@@ -12,6 +12,7 @@ use crate::core::validation::{
     normalize_non_empty, validate_existing_dir, validate_existing_dir_if_present,
 };
 use crate::models::project::{Project, ProjectService};
+use crate::services::realtime::publish_projects_updated;
 
 use super::contracts::{CreateProjectRequest, ProjectQuery, UpdateProjectRequest};
 use super::memory_sync::{sync_active_project, sync_archived_project};
@@ -96,7 +97,15 @@ pub(super) async fn create_project(
 
     (
         StatusCode::CREATED,
-        Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
+        {
+            publish_projects_updated(
+                auth.user_id.as_str(),
+                "project_created",
+                Some(saved.id.as_str()),
+                Some(saved.clone()),
+            );
+            Json(serde_json::to_value(saved).unwrap_or(Value::Null))
+        },
     )
 }
 
@@ -153,6 +162,12 @@ pub(super) async fn update_project(
                     project.id, err
                 );
             }
+            publish_projects_updated(
+                auth.user_id.as_str(),
+                "project_updated",
+                Some(project.id.as_str()),
+                Some(project.clone()),
+            );
             (
                 StatusCode::OK,
                 Json(serde_json::to_value(project).unwrap_or(Value::Null)),
@@ -182,6 +197,12 @@ pub(super) async fn delete_project(
                     project.id, err
                 );
             }
+            publish_projects_updated(
+                auth.user_id.as_str(),
+                "project_deleted",
+                Some(project.id.as_str()),
+                None,
+            );
             (
                 StatusCode::OK,
                 Json(serde_json::json!({"success": true, "message": "项目已删除"})),

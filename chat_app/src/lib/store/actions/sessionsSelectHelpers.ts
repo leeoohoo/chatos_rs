@@ -1,4 +1,10 @@
+import type { Message, Session } from '../../../types';
 import { applyTurnProcessCache } from '../helpers/messages';
+import {
+  asRecord,
+  normalizeDate,
+  readValue,
+} from '../helpers/normalizerUtils';
 import { normalizeContactSessions } from './sessionsUtils';
 import {
   buildDraftUserMessageForStreaming,
@@ -8,20 +14,50 @@ import {
   normalizeTurnId,
   resolveUserByTurnId,
 } from './sessionsUtils';
+import type { ChatState, SessionAiSelection } from '../types';
 
 interface ApplySelectSessionStateArgs {
-  state: any;
+  state: ChatState;
   sessionId: string;
-  session: any;
-  messages: any[];
+  session: Session | null;
+  messages: Message[];
   previousSessionId: string | null;
-  localStreamingMessage: any;
-  sessionAiSelectionFromMetadata: {
-    selectedModelId?: string | null;
-    selectedAgentId?: string | null;
-  } | null;
+  localStreamingMessage: Message | null;
+  sessionAiSelectionFromMetadata: Partial<SessionAiSelection> | null;
   keepActivePanel?: boolean;
 }
+
+const readMessageMetadataString = (message: Message | null | undefined, key: string): string => {
+  const metadata = asRecord(message?.metadata);
+  const value = readValue(metadata, key);
+  return typeof value === 'string' ? value : '';
+};
+
+const readHistoryDraftUserId = (message: Message | null | undefined): string => {
+  const metadata = asRecord(message?.metadata);
+  const draftUser = asRecord(readValue(metadata, 'historyDraftUserMessage'));
+  const value = readValue(draftUser, 'id');
+  return typeof value === 'string' ? value : '';
+};
+
+const readHistoryDraftUserRecord = (message: Message | null | undefined): Record<string, unknown> | null => {
+  const metadata = asRecord(message?.metadata);
+  return asRecord(readValue(metadata, 'historyDraftUserMessage'));
+};
+
+const isDraftUserMessageSnapshot = (
+  value: unknown,
+): value is NonNullable<NonNullable<Message['metadata']>['historyDraftUserMessage']> => (
+  (() => {
+    const record = asRecord(value);
+    return Boolean(
+      record
+      && typeof record.id === 'string'
+      && typeof record.content === 'string'
+      && typeof record.createdAt === 'string'
+    );
+  })()
+);
 
 export const applySelectSessionState = ({
   state,
@@ -38,9 +74,9 @@ export const applySelectSessionState = ({
   let nextMessages = messages;
 
   if (chatState?.isStreaming && chatState.streamingMessageId) {
-    const hasStreamingMessage = nextMessages.some((m: any) => m.id === chatState.streamingMessageId);
+    const hasStreamingMessage = nextMessages.some((message) => message.id === chatState.streamingMessageId);
     if (!hasStreamingMessage) {
-      let restoredStreamingMessage: any = null;
+      let restoredStreamingMessage: Message | null = null;
       if (draftMessage && typeof draftMessage === 'object') {
         restoredStreamingMessage = cloneStreamingMessageDraft(draftMessage);
       } else if (localStreamingMessage && typeof localStreamingMessage === 'object') {
@@ -50,20 +86,15 @@ export const applySelectSessionState = ({
       const streamingDraftSource = restoredStreamingMessage || localStreamingMessage;
       if (streamingDraftSource) {
         const linkedUserMessageId = normalizeTurnId(
-          typeof streamingDraftSource.metadata?.historyFinalForUserMessageId === 'string'
-            ? streamingDraftSource.metadata.historyFinalForUserMessageId
-            : (
-              typeof streamingDraftSource.metadata?.historyDraftUserMessage?.id === 'string'
-                ? streamingDraftSource.metadata.historyDraftUserMessage.id
-                : ''
-            ),
+          readMessageMetadataString(streamingDraftSource, 'historyFinalForUserMessageId')
+            || readHistoryDraftUserId(streamingDraftSource),
         );
         const linkedTurnId = normalizeTurnId(
-          streamingDraftSource.metadata?.historyFinalForTurnId
-          || streamingDraftSource.metadata?.conversation_turn_id,
+          readMessageMetadataString(streamingDraftSource, 'historyFinalForTurnId')
+          || readMessageMetadataString(streamingDraftSource, 'conversation_turn_id'),
         );
         const linkedUserById = linkedUserMessageId
-          ? nextMessages.find((message: any) => message?.role === 'user' && message?.id === linkedUserMessageId)
+          ? nextMessages.find((message) => message?.role === 'user' && message?.id === linkedUserMessageId)
           : null;
         const linkedUserByTurn = linkedUserById || !linkedTurnId
           ? null
@@ -78,8 +109,10 @@ export const applySelectSessionState = ({
           if (resolvedTurnId) {
             restoredStreamingMessage.metadata.historyFinalForTurnId = resolvedTurnId;
           }
-          if (restoredStreamingMessage.metadata.historyDraftUserMessage) {
-            restoredStreamingMessage.metadata.historyDraftUserMessage.id = linkedUserMessage.id;
+          const historyDraftUser = readHistoryDraftUserRecord(restoredStreamingMessage);
+          if (isDraftUserMessageSnapshot(historyDraftUser)) {
+            historyDraftUser.id = linkedUserMessage.id;
+            restoredStreamingMessage.metadata.historyDraftUserMessage = historyDraftUser;
           }
         }
 
@@ -116,28 +149,28 @@ export const applySelectSessionState = ({
 
   if (chatState?.isStreaming && draftMessage && typeof draftMessage === 'object') {
     const draftClone = cloneStreamingMessageDraft(draftMessage);
-    const draftId = typeof (draftClone as any)?.id === 'string' ? (draftClone as any).id : '';
+    const draftId = typeof draftClone.id === 'string' ? draftClone.id : '';
     const draftIndex = draftId
-      ? nextMessages.findIndex((m: any) => m?.id === draftId)
+      ? nextMessages.findIndex((message) => message?.id === draftId)
       : -1;
 
     if (draftIndex === -1) {
       nextMessages = [...nextMessages, draftClone];
     } else {
-      const existing = nextMessages[draftIndex] || {};
-      const existingTime = new Date((existing as any)?.updatedAt || (existing as any)?.createdAt || 0).getTime();
-      const draftTime = new Date((draftClone as any)?.updatedAt || (draftClone as any)?.createdAt || 0).getTime();
-      const existingContentLength = typeof (existing as any)?.content === 'string'
-        ? (existing as any).content.length
+      const existing = nextMessages[draftIndex];
+      const existingTime = normalizeDate(existing?.updatedAt || existing?.createdAt || 0).getTime();
+      const draftTime = normalizeDate(draftClone?.updatedAt || draftClone?.createdAt || 0).getTime();
+      const existingContentLength = typeof existing?.content === 'string'
+        ? existing.content.length
         : 0;
-      const draftContentLength = typeof (draftClone as any)?.content === 'string'
-        ? (draftClone as any).content.length
+      const draftContentLength = typeof draftClone?.content === 'string'
+        ? draftClone.content.length
         : 0;
       const shouldReplaceWithDraft = Boolean(
         chatState?.isStreaming
         || draftTime > existingTime
         || draftContentLength > existingContentLength
-        || (existing as any)?.status !== (draftClone as any)?.status
+        || existing?.status !== draftClone?.status
       );
       if (shouldReplaceWithDraft) {
         nextMessages[draftIndex] = {
@@ -160,13 +193,13 @@ export const applySelectSessionState = ({
 
   state.currentSessionId = sessionId;
   state.currentSession = session;
-  const index = state.sessions.findIndex((s: any) => s.id === sessionId);
+  const index = state.sessions.findIndex((item) => item.id === sessionId);
   if (index !== -1 && session) {
     state.sessions[index] = session;
   } else if (session) {
-    const isActive = isSessionActive(session as any);
+    const isActive = isSessionActive(session);
     if (isActive) {
-      const merged = [session, ...(state.sessions || []).filter((s: any) => s?.id !== session.id)];
+      const merged = [session, ...(state.sessions || []).filter((item) => item?.id !== session.id)];
       state.sessions = normalizeContactSessions(merged);
     }
   }

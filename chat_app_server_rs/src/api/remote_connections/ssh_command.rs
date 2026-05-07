@@ -63,8 +63,13 @@ pub(super) fn build_ssh_args(
             if let Some(jump_key) = connection.jump_private_key_path.as_ref() {
                 let jump_port = connection.jump_port.unwrap_or(22);
                 let proxy = format!(
-                    "ssh -i {} -p {} -W %h:%p {}@{}",
+                    "ssh -i {}{} -p {} -W %h:%p {}@{}",
                     shell_quote(jump_key),
+                    connection
+                        .jump_certificate_path
+                        .as_ref()
+                        .map(|path| format!(" -o CertificateFile={}", shell_quote(path)))
+                        .unwrap_or_default(),
                     jump_port,
                     shell_quote(username),
                     shell_quote(host)
@@ -155,8 +160,13 @@ pub(super) fn build_scp_args(connection: &RemoteConnection) -> Vec<String> {
             if let Some(jump_key) = connection.jump_private_key_path.as_ref() {
                 let jump_port = connection.jump_port.unwrap_or(22);
                 let proxy = format!(
-                    "ssh -i {} -p {} -W %h:%p {}@{}",
+                    "ssh -i {}{} -p {} -W %h:%p {}@{}",
                     shell_quote(jump_key),
+                    connection
+                        .jump_certificate_path
+                        .as_ref()
+                        .map(|path| format!(" -o CertificateFile={}", shell_quote(path)))
+                        .unwrap_or_default(),
                     jump_port,
                     shell_quote(username),
                     shell_quote(host)

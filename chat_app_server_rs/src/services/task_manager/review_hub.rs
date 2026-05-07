@@ -5,6 +5,8 @@ use once_cell::sync::Lazy;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
+use crate::services::realtime::{publish_task_board_updated, resolve_conversation_scope};
+
 use super::normalizer::{normalize_task_drafts, trimmed_non_empty};
 use super::types::{
     TaskCreateReviewPayload, TaskDraft, TaskReviewAction, TaskReviewDecision, REVIEW_NOT_FOUND_ERR,
@@ -76,6 +78,27 @@ impl TaskReviewHub {
         pending.get(review_id).map(|entry| entry.payload.clone())
     }
 
+    async fn payloads_for_conversation(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> Vec<TaskCreateReviewPayload> {
+        let pending = self.pending.lock().await;
+        let mut payloads = pending
+            .values()
+            .filter_map(|entry| {
+                if entry.payload.conversation_id == conversation_id {
+                    Some(entry.payload.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        payloads.sort_by(|left, right| left.review_id.cmp(&right.review_id));
+        payloads.truncate(limit);
+        payloads
+    }
+
     async fn remove(&self, review_id: &str) {
         let mut pending = self.pending.lock().await;
         pending.remove(review_id);
@@ -116,7 +139,9 @@ pub async fn create_task_review(
         draft_tasks,
         timeout_ms,
     };
+    let publish_payload = payload.clone();
     let receiver = TASK_REVIEW_HUB.register(payload.clone()).await;
+    publish_review_required_event(&publish_payload).await;
     Ok((payload, receiver))
 }
 
@@ -144,12 +169,74 @@ pub async fn submit_task_review_decision(
 ) -> Result<TaskCreateReviewPayload, String> {
     let review_id =
         trimmed_non_empty(review_id).ok_or_else(|| "review_id is required".to_string())?;
-    TASK_REVIEW_HUB
+    let payload = TASK_REVIEW_HUB
         .resolve(review_id, action, tasks, reason)
-        .await
+        .await?;
+    publish_review_resolved_event(&payload, action).await;
+    Ok(payload)
+}
+
+async fn publish_review_required_event(payload: &TaskCreateReviewPayload) {
+    let Ok(scope) = resolve_conversation_scope(payload.conversation_id.as_str()).await else {
+        return;
+    };
+    let Some(user_id) = scope.user_id.as_deref() else {
+        return;
+    };
+    publish_task_board_updated(
+        user_id,
+        payload.conversation_id.as_str(),
+        Some(payload.conversation_turn_id.as_str()),
+        Some(payload.review_id.as_str()),
+        None,
+        "review_required",
+        None,
+        Some(payload.draft_tasks.clone()),
+        Some(payload.timeout_ms),
+    );
+}
+
+async fn publish_review_resolved_event(
+    payload: &TaskCreateReviewPayload,
+    action: TaskReviewAction,
+) {
+    let Ok(scope) = resolve_conversation_scope(payload.conversation_id.as_str()).await else {
+        return;
+    };
+    let Some(user_id) = scope.user_id.as_deref() else {
+        return;
+    };
+    publish_task_board_updated(
+        user_id,
+        payload.conversation_id.as_str(),
+        Some(payload.conversation_turn_id.as_str()),
+        Some(payload.review_id.as_str()),
+        None,
+        match action {
+            TaskReviewAction::Confirm => "review_confirmed",
+            TaskReviewAction::Cancel => "review_cancelled",
+        },
+        None,
+        None,
+        None,
+    );
 }
 
 pub async fn get_task_review_payload(review_id: &str) -> Option<TaskCreateReviewPayload> {
     let review_id = trimmed_non_empty(review_id)?;
     TASK_REVIEW_HUB.payload(review_id).await
+}
+
+pub async fn list_task_review_payloads_for_conversation(
+    conversation_id: &str,
+    limit: usize,
+) -> Vec<TaskCreateReviewPayload> {
+    let conversation_id = match trimmed_non_empty(conversation_id) {
+        Some(value) => value,
+        None => return Vec::new(),
+    };
+    let limit = limit.clamp(1, 200);
+    TASK_REVIEW_HUB
+        .payloads_for_conversation(conversation_id, limit)
+        .await
 }

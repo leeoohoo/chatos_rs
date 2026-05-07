@@ -1,469 +1,228 @@
+#[path = "query_handlers_download.rs"]
+mod query_handlers_download;
+#[path = "query_handlers_listing.rs"]
+mod query_handlers_listing;
+#[path = "query_handlers_read.rs"]
+mod query_handlers_read;
+#[path = "query_handlers_search.rs"]
+mod query_handlers_search;
+
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::{extract::Query, Json};
-use base64::Engine;
+use axum::Json;
 use serde_json::{json, Value};
-use std::fs;
-use std::path::PathBuf;
 
-use super::contracts::{
-    FsContentSearchQuery, FsDownloadQuery, FsQuery, FsReadQuery, FsSearchQuery,
-};
-use super::helpers::{format_system_time, infer_download_name, read_dir_entries, zip_directory};
-use super::read_mode::should_render_text;
-use super::response::{binary_download_response, json_error_response};
-use super::roots::list_roots;
-use super::search::{is_search_match, normalize_search_keyword};
-use crate::services::workspace_search::{
-    search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES,
-    DEFAULT_MAX_VISITS,
-};
+use super::policy::FsPolicyError;
+use super::response::json_error_response;
 
-const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
-const DEFAULT_SEARCH_LIMIT: usize = 200;
-const MAX_SEARCH_LIMIT: usize = 500;
-const MAX_SEARCH_VISITS: usize = 20_000;
+pub(super) use self::query_handlers_download::download_entry;
+pub(super) use self::query_handlers_listing::{list_dirs, list_entries};
+pub(super) use self::query_handlers_read::read_file;
+pub(super) use self::query_handlers_search::{search_content, search_entries};
 
-pub(super) async fn download_entry(Query(query): Query<FsDownloadQuery>) -> Response {
-    let raw = query
-        .path
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw.is_none() {
-        return json_error_response(StatusCode::BAD_REQUEST, "路径不能为空");
-    }
-
-    let path = PathBuf::from(raw.unwrap());
-    if !path.exists() {
-        return json_error_response(StatusCode::BAD_REQUEST, "路径不存在");
-    }
-
-    if path.is_file() {
-        let data = match fs::read(&path) {
-            Ok(data) => data,
-            Err(err) => {
-                return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-            }
-        };
-        let name = infer_download_name(&path);
-        let mime = mime_guess::from_path(&path).first_or_octet_stream();
-        return binary_download_response(data, mime.essence_str(), &name);
-    }
-
-    if path.is_dir() {
-        let zip_data = match zip_directory(&path) {
-            Ok(data) => data,
-            Err(err) => return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err),
-        };
-        let base_name = infer_download_name(&path);
-        let file_name = if base_name.ends_with(".zip") {
-            base_name
-        } else {
-            format!("{base_name}.zip")
-        };
-        return binary_download_response(zip_data, "application/zip", &file_name);
-    }
-
-    json_error_response(StatusCode::BAD_REQUEST, "路径既不是文件也不是目录")
-}
-
-pub(super) async fn list_dirs(Query(query): Query<FsQuery>) -> (StatusCode, Json<Value>) {
-    let raw = query
-        .path
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw.is_none() {
-        let roots = list_roots();
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "path": Value::Null,
-                "parent": Value::Null,
-                "entries": Vec::<Value>::new(),
-                "roots": roots
-            })),
-        );
-    }
-
-    let path = PathBuf::from(raw.unwrap());
-    if !path.exists() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不存在" })),
-        );
-    }
-    if !path.is_dir() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不是目录" })),
-        );
-    }
-
-    let entries = match read_dir_entries(&path, false) {
-        Ok(v) => v,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": err })),
-            )
-        }
-    };
-    let parent = path.parent().map(|p| p.to_string_lossy().to_string());
-
+fn policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {
     (
-        StatusCode::OK,
+        err.status_code(),
         Json(json!({
-            "path": path.to_string_lossy(),
-            "parent": parent,
-            "entries": entries,
-            "roots": Vec::<Value>::new()
+            "error": err.message()
         })),
     )
 }
 
-pub(super) async fn list_entries(Query(query): Query<FsQuery>) -> (StatusCode, Json<Value>) {
-    let raw = query
-        .path
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw.is_none() {
-        let roots = list_roots();
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "path": Value::Null,
-                "parent": Value::Null,
-                "entries": Vec::<Value>::new(),
-                "roots": roots
-            })),
-        );
-    }
-
-    let path = PathBuf::from(raw.unwrap());
-    if !path.exists() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不存在" })),
-        );
-    }
-    if !path.is_dir() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不是目录" })),
-        );
-    }
-
-    let entries = match read_dir_entries(&path, true) {
-        Ok(v) => v,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": err })),
-            )
-        }
-    };
-    let parent = path.parent().map(|p| p.to_string_lossy().to_string());
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "path": path.to_string_lossy(),
-            "parent": parent,
-            "entries": entries,
-            "roots": Vec::<Value>::new()
-        })),
-    )
+fn policy_error_response(err: FsPolicyError) -> Response {
+    json_error_response(err.status_code(), err.message())
 }
 
-pub(super) async fn search_entries(
-    Query(query): Query<FsSearchQuery>,
-) -> (StatusCode, Json<Value>) {
-    let raw_path = query
-        .path
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw_path.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "搜索路径不能为空" })),
-        );
+#[cfg(test)]
+mod tests {
+    use super::{download_entry, list_entries, read_file};
+    use crate::core::auth::AuthUser;
+    use axum::body::to_bytes;
+    use axum::extract::Query;
+    use axum::http::{header, StatusCode};
+    use serde_json::Value;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::super::contracts::{FsDownloadQuery, FsQuery, FsReadQuery};
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let root = std::env::current_dir().expect("current dir").join(format!(
+            "{}_{}",
+            name,
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create temp dir");
+        root
     }
 
-    let raw_keyword = query
-        .q
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw_keyword.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "搜索关键字不能为空" })),
-        );
+    fn make_outside_temp_dir(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("{}_{}", name, uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create outside temp dir");
+        root
     }
 
-    let path = PathBuf::from(raw_path.unwrap());
-    if !path.exists() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不存在" })),
-        );
-    }
-    if !path.is_dir() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不是目录" })),
-        );
-    }
-
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_SEARCH_LIMIT)
-        .clamp(1, MAX_SEARCH_LIMIT);
-    let keyword = normalize_search_keyword(&raw_keyword.unwrap());
-
-    let mut stack = vec![path.clone()];
-    let mut entries: Vec<Value> = Vec::new();
-    let mut visited_dirs = 0usize;
-    let mut truncated = false;
-
-    while let Some(dir_path) = stack.pop() {
-        if visited_dirs >= MAX_SEARCH_VISITS {
-            truncated = true;
-            break;
-        }
-        visited_dirs += 1;
-
-        let iter = match fs::read_dir(&dir_path) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        for entry in iter {
-            if entries.len() >= limit {
-                truncated = true;
-                break;
-            }
-
-            let entry = match entry {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let meta = match entry.metadata() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let full_path = entry.path();
-            if meta.is_dir() {
-                stack.push(full_path);
-                continue;
-            }
-
-            let name = entry.file_name().to_string_lossy().to_string();
-            let relative_path = full_path
-                .strip_prefix(&path)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| full_path.to_string_lossy().to_string());
-
-            if !is_search_match(&name, &relative_path, &keyword) {
-                continue;
-            }
-
-            let modified_at = meta.modified().ok().and_then(format_system_time);
-            entries.push(json!({
-                "name": name,
-                "path": full_path.to_string_lossy(),
-                "relative_path": relative_path,
-                "is_dir": false,
-                "size": Some(meta.len()),
-                "modified_at": modified_at
-            }));
-        }
-
-        if truncated {
-            break;
+    fn mock_auth() -> AuthUser {
+        AuthUser {
+            user_id: "tester".to_string(),
+            role: "user".to_string(),
         }
     }
 
-    entries.sort_by(|a, b| {
-        let ap = a
-            .get("relative_path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let bp = b
-            .get("relative_path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_lowercase();
-        ap.cmp(&bp)
-    });
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "path": path.to_string_lossy(),
-            "query": keyword,
-            "entries": entries,
-            "truncated": truncated,
-            "visited_dirs": visited_dirs
-        })),
-    )
-}
-
-pub(super) async fn search_content(
-    Query(query): Query<FsContentSearchQuery>,
-) -> (StatusCode, Json<Value>) {
-    let raw_path = query
-        .path
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw_path.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "搜索路径不能为空" })),
-        );
+    async fn response_json(response: axum::response::Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        serde_json::from_slice(&bytes).expect("parse json body")
     }
 
-    let raw_keyword = query
-        .q
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw_keyword.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "搜索关键字不能为空" })),
-        );
-    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_file_rejects_symlink_escape_inside_allowed_root() {
+        use std::os::unix::fs::symlink;
 
-    let path = PathBuf::from(raw_path.unwrap());
-    let query_text = raw_keyword.unwrap();
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_SEARCH_LIMIT)
-        .clamp(1, MAX_SEARCH_LIMIT);
+        let root = make_temp_dir("fs_read_symlink_root");
+        let outside = make_outside_temp_dir("fs_read_symlink_outside");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&outside_file, "secret").expect("write outside file");
+        let link = root.join("secret-link");
+        symlink(&outside_file, &link).expect("create symlink");
 
-    match search_workspace_text(&TextSearchRequest {
-        root: path.clone(),
-        query: query_text.clone(),
-        max_results: limit,
-        max_file_bytes: DEFAULT_MAX_FILE_BYTES,
-        max_visits: DEFAULT_MAX_VISITS,
-        case_sensitive: query.case_sensitive.unwrap_or(false),
-        whole_word: query.whole_word.unwrap_or(false),
-    }) {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(json!({
-                "path": path.to_string_lossy(),
-                "query": query_text,
-                "entries": result.entries,
-                "truncated": result.truncated,
-                "visited_dirs": result.visited_dirs
-            })),
-        ),
-        Err(message) if message == "路径不存在" || message == "路径不是目录" => {
-            (StatusCode::BAD_REQUEST, Json(json!({ "error": message })))
-        }
-        Err(message) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": message })),
-        ),
-    }
-}
-
-pub(super) async fn read_file(Query(query): Query<FsReadQuery>) -> (StatusCode, Json<Value>) {
-    let raw = query
-        .path
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if raw.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不能为空" })),
-        );
-    }
-    let path = PathBuf::from(raw.unwrap());
-    if !path.exists() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不存在" })),
-        );
-    }
-    if !path.is_file() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "路径不是文件" })),
-        );
-    }
-
-    let meta = match fs::metadata(&path) {
-        Ok(m) => m,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": err.to_string() })),
-            )
-        }
-    };
-    let size = meta.len();
-    if size > MAX_PREVIEW_BYTES {
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json(json!({
-                "error": "文件过大，无法预览",
-                "size": size,
-                "limit": MAX_PREVIEW_BYTES
-            })),
-        );
-    }
-
-    let bytes = match fs::read(&path) {
-        Ok(b) => b,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": err.to_string() })),
-            )
-        }
-    };
-
-    let mime = mime_guess::from_path(&path).first_or_octet_stream();
-    let content_type = mime.essence_str().to_string();
-    let should_render = should_render_text(&path, &bytes, &content_type);
-
-    let (is_binary, content) = if should_render {
-        (
-            false,
-            Value::String(String::from_utf8_lossy(&bytes).to_string()),
+        let result = read_file(
+            mock_auth(),
+            Query(FsReadQuery {
+                path: Some(link.to_string_lossy().to_string()),
+            }),
         )
-    } else {
-        (
-            true,
-            Value::String(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+        .await;
+        let (status, body) = result;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body.0.get("error").and_then(Value::as_str),
+            Some("路径超出允许范围")
+        );
+
+        fs::remove_dir_all(root).expect("cleanup root");
+        fs::remove_dir_all(outside).expect("cleanup outside");
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_path_outside_allowed_roots() {
+        let outside = make_outside_temp_dir("fs_read_outside_root");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&outside_file, "secret").expect("write outside file");
+
+        let result = read_file(
+            mock_auth(),
+            Query(FsReadQuery {
+                path: Some(outside_file.to_string_lossy().to_string()),
+            }),
         )
-    };
+        .await;
 
-    let modified_at = meta.modified().ok().and_then(format_system_time);
+        let (status, body) = result;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body.0.get("error").and_then(Value::as_str),
+            Some("路径超出允许范围")
+        );
 
-    (
-        StatusCode::OK,
-        Json(json!({
-            "path": path.to_string_lossy(),
-            "name": path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-            "size": size,
-            "content_type": content_type,
-            "is_binary": is_binary,
-            "modified_at": modified_at,
-            "content": content
-        })),
-    )
+        fs::remove_dir_all(outside).expect("cleanup outside");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn list_entries_filters_symlink_escape_inside_allowed_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = make_temp_dir("fs_list_symlink_root");
+        let safe_file = root.join("safe.txt");
+        fs::write(&safe_file, "safe").expect("write safe file");
+        let outside = make_outside_temp_dir("fs_list_symlink_outside");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&outside_file, "secret").expect("write outside file");
+        let link = root.join("secret-link");
+        symlink(&outside_file, &link).expect("create symlink");
+
+        let result = list_entries(
+            mock_auth(),
+            Query(FsQuery {
+                path: Some(root.to_string_lossy().to_string()),
+            }),
+        )
+        .await;
+
+        let (status, body) = result;
+        assert_eq!(status, StatusCode::OK);
+        let names = body
+            .0
+            .get("entries")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("name").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert!(names.contains(&"safe.txt"));
+        assert!(!names.contains(&"secret-link"));
+
+        fs::remove_dir_all(root).expect("cleanup root");
+        fs::remove_dir_all(outside).expect("cleanup outside");
+    }
+
+    #[tokio::test]
+    async fn download_entry_rejects_empty_path() {
+        let response = download_entry(
+            mock_auth(),
+            Query(FsDownloadQuery {
+                path: Some("   ".to_string()),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(
+            body.get("error").and_then(Value::as_str),
+            Some("路径不能为空")
+        );
+    }
+
+    #[tokio::test]
+    async fn download_entry_streams_regular_file_with_attachment_headers() {
+        let root = make_temp_dir("fs_download_file");
+        let file_path = root.join("sample.txt");
+        fs::write(&file_path, "hello download").expect("write sample file");
+
+        let response = download_entry(
+            mock_auth(),
+            Query(FsDownloadQuery {
+                path: Some(file_path.to_string_lossy().to_string()),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/plain")
+        );
+        assert!(response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .contains("sample.txt"));
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        assert_eq!(&body[..], b"hello download");
+
+        fs::remove_dir_all(root).expect("cleanup root");
+    }
 }

@@ -6,6 +6,11 @@ export interface NoteMeta {
   updated_at: string;
 }
 
+export interface NoteDetail {
+  note: NoteMeta;
+  content: string;
+}
+
 export interface FolderNode {
   name: string;
   path: string;

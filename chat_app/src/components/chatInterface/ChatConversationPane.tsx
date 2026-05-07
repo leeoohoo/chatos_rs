@@ -6,9 +6,11 @@ import SummaryPane from './SummaryPane';
 import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
 import type {
   ChatInterfaceProps,
+  GuideMessageHandler,
   Message,
   Project,
   RemoteConnection,
+  SendMessageHandler,
   Session,
 } from '../../types';
 
@@ -18,7 +20,9 @@ type ChatComposerPanelProps = ComponentProps<typeof ChatComposerPanel>;
 interface ChatConversationPaneProps {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
+  taskHistoryOpen: boolean;
   currentContactName: string;
+  currentContactId: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
@@ -35,6 +39,10 @@ interface ChatConversationPaneProps {
   memoryLoading: boolean;
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;
+  onRunReviewRepair: (sessionId: string) => Promise<void>;
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
   mergedCurrentTurnTasks: ChatComposerPanelProps['mergedCurrentTurnTasks'];
@@ -45,29 +53,29 @@ interface ChatConversationPaneProps {
   workbarError: string | null;
   workbarHistoryError: string | null;
   workbarActionLoadingTaskId: string | null;
+  taskModalOpen: ChatComposerPanelProps['taskModalOpen'];
+  taskModalMode: ChatComposerPanelProps['taskModalMode'];
+  taskModalTask: ChatComposerPanelProps['taskModalTask'];
+  taskModalError: ChatComposerPanelProps['taskModalError'];
   onRefreshWorkbarTasks: () => void;
   onOpenHistory: (sessionId: string) => void;
+  onTaskHistoryOpenChange: (value: boolean) => void;
   onOpenUiPromptHistory: (sessionId: string) => void;
   uiPromptHistoryCount: number;
   uiPromptHistoryLoading: boolean;
   onCompleteTask: ChatComposerPanelProps['onCompleteTask'];
   onDeleteTask: ChatComposerPanelProps['onDeleteTask'];
   onEditTask: ChatComposerPanelProps['onEditTask'];
+  onCloseTaskModal: ChatComposerPanelProps['onCloseTaskModal'];
+  onSubmitTaskModal: ChatComposerPanelProps['onSubmitTaskModal'];
   activeUiPromptPanel: ChatComposerPanelProps['activeUiPromptPanel'];
   onUiPromptSubmit: ChatComposerPanelProps['onUiPromptSubmit'];
   onUiPromptCancel: () => void;
   activeTaskReviewPanel: ChatComposerPanelProps['activeTaskReviewPanel'];
   onTaskReviewConfirm: ChatComposerPanelProps['onTaskReviewConfirm'];
   onTaskReviewCancel: ChatComposerPanelProps['onTaskReviewCancel'];
-  onSend: (content: string, attachments?: File[], runtimeOptions?: {
-    mcpEnabled?: boolean;
-    remoteConnectionId?: string | null;
-    projectId?: string | null;
-    projectRoot?: string | null;
-    workspaceRoot?: string | null;
-    enabledMcpIds?: string[];
-  }) => void;
-  onGuide: (content: string) => void;
+  onSend: SendMessageHandler;
+  onGuide: GuideMessageHandler;
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;
@@ -85,6 +93,7 @@ interface ChatConversationPaneProps {
   workspaceRoot: string | null;
   onWorkspaceRootChange: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
+  currentAgent?: ChatComposerPanelProps['currentAgent'];
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   mcpEnabled: boolean;
@@ -101,6 +110,7 @@ interface ChatMessagesPaneProps {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
+  currentContactId: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
@@ -117,6 +127,10 @@ interface ChatMessagesPaneProps {
   memoryLoading: boolean;
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;
+  onRunReviewRepair: (sessionId: string) => Promise<void>;
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
 }
@@ -125,6 +139,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   currentSession,
   sessionSummaryPaneVisible,
   currentContactName,
+  currentContactId,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
@@ -141,9 +156,19 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   memoryLoading,
   memoryError,
   onRefreshMemory,
+  onRunReviewRepair,
+  reviewRepairRunning,
+  reviewRepairPendingCount,
+  reviewRepairDisabled,
   onCloseSummary,
   toggleSidebar,
 }) => {
+  void currentContactId;
+  void onRunReviewRepair;
+  void reviewRepairRunning;
+  void reviewRepairPendingCount;
+  void reviewRepairDisabled;
+
   if (!currentSession) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -214,7 +239,9 @@ ChatMessagesPane.displayName = 'ChatMessagesPane';
 const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentSession,
   sessionSummaryPaneVisible,
+  taskHistoryOpen,
   currentContactName,
+  currentContactId,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
@@ -231,6 +258,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   memoryLoading,
   memoryError,
   onRefreshMemory,
+  onRunReviewRepair,
+  reviewRepairRunning,
+  reviewRepairPendingCount,
+  reviewRepairDisabled,
   onCloseSummary,
   toggleSidebar,
   mergedCurrentTurnTasks,
@@ -241,14 +272,21 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   workbarError,
   workbarHistoryError,
   workbarActionLoadingTaskId,
+  taskModalOpen,
+  taskModalMode,
+  taskModalTask,
+  taskModalError,
   onRefreshWorkbarTasks,
   onOpenHistory,
+  onTaskHistoryOpenChange,
   onOpenUiPromptHistory,
   uiPromptHistoryCount,
   uiPromptHistoryLoading,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
+  onCloseTaskModal,
+  onSubmitTaskModal,
   activeUiPromptPanel,
   onUiPromptSubmit,
   onUiPromptCancel,
@@ -274,6 +312,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   workspaceRoot,
   onWorkspaceRootChange,
   currentRemoteConnectionId,
+  currentAgent,
   availableRemoteConnections,
   onRemoteConnectionChange,
   mcpEnabled,
@@ -292,14 +331,15 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           currentSession={currentSession}
           sessionSummaryPaneVisible={sessionSummaryPaneVisible}
           currentContactName={currentContactName}
+          currentContactId={currentContactId}
           currentProjectNameForMemory={currentProjectNameForMemory}
           currentProjectIdForMemory={currentProjectIdForMemory}
-        messages={messages}
-        chatIsLoading={chatIsLoading}
-        chatIsStreaming={chatIsStreaming}
-        chatIsStopping={chatIsStopping}
-        chatStreamingPreviewText={chatStreamingPreviewText}
-        hasMoreMessages={hasMoreMessages}
+          messages={messages}
+          chatIsLoading={chatIsLoading}
+          chatIsStreaming={chatIsStreaming}
+          chatIsStopping={chatIsStopping}
+          chatStreamingPreviewText={chatStreamingPreviewText}
+          hasMoreMessages={hasMoreMessages}
           onLoadMore={onLoadMore}
           onToggleTurnProcess={onToggleTurnProcess}
           customRenderer={customRenderer}
@@ -308,6 +348,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           memoryLoading={memoryLoading}
           memoryError={memoryError}
           onRefreshMemory={onRefreshMemory}
+          onRunReviewRepair={onRunReviewRepair}
+          reviewRepairRunning={reviewRepairRunning}
+          reviewRepairPendingCount={reviewRepairPendingCount}
+          reviewRepairDisabled={reviewRepairDisabled}
           onCloseSummary={onCloseSummary}
           toggleSidebar={toggleSidebar}
         />
@@ -318,20 +362,28 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           sessionId={currentSession.id}
           mergedCurrentTurnTasks={mergedCurrentTurnTasks}
           workbarHistoryTasks={workbarHistoryTasks}
+          taskHistoryOpen={taskHistoryOpen}
           activeConversationTurnId={activeConversationTurnId}
           workbarLoading={workbarLoading}
           workbarHistoryLoading={workbarHistoryLoading}
           workbarError={workbarError}
           workbarHistoryError={workbarHistoryError}
           workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+          taskModalOpen={taskModalOpen}
+          taskModalMode={taskModalMode}
+          taskModalTask={taskModalTask}
+          taskModalError={taskModalError}
           onRefreshWorkbarTasks={onRefreshWorkbarTasks}
           onOpenHistory={onOpenHistory}
+          onTaskHistoryOpenChange={onTaskHistoryOpenChange}
           onOpenUiPromptHistory={onOpenUiPromptHistory}
           uiPromptHistoryCount={uiPromptHistoryCount}
           uiPromptHistoryLoading={uiPromptHistoryLoading}
           onCompleteTask={onCompleteTask}
           onDeleteTask={onDeleteTask}
           onEditTask={onEditTask}
+          onCloseTaskModal={onCloseTaskModal}
+          onSubmitTaskModal={onSubmitTaskModal}
           activeUiPromptPanel={activeUiPromptPanel}
           onUiPromptSubmit={onUiPromptSubmit}
           onUiPromptCancel={onUiPromptCancel}
@@ -357,9 +409,14 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onProjectChange={onProjectChange}
           showProjectSelector={false}
           showProjectFileButton={false}
+          reviewRepairAvailable={true}
+          reviewRepairRunning={reviewRepairRunning}
+          reviewRepairDisabled={reviewRepairDisabled}
+          onReviewRepair={() => onRunReviewRepair(currentSession.id)}
           workspaceRoot={workspaceRoot}
           onWorkspaceRootChange={onWorkspaceRootChange}
           currentRemoteConnectionId={currentRemoteConnectionId}
+          currentAgent={currentAgent}
           availableRemoteConnections={availableRemoteConnections}
           onRemoteConnectionChange={onRemoteConnectionChange}
           showWorkspaceRootPicker={true}

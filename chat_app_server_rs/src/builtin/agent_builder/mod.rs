@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
+use crate::core::tool_registry::ToolRegistry;
 use crate::services::memory_server_client::{
     self, CreateMemoryAgentRequestDto, UpdateMemoryAgentRequestDto,
 };
@@ -26,16 +27,8 @@ pub struct AgentBuilderOptions {
 
 #[derive(Clone)]
 pub struct AgentBuilderService {
-    tools: HashMap<String, Tool>,
+    registry: ToolRegistry<ToolHandler>,
     default_user_id: Option<String>,
-}
-
-#[derive(Clone)]
-struct Tool {
-    name: String,
-    description: String,
-    input_schema: Value,
-    handler: ToolHandler,
 }
 
 type ToolHandler = Arc<dyn Fn(Value, Option<&str>) -> Result<Value, String> + Send + Sync>;
@@ -44,7 +37,7 @@ impl AgentBuilderService {
     pub fn new(opts: AgentBuilderOptions) -> Result<Self, String> {
         let default_user_id = normalize_optional_string(opts.user_id);
         let mut service = Self {
-            tools: HashMap::new(),
+            registry: ToolRegistry::new(),
             default_user_id,
         };
 
@@ -59,16 +52,7 @@ impl AgentBuilderService {
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema,
-                })
-            })
-            .collect()
+        self.registry.list_tools()
     }
 
     pub fn call_tool(
@@ -81,7 +65,7 @@ impl AgentBuilderService {
     ) -> Result<Value, String> {
         let normalized = normalize_tool_name(name);
         let tool = self
-            .tools
+            .registry
             .get(normalized.as_str())
             .ok_or_else(|| format!("Unknown tool: {}", name))?;
         (tool.handler)(args, self.default_user_id.as_deref())
@@ -94,15 +78,8 @@ impl AgentBuilderService {
         input_schema: Value,
         handler: ToolHandler,
     ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
+        self.registry
+            .register_tool(name, description, input_schema, handler);
     }
 
     fn register_recommend_agent_profile(&mut self, server_name: &str) {
@@ -182,7 +159,7 @@ impl AgentBuilderService {
                         }
                     }
                     let mut items = skill_map.into_values().collect::<Vec<_>>();
-                    items.sort_by(|left, right| {
+                    items.sort_by(|left: &Value, right: &Value| {
                         let left_id = left.get("id").and_then(Value::as_str).unwrap_or("");
                         let right_id = right.get("id").and_then(Value::as_str).unwrap_or("");
                         left_id.cmp(right_id)

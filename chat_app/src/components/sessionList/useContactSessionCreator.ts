@@ -1,14 +1,14 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
-import type { Session } from '../../types';
+import type { AgentConfig, Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
 import { CONTACT_CHAT_PROJECT_ID } from './useContactSessionListState';
 import type { ContactItem } from './types';
 
 interface UseContactSessionCreatorOptions {
-  agents: any[];
+  agents: AgentConfig[];
   currentSessionId: string | null;
   loadContacts: () => Promise<unknown>;
-  createContact: (agentId: string, name?: string) => Promise<any>;
+  createContact: (agentId: string, name?: string) => Promise<ContactItem>;
   ensureSessionForContact: (contact: ContactItem) => Promise<string | null>;
   updateSession: (sessionId: string, patch: Partial<Session>) => Promise<unknown>;
   selectSession: (sessionId: string) => Promise<unknown>;
@@ -61,7 +61,7 @@ export const useContactSessionCreator = ({
       setContactError('请先选择一个联系人');
       return;
     }
-    const selectedAgent = (agents || []).find((agent: any) => agent.id === agentId);
+    const selectedAgent = (agents || []).find((agent) => agent.id === agentId);
     if (!selectedAgent) {
       setContactError('联系人不存在或不可用');
       return;

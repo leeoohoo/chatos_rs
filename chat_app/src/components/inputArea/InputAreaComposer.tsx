@@ -1,135 +1,10 @@
-import type {
-  ChangeEvent,
-  ClipboardEvent,
-  Dispatch,
-  DragEvent,
-  KeyboardEvent,
-  RefObject,
-  SetStateAction,
-} from 'react';
-
 import { cn } from '../../lib/utils';
-import type {
-  AiModelConfig,
-  FsEntry,
-  Project,
-  RemoteConnection,
-} from '../../types';
-import {
-  InputAreaFloatingModelPicker,
-  InputAreaSendButton,
-} from './InlineWidgets';
-import type { McpToolsetPreset, SelectableMcpConfig } from './useMcpSelection';
-import {
-  InputAreaMcpPicker,
-  InputAreaProjectFilePicker,
-  InputAreaProjectSelector,
-  InputAreaRemoteConnectionPicker,
-  InputAreaWorkspacePicker,
-} from './PickerWidgets';
+import { InputAreaSendButton } from './InlineWidgets';
+import { InputAreaComposerControls } from './InputAreaComposerControls';
+import type { InputAreaComposerProps } from './InputAreaComposerTypes';
 
-interface InputAreaComposerProps {
-  disabled: boolean;
-  isStreaming: boolean;
-  isStopping: boolean;
-  isGuidingMode: boolean;
-  effectiveAllowAttachments: boolean;
-  showModelSelector: boolean;
-  selectedModelId: string | null;
-  onModelChange?: (modelId: string | null) => void;
-  availableProjects: Project[];
-  selectedProjectId: string | null;
-  onProjectChange?: (projectId: string | null) => void;
-  showProjectSelector: boolean;
-  showWorkspaceRootPicker: boolean;
-  currentRemoteConnectionId: string | null;
-  availableRemoteConnections: RemoteConnection[];
-  onRemoteConnectionChange?: (connectionId: string | null) => void;
-  mcpEnabled: boolean;
-  onMcpEnabledChange?: (enabled: boolean) => void;
-  reasoningSupported: boolean;
-  reasoningEnabled: boolean;
-  onReasoningToggle?: (enabled: boolean) => void;
-  placeholder: string;
-  maxLength: number;
-  supportedFileTypes: string[];
-  isDragging: boolean;
-  pickerRef: RefObject<HTMLDivElement>;
-  mcpPickerRef: RefObject<HTMLDivElement>;
-  workspacePickerRef: RefObject<HTMLDivElement>;
-  projectFilePickerRef: RefObject<HTMLDivElement>;
-  fileInputRef: RefObject<HTMLInputElement>;
-  textareaRef: RefObject<HTMLTextAreaElement>;
-  message: string;
-  setPickerOpen: Dispatch<SetStateAction<boolean>>;
-  pickerOpen: boolean;
-  hasAiOptions: boolean;
-  currentAiLabel: string;
-  enabledModels: AiModelConfig[];
-  projectForFilePicker: Project | null;
-  showProjectFilePicker: boolean;
-  projectFileAttachingPath: string | null;
-  projectFilePickerOpen: boolean;
-  handleToggleProjectFilePicker: () => void | Promise<void>;
-  projectFilePathLabel: string;
-  projectFileFilter: string;
-  setProjectFileFilter: (value: string) => void;
-  projectFileBusy: boolean;
-  projectFileKeywordActive: boolean;
-  projectFileParent: string | null;
-  loadProjectFileEntries: (path?: string | null) => void | Promise<void>;
-  displayedProjectFileEntries: FsEntry[];
-  handleAttachProjectFile: (entry: FsEntry) => void | Promise<void>;
-  toRelativeProjectPath: (path: string) => string;
-  projectFileSearchTruncated: boolean;
-  normalizedWorkspaceRoot: string | null;
-  workspaceRootDisplayName: string;
-  workspacePickerOpen: boolean;
-  workspacePath: string | null;
-  workspaceParent: string | null;
-  workspaceLoading: boolean;
-  workspaceEntries: FsEntry[];
-  workspaceRoots: FsEntry[];
-  handleToggleWorkspacePicker: () => void | Promise<void>;
-  loadWorkspaceDirectories: (path?: string | null) => void | Promise<void>;
-  handleSelectWorkspaceRoot: (path: string | null) => void;
-  mcpPickerOpen: boolean;
-  handleToggleMcpPicker: () => void | Promise<void>;
-  isAllMcpSelected: boolean;
-  selectableMcpIds: string[];
-  selectedMcpCount: number;
-  mcpConfigsLoading: boolean;
-  mcpConfigsError: string | null;
-  availableMcpConfigs: SelectableMcpConfig[];
-  builtinMcpConfigs: SelectableMcpConfig[];
-  customMcpConfigs: SelectableMcpConfig[];
-  mcpToolsetPresets: McpToolsetPreset[];
-  projectScopeKey: string | null;
-  hasProjectMcpDefault: boolean;
-  hasDirectoryContext: boolean;
-  hasRemoteContext: boolean;
-  isProjectRequiredMcpId: (mcpId: string) => boolean;
-  isRemoteRequiredMcpId: (mcpId: string) => boolean;
-  sanitizedEnabledMcpIds: string[];
-  loadAvailableMcpConfigs: () => void | Promise<void>;
-  handleSelectAllMcp: () => void;
-  handleToggleMcpSelection: (mcpId: string) => void;
-  handleApplyMcpToolsetPreset: (presetId: string) => void;
-  handleSaveProjectMcpDefault: () => void;
-  handleApplyProjectMcpDefault: () => void;
-  handleInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
-  handleKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  handlePaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
-  onStop?: () => void;
-  handleSend: () => void;
-  canSend: boolean;
-  handleDragOver: (event: DragEvent<HTMLDivElement>) => void;
-  handleDragLeave: (event: DragEvent<HTMLDivElement>) => void;
-  handleDrop: (event: DragEvent<HTMLDivElement>) => void;
-  handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => void;
-}
-
-export default function InputAreaComposer({
+export default function InputAreaComposer(props: InputAreaComposerProps) {
+  const {
   disabled,
   isStreaming,
   isStopping,
@@ -137,87 +12,13 @@ export default function InputAreaComposer({
   effectiveAllowAttachments,
   showModelSelector,
   selectedModelId,
-  onModelChange,
-  availableProjects,
-  selectedProjectId,
-  onProjectChange,
-  showProjectSelector,
-  showWorkspaceRootPicker,
-  currentRemoteConnectionId,
-  availableRemoteConnections,
-  onRemoteConnectionChange,
-  mcpEnabled,
-  onMcpEnabledChange,
-  reasoningSupported,
-  reasoningEnabled,
-  onReasoningToggle,
   placeholder,
   maxLength,
   supportedFileTypes,
   isDragging,
-  pickerRef,
-  mcpPickerRef,
-  workspacePickerRef,
-  projectFilePickerRef,
   fileInputRef,
   textareaRef,
   message,
-  setPickerOpen,
-  pickerOpen,
-  hasAiOptions,
-  currentAiLabel,
-  enabledModels,
-  projectForFilePicker,
-  showProjectFilePicker,
-  projectFileAttachingPath,
-  projectFilePickerOpen,
-  handleToggleProjectFilePicker,
-  projectFilePathLabel,
-  projectFileFilter,
-  setProjectFileFilter,
-  projectFileBusy,
-  projectFileKeywordActive,
-  projectFileParent,
-  loadProjectFileEntries,
-  displayedProjectFileEntries,
-  handleAttachProjectFile,
-  toRelativeProjectPath,
-  projectFileSearchTruncated,
-  normalizedWorkspaceRoot,
-  workspaceRootDisplayName,
-  workspacePickerOpen,
-  workspacePath,
-  workspaceParent,
-  workspaceLoading,
-  workspaceEntries,
-  workspaceRoots,
-  handleToggleWorkspacePicker,
-  loadWorkspaceDirectories,
-  handleSelectWorkspaceRoot,
-  mcpPickerOpen,
-  handleToggleMcpPicker,
-  isAllMcpSelected,
-  selectableMcpIds,
-  selectedMcpCount,
-  mcpConfigsLoading,
-  mcpConfigsError,
-  availableMcpConfigs,
-  builtinMcpConfigs,
-  customMcpConfigs,
-  mcpToolsetPresets,
-  projectScopeKey,
-  hasProjectMcpDefault,
-  hasDirectoryContext,
-  hasRemoteContext,
-  isProjectRequiredMcpId,
-  isRemoteRequiredMcpId,
-  sanitizedEnabledMcpIds,
-  loadAvailableMcpConfigs,
-  handleSelectAllMcp,
-  handleToggleMcpSelection,
-  handleApplyMcpToolsetPreset,
-  handleSaveProjectMcpDefault,
-  handleApplyProjectMcpDefault,
   handleInputChange,
   handleKeyDown,
   handlePaste,
@@ -228,7 +29,8 @@ export default function InputAreaComposer({
   handleDragLeave,
   handleDrop,
   handleFileSelect,
-}: InputAreaComposerProps) {
+  } = props;
+
   return (
     <div
       className={cn(
@@ -241,142 +43,7 @@ export default function InputAreaComposer({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <InputAreaFloatingModelPicker
-        showModelSelector={showModelSelector}
-        hasAiOptions={hasAiOptions}
-        pickerRef={pickerRef}
-        disabled={disabled}
-        currentAiLabel={currentAiLabel}
-        pickerOpen={pickerOpen}
-        setPickerOpen={setPickerOpen}
-        enabledModels={enabledModels}
-        selectedModelId={selectedModelId}
-        onModelChange={onModelChange}
-      />
-
-      {effectiveAllowAttachments && (
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
-          className="flex-shrink-0 p-2 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Attach files"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-          </svg>
-        </button>
-      )}
-
-      <InputAreaProjectFilePicker
-        allowAttachments={effectiveAllowAttachments}
-        showProjectFilePicker={showProjectFilePicker}
-        pickerRef={projectFilePickerRef}
-        disabled={disabled}
-        projectFileAttachingPath={projectFileAttachingPath}
-        projectFilePickerOpen={projectFilePickerOpen}
-        onTogglePicker={() => { void handleToggleProjectFilePicker(); }}
-        projectName={projectForFilePicker?.name || '当前项目'}
-        projectFilePathLabel={projectFilePathLabel}
-        projectFileFilter={projectFileFilter}
-        onProjectFileFilterChange={setProjectFileFilter}
-        projectFileBusy={projectFileBusy}
-        projectFileKeywordActive={projectFileKeywordActive}
-        projectFileParent={projectFileParent}
-        onLoadProjectFileEntries={(path) => { void loadProjectFileEntries(path); }}
-        displayedProjectFileEntries={displayedProjectFileEntries}
-        onAttachProjectFile={(entry) => { void handleAttachProjectFile(entry); }}
-        toRelativeProjectPath={toRelativeProjectPath}
-        projectFileSearchTruncated={projectFileSearchTruncated}
-      />
-
-      <InputAreaProjectSelector
-        showProjectSelector={showProjectSelector}
-        availableProjects={availableProjects}
-        selectedProjectId={selectedProjectId}
-        onProjectChange={onProjectChange}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-      />
-
-      <InputAreaWorkspacePicker
-        showWorkspaceRootPicker={showWorkspaceRootPicker}
-        workspacePickerRef={workspacePickerRef}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        onToggleWorkspacePicker={() => { void handleToggleWorkspacePicker(); }}
-        normalizedWorkspaceRoot={normalizedWorkspaceRoot}
-        workspaceRootDisplayName={workspaceRootDisplayName}
-        workspacePickerOpen={workspacePickerOpen}
-        workspacePath={workspacePath}
-        workspaceParent={workspaceParent}
-        workspaceLoading={workspaceLoading}
-        workspaceEntries={workspaceEntries}
-        workspaceRoots={workspaceRoots}
-        onLoadWorkspaceDirectories={(path) => { void loadWorkspaceDirectories(path); }}
-        onSelectWorkspaceRoot={handleSelectWorkspaceRoot}
-      />
-
-      <InputAreaRemoteConnectionPicker
-        availableRemoteConnections={availableRemoteConnections}
-        currentRemoteConnectionId={currentRemoteConnectionId}
-        onRemoteConnectionChange={onRemoteConnectionChange}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-      />
-
-      <InputAreaMcpPicker
-        mcpPickerRef={mcpPickerRef}
-        mcpEnabled={mcpEnabled}
-        onMcpEnabledChange={onMcpEnabledChange}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        onToggleMcpPicker={() => { void handleToggleMcpPicker(); }}
-        mcpPickerOpen={mcpPickerOpen}
-        isAllMcpSelected={isAllMcpSelected}
-        selectableMcpIds={selectableMcpIds}
-        selectedMcpCount={selectedMcpCount}
-        mcpConfigsLoading={mcpConfigsLoading}
-        mcpConfigsError={mcpConfigsError}
-        availableMcpConfigs={availableMcpConfigs}
-        builtinMcpConfigs={builtinMcpConfigs}
-        customMcpConfigs={customMcpConfigs}
-        mcpToolsetPresets={mcpToolsetPresets}
-        projectScopeKey={projectScopeKey}
-        hasProjectMcpDefault={hasProjectMcpDefault}
-        hasDirectoryContext={hasDirectoryContext}
-        hasRemoteContext={hasRemoteContext}
-        isProjectRequiredMcpId={isProjectRequiredMcpId}
-        isRemoteRequiredMcpId={isRemoteRequiredMcpId}
-        sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-        onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs(); }}
-        onSelectAllMcp={handleSelectAllMcp}
-        onToggleMcpSelection={handleToggleMcpSelection}
-        onApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
-        onSaveProjectMcpDefault={handleSaveProjectMcpDefault}
-        onApplyProjectMcpDefault={handleApplyProjectMcpDefault}
-      />
-
-      {reasoningSupported && (
-        <button
-          type="button"
-          onClick={() => onReasoningToggle?.(!reasoningEnabled)}
-          disabled={disabled || isStreaming || isStopping}
-          className={cn(
-            'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
-            reasoningEnabled
-              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-              : 'bg-muted text-muted-foreground hover:text-foreground',
-            (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
-          )}
-          title={reasoningEnabled ? '推理已开启' : '推理已关闭'}
-        >
-          推理 {reasoningEnabled ? '开' : '关'}
-        </button>
-      )}
+      <InputAreaComposerControls {...props} />
 
       <textarea
         ref={textareaRef}

@@ -58,7 +58,7 @@ pub(super) async fn delete_session_memory_summary(
     }
 
     match memory_server_client::delete_summary(&conversation_id, &summary_id).await {
-        Ok(true) => (
+        Ok(result) if result.success => (
             StatusCode::OK,
             Json(serde_json::json!({
                 "success": true,
@@ -66,10 +66,10 @@ pub(super) async fn delete_session_memory_summary(
                 "conversationId": conversation_id,
                 "summary_id": summary_id,
                 "deleted_summaries": 1,
-                "reset_messages": 0
+                "reset_messages": result.reset_messages
             })),
         ),
-        Ok(false) => (
+        Ok(_) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "对话线程总结不存在"})),
         ),

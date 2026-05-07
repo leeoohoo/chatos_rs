@@ -11,6 +11,7 @@ use crate::core::validation::{normalize_non_empty, validate_existing_dir};
 use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::project_run::validate_command_preflight;
+use crate::services::realtime::publish_terminal_list_invalidated;
 use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::InterruptTerminalRequest;
@@ -102,17 +103,31 @@ pub(super) async fn delete_terminal(
     auth: AuthUser,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_terminal(&id, &auth).await {
-        return map_terminal_access_error(err);
-    }
+    let owned_terminal = match ensure_owned_terminal(&id, &auth).await {
+        Ok(terminal) => terminal,
+        Err(err) => return map_terminal_access_error(err),
+    };
+    let terminal_user_id = owned_terminal.user_id.clone();
+    let terminal_project_id = owned_terminal.project_id.clone();
     let manager = get_terminal_manager();
     let _ = manager.close(&id).await;
     let _ = TerminalLogService::delete_by_terminal(&id).await;
     match TerminalService::delete(&id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "success": true, "message": "终端已删除" })),
-        ),
+        Ok(_) => {
+            if let Some(user_id) = terminal_user_id.as_deref() {
+                publish_terminal_list_invalidated(
+                    user_id,
+                    Some(id.as_str()),
+                    terminal_project_id.as_deref(),
+                    "deleted",
+                    None,
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "success": true, "message": "终端已删除" })),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": err })),

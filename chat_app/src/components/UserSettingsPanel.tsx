@@ -5,93 +5,53 @@ import {
   useChatStoreFromContext,
 } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
+import {
+  buildSummaryForm,
+  clampNumber,
+  DEFAULT_SUMMARY_FORM,
+  DEFAULT_SUMMARY_LIMITS,
+  getErrorMessage,
+  parseSummaryLimits,
+  rangeText,
+  type SummaryJobConfigForm,
+  type SummaryJobLimits,
+} from './settings/summaryJobConfig';
 
 interface Props { onClose: () => void }
 
-interface SummaryJobConfigForm {
-  enabled: boolean;
-  summary_model_config_id: string;
-  token_limit: number;
-  message_count_limit: number;
-  target_summary_tokens: number;
-  job_interval_seconds: number;
+interface UserSettingsForm {
+  MAX_ITERATIONS?: number | string;
+  LOG_LEVEL?: string;
+  CHAT_MAX_TOKENS?: number | string | null;
+  [key: string]: string | number | boolean | null | undefined;
 }
 
-interface RangeLimit {
-  min: number;
-  max?: number;
+interface UserSettingsPayload {
+  MAX_ITERATIONS: number;
+  LOG_LEVEL: string;
+  CHAT_MAX_TOKENS: number | null;
+  [key: string]: string | number | null;
 }
 
-interface SummaryJobLimits {
-  token_limit: RangeLimit;
-  message_count_limit: RangeLimit;
-  target_summary_tokens: RangeLimit;
-  job_interval_seconds: RangeLimit;
-}
+const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
 
-const DEFAULT_SUMMARY_FORM: SummaryJobConfigForm = {
-  enabled: true,
-  summary_model_config_id: '',
-  token_limit: 6000,
-  message_count_limit: 8,
-  target_summary_tokens: 700,
-  job_interval_seconds: 30,
+  const result: UserSettingsForm = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
+    if (
+      typeof entry === 'string'
+      || typeof entry === 'number'
+      || typeof entry === 'boolean'
+      || entry === null
+      || entry === undefined
+    ) {
+      result[key] = entry;
+    }
+  });
+  return result;
 };
-
-const DEFAULT_SUMMARY_LIMITS: SummaryJobLimits = {
-  token_limit: { min: 500 },
-  message_count_limit: { min: 1 },
-  target_summary_tokens: { min: 200 },
-  job_interval_seconds: { min: 10 },
-};
-
-function clampNumber(value: number, range: RangeLimit): number {
-  if (!Number.isFinite(value)) {
-    return range.min;
-  }
-  if (Number.isFinite(range.max)) {
-    return Math.max(range.min, Math.min(range.max as number, value));
-  }
-  return Math.max(range.min, value);
-}
-
-function rangeText(range: RangeLimit): string {
-  if (Number.isFinite(range.max)) {
-    return `${range.min}-${range.max}`;
-  }
-  return `>=${range.min}`;
-}
-
-function parseRangeLimit(input: any, fallback: RangeLimit): RangeLimit {
-  const min = Number(input?.min);
-  const max = Number(input?.max);
-  if (Number.isFinite(min) && Number.isFinite(max) && max >= min) {
-    return { min, max };
-  }
-  if (Number.isFinite(min)) {
-    return { min };
-  }
-  return fallback;
-}
-
-function parseSummaryLimits(config: any): SummaryJobLimits {
-  const limits = config?.limits || {};
-  return {
-    token_limit: parseRangeLimit(limits?.token_limit, DEFAULT_SUMMARY_LIMITS.token_limit),
-    message_count_limit: parseRangeLimit(
-      limits?.message_count_limit || limits?.round_limit,
-      DEFAULT_SUMMARY_LIMITS.message_count_limit,
-    ),
-    target_summary_tokens: parseRangeLimit(
-      limits?.target_summary_tokens,
-      DEFAULT_SUMMARY_LIMITS.target_summary_tokens,
-    ),
-    job_interval_seconds: parseRangeLimit(
-      limits?.job_interval_seconds,
-      DEFAULT_SUMMARY_LIMITS.job_interval_seconds,
-    ),
-  };
-}
 
 const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   const clientFromContext = useChatApiClientFromContext();
@@ -103,14 +63,14 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
-  const [settings, setSettings] = React.useState<any>({});
+  const [settings, setSettings] = React.useState<UserSettingsForm>({});
   const [summaryForm, setSummaryForm] = React.useState<SummaryJobConfigForm>(DEFAULT_SUMMARY_FORM);
   const [summaryLimits, setSummaryLimits] = React.useState<SummaryJobLimits>(DEFAULT_SUMMARY_LIMITS);
 
   const modelOptions = React.useMemo(
     () =>
       (Array.isArray(aiModelConfigs) ? aiModelConfigs : []).filter(
-        (item: any) => item?.enabled === true,
+        (item) => item.enabled === true,
       ),
     [aiModelConfigs],
   );
@@ -136,40 +96,17 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
         const loadErrors: string[] = [];
 
         if (settingsResp.status === 'fulfilled') {
-          setSettings(settingsResp.value?.effective || {});
+          setSettings(normalizeUserSettingsForm(settingsResp.value?.effective));
         } else {
-          loadErrors.push(String(settingsResp.reason?.message || settingsResp.reason || '用户参数加载失败'));
+          loadErrors.push(getErrorMessage(settingsResp.reason || '用户参数加载失败'));
         }
 
         if (summaryResp.status === 'fulfilled') {
           const loadedLimits = parseSummaryLimits(summaryResp.value);
           setSummaryLimits(loadedLimits);
-          setSummaryForm({
-            enabled: summaryResp.value?.enabled !== false,
-            summary_model_config_id: String(summaryResp.value?.summary_model_config_id || ''),
-            token_limit: clampNumber(
-              Number(summaryResp.value?.token_limit || DEFAULT_SUMMARY_FORM.token_limit),
-              loadedLimits.token_limit,
-            ),
-            message_count_limit: clampNumber(
-              Number(
-                summaryResp.value?.message_count_limit
-                  || summaryResp.value?.round_limit
-                  || DEFAULT_SUMMARY_FORM.message_count_limit,
-              ),
-              loadedLimits.message_count_limit,
-            ),
-            target_summary_tokens: clampNumber(
-              Number(summaryResp.value?.target_summary_tokens || DEFAULT_SUMMARY_FORM.target_summary_tokens),
-              loadedLimits.target_summary_tokens,
-            ),
-            job_interval_seconds: clampNumber(
-              Number(summaryResp.value?.job_interval_seconds || DEFAULT_SUMMARY_FORM.job_interval_seconds),
-              loadedLimits.job_interval_seconds,
-            ),
-          });
+          setSummaryForm(buildSummaryForm(summaryResp.value, loadedLimits));
         } else {
-          loadErrors.push(String(summaryResp.reason?.message || summaryResp.reason || '定时总结配置加载失败'));
+          loadErrors.push(getErrorMessage(summaryResp.reason || '定时总结配置加载失败'));
         }
 
         if (loadErrors.length > 0) {
@@ -183,10 +120,12 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   }, [client, userId]);
 
   const bind = (key: string) => ({
-    value: settings[key] ?? '',
+    value: typeof settings[key] === 'string' || typeof settings[key] === 'number'
+      ? settings[key]
+      : '',
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
       const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-      setSettings((s: any) => ({ ...s, [key]: e.target.type === 'number' ? Number(val) : val }));
+      setSettings((s) => ({ ...s, [key]: e.target.type === 'number' ? Number(val) : val }));
     }
   });
 
@@ -200,7 +139,7 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
     setError(null);
     setNotice(null);
     try {
-      const userSettingsPayload: any = {
+      const userSettingsPayload: UserSettingsPayload = {
         MAX_ITERATIONS: Number(settings.MAX_ITERATIONS || 0),
         LOG_LEVEL: String(settings.LOG_LEVEL || 'info'),
         CHAT_MAX_TOKENS: settings.CHAT_MAX_TOKENS === '' || settings.CHAT_MAX_TOKENS === null || settings.CHAT_MAX_TOKENS === undefined
@@ -238,38 +177,26 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
         }),
       ]);
 
-      setSettings(savedSettings?.effective || userSettingsPayload);
+      setSettings(normalizeUserSettingsForm(savedSettings?.effective || userSettingsPayload));
 
       const savedLimits = parseSummaryLimits(savedSummary);
       setSummaryLimits(savedLimits);
-      setSummaryForm({
-        enabled: savedSummary?.enabled !== false,
-        summary_model_config_id: String(savedSummary?.summary_model_config_id || ''),
-        token_limit: clampNumber(
-          Number(savedSummary?.token_limit || tokenLimit),
-          savedLimits.token_limit,
-        ),
-        message_count_limit: clampNumber(
-          Number(savedSummary?.message_count_limit || savedSummary?.round_limit || messageCountLimit),
-          savedLimits.message_count_limit,
-        ),
-        target_summary_tokens: clampNumber(
-          Number(savedSummary?.target_summary_tokens || targetSummaryTokens),
-          savedLimits.target_summary_tokens,
-        ),
-        job_interval_seconds: clampNumber(
-          Number(savedSummary?.job_interval_seconds || jobIntervalSeconds),
-          savedLimits.job_interval_seconds,
-        ),
-      });
+      setSummaryForm(buildSummaryForm(savedSummary, savedLimits, {
+        enabled: summaryForm.enabled,
+        summary_model_config_id: summaryForm.summary_model_config_id,
+        token_limit: tokenLimit,
+        message_count_limit: messageCountLimit,
+        target_summary_tokens: targetSummaryTokens,
+        job_interval_seconds: jobIntervalSeconds,
+      }));
 
       if (clampedFields.length > 0) {
         setNotice(`保存成功，定时总结配置已按安全范围自动调整：${clampedFields.join('、')}`);
       } else {
         setNotice('保存成功');
       }
-    } catch (e: any) {
-      setError(String(e?.message || e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -350,7 +277,7 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                       onChange={(event) => setSummaryField('summary_model_config_id', event.target.value)}
                     >
                       <option value="">默认模型（环境变量）</option>
-                      {modelOptions.map((option: any) => (
+                      {modelOptions.map((option) => (
                         <option key={option.id} value={option.id}>
                           {option.name}（{option.model_name || 'unknown'}）
                         </option>

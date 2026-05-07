@@ -1,19 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
-import { resolveRemoteSftpErrorMessage } from '../lib/api/remoteConnectionErrors';
 import { cn } from '../lib/utils';
 import RemoteVerificationModal from './remote/RemoteVerificationModal';
 import { LocalBrowserPane, RemoteBrowserPane } from './remoteSftp/SftpBrowsers';
 import { TransferQueuePanel, TransferStatusBanner } from './remoteSftp/TransferPanels';
+import { useDialogService } from './ui/DialogProvider';
 import {
   formatBytes,
   joinLocalPath,
   joinRemotePath,
-  remoteDirname,
 } from './remoteSftp/helpers';
 import { useRemoteSftpBrowsers } from './remoteSftp/useRemoteSftpBrowsers';
+import { useRemoteSftpRemoteActions } from './remoteSftp/useRemoteSftpRemoteActions';
 import { useRemoteSftpTransfer } from './remoteSftp/useRemoteSftpTransfer';
+import { useRemoteSftpVerification } from './remoteSftp/useRemoteSftpVerification';
 
 interface RemoteSftpPanelProps {
   className?: string;
@@ -26,50 +27,28 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
   } = useChatStoreFromContext();
   const apiClientFromContext = useChatApiClientFromContext();
   const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const { confirm, prompt } = useDialogService();
   const currentRemoteConnectionId = currentRemoteConnection?.id ?? null;
   const currentRemoteDefaultPath = currentRemoteConnection?.defaultRemotePath || '.';
 
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [remoteActionLoading, setRemoteActionLoading] = useState(false);
-  const [activeVerificationCode, setActiveVerificationCode] = useState<string | null>(null);
-  const [verificationOpen, setVerificationOpen] = useState(false);
-  const [verificationPrompt, setVerificationPrompt] = useState('');
-  const [verificationCodeInput, setVerificationCodeInput] = useState('');
-  const [verificationSubmitting, setVerificationSubmitting] = useState(false);
-  const pendingVerificationActionRef = useRef<((code: string) => Promise<void>) | null>(null);
-
-  const isSecondFactorRequired = useCallback((err: unknown) => (
-    typeof (err as any)?.code === 'string' && (err as any).code === 'second_factor_required'
-  ), []);
-
-  const extractSecondFactorPrompt = useCallback((err: unknown) => {
-    const prompt = (err as any)?.payload?.challenge_prompt;
-    if (typeof prompt === 'string' && prompt.trim()) {
-      return prompt.trim();
-    }
-    return '请输入短信验证码或 OTP';
-  }, []);
-
-  const handleSecondFactorRequired = useCallback((
-    err: unknown,
-    retryWithCode: (code: string) => Promise<void>,
-  ) => {
-    if (!isSecondFactorRequired(err)) {
-      return false;
-    }
-    pendingVerificationActionRef.current = retryWithCode;
-    setVerificationPrompt(extractSecondFactorPrompt(err));
-    setVerificationCodeInput('');
-    setVerificationOpen(true);
-    setVerificationSubmitting(false);
-    setActiveVerificationCode(null);
-    setError(null);
-    setMessage(null);
-    return true;
-  }, [extractSecondFactorPrompt, isSecondFactorRequired]);
-
-  const getVerificationCode = useCallback(() => activeVerificationCode, [activeVerificationCode]);
+  const {
+    activeVerificationCode,
+    verificationOpen,
+    verificationPrompt,
+    verificationCodeInput,
+    verificationSubmitting,
+    setVerificationCodeInput,
+    getVerificationCode,
+    handleSecondFactorRequired,
+    resetVerificationState,
+    closeVerification,
+    submitVerification,
+  } = useRemoteSftpVerification({
+    setError,
+    setMessage,
+  });
   const {
     localPath,
     localParent,
@@ -117,19 +96,33 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     getVerificationCode,
     onSecondFactorRequired: handleSecondFactorRequired,
   });
+  const {
+    remoteActionLoading,
+    handleCreateRemoteDirectory,
+    handleRenameRemoteEntry,
+    handleDeleteRemoteEntry,
+  } = useRemoteSftpRemoteActions({
+    client,
+    currentRemoteConnection,
+    remotePath,
+    selectedRemote,
+    setSelectedRemote,
+    loadRemote,
+    activeVerificationCode,
+    setMessage,
+    setError,
+    prompt,
+    confirm,
+    onSecondFactorRequired: handleSecondFactorRequired,
+  });
 
   useEffect(() => {
     if (!currentRemoteConnectionId) return;
     resetTransferState();
     setMessage(null);
     setError(null);
-    setActiveVerificationCode(null);
-    setVerificationOpen(false);
-    setVerificationPrompt('');
-    setVerificationCodeInput('');
-    setVerificationSubmitting(false);
-    pendingVerificationActionRef.current = null;
-  }, [currentRemoteConnectionId, resetTransferState]);
+    resetVerificationState();
+  }, [currentRemoteConnectionId, resetTransferState, resetVerificationState]);
 
   const handleUpload = async () => {
     if (!currentRemoteConnection) return;
@@ -165,196 +158,6 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       fallbackSuccess: `下载成功: ${selectedRemote.name}`,
       label: `下载 ${selectedRemote.name}`,
     });
-  };
-
-  const handleCreateRemoteDirectory = async () => {
-    if (!currentRemoteConnection) return;
-    const name = window.prompt('请输入新目录名称');
-    if (name === null) return;
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setError('目录名称不能为空');
-      return;
-    }
-    if (trimmedName === '.' || trimmedName === '..' || /[\\/]/.test(trimmedName)) {
-      setError('目录名称不合法');
-      return;
-    }
-
-    setRemoteActionLoading(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await client.createRemoteSftpDirectory(
-        currentRemoteConnection.id,
-        remotePath,
-        trimmedName,
-        activeVerificationCode || undefined,
-      );
-      setMessage(`已创建目录: ${trimmedName}`);
-      await loadRemote(remotePath);
-    } catch (err) {
-      if (handleSecondFactorRequired(err, async (code) => {
-        await client.createRemoteSftpDirectory(
-          currentRemoteConnection.id,
-          remotePath,
-          trimmedName,
-          code,
-        );
-        setMessage(`已创建目录: ${trimmedName}`);
-        await loadRemote(remotePath, code);
-      })) {
-        return;
-      }
-      setError(resolveRemoteSftpErrorMessage(err, '创建目录失败'));
-    } finally {
-      setRemoteActionLoading(false);
-    }
-  };
-
-  const handleRenameRemoteEntry = async () => {
-    if (!currentRemoteConnection) return;
-    if (!selectedRemote) {
-      setError('请先选择远端文件或目录');
-      return;
-    }
-    const nextName = window.prompt('请输入新名称', selectedRemote.name);
-    if (nextName === null) return;
-    const trimmedName = nextName.trim();
-    if (!trimmedName) {
-      setError('新名称不能为空');
-      return;
-    }
-    if (trimmedName === '.' || trimmedName === '..' || /[\\/]/.test(trimmedName)) {
-      setError('新名称不合法');
-      return;
-    }
-    if (trimmedName === selectedRemote.name) {
-      return;
-    }
-
-    const targetPath = joinRemotePath(remoteDirname(selectedRemote.path), trimmedName);
-    setRemoteActionLoading(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await client.renameRemoteSftpEntry(
-        currentRemoteConnection.id,
-        selectedRemote.path,
-        targetPath,
-        activeVerificationCode || undefined,
-      );
-      setMessage(`已重命名: ${selectedRemote.name} → ${trimmedName}`);
-      setSelectedRemote(null);
-      await loadRemote(remotePath);
-    } catch (err) {
-      if (handleSecondFactorRequired(err, async (code) => {
-        await client.renameRemoteSftpEntry(
-          currentRemoteConnection.id,
-          selectedRemote.path,
-          targetPath,
-          code,
-        );
-        setMessage(`已重命名: ${selectedRemote.name} → ${trimmedName}`);
-        setSelectedRemote(null);
-        await loadRemote(remotePath, code);
-      })) {
-        return;
-      }
-      setError(resolveRemoteSftpErrorMessage(err, '重命名失败'));
-    } finally {
-      setRemoteActionLoading(false);
-    }
-  };
-
-  const handleDeleteRemoteEntry = async () => {
-    if (!currentRemoteConnection) return;
-    if (!selectedRemote) {
-      setError('请先选择远端文件或目录');
-      return;
-    }
-
-    const confirmed = window.confirm(`确认删除 ${selectedRemote.isDir ? '目录' : '文件'} "${selectedRemote.name}" 吗？`);
-    if (!confirmed) return;
-
-    let recursive = false;
-    if (selectedRemote.isDir) {
-      recursive = window.confirm('是否递归删除该目录及其全部内容？\n选择“取消”将仅删除空目录。');
-    }
-
-    setRemoteActionLoading(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await client.deleteRemoteSftpEntry(
-        currentRemoteConnection.id,
-        selectedRemote.path,
-        recursive,
-        activeVerificationCode || undefined,
-      );
-      setMessage(`已删除: ${selectedRemote.name}`);
-      setSelectedRemote(null);
-      await loadRemote(remotePath);
-    } catch (err) {
-      if (handleSecondFactorRequired(err, async (code) => {
-        await client.deleteRemoteSftpEntry(
-          currentRemoteConnection.id,
-          selectedRemote.path,
-          recursive,
-          code,
-        );
-        setMessage(`已删除: ${selectedRemote.name}`);
-        setSelectedRemote(null);
-        await loadRemote(remotePath, code);
-      })) {
-        return;
-      }
-      setError(resolveRemoteSftpErrorMessage(err, '删除失败'));
-    } finally {
-      setRemoteActionLoading(false);
-    }
-  };
-
-  const handleSubmitRemoteVerification = async () => {
-    const code = verificationCodeInput.trim();
-    if (!code) {
-      setError('请输入验证码');
-      return;
-    }
-    const pendingAction = pendingVerificationActionRef.current;
-    if (!pendingAction) {
-      setVerificationOpen(false);
-      setError('验证码上下文已失效，请重试当前操作');
-      return;
-    }
-
-    setVerificationSubmitting(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await pendingAction(code);
-      setActiveVerificationCode(code);
-      setVerificationOpen(false);
-      setVerificationPrompt('');
-      setVerificationCodeInput('');
-      pendingVerificationActionRef.current = null;
-    } catch (err) {
-      if (isSecondFactorRequired(err)) {
-        setActiveVerificationCode(null);
-        setVerificationPrompt(extractSecondFactorPrompt(err));
-        setVerificationCodeInput('');
-        setVerificationOpen(true);
-        setError('验证码错误或已过期，请重试');
-        return;
-      }
-      setVerificationOpen(false);
-      setVerificationPrompt('');
-      setVerificationCodeInput('');
-      pendingVerificationActionRef.current = null;
-      setError(resolveRemoteSftpErrorMessage(err, 'SFTP 操作失败'));
-    } finally {
-      setVerificationSubmitting(false);
-    }
   };
 
   if (!currentRemoteConnection) {
@@ -478,17 +281,9 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
         code={verificationCodeInput}
         submitting={verificationSubmitting}
         onCodeChange={setVerificationCodeInput}
-        onClose={() => {
-          if (verificationSubmitting) {
-            return;
-          }
-          setVerificationOpen(false);
-          setVerificationPrompt('');
-          setVerificationCodeInput('');
-          pendingVerificationActionRef.current = null;
-        }}
+        onClose={closeVerification}
         onSubmit={() => {
-          void handleSubmitRemoteVerification();
+          void submitVerification();
         }}
       />
     </div>

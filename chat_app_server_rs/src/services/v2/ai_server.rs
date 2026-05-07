@@ -1,8 +1,7 @@
 use serde_json::{json, Value};
-use tracing::error;
 
 use crate::services::ai_common::{
-    build_user_content_parts, build_user_message_metadata, normalize_turn_id,
+    normalize_turn_id, persist_user_message_and_build_content_parts,
 };
 use crate::services::v2::ai_client::{AiClient, AiClientCallbacks};
 use crate::services::v2::ai_request_handler::AiRequestHandler;
@@ -27,7 +26,7 @@ impl AiServer {
         default_model: String,
         default_temperature: f64,
         mcp_tool_execute: McpToolExecute,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let message_manager = MessageManager::new();
         let ai_request_handler = AiRequestHandler::new(
             openai_api_key.clone(),
@@ -38,8 +37,8 @@ impl AiServer {
             ai_request_handler.clone(),
             mcp_tool_execute.clone(),
             message_manager.clone(),
-        );
-        Self {
+        )?;
+        Ok(Self {
             message_manager,
             ai_request_handler,
             mcp_tool_execute,
@@ -47,7 +46,7 @@ impl AiServer {
             default_model,
             default_temperature,
             base_url,
-        }
+        })
     }
 
     pub fn set_system_prompt(&mut self, prompt: Option<String>) {
@@ -73,35 +72,30 @@ impl AiServer {
         let max_tokens = options.max_tokens;
         let reasoning_enabled = options.reasoning_enabled.unwrap_or(true);
         let turn_id = normalize_turn_id(options.turn_id.as_deref());
-
-        let attachments_list = options.attachments.unwrap_or_default();
-        let meta = build_user_message_metadata(&attachments_list, turn_id.as_deref());
-        self.message_manager
-            .save_user_message(
-                session_id,
-                user_message,
-                options.user_message_id.clone(),
-                options.message_mode.clone(),
-                options.message_source.clone(),
-                meta,
-            )
-            .await
-            .map_err(|err| {
-                let detail = format!(
-                    "persist user message failed: session_id={} detail={}",
-                    session_id, err
-                );
-                error!("{}", detail);
-                detail
-            })?;
-
-        let content_parts = build_user_content_parts(
-            &model,
+        let user_message_id = options.user_message_id.clone();
+        let message_mode = options.message_mode.clone();
+        let message_source = options.message_source.clone();
+        let prepared = persist_user_message_and_build_content_parts(
+            session_id,
             user_message,
-            &attachments_list,
+            model.as_str(),
+            options.attachments.unwrap_or_default(),
             options.supports_images,
+            turn_id,
+            |metadata| {
+                self.message_manager.save_user_message(
+                    session_id,
+                    user_message,
+                    user_message_id,
+                    message_mode,
+                    message_source,
+                    metadata,
+                )
+            },
         )
-        .await;
+        .await?;
+        let turn_id = prepared.turn_id;
+        let content_parts = prepared.content_parts;
 
         let messages = vec![json!({"role": "user", "content": content_parts})];
 

@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useDialogService } from '../ui/DialogProvider';
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
-import type { AiModelConfig, InputAreaProps } from '../../types';
+import type { InputAreaProps } from '../../types';
 import { useAttachmentsInput } from './useAttachmentsInput';
 import { useDismissiblePopover } from './useDismissiblePopover';
 import { useMcpSelection } from './useMcpSelection';
 import { useProjectFilePicker } from './useProjectFilePicker';
 import { useWorkspaceDirectoryPicker } from './useWorkspaceDirectoryPicker';
+import { useAgentSkillSelection } from './useAgentSkillSelection';
+import { useInputAreaContextModel } from './useInputAreaContextModel';
+import { useInputAreaMessageDraft } from './useInputAreaMessageDraft';
 
 type UseInputAreaControllerParams = Pick<
   InputAreaProps,
@@ -29,6 +33,7 @@ type UseInputAreaControllerParams = Pick<
   | 'workspaceRoot'
   | 'onWorkspaceRootChange'
   | 'currentRemoteConnectionId'
+  | 'currentAgent'
   | 'mcpEnabled'
   | 'enabledMcpIds'
   | 'onMcpEnabledChange'
@@ -62,6 +67,7 @@ export function useInputAreaController({
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
+  currentAgent = null,
   mcpEnabled = true,
   enabledMcpIds = [],
   onMcpEnabledChange,
@@ -70,10 +76,25 @@ export function useInputAreaController({
   const isGuidingMode = isStreaming && !isStopping;
   const effectiveAllowAttachments = allowAttachments && !isGuidingMode;
 
-  const [message, setMessage] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const apiClientFromContext = useChatApiClientFromContext();
+  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const { alert } = useDialogService();
+
+  const {
+    currentAgentForSkills,
+    skillsEnabled,
+    setSkillsEnabled,
+    skillsLoading,
+    availableSkillOptions,
+    selectedSkillIds,
+    handleToggleSelectedSkill,
+    handleClearSelectedSkills,
+  } = useAgentSkillSelection({
+    client,
+    currentAgent,
+  });
 
   const {
     attachments,
@@ -94,28 +115,26 @@ export function useInputAreaController({
     fileInputRef,
   });
 
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
-
-  const normalizePath = useCallback((value: string) => {
-    const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
-    if (normalized.length > 1 && normalized.endsWith('/')) {
-      return normalized.slice(0, -1);
-    }
-    return normalized;
-  }, []);
-
-  const selectedRuntimeProject = useMemo(() => {
-    if (!selectedProjectId) {
-      return null;
-    }
-    return (availableProjects || []).find((project) => project.id === selectedProjectId) || null;
-  }, [availableProjects, selectedProjectId]);
-
-  const normalizedWorkspaceRoot = useMemo(() => {
-    const raw = typeof workspaceRoot === 'string' ? workspaceRoot.trim() : '';
-    return raw ? normalizePath(raw) : null;
-  }, [normalizePath, workspaceRoot]);
+  const {
+    selectedRuntimeProject,
+    normalizedWorkspaceRoot,
+    selectedModel,
+    enabledModels,
+    hasAiOptions,
+    projectForFilePicker,
+    projectRootForFilePicker,
+    showProjectFilePicker,
+    workspaceRootDisplayName,
+    currentAiLabel,
+  } = useInputAreaContextModel({
+    availableModels,
+    availableProjects,
+    selectedModelId,
+    selectedProjectId,
+    workspaceRoot,
+    isGuidingMode,
+    showProjectFileButton,
+  });
 
   const {
     workspacePickerOpen,
@@ -205,62 +224,6 @@ export function useInputAreaController({
     () => setWorkspacePickerOpen(false),
   );
 
-  const selectedModel = useMemo<AiModelConfig | null>(
-    () => (selectedModelId ? (availableModels || []).find((model) => model.id === selectedModelId) || null : null),
-    [availableModels, selectedModelId],
-  );
-
-  const enabledModels = useMemo(
-    () => (availableModels || []).filter((model) => model.enabled),
-    [availableModels],
-  );
-
-  const hasAiOptions = Boolean(availableModels && availableModels.length > 0);
-  const projectForFilePicker = useMemo(
-    () => selectedRuntimeProject || null,
-    [selectedRuntimeProject],
-  );
-
-  const projectRootForFilePicker = useMemo(() => {
-    if (!projectForFilePicker?.rootPath) {
-      return null;
-    }
-    return normalizePath(projectForFilePicker.rootPath);
-  }, [normalizePath, projectForFilePicker?.rootPath]);
-
-  const showProjectFilePicker = !isGuidingMode
-    && showProjectFileButton
-    && Boolean(projectRootForFilePicker);
-
-  const workspaceRootDisplayName = useMemo(() => {
-    if (!normalizedWorkspaceRoot) {
-      return '未选择';
-    }
-
-    const normalized = normalizePath(normalizedWorkspaceRoot);
-    const segments = normalized.split('/').filter((segment) => segment.length > 0);
-    if (segments.length === 0) {
-      return normalized;
-    }
-    return segments[segments.length - 1] || normalized;
-  }, [normalizePath, normalizedWorkspaceRoot]);
-
-  const currentAiLabel = useMemo(
-    () => (selectedModel ? `Model: ${selectedModel.name}` : '选择模型'),
-    [selectedModel],
-  );
-
-  const adjustTextareaHeight = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    textarea.style.height = 'auto';
-    const scrollHeight = textarea.scrollHeight;
-    textarea.style.height = `${Math.min(scrollHeight, 200)}px`;
-  }, []);
-
   const {
     projectFilePickerOpen,
     setProjectFilePickerOpen,
@@ -298,84 +261,43 @@ export function useInputAreaController({
     clearAttachments();
   }, [attachments.length, clearAttachments, isGuidingMode]);
 
-  const resetComposer = useCallback(() => {
-    setMessage('');
-    clearAttachments();
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-  }, [clearAttachments]);
-
-  const handleInputChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = event.target.value;
-    if (value.length <= maxLength) {
-      setMessage(value);
-      adjustTextareaHeight();
-    }
-  }, [adjustTextareaHeight, maxLength]);
-
-  const handleSend = useCallback(() => {
-    const trimmedMessage = message.trim();
-    if (!trimmedMessage && (!effectiveAllowAttachments || attachments.length === 0)) {
-      return;
-    }
-    if (disabled) {
-      return;
-    }
-
-    if (isGuidingMode) {
-      if (!trimmedMessage) {
-        return;
-      }
-      onGuide?.(trimmedMessage);
-      resetComposer();
-      return;
-    }
-
+  const requireModelSelection = useCallback(() => {
     if (showModelSelector && !selectedModelId) {
-      alert('请先选择一个模型');
-      return;
+      void alert({
+        title: '请选择模型',
+        message: '请先选择一个模型',
+        type: 'warning',
+      });
+      return true;
     }
+    return false;
+  }, [alert, selectedModelId, showModelSelector]);
 
-    const runtimeProjectId = selectedRuntimeProject?.id?.trim() || '0';
-    const runtimeProjectRoot = runtimeProjectId === '0'
-      ? null
-      : (selectedRuntimeProject?.rootPath || null);
-    const runtimeWorkspaceRoot = normalizedWorkspaceRoot || null;
-
-    onSend(trimmedMessage, attachments, {
-      mcpEnabled,
-      enabledMcpIds: sanitizedEnabledMcpIds,
-      remoteConnectionId: currentRemoteConnectionId,
-      projectId: runtimeProjectId,
-      projectRoot: runtimeProjectRoot,
-      workspaceRoot: runtimeWorkspaceRoot,
-    });
-    resetComposer();
-  }, [
+  const {
+    message,
+    textareaRef,
+    handleInputChange,
+    handleKeyDown,
+    handleSend,
+    canSend,
+  } = useInputAreaMessageDraft({
     attachments,
+    clearAttachments,
     currentRemoteConnectionId,
     disabled,
     effectiveAllowAttachments,
     isGuidingMode,
     mcpEnabled,
-    message,
+    maxLength,
     normalizedWorkspaceRoot,
     onGuide,
     onSend,
-    resetComposer,
+    requireModelSelection,
     sanitizedEnabledMcpIds,
-    selectedModelId,
+    selectedSkillIds,
     selectedRuntimeProject,
-    showModelSelector,
-  ]);
-
-  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      handleSend();
-    }
-  }, [handleSend]);
+    skillsEnabled,
+  });
 
   return {
     isGuidingMode,
@@ -434,6 +356,14 @@ export function useInputAreaController({
     handleApplyMcpToolsetPreset,
     handleSaveProjectMcpDefault,
     handleApplyProjectMcpDefault,
+    currentAgentForSkills,
+    skillsEnabled,
+    setSkillsEnabled,
+    skillsLoading,
+    availableSkillOptions,
+    selectedSkillIds,
+    handleToggleSelectedSkill,
+    handleClearSelectedSkills,
     selectedModel,
     enabledModels,
     hasAiOptions,
@@ -459,6 +389,6 @@ export function useInputAreaController({
     handleInputChange,
     handleKeyDown,
     handleSend,
-    canSend: Boolean(message.trim() || (!isGuidingMode && attachments.length > 0)),
+    canSend,
   };
 }

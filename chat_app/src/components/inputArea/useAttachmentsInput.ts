@@ -26,6 +26,11 @@ export const useAttachmentsInput = ({
   const [isDragging, setIsDragging] = useState(false);
   const globalDragCounter = useRef(0);
 
+  const clearDraggingState = () => {
+    globalDragCounter.current = 0;
+    setIsDragging(false);
+  };
+
   const isFileTypeAllowed = useCallback((file: File) => {
     if (!supportedFileTypes || supportedFileTypes.length === 0) return true;
     const type = String(file.type || '').toLowerCase();
@@ -89,7 +94,10 @@ export const useAttachmentsInput = ({
   }, [isFileTypeAllowed]);
 
   useEffect(() => {
-    if (!allowAttachments || disabled) return;
+    if (!allowAttachments || disabled) {
+      clearDraggingState();
+      return undefined;
+    }
 
     const hasFiles = (e: DragEvent | ClipboardEvent) => {
       const dt = (e as DragEvent).dataTransfer;
@@ -129,8 +137,7 @@ export const useAttachmentsInput = ({
       if (!hasFiles(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      globalDragCounter.current = 0;
-      setIsDragging(false);
+      clearDraggingState();
       const dt = e.dataTransfer as DataTransfer;
       const files = Array.from(dt.files || []);
       if (files.length > 0) {
@@ -138,15 +145,35 @@ export const useAttachmentsInput = ({
       }
     };
 
+    const onDragEnd = () => {
+      clearDraggingState();
+    };
+
+    const onWindowBlur = () => {
+      clearDraggingState();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') {
+        clearDraggingState();
+      }
+    };
+
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('dragenter', onDragEnter);
     window.addEventListener('dragleave', onDragLeave);
     window.addEventListener('drop', onDrop);
+    window.addEventListener('dragend', onDragEnd);
+    window.addEventListener('blur', onWindowBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('dragenter', onDragEnter);
       window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
+      window.removeEventListener('dragend', onDragEnd);
+      window.removeEventListener('blur', onWindowBlur);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [allowAttachments, disabled, addFiles]);
 
@@ -198,18 +225,22 @@ export const useAttachmentsInput = ({
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
-  }, []);
+    const nextTarget = e.relatedTarget;
+    if (nextTarget instanceof Node && e.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    clearDraggingState();
+  }, [clearDraggingState]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
+    clearDraggingState();
 
     if (!allowAttachments || disabled) return;
 
     const files = Array.from(e.dataTransfer.files);
     addFiles(files);
-  }, [addFiles, allowAttachments, disabled]);
+  }, [addFiles, allowAttachments, clearDraggingState, disabled]);
 
   const clearAttachments = useCallback(() => {
     setAttachments([]);

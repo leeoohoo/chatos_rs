@@ -2,37 +2,15 @@ import type {
   AiModelConfig,
   Attachment,
   ContentSegment,
+  DraftUserMessageSnapshot,
   Message,
+  MessageHistoryProcessState,
   ToolCall,
+  UnavailableToolInfo,
 } from '../../../../types';
 
-export interface MessageHistoryProcessState {
-  hasProcess: boolean;
-  toolCallCount: number;
-  thinkingCount: number;
-  unavailableToolCount?: number;
-  processMessageCount: number;
-  userMessageId: string;
-  turnId: string;
-  finalAssistantMessageId: string | null;
-  expanded: boolean;
-  loaded: boolean;
-  loading: boolean;
-}
-
-export interface UnavailableToolEntry {
-  id: string;
-  serverName: string;
-  toolName: string;
-  reason: string;
-  createdAt: string;
-}
-
-export interface DraftUserMessageSnapshot {
-  id: string;
-  content: string;
-  createdAt: string;
-}
+export type UnavailableToolEntry = UnavailableToolInfo;
+export type { DraftUserMessageSnapshot, MessageHistoryProcessState };
 
 export interface MessageModelConfigMetadata {
   id: string;
@@ -104,6 +82,8 @@ export interface StreamChatLogPayload {
   project_root: string | null;
   mcp_enabled: boolean;
   enabled_mcp_ids: string[];
+  skills_enabled: boolean;
+  selected_skill_ids: string[];
 }
 
 export interface StreamChatRuntimeOptions {
@@ -114,6 +94,8 @@ export interface StreamChatRuntimeOptions {
   projectRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  skillsEnabled: boolean;
+  selectedSkillIds: string[];
 }
 
 export interface StreamEventPayload {
@@ -122,6 +104,11 @@ export interface StreamEventPayload {
   data?: unknown;
   result?: {
     content?: unknown;
+    persisted_user_message?: unknown;
+    persisted_user_message_id?: string | null;
+    persisted_assistant_message?: unknown;
+    persisted_assistant_message_id?: string | null;
+    [key: string]: unknown;
   } | null;
   success?: boolean;
   is_error?: boolean;

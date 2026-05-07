@@ -97,6 +97,8 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                   const runDisabled = isRunning || actionLoading || runningProjectId === project.id || !isReady;
                   const runTitle = isRunning
                     ? `运行中：${liveState?.terminalName || '终端'}`
+                    : status === 'missing_root'
+                      ? (runState?.error || '项目目录不存在，请检查项目路径')
                     : isReady
                       ? '启动项目全部服务'
                       : (runState?.error || (isAnalyzing ? '正在检查脚本状态' : '缺少启动脚本'));

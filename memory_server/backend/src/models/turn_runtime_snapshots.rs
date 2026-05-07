@@ -24,6 +24,31 @@ pub struct TurnRuntimeSnapshotTool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnRuntimeSnapshotUnavailableTool {
+    pub server_name: String,
+    pub tool_name: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TurnRuntimeSnapshotBuiltinMcpPrompt {
+    pub prompt_source_path: Option<String>,
+    #[serde(default)]
+    pub all_section_ids: Vec<String>,
+    #[serde(default)]
+    pub selected_section_ids: Vec<String>,
+    #[serde(default)]
+    pub omitted_section_ids: Vec<String>,
+    #[serde(default)]
+    pub requested_builtin_server_names: Vec<String>,
+    #[serde(default)]
+    pub active_builtin_server_names: Vec<String>,
+    #[serde(default)]
+    pub omitted_builtin_server_names: Vec<String>,
+    pub runtime_limitations: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnRuntimeSnapshotSelectedCommand {
     pub command_ref: Option<String>,
     pub name: Option<String>,
@@ -47,6 +72,9 @@ pub struct TurnRuntimeSnapshotRuntime {
     pub enabled_mcp_ids: Vec<String>,
     #[serde(default)]
     pub selected_commands: Vec<TurnRuntimeSnapshotSelectedCommand>,
+    #[serde(default)]
+    pub unavailable_builtin_tools: Vec<TurnRuntimeSnapshotUnavailableTool>,
+    pub builtin_mcp_prompt: Option<TurnRuntimeSnapshotBuiltinMcpPrompt>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

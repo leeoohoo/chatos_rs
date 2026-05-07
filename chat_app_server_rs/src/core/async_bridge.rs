@@ -11,3 +11,15 @@ where
         runtime.block_on(future)
     }
 }
+
+pub fn block_on_option<F, T>(future: F) -> Option<T>
+where
+    F: Future<Output = Option<T>>,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        let runtime = tokio::runtime::Runtime::new().ok()?;
+        runtime.block_on(future)
+    }
+}

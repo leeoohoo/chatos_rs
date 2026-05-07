@@ -23,7 +23,7 @@ interface UseTeamMemberConversationParams {
     sessionId: string,
     options: { confirmMessage?: string },
   ) => Promise<void>;
-  loadSessionSummaries: (sessionId: string, options?: { silent?: boolean }) => Promise<void>;
+  cancelPendingSessionSummariesLoad: () => void;
   ensureContactSession: (contact: ContactItem) => Promise<string | null>;
   sendMessage: (
     content: string,
@@ -50,7 +50,7 @@ export const useTeamMemberConversation = ({
   openSummaryForSession,
   deleteSummary,
   clearSummaries,
-  loadSessionSummaries,
+  cancelPendingSessionSummariesLoad,
   ensureContactSession,
   sendMessage,
   toggleTurnProcess,
@@ -119,6 +119,7 @@ export const useTeamMemberConversation = ({
     try {
       const sessionId = await ensureContactSession(contact);
       if (summaryPaneSessionId && sessionId && sessionId !== summaryPaneSessionId) {
+        cancelPendingSessionSummariesLoad();
         setSummaryPaneSessionId(null);
         resetSummaryState();
       }
@@ -126,6 +127,7 @@ export const useTeamMemberConversation = ({
       setSwitchingContactId((prev) => (prev === contactId ? null : prev));
     }
   }, [
+    cancelPendingSessionSummariesLoad,
     ensureContactSession,
     normalizedContacts,
     projectContacts,
@@ -227,13 +229,6 @@ export const useTeamMemberConversation = ({
       confirmMessage: '确定清空当前会话的所有总结吗？',
     });
   }, [clearSummaries, selectedProjectSession?.id]);
-
-  useEffect(() => {
-    if (!sessionSummaryPaneVisible || !selectedProjectSession?.id) {
-      return;
-    }
-    void loadSessionSummaries(selectedProjectSession.id, { silent: true });
-  }, [loadSessionSummaries, selectedProjectSession?.id, sessionSummaryPaneVisible]);
 
   return {
     selectedContactId,

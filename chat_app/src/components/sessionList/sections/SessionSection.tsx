@@ -1,6 +1,7 @@
 import React from 'react';
 import { cn } from '../../../lib/utils';
 import type { Session } from '../../../types';
+import type { TaskReviewPanelState, UiPromptPanelState } from '../../../lib/store/types';
 import { ChatIcon, DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
 import SessionBusyBadge from '../../chat/SessionBusyBadge';
 
@@ -22,8 +23,8 @@ interface SessionSectionProps {
   runtimeContextSessionId?: string | null;
   displaySessionRuntimeIdMap?: Record<string, string>;
   sessionChatState?: SessionChatStateMap;
-  taskReviewPanelsBySession?: Record<string, any[]>;
-  uiPromptPanelsBySession?: Record<string, any[]>;
+  taskReviewPanelsBySession?: Record<string, TaskReviewPanelState[]>;
+  uiPromptPanelsBySession?: Record<string, UiPromptPanelState[]>;
   hasMore: boolean;
   isRefreshing: boolean;
   isLoadingMore: boolean;

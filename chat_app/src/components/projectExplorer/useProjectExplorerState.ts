@@ -11,7 +11,7 @@ export interface ExplorerContextMenuState {
   entry: FsEntry;
 }
 
-export const useProjectExplorerState = () => {
+export const useProjectExplorerState = (projectId?: string | null) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const resizeStartX = useRef(0);
@@ -37,7 +37,13 @@ export const useProjectExplorerState = () => {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [expandedReady, setExpandedReady] = useState(false);
   const [showOnlyChanged, setShowOnlyChanged] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('files');
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(() => {
+    if (typeof window === 'undefined' || !projectId) {
+      return 'files';
+    }
+    const saved = window.localStorage.getItem(`project_workspace_tab_${projectId}`);
+    return saved === 'team' ? 'team' : 'files';
+  });
   const [treeWidth, setTreeWidth] = useState(() => {
     if (typeof window === 'undefined') return 288;
     const saved = window.localStorage.getItem('project_explorer_tree_width');

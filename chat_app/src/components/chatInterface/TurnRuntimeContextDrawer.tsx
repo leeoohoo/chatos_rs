@@ -32,6 +32,20 @@ interface RuntimeFieldProps {
   tone?: 'default' | 'code';
 }
 
+function getSystemMessageCardClass(source?: string | null): string {
+  if (source === 'task_runtime_board') {
+    return 'rounded-md border border-amber-500/50 bg-amber-500/10 p-3 shadow-sm';
+  }
+  return 'rounded-md border border-border bg-background/80 p-2';
+}
+
+function getSystemMessageMetaClass(source?: string | null): string {
+  if (source === 'task_runtime_board') {
+    return 'mb-1 text-[11px] font-semibold tracking-wide text-amber-800 dark:text-amber-200';
+  }
+  return 'mb-1 text-[11px] text-muted-foreground';
+}
+
 const RuntimeField: React.FC<RuntimeFieldProps> = ({
   label,
   value,
@@ -153,10 +167,18 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
                   ) : (
                     <div className="space-y-2">
                       {systemMessages.map((item) => (
-                        <div key={`${item.id}:${item.source}`} className="rounded-md border border-border bg-background/80 p-2">
-                          <div className="mb-1 text-[11px] text-muted-foreground">
+                        <div
+                          key={`${item.id}:${item.source}`}
+                          className={getSystemMessageCardClass(item.source)}
+                        >
+                          <div className={getSystemMessageMetaClass(item.source)}>
                             {`${item.id} · ${item.source}`}
                           </div>
+                          {item.source === 'task_runtime_board' ? (
+                            <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-900 dark:text-amber-100">
+                              任务看板由系统动态维护。没有任务时也会显示“当前无任务”；完成任务后刷新即可看到最新状态。
+                            </div>
+                          ) : null}
                           <pre className="whitespace-pre-wrap break-words text-xs text-foreground">
 {item.content}
                           </pre>

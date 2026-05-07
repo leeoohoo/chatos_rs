@@ -1,10 +1,13 @@
 use super::dto::{MemorySkillDto, MemorySkillPluginDto};
-use super::http::{build_url, client, send_optional_json, timeout_duration};
+use super::http::{client, send_optional_json, try_build_url, try_timeout_duration};
 
 pub async fn get_memory_skill(skill_id: &str) -> Result<Option<MemorySkillDto>, String> {
     let req = client()
-        .get(build_url(&format!("/skills/{}", urlencoding::encode(skill_id))).as_str())
-        .timeout(timeout_duration());
+        .get(try_build_url(&format!(
+            "/skills/{}",
+            urlencoding::encode(skill_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
     send_optional_json(req).await
 }
 
@@ -14,8 +17,8 @@ pub async fn get_memory_skill_plugin(source: &str) -> Result<Option<MemorySkillP
         return Ok(None);
     }
     let req = client()
-        .get(build_url("/skills/plugins/detail").as_str())
+        .get(try_build_url("/skills/plugins/detail")?)
         .query(&[("source", normalized_source)])
-        .timeout(timeout_duration());
+        .timeout(try_timeout_duration()?);
     send_optional_json(req).await
 }

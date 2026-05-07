@@ -5,8 +5,18 @@ use uuid::Uuid;
 
 use crate::db::Db;
 use crate::models::JobRun;
+use crate::services::realtime::publish_job_run_event;
 
 use super::now_rfc3339;
+
+fn running_job_timeout_seconds() -> i64 {
+    std::env::var("MEMORY_SERVER_RUNNING_JOB_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(600)
+        .max(60)
+}
 
 fn collection(db: &Db) -> mongodb::Collection<JobRun> {
     db.collection::<JobRun>("job_runs")
@@ -65,6 +75,7 @@ pub async fn create_job_run(
         return Err(err.to_string());
     }
 
+    publish_job_run_event("upsert", &job);
     Ok(job)
 }
 
@@ -90,6 +101,13 @@ pub async fn finish_job_run(
         .await
         .map_err(|e| e.to_string())?;
 
+    if let Some(job_run) = collection(db)
+        .find_one(doc! {"id": job_run_id})
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        publish_job_run_event("upsert", &job_run);
+    }
     Ok(())
 }
 
@@ -115,6 +133,13 @@ pub async fn update_job_run_diagnostics(
         )
         .await
         .map_err(|e| e.to_string())?;
+    if let Some(job_run) = collection(db)
+        .find_one(doc! {"id": job_run_id})
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        publish_job_run_event("upsert", &job_run);
+    }
     Ok(())
 }
 
@@ -148,6 +173,67 @@ pub async fn list_job_runs(
         .map_err(|e| e.to_string())?;
 
     cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
+pub async fn count_job_runs_for_sessions(
+    db: &Db,
+    job_type: &str,
+    session_ids: &[String],
+    status: Option<&str>,
+) -> Result<i64, String> {
+    if session_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut filter = doc! {
+        "job_type": job_type,
+        "session_id": {"$in": session_ids.to_vec()},
+    };
+    if let Some(value) = status {
+        filter.insert("status", value);
+    }
+
+    collection(db)
+        .count_documents(filter)
+        .await
+        .map(|count| count as i64)
+        .map_err(|e| e.to_string())
+}
+
+pub async fn cleanup_stale_running_job_runs(
+    db: &Db,
+    job_type: &str,
+    session_ids: &[String],
+) -> Result<u64, String> {
+    if session_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let timeout_seconds = running_job_timeout_seconds();
+    let stale_before = (chrono::Utc::now() - chrono::Duration::seconds(timeout_seconds)).to_rfc3339();
+    let result = collection(db)
+        .update_many(
+            doc! {
+                "job_type": job_type,
+                "session_id": {"$in": session_ids.to_vec()},
+                "status": "running",
+                "started_at": {"$lte": stale_before},
+            },
+            doc! {
+                "$set": {
+                    "status": "failed",
+                    "error_message": format!(
+                        "timed_out: exceeded {}s without completion",
+                        timeout_seconds
+                    ),
+                    "finished_at": now_rfc3339(),
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.modified_count)
 }
 
 pub async fn job_stats(db: &Db) -> Result<serde_json::Value, String> {

@@ -8,6 +8,19 @@ export interface TaskWorkbarItem {
   createdAt: string;
   dueAt?: string | null;
   tags: string[];
+  outcomeSummary: string;
+  outcomeItems: Array<{
+    kind: string;
+    text: string;
+    importance?: 'high' | 'medium' | 'low';
+    refs: string[];
+  }>;
+  resumeHint: string;
+  blockerReason: string;
+  blockerNeeds: string[];
+  blockerKind: string;
+  completedAt?: string | null;
+  lastOutcomeAt?: string | null;
 }
 
 export interface SessionSummaryWorkbarItem {

@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::services::task_manager::{TaskDraft, TaskUpdatePatch};
+use crate::services::task_manager::{TaskDraft, TaskOutcomeItem, TaskUpdatePatch};
 
 pub(super) fn parse_task_drafts(args: &Value) -> Result<Vec<TaskDraft>, String> {
     if let Some(items) = args.get("tasks").and_then(|value| value.as_array()) {
@@ -58,6 +58,30 @@ pub(super) fn parse_update_patch(value: &Value) -> Result<TaskUpdatePatch, Strin
             "due_at" | "dueAt" => {
                 patch.due_at = Some(parse_due_at(value, "changes.due_at")?);
             }
+            "outcome_summary" | "outcomeSummary" => {
+                patch.outcome_summary = Some(expect_string(value, "changes.outcome_summary")?)
+            }
+            "outcome_items" | "outcomeItems" => {
+                patch.outcome_items = Some(parse_outcome_items(value, "changes.outcome_items")?);
+            }
+            "resume_hint" | "resumeHint" => {
+                patch.resume_hint = Some(expect_string(value, "changes.resume_hint")?)
+            }
+            "blocker_reason" | "blockerReason" => {
+                patch.blocker_reason = Some(expect_string(value, "changes.blocker_reason")?)
+            }
+            "blocker_needs" | "blockerNeeds" => {
+                patch.blocker_needs = Some(parse_tags(value, "changes.blocker_needs")?);
+            }
+            "blocker_kind" | "blockerKind" => {
+                patch.blocker_kind = Some(expect_string(value, "changes.blocker_kind")?)
+            }
+            "completed_at" | "completedAt" => {
+                patch.completed_at = Some(parse_due_at(value, "changes.completed_at")?);
+            }
+            "last_outcome_at" | "lastOutcomeAt" => {
+                patch.last_outcome_at = Some(parse_due_at(value, "changes.last_outcome_at")?);
+            }
             other => return Err(format!("unsupported changes field: {other}")),
         }
     }
@@ -68,6 +92,14 @@ pub(super) fn parse_update_patch(value: &Value) -> Result<TaskUpdatePatch, Strin
         && patch.status.is_none()
         && patch.tags.is_none()
         && patch.due_at.is_none()
+        && patch.outcome_summary.is_none()
+        && patch.outcome_items.is_none()
+        && patch.resume_hint.is_none()
+        && patch.blocker_reason.is_none()
+        && patch.blocker_needs.is_none()
+        && patch.blocker_kind.is_none()
+        && patch.completed_at.is_none()
+        && patch.last_outcome_at.is_none()
     {
         return Err("changes cannot be empty".to_string());
     }
@@ -107,6 +139,52 @@ fn parse_due_at(value: &Value, field: &str) -> Result<Option<String>, String> {
     }
 }
 
+fn parse_outcome_items(value: &Value, field: &str) -> Result<Vec<TaskOutcomeItem>, String> {
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .map(|item| {
+                let map = item
+                    .as_object()
+                    .ok_or_else(|| format!("{field} items must be objects"))?;
+                let text = map
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| format!("{field} item.text is required"))?
+                    .to_string();
+                let refs = map
+                    .get("refs")
+                    .map(|refs| parse_tags(refs, "changes.outcome_items.refs"))
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(TaskOutcomeItem {
+                    kind: map
+                        .get("kind")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("finding")
+                        .to_string(),
+                    text,
+                    importance: map
+                        .get("importance")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string()),
+                    refs,
+                })
+            })
+            .collect(),
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(Vec::new());
+            }
+            let parsed: Value = serde_json::from_str(trimmed)
+                .map_err(|_| format!("{field} must be valid JSON when provided as string"))?;
+            parse_outcome_items(&parsed, field)
+        }
+        _ => Err(format!("{field} must be an array or JSON string")),
+    }
+}
+
 fn expect_string(value: &Value, field: &str) -> Result<String, String> {
     value
         .as_str()
@@ -135,6 +213,18 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
     let priority = optional_string(map, "priority").unwrap_or_else(|| "medium".to_string());
     let status = optional_string(map, "status").unwrap_or_else(|| "todo".to_string());
     let due_at = optional_string(map, "due_at").or_else(|| optional_string(map, "dueAt"));
+    let outcome_summary = optional_string(map, "outcome_summary")
+        .or_else(|| optional_string(map, "outcomeSummary"))
+        .unwrap_or_default();
+    let resume_hint = optional_string(map, "resume_hint")
+        .or_else(|| optional_string(map, "resumeHint"))
+        .unwrap_or_default();
+    let blocker_reason = optional_string(map, "blocker_reason")
+        .or_else(|| optional_string(map, "blockerReason"))
+        .unwrap_or_default();
+    let blocker_kind = optional_string(map, "blocker_kind")
+        .or_else(|| optional_string(map, "blockerKind"))
+        .unwrap_or_default();
 
     let tags = match map.get("tags") {
         Some(Value::Array(values)) => values
@@ -148,6 +238,22 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
             .collect(),
         _ => Vec::new(),
     };
+    let blocker_needs = match map.get("blocker_needs").or_else(|| map.get("blockerNeeds")) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| value.as_str().map(|item| item.to_string()))
+            .collect(),
+        Some(Value::String(raw)) => raw
+            .split(',')
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let outcome_items = match map.get("outcome_items").or_else(|| map.get("outcomeItems")) {
+        Some(value) => parse_outcome_items(value, "task.outcome_items")?,
+        None => Vec::new(),
+    };
 
     Ok(TaskDraft {
         title,
@@ -156,6 +262,12 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
         status,
         tags,
         due_at,
+        outcome_summary,
+        outcome_items,
+        resume_hint,
+        blocker_reason,
+        blocker_needs,
+        blocker_kind,
     })
 }
 

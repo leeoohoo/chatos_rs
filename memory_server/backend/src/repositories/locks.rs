@@ -109,3 +109,22 @@ pub async fn release_job_lock(db: &Db, handle: &JobLockHandle) -> Result<(), Str
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+pub async fn cleanup_expired_job_locks(
+    db: &Db,
+    lock_keys: &[String],
+) -> Result<u64, String> {
+    if lock_keys.is_empty() {
+        return Ok(0);
+    }
+
+    let now_ts = chrono::Utc::now().timestamp();
+    let result = collection(db)
+        .delete_many(doc! {
+            "lock_key": {"$in": lock_keys.to_vec()},
+            "expires_at_ts": {"$lte": now_ts},
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result.deleted_count)
+}

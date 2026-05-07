@@ -46,6 +46,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
+  currentAgent = null,
   availableRemoteConnections = [],
   onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
@@ -111,6 +112,14 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleSaveProjectMcpDefault,
     handleApplyProjectMcpDefault,
     enabledModels,
+    currentAgentForSkills,
+    skillsEnabled,
+    setSkillsEnabled,
+    skillsLoading,
+    availableSkillOptions,
+    selectedSkillIds,
+    handleToggleSelectedSkill,
+    handleClearSelectedSkills,
     hasAiOptions,
     projectForFilePicker,
     showProjectFilePicker,
@@ -154,6 +163,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     workspaceRoot,
     onWorkspaceRootChange,
     currentRemoteConnectionId,
+    currentAgent,
     mcpEnabled,
     enabledMcpIds,
     onMcpEnabledChange,
@@ -172,114 +182,124 @@ export const InputArea: React.FC<InputAreaProps> = ({
         workspaceError={workspaceError}
       />
 
-      <InputAreaComposer
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        isGuidingMode={isGuidingMode}
-        effectiveAllowAttachments={effectiveAllowAttachments}
-        showModelSelector={showModelSelector}
-        selectedModelId={selectedModelId}
-        onModelChange={onModelChange}
-        availableProjects={availableProjects}
-        selectedProjectId={selectedProjectId}
-        onProjectChange={onProjectChange}
-        showProjectSelector={showProjectSelector}
-        showWorkspaceRootPicker={showWorkspaceRootPicker}
-        currentRemoteConnectionId={currentRemoteConnectionId}
-        availableRemoteConnections={availableRemoteConnections}
-        onRemoteConnectionChange={onRemoteConnectionChange}
-        mcpEnabled={mcpEnabled}
-        onMcpEnabledChange={onMcpEnabledChange}
-        reasoningSupported={reasoningSupported}
-        reasoningEnabled={reasoningEnabled}
-        onReasoningToggle={onReasoningToggle}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        supportedFileTypes={supportedFileTypes}
-        isDragging={isDragging}
-        pickerRef={pickerRef}
-        mcpPickerRef={mcpPickerRef}
-        workspacePickerRef={workspacePickerRef}
-        projectFilePickerRef={projectFilePickerRef}
-        fileInputRef={fileInputRef}
-        textareaRef={textareaRef}
-        message={message}
-        setPickerOpen={setPickerOpen}
-        pickerOpen={pickerOpen}
-        hasAiOptions={hasAiOptions}
-        currentAiLabel={currentAiLabel}
-        enabledModels={enabledModels}
-        projectForFilePicker={projectForFilePicker}
-        showProjectFilePicker={showProjectFilePicker}
-        projectFileAttachingPath={projectFileAttachingPath}
-        projectFilePickerOpen={projectFilePickerOpen}
-        handleToggleProjectFilePicker={handleToggleProjectFilePicker}
-        projectFilePathLabel={projectFilePathLabel}
-        projectFileFilter={projectFileFilter}
-        setProjectFileFilter={setProjectFileFilter}
-        projectFileBusy={projectFileBusy}
-        projectFileKeywordActive={projectFileKeywordActive}
-        projectFileParent={projectFileParent}
-        loadProjectFileEntries={loadProjectFileEntries}
-        displayedProjectFileEntries={displayedProjectFileEntries}
-        handleAttachProjectFile={handleAttachProjectFile}
-        toRelativeProjectPath={toRelativeProjectPath}
-        projectFileSearchTruncated={projectFileSearchTruncated}
-        normalizedWorkspaceRoot={normalizedWorkspaceRoot}
-        workspaceRootDisplayName={workspaceRootDisplayName}
-        workspacePickerOpen={workspacePickerOpen}
-        workspacePath={workspacePath}
-        workspaceParent={workspaceParent}
-        workspaceLoading={workspaceLoading}
-        workspaceEntries={workspaceEntries}
-        workspaceRoots={workspaceRoots}
-        handleToggleWorkspacePicker={handleToggleWorkspacePicker}
-        loadWorkspaceDirectories={loadWorkspaceDirectories}
-        handleSelectWorkspaceRoot={handleSelectWorkspaceRoot}
-        mcpPickerOpen={mcpPickerOpen}
-        handleToggleMcpPicker={handleToggleMcpPicker}
-        isAllMcpSelected={isAllMcpSelected}
-        selectableMcpIds={selectableMcpIds}
-        selectedMcpCount={selectedMcpCount}
-        mcpConfigsLoading={mcpConfigsLoading}
-        mcpConfigsError={mcpConfigsError}
-        availableMcpConfigs={availableMcpConfigs}
-        builtinMcpConfigs={builtinMcpConfigs}
-        customMcpConfigs={customMcpConfigs}
-        mcpToolsetPresets={mcpToolsetPresets}
-        projectScopeKey={projectScopeKey}
-        hasProjectMcpDefault={hasProjectMcpDefault}
-        hasDirectoryContext={hasDirectoryContext}
-        hasRemoteContext={hasRemoteContext}
-        isProjectRequiredMcpId={isProjectRequiredMcpId}
-        isRemoteRequiredMcpId={isRemoteRequiredMcpId}
-        sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-        loadAvailableMcpConfigs={loadAvailableMcpConfigs}
-        handleSelectAllMcp={handleSelectAllMcp}
-        handleToggleMcpSelection={handleToggleMcpSelection}
-        handleApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
-        handleSaveProjectMcpDefault={handleSaveProjectMcpDefault}
-        handleApplyProjectMcpDefault={handleApplyProjectMcpDefault}
-        handleInputChange={handleInputChange}
-        handleKeyDown={handleKeyDown}
-        handlePaste={handlePaste}
-        onStop={onStop}
-        handleSend={handleSend}
-        canSend={canSend}
-        handleDragOver={handleDragOver}
-        handleDragLeave={handleDragLeave}
-        handleDrop={handleDrop}
-        handleFileSelect={handleFileSelect}
-      />
-
-      {isDragging && effectiveAllowAttachments && (
-        <InputAreaDragOverlay
-          maxFileBytes={MAX_FILE_BYTES}
-          maxTotalBytes={MAX_TOTAL_BYTES}
-          maxAttachments={MAX_ATTACHMENTS}
+      <div className="relative">
+        <InputAreaComposer
+          disabled={disabled}
+          isStreaming={isStreaming}
+          isStopping={isStopping}
+          isGuidingMode={isGuidingMode}
+          effectiveAllowAttachments={effectiveAllowAttachments}
+          showModelSelector={showModelSelector}
+          selectedModelId={selectedModelId}
+          onModelChange={onModelChange}
+          availableProjects={availableProjects}
+          selectedProjectId={selectedProjectId}
+          onProjectChange={onProjectChange}
+          showProjectSelector={showProjectSelector}
+          showWorkspaceRootPicker={showWorkspaceRootPicker}
+          currentRemoteConnectionId={currentRemoteConnectionId}
+          currentAgent={currentAgentForSkills}
+          availableRemoteConnections={availableRemoteConnections}
+          onRemoteConnectionChange={onRemoteConnectionChange}
+          mcpEnabled={mcpEnabled}
+          onMcpEnabledChange={onMcpEnabledChange}
+          reasoningSupported={reasoningSupported}
+          reasoningEnabled={reasoningEnabled}
+          onReasoningToggle={onReasoningToggle}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          supportedFileTypes={supportedFileTypes}
+          isDragging={isDragging}
+          pickerRef={pickerRef}
+          mcpPickerRef={mcpPickerRef}
+          workspacePickerRef={workspacePickerRef}
+          projectFilePickerRef={projectFilePickerRef}
+          fileInputRef={fileInputRef}
+          textareaRef={textareaRef}
+          message={message}
+          setPickerOpen={setPickerOpen}
+          pickerOpen={pickerOpen}
+          hasAiOptions={hasAiOptions}
+          currentAiLabel={currentAiLabel}
+          enabledModels={enabledModels}
+          projectForFilePicker={projectForFilePicker}
+          showProjectFilePicker={showProjectFilePicker}
+          projectFileAttachingPath={projectFileAttachingPath}
+          projectFilePickerOpen={projectFilePickerOpen}
+          handleToggleProjectFilePicker={handleToggleProjectFilePicker}
+          projectFilePathLabel={projectFilePathLabel}
+          projectFileFilter={projectFileFilter}
+          setProjectFileFilter={setProjectFileFilter}
+          projectFileBusy={projectFileBusy}
+          projectFileKeywordActive={projectFileKeywordActive}
+          projectFileParent={projectFileParent}
+          loadProjectFileEntries={loadProjectFileEntries}
+          displayedProjectFileEntries={displayedProjectFileEntries}
+          handleAttachProjectFile={handleAttachProjectFile}
+          toRelativeProjectPath={toRelativeProjectPath}
+          projectFileSearchTruncated={projectFileSearchTruncated}
+          normalizedWorkspaceRoot={normalizedWorkspaceRoot}
+          workspaceRootDisplayName={workspaceRootDisplayName}
+          workspacePickerOpen={workspacePickerOpen}
+          workspacePath={workspacePath}
+          workspaceParent={workspaceParent}
+          workspaceLoading={workspaceLoading}
+          workspaceEntries={workspaceEntries}
+          workspaceRoots={workspaceRoots}
+          handleToggleWorkspacePicker={handleToggleWorkspacePicker}
+          loadWorkspaceDirectories={loadWorkspaceDirectories}
+          handleSelectWorkspaceRoot={handleSelectWorkspaceRoot}
+          mcpPickerOpen={mcpPickerOpen}
+          handleToggleMcpPicker={handleToggleMcpPicker}
+          isAllMcpSelected={isAllMcpSelected}
+          selectableMcpIds={selectableMcpIds}
+          selectedMcpCount={selectedMcpCount}
+          mcpConfigsLoading={mcpConfigsLoading}
+          mcpConfigsError={mcpConfigsError}
+          availableMcpConfigs={availableMcpConfigs}
+          builtinMcpConfigs={builtinMcpConfigs}
+          customMcpConfigs={customMcpConfigs}
+          mcpToolsetPresets={mcpToolsetPresets}
+          projectScopeKey={projectScopeKey}
+          hasProjectMcpDefault={hasProjectMcpDefault}
+          hasDirectoryContext={hasDirectoryContext}
+          hasRemoteContext={hasRemoteContext}
+          isProjectRequiredMcpId={isProjectRequiredMcpId}
+          isRemoteRequiredMcpId={isRemoteRequiredMcpId}
+          sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
+          loadAvailableMcpConfigs={loadAvailableMcpConfigs}
+          handleSelectAllMcp={handleSelectAllMcp}
+          handleToggleMcpSelection={handleToggleMcpSelection}
+          handleApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
+          handleSaveProjectMcpDefault={handleSaveProjectMcpDefault}
+	      handleApplyProjectMcpDefault={handleApplyProjectMcpDefault}
+          skillsEnabled={skillsEnabled}
+          onSkillsEnabledChange={setSkillsEnabled}
+          skillsLoading={skillsLoading}
+          availableSkillOptions={availableSkillOptions}
+          selectedSkillIds={selectedSkillIds}
+          onToggleSelectedSkill={handleToggleSelectedSkill}
+          onClearSelectedSkills={handleClearSelectedSkills}
+	      handleInputChange={handleInputChange}
+          handleKeyDown={handleKeyDown}
+          handlePaste={handlePaste}
+          onStop={onStop}
+          handleSend={handleSend}
+          canSend={canSend}
+          handleDragOver={handleDragOver}
+          handleDragLeave={handleDragLeave}
+          handleDrop={handleDrop}
+          handleFileSelect={handleFileSelect}
         />
-      )}
+
+        {isDragging && effectiveAllowAttachments && (
+          <InputAreaDragOverlay
+            maxFileBytes={MAX_FILE_BYTES}
+            maxTotalBytes={MAX_TOTAL_BYTES}
+            maxAttachments={MAX_ATTACHMENTS}
+          />
+        )}
+      </div>
     </div>
   );
 };

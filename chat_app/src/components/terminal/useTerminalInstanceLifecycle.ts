@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import type { ITheme } from '@xterm/xterm';
 
 import type { TerminalLogResponse } from '../../lib/api/client/types';
 import type { Terminal } from '../../types';
@@ -46,8 +47,8 @@ interface TerminalApiClient {
 interface UseTerminalInstanceLifecycleParams {
   currentTerminal: Terminal | null;
   client: TerminalApiClient;
-  themeColors: any;
-  themeColorsRef: MutableRefObject<any>;
+  themeColors: ITheme;
+  themeColorsRef: MutableRefObject<ITheme>;
   terminalRef: MutableRefObject<XTerm | null>;
   fitRef: MutableRefObject<FitAddon | null>;
   containerRef: MutableRefObject<HTMLDivElement | null>;

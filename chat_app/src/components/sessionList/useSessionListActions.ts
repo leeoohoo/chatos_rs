@@ -1,22 +1,26 @@
 import { useCallback } from 'react';
 import { deriveNameFromPath } from './helpers';
+import type { ChatState } from '../../lib/store/types';
+import type { Project, RemoteConnection, Session, Terminal } from '../../types';
 import type { ContactItem } from './types';
+
+type ActivePanel = ChatState['activePanel'];
 
 interface SessionListActionsParams {
   contacts: ContactItem[];
-  currentSession: any;
-  terminals: any[];
-  currentTerminal: any;
-  remoteConnections: any[];
-  currentRemoteConnection: any;
+  currentSession: Session | null;
+  terminals: Terminal[];
+  currentTerminal: Terminal | null;
+  remoteConnections: RemoteConnection[];
+  currentRemoteConnection: RemoteConnection | null;
   ensureSessionForContact: (contact: ContactItem) => Promise<string | null>;
-  selectSession: (sessionId: string) => Promise<any>;
-  setActivePanel: (panel: any) => void;
+  selectSession: (sessionId: string) => Promise<void>;
+  setActivePanel: (panel: ActivePanel) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
   onOpenSessionRuntimeContext?: (sessionId: string) => void;
-  loadContactsAction: () => Promise<any>;
-  loadTerminals: () => Promise<any>;
-  loadRemoteConnections: () => Promise<any>;
+  loadContactsAction: (options?: { force?: boolean }) => Promise<unknown>;
+  loadTerminals: (options?: { force?: boolean }) => Promise<unknown>;
+  loadRemoteConnections: (options?: { force?: boolean }) => Promise<unknown>;
   setIsRefreshing: (value: boolean) => void;
   setIsRefreshingTerminals: (value: boolean) => void;
   setIsRefreshingRemote: (value: boolean) => void;
@@ -28,12 +32,12 @@ interface SessionListActionsParams {
   setTerminalModalOpen: (value: boolean) => void;
   setKeyFilePickerOpen: (value: boolean) => void;
   openRemoteModalBase: () => void;
-  createProject: (name: string, rootPath: string) => Promise<any>;
-  createTerminal: (cwd: string, name: string) => Promise<any>;
-  selectProject: (projectId: string) => Promise<any>;
-  selectTerminal: (terminalId: string) => Promise<any>;
-  selectRemoteConnection: (connectionId: string) => Promise<any>;
-  openRemoteSftp: (connectionId: string) => Promise<any>;
+  createProject: (name: string, rootPath: string) => Promise<Project>;
+  createTerminal: (cwd: string, name: string) => Promise<Terminal>;
+  selectProject: (projectId: string) => Promise<void>;
+  selectTerminal: (terminalId: string) => Promise<void>;
+  selectRemoteConnection: (connectionId: string) => Promise<void>;
+  openRemoteSftp: (connectionId: string) => Promise<void>;
   projectRoot: string;
   terminalRoot: string;
 }
@@ -122,19 +126,19 @@ export const useSessionListActions = ({
 
   const handleRefreshSessions = useCallback(async () => {
     setIsRefreshing(true);
-    await loadContactsAction();
+    await loadContactsAction({ force: true });
     setIsRefreshing(false);
   }, [loadContactsAction, setIsRefreshing]);
 
   const handleRefreshTerminals = useCallback(async () => {
     setIsRefreshingTerminals(true);
-    await loadTerminals();
+    await loadTerminals({ force: true });
     setIsRefreshingTerminals(false);
   }, [loadTerminals, setIsRefreshingTerminals]);
 
   const handleRefreshRemote = useCallback(async () => {
     setIsRefreshingRemote(true);
-    await loadRemoteConnections();
+    await loadRemoteConnections({ force: true });
     setIsRefreshingRemote(false);
   }, [loadRemoteConnections, setIsRefreshingRemote]);
 

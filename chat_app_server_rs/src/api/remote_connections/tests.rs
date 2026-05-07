@@ -67,6 +67,23 @@ fn maps_second_factor_required_error_code() {
 }
 
 #[test]
+fn maps_wrapped_second_factor_required_error_response() {
+    let (status, body) = remote_connectivity_error_response(
+        "跳板机认证失败：jump_password 认证失败: __CHATOS_SECOND_FACTOR_REQUIRED__:SMS verification code。请检查配置"
+            .to_string(),
+    );
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body.0,
+        json!({
+            "error": "需要二次验证",
+            "code": remote_connection_codes::SECOND_FACTOR_REQUIRED,
+            "challenge_prompt": "SMS verification code"
+        })
+    );
+}
+
+#[test]
 fn emits_internal_error_payload_with_code() {
     let (status, body) = internal_error_response(
         remote_connection_codes::REMOTE_CONNECTION_DELETE_FAILED,

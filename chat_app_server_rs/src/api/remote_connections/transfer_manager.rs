@@ -1,13 +1,25 @@
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 
 use super::SftpTransferStatus;
+use crate::services::realtime::{
+    publish_remote_sftp_transfer_updated, RemoteSftpTransferRealtimePayload,
+};
 
 pub(super) struct SftpTransferManager {
     transfers: DashMap<String, SftpTransferStatus>,
     cancel_flags: DashMap<String, bool>,
+    publish_gates: DashMap<String, TransferPublishGate>,
+}
+
+#[derive(Clone, Debug)]
+struct TransferPublishGate {
+    last_state: String,
+    last_percent_bucket: Option<i64>,
+    last_published_at: Instant,
 }
 
 impl SftpTransferManager {
@@ -15,12 +27,14 @@ impl SftpTransferManager {
         Self {
             transfers: DashMap::new(),
             cancel_flags: DashMap::new(),
+            publish_gates: DashMap::new(),
         }
     }
 
     pub(super) fn create(
         &self,
         connection_id: &str,
+        user_id: &str,
         direction: &str,
         total_bytes: Option<u64>,
         current_path: Option<String>,
@@ -30,6 +44,7 @@ impl SftpTransferManager {
         let status = SftpTransferStatus {
             id: id.clone(),
             connection_id: connection_id.to_string(),
+            user_id: user_id.to_string(),
             direction: direction.to_string(),
             state: "pending".to_string(),
             total_bytes,
@@ -43,6 +58,7 @@ impl SftpTransferManager {
         };
         self.transfers.insert(id, status.clone());
         self.cancel_flags.insert(status.id.clone(), false);
+        self.publish_status(&status, true);
         status
     }
 
@@ -66,12 +82,18 @@ impl SftpTransferManager {
                 entry.state = "cancelling".to_string();
                 entry.message = Some("正在取消传输...".to_string());
                 entry.updated_at = crate::core::time::now_rfc3339();
+                let snapshot = entry.clone();
+                drop(entry);
+                self.publish_status(&snapshot, true);
                 return;
             }
             entry.state = "running".to_string();
             entry.updated_at = crate::core::time::now_rfc3339();
             entry.error = None;
             entry.message = None;
+            let snapshot = entry.clone();
+            drop(entry);
+            self.publish_status(&snapshot, true);
         }
     }
 
@@ -98,6 +120,9 @@ impl SftpTransferManager {
                 }
             });
             entry.updated_at = crate::core::time::now_rfc3339();
+            let snapshot = entry.clone();
+            drop(entry);
+            self.publish_status(&snapshot, false);
         }
     }
 
@@ -113,6 +138,9 @@ impl SftpTransferManager {
             entry.message = Some(message);
             entry.error = None;
             entry.updated_at = crate::core::time::now_rfc3339();
+            let snapshot = entry.clone();
+            drop(entry);
+            self.publish_status(&snapshot, true);
         }
         self.cancel_flags.remove(transfer_id);
     }
@@ -123,6 +151,9 @@ impl SftpTransferManager {
             entry.error = Some(error);
             entry.message = None;
             entry.updated_at = crate::core::time::now_rfc3339();
+            let snapshot = entry.clone();
+            drop(entry);
+            self.publish_status(&snapshot, true);
         }
         self.cancel_flags.remove(transfer_id);
     }
@@ -133,6 +164,9 @@ impl SftpTransferManager {
             entry.message = Some("传输已取消".to_string());
             entry.error = None;
             entry.updated_at = crate::core::time::now_rfc3339();
+            let snapshot = entry.clone();
+            drop(entry);
+            self.publish_status(&snapshot, true);
         }
         self.cancel_flags.remove(transfer_id);
     }
@@ -155,6 +189,9 @@ impl SftpTransferManager {
                 entry.message = Some("正在取消传输...".to_string());
                 entry.updated_at = crate::core::time::now_rfc3339();
                 self.cancel_flags.insert(transfer_id.to_string(), true);
+                let snapshot = entry.clone();
+                drop(entry);
+                self.publish_status(&snapshot, true);
                 true
             }
         }
@@ -166,6 +203,53 @@ impl SftpTransferManager {
             .map(|v| *v)
             .unwrap_or(false)
     }
+
+    fn publish_status(&self, status: &SftpTransferStatus, force: bool) {
+        if status.user_id.trim().is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let next_bucket = percent_bucket(status.percent);
+        let should_publish = match self.publish_gates.get(status.id.as_str()) {
+            Some(gate) => {
+                force
+                    || gate.last_state != status.state
+                    || gate.last_percent_bucket != next_bucket
+                    || now.duration_since(gate.last_published_at).as_millis() >= 1000
+            }
+            None => true,
+        };
+        if !should_publish {
+            return;
+        }
+
+        self.publish_gates.insert(
+            status.id.clone(),
+            TransferPublishGate {
+                last_state: status.state.clone(),
+                last_percent_bucket: next_bucket,
+                last_published_at: now,
+            },
+        );
+
+        publish_remote_sftp_transfer_updated(
+            status.user_id.as_str(),
+            RemoteSftpTransferRealtimePayload {
+                id: status.id.clone(),
+                connection_id: status.connection_id.clone(),
+                direction: status.direction.clone(),
+                state: status.state.clone(),
+                total_bytes: status.total_bytes,
+                transferred_bytes: status.transferred_bytes,
+                percent: status.percent,
+                current_path: status.current_path.clone(),
+                message: status.message.clone(),
+                error: status.error.clone(),
+                created_at: status.created_at.clone(),
+                updated_at: status.updated_at.clone(),
+            },
+        );
+    }
 }
 
 static SFTP_TRANSFER_MANAGER: OnceCell<Arc<SftpTransferManager>> = OnceCell::new();
@@ -174,4 +258,8 @@ pub(super) fn get_sftp_transfer_manager() -> Arc<SftpTransferManager> {
     SFTP_TRANSFER_MANAGER
         .get_or_init(|| Arc::new(SftpTransferManager::new()))
         .clone()
+}
+
+fn percent_bucket(value: Option<f64>) -> Option<i64> {
+    value.map(|current| (current / 2.0).floor() as i64)
 }

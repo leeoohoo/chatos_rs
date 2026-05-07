@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 pub use crate::services::ai_client_common::AiClientCallbacks;
+use crate::services::task_board_refresh_context::TaskBoardRefreshContextStore;
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v3::ai_request_handler::AiRequestHandler;
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
@@ -10,6 +11,9 @@ use crate::services::v3::message_manager::MessageManager;
 
 mod compat;
 mod execution_loop;
+mod execution_loop_guidance;
+mod execution_loop_state;
+mod execution_loop_tool_io;
 mod input_transform;
 mod prev_context;
 mod recovery_policy;
@@ -56,6 +60,7 @@ pub struct AiClient {
     prev_response_id_disabled_sessions: HashSet<String>,
     force_text_content_sessions: HashSet<String>,
     no_system_message_sessions: HashSet<String>,
+    task_board_refresh_context: TaskBoardRefreshContextStore,
 }
 
 impl AiClient {
@@ -74,6 +79,7 @@ impl AiClient {
             prev_response_id_disabled_sessions: HashSet::new(),
             force_text_content_sessions: HashSet::new(),
             no_system_message_sessions: HashSet::new(),
+            task_board_refresh_context: TaskBoardRefreshContextStore::new(),
         }
     }
 
@@ -83,6 +89,27 @@ impl AiClient {
 
     pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
         self.mcp_tool_execute = mcp_tool_execute;
+    }
+
+    pub fn set_task_board_refresh_context(
+        &mut self,
+        session_id: Option<String>,
+        turn_id: Option<String>,
+        contact_system_prompt: Option<String>,
+        builtin_mcp_system_prompt: Option<String>,
+        command_system_prompt: Option<String>,
+    ) {
+        self.task_board_refresh_context.set(
+            session_id,
+            turn_id,
+            contact_system_prompt,
+            builtin_mcp_system_prompt,
+            command_system_prompt,
+        );
+    }
+
+    pub async fn load_runtime_prefixed_input_items(&self) -> Option<Vec<Value>> {
+        self.task_board_refresh_context.load_prefixed_input_items().await
     }
 }
 

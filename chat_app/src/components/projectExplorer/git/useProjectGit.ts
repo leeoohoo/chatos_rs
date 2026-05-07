@@ -1,237 +1,142 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import type {
-  GitActionResult,
   GitBranchesResult,
-  GitBranchInfo,
   GitClientInfo,
-  GitCompareResult,
-  GitFileDiff,
-  GitStatusFile,
   GitStatusResult,
   GitSummary,
 } from '../../../types';
-
-export interface ProjectGitApiClient {
-  getGitClientInfo: () => Promise<any>;
-  getGitSummary: (root: string) => Promise<any>;
-  getGitBranches: (root: string) => Promise<any>;
-  getGitStatus: (root: string) => Promise<any>;
-  compareGitBranch: (root: string, target: string) => Promise<any>;
-  getGitDiff: (data: { root: string; path: string; target?: string; staged?: boolean }) => Promise<any>;
-  fetchGit: (data: { root: string; remote?: string }) => Promise<any>;
-  pullGit: (data: { root: string; mode?: 'ff-only' | 'rebase' | string }) => Promise<any>;
-  pushGit: (data: { root: string; remote?: string; branch?: string; setUpstream?: boolean }) => Promise<any>;
-  checkoutGit: (data: { root: string; branch?: string; remoteBranch?: string; createTracking?: boolean }) => Promise<any>;
-  createGitBranch: (data: { root: string; name: string; startPoint?: string; checkout?: boolean }) => Promise<any>;
-  mergeGit: (data: { root: string; branch: string; mode?: 'default' | 'no-ff' | 'ff-only' | string }) => Promise<any>;
-  stageGitPaths: (data: { root: string; paths: string[] }) => Promise<any>;
-  unstageGitPaths: (data: { root: string; paths: string[] }) => Promise<any>;
-  commitGit: (data: { root: string; message: string; paths?: string[] }) => Promise<any>;
-}
-
-interface UseProjectGitOptions {
-  client: ProjectGitApiClient;
-  projectRoot: string;
-  onRepositoryChanged?: () => Promise<void> | void;
-}
-
-export interface UseProjectGitResult {
-  clientInfo: GitClientInfo | null;
-  summary: GitSummary | null;
-  branches: GitBranchesResult | null;
-  status: GitStatusResult | null;
-  compareResult: GitCompareResult | null;
-  fileDiff: GitFileDiff | null;
-  loadingSummary: boolean;
-  loadingClientInfo: boolean;
-  loadingBranches: boolean;
-  loadingStatus: boolean;
-  loadingCompare: boolean;
-  loadingDiff: boolean;
-  actionLoading: boolean;
-  error: string | null;
-  actionMessage: string | null;
-  refreshClientInfo: () => Promise<void>;
-  refreshSummary: () => Promise<void>;
-  loadDetails: () => Promise<void>;
-  fetchRemote: () => Promise<void>;
-  pullCurrent: () => Promise<void>;
-  pushCurrent: () => Promise<void>;
-  checkoutBranch: (branch: GitBranchInfo) => Promise<void>;
-  mergeBranch: (branch: GitBranchInfo) => Promise<void>;
-  compareBranch: (branch: GitBranchInfo) => Promise<void>;
-  loadFileDiff: (path: string, target?: string, staged?: boolean) => Promise<void>;
-  clearCompare: () => void;
-  clearFileDiff: () => void;
-  createBranch: (name: string, startPoint?: string) => Promise<void>;
-  stageFiles: (paths: string[]) => Promise<void>;
-  unstageFiles: (paths: string[]) => Promise<void>;
-  commitStaged: (message: string) => Promise<boolean>;
-  commitSelected: (message: string, paths: string[]) => Promise<boolean>;
-  clearMessages: () => void;
-}
-
-const toNumber = (value: unknown): number => (
-  typeof value === 'number' && Number.isFinite(value) ? value : 0
-);
-
-const normalizeSummary = (raw: any): GitSummary => {
-  const changes = raw?.changes || {};
-  return {
-    isRepo: Boolean(raw?.is_repo ?? raw?.isRepo),
-    root: raw?.root ?? null,
-    worktreeRoot: raw?.worktree_root ?? raw?.worktreeRoot ?? null,
-    head: raw?.head ?? null,
-    currentBranch: raw?.current_branch ?? raw?.currentBranch ?? null,
-    detached: Boolean(raw?.detached),
-    upstream: raw?.upstream ?? null,
-    ahead: toNumber(raw?.ahead),
-    behind: toNumber(raw?.behind),
-    dirty: Boolean(raw?.dirty),
-    operationState: raw?.operation_state ?? raw?.operationState ?? null,
-    changes: {
-      staged: toNumber(changes?.staged),
-      unstaged: toNumber(changes?.unstaged),
-      untracked: toNumber(changes?.untracked),
-      conflicted: toNumber(changes?.conflicted),
-    },
-  };
-};
-
-const normalizeClientInfo = (raw: any): GitClientInfo => ({
-  available: Boolean(raw?.available),
-  source: String(raw?.source || 'system'),
-  path: String(raw?.path || 'git'),
-  version: raw?.version ?? null,
-  error: raw?.error ?? null,
-  bundledCandidates: Array.isArray(raw?.bundled_candidates)
-    ? raw.bundled_candidates.map(String)
-    : Array.isArray(raw?.bundledCandidates)
-      ? raw.bundledCandidates.map(String)
-      : [],
-});
-
-const normalizeBranch = (raw: any): GitBranchInfo => ({
-  name: String(raw?.name || ''),
-  shortName: raw?.short_name ?? raw?.shortName ?? null,
-  current: Boolean(raw?.current),
-  upstream: raw?.upstream ?? null,
-  remote: raw?.remote ?? null,
-  trackedBy: raw?.tracked_by ?? raw?.trackedBy ?? null,
-  ahead: toNumber(raw?.ahead),
-  behind: toNumber(raw?.behind),
-  lastCommit: raw?.last_commit ?? raw?.lastCommit ?? null,
-  lastCommitSubject: raw?.last_commit_subject ?? raw?.lastCommitSubject ?? null,
-});
-
-const normalizeBranches = (raw: any): GitBranchesResult => ({
-  current: raw?.current ?? null,
-  locals: Array.isArray(raw?.locals) ? raw.locals.map(normalizeBranch).filter((branch: GitBranchInfo) => branch.name) : [],
-  remotes: Array.isArray(raw?.remotes) ? raw.remotes.map(normalizeBranch).filter((branch: GitBranchInfo) => branch.name) : [],
-});
-
-const normalizeStatusFile = (raw: any): GitStatusFile => ({
-  path: String(raw?.path || ''),
-  oldPath: raw?.old_path ?? raw?.oldPath ?? null,
-  status: String(raw?.status || 'modified'),
-  staged: Boolean(raw?.staged),
-  unstaged: Boolean(raw?.unstaged),
-  conflicted: Boolean(raw?.conflicted),
-});
-
-const normalizeStatus = (raw: any): GitStatusResult => ({
-  files: Array.isArray(raw?.files) ? raw.files.map(normalizeStatusFile).filter((file: GitStatusFile) => file.path) : [],
-});
-
-const normalizeCompare = (raw: any): GitCompareResult => ({
-  current: String(raw?.current || ''),
-  target: String(raw?.target || ''),
-  files: Array.isArray(raw?.files)
-    ? raw.files.map((file: any) => ({
-      path: String(file?.path || ''),
-      oldPath: file?.old_path ?? file?.oldPath ?? null,
-      status: String(file?.status || 'modified'),
-    })).filter((file: { path: string }) => file.path)
-    : [],
-  commits: Array.isArray(raw?.commits)
-    ? raw.commits.map((commit: any) => ({
-      side: String(commit?.side || 'unknown'),
-      hash: String(commit?.hash || ''),
-      subject: String(commit?.subject || ''),
-    })).filter((commit: { hash: string }) => commit.hash)
-    : [],
-});
-
-const normalizeFileDiff = (raw: any): GitFileDiff => ({
-  path: String(raw?.path || ''),
-  target: raw?.target ?? null,
-  staged: Boolean(raw?.staged),
-  patch: String(raw?.patch || ''),
-});
-
-const normalizeAction = (raw: any): GitActionResult => ({
-  success: raw?.success !== false,
-  summary: raw?.summary ? normalizeSummary(raw.summary) : null,
-  stdout: raw?.stdout ?? null,
-  stderr: raw?.stderr ?? null,
-});
-
-const actionOutputMessage = (result: GitActionResult, fallback: string): string => (
-  result.stdout || result.stderr || fallback
-);
-
-const actionErrorMessage = (result: GitActionResult, fallback: string): string => (
-  result.stderr || result.stdout || fallback
-);
+import type { GitActionResponse } from '../../../lib/api/client/types';
+import {
+  normalizeGitAction,
+  normalizeGitBranches,
+  normalizeGitClientInfo,
+  normalizeGitStatus,
+  normalizeGitSummary,
+} from '../../../lib/domain/git';
+import { useDialogService } from '../../ui/DialogProvider';
+import {
+  getGitClientInfoInflight,
+  getGitDetailsInflight,
+  getGitSummaryInflight,
+  markGitDetailsCacheStale,
+  markGitSummaryCacheStale,
+  peekGitClientInfoCacheEntry,
+  peekGitDetailsCacheEntry,
+  peekGitSummaryCacheEntry,
+  setGitClientInfoCacheEntry,
+  setGitClientInfoInflight,
+  setGitDetailsCacheEntry,
+  setGitDetailsInflight,
+  setGitSummaryCacheEntry,
+  setGitSummaryInflight,
+} from './cache';
+import {
+  actionErrorMessage,
+  actionOutputMessage,
+} from './projectGitHelpers';
+import type {
+  UseProjectGitOptions,
+  UseProjectGitResult,
+} from './projectGitTypes';
+import { useProjectGitActions } from './useProjectGitActions';
+import { useProjectGitCompare } from './useProjectGitCompare';
+import { useProjectGitLifecycle } from './useProjectGitLifecycle';
 
 export const useProjectGit = ({
   client,
   projectRoot,
+  open = false,
   onRepositoryChanged,
 }: UseProjectGitOptions): UseProjectGitResult => {
-  const [clientInfo, setClientInfo] = useState<GitClientInfo | null>(null);
-  const [summary, setSummary] = useState<GitSummary | null>(null);
-  const [branches, setBranches] = useState<GitBranchesResult | null>(null);
-  const [status, setStatus] = useState<GitStatusResult | null>(null);
-  const [compareResult, setCompareResult] = useState<GitCompareResult | null>(null);
-  const [fileDiff, setFileDiff] = useState<GitFileDiff | null>(null);
+  const { confirm } = useDialogService();
+  const [clientInfo, setClientInfo] = useState<GitClientInfo | null>(
+    () => peekGitClientInfoCacheEntry(client)?.clientInfo || null,
+  );
+  const [summary, setSummary] = useState<GitSummary | null>(
+    () => peekGitSummaryCacheEntry(client, projectRoot)?.summary || null,
+  );
+  const [branches, setBranches] = useState<GitBranchesResult | null>(
+    () => peekGitDetailsCacheEntry(client, projectRoot)?.branches || null,
+  );
+  const [status, setStatus] = useState<GitStatusResult | null>(
+    () => peekGitDetailsCacheEntry(client, projectRoot)?.status || null,
+  );
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingClientInfo, setLoadingClientInfo] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(false);
-  const [loadingCompare, setLoadingCompare] = useState(false);
-  const [loadingDiff, setLoadingDiff] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const compareRequestIdRef = useRef(0);
-  const diffRequestIdRef = useRef(0);
+  const summaryRef = useRef<GitSummary | null>(null);
+  const branchesRef = useRef<GitBranchesResult | null>(null);
+  const statusRef = useRef<GitStatusResult | null>(null);
+  const summaryLoadedRootRef = useRef<string | null>(null);
+  const detailsLoadedRootRef = useRef<string | null>(null);
+  const summaryStaleRef = useRef(true);
+  const detailsStaleRef = useRef(true);
 
   const clearMessages = useCallback(() => {
     setError(null);
     setActionMessage(null);
   }, []);
 
-  const clearCompare = useCallback(() => {
-    compareRequestIdRef.current += 1;
-    diffRequestIdRef.current += 1;
-    setCompareResult(null);
-    setFileDiff(null);
-    setLoadingCompare(false);
-    setLoadingDiff(false);
-  }, []);
+  const hydrateCachedState = useCallback((nextProjectRoot: string) => {
+    setClientInfo(peekGitClientInfoCacheEntry(client)?.clientInfo || null);
+    const cachedSummary = peekGitSummaryCacheEntry(client, nextProjectRoot);
+    setSummary(cachedSummary?.summary || null);
+    summaryRef.current = cachedSummary?.summary || null;
+    summaryLoadedRootRef.current = cachedSummary ? nextProjectRoot : null;
+    summaryStaleRef.current = cachedSummary?.stale ?? true;
 
-  const clearFileDiff = useCallback(() => {
-    diffRequestIdRef.current += 1;
-    setFileDiff(null);
-    setLoadingDiff(false);
-  }, []);
+    const cachedDetails = peekGitDetailsCacheEntry(client, nextProjectRoot);
+    setBranches(cachedDetails?.branches || null);
+    setStatus(cachedDetails?.status || null);
+    branchesRef.current = cachedDetails?.branches || null;
+    statusRef.current = cachedDetails?.status || null;
+    detailsLoadedRootRef.current = cachedDetails ? nextProjectRoot : null;
+    detailsStaleRef.current = cachedDetails?.stale ?? true;
+  }, [client]);
 
   const refreshClientInfo = useCallback(async () => {
+    const cached = peekGitClientInfoCacheEntry(client);
+    if (cached) {
+      setClientInfo(cached.clientInfo);
+    }
+    const existingInflight = getGitClientInfoInflight(client);
+    if (existingInflight) {
+      setLoadingClientInfo(true);
+      try {
+        const resolved = await existingInflight;
+        setClientInfo(resolved);
+      } finally {
+        setLoadingClientInfo(false);
+      }
+      return;
+    }
+
     setLoadingClientInfo(true);
     try {
-      setClientInfo(normalizeClientInfo(await client.getGitClientInfo()));
+      const inflight = client.getGitClientInfo()
+        .then((payload) => normalizeGitClientInfo(payload))
+        .catch((err) => ({
+          available: false,
+          source: 'unknown' as const,
+          path: 'git',
+          version: null,
+          error: err instanceof Error ? err.message : '加载 Git 客户端信息失败',
+          bundledCandidates: [],
+        }))
+        .then((normalized) => {
+          setGitClientInfoCacheEntry(client, normalized);
+          return normalized;
+        })
+        .finally(() => {
+          setGitClientInfoInflight(client, null);
+        });
+      setGitClientInfoInflight(client, inflight);
+      setClientInfo(await inflight);
     } catch (err) {
       setClientInfo({
         available: false,
@@ -246,37 +151,171 @@ export const useProjectGit = ({
     }
   }, [client]);
 
-  const refreshSummary = useCallback(async () => {
+  const markSummaryStale = useCallback(() => {
+    if (projectRoot) {
+      markGitSummaryCacheStale(client, projectRoot);
+    }
+    summaryStaleRef.current = true;
+  }, [client, projectRoot]);
+
+  const markDetailsStale = useCallback(() => {
+    if (projectRoot) {
+      markGitDetailsCacheStale(client, projectRoot);
+    }
+    detailsStaleRef.current = true;
+  }, [client, projectRoot]);
+
+  const refreshSummary = useCallback(async (options?: { force?: boolean }) => {
     if (!projectRoot) {
       setSummary(null);
+      summaryRef.current = null;
+      summaryLoadedRootRef.current = null;
+      summaryStaleRef.current = true;
+      return;
+    }
+    const force = options?.force === true;
+    if (!force) {
+      const cached = peekGitSummaryCacheEntry(client, projectRoot);
+      if (cached?.summary) {
+        setSummary(cached.summary);
+        summaryRef.current = cached.summary;
+        summaryLoadedRootRef.current = projectRoot;
+        summaryStaleRef.current = cached.stale;
+      }
+    }
+    if (!force && !summaryStaleRef.current && summaryLoadedRootRef.current === projectRoot && summaryRef.current) {
+      return;
+    }
+    const existingInflight = getGitSummaryInflight(client, projectRoot);
+    if (existingInflight) {
+      setLoadingSummary(true);
+      setError(null);
+      try {
+        const normalized = await existingInflight;
+        setSummary(normalized);
+        summaryRef.current = normalized;
+        summaryLoadedRootRef.current = projectRoot;
+        summaryStaleRef.current = false;
+      } catch (err) {
+        setSummary(null);
+        summaryRef.current = null;
+        summaryLoadedRootRef.current = null;
+        setError(err instanceof Error ? err.message : '加载 Git 状态失败');
+      } finally {
+        setLoadingSummary(false);
+      }
       return;
     }
     setLoadingSummary(true);
     setError(null);
     try {
-      const raw = await client.getGitSummary(projectRoot);
-      setSummary(normalizeSummary(raw));
+      const inflight = client.getGitSummary(projectRoot)
+        .then((raw) => normalizeGitSummary(raw))
+        .then((normalized) => {
+          setGitSummaryCacheEntry(client, projectRoot, normalized);
+          return normalized;
+        })
+        .finally(() => {
+          setGitSummaryInflight(client, projectRoot, null);
+        });
+      setGitSummaryInflight(client, projectRoot, inflight);
+      const normalized = await inflight;
+      setSummary(normalized);
+      summaryRef.current = normalized;
+      summaryLoadedRootRef.current = projectRoot;
+      summaryStaleRef.current = false;
     } catch (err) {
       setSummary(null);
+      summaryRef.current = null;
+      summaryLoadedRootRef.current = null;
       setError(err instanceof Error ? err.message : '加载 Git 状态失败');
     } finally {
       setLoadingSummary(false);
     }
   }, [client, projectRoot]);
 
-  const loadDetails = useCallback(async () => {
-    if (!projectRoot) return;
+  const loadDetails = useCallback(async (options?: { force?: boolean }) => {
+    if (!projectRoot) {
+      setBranches(null);
+      setStatus(null);
+      branchesRef.current = null;
+      statusRef.current = null;
+      detailsLoadedRootRef.current = null;
+      detailsStaleRef.current = true;
+      return;
+    }
+    const force = options?.force === true;
+    if (!force) {
+      const cached = peekGitDetailsCacheEntry(client, projectRoot);
+      if (cached) {
+        setBranches(cached.branches);
+        setStatus(cached.status);
+        branchesRef.current = cached.branches;
+        statusRef.current = cached.status;
+        detailsLoadedRootRef.current = projectRoot;
+        detailsStaleRef.current = cached.stale;
+      }
+    }
+    if (!force && !detailsStaleRef.current && detailsLoadedRootRef.current === projectRoot && branchesRef.current && statusRef.current) {
+      return;
+    }
+    const existingInflight = getGitDetailsInflight(client, projectRoot);
+    if (existingInflight) {
+      setError(null);
+      setLoadingBranches(true);
+      setLoadingStatus(true);
+      try {
+        const resolved = await existingInflight;
+        setBranches(resolved.branches);
+        setStatus(resolved.status);
+        branchesRef.current = resolved.branches;
+        statusRef.current = resolved.status;
+        detailsLoadedRootRef.current = projectRoot;
+        detailsStaleRef.current = false;
+      } catch (err) {
+        branchesRef.current = null;
+        statusRef.current = null;
+        detailsLoadedRootRef.current = null;
+        setError(err instanceof Error ? err.message : '加载 Git 详情失败');
+      } finally {
+        setLoadingBranches(false);
+        setLoadingStatus(false);
+      }
+      return;
+    }
     setError(null);
     setLoadingBranches(true);
     setLoadingStatus(true);
     try {
-      const [branchesRaw, statusRaw] = await Promise.all([
+      const inflight = Promise.all([
         client.getGitBranches(projectRoot),
         client.getGitStatus(projectRoot),
-      ]);
-      setBranches(normalizeBranches(branchesRaw));
-      setStatus(normalizeStatus(statusRaw));
+      ])
+        .then(([branchesRaw, statusRaw]) => ({
+          branches: normalizeGitBranches(branchesRaw),
+          status: normalizeGitStatus(statusRaw),
+        }))
+        .then((resolved) => {
+          setGitDetailsCacheEntry(client, projectRoot, resolved);
+          return resolved;
+        })
+        .finally(() => {
+          setGitDetailsInflight(client, projectRoot, null);
+        });
+      setGitDetailsInflight(client, projectRoot, inflight);
+      const resolved = await inflight;
+      const normalizedBranches = resolved.branches;
+      const normalizedStatus = resolved.status;
+      setBranches(normalizedBranches);
+      setStatus(normalizedStatus);
+      branchesRef.current = normalizedBranches;
+      statusRef.current = normalizedStatus;
+      detailsLoadedRootRef.current = projectRoot;
+      detailsStaleRef.current = false;
     } catch (err) {
+      branchesRef.current = null;
+      statusRef.current = null;
+      detailsLoadedRootRef.current = null;
       setError(err instanceof Error ? err.message : '加载 Git 详情失败');
     } finally {
       setLoadingBranches(false);
@@ -285,7 +324,7 @@ export const useProjectGit = ({
   }, [client, projectRoot]);
 
   const runAction = useCallback(async (
-    action: () => Promise<any>,
+    action: () => Promise<GitActionResponse>,
     fallbackMessage: string,
     repositoryChanging = false,
   ): Promise<boolean> => {
@@ -293,13 +332,20 @@ export const useProjectGit = ({
     setError(null);
     setActionMessage(null);
     try {
-      const result = normalizeAction(await action());
+      const result = normalizeGitAction(await action());
       if (result.summary) {
         setSummary(result.summary);
+        summaryRef.current = result.summary;
+        summaryLoadedRootRef.current = projectRoot || null;
+        summaryStaleRef.current = false;
+        if (projectRoot) {
+          setGitSummaryCacheEntry(client, projectRoot, result.summary);
+        }
       } else {
-        await refreshSummary();
+        await refreshSummary({ force: true });
       }
-      await loadDetails();
+      detailsStaleRef.current = true;
+      await loadDetails({ force: true });
       if (repositoryChanging) {
         await onRepositoryChanged?.();
       }
@@ -315,221 +361,56 @@ export const useProjectGit = ({
     } finally {
       setActionLoading(false);
     }
-  }, [loadDetails, onRepositoryChanged, refreshSummary]);
+  }, [loadDetails, onRepositoryChanged, projectRoot, refreshSummary]);
 
-  const fetchRemote = useCallback(async () => {
-    await runAction(
-      () => client.fetchGit({ root: projectRoot, remote: 'origin' }),
-      'Fetch 完成',
-    );
-  }, [client, projectRoot, runAction]);
-
-  const pullCurrent = useCallback(async () => {
-    await runAction(
-      () => client.pullGit({ root: projectRoot, mode: 'ff-only' }),
-      'Pull 完成',
-      true,
-    );
-  }, [client, projectRoot, runAction]);
-
-  const pushCurrent = useCallback(async () => {
-    await runAction(
-      () => client.pushGit({ root: projectRoot }),
-      'Push 完成',
-    );
-  }, [client, projectRoot, runAction]);
-
-  const checkoutBranch = useCallback(async (branch: GitBranchInfo) => {
-    if (branch.current) return;
-    if (summary?.dirty) {
-      const confirmed = window.confirm('当前工作区有未提交改动，切换分支可能失败或影响改动。是否继续？');
-      if (!confirmed) return;
-    }
-    const isRemote = Boolean(branch.remote);
-    await runAction(
-      () => client.checkoutGit({
-        root: projectRoot,
-        branch: isRemote ? branch.shortName || branch.name.split('/').slice(1).join('/') : branch.name,
-        remoteBranch: isRemote ? branch.name : undefined,
-        createTracking: isRemote && !branch.trackedBy,
-      }),
-      `已切换到 ${branch.shortName || branch.name}`,
-      true,
-    );
-  }, [client, projectRoot, runAction, summary?.dirty]);
-
-  const mergeBranch = useCallback(async (branch: GitBranchInfo) => {
-    if (branch.current) return;
-    const target = branch.name.trim();
-    if (!target) return;
-    if (summary?.operationState) {
-      setError(`当前处于 ${summary.operationState} 状态，请先处理完再 Merge`);
-      return;
-    }
-    if (summary?.detached) {
-      setError('当前是 detached HEAD，无法从界面执行 Merge');
-      return;
-    }
-    const current = summary?.currentBranch || 'HEAD';
-    const targetLabel = branch.shortName || branch.name;
-    const dirtyWarning = summary?.dirty
-      ? '\n\n当前工作区有未提交改动，Merge 可能失败或产生冲突。建议先提交或暂存。是否继续？'
-      : '';
-    const confirmed = window.confirm(`确认将 ${targetLabel} 合并到当前分支 ${current} 吗？${dirtyWarning}`);
-    if (!confirmed) return;
-    await runAction(
-      () => client.mergeGit({ root: projectRoot, branch: target, mode: 'default' }),
-      `已将 ${targetLabel} 合并到 ${current}`,
-      true,
-    );
-  }, [
+  const {
+    compareResult,
+    fileDiff,
+    loadingCompare,
+    loadingDiff,
+    clearCompare,
+    clearFileDiff,
+    compareBranch,
+    loadFileDiff,
+  } = useProjectGitCompare({
     client,
     projectRoot,
+    setError,
+  });
+
+  const {
+    fetchRemote,
+    pullCurrent,
+    pushCurrent,
+    checkoutBranch,
+    mergeBranch,
+    createBranch,
+    stageFiles,
+    unstageFiles,
+    commitStaged,
+    commitSelected,
+  } = useProjectGitActions({
+    client,
+    projectRoot,
+    summary,
+    confirm,
     runAction,
-    summary?.currentBranch,
-    summary?.detached,
-    summary?.dirty,
-    summary?.operationState,
-  ]);
+    setError,
+  });
 
-  const createBranch = useCallback(async (name: string, startPoint?: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError('分支名不能为空');
-      return;
-    }
-    await runAction(
-      () => client.createGitBranch({
-        root: projectRoot,
-        name: trimmed,
-        startPoint,
-        checkout: true,
-      }),
-      `已创建并切换到 ${trimmed}`,
-      true,
-    );
-  }, [client, projectRoot, runAction]);
-
-  const stageFiles = useCallback(async (paths: string[]) => {
-    const validPaths = paths.map((path) => path.trim()).filter(Boolean);
-    if (validPaths.length === 0) {
-      setError('请选择要 Stage 的文件');
-      return;
-    }
-    await runAction(
-      () => client.stageGitPaths({ root: projectRoot, paths: validPaths }),
-      'Stage 完成',
-    );
-  }, [client, projectRoot, runAction]);
-
-  const unstageFiles = useCallback(async (paths: string[]) => {
-    const validPaths = paths.map((path) => path.trim()).filter(Boolean);
-    if (validPaths.length === 0) {
-      setError('请选择要 Unstage 的文件');
-      return;
-    }
-    await runAction(
-      () => client.unstageGitPaths({ root: projectRoot, paths: validPaths }),
-      'Unstage 完成',
-    );
-  }, [client, projectRoot, runAction]);
-
-  const commitStaged = useCallback(async (message: string) => {
-    const trimmed = message.trim();
-    if (!trimmed) {
-      setError('Commit message 不能为空');
-      return false;
-    }
-    return runAction(
-      () => client.commitGit({ root: projectRoot, message: trimmed }),
-      'Commit staged 完成',
-      true,
-    );
-  }, [client, projectRoot, runAction]);
-
-  const commitSelected = useCallback(async (message: string, paths: string[]) => {
-    const trimmed = message.trim();
-    if (!trimmed) {
-      setError('Commit message 不能为空');
-      return false;
-    }
-    if (paths.length === 0) {
-      setError('请至少选择一个文件');
-      return false;
-    }
-    return runAction(
-      () => client.commitGit({ root: projectRoot, message: trimmed, paths }),
-      'Commit 完成',
-      true,
-    );
-  }, [client, projectRoot, runAction]);
-
-  useEffect(() => {
-    setBranches(null);
-    setStatus(null);
-    clearCompare();
-    setActionMessage(null);
-    void refreshClientInfo();
-    void refreshSummary();
-  }, [clearCompare, refreshClientInfo, refreshSummary]);
-
-  const compareBranch = useCallback(async (branch: GitBranchInfo) => {
-    const target = branch.name;
-    if (!target) return;
-    const requestId = compareRequestIdRef.current + 1;
-    compareRequestIdRef.current = requestId;
-    setLoadingCompare(true);
-    setError(null);
-    setFileDiff(null);
-    try {
-      const raw = await client.compareGitBranch(projectRoot, target);
-      if (compareRequestIdRef.current !== requestId) return;
-      setCompareResult(normalizeCompare(raw));
-    } catch (err) {
-      if (compareRequestIdRef.current !== requestId) return;
-      setCompareResult(null);
-      setError(err instanceof Error ? err.message : '分支对比失败');
-    } finally {
-      if (compareRequestIdRef.current === requestId) {
-        setLoadingCompare(false);
-      }
-    }
-  }, [client, projectRoot]);
-
-  const loadFileDiff = useCallback(async (path: string, target?: string, staged?: boolean) => {
-    if (!path) return;
-    const requestId = diffRequestIdRef.current + 1;
-    diffRequestIdRef.current = requestId;
-    setLoadingDiff(true);
-    setError(null);
-    try {
-      const raw = await client.getGitDiff({ root: projectRoot, path, target, staged });
-      if (diffRequestIdRef.current !== requestId) return;
-      setFileDiff(normalizeFileDiff(raw));
-    } catch (err) {
-      if (diffRequestIdRef.current !== requestId) return;
-      setFileDiff(null);
-      setError(err instanceof Error ? err.message : '加载 diff 失败');
-    } finally {
-      if (diffRequestIdRef.current === requestId) {
-        setLoadingDiff(false);
-      }
-    }
-  }, [client, projectRoot]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshSummary();
-    }, 15000);
-    const handleFocus = () => {
-      void refreshSummary();
-    };
-    window.addEventListener('focus', handleFocus);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [refreshSummary]);
+  useProjectGitLifecycle({
+    open,
+    clearCompare,
+    setBranches,
+    setStatus,
+    setActionMessage,
+    hydrateCachedState,
+    projectRoot,
+    refreshClientInfo,
+    refreshSummary,
+    markSummaryStale,
+    markDetailsStale,
+  });
 
   return useMemo(() => ({
     clientInfo,
@@ -550,6 +431,8 @@ export const useProjectGit = ({
     refreshClientInfo,
     refreshSummary,
     loadDetails,
+    markSummaryStale,
+    markDetailsStale,
     fetchRemote,
     pullCurrent,
     pushCurrent,
@@ -591,6 +474,8 @@ export const useProjectGit = ({
     loadingDiff,
     loadingStatus,
     loadingSummary,
+    markDetailsStale,
+    markSummaryStale,
     pullCurrent,
     pushCurrent,
     refreshClientInfo,

@@ -37,6 +37,8 @@ MAIN_BACKEND_LOG_FILE="$RUNTIME_DIR/backend.log"
 MAIN_FRONTEND_LOG_FILE="$RUNTIME_DIR/frontend.log"
 MEMORY_BACKEND_LOG_FILE="$RUNTIME_DIR/memory_backend.log"
 MEMORY_FRONTEND_LOG_FILE="$RUNTIME_DIR/memory_frontend.log"
+MAIN_BACKEND_BINARY="$ROOT_DIR/target-shared/debug/chat_app_server_rs"
+MEMORY_BACKEND_BINARY="$ROOT_DIR/target-shared/debug/memory_server"
 LEGACY_MAIN_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/backend.pid"
 LEGACY_MAIN_FRONTEND_PID_FILE="$LEGACY_RUNTIME_DIR/frontend.pid"
 LEGACY_MEMORY_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/memory_backend.pid"
@@ -166,6 +168,20 @@ ensure_port_available() {
   fi
 }
 
+launch_service() {
+  local name="$1"
+  local port="$2"
+  local pid_file="$3"
+  local log_file="$4"
+  local command="$5"
+
+  ensure_port_available "$name" "$port" || return 1
+  echo "[INFO] 启动 $name..."
+  : >"$log_file"
+  nohup bash -lc "$command" >"$log_file" 2>&1 &
+  echo $! >"$pid_file"
+}
+
 prepare() {
   need_cmd bash
   need_cmd npm
@@ -195,31 +211,39 @@ prepare() {
 }
 
 start_main_backend() {
-  ensure_port_available "原项目 backend" "$MAIN_BACKEND_PORT" || return 1
-  echo "[INFO] 启动原项目 backend..."
-  nohup bash -lc "cd \"$MAIN_BACKEND_DIR\" && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" cargo run --bin chat_app_server_rs" >"$MAIN_BACKEND_LOG_FILE" 2>&1 &
-  echo $! >"$MAIN_BACKEND_PID_FILE"
+  launch_service \
+    "原项目 backend" \
+    "$MAIN_BACKEND_PORT" \
+    "$MAIN_BACKEND_PID_FILE" \
+    "$MAIN_BACKEND_LOG_FILE" \
+    "cd \"$MAIN_BACKEND_DIR\" && cargo build --bin chat_app_server_rs && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" exec \"$MAIN_BACKEND_BINARY\""
 }
 
 start_main_frontend() {
-  ensure_port_available "原项目 frontend" "$MAIN_FRONTEND_PORT" || return 1
-  echo "[INFO] 启动原项目 frontend..."
-  nohup bash -lc "cd \"$MAIN_FRONTEND_DIR\" && npm run dev -- --host 0.0.0.0 --port \"$MAIN_FRONTEND_PORT\"" >"$MAIN_FRONTEND_LOG_FILE" 2>&1 &
-  echo $! >"$MAIN_FRONTEND_PID_FILE"
+  launch_service \
+    "原项目 frontend" \
+    "$MAIN_FRONTEND_PORT" \
+    "$MAIN_FRONTEND_PID_FILE" \
+    "$MAIN_FRONTEND_LOG_FILE" \
+    "cd \"$MAIN_FRONTEND_DIR\" && exec npm run dev -- --host 0.0.0.0 --port \"$MAIN_FRONTEND_PORT\""
 }
 
 start_memory_backend() {
-  ensure_port_available "memory backend" "$MEMORY_BACKEND_PORT" || return 1
-  echo "[INFO] 启动 memory backend..."
-  nohup bash -lc "cd \"$MEMORY_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo run --bin memory_server" >"$MEMORY_BACKEND_LOG_FILE" 2>&1 &
-  echo $! >"$MEMORY_BACKEND_PID_FILE"
+  launch_service \
+    "memory backend" \
+    "$MEMORY_BACKEND_PORT" \
+    "$MEMORY_BACKEND_PID_FILE" \
+    "$MEMORY_BACKEND_LOG_FILE" \
+    "cd \"$MEMORY_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo build --bin memory_server && exec \"$MEMORY_BACKEND_BINARY\""
 }
 
 start_memory_frontend() {
-  ensure_port_available "memory frontend" "$MEMORY_FRONTEND_PORT" || return 1
-  echo "[INFO] 启动 memory frontend..."
-  nohup bash -lc "cd \"$MEMORY_FRONTEND_DIR\" && npm run dev -- --host \"$MEMORY_FRONTEND_HOST\" --port \"$MEMORY_FRONTEND_PORT\"" >"$MEMORY_FRONTEND_LOG_FILE" 2>&1 &
-  echo $! >"$MEMORY_FRONTEND_PID_FILE"
+  launch_service \
+    "memory frontend" \
+    "$MEMORY_FRONTEND_PORT" \
+    "$MEMORY_FRONTEND_PID_FILE" \
+    "$MEMORY_FRONTEND_LOG_FILE" \
+    "cd \"$MEMORY_FRONTEND_DIR\" && exec npm run dev -- --host \"$MEMORY_FRONTEND_HOST\" --port \"$MEMORY_FRONTEND_PORT\""
 }
 
 check_alive() {
@@ -264,6 +288,28 @@ wait_http_ready() {
   done
 }
 
+wait_port_released() {
+  local name="$1"
+  local port="$2"
+  local timeout_sec="${3:-15}"
+
+  local start_ts now_ts elapsed
+  start_ts="$(date +%s)"
+
+  while is_port_listening "$port"; do
+    now_ts="$(date +%s)"
+    elapsed="$((now_ts - start_ts))"
+    if (( elapsed >= timeout_sec )); then
+      echo "[ERROR] $name 端口未在预期时间内释放: $port"
+      if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN || true
+      fi
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 do_stop() {
   stop_from_pid_file "原项目 backend" "$MAIN_BACKEND_PID_FILE"
   stop_from_pid_file "原项目 frontend" "$MAIN_FRONTEND_PID_FILE"
@@ -296,9 +342,22 @@ do_stop() {
     stop_project_owned_port_processes "memory backend" "$MEMORY_BACKEND_PORT"
     stop_project_owned_port_processes "memory frontend" "$MEMORY_FRONTEND_PORT"
   fi
+
+  wait_port_released "原项目 backend" "$MAIN_BACKEND_PORT" || return 1
+  if [[ "$LEGACY_MAIN_BACKEND_PORT" != "$MAIN_BACKEND_PORT" ]]; then
+    wait_port_released "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT" || return 1
+  fi
+  wait_port_released "原项目 frontend" "$MAIN_FRONTEND_PORT" || return 1
+  wait_port_released "memory backend" "$MEMORY_BACKEND_PORT" || return 1
+  wait_port_released "memory frontend" "$MEMORY_FRONTEND_PORT" || return 1
 }
 
 run_start_sequence() {
+  local backend_timeout="${MAIN_BACKEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-120}}"
+  local frontend_timeout="${MAIN_FRONTEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}}"
+  local memory_backend_timeout="${MEMORY_BACKEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-90}}"
+  local memory_frontend_timeout="${MEMORY_FRONTEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}}"
+
   start_main_backend &&
     start_main_frontend &&
     start_memory_backend &&
@@ -308,10 +367,10 @@ run_start_sequence() {
     check_alive "原项目 frontend" "$MAIN_FRONTEND_PID_FILE" "$MAIN_FRONTEND_LOG_FILE" &&
     check_alive "memory backend" "$MEMORY_BACKEND_PID_FILE" "$MEMORY_BACKEND_LOG_FILE" &&
     check_alive "memory frontend" "$MEMORY_FRONTEND_PID_FILE" "$MEMORY_FRONTEND_LOG_FILE" &&
-    wait_http_ready "原项目 backend" "http://127.0.0.1:$MAIN_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC" &&
-    wait_http_ready "原项目 frontend" "http://127.0.0.1:$MAIN_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC" &&
-    wait_http_ready "memory backend" "http://127.0.0.1:$MEMORY_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC" &&
-    wait_http_ready "memory frontend" "http://127.0.0.1:$MEMORY_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
+    wait_http_ready "原项目 backend" "http://127.0.0.1:$MAIN_BACKEND_PORT/health" "$backend_timeout" &&
+    wait_http_ready "原项目 frontend" "http://127.0.0.1:$MAIN_FRONTEND_PORT" "$frontend_timeout" &&
+    wait_http_ready "memory backend" "http://127.0.0.1:$MEMORY_BACKEND_PORT/health" "$memory_backend_timeout" &&
+    wait_http_ready "memory frontend" "http://127.0.0.1:$MEMORY_FRONTEND_PORT" "$memory_frontend_timeout"
 }
 
 print_runtime_info() {
@@ -356,7 +415,6 @@ prepare
 
 case "$CMD" in
   restart|start)
-    STARTUP_HEALTHCHECK_TIMEOUT_SEC="${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}"
     do_stop
     if run_start_sequence; then
       print_runtime_info

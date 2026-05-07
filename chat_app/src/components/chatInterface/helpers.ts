@@ -1,5 +1,14 @@
 import type { AiModelConfig, Message } from '../../types';
-import type { UiPromptChoice, UiPromptPanelState } from '../../lib/store/types';
+import type {
+  TaskReviewDraft,
+  TaskReviewPanelState,
+  UiPromptChoice,
+  UiPromptPanelState,
+} from '../../lib/store/types';
+import type {
+  RealtimeTaskBoardPayloadWrapper,
+  RealtimeUiPromptPayloadWrapper,
+} from '../../lib/realtime/types';
 import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from '../TaskWorkbar';
 import type { UiPromptHistoryItem } from './types';
 
@@ -20,6 +29,14 @@ interface UiPromptRecordLike {
   timeout_ms?: number;
   created_at?: string;
   updated_at?: string;
+}
+
+interface TaskReviewRecordLike {
+  review_id?: string;
+  conversation_id?: string;
+  conversation_turn_id?: string;
+  draft_tasks?: unknown[];
+  timeout_ms?: number;
 }
 
 interface ToolCallLike {
@@ -83,6 +100,203 @@ export const toUiPromptPanelFromRecord = (record: unknown): UiPromptPanelState |
     message: typeof source?.message === 'string' ? source.message : '',
     allowCancel: source?.allow_cancel !== false,
     timeoutMs: typeof source?.timeout_ms === 'number' ? source.timeout_ms : undefined,
+    payload: { fields, choice },
+    submitting: false,
+    error: null,
+  };
+};
+
+export const syncUiPromptPanelsSnapshot = ({
+  sessionId,
+  panels,
+  existingPanels,
+  upsertUiPromptPanel,
+  removeUiPromptPanel,
+}: {
+  sessionId: string;
+  panels: UiPromptPanelState[];
+  existingPanels?: UiPromptPanelState[] | null;
+  upsertUiPromptPanel: (panel: UiPromptPanelState) => void;
+  removeUiPromptPanel: (promptId: string, sessionId?: string) => void;
+}): void => {
+  if (!sessionId) {
+    return;
+  }
+  const nextPromptIds = new Set(
+    (panels || [])
+      .map((panel) => String(panel?.promptId || '').trim())
+      .filter((promptId) => promptId.length > 0),
+  );
+
+  (Array.isArray(existingPanels) ? existingPanels : []).forEach((panel) => {
+    const promptId = String(panel?.promptId || '').trim();
+    if (!promptId || nextPromptIds.has(promptId)) {
+      return;
+    }
+    removeUiPromptPanel(promptId, sessionId);
+  });
+
+  (panels || []).forEach((panel) => {
+    upsertUiPromptPanel(panel);
+  });
+};
+
+export const syncTaskReviewPanelsSnapshot = ({
+  sessionId,
+  panels,
+  existingPanels,
+  upsertTaskReviewPanel,
+  removeTaskReviewPanel,
+}: {
+  sessionId: string;
+  panels: TaskReviewPanelState[];
+  existingPanels?: TaskReviewPanelState[] | null;
+  upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;
+  removeTaskReviewPanel: (reviewId: string, sessionId?: string) => void;
+}): void => {
+  if (!sessionId) {
+    return;
+  }
+  const nextReviewIds = new Set(
+    (panels || [])
+      .map((panel) => String(panel?.reviewId || '').trim())
+      .filter((reviewId) => reviewId.length > 0),
+  );
+
+  (Array.isArray(existingPanels) ? existingPanels : []).forEach((panel) => {
+    const reviewId = String(panel?.reviewId || '').trim();
+    if (!reviewId || nextReviewIds.has(reviewId)) {
+      return;
+    }
+    removeTaskReviewPanel(reviewId, sessionId);
+  });
+
+  (panels || []).forEach((panel) => {
+    upsertTaskReviewPanel(panel);
+  });
+};
+
+const toTaskReviewDraft = (raw: unknown, index: number): TaskReviewDraft => {
+  const source = asRecord(raw) || {};
+  const title = typeof source.title === 'string' ? source.title.trim() : '';
+  const details = typeof (source.details ?? source.description) === 'string'
+    ? String(source.details ?? source.description).trim()
+    : '';
+  const dueAt = typeof (source.due_at ?? source.dueAt) === 'string'
+    ? String(source.due_at ?? source.dueAt).trim()
+    : '';
+
+  return {
+    id: typeof source.id === 'string' && source.id.trim()
+      ? source.id.trim()
+      : `draft_${index + 1}`,
+    title,
+    details,
+    priority: (() => {
+      const normalized = String(source.priority ?? '').trim().toLowerCase();
+      if (normalized === 'high') return 'high';
+      if (normalized === 'low') return 'low';
+      return 'medium';
+    })(),
+    status: (() => {
+      const normalized = String(source.status ?? '').trim().toLowerCase();
+      if (normalized === 'doing') return 'doing';
+      if (normalized === 'blocked') return 'blocked';
+      if (normalized === 'done') return 'done';
+      return 'todo';
+    })(),
+    tags: Array.isArray(source.tags)
+      ? source.tags
+          .map((tag) => String(tag).trim())
+          .filter((tag: string) => tag.length > 0)
+      : [],
+    dueAt: dueAt || null,
+  };
+};
+
+export const toTaskReviewPanelFromRealtimePayload = (
+  payload: RealtimeTaskBoardPayloadWrapper,
+): TaskReviewPanelState | null => {
+  const reviewId = typeof payload.review_id === 'string' ? payload.review_id.trim() : '';
+  const sessionId = typeof payload.conversation_id === 'string'
+    ? payload.conversation_id.trim()
+    : '';
+  const conversationTurnId = typeof payload.conversation_turn_id === 'string'
+    ? payload.conversation_turn_id.trim()
+    : '';
+  if (!reviewId || !sessionId || !conversationTurnId) {
+    return null;
+  }
+  const rawDraftTasks = Array.isArray(payload.draft_tasks) ? payload.draft_tasks : [];
+  return {
+    reviewId,
+    sessionId,
+    conversationTurnId,
+    drafts: rawDraftTasks.map((task, index) => toTaskReviewDraft(task, index)),
+    timeoutMs: typeof payload.timeout_ms === 'number' ? payload.timeout_ms : undefined,
+    submitting: false,
+    error: null,
+  };
+};
+
+export const toTaskReviewPanelFromRecord = (
+  record: unknown,
+): TaskReviewPanelState | null => {
+  const source = asRecord(record) as TaskReviewRecordLike;
+  const reviewId = typeof source.review_id === 'string' ? source.review_id.trim() : '';
+  const sessionId = typeof source.conversation_id === 'string'
+    ? source.conversation_id.trim()
+    : '';
+  const conversationTurnId = typeof source.conversation_turn_id === 'string'
+    ? source.conversation_turn_id.trim()
+    : '';
+  if (!reviewId || !sessionId || !conversationTurnId) {
+    return null;
+  }
+  const rawDraftTasks = Array.isArray(source.draft_tasks) ? source.draft_tasks : [];
+  return {
+    reviewId,
+    sessionId,
+    conversationTurnId,
+    drafts: rawDraftTasks.map((task, index) => toTaskReviewDraft(task, index)),
+    timeoutMs: typeof source.timeout_ms === 'number' ? source.timeout_ms : undefined,
+    submitting: false,
+    error: null,
+  };
+};
+
+export const toUiPromptPanelFromRealtimePayload = (
+  payload: RealtimeUiPromptPayloadWrapper,
+): UiPromptPanelState | null => {
+  const promptId = typeof payload.prompt_id === 'string' ? payload.prompt_id.trim() : '';
+  const sessionId = typeof payload.conversation_id === 'string'
+    ? payload.conversation_id.trim()
+    : '';
+  const conversationTurnId = typeof payload.conversation_turn_id === 'string'
+    ? payload.conversation_turn_id.trim()
+    : '';
+  if (!promptId || !sessionId || !conversationTurnId) {
+    return null;
+  }
+
+  const kindRaw = String(payload.prompt_kind || 'kv').trim().toLowerCase();
+  const kind = kindRaw === 'choice' ? 'choice' : (kindRaw === 'mixed' ? 'mixed' : 'kv');
+  const shape = asRecord(payload.payload);
+  const fields = Array.isArray(shape.fields) ? shape.fields : [];
+  const choice = shape.choice && typeof shape.choice === 'object' && Array.isArray((shape.choice as UiPromptChoice).options)
+    ? shape.choice as UiPromptChoice
+    : undefined;
+
+  return {
+    promptId,
+    sessionId,
+    conversationTurnId,
+    toolCallId: typeof payload.tool_call_id === 'string' ? payload.tool_call_id : null,
+    kind,
+    title: typeof payload.title === 'string' ? payload.title : '',
+    message: typeof payload.message === 'string' ? payload.message : '',
+    allowCancel: payload.allow_cancel !== false,
+    timeoutMs: typeof payload.timeout_ms === 'number' ? payload.timeout_ms : undefined,
     payload: { fields, choice },
     submitting: false,
     error: null,
@@ -341,6 +555,14 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
   const conversationTurnId = String(record.conversation_turn_id ?? record.conversationTurnId ?? '').trim();
   const createdAt = String(record.created_at ?? record.createdAt ?? '');
   const dueAtRaw = record.due_at ?? record.dueAt;
+  const outcomeItemsCandidate = record.outcome_items ?? record.outcomeItems;
+  const outcomeItemsRaw: unknown[] = Array.isArray(outcomeItemsCandidate)
+    ? outcomeItemsCandidate
+    : [];
+  const blockerNeedsCandidate = record.blocker_needs ?? record.blockerNeeds;
+  const blockerNeedsRaw: unknown[] = Array.isArray(blockerNeedsCandidate)
+    ? blockerNeedsCandidate
+    : [];
 
   return {
     id: String(record.id || '').trim(),
@@ -356,6 +578,34 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
           .map((tag) => String(tag).trim())
           .filter((tag: string) => tag.length > 0)
       : [],
+    outcomeSummary: String(record.outcome_summary ?? record.outcomeSummary ?? ''),
+    outcomeItems: outcomeItemsRaw
+      .map((item: unknown) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item: Record<string, unknown>) => ({
+        kind: String(item.kind || 'finding').trim() || 'finding',
+        text: String(item.text || '').trim(),
+        importance: (() => {
+          const raw = String(item.importance || '').trim().toLowerCase();
+          if (raw === 'high' || raw === 'medium' || raw === 'low') {
+            return raw as 'high' | 'medium' | 'low';
+          }
+          return undefined;
+        })(),
+        refs: Array.isArray(item.refs)
+          ? item.refs.map((ref: unknown) => String(ref).trim()).filter((ref: string) => ref.length > 0)
+          : [],
+      }))
+      .filter((item: { text: string }) => item.text.length > 0),
+    resumeHint: String(record.resume_hint ?? record.resumeHint ?? ''),
+    blockerReason: String(record.blocker_reason ?? record.blockerReason ?? ''),
+    blockerNeeds: blockerNeedsRaw
+          .map((item: unknown) => String(item).trim())
+          .filter((item: string) => item.length > 0)
+      ,
+    blockerKind: String(record.blocker_kind ?? record.blockerKind ?? ''),
+    completedAt: record.completed_at ?? record.completedAt ? String(record.completed_at ?? record.completedAt) : null,
+    lastOutcomeAt: record.last_outcome_at ?? record.lastOutcomeAt ? String(record.last_outcome_at ?? record.lastOutcomeAt) : null,
   };
 };
 
@@ -381,11 +631,11 @@ export const selectLatestTurnTasks = (tasks: TaskWorkbarItem[]): TaskWorkbarItem
     return [];
   }
 
-  const latestTaskWithTurn = tasks.find((task) => task.conversationTurnId.trim().length > 0);
-  if (!latestTaskWithTurn) {
+  const earliestTaskWithTurn = tasks.find((task) => task.conversationTurnId.trim().length > 0);
+  if (!earliestTaskWithTurn) {
     return tasks.slice(0, 8);
   }
 
-  const latestTurnId = latestTaskWithTurn.conversationTurnId.trim();
-  return tasks.filter((task) => task.conversationTurnId.trim() === latestTurnId);
+  const currentTurnId = earliestTaskWithTurn.conversationTurnId.trim();
+  return tasks.filter((task) => task.conversationTurnId.trim() === currentTurnId);
 };

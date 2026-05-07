@@ -7,6 +7,18 @@ pub const REVIEW_TIMEOUT_ERR: &str = "review_timeout";
 pub const REVIEW_NOT_FOUND_ERR: &str = "review_not_found";
 pub const TASK_NOT_FOUND_ERR: &str = "task_not_found";
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TaskOutcomeItem {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub importance: Option<String>,
+    #[serde(default)]
+    pub refs: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDraft {
     pub title: String,
@@ -20,6 +32,18 @@ pub struct TaskDraft {
     pub tags: Vec<String>,
     #[serde(default)]
     pub due_at: Option<String>,
+    #[serde(default)]
+    pub outcome_summary: String,
+    #[serde(default)]
+    pub outcome_items: Vec<TaskOutcomeItem>,
+    #[serde(default)]
+    pub resume_hint: String,
+    #[serde(default)]
+    pub blocker_reason: String,
+    #[serde(default)]
+    pub blocker_needs: Vec<String>,
+    #[serde(default)]
+    pub blocker_kind: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -36,6 +60,22 @@ pub struct TaskUpdatePatch {
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub due_at: Option<Option<String>>,
+    #[serde(default)]
+    pub outcome_summary: Option<String>,
+    #[serde(default)]
+    pub outcome_items: Option<Vec<TaskOutcomeItem>>,
+    #[serde(default)]
+    pub resume_hint: Option<String>,
+    #[serde(default)]
+    pub blocker_reason: Option<String>,
+    #[serde(default)]
+    pub blocker_needs: Option<Vec<String>>,
+    #[serde(default)]
+    pub blocker_kind: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<Option<String>>,
+    #[serde(default)]
+    pub last_outcome_at: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +90,14 @@ pub struct TaskRecord {
     pub status: String,
     pub tags: Vec<String>,
     pub due_at: Option<String>,
+    pub outcome_summary: String,
+    pub outcome_items: Vec<TaskOutcomeItem>,
+    pub resume_hint: String,
+    pub blocker_reason: String,
+    pub blocker_needs: Vec<String>,
+    pub blocker_kind: String,
+    pub completed_at: Option<String>,
+    pub last_outcome_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -95,6 +143,14 @@ impl TaskUpdatePatch {
             && self.status.is_none()
             && self.tags.is_none()
             && self.due_at.is_none()
+            && self.outcome_summary.is_none()
+            && self.outcome_items.is_none()
+            && self.resume_hint.is_none()
+            && self.blocker_reason.is_none()
+            && self.blocker_needs.is_none()
+            && self.blocker_kind.is_none()
+            && self.completed_at.is_none()
+            && self.last_outcome_at.is_none()
     }
 
     pub(super) fn normalized(mut self) -> Result<Self, String> {
@@ -130,6 +186,46 @@ impl TaskUpdatePatch {
             self.due_at = Some(normalized);
         }
 
+        if let Some(outcome_summary) = self.outcome_summary.take() {
+            self.outcome_summary = Some(outcome_summary.trim().to_string());
+        }
+
+        if let Some(outcome_items) = self.outcome_items.take() {
+            self.outcome_items = Some(normalize_outcome_items(outcome_items));
+        }
+
+        if let Some(resume_hint) = self.resume_hint.take() {
+            self.resume_hint = Some(resume_hint.trim().to_string());
+        }
+
+        if let Some(blocker_reason) = self.blocker_reason.take() {
+            self.blocker_reason = Some(blocker_reason.trim().to_string());
+        }
+
+        if let Some(blocker_needs) = self.blocker_needs.take() {
+            self.blocker_needs = Some(normalize_string_list(blocker_needs));
+        }
+
+        if let Some(blocker_kind) = self.blocker_kind.take() {
+            self.blocker_kind = Some(normalize_blocker_kind(blocker_kind.as_str()));
+        }
+
+        if let Some(completed_at) = self.completed_at.take() {
+            let normalized = completed_at
+                .as_deref()
+                .and_then(trimmed_non_empty)
+                .map(|value| value.to_string());
+            self.completed_at = Some(normalized);
+        }
+
+        if let Some(last_outcome_at) = self.last_outcome_at.take() {
+            let normalized = last_outcome_at
+                .as_deref()
+                .and_then(trimmed_non_empty)
+                .map(|value| value.to_string());
+            self.last_outcome_at = Some(normalized);
+        }
+
         Ok(self)
     }
 }
@@ -140,4 +236,73 @@ fn default_priority() -> String {
 
 fn default_status() -> String {
     "todo".to_string()
+}
+
+fn normalize_outcome_items(items: Vec<TaskOutcomeItem>) -> Vec<TaskOutcomeItem> {
+    let mut out = Vec::new();
+    for item in items {
+        let kind = item.kind.trim().to_ascii_lowercase();
+        let text = item.text.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        let importance = item
+            .importance
+            .as_deref()
+            .and_then(trimmed_non_empty)
+            .map(|value| normalize_importance(value));
+        let refs = normalize_string_list(item.refs);
+        out.push(TaskOutcomeItem {
+            kind: normalize_outcome_kind(kind.as_str()),
+            text,
+            importance,
+            refs,
+        });
+    }
+    out
+}
+
+fn normalize_outcome_kind(value: &str) -> String {
+    match value {
+        "decision" => "decision".to_string(),
+        "artifact" => "artifact".to_string(),
+        "risk" => "risk".to_string(),
+        "handoff" => "handoff".to_string(),
+        _ => "finding".to_string(),
+    }
+}
+
+fn normalize_importance(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "high" => "high".to_string(),
+        "low" => "low".to_string(),
+        _ => "medium".to_string(),
+    }
+}
+
+fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if out.iter().any(|item: &String| item == trimmed) {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    out
+}
+
+fn normalize_blocker_kind(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "external_dependency" => "external_dependency".to_string(),
+        "permission" => "permission".to_string(),
+        "missing_information" => "missing_information".to_string(),
+        "design_decision" => "design_decision".to_string(),
+        "environment_failure" => "environment_failure".to_string(),
+        "upstream_bug" => "upstream_bug".to_string(),
+        _ => "unknown".to_string(),
+    }
 }

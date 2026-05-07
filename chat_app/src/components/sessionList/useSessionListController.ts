@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import {
   useChatApiClientFromContext,
   useOptionalChatStoreContext,
 } from '../../lib/store/ChatStoreContext';
 import { useChatStore } from '../../lib/store';
+import { useDialogService } from '../ui/DialogProvider';
 import {
   useContactSessionCreator,
 } from './useContactSessionCreator';
+import { useTerminalListRealtime } from '../../lib/realtime/useTerminalListRealtime';
 import {
   useContactSessionListState,
 } from './useContactSessionListState';
@@ -22,7 +23,20 @@ import { useSessionListDeleteActions } from './useSessionListDeleteActions';
 import { useSessionListActions } from './useSessionListActions';
 import { useSessionListStoreState } from './useSessionListStoreState';
 import { useRemoteConnectionForm } from './useRemoteConnectionForm';
+import { useContactsRealtime } from '../../lib/realtime/useContactsRealtime';
+import { useProjectsRealtime } from '../../lib/realtime/useProjectsRealtime';
+import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnectionsRealtime';
+import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
 import type { ContactItem } from './types';
+
+const CONTACT_CREATE_LIKE_REASONS = new Set(['contact_created', 'contact_upserted']);
+const CONTACT_UPDATE_LIKE_REASONS = new Set(['contact_updated']);
+const PROJECT_CREATE_LIKE_REASONS = new Set(['project_created']);
+const PROJECT_UPDATE_LIKE_REASONS = new Set(['project_updated']);
+const REMOTE_CONNECTION_CREATE_LIKE_REASONS = new Set(['remote_connection_created']);
+const REMOTE_CONNECTION_UPDATE_LIKE_REASONS = new Set(['remote_connection_updated']);
+const SESSION_CREATE_LIKE_REASONS = new Set(['session_created']);
+const SESSION_UPDATE_LIKE_REASONS = new Set(['session_updated']);
 
 interface SessionListControllerParams {
   store?: typeof useChatStore;
@@ -48,13 +62,22 @@ export const useSessionListController = ({
     agents,
     currentSession,
     activePanel,
+    loadSessions,
     loadContacts: loadContactsAction,
     createContact: createContactAction,
     deleteContact: deleteContactAction,
+    markContactsStale,
+    removeContactLocally,
+    applyRealtimeContactSnapshot,
+    refreshContactById,
     createSession,
     selectSession,
     deleteSession,
     updateSession,
+    markSessionsStale,
+    removeSessionLocally,
+    applyRealtimeSessionSnapshot,
+    refreshSessionById,
     loadAgents,
     sessionChatState,
     taskReviewPanelsBySession = {},
@@ -65,6 +88,10 @@ export const useSessionListController = ({
     createProject,
     selectProject,
     deleteProject,
+    markProjectsStale,
+    removeProjectLocally,
+    applyRealtimeProjectSnapshot,
+    refreshProjectById,
     setActivePanel,
     terminals,
     currentTerminal,
@@ -72,6 +99,10 @@ export const useSessionListController = ({
     createTerminal,
     selectTerminal,
     deleteTerminal,
+    markTerminalsStale,
+    removeTerminalLocally,
+    applyRealtimeTerminalSnapshot,
+    refreshTerminalById,
     remoteConnections,
     currentRemoteConnection,
     loadRemoteConnections,
@@ -80,6 +111,10 @@ export const useSessionListController = ({
     selectRemoteConnection,
     deleteRemoteConnection,
     openRemoteSftp,
+    markRemoteConnectionsStale,
+    removeRemoteConnectionLocally,
+    applyRealtimeRemoteConnectionSnapshot,
+    refreshRemoteConnectionById,
   } = useSessionListStoreState(storeToUse);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -96,9 +131,11 @@ export const useSessionListController = ({
 
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = apiClientFromContext || globalApiClient;
+  const { confirm, alert } = useDialogService();
 
   const remoteForm = useRemoteConnectionForm({
     apiClient,
+    remoteConnections,
     createRemoteConnection,
     updateRemoteConnection,
   });
@@ -110,14 +147,14 @@ export const useSessionListController = ({
     remotePrivateKeyPath: remoteForm.remotePrivateKeyPath,
     remoteCertificatePath: remoteForm.remoteCertificatePath,
     remoteJumpPrivateKeyPath: remoteForm.remoteJumpPrivateKeyPath,
+    remoteJumpCertificatePath: remoteForm.remoteJumpCertificatePath,
     onProjectRootChange: setProjectRoot,
     onTerminalRootChange: setTerminalRoot,
     onRemotePrivateKeyPathChange: remoteForm.setRemotePrivateKeyPath,
     onRemoteCertificatePathChange: remoteForm.setRemoteCertificatePath,
     onRemoteJumpPrivateKeyPathChange: remoteForm.setRemoteJumpPrivateKeyPath,
+    onRemoteJumpCertificatePathChange: remoteForm.setRemoteJumpCertificatePath,
   });
-
-  const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
 
   const existingContactAgentIds = useMemo(
     () => (contacts || []).map((item: ContactItem) => item.agentId),
@@ -135,11 +172,11 @@ export const useSessionListController = ({
   });
 
   const contactSessionCreator = useContactSessionCreator({
-    agents: agents as any[],
+    agents,
     currentSessionId: currentSession?.id || null,
     loadContacts: loadContactsAction,
     createContact: createContactAction,
-    ensureSessionForContact: contactSessionState.ensureSessionForContact as any,
+    ensureSessionForContact: contactSessionState.ensureSessionForContact,
     updateSession,
     selectSession,
   });
@@ -153,7 +190,7 @@ export const useSessionListController = ({
     currentTerminal,
     remoteConnections,
     currentRemoteConnection,
-    ensureSessionForContact: contactSessionState.ensureSessionForContact as any,
+    ensureSessionForContact: contactSessionState.ensureSessionForContact,
     selectSession,
     setActivePanel,
     onOpenSessionSummary,
@@ -201,10 +238,12 @@ export const useSessionListController = ({
     deleteContactAction,
     loadContactsAction,
     clearCachedSessionIdsForContact: contactSessionState.clearCachedSessionIdsForContact,
-    showConfirmDialog,
+    confirmDialog: confirm,
+    alertDialog: alert,
   });
 
   useSessionListBootstrap({
+    loadSessions,
     loadProjects,
     loadAgents,
     loadContacts: loadContactsAction,
@@ -215,15 +254,172 @@ export const useSessionListController = ({
     remoteExpanded: sectionExpansion.remoteExpanded,
   });
 
-  useEffect(() => {
-    if (isCollapsed) {
-      return;
-    }
-    const timer = setInterval(() => {
+  useTerminalListRealtime({
+    enabled: true,
+    onInvalidate: (payload) => {
+      const reason = String(payload.reason || '').trim();
+      const terminalId = String(payload.terminal_id || '').trim();
+      if (reason === 'deleted' && terminalId) {
+        removeTerminalLocally(terminalId);
+        return;
+      }
+      if (payload.terminal) {
+        applyRealtimeTerminalSnapshot(payload.terminal);
+        return;
+      }
+      if (terminalId) {
+        void refreshTerminalById(terminalId).then((terminal) => {
+          if (!terminal && reason === 'created') {
+            markTerminalsStale();
+            void loadTerminals();
+          }
+        });
+        return;
+      }
+      markTerminalsStale();
       void loadTerminals();
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [isCollapsed, loadTerminals]);
+    },
+  });
+
+  useContactsRealtime({
+    enabled: true,
+    onInvalidate: (payload) => {
+      const reason = String(payload.reason || '').trim();
+      const contactId = String(payload.contact_id || '').trim();
+      if (reason === 'contact_deleted' && contactId) {
+        removeContactLocally(contactId);
+        return;
+      }
+      if (payload.contact) {
+        applyRealtimeContactSnapshot(payload.contact);
+        return;
+      }
+      if (contactId) {
+        void refreshContactById(contactId).then((contact) => {
+          if (contact) {
+            return;
+          }
+          if (
+            CONTACT_CREATE_LIKE_REASONS.has(reason)
+            || CONTACT_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            markContactsStale();
+            if (CONTACT_CREATE_LIKE_REASONS.has(reason)) {
+              void loadContactsAction();
+            }
+          }
+        });
+        return;
+      }
+      markContactsStale();
+      void loadContactsAction();
+    },
+  });
+
+  useProjectsRealtime({
+    enabled: true,
+    onInvalidate: (payload) => {
+      const reason = String(payload.reason || '').trim();
+      const projectId = String(payload.project_id || '').trim();
+      if (reason === 'project_deleted' && projectId) {
+        removeProjectLocally(projectId);
+        return;
+      }
+      if (payload.project) {
+        applyRealtimeProjectSnapshot(payload.project);
+        return;
+      }
+      if (projectId) {
+        void refreshProjectById(projectId).then((project) => {
+          if (project) {
+            return;
+          }
+          markProjectsStale({ projectId });
+          if (
+            PROJECT_CREATE_LIKE_REASONS.has(reason)
+            || PROJECT_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            if (PROJECT_CREATE_LIKE_REASONS.has(reason)) {
+              void loadProjects();
+            }
+          }
+        });
+        return;
+      }
+      markProjectsStale();
+      void loadProjects();
+    },
+  });
+
+  useRemoteConnectionsRealtime({
+    enabled: true,
+    onInvalidate: (payload) => {
+      const reason = String(payload.reason || '').trim();
+      const connectionId = String(payload.connection_id || '').trim();
+      if (reason === 'remote_connection_deleted' && connectionId) {
+        removeRemoteConnectionLocally(connectionId);
+        return;
+      }
+      if (payload.connection) {
+        applyRealtimeRemoteConnectionSnapshot(payload.connection);
+        return;
+      }
+      if (connectionId) {
+        void refreshRemoteConnectionById(connectionId).then((connection) => {
+          if (connection) {
+            return;
+          }
+          markRemoteConnectionsStale({ connectionId });
+          if (
+            REMOTE_CONNECTION_CREATE_LIKE_REASONS.has(reason)
+            || REMOTE_CONNECTION_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            if (REMOTE_CONNECTION_CREATE_LIKE_REASONS.has(reason)) {
+              void loadRemoteConnections();
+            }
+          }
+        });
+        return;
+      }
+      markRemoteConnectionsStale();
+      void loadRemoteConnections();
+    },
+  });
+
+  useSessionsRealtime({
+    enabled: true,
+    onInvalidate: (payload) => {
+      const reason = String(payload.reason || '').trim();
+      const sessionId = String(payload.session_id || '').trim();
+      if (reason === 'session_deleted' && sessionId) {
+        removeSessionLocally(sessionId);
+        return;
+      }
+      if (payload.session) {
+        applyRealtimeSessionSnapshot(payload.session);
+        return;
+      }
+      if (sessionId) {
+        void refreshSessionById(sessionId).then((session) => {
+          if (session) {
+            return;
+          }
+          markSessionsStale({ sessionId });
+          if (
+            SESSION_CREATE_LIKE_REASONS.has(reason)
+            || SESSION_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            if (SESSION_CREATE_LIKE_REASONS.has(reason)) {
+              void loadSessions({ silent: true });
+            }
+          }
+        });
+        return;
+      }
+      markSessionsStale();
+      void loadSessions({ silent: true });
+    },
+  });
 
   const projectRunState = useProjectRunState({
     apiClient,
@@ -232,6 +428,7 @@ export const useSessionListController = ({
     loadTerminals,
     handleSelectTerminal: sessionListActions.handleSelectTerminal,
     setActivePanel,
+    enabled: activePanel !== 'project',
   });
 
   return {
@@ -243,10 +440,7 @@ export const useSessionListController = ({
     currentRemoteConnection,
     currentTerminal,
     deleteActions,
-    dialogState,
     existingContactAgentIds,
-    handleCancel,
-    handleConfirm,
     inlineActionMenus,
     isRefreshing,
     isRefreshingRemote,

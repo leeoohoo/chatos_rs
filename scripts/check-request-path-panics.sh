@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+TARGETS=(
+  "chat_app_server_rs/src/api/fs"
+  "chat_app_server_rs/src/services/v2/ai_client/history_tools.rs"
+  "chat_app_server_rs/src/services/v2/ai_client/mod.rs"
+  "chat_app_server_rs/src/services/mcp_loader.rs"
+  "chat_app_server_rs/src/services/user_settings.rs"
+  "chat_app_server_rs/src/utils/model_config.rs"
+)
+
+echo "Checking request-path unwrap/expect usage..."
+
+tmp_file="$(mktemp)"
+trap 'rm -f "$tmp_file"' EXIT
+
+search_unwrap_expect() {
+  if command -v rg >/dev/null 2>&1; then
+    rg -n '\b(?:unwrap|expect)\s*\(' --color=never
+  else
+    grep -En '(^|[^[:alnum:]_])(unwrap|expect)[[:space:]]*\('
+  fi
+}
+
+check_file() {
+  local file_path="$1"
+  awk '
+    /^\s*#\[cfg\(test\)\]/ { exit }
+    { print }
+  ' "$file_path"
+}
+
+for target in "${TARGETS[@]}"; do
+  abs_target="$ROOT_DIR/$target"
+  if [[ -d "$abs_target" ]]; then
+    while IFS= read -r file; do
+      check_file "$file" | search_unwrap_expect >>"$tmp_file" || true
+    done < <(find "$abs_target" -type f \( -name '*.rs' \) | sort)
+  elif [[ -f "$abs_target" ]]; then
+    check_file "$abs_target" | search_unwrap_expect >>"$tmp_file" || true
+  fi
+done
+
+if [[ -s "$tmp_file" ]]; then
+  cat "$tmp_file"
+  echo
+  echo "Found unwrap/expect in guarded request-path files."
+  exit 1
+fi
+
+echo "No unwrap/expect found in guarded request-path files."

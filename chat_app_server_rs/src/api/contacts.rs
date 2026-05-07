@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::resolve_user_id;
 use crate::services::memory_server_client;
+use crate::services::realtime::publish_contacts_updated;
 
 #[derive(Debug, Deserialize)]
 struct ListContactsQuery {
@@ -36,7 +37,7 @@ pub fn router() -> Router {
         .route("/api/contacts", get(list_contacts).post(create_contact))
         .route(
             "/api/contacts/:contact_id",
-            axum::routing::delete(delete_contact),
+            get(get_contact).delete(delete_contact),
         )
         .route(
             "/api/contacts/:contact_id/project-memories",
@@ -80,6 +81,31 @@ async fn list_contacts(
     }
 }
 
+async fn get_contact(
+    auth: AuthUser,
+    Path(contact_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match memory_server_client::get_memory_contact(contact_id.as_str()).await {
+        Ok(Some(contact)) => {
+            if contact.user_id != auth.user_id {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": "forbidden"})),
+                );
+            }
+            (StatusCode::OK, Json(json!(contact)))
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "contact not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get contact failed", "detail": err})),
+        ),
+    }
+}
+
 async fn create_contact(
     auth: AuthUser,
     Json(req): Json<CreateContactRequest>,
@@ -109,6 +135,16 @@ async fn create_contact(
 
     match memory_server_client::create_memory_contact(&payload).await {
         Ok(result) => {
+            publish_contacts_updated(
+                auth.user_id.as_str(),
+                if result.created {
+                    "contact_created"
+                } else {
+                    "contact_upserted"
+                },
+                Some(result.contact.id.as_str()),
+                Some(result.contact.clone()),
+            );
             let status = if result.created {
                 StatusCode::CREATED
             } else {
@@ -127,9 +163,17 @@ async fn delete_contact(
     auth: AuthUser,
     Path(contact_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    let _ = auth;
+    let user_id = auth.user_id.clone();
     match memory_server_client::delete_memory_contact(contact_id.as_str()).await {
-        Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
+        Ok(true) => {
+            publish_contacts_updated(
+                user_id.as_str(),
+                "contact_deleted",
+                Some(contact_id.as_str()),
+                None,
+            );
+            (StatusCode::OK, Json(json!({"success": true})))
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "contact not found"})),

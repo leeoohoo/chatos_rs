@@ -1,15 +1,19 @@
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
-use futures_util::TryStreamExt;
+use futures_util::{stream, Stream, TryStreamExt};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::FindOptions;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::convert::Infallible;
+use std::time::Duration;
 
 use crate::jobs;
 use crate::repositories::{contacts, jobs as job_repo, projects, sessions};
+use crate::services::realtime::subscribe_job_run_events;
 
 use super::{
     build_ai_client, ensure_admin, ensure_session_access, require_auth, resolve_scope_user_id,
@@ -20,6 +24,14 @@ use super::{
 pub(super) struct RunJobRequest {
     user_id: Option<String>,
     session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RunScopedReviewRepairRequest {
+    user_id: Option<String>,
+    project_id: Option<String>,
+    contact_id: Option<String>,
+    agent_id: Option<String>,
 }
 
 pub(super) async fn run_summary_once(
@@ -51,6 +63,127 @@ pub(super) async fn run_summary_once(
     };
 
     match result {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
+pub(super) async fn run_review_repair_once(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<RunScopedReviewRepairRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let ai = match build_ai_client(&state) {
+        Ok(client) => client,
+        Err(err) => return err,
+    };
+
+    let project_id = req
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "0".to_string());
+    let contact_id = req
+        .contact_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let agent_id = req
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if contact_id.is_none() && agent_id.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "contact_id 或 agent_id 至少要提供一个"
+            })),
+        );
+    }
+
+    match jobs::summary::run_review_repair_for_scope(
+        &state.pool,
+        &ai,
+        scope_user_id.as_str(),
+        project_id.as_str(),
+        contact_id.as_deref(),
+        agent_id.as_deref(),
+    )
+    .await
+    {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
+pub(super) async fn get_review_repair_status(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(req): Query<RunScopedReviewRepairRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+
+    let project_id = req
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "0".to_string());
+    let contact_id = req
+        .contact_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let agent_id = req
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if contact_id.is_none() && agent_id.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "contact_id 或 agent_id 至少要提供一个"
+            })),
+        );
+    }
+
+    match jobs::summary::get_review_repair_status_for_scope(
+        &state.pool,
+        scope_user_id.as_str(),
+        project_id.as_str(),
+        contact_id.as_deref(),
+        agent_id.as_deref(),
+    )
+    .await
+    {
         Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -109,6 +242,14 @@ pub(super) async fn run_agent_memory_once(
 
 #[derive(Debug, Deserialize)]
 pub(super) struct JobRunsQuery {
+    job_type: Option<String>,
+    session_id: Option<String>,
+    status: Option<String>,
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct JobRunsStreamQuery {
     job_type: Option<String>,
     session_id: Option<String>,
     status: Option<String>,
@@ -612,6 +753,104 @@ pub(super) async fn list_job_runs(
             Json(json!({"error": "list job runs failed", "detail": err})),
         ),
     }
+}
+
+fn job_run_matches_filters(
+    item: &crate::models::JobRun,
+    q: &JobRunsStreamQuery,
+) -> bool {
+    if let Some(job_type) = q.job_type.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if item.job_type != job_type {
+            return false;
+        }
+    }
+    if let Some(session_id) = q.session_id.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if item.session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+    }
+    if let Some(status) = q.status.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if item.status != status {
+            return false;
+        }
+    }
+    true
+}
+
+pub(super) async fn stream_job_runs(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<JobRunsStreamQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<Value>)> {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return Err(err),
+    };
+    if let Err(err) = ensure_admin(&auth) {
+        return Err(err);
+    }
+
+    let initial_items = match job_repo::list_job_runs(
+        &state.pool,
+        q.job_type.as_deref(),
+        q.session_id.as_deref(),
+        q.status.as_deref(),
+        q.limit.unwrap_or(500),
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "list job runs failed", "detail": err})),
+            ));
+        }
+    };
+
+    let initial_event = Event::default().event("snapshot").json_data(json!({
+        "items": initial_items,
+    })).unwrap_or_else(|_| Event::default().event("snapshot").data("{\"items\":[]}"));
+
+    let rx = subscribe_job_run_events();
+    let filters = q;
+    let event_stream = stream::unfold(
+        (Some(initial_event), rx, filters),
+        |(initial, mut rx, filters)| async move {
+            if let Some(event) = initial {
+                return Some((Ok(event), (None, rx, filters)));
+            }
+
+            loop {
+                match rx.recv().await {
+                    Ok(payload) => {
+                        if !job_run_matches_filters(&payload.job_run, &filters) {
+                            continue;
+                        }
+                        let event = Event::default()
+                            .event(payload.action)
+                            .json_data(json!({
+                                "action": payload.action,
+                                "job_run": payload.job_run,
+                            }))
+                            .unwrap_or_else(|_| Event::default().event("upsert").data("{}"));
+                        return Some((Ok(event), (None, rx, filters)));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let resync = Event::default().event("resync").data("{}");
+                        return Some((Ok(resync), (None, rx, filters)));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        },
+    );
+
+    Ok(Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keepalive"),
+    ))
 }
 
 pub(super) async fn job_stats(

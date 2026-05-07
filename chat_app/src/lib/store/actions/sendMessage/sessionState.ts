@@ -16,6 +16,8 @@ export const createDefaultSessionChatState = (): SessionChatState => ({
   streamingMessageId: null,
   activeTurnId: null,
   streamingPreviewText: '',
+  streamingTransport: null,
+  runtimeContextRefreshNonce: 0,
 });
 
 const resolveSessionChatState = (
@@ -74,6 +76,7 @@ export const beginUserTurnInState = (
     isStopping: false,
     activeTurnId: conversationTurnId,
     streamingPreviewText: '',
+    streamingTransport: null,
   };
   state.sessionRuntimeGuidanceState[sessionId] = createEmptySessionRuntimeGuidanceState();
 
@@ -169,6 +172,7 @@ export const finalizeStreamingSessionState = (
     streamingMessageId: null,
     activeTurnId: null,
     streamingPreviewText: '',
+    streamingTransport: null,
   };
   resetRuntimeGuidancePendingCount(state, sessionId);
 
@@ -250,6 +254,7 @@ export const failSendMessageState = (
     streamingMessageId: null,
     activeTurnId: null,
     streamingPreviewText: '',
+    streamingTransport: null,
   };
   resetRuntimeGuidancePendingCount(state, sessionId);
 

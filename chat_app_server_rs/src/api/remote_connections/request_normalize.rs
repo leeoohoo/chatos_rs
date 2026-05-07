@@ -16,11 +16,13 @@ pub(super) fn normalize_create_request(
     let auth_type = normalize_auth_type(req.auth_type)?;
     let host_key_policy = normalize_host_key_policy(req.host_key_policy)?;
     let jump_enabled = req.jump_enabled.unwrap_or(false);
+    let jump_connection_id = normalize_non_empty(req.jump_connection_id);
 
     let raw_password = normalize_non_empty(req.password);
     let raw_private_key_path = normalize_non_empty(req.private_key_path);
     let raw_certificate_path = normalize_non_empty(req.certificate_path);
     let jump_private_key_path = normalize_non_empty(req.jump_private_key_path);
+    let jump_certificate_path = normalize_non_empty(req.jump_certificate_path);
     let jump_password = normalize_non_empty(req.jump_password);
     let (password, private_key_path, certificate_path) = match auth_type.as_str() {
         "password" => (raw_password, None, None),
@@ -40,6 +42,10 @@ pub(super) fn normalize_create_request(
     validate_file_path_if_present(
         jump_private_key_path.as_deref(),
         "jump_private_key_path 文件不存在",
+    )?;
+    validate_file_path_if_present(
+        jump_certificate_path.as_deref(),
+        "jump_certificate_path 文件不存在",
     )?;
 
     let jump_host = normalize_non_empty(req.jump_host);
@@ -64,11 +70,21 @@ pub(super) fn normalize_create_request(
         normalize_non_empty(req.default_remote_path),
         host_key_policy,
         jump_enabled,
-        jump_host,
+        if jump_enabled {
+            jump_connection_id
+        } else {
+            None
+        },
+        if jump_enabled { jump_host } else { None },
         if jump_enabled { jump_port } else { None },
-        jump_username,
+        if jump_enabled { jump_username } else { None },
         if jump_enabled {
             jump_private_key_path
+        } else {
+            None
+        },
+        if jump_enabled {
+            jump_certificate_path
         } else {
             None
         },
@@ -110,18 +126,49 @@ pub(super) fn normalize_update_request(
         _ => return Err("不支持的 auth_type".to_string()),
     };
 
+    let replacing_jump_config = req.jump_enabled.is_some();
     let jump_enabled = req.jump_enabled.unwrap_or(existing.jump_enabled);
+    let jump_connection_id = if replacing_jump_config {
+        normalize_non_empty(req.jump_connection_id)
+    } else {
+        merge_optional_text(req.jump_connection_id, existing.jump_connection_id.clone())
+    };
 
-    let jump_host = merge_optional_text(req.jump_host, existing.jump_host.clone());
-    let jump_username = merge_optional_text(req.jump_username, existing.jump_username.clone());
-    let jump_private_key_path = merge_optional_text(
-        req.jump_private_key_path,
-        existing.jump_private_key_path.clone(),
-    );
-    let jump_password = merge_optional_text(req.jump_password, existing.jump_password.clone());
+    let jump_host = if replacing_jump_config {
+        normalize_non_empty(req.jump_host)
+    } else {
+        merge_optional_text(req.jump_host, existing.jump_host.clone())
+    };
+    let jump_username = if replacing_jump_config {
+        normalize_non_empty(req.jump_username)
+    } else {
+        merge_optional_text(req.jump_username, existing.jump_username.clone())
+    };
+    let jump_private_key_path = if replacing_jump_config {
+        normalize_non_empty(req.jump_private_key_path)
+    } else {
+        merge_optional_text(
+            req.jump_private_key_path,
+            existing.jump_private_key_path.clone(),
+        )
+    };
+    let jump_certificate_path = if replacing_jump_config {
+        normalize_non_empty(req.jump_certificate_path)
+    } else {
+        merge_optional_text(
+            req.jump_certificate_path,
+            existing.jump_certificate_path.clone(),
+        )
+    };
+    let jump_password = if replacing_jump_config {
+        normalize_non_empty(req.jump_password)
+    } else {
+        merge_optional_text(req.jump_password, existing.jump_password.clone())
+    };
 
     let jump_port = match req.jump_port {
         Some(v) => Some(normalize_port(v)?),
+        None if replacing_jump_config => Some(22),
         None => existing.jump_port.or(Some(22)),
     };
 
@@ -136,6 +183,10 @@ pub(super) fn normalize_update_request(
     validate_file_path_if_present(
         jump_private_key_path.as_deref(),
         "jump_private_key_path 文件不存在",
+    )?;
+    validate_file_path_if_present(
+        jump_certificate_path.as_deref(),
+        "jump_certificate_path 文件不存在",
     )?;
 
     if jump_enabled && (jump_host.is_none() || jump_username.is_none()) {
@@ -163,11 +214,21 @@ pub(super) fn normalize_update_request(
         ),
         host_key_policy,
         jump_enabled,
+        jump_connection_id: if jump_enabled {
+            jump_connection_id
+        } else {
+            None
+        },
         jump_host: if jump_enabled { jump_host } else { None },
         jump_port: if jump_enabled { jump_port } else { None },
         jump_username: if jump_enabled { jump_username } else { None },
         jump_private_key_path: if jump_enabled {
             jump_private_key_path
+        } else {
+            None
+        },
+        jump_certificate_path: if jump_enabled {
+            jump_certificate_path
         } else {
             None
         },

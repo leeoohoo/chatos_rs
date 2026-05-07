@@ -20,6 +20,35 @@ interface LoadingDeps {
 }
 
 export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
+  const applySessionMessagesSnapshot = (
+    sessionId: string,
+    messages: Awaited<ReturnType<typeof fetchSessionMessages>>,
+    options: {
+      updateVisibleMessages: boolean;
+      settleGlobalLoading: boolean;
+    },
+  ) => {
+    set((state) => {
+      ensureSessionTurnMaps(state, sessionId);
+
+      const nextMessages = mergeMessagesWithStreamingDraft(state, sessionId, messages);
+      const mergedMessages = applyTurnProcessCache(
+        nextMessages,
+        state.sessionTurnProcessCache?.[sessionId],
+        state.sessionTurnProcessState?.[sessionId],
+      );
+
+      if (options.updateVisibleMessages || state.currentSessionId === sessionId) {
+        state.messages = mergedMessages;
+        state.hasMoreMessages = messages.length >= 50;
+      }
+
+      if (options.settleGlobalLoading) {
+        state.isLoading = false;
+      }
+    });
+  };
+
   return {
     loadMessages: async (sessionId: string) => {
       try {
@@ -29,18 +58,9 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
         });
 
         const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
-
-        set((state) => {
-          ensureSessionTurnMaps(state, sessionId);
-
-          const nextMessages = mergeMessagesWithStreamingDraft(state, sessionId, messages);
-          state.messages = applyTurnProcessCache(
-            nextMessages,
-            state.sessionTurnProcessCache?.[sessionId],
-            state.sessionTurnProcessState?.[sessionId],
-          );
-          state.isLoading = false;
-          state.hasMoreMessages = messages.length >= 50;
+        applySessionMessagesSnapshot(sessionId, messages, {
+          updateVisibleMessages: true,
+          settleGlobalLoading: true,
         });
       } catch (error) {
         console.error('Failed to load messages:', error);
@@ -48,6 +68,18 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           state.error = error instanceof Error ? error.message : 'Failed to load messages';
           state.isLoading = false;
         });
+      }
+    },
+
+    syncSessionMessagesInBackground: async (sessionId: string) => {
+      try {
+        const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
+        applySessionMessagesSnapshot(sessionId, messages, {
+          updateVisibleMessages: false,
+          settleGlobalLoading: false,
+        });
+      } catch (error) {
+        console.error('Failed to sync session messages in background:', error);
       }
     },
 

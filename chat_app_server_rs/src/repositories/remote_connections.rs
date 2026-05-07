@@ -61,11 +61,19 @@ pub(super) fn normalize_doc(doc: &Document) -> Option<RemoteConnection> {
             .unwrap_or("strict")
             .to_string(),
         jump_enabled,
+        jump_connection_id: doc
+            .get_str("jump_connection_id")
+            .ok()
+            .map(|s| s.to_string()),
         jump_host: doc.get_str("jump_host").ok().map(|s| s.to_string()),
         jump_port: doc.get_i64("jump_port").ok(),
         jump_username: doc.get_str("jump_username").ok().map(|s| s.to_string()),
         jump_private_key_path: doc
             .get_str("jump_private_key_path")
+            .ok()
+            .map(|s| s.to_string()),
+        jump_certificate_path: doc
+            .get_str("jump_certificate_path")
             .ok()
             .map(|s| s.to_string()),
         jump_password: doc.get_str("jump_password").ok().map(|s| s.to_string()),

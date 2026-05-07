@@ -354,6 +354,8 @@ export const zhCN: Record<string, string> = {
   'jobRuns.output': '输出',
   'jobRuns.progress': '处理进度',
   'jobRuns.progressSuspect': '已完成但未消化消息',
+  'jobRuns.reviewRepairPendingFlow': '未总结消息 {before} -> {after}',
+  'jobRuns.reviewRepairSelectionFlow': '本次尝试 {selected}，实际标记 {marked}',
   'jobRuns.startedAt': '开始时间',
   'jobRuns.finishedAt': '结束时间',
   'jobRuns.duration': '耗时',

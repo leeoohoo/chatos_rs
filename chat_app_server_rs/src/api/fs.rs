@@ -6,6 +6,7 @@ use axum::{
 mod contracts;
 mod helpers;
 mod mutate_handlers;
+mod policy;
 mod query_handlers;
 mod read_mode;
 mod response;

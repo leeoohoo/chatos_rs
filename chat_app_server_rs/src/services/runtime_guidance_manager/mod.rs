@@ -1,3 +1,5 @@
+pub(crate) mod support;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 

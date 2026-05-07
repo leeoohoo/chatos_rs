@@ -19,6 +19,7 @@ import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
+import { connectJobRunsStream } from '../lib/jobRunsStream';
 import type { JobRun } from '../types';
 
 const { Text } = Typography;
@@ -75,6 +76,10 @@ function formatCount(value?: number | null): string {
   return String(value);
 }
 
+function isReviewRepairJob(row: JobRun): boolean {
+  return row.job_type === 'summary_review_repair' || row.trigger_type === 'manual_review_repair';
+}
+
 export function JobRunsPage() {
   const { t } = useI18n();
   const [items, setItems] = useState<JobRun[]>([]);
@@ -111,10 +116,41 @@ export function JobRunsPage() {
     if (!autoRefresh) {
       return;
     }
-    const timer = window.setInterval(() => {
-      void load();
-    }, 10000);
-    return () => window.clearInterval(timer);
+    const disconnect = connectJobRunsStream(
+      {
+        jobType,
+        status,
+      },
+      {
+        onSnapshot: (nextItems) => {
+          setItems(nextItems);
+          setError(null);
+          setLoading(false);
+        },
+        onUpsert: (jobRun) => {
+          setItems((prev) => {
+            const existingIndex = prev.findIndex((item) => item.id === jobRun.id);
+            if (existingIndex < 0) {
+              return [jobRun, ...prev].slice(0, 500);
+            }
+            const next = prev.slice();
+            next[existingIndex] = {
+              ...next[existingIndex],
+              ...jobRun,
+            };
+            return next;
+          });
+        },
+        onResync: () => {
+          void load();
+        },
+        onError: (streamError) => {
+          setError(streamError.message);
+          void load();
+        },
+      },
+    );
+    return disconnect;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefresh, jobType, status]);
 
@@ -274,6 +310,7 @@ export function JobRunsPage() {
         const selected = formatCount(row.selected_count);
         const marked = formatCount(row.marked_count);
         const after = formatCount(row.pending_after_count);
+        const reviewRepair = isReviewRepairJob(row);
         const hasMarked =
           row.marked_count !== undefined && row.marked_count !== null && row.marked_count >= 0;
         const suspect =
@@ -281,11 +318,19 @@ export function JobRunsPage() {
           row.marked_count === 0 &&
           row.status === 'done' &&
           row.input_count > 0 &&
-          row.job_type === 'summary_l0';
+          (row.job_type === 'summary_l0' || reviewRepair);
         return (
           <Space direction="vertical" size={0}>
-            <span>{`pending ${before} -> ${after}`}</span>
-            <span>{`selected ${selected}, marked ${marked}`}</span>
+            <span>
+              {reviewRepair
+                ? t('jobRuns.reviewRepairPendingFlow', { before, after })
+                : `pending ${before} -> ${after}`}
+            </span>
+            <span>
+              {reviewRepair
+                ? t('jobRuns.reviewRepairSelectionFlow', { selected, marked })
+                : `selected ${selected}, marked ${marked}`}
+            </span>
             {suspect && <Tag color="warning">{t('jobRuns.progressSuspect')}</Tag>}
           </Space>
         );

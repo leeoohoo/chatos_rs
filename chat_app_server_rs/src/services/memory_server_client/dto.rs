@@ -23,6 +23,14 @@ pub(crate) struct ListResponse<T> {
     pub items: Vec<T>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeleteSummaryResultDto {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub reset_messages: usize,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct MemorySession {
     pub id: String,
@@ -226,6 +234,40 @@ pub struct SyncProjectAgentLinkRequestDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReviewRepairSummaryRunResultDto {
+    pub processed_sessions: usize,
+    pub summarized_sessions: usize,
+    pub generated_summaries: usize,
+    pub marked_messages: usize,
+    pub failed_sessions: usize,
+    pub pending_message_count: i64,
+    pub project_id: String,
+    pub contact_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub mode: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReviewRepairStatusDto {
+    pub running: bool,
+    pub running_job_count: i64,
+    pub pending_message_count: i64,
+    pub scope_session_count: usize,
+    pub project_id: String,
+    pub contact_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub job_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunReviewRepairSummaryRequestDto {
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub contact_id: Option<String>,
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryProjectMemoryDto {
     pub id: String,
     pub user_id: String,
@@ -314,6 +356,31 @@ pub struct TurnRuntimeSnapshotToolDto {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TurnRuntimeSnapshotUnavailableToolDto {
+    pub server_name: String,
+    pub tool_name: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct TurnRuntimeSnapshotBuiltinMcpPromptDto {
+    pub prompt_source_path: Option<String>,
+    #[serde(default)]
+    pub all_section_ids: Vec<String>,
+    #[serde(default)]
+    pub selected_section_ids: Vec<String>,
+    #[serde(default)]
+    pub omitted_section_ids: Vec<String>,
+    #[serde(default)]
+    pub requested_builtin_server_names: Vec<String>,
+    #[serde(default)]
+    pub active_builtin_server_names: Vec<String>,
+    #[serde(default)]
+    pub omitted_builtin_server_names: Vec<String>,
+    pub runtime_limitations: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TurnRuntimeSnapshotRuntimeDto {
     pub model: Option<String>,
@@ -328,6 +395,9 @@ pub struct TurnRuntimeSnapshotRuntimeDto {
     pub enabled_mcp_ids: Vec<String>,
     #[serde(default)]
     pub selected_commands: Vec<TurnRuntimeSnapshotSelectedCommandDto>,
+    #[serde(default)]
+    pub unavailable_builtin_tools: Vec<TurnRuntimeSnapshotUnavailableToolDto>,
+    pub builtin_mcp_prompt: Option<TurnRuntimeSnapshotBuiltinMcpPromptDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]

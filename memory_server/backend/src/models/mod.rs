@@ -52,6 +52,7 @@ pub use self::job_configs::{
     AgentMemoryJobConfig, JobRun, SummaryJobConfig, SummaryRollupJobConfig,
     UpsertAgentMemoryJobConfigRequest, UpsertSummaryJobConfigRequest,
     UpsertSummaryRollupJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+    REVIEW_REPAIR_SUMMARY_PROMPT_TEMPLATE,
 };
 pub use self::memories::{AgentRecall, ProjectMemory};
 pub use self::messages::{BatchCreateMessagesRequest, CreateMessageRequest, Message};

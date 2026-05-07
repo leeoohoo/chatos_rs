@@ -18,6 +18,7 @@ use tracing::info;
 use crate::ai::AiClient;
 use crate::config::AppConfig;
 use crate::repositories::auth;
+use crate::services::realtime::init_job_run_realtime_bus;
 use crate::state::AppState;
 
 #[tokio::main]
@@ -36,6 +37,7 @@ async fn main() -> Result<(), String> {
     let pool = db::init_pool(&config).await?;
     db::init_schema(&pool).await?;
     auth::ensure_default_admin(&pool).await?;
+    init_job_run_realtime_bus();
 
     let state = Arc::new(AppState {
         pool,

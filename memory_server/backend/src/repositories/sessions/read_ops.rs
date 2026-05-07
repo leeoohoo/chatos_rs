@@ -184,6 +184,48 @@ pub async fn list_sessions_by_contact(
     Ok(deduped)
 }
 
+pub async fn list_session_ids_by_scope(
+    db: &Db,
+    user_id: &str,
+    project_id: &str,
+    contact_id: Option<&str>,
+    agent_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<String>, String> {
+    let conditions = build_contact_or_conditions(contact_id, agent_id);
+    if conditions.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = doc! {
+        "user_id": user_id,
+        "status": "active",
+        "$and": [
+            {"$or": conditions},
+            project_scope_condition(project_id),
+        ],
+    };
+    let options = FindOptions::builder()
+        .projection(doc! {"_id": 0, "id": 1})
+        .sort(doc! {"updated_at": -1, "created_at": -1})
+        .limit(Some(limit.max(1).min(5000)))
+        .build();
+
+    let cursor = db
+        .collection::<mongodb::bson::Document>("sessions")
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
+
+    Ok(docs
+        .into_iter()
+        .filter_map(|doc| doc.get_str("id").ok().map(|value| value.to_string()))
+        .collect())
+}
+
 pub async fn get_session_by_id(db: &Db, session_id: &str) -> Result<Option<Session>, String> {
     collection(db)
         .find_one(doc! {"id": session_id})

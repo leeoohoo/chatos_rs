@@ -8,7 +8,9 @@ use tracing::error;
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
 use crate::models::session_summary_v2::SessionSummaryV2;
-use crate::services::ai_common::build_tool_result_metadata;
+use crate::services::ai_common::{
+    build_assistant_message_metadata, build_tool_result_metadata,
+};
 use crate::services::memory_server_client;
 
 #[derive(Debug, Default, Clone)]
@@ -101,6 +103,37 @@ impl MessageManagerCore {
         let saved = self.persist_message(message).await?;
         self.cache_message(saved.clone());
         Ok(saved)
+    }
+
+    pub(crate) async fn save_assistant_response_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        reasoning: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
+        tool_calls: Option<Value>,
+        response_id: Option<&str>,
+        turn_id: Option<&str>,
+        response_status: Option<&str>,
+    ) -> Result<Message, String> {
+        let metadata = build_assistant_message_metadata(
+            tool_calls.as_ref(),
+            response_id,
+            turn_id,
+            response_status,
+        );
+        self.save_assistant_message(
+            session_id,
+            content,
+            None,
+            reasoning,
+            message_mode,
+            message_source,
+            metadata,
+            tool_calls,
+        )
+        .await
     }
 
     pub(crate) async fn save_tool_message(

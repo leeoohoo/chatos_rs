@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::repositories::change_logs;
+use crate::services::realtime::publish_project_change_summary_updated;
 
 use super::change_support::{build_change_paths, collect_change_ids_for_paths};
 use super::contracts::{ConfirmProjectChangesRequest, ProjectChangeQuery};
@@ -151,14 +152,25 @@ pub(super) async fn confirm_project_changes(
 
     match change_logs::confirm_change_logs_by_ids(&candidate_ids, Some(auth.user_id.as_str())).await
     {
-        Ok(confirmed) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "confirmed": confirmed,
-                "requested": candidate_ids.len(),
-                "mode": mode,
-            })),
-        ),
+        Ok(confirmed) => {
+            if confirmed > 0 {
+                publish_project_change_summary_updated(
+                    auth.user_id.as_str(),
+                    project.id.as_str(),
+                    "changes_confirmed",
+                    None,
+                    None,
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "confirmed": confirmed,
+                    "requested": candidate_ids.len(),
+                    "mode": mode,
+                })),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),

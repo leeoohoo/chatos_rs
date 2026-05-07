@@ -8,6 +8,7 @@ use crate::services::code_nav::languages::basic::{
     count_char, find_balanced_end, find_column, last_identifier, make_symbol,
     strip_c_style_comments, BasicFileAnalysis, BasicLanguageSpec, BasicSymbol,
 };
+use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities, NavLocation,
     NavPositionRequest, ProjectContext,
@@ -39,19 +40,18 @@ const CPP_PROJECT_FILES: &[&str] = &[
 const CPP_PROJECT_EXTENSIONS: &[&str] = &["vcxproj", "sln", "mk"];
 
 static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    compile_static_regex(
         r"^\s*(?:template\s*<[^>{}]+>\s*)?(class|struct|enum(?:\s+class)?|union)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
     )
-    .unwrap()
 });
 static NAMESPACE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_]*)\b").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
 static USING_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*using\s+([A-Za-z_][A-Za-z0-9_]*)\s*=").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*using\s+([A-Za-z_][A-Za-z0-9_]*)\s*="));
 static TYPEDEF_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*typedef\b.+\b([A-Za-z_][A-Za-z0-9_]*)\s*;").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*typedef\b.+\b([A-Za-z_][A-Za-z0-9_]*)\s*;"));
 static MACRO_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\b").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
 
 const SPEC: BasicLanguageSpec = BasicLanguageSpec {
     provider_id: "cpp",

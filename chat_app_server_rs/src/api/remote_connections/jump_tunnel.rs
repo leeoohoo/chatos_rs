@@ -2,6 +2,7 @@ use crate::models::remote_connection::RemoteConnection;
 use ssh2::Session;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::mpsc;
 use std::time::{Duration as StdDuration, Instant};
 
 use super::terminal_io::{is_io_would_block, is_ssh_would_block};
@@ -161,11 +162,13 @@ fn run_jump_tunnel_bridge(
     forward_jump_tunnel(&mut local_stream, &mut jump_channel)
 }
 
-pub(super) fn create_jump_tunnel_stream(
+pub(super) fn create_jump_tunnel_stream_with_verification_channel(
     connection: &RemoteConnection,
     timeout: StdDuration,
     timeout_ms: u32,
     verification_code: Option<&str>,
+    verification_code_rx: Option<mpsc::Receiver<String>>,
+    challenge_tx: Option<mpsc::Sender<String>>,
 ) -> Result<TcpStream, String> {
     let jump_host = connection
         .jump_host
@@ -176,7 +179,6 @@ pub(super) fn create_jump_tunnel_stream(
         .as_deref()
         .ok_or_else(|| "启用跳板机时 jump_username 不能为空".to_string())?;
     let jump_port = connection.jump_port.unwrap_or(22);
-
     let jump_stream = connect_tcp_stream(jump_host, jump_port, timeout, "跳板机")?;
     configure_stream_timeout(&jump_stream, timeout, "跳板机")?;
 
@@ -192,7 +194,14 @@ pub(super) fn create_jump_tunnel_stream(
         jump_port,
         connection.host_key_policy.as_str(),
     )?;
-    authenticate_jump_session(&jump_session, connection, jump_username, verification_code)?;
+    authenticate_jump_session(
+        &jump_session,
+        connection,
+        jump_username,
+        verification_code,
+        verification_code_rx,
+        challenge_tx,
+    )?;
     if !jump_session.authenticated() {
         return Err("跳板机 SSH 认证失败".to_string());
     }

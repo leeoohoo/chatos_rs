@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import { useDialogService } from '../ui/DialogProvider';
 import { splitLines, readContextContent, readContextName } from './helpers';
 import type {
   AssistantFormState,
@@ -49,7 +49,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
   const [assistantError, setAssistantError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<PromptCandidate[]>([]);
   const [qualityReport, setQualityReport] = useState<PromptQualityReport | null>(null);
-  const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
+  const { confirm } = useDialogService();
 
   useEffect(() => {
     const loadData = async () => {
@@ -181,33 +181,31 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     viewMode,
   ]);
 
-  const handleDelete = useCallback((context: SystemContextLike) => {
-    showConfirmDialog({
+  const handleDelete = useCallback(async (context: SystemContextLike) => {
+    const confirmed = await confirm({
       title: '删除系统提示词',
       message: `确定删除 "${readContextName(context)}" 吗？此操作无法撤销。`,
       confirmText: '删除',
       cancelText: '取消',
       type: 'danger',
-      onConfirm: async () => {
-        if (!context.id) {
-          return;
-        }
-
-        try {
-          await deleteSystemContext(context.id);
-          if (context.id === selectedContextId) {
-            setSelectedContextId(null);
-            setFormData({ name: '', content: '' });
-            setSelectedAppIds([]);
-            setViewMode('list');
-          }
-          await loadSystemContexts();
-        } catch (error) {
-          setActionError(error instanceof Error ? error.message : '删除失败。');
-        }
-      },
     });
-  }, [deleteSystemContext, loadSystemContexts, selectedContextId, showConfirmDialog]);
+    if (!confirmed || !context.id) {
+      return;
+    }
+
+    try {
+      await deleteSystemContext(context.id);
+      if (context.id === selectedContextId) {
+        setSelectedContextId(null);
+        setFormData({ name: '', content: '' });
+        setSelectedAppIds([]);
+        setViewMode('list');
+      }
+      await loadSystemContexts();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '删除失败。');
+    }
+  }, [confirm, deleteSystemContext, loadSystemContexts, selectedContextId]);
 
   const handleBackToList = useCallback(() => {
     setViewMode('list');
@@ -395,9 +393,6 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     qualityReport,
     filteredContexts,
     selectedContextName,
-    dialogState,
-    handleConfirm,
-    handleCancel,
     setSearchKeyword,
     fillEditorFromContext,
     handleCreate,

@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
+use crate::services::realtime::publish_notepad_updated;
 use crate::services::notepad::{
     CreateNoteParams, ListNotesParams, NotepadService, SearchNotesParams, UpdateNoteParams,
 };
@@ -119,7 +120,17 @@ async fn create_folder(
     };
     let folder = req.folder.unwrap_or_default();
     match service.create_folder(folder.as_str()).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
+        Ok(value) => {
+            publish_notepad_updated(
+                auth.user_id.as_str(),
+                "folder_created",
+                None,
+                value.get("folder").and_then(|item| item.as_str()),
+                None,
+                None,
+            );
+            (StatusCode::OK, Json(value))
+        }
         Err(err) => bad_request(err),
     }
 }
@@ -135,7 +146,17 @@ async fn rename_folder(
     let from = req.from.unwrap_or_default();
     let to = req.to.unwrap_or_default();
     match service.rename_folder(from.as_str(), to.as_str()).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
+        Ok(value) => {
+            publish_notepad_updated(
+                auth.user_id.as_str(),
+                "folder_renamed",
+                None,
+                None,
+                value.get("from").and_then(|item| item.as_str()),
+                value.get("to").and_then(|item| item.as_str()),
+            );
+            (StatusCode::OK, Json(value))
+        }
         Err(err) => bad_request(err),
     }
 }
@@ -151,7 +172,17 @@ async fn delete_folder(
     let folder = query.folder.unwrap_or_default();
     let recursive = query.recursive.unwrap_or(false);
     match service.delete_folder(folder.as_str(), recursive).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
+        Ok(value) => {
+            publish_notepad_updated(
+                auth.user_id.as_str(),
+                "folder_deleted",
+                None,
+                value.get("folder").and_then(|item| item.as_str()),
+                None,
+                None,
+            );
+            (StatusCode::OK, Json(value))
+        }
         Err(err) => bad_request(err),
     }
 }
@@ -197,7 +228,18 @@ async fn create_note(
         tags: req.tags.unwrap_or_default(),
     };
     match service.create_note(params).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
+        Ok(value) => {
+            let note = value.get("note");
+            publish_notepad_updated(
+                auth.user_id.as_str(),
+                "note_created",
+                note.and_then(|item| item.get("id")).and_then(|item| item.as_str()),
+                note.and_then(|item| item.get("folder")).and_then(|item| item.as_str()),
+                None,
+                None,
+            );
+            (StatusCode::OK, Json(value))
+        }
         Err(err) => bad_request(err),
     }
 }
@@ -222,6 +264,7 @@ async fn update_note(
         Ok(service) => service,
         Err(err) => return err,
     };
+    let target_note_id = note_id.clone();
     let params = UpdateNoteParams {
         id: note_id,
         title: req.title,
@@ -230,7 +273,20 @@ async fn update_note(
         tags: req.tags,
     };
     match service.update_note(params).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
+        Ok(value) => {
+            let note = value.get("note");
+            publish_notepad_updated(
+                auth.user_id.as_str(),
+                "note_updated",
+                note.and_then(|item| item.get("id"))
+                    .and_then(|item| item.as_str())
+                    .or(Some(target_note_id.as_str())),
+                note.and_then(|item| item.get("folder")).and_then(|item| item.as_str()),
+                None,
+                None,
+            );
+            (StatusCode::OK, Json(value))
+        }
         Err(err) => bad_request(err),
     }
 }
@@ -244,7 +300,17 @@ async fn delete_note_by_id(
         Err(err) => return err,
     };
     match service.delete_note(note_id.as_str()).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
+        Ok(value) => {
+            publish_notepad_updated(
+                auth.user_id.as_str(),
+                "note_deleted",
+                value.get("id").and_then(|item| item.as_str()),
+                None,
+                None,
+                None,
+            );
+            (StatusCode::OK, Json(value))
+        }
         Err(err) => bad_request(err),
     }
 }

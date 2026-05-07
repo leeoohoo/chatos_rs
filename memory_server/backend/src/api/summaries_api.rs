@@ -161,8 +161,11 @@ pub(super) async fn delete_summary(
     }
 
     match summaries::delete_summary(&state.pool, session_id.as_str(), summary_id.as_str()).await {
-        Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
-        Ok(false) => (
+        Ok(reset_messages) if reset_messages > 0 => (
+            StatusCode::OK,
+            Json(json!({"success": true, "reset_messages": reset_messages})),
+        ),
+        Ok(_) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "summary not found"})),
         ),

@@ -1,4 +1,5 @@
 import type {
+  TaskReviewItemResponse,
   TaskManagerTaskResponse,
   TaskManagerUpdatePayload,
   TaskReviewDecisionPayload,
@@ -64,7 +65,8 @@ export const updateTaskManagerTask = (
 export const completeTaskManagerTask = (
   request: ApiRequestFn,
   conversationId: string,
-  taskId: string
+  taskId: string,
+  payload?: Partial<TaskManagerUpdatePayload>
 ): Promise<TaskManagerTaskResponse> => {
   if (!conversationId) {
     throw new Error('conversationId is required');
@@ -79,7 +81,7 @@ export const completeTaskManagerTask = (
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(),
     {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload || {}),
     },
   );
 };
@@ -122,6 +124,30 @@ export const submitTaskReviewDecision = (
     body: JSON.stringify(payload),
     },
   );
+};
+
+export const getPendingTaskReviews = async (
+  request: ApiRequestFn,
+  conversationId: string,
+  options?: { limit?: number }
+): Promise<TaskReviewItemResponse[]> => {
+  if (!conversationId) {
+    return [];
+  }
+
+  const params = new URLSearchParams();
+  params.set('conversation_id', conversationId);
+  if (typeof options?.limit === 'number') {
+    params.set('limit', String(options.limit));
+  }
+
+  const result = await request<{ reviews?: TaskReviewItemResponse[] } | TaskReviewItemResponse[]>(
+    '/task-manager/reviews/pending?' + params.toString(),
+  );
+  if (Array.isArray(result)) {
+    return result;
+  }
+  return Array.isArray(result?.reviews) ? result.reviews : [];
 };
 
 export const getPendingUiPrompts = async (

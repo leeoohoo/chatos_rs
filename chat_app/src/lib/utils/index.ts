@@ -3,6 +3,11 @@ import { twMerge } from 'tailwind-merge';
 import { v4 as uuidv4 } from 'uuid';
 import { format, formatDistanceToNow } from 'date-fns';
 
+type AnyFunction = (...args: unknown[]) => unknown;
+type ImportMetaEnvLike = {
+  DEV?: boolean;
+};
+
 /**
  * 合并 Tailwind CSS 类名
  */
@@ -143,7 +148,7 @@ export function deepClone<T>(obj: T): T {
 /**
  * 防抖函数
  */
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends AnyFunction>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
@@ -157,7 +162,7 @@ export function debounce<T extends (...args: any[]) => any>(
 /**
  * 节流函数
  */
-export function throttle<T extends (...args: any[]) => any>(
+export function throttle<T extends AnyFunction>(
   func: T,
   limit: number
 ): (...args: Parameters<T>) => void {
@@ -318,7 +323,7 @@ export const storage = {
     }
   },
   
-  set: (key: string, value: any): void => {
+  set: (key: string, value: unknown): void => {
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (error) {
@@ -345,10 +350,9 @@ export const storage = {
 
 const isDev =
   typeof import.meta !== 'undefined' &&
-  (import.meta as any).env &&
-  (import.meta as any).env.DEV === true;
+  (import.meta as ImportMeta & { env?: ImportMetaEnvLike }).env?.DEV === true;
 
-export const debugLog = (...args: any[]) => {
+export const debugLog = (...args: unknown[]) => {
   if (!isDev) {
     return;
   }

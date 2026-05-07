@@ -1,26 +1,23 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-export interface SessionSummaryItem {
-  id: string;
-  summaryText: string;
-  summaryModel: string;
-  triggerType: string;
-  sourceMessageCount: number;
-  sourceEstimatedTokens: number;
-  status: string;
-  errorMessage: string | null;
-  level: number;
-  createdAt: string;
-  updatedAt: string;
-}
+import { useDialogService } from '../../components/ui/DialogProvider';
+import type { SessionSummariesListResponse } from '../../lib/api/client/types';
+import type { SessionSummaryItem } from '../../lib/domain/configs';
+import {
+  applyConversationSummaryItemsSnapshot,
+  getCachedConversationSummaryItems,
+  loadConversationSummaryItems,
+  markConversationSummaryCacheStale,
+} from '../../lib/sessionSummaries/cache';
+export type { SessionSummaryItem } from '../../lib/domain/configs';
 
 interface SessionSummaryApiClient {
   getConversationSummaries: (
     sessionId: string,
     options?: { limit?: number; offset?: number },
-  ) => Promise<{ items?: any[] }>;
-  deleteConversationSummary: (sessionId: string, summaryId: string) => Promise<any>;
-  clearConversationSummaries: (sessionId: string) => Promise<any>;
+  ) => Promise<SessionSummariesListResponse>;
+  deleteConversationSummary: (sessionId: string, summaryId: string) => Promise<{ success?: boolean }>;
+  clearConversationSummaries: (sessionId: string) => Promise<{ success?: boolean }>;
 }
 
 interface UseSessionSummaryPanelResult {
@@ -33,7 +30,17 @@ interface UseSessionSummaryPanelResult {
   setSummaryPaneSessionId: (sessionId: string | null) => void;
   setSummaryError: (message: string | null) => void;
   resetSummaryState: () => void;
-  loadSessionSummaries: (sessionId: string, options?: { silent?: boolean }) => Promise<void>;
+  loadSessionSummaries: (
+    sessionId: string,
+    options?: { silent?: boolean; force?: boolean },
+  ) => Promise<void>;
+  markSessionSummariesStale: (sessionId: string) => void;
+  hydrateSessionSummariesFromCache: (sessionId: string) => void;
+  cancelPendingSessionSummariesLoad: () => void;
+  applyRealtimeSessionSummaries: (
+    sessionId: string,
+    payload: SessionSummariesListResponse | unknown,
+  ) => void;
   openSummaryForSession: (sessionId: string) => Promise<void>;
   deleteSummary: (sessionId: string, summaryId: string) => Promise<void>;
   clearSummaries: (
@@ -42,88 +49,163 @@ interface UseSessionSummaryPanelResult {
   ) => Promise<void>;
 }
 
-const normalizeSessionSummary = (item: any): SessionSummaryItem | null => {
-  const id = typeof item?.id === 'string' ? item.id.trim() : '';
-  if (!id) {
-    return null;
-  }
-  const createdAt = typeof item?.created_at === 'string'
-    ? item.created_at
-    : (typeof item?.createdAt === 'string' ? item.createdAt : '');
-  const updatedAt = typeof item?.updated_at === 'string'
-    ? item.updated_at
-    : (typeof item?.updatedAt === 'string' ? item.updatedAt : createdAt);
-
-  return {
-    id,
-    summaryText: typeof item?.summary_text === 'string'
-      ? item.summary_text
-      : (typeof item?.summaryText === 'string' ? item.summaryText : ''),
-    summaryModel: typeof item?.summary_model === 'string'
-      ? item.summary_model
-      : (typeof item?.summaryModel === 'string' ? item.summaryModel : ''),
-    triggerType: typeof item?.trigger_type === 'string'
-      ? item.trigger_type
-      : (typeof item?.triggerType === 'string' ? item.triggerType : ''),
-    sourceMessageCount: Number(item?.source_message_count ?? item?.sourceMessageCount ?? 0) || 0,
-    sourceEstimatedTokens: Number(item?.source_estimated_tokens ?? item?.sourceEstimatedTokens ?? 0) || 0,
-    status: typeof item?.status === 'string' ? item.status : '',
-    errorMessage: typeof item?.error_message === 'string'
-      ? item.error_message
-      : (typeof item?.errorMessage === 'string' ? item.errorMessage : null),
-    level: Number(item?.level ?? 0) || 0,
-    createdAt,
-    updatedAt,
-  };
-};
-
 export const useSessionSummaryPanel = (
   apiClient: SessionSummaryApiClient,
 ): UseSessionSummaryPanelResult => {
-  const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
+  const { confirm } = useDialogService();
+  const [summaryPaneSessionId, setSummaryPaneSessionIdState] = useState<string | null>(null);
   const [summaryItems, setSummaryItems] = useState<SessionSummaryItem[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [clearingSummaries, setClearingSummaries] = useState(false);
   const [deletingSummaryId, setDeletingSummaryId] = useState<string | null>(null);
+  const [summaryLoadedSessionId, setSummaryLoadedSessionId] = useState<string | null>(null);
+  const summaryLoadSeqRef = useRef(0);
+  const summaryStaleSessionsRef = useRef<Set<string>>(new Set());
+  const currentSummarySessionIdRef = useRef<string | null>(summaryPaneSessionId);
+
+  useEffect(() => {
+    currentSummarySessionIdRef.current = summaryPaneSessionId;
+  }, [summaryPaneSessionId]);
+
+  const setSummaryPaneSessionId = useCallback((
+    value: string | null | ((prev: string | null) => string | null),
+  ) => {
+    setSummaryPaneSessionIdState((prev) => {
+      const nextValue = typeof value === 'function'
+        ? value(prev)
+        : value;
+      currentSummarySessionIdRef.current = nextValue;
+      return nextValue;
+    });
+  }, []);
 
   const resetSummaryState = useCallback(() => {
     setSummaryItems([]);
     setSummaryError(null);
+    setSummaryLoadedSessionId(null);
+    setSummaryLoading(false);
   }, []);
+
+  const hydrateSessionSummariesFromCache = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      resetSummaryState();
+      return;
+    }
+    if (currentSummarySessionIdRef.current !== sessionId) {
+      return;
+    }
+    const cached = getCachedConversationSummaryItems(apiClient, sessionId);
+    setSummaryItems(cached ? [...cached] : []);
+    setSummaryError(null);
+    setSummaryLoadedSessionId(cached ? sessionId : null);
+    setSummaryLoading(false);
+  }, [apiClient, resetSummaryState]);
+
+  const cancelPendingSessionSummariesLoad = useCallback(() => {
+    summaryLoadSeqRef.current += 1;
+  }, []);
+
+  const applyRealtimeSessionSummaries = useCallback((
+    sessionId: string,
+    payload: SessionSummariesListResponse | unknown,
+  ) => {
+    if (!sessionId) {
+      return;
+    }
+    const normalized = applyConversationSummaryItemsSnapshot(apiClient, sessionId, payload, {
+      loadedLimit: 200,
+    });
+    summaryStaleSessionsRef.current.delete(sessionId);
+    if (currentSummarySessionIdRef.current !== sessionId) {
+      return;
+    }
+    setSummaryItems(normalized);
+    setSummaryLoadedSessionId(sessionId);
+    setSummaryError(null);
+    setSummaryLoading(false);
+  }, [apiClient]);
+
+  const markSessionSummariesStale = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    summaryStaleSessionsRef.current.add(sessionId);
+    markConversationSummaryCacheStale(apiClient, sessionId);
+  }, [apiClient]);
 
   const loadSessionSummaries = useCallback(async (
     sessionId: string,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; force?: boolean },
   ) => {
     if (!sessionId) {
       setSummaryItems([]);
       setSummaryError(null);
       setSummaryLoading(false);
+      setSummaryLoadedSessionId(null);
       return;
     }
-    if (!options?.silent) {
+
+    const force = options?.force === true;
+    const cached = getCachedConversationSummaryItems(apiClient, sessionId);
+    const isStale = summaryStaleSessionsRef.current.has(sessionId);
+    if (
+      !force
+      && !isStale
+      && summaryLoadedSessionId === sessionId
+      && summaryItems.length > 0
+    ) {
+      return;
+    }
+    if (!force && !isStale && cached) {
+      if (currentSummarySessionIdRef.current === sessionId) {
+        setSummaryItems(cached);
+        setSummaryError(null);
+        setSummaryLoadedSessionId(sessionId);
+        setSummaryLoading(false);
+      }
+      return;
+    }
+
+    const requestSeq = summaryLoadSeqRef.current + 1;
+    summaryLoadSeqRef.current = requestSeq;
+    const shouldShowLoading = !options?.silent && (!cached || force);
+    if (shouldShowLoading) {
       setSummaryLoading(true);
     }
     setSummaryError(null);
     try {
-      const result = await apiClient.getConversationSummaries(sessionId, { limit: 200, offset: 0 });
-      const normalized = (Array.isArray(result?.items) ? result.items : [])
-        .map((item: any) => normalizeSessionSummary(item))
-        .filter((item: SessionSummaryItem | null): item is SessionSummaryItem => Boolean(item))
-        .sort((left, right) => {
-          const leftTs = new Date(left.createdAt || left.updatedAt).getTime();
-          const rightTs = new Date(right.createdAt || right.updatedAt).getTime();
-          return (Number.isFinite(rightTs) ? rightTs : 0) - (Number.isFinite(leftTs) ? leftTs : 0);
-        });
+      const normalized = await loadConversationSummaryItems(apiClient, sessionId, {
+        force,
+        limit: 200,
+      });
+      if (
+        summaryLoadSeqRef.current !== requestSeq
+        || currentSummarySessionIdRef.current !== sessionId
+      ) {
+        return;
+      }
+      summaryStaleSessionsRef.current.delete(sessionId);
       setSummaryItems(normalized);
+      setSummaryLoadedSessionId(sessionId);
     } catch (error) {
+      if (
+        summaryLoadSeqRef.current !== requestSeq
+        || currentSummarySessionIdRef.current !== sessionId
+      ) {
+        return;
+      }
       setSummaryError(error instanceof Error ? error.message : '加载会话总结失败');
       setSummaryItems([]);
     } finally {
-      setSummaryLoading(false);
+      if (
+        summaryLoadSeqRef.current === requestSeq
+        && currentSummarySessionIdRef.current === sessionId
+      ) {
+        setSummaryLoading(false);
+      }
     }
-  }, [apiClient]);
+  }, [apiClient, summaryItems.length, summaryLoadedSessionId]);
 
   const openSummaryForSession = useCallback(async (sessionId: string) => {
     if (!sessionId) {
@@ -134,8 +216,13 @@ export const useSessionSummaryPanel = (
       return;
     }
     setSummaryPaneSessionId(sessionId);
+    const cached = getCachedConversationSummaryItems(apiClient, sessionId);
+    setSummaryItems(cached ? [...cached] : []);
+    setSummaryError(null);
+    setSummaryLoadedSessionId(cached ? sessionId : null);
+    setSummaryLoading(!cached);
     await loadSessionSummaries(sessionId);
-  }, [loadSessionSummaries, summaryPaneSessionId]);
+  }, [apiClient, loadSessionSummaries, summaryPaneSessionId, setSummaryPaneSessionId]);
 
   const deleteSummary = useCallback(async (sessionId: string, summaryId: string) => {
     if (!sessionId || !summaryId) {
@@ -145,13 +232,14 @@ export const useSessionSummaryPanel = (
     setSummaryError(null);
     try {
       await apiClient.deleteConversationSummary(sessionId, summaryId);
-      await loadSessionSummaries(sessionId, { silent: true });
+      markSessionSummariesStale(sessionId);
+      await loadSessionSummaries(sessionId, { silent: true, force: true });
     } catch (error) {
       setSummaryError(error instanceof Error ? error.message : '删除总结失败');
     } finally {
       setDeletingSummaryId((prev) => (prev === summaryId ? null : prev));
     }
-  }, [apiClient, loadSessionSummaries]);
+  }, [apiClient, loadSessionSummaries, markSessionSummariesStale]);
 
   const clearSummaries = useCallback(async (
     sessionId: string,
@@ -161,8 +249,13 @@ export const useSessionSummaryPanel = (
       return;
     }
     const confirmed = options?.skipConfirm === true
-      || typeof window === 'undefined'
-      || window.confirm(options?.confirmMessage || '确定清空当前会话的所有总结吗？');
+      || await confirm({
+        title: '清空会话总结',
+        message: options?.confirmMessage || '确定清空当前会话的所有总结吗？',
+        confirmText: '清空',
+        cancelText: '取消',
+        type: 'danger',
+      });
     if (!confirmed) {
       return;
     }
@@ -170,13 +263,14 @@ export const useSessionSummaryPanel = (
     setSummaryError(null);
     try {
       await apiClient.clearConversationSummaries(sessionId);
-      await loadSessionSummaries(sessionId, { silent: true });
+      markSessionSummariesStale(sessionId);
+      await loadSessionSummaries(sessionId, { silent: true, force: true });
     } catch (error) {
       setSummaryError(error instanceof Error ? error.message : '清空总结失败');
     } finally {
       setClearingSummaries(false);
     }
-  }, [apiClient, loadSessionSummaries]);
+  }, [apiClient, confirm, loadSessionSummaries, markSessionSummariesStale]);
 
   return {
     summaryPaneSessionId,
@@ -189,6 +283,10 @@ export const useSessionSummaryPanel = (
     setSummaryError,
     resetSummaryState,
     loadSessionSummaries,
+    markSessionSummariesStale,
+    hydrateSessionSummariesFromCache,
+    cancelPendingSessionSummariesLoad,
+    applyRealtimeSessionSummaries,
     openSummaryForSession,
     deleteSummary,
     clearSummaries,

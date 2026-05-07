@@ -68,4 +68,6 @@ find "$ROOT_DIR" \
 
 print_header "Suggested Commands"
 echo "bash scripts/check-large-files.sh --threshold 20"
+echo "python scripts/check-non-test-unwrap-expect.py"
+echo "bash scripts/check-hotspot-line-budgets.sh"
 echo "bash scripts/cleanup-dev-artifacts.sh --dry-run"

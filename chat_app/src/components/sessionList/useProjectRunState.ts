@@ -1,15 +1,30 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
+import { useRealtimeEvent, useRealtimeTopics } from '../../lib/realtime/RealtimeProvider';
+import { getRealtimeConnectionStateSnapshot } from '../../lib/realtime/state';
+import type {
+  RealtimeEventEnvelope,
+  RealtimeProjectMembersUpdatedPayloadWrapper,
+  RealtimeProjectRunCatalogPayloadWrapper,
+  RealtimeProjectRunStatePayloadWrapper,
+} from '../../lib/realtime/types';
 import type { Project, Terminal } from '../../types';
-import { normalizeEntry } from '../projectExplorer/utils';
-
-const RUNNER_SCRIPT_DIR = '.chatos';
-const RUNNER_SCRIPT_FILE = 'project_runner.sh';
-const RUNNER_SCRIPT_REL_PATH = `${RUNNER_SCRIPT_DIR}/${RUNNER_SCRIPT_FILE}`;
-const RUNNER_START_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} start`;
-const RUNNER_STOP_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} stop`;
-const RUNNER_RESTART_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} restart`;
+import {
+  RUNNER_RESTART_COMMAND,
+  RUNNER_START_COMMAND,
+  RUNNER_STOP_COMMAND,
+  buildProjectRunnerTarget,
+  hasProjectRunnerScript,
+  isProjectRunnerPathMissingError,
+  loadProjectRunnerContactRows,
+  markProjectRunnerContactRowsStale,
+  markProjectRunnerScriptStateStale,
+  normalizeProjectRunnerRootPath,
+  patchProjectRunnerScriptStateSnapshot,
+  readProjectRunnerErrorMessage,
+  resolveProjectRuntimeTerminal,
+} from '../../lib/domain/projectRunner';
 
 export interface ProjectRunTargetOption {
   id: string;
@@ -47,6 +62,26 @@ interface UseProjectRunStateParams {
   loadTerminals: () => Promise<unknown>;
   handleSelectTerminal: (terminalId: string) => Promise<void>;
   setActivePanel: (panel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp') => void;
+  enabled?: boolean;
+}
+
+interface ProjectRealtimeLiveState {
+  isRunning: boolean;
+  terminalId: string | null;
+  terminalName: string | null;
+  cwd: string | null;
+  busy: boolean;
+  status: string;
+}
+
+interface ProjectRunStateDetails {
+  memberCount: number;
+  runnerScriptExists: boolean;
+  runnerRootMissing: boolean;
+  membersError: string | null;
+  runnerScriptError: string | null;
+  membersLoading: boolean;
+  runnerScriptLoading: boolean;
 }
 
 const createInitialProjectRunState = (): ProjectRunViewState => ({
@@ -63,98 +98,221 @@ const createInitialProjectRunState = (): ProjectRunViewState => ({
   error: null,
 });
 
-const normalizeRootPath = (value: string): string => value.trim().replace(/[\\/]+$/, '');
+const createInitialProjectRunStateDetails = (): ProjectRunStateDetails => ({
+  memberCount: 0,
+  runnerScriptExists: false,
+  runnerRootMissing: false,
+  membersError: null,
+  runnerScriptError: null,
+  membersLoading: true,
+  runnerScriptLoading: true,
+});
 
-const hasRunnerScript = async (apiClient: ApiClient, rootPath: string): Promise<boolean> => {
-  const safeRoot = normalizeRootPath(rootPath);
-  if (!safeRoot) {
-    return false;
+const isProjectRunStatePayload = (
+  event: RealtimeEventEnvelope,
+): event is RealtimeEventEnvelope & { payload: RealtimeProjectRunStatePayloadWrapper } => (
+  event?.payload?.kind === 'project_run_state'
+);
+
+const isProjectRunCatalogPayload = (
+  event: RealtimeEventEnvelope,
+): event is RealtimeEventEnvelope & { payload: RealtimeProjectRunCatalogPayloadWrapper } => (
+  event?.payload?.kind === 'project_run_catalog'
+);
+
+const isProjectMembersUpdatedPayload = (
+  event: RealtimeEventEnvelope,
+): event is RealtimeEventEnvelope & { payload: RealtimeProjectMembersUpdatedPayloadWrapper } => (
+  event?.payload?.kind === 'project_members_updated'
+);
+
+const readTrimmedString = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const shouldFallbackRefreshTerminals = (): boolean => (
+  getRealtimeConnectionStateSnapshot() !== 'connected'
+);
+
+const buildProjectRunViewState = (
+  project: Project,
+  details: ProjectRunStateDetails,
+): ProjectRunViewState => {
+  const loading = details.membersLoading || details.runnerScriptLoading;
+
+  if (details.runnerRootMissing) {
+    return {
+      ...createInitialProjectRunState(),
+      status: 'missing_root',
+      loading: false,
+      error: '项目目录不存在，请检查项目路径',
+    };
   }
-  const rootList = await apiClient.listFsEntries(safeRoot);
-  const rootEntries = Array.isArray(rootList?.entries) ? rootList.entries.map(normalizeEntry) : [];
-  const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
-  const runnerDirPath = runnerDirEntry?.path || `${safeRoot}/${RUNNER_SCRIPT_DIR}`;
+
+  if (loading) {
+    return {
+      ...createInitialProjectRunState(),
+      status: 'loading',
+      loading: true,
+    };
+  }
+
+  if (details.membersError || details.runnerScriptError) {
+    return {
+      ...createInitialProjectRunState(),
+      status: 'error',
+      loading: false,
+      error: details.runnerScriptError || details.membersError || '运行状态加载失败',
+    };
+  }
+
+  if (details.runnerScriptExists) {
+    const target = buildProjectRunnerTarget(project.rootPath);
+    return {
+      ...createInitialProjectRunState(),
+      status: 'ready',
+      loading: false,
+      targetCount: 1,
+      defaultTargetId: target.id,
+      fallbackTargetId: target.id,
+      defaultCommand: target.command,
+      defaultCwd: target.cwd,
+      fallbackCommand: target.command,
+      fallbackCwd: target.cwd,
+      targets: [target],
+      error: null,
+    };
+  }
+
+  if (details.memberCount <= 0) {
+    return {
+      ...createInitialProjectRunState(),
+      status: 'no_member',
+      loading: false,
+      error: '请先添加一个联系人',
+    };
+  }
+
+  return {
+    ...createInitialProjectRunState(),
+    status: 'script_missing',
+    loading: false,
+    defaultCwd: project.rootPath,
+    fallbackCwd: project.rootPath,
+    error: '请先在项目页生成启动脚本',
+  };
+};
+
+const loadProjectRunMembersDetails = async (
+  apiClient: ApiClient,
+  projectId: string,
+): Promise<Partial<ProjectRunStateDetails>> => {
   try {
-    const runnerList = await apiClient.listFsEntries(runnerDirPath);
-    const runnerEntries = Array.isArray(runnerList?.entries) ? runnerList.entries.map(normalizeEntry) : [];
-    return runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE);
-  } catch {
-    return false;
+    const members = await loadProjectRunnerContactRows(apiClient, projectId);
+    return {
+      memberCount: Array.isArray(members) ? members.length : 0,
+      membersError: null,
+      membersLoading: false,
+    };
+  } catch (error) {
+    return {
+      memberCount: 0,
+      membersError: readProjectRunnerErrorMessage(error, '运行状态加载失败'),
+      membersLoading: false,
+    };
   }
+};
+
+const loadProjectRunScriptDetails = async (
+  apiClient: ApiClient,
+  project: Project,
+): Promise<Partial<ProjectRunStateDetails>> => {
+  try {
+    const scriptExists = await hasProjectRunnerScript(apiClient, project.rootPath);
+    return {
+      runnerScriptExists: scriptExists,
+      runnerRootMissing: false,
+      runnerScriptError: null,
+      runnerScriptLoading: false,
+    };
+  } catch (error) {
+    if (isProjectRunnerPathMissingError(error)) {
+      return {
+        runnerScriptExists: false,
+        runnerRootMissing: true,
+        runnerScriptError: '项目目录不存在，请检查项目路径',
+        runnerScriptLoading: false,
+      };
+    }
+
+    return {
+      runnerScriptExists: false,
+      runnerRootMissing: false,
+      runnerScriptError: readProjectRunnerErrorMessage(error, '运行状态加载失败'),
+      runnerScriptLoading: false,
+    };
+  }
+};
+
+const resolveProjectRunScriptSnapshotDetails = (
+  apiClient: ApiClient,
+  project: Project,
+  payload: RealtimeProjectRunCatalogPayloadWrapper,
+): Partial<ProjectRunStateDetails> | null => {
+  const hasRootMissing = typeof payload.root_missing === 'boolean';
+  const hasRunnerScriptExists = typeof payload.runner_script_exists === 'boolean';
+  if (!hasRootMissing && !hasRunnerScriptExists) {
+    return null;
+  }
+
+  if (hasRunnerScriptExists && project.rootPath) {
+    patchProjectRunnerScriptStateSnapshot(
+      apiClient,
+      project.rootPath,
+      payload.runner_script_exists === true,
+    );
+  }
+
+  const next: Partial<ProjectRunStateDetails> = {
+    runnerScriptLoading: false,
+  };
+
+  if (hasRunnerScriptExists) {
+    next.runnerScriptExists = payload.runner_script_exists === true;
+    next.runnerRootMissing = false;
+    next.runnerScriptError = null;
+  }
+
+  if (hasRootMissing) {
+    next.runnerRootMissing = payload.root_missing === true;
+    next.runnerScriptError = payload.root_missing === true ? '项目目录不存在，请检查项目路径' : null;
+    if (payload.root_missing === true) {
+      next.runnerScriptExists = false;
+    }
+  }
+
+  return next;
 };
 
 const resolveProjectRunState = async (
   apiClient: ApiClient,
   project: Project,
-): Promise<ProjectRunViewState> => {
-  try {
-    const [members, scriptExists] = await Promise.all([
-      apiClient.listProjectContacts(project.id, { limit: 500, offset: 0 }),
-      hasRunnerScript(apiClient, project.rootPath),
-    ]);
-    const memberCount = Array.isArray(members) ? members.length : 0;
-    if (scriptExists) {
-      const target: ProjectRunTargetOption = {
-        id: 'project_runner_start',
-        label: 'project_runner.sh start',
-        cwd: project.rootPath,
-        command: RUNNER_START_COMMAND,
-      };
-      return {
-        status: 'ready',
-        loading: false,
-        targetCount: 1,
-        defaultTargetId: target.id,
-        fallbackTargetId: target.id,
-        defaultCommand: target.command,
-        defaultCwd: target.cwd,
-        fallbackCommand: target.command,
-        fallbackCwd: target.cwd,
-        targets: [target],
-        error: null,
-      };
-    }
-    if (memberCount <= 0) {
-      return {
-        ...createInitialProjectRunState(),
-        status: 'no_member',
-        loading: false,
-        error: '请先添加一个联系人',
-      };
-    }
-    return {
-      ...createInitialProjectRunState(),
-      status: 'script_missing',
-      loading: false,
-      defaultCwd: project.rootPath,
-      fallbackCwd: project.rootPath,
-      error: '请先在项目页生成启动脚本',
-    };
-  } catch (error) {
-    return {
-      ...createInitialProjectRunState(),
-      status: 'error',
-      loading: false,
-      error: error instanceof Error ? error.message : '运行状态加载失败',
-    };
-  }
-};
-
-const resolveProjectRuntimeTerminal = (
-  terminals: Terminal[],
-  projectId: string,
-) => {
-  const related = terminals
-    .filter((terminal) => String(terminal?.projectId || '') === projectId && terminal?.status === 'running')
-    .sort((left, right) => {
-      const leftTime = new Date(left?.lastActiveAt || 0).getTime();
-      const rightTime = new Date(right?.lastActiveAt || 0).getTime();
-      return rightTime - leftTime;
-    });
-  const busyTerminal = related.find((terminal) => Boolean(terminal?.busy));
+): Promise<{
+  details: ProjectRunStateDetails;
+  viewState: ProjectRunViewState;
+}> => {
+  const [memberDetails, scriptDetails] = await Promise.all([
+    loadProjectRunMembersDetails(apiClient, project.id),
+    loadProjectRunScriptDetails(apiClient, project),
+  ]);
+  const details: ProjectRunStateDetails = {
+    ...createInitialProjectRunStateDetails(),
+    ...memberDetails,
+    ...scriptDetails,
+  };
   return {
-    busyTerminal,
-    activeTerminal: busyTerminal || related[0] || null,
+    details,
+    viewState: buildProjectRunViewState(project, details),
   };
 };
 
@@ -165,21 +323,60 @@ export const useProjectRunState = ({
   loadTerminals,
   handleSelectTerminal,
   setActivePanel,
+  enabled = true,
 }: UseProjectRunStateParams) => {
   const [projectRunStateById, setProjectRunStateById] = useState<Record<string, ProjectRunViewState>>({});
+  const [projectRealtimeLiveById, setProjectRealtimeLiveById] = useState<Record<string, ProjectRealtimeLiveState>>({});
   const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
   const [projectActionLoadingById, setProjectActionLoadingById] = useState<Record<string, boolean>>({});
+  const projectRunStateRef = useRef<Record<string, ProjectRunViewState>>({});
+  const projectRunStateDetailsRef = useRef<Record<string, ProjectRunStateDetails>>({});
+  const projectRootPathByIdRef = useRef<Record<string, string>>({});
+  const projectIds = useMemo(
+    () => new Set((projects || []).map((project) => String(project.id || '')).filter(Boolean)),
+    [projects],
+  );
+  const realtimeProjectTopics = useMemo(
+    () => (projects || []).map((project) => (
+      project?.id ? { scope: 'project' as const, id: project.id } : null
+    )),
+    [projects],
+  );
+
+  useRealtimeTopics(realtimeProjectTopics, enabled);
 
   useEffect(() => {
+    if (!enabled) {
+      setProjectRunStateById({});
+      setProjectRealtimeLiveById({});
+      projectRunStateRef.current = {};
+      projectRunStateDetailsRef.current = {};
+      projectRootPathByIdRef.current = {};
+      return;
+    }
+
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
     const projectIds = new Set((projects || []).map((project) => String(project.id || '')));
 
     setProjectRunStateById((prev) => {
       const next: Record<string, ProjectRunViewState> = {};
+      const nextDetails: Record<string, ProjectRunStateDetails> = {};
+      const nextRootPathById: Record<string, string> = {};
       (projects || []).forEach((project) => {
-        next[project.id] = prev[project.id] || createInitialProjectRunState();
+        const normalizedRootPath = normalizeProjectRunnerRootPath(project.rootPath || '');
+        nextRootPathById[project.id] = normalizedRootPath;
+        const previousRootPath = projectRootPathByIdRef.current[project.id] || '';
+        const currentDetails = previousRootPath === normalizedRootPath
+          ? (projectRunStateDetailsRef.current[project.id] || createInitialProjectRunStateDetails())
+          : createInitialProjectRunStateDetails();
+        nextDetails[project.id] = currentDetails;
+        next[project.id] = previousRootPath === normalizedRootPath
+          ? (prev[project.id] || createInitialProjectRunState())
+          : createInitialProjectRunState();
       });
+      projectRunStateRef.current = next;
+      projectRunStateDetailsRef.current = nextDetails;
+      projectRootPathByIdRef.current = nextRootPathById;
       return next;
     });
 
@@ -187,7 +384,7 @@ export const useProjectRunState = ({
       const updates = await Promise.all(
         (projects || []).map(async (project) => ({
           projectId: project.id,
-          state: await resolveProjectRunState(apiClient, project),
+          resolved: await resolveProjectRunState(apiClient, project),
         })),
       );
 
@@ -197,54 +394,199 @@ export const useProjectRunState = ({
 
       setProjectRunStateById((prev) => {
         const next: Record<string, ProjectRunViewState> = {};
+        const nextDetails: Record<string, ProjectRunStateDetails> = {};
         projectIds.forEach((projectId) => {
           if (prev[projectId]) {
             next[projectId] = prev[projectId];
           }
+          if (projectRunStateDetailsRef.current[projectId]) {
+            nextDetails[projectId] = projectRunStateDetailsRef.current[projectId];
+          }
         });
         updates.forEach((item) => {
-          next[item.projectId] = item.state;
+          next[item.projectId] = item.resolved.viewState;
+          nextDetails[item.projectId] = item.resolved.details;
         });
+        projectRunStateRef.current = next;
+        projectRunStateDetailsRef.current = nextDetails;
         return next;
       });
-
-      if (!cancelled && updates.some((item) => item.state.status !== 'ready')) {
-        timer = setTimeout(() => {
-          void loadProjectRunStates();
-        }, 5000);
-      }
     };
 
     void loadProjectRunStates();
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
     };
-  }, [apiClient, projects]);
+  }, [apiClient, enabled, projects]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setProjectRealtimeLiveById({});
+      return;
+    }
+    setProjectRealtimeLiveById((prev) => {
+      const next: Record<string, ProjectRealtimeLiveState> = {};
+      (projects || []).forEach((project) => {
+        if (prev[project.id]) {
+          next[project.id] = prev[project.id];
+        }
+      });
+      return next;
+    });
+  }, [enabled, projects]);
+
+  const refreshProjectRunMembersState = useCallback(async (projectId: string) => {
+    const project = (projects || []).find((item) => item.id === projectId);
+    if (!enabled || !project) {
+      return;
+    }
+    markProjectRunnerContactRowsStale(apiClient, projectId);
+    const nextMemberDetails = await loadProjectRunMembersDetails(apiClient, projectId);
+    setProjectRunStateById((prev) => {
+      const currentDetails = projectRunStateDetailsRef.current[projectId]
+        || createInitialProjectRunStateDetails();
+      const nextDetails: ProjectRunStateDetails = {
+        ...currentDetails,
+        ...nextMemberDetails,
+      };
+      const next = {
+        ...prev,
+        [projectId]: buildProjectRunViewState(project, nextDetails),
+      };
+      projectRunStateRef.current = next;
+      projectRunStateDetailsRef.current = {
+        ...projectRunStateDetailsRef.current,
+        [projectId]: nextDetails,
+      };
+      return next;
+    });
+  }, [apiClient, enabled, projects]);
+
+  const refreshProjectRunScriptState = useCallback(async (projectId: string) => {
+    const project = (projects || []).find((item) => item.id === projectId);
+    if (!enabled || !project) {
+      return;
+    }
+    markProjectRunnerScriptStateStale(apiClient, project.rootPath);
+    const nextScriptDetails = await loadProjectRunScriptDetails(apiClient, project);
+    setProjectRunStateById((prev) => {
+      const currentDetails = projectRunStateDetailsRef.current[projectId]
+        || createInitialProjectRunStateDetails();
+      const nextDetails: ProjectRunStateDetails = {
+        ...currentDetails,
+        ...nextScriptDetails,
+      };
+      const next = {
+        ...prev,
+        [projectId]: buildProjectRunViewState(project, nextDetails),
+      };
+      projectRunStateRef.current = next;
+      projectRunStateDetailsRef.current = {
+        ...projectRunStateDetailsRef.current,
+        [projectId]: nextDetails,
+      };
+      return next;
+    });
+  }, [apiClient, enabled, projects]);
+
+  useRealtimeEvent((event) => {
+    if (!enabled) {
+      return;
+    }
+    if (event.event === 'project.members.updated' && isProjectMembersUpdatedPayload(event)) {
+      const payloadProjectId = String(event.project_id || event.payload.project_id || '').trim();
+      if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
+        return;
+      }
+      void refreshProjectRunMembersState(payloadProjectId);
+      return;
+    }
+    if (event.event === 'project.run.catalog.updated' && isProjectRunCatalogPayload(event)) {
+      const payloadProjectId = String(event.project_id || event.payload.project_id || '').trim();
+      if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
+        return;
+      }
+      const project = (projects || []).find((item) => item.id === payloadProjectId);
+      if (!project) {
+        return;
+      }
+      const nextScriptDetails = resolveProjectRunScriptSnapshotDetails(apiClient, project, event.payload);
+      if (!nextScriptDetails) {
+        void refreshProjectRunScriptState(payloadProjectId);
+        return;
+      }
+      setProjectRunStateById((prev) => {
+        const currentDetails = projectRunStateDetailsRef.current[payloadProjectId]
+          || createInitialProjectRunStateDetails();
+        const nextDetails: ProjectRunStateDetails = {
+          ...currentDetails,
+          ...nextScriptDetails,
+        };
+        const next = {
+          ...prev,
+          [payloadProjectId]: buildProjectRunViewState(project, nextDetails),
+        };
+        projectRunStateRef.current = next;
+        projectRunStateDetailsRef.current = {
+          ...projectRunStateDetailsRef.current,
+          [payloadProjectId]: nextDetails,
+        };
+        return next;
+      });
+      return;
+    }
+
+    if (event.event !== 'project.run.state_changed' || !isProjectRunStatePayload(event)) {
+      return;
+    }
+    const payloadProjectId = String(event.project_id || event.payload.project_id || '').trim();
+    if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
+      return;
+    }
+    const terminalId = readTrimmedString(event.payload.terminal_id);
+    const terminalName = readTrimmedString(event.payload.terminal_name) || terminalId || null;
+    const cwd = readTrimmedString(event.payload.cwd) || null;
+    const status = readTrimmedString(event.payload.status) || 'unknown';
+    setProjectRealtimeLiveById((prev) => ({
+      ...prev,
+      [payloadProjectId]: {
+        isRunning: event.payload.running === true,
+        terminalId: terminalId || null,
+        terminalName,
+        cwd,
+        busy: event.payload.busy === true,
+        status,
+      },
+    }));
+  });
 
   const projectLiveStateById = useMemo<Record<string, ProjectLiveViewState>>(() => {
     const out: Record<string, ProjectLiveViewState> = {};
 
     (projects || []).forEach((project) => {
       const { busyTerminal, activeTerminal } = resolveProjectRuntimeTerminal(terminals || [], project.id);
+      const realtimeLive = projectRealtimeLiveById[project.id];
       const runState = projectRunStateById[project.id];
       const command = runState?.defaultCommand || runState?.fallbackCommand || null;
-      const cwd = runState?.defaultCwd || runState?.fallbackCwd || activeTerminal?.cwd || null;
+      const cwd = runState?.defaultCwd || runState?.fallbackCwd || realtimeLive?.cwd || activeTerminal?.cwd || null;
+      const terminalId = realtimeLive?.terminalId || activeTerminal?.id || null;
+      const terminalName = realtimeLive?.terminalName || activeTerminal?.name || null;
+      const isRunning = typeof realtimeLive?.isRunning === 'boolean'
+        ? realtimeLive.isRunning
+        : Boolean(busyTerminal);
 
       out[project.id] = {
-        isRunning: Boolean(busyTerminal),
-        terminalId: activeTerminal?.id || null,
-        terminalName: activeTerminal?.name || null,
+        isRunning,
+        terminalId,
+        terminalName,
         canRestart: Boolean(command && cwd),
         actionLoading: Boolean(projectActionLoadingById[project.id]),
       };
     });
 
     return out;
-  }, [projectActionLoadingById, projectRunStateById, projects, terminals]);
+  }, [projectActionLoadingById, projectRealtimeLiveById, projectRunStateById, projects, terminals]);
 
   const setProjectRunError = useCallback((projectId: string, error: string | null) => {
     setProjectRunStateById((prev) => {
@@ -252,13 +594,15 @@ export const useProjectRunState = ({
       if (!current) {
         return prev;
       }
-      return {
+      const next = {
         ...prev,
         [projectId]: {
           ...current,
           error,
         },
       };
+      projectRunStateRef.current = next;
+      return next;
     });
   }, []);
 
@@ -297,7 +641,9 @@ export const useProjectRunState = ({
         await handleSelectTerminal(terminalId);
       }
       setActivePanel('terminal');
-      await loadTerminals();
+      if (shouldFallbackRefreshTerminals()) {
+        await loadTerminals();
+      }
     } catch (error) {
       setProjectRunError(projectId, error instanceof Error ? error.message : '运行失败');
     } finally {
@@ -328,7 +674,9 @@ export const useProjectRunState = ({
       if (terminalId) {
         await handleSelectTerminal(terminalId);
       }
-      await loadTerminals();
+      if (shouldFallbackRefreshTerminals()) {
+        await loadTerminals();
+      }
       setActivePanel('terminal');
     } catch (error) {
       setProjectRunError(projectId, error instanceof Error ? error.message : '停止失败');
@@ -361,7 +709,9 @@ export const useProjectRunState = ({
         await handleSelectTerminal(terminalId);
       }
       setActivePanel('terminal');
-      await loadTerminals();
+      if (shouldFallbackRefreshTerminals()) {
+        await loadTerminals();
+      }
     } catch (error) {
       setProjectRunError(projectId, error instanceof Error ? error.message : '重启失败');
     } finally {

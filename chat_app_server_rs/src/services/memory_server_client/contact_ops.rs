@@ -6,8 +6,8 @@ use super::dto::{
     MemoryProjectMemoryDto, SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
 };
 use super::http::{
-    build_url, client, push_limit_offset_params, send_delete_result, send_json, send_list,
-    timeout_duration,
+    client, push_limit_offset_params, send_delete_result, send_json, send_list,
+    send_optional_json, try_build_url, try_timeout_duration,
 };
 
 pub async fn list_memory_contacts(
@@ -24,20 +24,33 @@ pub async fn list_memory_contacts(
     send_list("/contacts", &params).await
 }
 
+pub async fn get_memory_contact(contact_id: &str) -> Result<Option<MemoryContactDto>, String> {
+    let req = client()
+        .get(try_build_url(&format!(
+            "/contacts/{}",
+            urlencoding::encode(contact_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
+    send_optional_json(req).await
+}
+
 pub async fn create_memory_contact(
     payload: &CreateMemoryContactRequestDto,
 ) -> Result<CreateMemoryContactResponseDto, String> {
     let req = client()
-        .post(build_url("/contacts").as_str())
-        .timeout(timeout_duration())
+        .post(try_build_url("/contacts")?)
+        .timeout(try_timeout_duration()?)
         .json(payload);
     send_json(req).await
 }
 
 pub async fn delete_memory_contact(contact_id: &str) -> Result<bool, String> {
     let req = client()
-        .delete(build_url(&format!("/contacts/{}", urlencoding::encode(contact_id))).as_str())
-        .timeout(timeout_duration());
+        .delete(try_build_url(&format!(
+            "/contacts/{}",
+            urlencoding::encode(contact_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     send_delete_result(req).await
 }
@@ -46,8 +59,8 @@ pub async fn sync_memory_project(
     payload: &SyncMemoryProjectRequestDto,
 ) -> Result<MemoryProjectDto, String> {
     let req = client()
-        .post(build_url("/projects/sync").as_str())
-        .timeout(timeout_duration())
+        .post(try_build_url("/projects/sync")?)
+        .timeout(try_timeout_duration()?)
         .json(payload);
     send_json(req).await
 }
@@ -56,8 +69,8 @@ pub async fn sync_project_agent_link(
     payload: &SyncProjectAgentLinkRequestDto,
 ) -> Result<MemoryProjectAgentLinkDto, String> {
     let req = client()
-        .post(build_url("/project-agent-links/sync").as_str())
-        .timeout(timeout_duration())
+        .post(try_build_url("/project-agent-links/sync")?)
+        .timeout(try_timeout_duration()?)
         .json(payload);
     send_json(req).await
 }

@@ -8,6 +8,7 @@ use crate::services::code_nav::languages::basic::{
     count_char, find_balanced_end, find_column, make_symbol, strip_c_style_comments,
     BasicFileAnalysis, BasicLanguageSpec, BasicSymbol,
 };
+use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities, NavLocation,
     NavPositionRequest, ProjectContext,
@@ -36,22 +37,19 @@ const KOTLIN_PROJECT_FILES: &[&str] = &[
 const KOTLIN_PROJECT_EXTENSIONS: &[&str] = &["gradle", "kts"];
 
 static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    compile_static_regex(
         r"^\s*(?:(?:public|private|protected|internal|abstract|open|final|sealed|data|enum|annotation|value|inner)\s+)*(class|interface|object)\s+([A-Za-z_][A-Za-z0-9_]*)",
     )
-    .unwrap()
 });
 static FUNCTION_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    compile_static_regex(
         r"^\s*(?:(?:public|private|protected|internal|abstract|open|final|override|suspend|inline|operator|infix|tailrec|external)\s+)*fun\s*(?:<[^>{}]+>\s*)?(?:(?:[A-Za-z_][A-Za-z0-9_.$<>?,\s]*\.)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(",
     )
-    .unwrap()
 });
 static PROPERTY_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    compile_static_regex(
         r"^\s*(?:(?:public|private|protected|internal|abstract|open|final|override|lateinit|const)\s+)*(val|var)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
     )
-    .unwrap()
 });
 
 const SPEC: BasicLanguageSpec = BasicLanguageSpec {

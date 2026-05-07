@@ -227,6 +227,14 @@ pub fn router(state: SharedState) -> Router {
             post(jobs_api::run_summary_once),
         )
         .route(
+            "/api/memory/v1/jobs/summary/review-repair-run-once",
+            post(jobs_api::run_review_repair_once),
+        )
+        .route(
+            "/api/memory/v1/jobs/summary/review-repair-status",
+            get(jobs_api::get_review_repair_status),
+        )
+        .route(
             "/api/memory/v1/jobs/summary-rollup/run-once",
             post(jobs_api::run_rollup_once),
         )
@@ -235,6 +243,7 @@ pub fn router(state: SharedState) -> Router {
             post(jobs_api::run_agent_memory_once),
         )
         .route("/api/memory/v1/jobs/runs", get(jobs_api::list_job_runs))
+        .route("/api/memory/v1/jobs/runs/stream", get(jobs_api::stream_job_runs))
         .route("/api/memory/v1/jobs/stats", get(jobs_api::job_stats))
         .route(
             "/api/memory/v1/context/compose",

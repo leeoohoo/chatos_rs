@@ -5,18 +5,25 @@ use axum::{
 
 mod contracts;
 mod history;
+mod history_compact;
+mod history_display;
+mod history_process;
+mod history_process_support;
 mod mcp_server_handlers;
 mod message_handlers;
+mod review_handlers;
 mod session_handlers;
 mod summary_handlers;
 mod support;
 
 use self::mcp_server_handlers::{add_mcp_server, delete_mcp_server, list_mcp_servers};
 use self::message_handlers::{
-    create_session_message, get_session_messages, get_session_turn_process_messages,
+    create_session_message, get_session_messages, get_session_turn_display_messages,
+    get_session_turn_display_messages_by_turn, get_session_turn_process_messages,
     get_session_turn_process_messages_by_turn, get_session_turn_runtime_context_by_turn,
     get_session_turn_runtime_context_latest,
 };
+use self::review_handlers::{get_session_review_repair_status, run_session_review_repair};
 use self::session_handlers::{
     create_session, delete_session, get_session, list_sessions, update_session,
 };
@@ -51,8 +58,16 @@ pub fn router() -> Router {
             get(get_session_turn_process_messages),
         )
         .route(
+            "/api/conversations/:conversation_id/turns/:user_message_id/messages",
+            get(get_session_turn_display_messages),
+        )
+        .route(
             "/api/conversations/:conversation_id/turns/by-turn/:turn_id/process",
             get(get_session_turn_process_messages_by_turn),
+        )
+        .route(
+            "/api/conversations/:conversation_id/turns/by-turn/:turn_id/messages",
+            get(get_session_turn_display_messages_by_turn),
         )
         .route(
             "/api/conversations/:conversation_id/turns/latest/runtime-context",
@@ -65,6 +80,10 @@ pub fn router() -> Router {
         .route(
             "/api/conversations/:conversation_id/summaries",
             get(list_session_memory_summaries).delete(clear_session_memory_summaries),
+        )
+        .route(
+            "/api/conversations/:conversation_id/review-repair",
+            axum::routing::post(run_session_review_repair).get(get_session_review_repair_status),
         )
         .route(
             "/api/conversations/:conversation_id/summaries/:summary_id",

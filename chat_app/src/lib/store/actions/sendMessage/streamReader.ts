@@ -8,6 +8,7 @@ interface ConsumeChatStreamParams {
   streamedTextRef: { value: string };
   flushPendingTextToStreamingMessage: () => void;
   handleParsedEvent: (parsed: StreamEventPayload) => HandleStreamEventResult;
+  shouldHandleParsedEvent?: (parsed: StreamEventPayload) => boolean;
 }
 
 export const consumeChatStream = async ({
@@ -15,6 +16,7 @@ export const consumeChatStream = async ({
   streamedTextRef,
   flushPendingTextToStreamingMessage,
   handleParsedEvent,
+  shouldHandleParsedEvent,
 }: ConsumeChatStreamParams): Promise<HandleStreamEventResult> => {
   const decoder = new TextDecoder();
   let buffer = '';
@@ -68,6 +70,10 @@ export const consumeChatStream = async ({
           break;
         }
         if (typeof parsed === 'string') {
+          continue;
+        }
+
+        if (shouldHandleParsedEvent && !shouldHandleParsedEvent(parsed)) {
           continue;
         }
 

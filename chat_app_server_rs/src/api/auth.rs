@@ -3,6 +3,7 @@ use axum::{routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::services::memory_server_client;
 
@@ -67,15 +68,24 @@ async fn login_inner(
     };
 
     match memory_server_client::auth_login(username.as_str(), password.as_str()).await {
-        Ok(resp) => (
-            StatusCode::OK,
-            Json(json!({
-                "access_token": resp.token,
-                "token_type": "Bearer",
-                "expires_in": crate::config::Config::get().auth_access_token_ttl_seconds,
-                "user": user_public_value(resp.user_id.as_str(), resp.role.as_str()),
-            })),
-        ),
+        Ok(resp) => match Config::try_get() {
+            Ok(cfg) => (
+                StatusCode::OK,
+                Json(json!({
+                    "access_token": resp.token,
+                    "token_type": "Bearer",
+                    "expires_in": cfg.auth_access_token_ttl_seconds,
+                    "user": user_public_value(resp.user_id.as_str(), resp.role.as_str()),
+                })),
+            ),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "服务配置未初始化",
+                    "detail": err
+                })),
+            ),
+        },
         Err(err) => map_memory_auth_error("登录失败", err),
     }
 }

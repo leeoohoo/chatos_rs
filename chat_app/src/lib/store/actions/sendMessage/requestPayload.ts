@@ -39,6 +39,8 @@ export const buildChatRequestLogPayload = ({
   projectRoot,
   mcpEnabled,
   enabledMcpIds,
+  skillsEnabled,
+  selectedSkillIds,
 }: {
   sessionId: string;
   turnId: string;
@@ -54,6 +56,8 @@ export const buildChatRequestLogPayload = ({
   projectRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  skillsEnabled: boolean;
+  selectedSkillIds: string[];
 }): StreamChatLogPayload => ({
   conversation_id: sessionId,
   turn_id: turnId,
@@ -77,6 +81,8 @@ export const buildChatRequestLogPayload = ({
   project_root: projectRoot,
   mcp_enabled: mcpEnabled,
   enabled_mcp_ids: enabledMcpIds,
+  skills_enabled: skillsEnabled,
+  selected_skill_ids: selectedSkillIds,
 });
 
 export const buildStreamChatRuntimeOptions = ({
@@ -87,6 +93,8 @@ export const buildStreamChatRuntimeOptions = ({
   projectRoot,
   mcpEnabled,
   enabledMcpIds,
+  skillsEnabled,
+  selectedSkillIds,
 }: {
   turnId: string;
   contactAgentId: string | null;
@@ -95,6 +103,8 @@ export const buildStreamChatRuntimeOptions = ({
   projectRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  skillsEnabled: boolean;
+  selectedSkillIds: string[];
 }): StreamChatRuntimeOptions => ({
   turnId,
   contactAgentId,
@@ -103,4 +113,6 @@ export const buildStreamChatRuntimeOptions = ({
   projectRoot,
   mcpEnabled,
   enabledMcpIds,
+  skillsEnabled,
+  selectedSkillIds,
 });

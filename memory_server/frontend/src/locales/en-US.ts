@@ -354,6 +354,8 @@ export const enUS: Record<string, string> = {
   'jobRuns.output': 'Output',
   'jobRuns.progress': 'Progress',
   'jobRuns.progressSuspect': 'Done but no message consumed',
+  'jobRuns.reviewRepairPendingFlow': 'Unsummarized messages {before} -> {after}',
+  'jobRuns.reviewRepairSelectionFlow': 'Attempted {selected}, marked {marked}',
   'jobRuns.startedAt': 'Started At',
   'jobRuns.finishedAt': 'Finished At',
   'jobRuns.duration': 'Duration',

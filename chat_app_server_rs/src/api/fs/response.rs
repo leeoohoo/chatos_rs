@@ -19,8 +19,13 @@ pub fn json_error_response(status: StatusCode, message: impl AsRef<str>) -> Resp
     response
 }
 
-pub fn binary_download_response(data: Vec<u8>, content_type: &str, file_name: &str) -> Response {
-    let mut response = Response::new(Body::from(data));
+pub fn body_download_response(
+    body: Body,
+    content_type: &str,
+    file_name: &str,
+    content_length: Option<u64>,
+) -> Response {
+    let mut response = Response::new(body);
     *response.status_mut() = StatusCode::OK;
 
     let headers = response.headers_mut();
@@ -36,6 +41,11 @@ pub fn binary_download_response(data: Vec<u8>, content_type: &str, file_name: &s
     let disposition = build_content_disposition(file_name);
     if let Ok(value) = HeaderValue::from_str(&disposition) {
         headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    if let Some(content_length) = content_length {
+        if let Ok(value) = HeaderValue::from_str(&content_length.to_string()) {
+            headers.insert(header::CONTENT_LENGTH, value);
+        }
     }
 
     response

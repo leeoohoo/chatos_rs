@@ -1,13 +1,11 @@
 mod actions;
 mod context;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::core::async_bridge::block_on_result;
-use crate::core::tool_io::text_result;
+use crate::core::tool_registry::{async_text_tool_handler, ToolRegistry};
 
 use self::actions::{
     list_connections_with_context, list_directory_with_context, read_file_with_context,
@@ -35,16 +33,7 @@ pub struct RemoteConnectionControllerOptions {
 
 #[derive(Clone)]
 pub struct RemoteConnectionControllerService {
-    tools: HashMap<String, Tool>,
-    unavailable_tools: HashMap<String, String>,
-}
-
-#[derive(Clone)]
-struct Tool {
-    name: String,
-    description: String,
-    input_schema: Value,
-    handler: ToolHandler,
+    registry: ToolRegistry<ToolHandler>,
 }
 
 type ToolHandler = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
@@ -63,8 +52,7 @@ pub(super) struct BoundContext {
 impl RemoteConnectionControllerService {
     pub fn new(opts: RemoteConnectionControllerOptions) -> Result<Self, String> {
         let mut service = Self {
-            tools: HashMap::new(),
-            unavailable_tools: HashMap::new(),
+            registry: ToolRegistry::new(),
         };
         let bound = BoundContext {
             server_name: opts.server_name,
@@ -93,17 +81,16 @@ impl RemoteConnectionControllerService {
 
         if bound.user_id.is_none() {
             let reason = "remote_connection_controller 缺少 user_id 上下文".to_string();
-            for tool_name in [
+            service.registry.register_unavailable_tools(
+                [
                 "list_connections",
                 "test_connection",
                 "run_command",
                 "list_directory",
                 "read_file",
-            ] {
-                service
-                    .unavailable_tools
-                    .insert(tool_name.to_string(), reason.clone());
-            }
+                ],
+                reason.clone(),
+            );
             return Ok(service);
         }
 
@@ -118,34 +105,19 @@ impl RemoteConnectionControllerService {
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema
-                })
-            })
-            .collect()
+        self.registry.list_tools()
     }
 
     pub fn call_tool(&self, name: &str, args: Value) -> Result<Value, String> {
         let tool = self
-            .tools
+            .registry
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
         (tool.handler)(args)
     }
 
     pub fn unavailable_tools(&self) -> Vec<(String, String)> {
-        let mut pairs: Vec<(String, String)> = self
-            .unavailable_tools
-            .iter()
-            .map(|(name, reason)| (name.clone(), reason.clone()))
-            .collect();
-        pairs.sort_by(|left, right| left.0.cmp(&right.0));
-        pairs
+        self.registry.unavailable_tools()
     }
 
     fn register_tool(
@@ -155,15 +127,8 @@ impl RemoteConnectionControllerService {
         input_schema: Value,
         handler: ToolHandler,
     ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
+        self.registry
+            .register_tool(name, description, input_schema, handler);
     }
 
     fn register_list_connections(&mut self, bound: BoundContext) {
@@ -175,10 +140,9 @@ impl RemoteConnectionControllerService {
                 "properties": {},
                 "additionalProperties": false
             }),
-            Arc::new(move |_args| {
+            async_text_tool_handler(move |_args| {
                 let ctx = bound.clone();
-                let result = block_on_result(async move { list_connections_with_context(ctx).await })?;
-                Ok(text_result(result))
+                Ok(async move { list_connections_with_context(ctx).await })
             }),
         );
     }
@@ -205,13 +169,12 @@ impl RemoteConnectionControllerService {
                 "required": required,
                 "additionalProperties": false
             }),
-            Arc::new(move |args| {
+            async_text_tool_handler(move |args| {
                 let connection_id = optional_trimmed_string(&args, "connection_id");
                 let ctx = bound.clone();
-                let result = block_on_result(async move {
+                Ok(async move {
                     test_connection_with_context(ctx, connection_id).await
-                })?;
-                Ok(text_result(result))
+                })
             }),
         );
     }
@@ -242,14 +205,14 @@ impl RemoteConnectionControllerService {
                 "required": required,
                 "additionalProperties": false
             }),
-            Arc::new(move |args| {
+            async_text_tool_handler(move |args| {
                 let connection_id = optional_trimmed_string(&args, "connection_id");
                 let command = required_trimmed_string(&args, "command")?;
                 let timeout_seconds = optional_u64(&args, "timeout_seconds");
                 let allow_dangerous = optional_bool(&args, "allow_dangerous");
                 let max_output_chars = optional_usize(&args, "max_output_chars");
                 let ctx = bound.clone();
-                let result = block_on_result(async move {
+                Ok(async move {
                     run_command_with_context(
                         ctx,
                         connection_id,
@@ -259,8 +222,7 @@ impl RemoteConnectionControllerService {
                         max_output_chars,
                     )
                     .await
-                })?;
-                Ok(text_result(result))
+                })
             }),
         );
     }
@@ -289,15 +251,14 @@ impl RemoteConnectionControllerService {
                 "required": required,
                 "additionalProperties": false
             }),
-            Arc::new(move |args| {
+            async_text_tool_handler(move |args| {
                 let connection_id = optional_trimmed_string(&args, "connection_id");
                 let path = optional_trimmed_string(&args, "path");
                 let limit = optional_usize(&args, "limit");
                 let ctx = bound.clone();
-                let result = block_on_result(async move {
+                Ok(async move {
                     list_directory_with_context(ctx, connection_id, path, limit).await
-                })?;
-                Ok(text_result(result))
+                })
             }),
         );
     }
@@ -333,15 +294,14 @@ impl RemoteConnectionControllerService {
                 "required": required,
                 "additionalProperties": false
             }),
-            Arc::new(move |args| {
+            async_text_tool_handler(move |args| {
                 let connection_id = optional_trimmed_string(&args, "connection_id");
                 let path = required_trimmed_string(&args, "path")?;
                 let max_bytes = optional_usize(&args, "max_bytes");
                 let ctx = bound.clone();
-                let result = block_on_result(async move {
+                Ok(async move {
                     read_file_with_context(ctx, connection_id, path, max_bytes).await
-                })?;
-                Ok(text_result(result))
+                })
             }),
         );
     }

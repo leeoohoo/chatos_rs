@@ -4,15 +4,18 @@ mod review_flow;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::core::async_bridge::block_on_result;
+use crate::core::async_bridge::{block_on_option, block_on_result};
 use crate::core::mcp_tools::ToolStreamChunkCallback;
 use crate::core::tool_io::text_result;
+use crate::core::tool_registry::ToolRegistry;
+use crate::services::task_board_prompt::{
+    build_task_board_updated_event_payload, enqueue_task_board_refresh,
+};
 use crate::services::task_manager::{
     complete_task_by_id, delete_task_by_id, list_tasks_for_context, update_task_by_id,
 };
@@ -28,17 +31,9 @@ pub struct TaskManagerOptions {
 
 #[derive(Clone)]
 pub struct TaskManagerService {
-    tools: HashMap<String, Tool>,
+    registry: ToolRegistry<ToolHandler>,
     default_conversation_id: String,
     default_turn_id: String,
-}
-
-#[derive(Clone)]
-struct Tool {
-    name: String,
-    description: String,
-    input_schema: Value,
-    handler: ToolHandler,
 }
 
 type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Send + Sync>;
@@ -52,7 +47,7 @@ pub(super) struct ToolContext<'a> {
 impl TaskManagerService {
     pub fn new(opts: TaskManagerOptions) -> Result<Self, String> {
         let mut service = Self {
-            tools: HashMap::new(),
+            registry: ToolRegistry::new(),
             default_conversation_id: format!("conversation_{}", Uuid::new_v4().simple()),
             default_turn_id: format!("turn_{}", Uuid::new_v4().simple()),
         };
@@ -70,16 +65,7 @@ impl TaskManagerService {
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema
-                })
-            })
-            .collect()
+        self.registry.list_tools()
     }
 
     pub fn call_tool(
@@ -91,7 +77,7 @@ impl TaskManagerService {
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
         let tool = self
-            .tools
+            .registry
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
 
@@ -117,15 +103,8 @@ impl TaskManagerService {
         input_schema: Value,
         handler: ToolHandler,
     ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
+        self.registry
+            .register_tool(name, description, input_schema, handler);
     }
 
     fn register_add_task(&mut self, add_timeout: u64, server_name: &str) {
@@ -147,7 +126,29 @@ impl TaskManagerService {
                                 "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                                 "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
                                 "tags": { "type": "array", "items": { "type": "string" } },
-                                "due_at": { "type": "string" }
+                                "due_at": { "type": "string" },
+                                "outcome_summary": { "type": "string" },
+                                "outcome_items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "kind": { "type": "string" },
+                                            "text": { "type": "string" },
+                                            "importance": { "type": "string", "enum": ["high", "medium", "low"] },
+                                            "refs": { "type": "array", "items": { "type": "string" } }
+                                        },
+                                        "required": ["text"],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                "resume_hint": { "type": "string" },
+                                "blocker_reason": { "type": "string" },
+                                "blocker_needs": { "type": "array", "items": { "type": "string" } },
+                                "blocker_kind": {
+                                    "type": "string",
+                                    "enum": ["external_dependency", "permission", "missing_information", "design_decision", "environment_failure", "upstream_bug", "unknown"]
+                                }
                             },
                             "required": ["title"],
                             "additionalProperties": false
@@ -158,7 +159,29 @@ impl TaskManagerService {
                     "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                     "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
                     "tags": { "type": "array", "items": { "type": "string" } },
-                    "due_at": { "type": "string" }
+                    "due_at": { "type": "string" },
+                    "outcome_summary": { "type": "string" },
+                    "outcome_items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string" },
+                                "text": { "type": "string" },
+                                "importance": { "type": "string", "enum": ["high", "medium", "low"] },
+                                "refs": { "type": "array", "items": { "type": "string" } }
+                            },
+                            "required": ["text"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "resume_hint": { "type": "string" },
+                    "blocker_reason": { "type": "string" },
+                    "blocker_needs": { "type": "array", "items": { "type": "string" } },
+                    "blocker_kind": {
+                        "type": "string",
+                        "enum": ["external_dependency", "permission", "missing_information", "design_decision", "environment_failure", "upstream_bug", "unknown"]
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -224,14 +247,14 @@ impl TaskManagerService {
     fn register_update_task(&mut self) {
         self.register_tool(
             "update_task",
-            "Update a task in current conversation by task_id. Provide changes as a JSON string (example: {\"status\":\"doing\"}).",
+            "Update a task in current conversation by task_id. Provide changes as a JSON string (example: {\"status\":\"doing\"}). When setting status=blocked, include outcome_summary and blocker_reason whenever possible.",
             json!({
                 "type": "object",
                 "properties": {
                     "task_id": { "type": "string" },
                     "changes": {
                         "type": "string",
-                        "description": "JSON object string. Allowed keys: title, details (or description), priority, status, tags, due_at (or dueAt)."
+                        "description": "JSON object string. Allowed keys: title, details (or description), priority, status, tags, due_at (or dueAt), outcome_summary, outcome_items, resume_hint, blocker_reason, blocker_needs, blocker_kind, completed_at, last_outcome_at."
                     }
                 },
                 "required": ["task_id", "changes"],
@@ -245,6 +268,7 @@ impl TaskManagerService {
                 let patch = parse_update_patch(changes)?;
                 let task =
                     block_on_result(update_task_by_id(ctx.conversation_id, task_id.as_str(), patch))?;
+                emit_task_board_refresh(ctx);
                 Ok(text_result(json!({
                     "updated": true,
                     "task": task,
@@ -257,19 +281,46 @@ impl TaskManagerService {
     fn register_complete_task(&mut self) {
         self.register_tool(
             "complete_task",
-            "Mark a task as done in current conversation by task_id.",
+            "Mark a task as done in current conversation by task_id. Prefer providing outcome_summary and key findings so later tasks can reuse them.",
             json!({
                 "type": "object",
                 "properties": {
-                    "task_id": { "type": "string" }
+                    "task_id": { "type": "string" },
+                    "outcome_summary": { "type": "string" },
+                    "outcome_items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string" },
+                                "text": { "type": "string" },
+                                "importance": { "type": "string", "enum": ["high", "medium", "low"] },
+                                "refs": { "type": "array", "items": { "type": "string" } }
+                            },
+                            "required": ["text"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "resume_hint": { "type": "string" }
                 },
                 "required": ["task_id"],
                 "additionalProperties": false
             }),
             Arc::new(move |args, ctx| {
                 let task_id = required_string_arg(&args, "task_id")?;
+                let mut patch_args = args
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| "complete_task payload must be an object".to_string())?;
+                patch_args.remove("task_id");
+                let patch = if patch_args.is_empty() {
+                    None
+                } else {
+                    Some(parse_update_patch(&Value::Object(patch_args))?)
+                };
                 let task =
-                    block_on_result(complete_task_by_id(ctx.conversation_id, task_id.as_str()))?;
+                    block_on_result(complete_task_by_id(ctx.conversation_id, task_id.as_str(), patch))?;
+                emit_task_board_refresh(ctx);
                 Ok(text_result(json!({
                     "completed": true,
                     "task": task,
@@ -307,5 +358,26 @@ impl TaskManagerService {
                 })))
             }),
         );
+    }
+}
+
+fn emit_task_board_refresh(ctx: &ToolContext<'_>) {
+    let Some(task_board_prompt) = block_on_option(enqueue_task_board_refresh(
+        ctx.conversation_id,
+        ctx.conversation_turn_id,
+    )) else {
+        return;
+    };
+
+    let Some(callback) = ctx.on_stream_chunk.as_ref() else {
+        return;
+    };
+    let event_payload = build_task_board_updated_event_payload(
+        ctx.conversation_id,
+        ctx.conversation_turn_id,
+        task_board_prompt.as_str(),
+    );
+    if let Ok(serialized) = serde_json::to_string(&event_payload) {
+        callback(serialized);
     }
 }

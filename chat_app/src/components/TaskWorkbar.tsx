@@ -6,6 +6,7 @@ import {
 import RuntimeGuidanceSection from './taskWorkbar/RuntimeGuidanceSection';
 import TaskCard from './taskWorkbar/TaskCard';
 import TaskHistoryDrawer from './taskWorkbar/TaskHistoryDrawer';
+import TaskOutcomeModal, { type TaskOutcomeDraft } from './taskWorkbar/TaskOutcomeModal';
 import type {
   HistoryFilter,
   RuntimeGuidanceWorkbarItem,
@@ -21,6 +22,7 @@ export type {
 interface TaskWorkbarProps {
   tasks: TaskWorkbarItem[];
   historyTasks?: TaskWorkbarItem[];
+  historyOpen?: boolean;
   currentTurnId?: string | null;
   isLoading?: boolean;
   historyLoading?: boolean;
@@ -28,12 +30,22 @@ interface TaskWorkbarProps {
   historyError?: string | null;
   onRefresh?: () => void;
   onOpenHistory?: () => void;
+  onHistoryOpenChange?: (value: boolean) => void;
   onOpenUiPromptHistory?: () => void;
+  onReviewRepair?: () => void | Promise<void>;
+  reviewRepairRunning?: boolean;
+  reviewRepairDisabled?: boolean;
   uiPromptHistoryCount?: number;
   uiPromptHistoryLoading?: boolean;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
+  taskModalOpen?: boolean;
+  taskModalMode?: 'complete' | 'edit';
+  taskModalTask?: TaskWorkbarItem | null;
+  taskModalError?: string | null;
+  onCloseTaskModal?: () => void;
+  onSubmitTaskModal?: (draft: TaskOutcomeDraft) => void;
   actionLoadingTaskId?: string | null;
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
@@ -44,6 +56,7 @@ interface TaskWorkbarProps {
 export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   tasks,
   historyTasks = [],
+  historyOpen = false,
   currentTurnId,
   isLoading = false,
   historyLoading = false,
@@ -51,12 +64,22 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   historyError = null,
   onRefresh,
   onOpenHistory,
+  onHistoryOpenChange,
   onOpenUiPromptHistory,
+  onReviewRepair,
+  reviewRepairRunning = false,
+  reviewRepairDisabled = false,
   uiPromptHistoryCount = 0,
   uiPromptHistoryLoading = false,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
+  taskModalOpen = false,
+  taskModalMode = 'edit',
+  taskModalTask = null,
+  taskModalError = null,
+  onCloseTaskModal,
+  onSubmitTaskModal,
   actionLoadingTaskId = null,
   runtimeGuidancePendingCount = 0,
   runtimeGuidanceAppliedCount = 0,
@@ -64,8 +87,11 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   runtimeGuidanceItems = [],
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [uncontrolledHistoryOpen, setUncontrolledHistoryOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
+  const resolvedHistoryOpen = typeof onHistoryOpenChange === 'function'
+    ? historyOpen
+    : uncontrolledHistoryOpen;
 
   const sortedTasks = useMemo(() => sortTasks(tasks), [tasks]);
   const sortedHistoryTasks = useMemo(
@@ -130,7 +156,11 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
 
   const handleOpenHistory = (filter: HistoryFilter = 'all') => {
     setHistoryFilter(filter);
-    setHistoryOpen(true);
+    if (typeof onHistoryOpenChange === 'function') {
+      onHistoryOpenChange(true);
+    } else {
+      setUncontrolledHistoryOpen(true);
+    }
     onOpenHistory?.();
   };
 
@@ -175,6 +205,16 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 onClick={onOpenUiPromptHistory}
               >
                 {`交互确认记录 ${uiPromptHistoryCount}${uiPromptHistoryLoading ? ' · 更新中' : ''}`}
+              </button>
+            ) : null}
+            {onReviewRepair ? (
+              <button
+                type="button"
+                className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+                onClick={() => { void onReviewRepair(); }}
+                disabled={reviewRepairRunning || reviewRepairDisabled}
+              >
+                {reviewRepairRunning ? '复盘中...' : '复盘'}
               </button>
             ) : null}
             {expanded ? (
@@ -250,7 +290,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
       </div>
 
       <TaskHistoryDrawer
-        open={historyOpen}
+        open={resolvedHistoryOpen}
         historyFilter={historyFilter}
         sortedHistoryTasks={sortedHistoryTasks}
         processedHistoryTasks={processedHistoryTasks}
@@ -259,12 +299,27 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
         isLoading={isLoading}
         historyError={historyError}
         actionLoadingTaskId={actionLoadingTaskId}
-        onClose={() => setHistoryOpen(false)}
+        onClose={() => {
+          if (typeof onHistoryOpenChange === 'function') {
+            onHistoryOpenChange(false);
+            return;
+          }
+          setUncontrolledHistoryOpen(false);
+        }}
         onRefresh={onRefresh}
         onSetHistoryFilter={setHistoryFilter}
         onCompleteTask={onCompleteTask}
         onDeleteTask={onDeleteTask}
         onEditTask={onEditTask}
+      />
+      <TaskOutcomeModal
+        open={taskModalOpen}
+        mode={taskModalMode}
+        task={taskModalTask}
+        error={taskModalError}
+        submitting={taskModalTask ? actionLoadingTaskId === taskModalTask.id : false}
+        onClose={() => onCloseTaskModal?.()}
+        onSubmit={(draft) => onSubmitTaskModal?.(draft)}
       />
     </>
   );

@@ -35,6 +35,19 @@ export const normalizeMetaId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
+export const getCollapsedTextContentForRender = (segments: RenderSegment[]): string => {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return '';
+  }
+
+  const textChunks = segments
+    .filter((segment) => segment.type === 'text')
+    .map((segment) => (typeof segment.content === 'string' ? segment.content : ''))
+    .filter((chunk) => chunk.length > 0);
+
+  return compactTextChunks(textChunks);
+};
+
 export const normalizeContentSegmentsForRender = (segments: unknown[]): RenderSegment[] => {
   if (!Array.isArray(segments) || segments.length === 0) {
     return [];

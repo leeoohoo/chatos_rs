@@ -159,7 +159,9 @@ fn normalize_thinking_level_input(
         return Err("thinking_level only works with gpt provider".to_string());
     }
 
-    let level = level.expect("checked");
+    let Some(level) = level else {
+        return Ok(None);
+    };
     let allowed = ["none", "minimal", "low", "medium", "high", "xhigh"];
     if !allowed.contains(&level.as_str()) {
         return Err("thinking_level only supports none/minimal/low/medium/high/xhigh".to_string());

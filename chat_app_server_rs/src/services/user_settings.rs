@@ -24,8 +24,8 @@ fn coerce(value: &Value, key: &str) -> Value {
     }
 }
 
-pub fn get_default_user_settings() -> Value {
-    let cfg = Config::get();
+pub fn get_default_user_settings() -> Result<Value, String> {
+    let cfg = Config::try_get()?;
     let max_iterations = std::env::var("MAX_ITERATIONS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
@@ -41,20 +41,19 @@ pub fn get_default_user_settings() -> Value {
         .map(Value::Number)
         .unwrap_or(Value::Null);
 
-    json!({
+    Ok(json!({
         "MAX_ITERATIONS": max_iterations,
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,
         "CHAT_MAX_TOKENS": chat_max_tokens,
-    })
+    }))
 }
 
 pub async fn get_effective_user_settings(user_id: Option<String>) -> Result<Value, String> {
-    let mut base = get_default_user_settings();
-    if user_id.is_none() {
+    let mut base = get_default_user_settings()?;
+    let Some(user_id) = user_id else {
         return Ok(base);
-    }
-    let user_id = user_id.unwrap();
+    };
     let row = repo::get_user_settings(&user_id).await?;
     let settings = row
         .map(|r| r.settings)

@@ -63,6 +63,33 @@ impl MessageManager {
             .await
     }
 
+    pub async fn save_assistant_response_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        reasoning: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
+        tool_calls: Option<Value>,
+        response_id: Option<&str>,
+        turn_id: Option<&str>,
+        response_status: Option<&str>,
+    ) -> Result<Message, String> {
+        self.core
+            .save_assistant_response_message(
+                session_id,
+                content,
+                reasoning,
+                message_mode,
+                message_source,
+                tool_calls,
+                response_id,
+                turn_id,
+                response_status,
+            )
+            .await
+    }
+
     pub async fn save_tool_message(
         &self,
         session_id: &str,

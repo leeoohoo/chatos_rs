@@ -3,6 +3,8 @@ use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
 
 use crate::repositories::db::with_db;
+use crate::services::realtime::{publish_ui_prompt_updated, resolve_conversation_scope};
+use crate::services::session_mirror::ensure_sqlite_session_present;
 use crate::services::ui_prompt_manager::normalizer::{redact_prompt_payload, trimmed_non_empty};
 use crate::services::ui_prompt_manager::types::{
     UiPromptPayload, UiPromptRecord, UiPromptStatus, UI_PROMPT_NOT_FOUND_ERR,
@@ -53,7 +55,7 @@ pub async fn create_ui_prompt_record(payload: &UiPromptPayload) -> Result<UiProm
     let mongo_record = record.clone();
     let sqlite_record = record.clone();
 
-    with_db(
+    let created = with_db(
         move |db| {
             let record = mongo_record.clone();
             Box::pin(async move {
@@ -72,6 +74,7 @@ pub async fn create_ui_prompt_record(payload: &UiPromptPayload) -> Result<UiProm
         move |pool| {
             let record = sqlite_record.clone();
             Box::pin(async move {
+                ensure_sqlite_session_present(pool, &record.conversation_id).await?;
                 let prompt_json =
                     serde_json::to_string(&record.prompt).unwrap_or_else(|_| "{}".to_string());
 
@@ -97,7 +100,10 @@ pub async fn create_ui_prompt_record(payload: &UiPromptPayload) -> Result<UiProm
             })
         },
     )
-    .await
+    .await?;
+
+    publish_ui_prompt_created(&created).await;
+    Ok(created)
 }
 
 pub async fn update_ui_prompt_response(
@@ -124,7 +130,7 @@ pub async fn update_ui_prompt_response(
     let updated_at_for_mongo = updated_at.clone();
     let updated_at_for_sqlite = updated_at.clone();
 
-    with_db(
+    let updated = with_db(
         move |db| {
             let prompt_id = prompt_id_for_mongo.clone();
             let status = status_for_mongo.clone();
@@ -196,5 +202,56 @@ pub async fn update_ui_prompt_response(
             })
         },
     )
-    .await
+    .await?;
+
+    publish_ui_prompt_resolved(&updated).await;
+    Ok(updated)
+}
+
+async fn publish_ui_prompt_created(record: &UiPromptRecord) {
+    let Ok(scope) = resolve_conversation_scope(record.conversation_id.as_str()).await else {
+        return;
+    };
+    let Some(user_id) = scope.user_id.as_deref() else {
+        return;
+    };
+    publish_ui_prompt_updated(
+        user_id,
+        record.conversation_id.as_str(),
+        Some(record.conversation_turn_id.as_str()),
+        record.id.as_str(),
+        "prompt_required",
+        Some(record.status.as_str()),
+        record.tool_call_id.as_deref(),
+        Some(record.kind.as_str()),
+        record.prompt.get("title").and_then(serde_json::Value::as_str),
+        record.prompt.get("message").and_then(serde_json::Value::as_str),
+        record.prompt.get("allow_cancel").and_then(serde_json::Value::as_bool),
+        record.prompt.get("timeout_ms").and_then(serde_json::Value::as_u64),
+        record.prompt.get("payload").cloned(),
+    );
+}
+
+async fn publish_ui_prompt_resolved(record: &UiPromptRecord) {
+    let Ok(scope) = resolve_conversation_scope(record.conversation_id.as_str()).await else {
+        return;
+    };
+    let Some(user_id) = scope.user_id.as_deref() else {
+        return;
+    };
+    publish_ui_prompt_updated(
+        user_id,
+        record.conversation_id.as_str(),
+        Some(record.conversation_turn_id.as_str()),
+        record.id.as_str(),
+        "prompt_resolved",
+        Some(record.status.as_str()),
+        record.tool_call_id.as_deref(),
+        Some(record.kind.as_str()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
 }

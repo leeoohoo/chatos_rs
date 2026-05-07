@@ -1,9 +1,14 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   resolveSessionProjectScopeId,
 } from '../../../features/contactSession/sessionResolver';
 import type { TurnRuntimeSnapshotLookupResponse } from '../../../lib/api/client/types';
+import {
+  getCachedRuntimeContextData,
+  loadRuntimeContextSnapshot,
+  markRuntimeContextStale,
+} from '../../../lib/runtimeContext/cache';
 import type { Session } from '../../../types';
 import type { ContactItem } from './types';
 
@@ -17,6 +22,7 @@ interface UseTeamMemberRuntimeContextOptions {
   apiClient: RuntimeContextApiClient;
   sessions: Session[];
   normalizedProjectId: string;
+  runtimeContextRefreshNonce: number;
   ensureContactSession: (contact: ContactItem) => Promise<string | null>;
   setSelectedContactId: (contactId: string | null) => void;
 }
@@ -25,6 +31,7 @@ export const useTeamMemberRuntimeContext = ({
   apiClient,
   sessions,
   normalizedProjectId,
+  runtimeContextRefreshNonce,
   ensureContactSession,
   setSelectedContactId,
 }: UseTeamMemberRuntimeContextOptions) => {
@@ -35,21 +42,39 @@ export const useTeamMemberRuntimeContext = ({
   const [runtimeContextLoading, setRuntimeContextLoading] = useState(false);
   const [runtimeContextError, setRuntimeContextError] = useState<string | null>(null);
   const [openingRuntimeContextContactId, setOpeningRuntimeContextContactId] = useState<string | null>(null);
+  const latestSessionIdRef = useRef<string | null>(null);
+  const refreshNonceRef = useRef(runtimeContextRefreshNonce);
+  const lastRefreshSignatureRef = useRef<string | null>(null);
 
-  const loadLatestRuntimeContext = useCallback(async (sessionId: string) => {
+  refreshNonceRef.current = runtimeContextRefreshNonce;
+
+  const loadLatestRuntimeContext = useCallback(async (
+    sessionId: string,
+    options?: { force?: boolean; silent?: boolean },
+  ) => {
     if (!sessionId) {
       return;
     }
-    setRuntimeContextLoading(true);
+    latestSessionIdRef.current = sessionId;
+    if (!options?.silent) {
+      setRuntimeContextLoading(true);
+    }
     setRuntimeContextError(null);
     try {
-      const payload = await apiClient.getConversationLatestTurnRuntimeContext(sessionId);
+      const payload = await loadRuntimeContextSnapshot(apiClient, sessionId, options);
+      if (latestSessionIdRef.current !== sessionId) {
+        return;
+      }
       setRuntimeContextData(payload);
     } catch (error) {
       console.error('Failed to load turn runtime context in team pane:', error);
-      setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
+      if (latestSessionIdRef.current === sessionId) {
+        setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
+      }
     } finally {
-      setRuntimeContextLoading(false);
+      if (latestSessionIdRef.current === sessionId && !options?.silent) {
+        setRuntimeContextLoading(false);
+      }
     }
   }, [apiClient]);
 
@@ -73,14 +98,13 @@ export const useTeamMemberRuntimeContext = ({
       }
       setRuntimeContextOpen(true);
       setRuntimeContextSessionId(sessionId);
-      setRuntimeContextData(null);
-      await loadLatestRuntimeContext(sessionId);
+      setRuntimeContextData(getCachedRuntimeContextData(apiClient, sessionId));
     } finally {
       setOpeningRuntimeContextContactId((prev) => (prev === contact.id ? null : prev));
     }
   }, [
+    apiClient,
     ensureContactSession,
-    loadLatestRuntimeContext,
     normalizedProjectId,
     runtimeContextOpen,
     runtimeContextSessionId,
@@ -92,8 +116,44 @@ export const useTeamMemberRuntimeContext = ({
     if (!runtimeContextSessionId) {
       return;
     }
+    markRuntimeContextStale(apiClient, runtimeContextSessionId);
+    void loadLatestRuntimeContext(runtimeContextSessionId, { force: true });
+  }, [apiClient, loadLatestRuntimeContext, runtimeContextSessionId]);
+
+  useEffect(() => {
+    if (!runtimeContextOpen || !runtimeContextSessionId) {
+      lastRefreshSignatureRef.current = null;
+      return;
+    }
+    setRuntimeContextData(getCachedRuntimeContextData(apiClient, runtimeContextSessionId));
+    lastRefreshSignatureRef.current = `${runtimeContextSessionId}:${refreshNonceRef.current}`;
     void loadLatestRuntimeContext(runtimeContextSessionId);
-  }, [loadLatestRuntimeContext, runtimeContextSessionId]);
+  }, [
+    apiClient,
+    loadLatestRuntimeContext,
+    runtimeContextOpen,
+    runtimeContextSessionId,
+  ]);
+
+  useEffect(() => {
+    if (!runtimeContextOpen || !runtimeContextSessionId) {
+      return;
+    }
+    const signature = `${runtimeContextSessionId}:${runtimeContextRefreshNonce}`;
+    if (lastRefreshSignatureRef.current === signature) {
+      return;
+    }
+    lastRefreshSignatureRef.current = signature;
+    markRuntimeContextStale(apiClient, runtimeContextSessionId);
+    setRuntimeContextData(getCachedRuntimeContextData(apiClient, runtimeContextSessionId));
+    void loadLatestRuntimeContext(runtimeContextSessionId, { silent: true });
+  }, [
+    apiClient,
+    loadLatestRuntimeContext,
+    runtimeContextOpen,
+    runtimeContextRefreshNonce,
+    runtimeContextSessionId,
+  ]);
 
   return {
     runtimeContextOpen,

@@ -1,13 +1,23 @@
-import type { Message } from '../../types';
+import type { ContentSegment, Message } from '../../types';
 import type { DerivedProcessStats } from '../messageItem/types';
-
-export const normalizeTurnId = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
-
-export const normalizeMetaId = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
+import {
+  getMessageAllToolCalls,
+  getMessageContentSegments,
+  getMessageConversationTurnId,
+  getMessageHistoryFinalForTurnId,
+  getMessageHistoryFinalForUserMessageId,
+  getMessageHistoryProcessFinalAssistantMessageId,
+  getMessageHistoryProcessTurnId,
+  getMessageHistoryProcessUserMessageId,
+  getMessageMetadataToolCalls,
+  getMessageMetadataRecord,
+  getMessageToolResultCallId,
+  isMessageHistoryProcessExpanded,
+  isMessageHistoryProcessPlaceholder,
+  normalizeMetaId,
+  normalizeTurnId,
+  type MessageToolCallLike,
+} from '../messageItem/messageReaders';
 
 type ParsedMessageForList = {
   message: Message;
@@ -16,11 +26,10 @@ type ParsedMessageForList = {
   status: string;
   visible: boolean;
   time: number;
-  metadata: Record<string, any>;
-  segments: any[];
-  metadataToolCalls: any[];
-  topLevelToolCalls: any[];
-  assistantToolCalls: Array<{ id: string; toolCall: any }>;
+  metadataHidden: boolean;
+  segments: ContentSegment[];
+  metadataToolCallCount: number;
+  assistantToolCalls: Array<{ id: string; toolCall: MessageToolCallLike }>;
   toolResultCallId: string;
   thinkingSegmentCount: number;
   toolCallSegmentCount: number;
@@ -47,21 +56,50 @@ export type ParsedMessageCacheEntry = {
 const getTimeValue = (value: unknown): number => {
   if (!value) return 0;
   if (value instanceof Date) return value.getTime();
-  const parsed = new Date(value as any).getTime();
+  if (typeof value !== 'string' && typeof value !== 'number') return 0;
+  const parsed = new Date(value).getTime();
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const isContentSegment = (value: unknown): value is ContentSegment => (
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+);
+
+const readMessageContentLength = (message: Message): number => (
+  typeof message?.content === 'string' ? message.content.trim().length : 0
+);
+
+const readNonProcessAssistantDedupKey = (parsed: ParsedMessageForList): string => {
+  if (parsed.role !== 'assistant') {
+    return '';
+  }
+  if (parsed.historyProcessUserMessageId || parsed.historyProcessTurnId) {
+    return '';
+  }
+
+  const turnId = normalizeTurnId(parsed.historyFinalForTurnId || parsed.conversationTurnId);
+  if (turnId) {
+    return `turn:${turnId}`;
+  }
+
+  const userId = normalizeMetaId(parsed.historyFinalForUserMessageId);
+  if (userId) {
+    return `user:${userId}`;
+  }
+
+  return '';
+};
+
 export const parseMessageForList = (message: Message): ParsedMessageForList => {
-  const raw = message as any;
-  const metadata = ((raw?.metadata || {}) as Record<string, any>);
-  const segments = Array.isArray(metadata.contentSegments) ? metadata.contentSegments : [];
-  const metadataToolCalls = Array.isArray(metadata.toolCalls) ? metadata.toolCalls : [];
-  const topLevelToolCalls = Array.isArray(raw.toolCalls) ? raw.toolCalls : [];
-  const assistantToolCalls: Array<{ id: string; toolCall: any }> = [];
+  const metadataRecord = getMessageMetadataRecord(message);
+  const segments = getMessageContentSegments(message).filter(isContentSegment);
+  const allToolCalls = getMessageAllToolCalls(message);
+  const metadataToolCallCount = getMessageMetadataToolCalls(message).length;
+  const assistantToolCalls: Array<{ id: string; toolCall: MessageToolCallLike }> = [];
 
   if (message.role === 'assistant') {
-    [...metadataToolCalls, ...topLevelToolCalls].forEach((toolCall: any) => {
-      const id = normalizeMetaId(toolCall?.id);
+    allToolCalls.forEach((toolCall) => {
+      const id = normalizeMetaId(toolCall.id);
       if (id) {
         assistantToolCalls.push({ id, toolCall });
       }
@@ -71,49 +109,45 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
   let thinkingSegmentCount = 0;
   let toolCallSegmentCount = 0;
   if (message.role === 'assistant') {
-    segments.forEach((segment: any) => {
+    segments.forEach((segment) => {
       if (
-        segment?.type === 'thinking'
-        && typeof segment?.content === 'string'
+        segment.type === 'thinking'
+        && typeof segment.content === 'string'
         && segment.content.trim().length > 0
       ) {
         thinkingSegmentCount += 1;
         return;
       }
-      if (segment?.type === 'tool_call' && Boolean(segment?.toolCallId)) {
+      if (segment.type === 'tool_call' && Boolean(segment.toolCallId)) {
         toolCallSegmentCount += 1;
       }
     });
   }
 
-  const toolResultCallIdRaw = raw.tool_call_id || raw.toolCallId || metadata.tool_call_id || metadata.toolCallId;
-  const conversationTurnId = normalizeTurnId(
-    metadata.conversation_turn_id || metadata.conversationTurnId,
-  );
-  const historyProcessTurnId = normalizeTurnId(metadata.historyProcessTurnId || metadata.historyProcess?.turnId);
-  const historyProcessUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
-  const historyFinalForUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
-  const historyFinalForTurnId = normalizeTurnId(metadata.historyFinalForTurnId);
-  const historyProcessPlaceholder = metadata.historyProcessPlaceholder === true;
-  const userExpanded = metadata?.historyProcess?.expanded === true;
+  const conversationTurnId = getMessageConversationTurnId(message);
+  const historyProcessTurnId = getMessageHistoryProcessTurnId(message);
+  const historyProcessUserMessageId = getMessageHistoryProcessUserMessageId(message);
+  const historyFinalForUserMessageId = getMessageHistoryFinalForUserMessageId(message);
+  const historyFinalForTurnId = getMessageHistoryFinalForTurnId(message);
+  const historyProcessPlaceholder = isMessageHistoryProcessPlaceholder(message);
+  const userExpanded = isMessageHistoryProcessExpanded(message);
   const userTurnId = normalizeTurnId(
-    metadata.conversation_turn_id || metadata.conversationTurnId || metadata.historyProcess?.turnId,
+    conversationTurnId || historyProcessTurnId,
   );
-  const userFinalAssistantMessageId = normalizeMetaId(metadata?.historyProcess?.finalAssistantMessageId);
+  const userFinalAssistantMessageId = getMessageHistoryProcessFinalAssistantMessageId(message);
 
   return {
     message,
     id: message.id,
     role: message.role,
     status: String(message.status || ''),
-    visible: !metadata?.hidden && message.role !== 'tool',
+    visible: metadataRecord?.hidden !== true && message.role !== 'tool',
     time: message.updatedAt ? getTimeValue(message.updatedAt) : getTimeValue(message.createdAt),
-    metadata,
+    metadataHidden: metadataRecord?.hidden === true,
     segments,
-    metadataToolCalls,
-    topLevelToolCalls,
+    metadataToolCallCount,
     assistantToolCalls,
-    toolResultCallId: toolResultCallIdRaw ? String(toolResultCallIdRaw) : '',
+    toolResultCallId: getMessageToolResultCallId(message),
     thinkingSegmentCount,
     toolCallSegmentCount,
     conversationTurnId,
@@ -129,10 +163,10 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
 };
 
 export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[]) => {
-  const visible: Message[] = [];
+  const visibleCandidates: ParsedMessageForList[] = [];
   const toolResultMap = new Map<string, Message>();
   const toolResultMetaMap = new Map<string, { id: string; time: number }>();
-  const assistantToolById = new Map<string, any>();
+  const assistantToolById = new Map<string, MessageToolCallLike>();
   const assistantToolMetaById = new Map<string, { messageId: string; time: number }>();
 
   const signalMap = new Map<string, string>();
@@ -152,7 +186,7 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
 
   parsedMessages.forEach((parsed) => {
     if (parsed.visible) {
-      visible.push(parsed.message);
+      visibleCandidates.push(parsed);
     }
 
     if (parsed.toolResultCallId) {
@@ -252,7 +286,7 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
     if (parsed.role === 'assistant') {
       appendSignal(
         linkedUserMessageId,
-        `A:${parsed.id}:${parsed.status}:${parsed.metadataToolCalls.length}:${parsed.toolCallSegmentCount}:${parsed.thinkingSegmentCount}:${parsed.segments.length}`,
+        `A:${parsed.id}:${parsed.status}:${parsed.metadataToolCallCount}:${parsed.toolCallSegmentCount}:${parsed.thinkingSegmentCount}:${parsed.segments.length}`,
       );
 
       const stats = mutableStats.get(linkedUserMessageId);
@@ -273,17 +307,17 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
         stats.toolCallIds.add(id);
       });
 
-      parsed.segments.forEach((segment: any) => {
-        if (segment?.type === 'tool_call') {
-          const id = normalizeMetaId(segment?.toolCallId);
+      parsed.segments.forEach((segment) => {
+        if (segment.type === 'tool_call') {
+          const id = normalizeMetaId(segment.toolCallId);
           if (id) {
             stats.toolCallIds.add(id);
           }
           return;
         }
         if (
-          segment?.type === 'thinking'
-          && typeof segment?.content === 'string'
+          segment.type === 'thinking'
+          && typeof segment.content === 'string'
           && segment.content.trim().length > 0
         ) {
           stats.thinkingCount += 1;
@@ -335,6 +369,57 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
       expandedByAssistantId.set(parsed.id, finalAssistantExpandedById.get(parsed.id) === true);
     }
   });
+
+  const visible = (() => {
+    if (visibleCandidates.length <= 1) {
+      return visibleCandidates.map((item) => item.message);
+    }
+
+    const bestFinalAssistantByKey = new Map<string, ParsedMessageForList>();
+
+    visibleCandidates.forEach((parsed) => {
+      const dedupKey = readNonProcessAssistantDedupKey(parsed);
+      if (!dedupKey) {
+        return;
+      }
+
+      const existing = bestFinalAssistantByKey.get(dedupKey);
+      if (!existing) {
+        bestFinalAssistantByKey.set(dedupKey, parsed);
+        return;
+      }
+
+      const parsedStatus = String(parsed.status || '');
+      const existingStatus = String(existing.status || '');
+      const parsedIsTerminal = parsedStatus === 'completed' || parsedStatus === 'error';
+      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'error';
+      const parsedContentLength = readMessageContentLength(parsed.message);
+      const existingContentLength = readMessageContentLength(existing.message);
+
+      const shouldReplace = (
+        Number(parsedIsTerminal) > Number(existingIsTerminal)
+        || (
+          parsedIsTerminal === existingIsTerminal
+          && (
+            parsedContentLength > existingContentLength
+            || (parsedContentLength === existingContentLength && parsed.time >= existing.time)
+          )
+        )
+      );
+
+      if (shouldReplace) {
+        bestFinalAssistantByKey.set(dedupKey, parsed);
+      }
+    });
+
+    return visibleCandidates.filter((parsed) => {
+      const dedupKey = readNonProcessAssistantDedupKey(parsed);
+      if (!dedupKey) {
+        return true;
+      }
+      return bestFinalAssistantByKey.get(dedupKey)?.id === parsed.id;
+    }).map((parsed) => parsed.message);
+  })();
 
   return {
     visibleMessages: visible,

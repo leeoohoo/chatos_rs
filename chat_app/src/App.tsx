@@ -5,6 +5,8 @@ import { useTheme } from './hooks/useTheme';
 import { ChatStoreProvider } from './lib/store/ChatStoreContext';
 import { useAuthStore } from './lib/auth/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { DialogProvider } from './components/ui/DialogProvider';
+import { RealtimeProvider } from './lib/realtime/RealtimeProvider';
 import './styles/index.css';
 
 interface AppProps {
@@ -13,7 +15,7 @@ interface AppProps {
 
 function App({ projectId }: AppProps = {}) {
   const { actualTheme } = useTheme();
-  const { user, initialized, bootstrap } = useAuthStore();
+  const { user, initialized, bootstrap, accessToken } = useAuthStore();
 
   // 确保主题正确应用
   useEffect(() => {
@@ -39,11 +41,15 @@ function App({ projectId }: AppProps = {}) {
 
   return (
     <ErrorBoundary>
-      <ChatStoreProvider userId={user.id} projectId={projectId}>
-        <div className="App">
-          <ChatInterface />
-        </div>
-      </ChatStoreProvider>
+      <RealtimeProvider accessToken={accessToken}>
+        <DialogProvider>
+          <ChatStoreProvider userId={user.id} projectId={projectId}>
+            <div className="App">
+              <ChatInterface />
+            </div>
+          </ChatStoreProvider>
+        </DialogProvider>
+      </RealtimeProvider>
     </ErrorBoundary>
   );
 }

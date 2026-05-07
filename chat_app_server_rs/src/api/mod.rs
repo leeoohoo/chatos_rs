@@ -41,6 +41,7 @@ pub mod memory_agents;
 pub mod messages;
 pub mod notepad;
 pub mod projects;
+pub mod realtime;
 pub mod remote_connections;
 pub mod session_summary_job_config;
 pub mod sessions;
@@ -50,8 +51,8 @@ pub mod terminals;
 pub mod ui_prompts;
 pub mod user_settings;
 
-pub fn router() -> Router {
-    let cfg = Config::get();
+pub fn router() -> Result<Router, String> {
+    let cfg = Config::try_get()?;
 
     let allowed_headers = [
         ACCEPT,
@@ -65,6 +66,7 @@ pub fn router() -> Router {
         HeaderName::from_static("x-project-id"),
         HeaderName::from_static("x-conversation-id"),
         HeaderName::from_static("x-request-id"),
+        HeaderName::from_static("x-remote-verification-code"),
     ];
 
     let cors = if cfg.cors_origins.iter().any(|o| o == "*") {
@@ -128,6 +130,7 @@ pub fn router() -> Router {
         .merge(code_nav::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
+        .merge(realtime::router())
         .merge(remote_connections::router())
         .merge(session_summary_job_config::router())
         .merge(task_manager::router())
@@ -141,7 +144,7 @@ pub fn router() -> Router {
         .merge(user_settings::router())
         .route_layer(middleware::from_fn(require_auth));
 
-    Router::new()
+    Ok(Router::new()
         .merge(auth::router())
         .merge(protected_api)
         .route("/health", axum::routing::get(health))
@@ -154,7 +157,7 @@ pub fn router() -> Router {
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
-        ))
+        )))
 }
 
 async fn health() -> axum::Json<serde_json::Value> {

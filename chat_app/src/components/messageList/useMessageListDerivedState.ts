@@ -3,10 +3,14 @@ import { useMemo, useRef } from 'react';
 import type { Message } from '../../types';
 import {
   buildVisibleMessageState,
-  normalizeMetaId,
   parseMessageForList,
   type ParsedMessageCacheEntry,
 } from './derivedData';
+import {
+  getMessageContentSegments,
+  getMessageMetadataToolCalls,
+  normalizeMetaId,
+} from '../messageItem/messageReaders';
 
 export const useMessageListDerivedState = (messages: Message[]) => {
   const parsedMessageCacheRef = useRef<Map<string, ParsedMessageCacheEntry>>(new Map());
@@ -16,8 +20,8 @@ export const useMessageListDerivedState = (messages: Message[]) => {
     const nextCache = new Map<string, ParsedMessageCacheEntry>();
     const list = (messages || []).map((message) => {
       const cacheKey = String(message.id);
-      const metadataRef = (message as any)?.metadata;
-      const updatedAt = (message as any)?.updatedAt;
+      const metadataRef = message.metadata;
+      const updatedAt = message.updatedAt;
       const cached = previousCache.get(cacheKey);
 
       if (
@@ -79,7 +83,7 @@ export const useMessageListDerivedState = (messages: Message[]) => {
   const toolResultKeyByMessageId = useMemo(() => {
     const map = new Map<string, string>();
     for (const message of dedupedVisibleMessages) {
-      const toolCalls = message.metadata?.toolCalls;
+      const toolCalls = getMessageMetadataToolCalls(message);
       if (!toolCalls || toolCalls.length === 0) {
         map.set(message.id, '');
         continue;
@@ -98,12 +102,13 @@ export const useMessageListDerivedState = (messages: Message[]) => {
   const toolCallLookupKeyByMessageId = useMemo(() => {
     const map = new Map<string, string>();
     for (const message of dedupedVisibleMessages) {
-      const segments = Array.isArray(message.metadata?.contentSegments)
-        ? message.metadata.contentSegments
-        : [];
+      const segments = getMessageContentSegments(message);
       const toolCallIds = segments
-        .filter((segment: any) => segment?.type === 'tool_call')
-        .map((segment: any) => normalizeMetaId(segment?.toolCallId))
+        .filter((segment): segment is { type: string; toolCallId?: unknown } => (
+          segment !== null && typeof segment === 'object' && !Array.isArray(segment)
+        ))
+        .filter((segment) => segment.type === 'tool_call')
+        .map((segment) => normalizeMetaId(segment.toolCallId))
         .filter(Boolean);
       if (toolCallIds.length === 0) {
         map.set(message.id, '');

@@ -1,12 +1,13 @@
-import type { ComponentProps } from 'react';
+import { Suspense, lazy, type ComponentProps } from 'react';
 
 import ChatConversationPane from './ChatConversationPane';
 import { SessionList } from '../SessionList';
-import ProjectExplorer from '../ProjectExplorer';
-import TerminalView from '../TerminalView';
-import RemoteTerminalView from '../RemoteTerminalView';
-import RemoteSftpPanel from '../RemoteSftpPanel';
 import type { Project } from '../../types';
+
+const ProjectExplorer = lazy(() => import('../ProjectExplorer'));
+const TerminalView = lazy(() => import('../TerminalView'));
+const RemoteTerminalView = lazy(() => import('../RemoteTerminalView'));
+const RemoteSftpPanel = lazy(() => import('../RemoteSftpPanel'));
 
 interface ChatInterfaceMainContentProps {
   activePanel: string;
@@ -22,6 +23,12 @@ interface ChatInterfaceMainContentProps {
   sessionListProps: ComponentProps<typeof SessionList>;
   conversationPaneProps: ComponentProps<typeof ChatConversationPane>;
 }
+
+const LazyPanelFallback = () => (
+  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+    面板加载中...
+  </div>
+);
 
 export default function ChatInterfaceMainContent({
   activePanel,
@@ -51,17 +58,19 @@ export default function ChatInterfaceMainContent({
       />
 
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {activePanel === 'project' ? (
-          <ProjectExplorer project={currentProject} className="flex-1" />
-        ) : activePanel === 'terminal' ? (
-          <TerminalView className="flex-1" />
-        ) : activePanel === 'remote_terminal' ? (
-          <RemoteTerminalView className="flex-1" />
-        ) : activePanel === 'remote_sftp' ? (
-          <RemoteSftpPanel className="flex-1" />
-        ) : (
-          <ChatConversationPane {...conversationPaneProps} />
-        )}
+        <Suspense fallback={<LazyPanelFallback />}>
+          {activePanel === 'project' ? (
+            <ProjectExplorer project={currentProject} className="flex-1" />
+          ) : activePanel === 'terminal' ? (
+            <TerminalView className="flex-1" />
+          ) : activePanel === 'remote_terminal' ? (
+            <RemoteTerminalView className="flex-1" />
+          ) : activePanel === 'remote_sftp' ? (
+            <RemoteSftpPanel className="flex-1" />
+          ) : (
+            <ChatConversationPane {...conversationPaneProps} />
+          )}
+        </Suspense>
       </div>
     </div>
   );

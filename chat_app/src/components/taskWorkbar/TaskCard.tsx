@@ -34,11 +34,16 @@ const TaskCard = ({
   const detailsClass = compact
     ? 'mb-1 line-clamp-1 break-all text-[11px] text-muted-foreground'
     : 'mb-1 line-clamp-2 break-all text-xs text-muted-foreground';
+  const secondaryTextClass = compact
+    ? 'mb-1 line-clamp-2 break-all text-[11px] text-muted-foreground'
+    : 'mb-1 line-clamp-3 break-all text-xs text-muted-foreground';
 
   const metaClass = compact ? 'text-[10px] text-muted-foreground' : 'text-[11px] text-muted-foreground';
   const actionClass = compact
     ? 'rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50'
     : 'rounded border border-border bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50';
+  const outcomeSummary = task.outcomeSummary.trim();
+  const blockerReason = task.blockerReason.trim();
 
   return (
     <div className={cardClass}>
@@ -50,6 +55,16 @@ const TaskCard = ({
       </div>
 
       {task.details ? <div className={detailsClass}>{task.details}</div> : null}
+      {outcomeSummary ? (
+        <div className={secondaryTextClass} title={outcomeSummary}>
+          {`成果：${outcomeSummary}`}
+        </div>
+      ) : null}
+      {task.status === 'blocked' && blockerReason ? (
+        <div className={secondaryTextClass} title={blockerReason}>
+          {`阻塞：${blockerReason}`}
+        </div>
+      ) : null}
 
       <div className={metaClass}>
         <div>
@@ -88,6 +103,14 @@ const TaskCard = ({
       {task.dueAt ? (
         <div className={compact ? 'mt-1 truncate text-[10px] text-muted-foreground' : 'mt-1 truncate text-[11px] text-muted-foreground'} title={task.dueAt}>
           截止 {task.dueAt}
+        </div>
+      ) : null}
+      {task.status === 'blocked' && task.blockerNeeds.length > 0 ? (
+        <div
+          className={compact ? 'mt-1 line-clamp-2 text-[10px] text-muted-foreground' : 'mt-1 line-clamp-3 text-[11px] text-muted-foreground'}
+          title={task.blockerNeeds.join('；')}
+        >
+          {`需满足：${task.blockerNeeds.join('；')}`}
         </div>
       ) : null}
     </div>

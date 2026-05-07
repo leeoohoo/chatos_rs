@@ -1,6 +1,12 @@
 use std::collections::HashSet;
 
-use serde_json::{json, Value};
+use serde_json::Value;
+
+use crate::core::messages::text_has_content;
+use crate::core::tool_call::{
+    build_tool_role_message, extract_message_tool_calls_from_value, extract_tool_call_id,
+    message_has_tool_calls,
+};
 
 const EMPTY_ASSISTANT_TOOL_CALL_PLACEHOLDER: &str = "[tool_call]";
 const EMPTY_ASSISTANT_MESSAGE_PLACEHOLDER: &str = "[assistant_message]";
@@ -39,10 +45,8 @@ pub(super) fn drop_duplicate_tail(history: Vec<Value>, current: &[Value]) -> Vec
             break;
         }
 
-        let history_content =
-            normalize_content(history_item.get("content").unwrap_or(&Value::Null));
-        let current_content =
-            normalize_content(current_item.get("content").unwrap_or(&Value::Null));
+        let history_content = normalize_content(history_item.get("content").unwrap_or(&Value::Null));
+        let current_content = normalize_content(current_item.get("content").unwrap_or(&Value::Null));
         if history_content != current_content {
             break;
         }
@@ -74,21 +78,12 @@ pub(super) fn ensure_tool_responses(history: Vec<Value>) -> Vec<Value> {
 
         output.push(message.clone());
         if message.get("role").and_then(|value| value.as_str()) == Some("assistant") {
-            let tool_calls = message
-                .get("tool_calls")
-                .and_then(|value| value.as_array())
-                .cloned()
-                .unwrap_or_default();
+            let tool_calls = extract_message_tool_calls_from_value(&message);
 
             if !tool_calls.is_empty() {
                 let expected_ids: Vec<String> = tool_calls
                     .iter()
-                    .filter_map(|tool_call| {
-                        tool_call
-                            .get("id")
-                            .and_then(|value| value.as_str())
-                            .map(|value| value.to_string())
-                    })
+                    .filter_map(|tool_call| extract_tool_call_id(tool_call).map(str::to_string))
                     .collect();
                 let mut present_ids = HashSet::new();
                 let mut next_index = index + 1;
@@ -107,9 +102,7 @@ pub(super) fn ensure_tool_responses(history: Vec<Value>) -> Vec<Value> {
 
                 for id in expected_ids {
                     if !present_ids.contains(&id) {
-                        output.push(
-                            json!({"role": "tool", "tool_call_id": id, "content": "aborted"}),
-                        );
+                        output.push(build_tool_role_message(id.as_str(), "aborted"));
                     }
                 }
 
@@ -146,20 +139,16 @@ pub(super) fn sanitize_messages_for_request(messages: Vec<Value>) -> Vec<Value> 
             continue;
         }
 
-        let has_tool_calls = message
-            .get("tool_calls")
-            .and_then(|value| value.as_array())
-            .map(|items| !items.is_empty())
-            .unwrap_or(false);
+        let has_tool_calls = message_has_tool_calls(&message);
         let has_reasoning = message
             .get("reasoning_content")
             .and_then(|value| value.as_str())
-            .map(|value| !value.trim().is_empty())
+            .map(text_has_content)
             .unwrap_or(false)
             || message
                 .get("reasoning")
                 .and_then(|value| value.as_str())
-                .map(|value| !value.trim().is_empty())
+                .map(text_has_content)
                 .unwrap_or(false);
 
         if has_tool_calls {
@@ -183,18 +172,16 @@ fn assistant_content_is_empty(content: &Value) -> bool {
     }
 
     if let Some(text) = content.as_str() {
-        return text.trim().is_empty();
+        return !text_has_content(text);
     }
 
     false
 }
 
 pub(super) fn find_summary_index(messages: &[Value], summary_prompt: Option<&String>) -> i64 {
-    if summary_prompt.is_none() {
+    let Some(summary_prompt) = summary_prompt else {
         return -1;
-    }
-
-    let summary_prompt = summary_prompt.unwrap();
+    };
     for (index, message) in messages.iter().enumerate().rev() {
         if message.get("role").and_then(|value| value.as_str()) == Some("system") {
             if let Some(content) = message.get("content").and_then(|value| value.as_str()) {
@@ -229,6 +216,7 @@ pub(super) fn find_anchor_index(messages: &[Value], anchor: Option<&Value>) -> i
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn sanitize_messages_for_request_replaces_empty_assistant_with_tool_calls() {

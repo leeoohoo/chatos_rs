@@ -1,4 +1,5 @@
 import type { Session } from '../../../types';
+import type { TaskReviewPanelState, UiPromptPanelState } from '../../../lib/store/types';
 
 export interface ContactItem {
   id: string;
@@ -27,3 +28,7 @@ export type SessionChatStateMap = Record<
     isStopping?: boolean;
   } | undefined
 >;
+
+export type TaskReviewPanelsBySessionMap = Record<string, TaskReviewPanelState[] | undefined>;
+
+export type UiPromptPanelsBySessionMap = Record<string, UiPromptPanelState[] | undefined>;

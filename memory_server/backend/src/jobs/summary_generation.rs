@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use tokio::time::timeout;
 use tracing::{info, warn};
 
 use crate::ai::AiClient;
@@ -22,7 +25,66 @@ pub(crate) async fn process_session(
     token_limit: i64,
     target_summary_tokens: i64,
 ) -> Result<(usize, usize), String> {
+    process_session_with_mode(
+        pool,
+        ai,
+        session_id,
+        model_name,
+        model_cfg,
+        summary_prompt,
+        round_limit,
+        token_limit,
+        target_summary_tokens,
+        false,
+        "summary_l0",
+    )
+    .await
+}
+
+pub(crate) async fn process_session_force(
+    pool: &Db,
+    ai: &AiClient,
+    session_id: &str,
+    model_name: &str,
+    model_cfg: Option<&AiModelConfig>,
+    summary_prompt: Option<&str>,
+    round_limit: i64,
+    token_limit: i64,
+    target_summary_tokens: i64,
+    job_type: &str,
+) -> Result<(usize, usize), String> {
+    process_session_with_mode(
+        pool,
+        ai,
+        session_id,
+        model_name,
+        model_cfg,
+        summary_prompt,
+        round_limit,
+        token_limit,
+        target_summary_tokens,
+        true,
+        job_type,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_session_with_mode(
+    pool: &Db,
+    ai: &AiClient,
+    session_id: &str,
+    model_name: &str,
+    model_cfg: Option<&AiModelConfig>,
+    summary_prompt: Option<&str>,
+    round_limit: i64,
+    token_limit: i64,
+    target_summary_tokens: i64,
+    force_run: bool,
+    job_type: &str,
+) -> Result<(usize, usize), String> {
     let lease_seconds = job_support::resolve_lock_lease_seconds();
+    let job_timeout = Duration::from_secs(job_support::resolve_job_timeout_seconds());
     let lock_key = format!("summary_l0:{}", session_id);
     let Some(lock_handle) =
         locks::try_acquire_job_lock(pool, lock_key.as_str(), lease_seconds).await?
@@ -34,20 +96,34 @@ pub(crate) async fn process_session(
         return Ok((0, 0));
     };
 
-    let result = process_session_locked(
-        pool,
-        ai,
-        session_id,
-        model_name,
-        model_cfg,
-        summary_prompt,
-        round_limit,
-        token_limit,
-        target_summary_tokens,
-        &lock_handle,
-        lease_seconds,
+    let result = match timeout(
+        job_timeout,
+        process_session_locked(
+            pool,
+            ai,
+            session_id,
+            model_name,
+            model_cfg,
+            summary_prompt,
+            round_limit,
+            token_limit,
+            target_summary_tokens,
+            force_run,
+            job_type,
+            &lock_handle,
+            lease_seconds,
+        ),
     )
-    .await;
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "summary job timed out after {}s: session_id={} job_type={}",
+            job_timeout.as_secs(),
+            session_id,
+            job_type
+        )),
+    };
 
     if let Err(err) = locks::release_job_lock(pool, &lock_handle).await {
         warn!(
@@ -70,38 +146,57 @@ async fn process_session_locked(
     round_limit: i64,
     token_limit: i64,
     target_summary_tokens: i64,
+    force_run: bool,
+    job_type: &str,
     lock_handle: &locks::JobLockHandle,
     lease_seconds: i64,
 ) -> Result<(usize, usize), String> {
-    let pending_head =
-        messages::list_pending_messages(pool, session_id, Some(round_limit.max(1))).await?;
-    if pending_head.is_empty() {
-        return Ok((0, 0));
-    }
+    let selected: Vec<crate::models::Message>;
+    let pending_before_count: i64;
+    let trigger: String;
 
-    let mut pending_all_for_trigger: Option<Vec<crate::models::Message>> = None;
-    let trigger = if pending_head.len() as i64 >= round_limit.max(1) {
-        "message_count_limit".to_string()
-    } else {
-        let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
-        let all_texts: Vec<String> = all_pending.iter().map(message_to_summary_block).collect();
-        let tokens = estimate_tokens_texts(all_texts.as_slice());
-        if tokens >= token_limit.max(500) {
-            pending_all_for_trigger = Some(all_pending);
-            "token_limit".to_string()
-        } else {
+    if force_run {
+        let review_repair_pending =
+            messages::list_pending_review_repair_messages(pool, session_id, None).await?;
+        if review_repair_pending.is_empty() {
             return Ok((0, 0));
         }
-    };
-
-    let (selected, pending_before_count) = if trigger == "message_count_limit" {
-        let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
-        (pending_head, all_pending.len() as i64)
+        pending_before_count = review_repair_pending.len() as i64;
+        selected = review_repair_pending;
+        trigger = "manual_review_repair".to_string();
     } else {
-        let all_pending = pending_all_for_trigger.unwrap_or_default();
-        let pending_before = all_pending.len() as i64;
-        (all_pending, pending_before)
-    };
+        let pending_head =
+            messages::list_pending_messages(pool, session_id, Some(round_limit.max(1))).await?;
+        if pending_head.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let mut pending_all_for_trigger: Option<Vec<crate::models::Message>> = None;
+        trigger = if pending_head.len() as i64 >= round_limit.max(1) {
+            "message_count_limit".to_string()
+        } else {
+            let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
+            let all_texts: Vec<String> = all_pending.iter().map(message_to_summary_block).collect();
+            let tokens = estimate_tokens_texts(all_texts.as_slice());
+            if tokens >= token_limit.max(500) {
+                pending_all_for_trigger = Some(all_pending);
+                "token_limit".to_string()
+            } else {
+                return Ok((0, 0));
+            }
+        };
+
+        let values = if trigger == "message_count_limit" {
+            let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
+            (pending_head, all_pending.len() as i64)
+        } else {
+            let all_pending = pending_all_for_trigger.unwrap_or_default();
+            let pending_before = all_pending.len() as i64;
+            (all_pending, pending_before)
+        };
+        selected = values.0;
+        pending_before_count = values.1;
+    }
 
     let mut summarizable_messages = Vec::new();
     let mut oversized_messages = Vec::new();
@@ -122,7 +217,7 @@ async fn process_session_locked(
         .iter()
         .map(|m| estimate_tokens_text(message_to_summary_block(m).as_str()))
         .sum::<i64>();
-    let source_digest = idempotency::digest_from_ids("summary_l0", selected_ids.as_slice())
+    let source_digest = idempotency::digest_from_ids(job_type, selected_ids.as_slice())
         .ok_or_else(|| "build summary source digest failed".to_string())?;
 
     if let Some(existing) =
@@ -167,7 +262,7 @@ async fn process_session_locked(
 
     let job_run = match jobs::create_job_run(
         pool,
-        "summary_l0",
+        job_type,
         Some(session_id),
         Some(trigger.as_str()),
         selected.len() as i64,
@@ -218,6 +313,15 @@ async fn process_session_locked(
         {
             Ok(v) => v,
             Err(err) => {
+                summary_support::update_failed_job_run_diagnostics(
+                    pool,
+                    job_run.id.as_str(),
+                    Some(pending_before_count),
+                    Some(selected.len() as i64),
+                    Some(0),
+                    Some(pending_before_count),
+                )
+                .await;
                 let _ =
                     summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str())
                         .await;
@@ -294,6 +398,15 @@ async fn process_session_locked(
     {
         Ok(v) => v,
         Err(err) => {
+            summary_support::update_failed_job_run_diagnostics(
+                pool,
+                job_run.id.as_str(),
+                Some(pending_before_count),
+                Some(selected.len() as i64),
+                Some(0),
+                Some(pending_before_count),
+            )
+            .await;
             let _ = summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str())
                 .await;
             return Err(err);
@@ -303,6 +416,15 @@ async fn process_session_locked(
     let summary = create_result.summary;
 
     if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &summary).await {
+        summary_support::update_failed_job_run_diagnostics(
+            pool,
+            job_run.id.as_str(),
+            Some(pending_before_count),
+            Some(selected.len() as i64),
+            Some(0),
+            Some(pending_before_count),
+        )
+        .await;
         let _ =
             summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
         return Err(err);
@@ -325,6 +447,15 @@ async fn process_session_locked(
     {
         Ok(v) => v,
         Err(err) => {
+            summary_support::update_failed_job_run_diagnostics(
+                pool,
+                job_run.id.as_str(),
+                Some(pending_before_count),
+                Some(selected.len() as i64),
+                Some(0),
+                Some(pending_before_count),
+            )
+            .await;
             let _ = summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str())
                 .await;
             return Err(err);

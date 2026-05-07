@@ -20,16 +20,20 @@ import type {
   RegisterPayload,
   RuntimeGuidanceSubmitPayload,
   RuntimeGuidanceSubmitResponse,
+  ReviewRepairResponse,
+  ReviewRepairStatusResponse,
   SessionSummariesListResponse,
   SessionSummaryJobConfigPayload,
   SessionSummaryJobConfigResponse,
   StopChatResponse,
   StreamChatAttachmentPayload,
+  StreamChatCommandResponse,
   StreamChatModelConfigPayload,
   StreamChatOptions,
   TaskManagerTaskResponse,
   TaskManagerUpdatePayload,
   TaskReviewDecisionPayload,
+  TaskReviewItemResponse,
   UiPromptItemResponse,
   UiPromptResponsePayload,
   UserSettingsResponse,
@@ -46,6 +50,15 @@ export interface RuntimeFacade {
     reasoningEnabled?: boolean,
     options?: StreamChatOptions,
   ): Promise<ReadableStream>;
+  sendChatCommand(
+    conversationId: string,
+    content: string,
+    modelConfig: StreamChatModelConfigPayload,
+    userId?: string,
+    attachments?: StreamChatAttachmentPayload[],
+    reasoningEnabled?: boolean,
+    options?: StreamChatOptions,
+  ): Promise<StreamChatCommandResponse>;
   submitRuntimeGuidance(payload: RuntimeGuidanceSubmitPayload): Promise<RuntimeGuidanceSubmitResponse>;
   getTaskManagerTasks(
     conversationId: string,
@@ -56,12 +69,17 @@ export interface RuntimeFacade {
     taskId: string,
     payload: TaskManagerUpdatePayload,
   ): Promise<TaskManagerTaskResponse>;
-  completeTaskManagerTask(conversationId: string, taskId: string): Promise<TaskManagerTaskResponse>;
+  completeTaskManagerTask(
+    conversationId: string,
+    taskId: string,
+    payload?: Partial<TaskManagerUpdatePayload>,
+  ): Promise<TaskManagerTaskResponse>;
   deleteTaskManagerTask(conversationId: string, taskId: string): Promise<{ success?: boolean }>;
   submitTaskReviewDecision(
     reviewId: string,
     payload: TaskReviewDecisionPayload,
   ): Promise<{ success?: boolean; status?: string }>;
+  getPendingTaskReviews(conversationId: string, options?: { limit?: number }): Promise<TaskReviewItemResponse[]>;
   getPendingUiPrompts(conversationId: string, options?: { limit?: number }): Promise<UiPromptItemResponse[]>;
   getUiPromptHistory(
     conversationId: string,
@@ -92,6 +110,8 @@ export interface RuntimeFacade {
   ): Promise<SessionSummariesListResponse>;
   deleteConversationSummary(conversationId: string, summaryId: string): Promise<{ success?: boolean }>;
   clearConversationSummaries(conversationId: string): Promise<{ success?: boolean }>;
+  runConversationReviewRepair(conversationId: string): Promise<ReviewRepairResponse>;
+  getConversationReviewRepairStatus(conversationId: string): Promise<ReviewRepairStatusResponse>;
   register(data: RegisterPayload): Promise<AuthResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
@@ -113,6 +133,18 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
       options,
     );
   },
+  async sendChatCommand(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
+    return streamApi.sendChatCommand(
+      this.getStreamApiContext(),
+      conversationId,
+      content,
+      modelConfig,
+      userId,
+      attachments,
+      reasoningEnabled,
+      options,
+    );
+  },
   async submitRuntimeGuidance(payload) {
     return streamApi.submitRuntimeGuidance(this.getRequestFn(), payload);
   },
@@ -122,14 +154,17 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async updateTaskManagerTask(conversationId, taskId, payload) {
     return tasksApi.updateTaskManagerTask(this.getRequestFn(), conversationId, taskId, payload);
   },
-  async completeTaskManagerTask(conversationId, taskId) {
-    return tasksApi.completeTaskManagerTask(this.getRequestFn(), conversationId, taskId);
+  async completeTaskManagerTask(conversationId, taskId, payload) {
+    return tasksApi.completeTaskManagerTask(this.getRequestFn(), conversationId, taskId, payload);
   },
   async deleteTaskManagerTask(conversationId, taskId) {
     return tasksApi.deleteTaskManagerTask(this.getRequestFn(), conversationId, taskId);
   },
   async submitTaskReviewDecision(reviewId, payload) {
     return tasksApi.submitTaskReviewDecision(this.getRequestFn(), reviewId, payload);
+  },
+  async getPendingTaskReviews(conversationId, options) {
+    return tasksApi.getPendingTaskReviews(this.getRequestFn(), conversationId, options);
   },
   async getPendingUiPrompts(conversationId, options) {
     return tasksApi.getPendingUiPrompts(this.getRequestFn(), conversationId, options);
@@ -193,6 +228,12 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async clearConversationSummaries(conversationId) {
     return summaryApi.clearConversationSummaries(this.getRequestFn(), conversationId);
+  },
+  async runConversationReviewRepair(conversationId) {
+    return summaryApi.runConversationReviewRepair(this.getRequestFn(), conversationId);
+  },
+  async getConversationReviewRepairStatus(conversationId) {
+    return summaryApi.getConversationReviewRepairStatus(this.getRequestFn(), conversationId);
   },
   async register(data) {
     return accountApi.register(this.getRequestFn(), data);

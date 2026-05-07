@@ -12,12 +12,13 @@ use crate::core::remote_connection_access::{
 use crate::core::remote_connection_error_codes::remote_connection_codes;
 use crate::core::user_scope::resolve_user_id;
 use crate::models::remote_connection::RemoteConnectionService;
+use crate::services::realtime::publish_remote_connections_updated;
 
 use super::{
     error_payload, get_remote_terminal_manager, internal_error_response, normalize_create_request,
-    normalize_update_request, remote_connectivity_error_response, run_remote_connectivity_test,
-    CreateRemoteConnectionRequest, DisconnectReason, RemoteConnectionQuery,
-    UpdateRemoteConnectionRequest,
+    normalize_update_request, remote_connectivity_error_response, resolve_jump_connection_snapshot,
+    run_remote_connectivity_test, CreateRemoteConnectionRequest, DisconnectReason,
+    RemoteConnectionQuery, UpdateRemoteConnectionRequest,
 };
 
 const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";
@@ -83,6 +84,12 @@ pub(super) async fn create_remote_connection(
         .ok()
         .flatten()
         .unwrap_or(normalized);
+    publish_remote_connections_updated(
+        auth.user_id.as_str(),
+        "remote_connection_created",
+        Some(saved.id.as_str()),
+        Some(saved.clone()),
+    );
 
     (
         StatusCode::CREATED,
@@ -112,7 +119,12 @@ pub(super) async fn test_remote_connection_draft(
 
     let verification_code = verification_code_from_headers(&headers);
 
-    match run_remote_connectivity_test(&connection, verification_code.as_deref()).await {
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return remote_connectivity_error_response(err),
+    };
+
+    match run_remote_connectivity_test(&resolved_connection, verification_code.as_deref()).await {
         Ok(result) => (StatusCode::OK, Json(result)),
         Err(err) => remote_connectivity_error_response(err),
     }
@@ -159,10 +171,18 @@ pub(super) async fn update_remote_connection(
     }
 
     match RemoteConnectionService::get_by_id(&id).await {
-        Ok(Some(connection)) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(connection).unwrap_or(Value::Null)),
-        ),
+        Ok(Some(connection)) => {
+            publish_remote_connections_updated(
+                auth.user_id.as_str(),
+                "remote_connection_updated",
+                Some(connection.id.as_str()),
+                Some(connection.clone()),
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(connection).unwrap_or(Value::Null)),
+            )
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             error_payload(
@@ -188,10 +208,18 @@ pub(super) async fn delete_remote_connection(
     manager.close_with_reason(&id, DisconnectReason::ConnectionDeleted);
 
     match RemoteConnectionService::delete(&id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "success": true, "message": "远端连接已删除" })),
-        ),
+        Ok(_) => {
+            publish_remote_connections_updated(
+                auth.user_id.as_str(),
+                "remote_connection_deleted",
+                Some(id.as_str()),
+                None,
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "success": true, "message": "远端连接已删除" })),
+            )
+        }
         Err(err) => internal_error_response(
             remote_connection_codes::REMOTE_CONNECTION_DELETE_FAILED,
             err,
@@ -231,7 +259,12 @@ pub(super) async fn test_remote_connection_saved(
 
     let verification_code = verification_code_from_headers(&headers);
 
-    match run_remote_connectivity_test(&connection, verification_code.as_deref()).await {
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return remote_connectivity_error_response(err),
+    };
+
+    match run_remote_connectivity_test(&resolved_connection, verification_code.as_deref()).await {
         Ok(result) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (StatusCode::OK, Json(result))

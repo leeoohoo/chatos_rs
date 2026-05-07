@@ -1,11 +1,11 @@
 use serde_json::json;
 
-use crate::services::ai_common::validate_request_payload_size;
-
-use super::{
-    build_request_payload, is_non_terminal_response_status, should_persist_assistant_message,
-    REQUEST_BODY_LIMIT_ENV,
+use crate::services::ai_common::{
+    is_non_terminal_response_status, should_persist_assistant_message,
+    validate_request_payload_size,
 };
+
+use super::{build_request_payload, REQUEST_BODY_LIMIT_ENV};
 
 #[test]
 fn payload_precheck_accepts_small_payload() {

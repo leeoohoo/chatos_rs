@@ -1,12 +1,30 @@
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::core::messages::text_has_content;
+use crate::core::tool_call::{extract_tool_call_id, extract_tool_call_name};
 use crate::core::mcp_tools::{ToolResult, ToolResultCallback};
+use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
+
+pub(crate) const EMPTY_STREAM_RESPONSE_PARSE_ERROR: &str =
+    "stream response parse failed: no valid SSE events parsed from provider";
+
+pub(crate) struct ToolExecutionOutcome {
+    pub tool_results: Vec<ToolResult>,
+    pub persisted_results: Vec<ToolResult>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct AiStreamCallbacks {
+    pub on_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    pub on_thinking: Option<Arc<dyn Fn(String) + Send + Sync>>,
+}
 
 pub(crate) fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
     let mut events = Vec::new();
@@ -184,22 +202,12 @@ pub(crate) fn build_aborted_tool_results(
         .collect();
 
     for tool_call in tool_calls {
-        let id = tool_call
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .to_string();
+        let id = extract_tool_call_id(tool_call).unwrap_or("").to_string();
         if id.is_empty() || present.contains(&id) {
             continue;
         }
 
-        let name = tool_call
-            .get("function")
-            .and_then(|function| function.get("name"))
-            .and_then(|value| value.as_str())
-            .or_else(|| tool_call.get("name").and_then(|value| value.as_str()))
-            .unwrap_or("tool")
-            .to_string();
+        let name = extract_tool_call_name(tool_call).unwrap_or("tool").to_string();
 
         present.insert(id.clone());
         results.push(ToolResult {
@@ -215,4 +223,115 @@ pub(crate) fn build_aborted_tool_results(
     }
 
     results
+}
+
+pub(crate) fn aborted_tool_results_if_needed(
+    session_id: Option<&str>,
+    persist_tool_messages: bool,
+    tool_calls: &[Value],
+    existing: Option<&[ToolResult]>,
+) -> Option<Vec<ToolResult>> {
+    let session_id = session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if !persist_tool_messages || !abort_registry::is_aborted(session_id) {
+        return None;
+    }
+    Some(build_aborted_tool_results(tool_calls, existing))
+}
+
+pub(crate) fn build_tools_end_payload(tool_results: &[ToolResult]) -> Value {
+    json!({
+        "tool_results": tool_results,
+    })
+}
+
+pub(crate) fn emit_stream_callbacks(
+    callbacks: &AiStreamCallbacks,
+    chunk: Option<String>,
+    thinking: Option<String>,
+) {
+    if let Some(chunk) = chunk {
+        if let Some(cb) = &callbacks.on_chunk {
+            cb(chunk);
+        }
+    }
+
+    if let Some(thinking) = thinking {
+        if let Some(cb) = &callbacks.on_thinking {
+            cb(thinking);
+        }
+    }
+}
+
+pub(crate) fn parsed_stream_response_is_empty(
+    parsed_event_count: usize,
+    content: &str,
+    reasoning: &str,
+    has_auxiliary_payload: bool,
+) -> bool {
+    parsed_event_count == 0
+        && !text_has_content(content)
+        && !text_has_content(reasoning)
+        && !has_auxiliary_payload
+}
+
+pub(crate) async fn execute_tool_lifecycle<Exec, ExecFut, Finalize, Persist, PersistFut>(
+    requested_tool_calls: &[Value],
+    display_tool_calls: Value,
+    session_id: Option<&str>,
+    persist_tool_messages: bool,
+    callbacks: &AiClientCallbacks,
+    execute: Exec,
+    finalize_results: Finalize,
+    persist: Persist,
+) -> Result<ToolExecutionOutcome, String>
+where
+    Exec: FnOnce(Option<ToolResultCallback>) -> ExecFut,
+    ExecFut: Future<Output = Vec<ToolResult>>,
+    Finalize: FnOnce(&[ToolResult]) -> Vec<ToolResult>,
+    Persist: Fn(Vec<ToolResult>) -> PersistFut,
+    PersistFut: Future<Output = ()>,
+{
+    if let Some(cb) = &callbacks.on_tools_start {
+        cb(display_tool_calls);
+    }
+
+    if let Some(aborted_results) = aborted_tool_results_if_needed(
+        session_id,
+        persist_tool_messages,
+        requested_tool_calls,
+        None,
+    ) {
+        persist(aborted_results).await;
+        return Err("aborted".to_string());
+    }
+
+    let on_tools_stream_cb =
+        build_tool_stream_callback(callbacks.on_tools_stream.clone(), session_id.map(str::to_string));
+    let tool_results = execute(on_tools_stream_cb).await;
+    let persisted_results = finalize_results(tool_results.as_slice());
+
+    if let Some(aborted_results) = aborted_tool_results_if_needed(
+        session_id,
+        persist_tool_messages,
+        requested_tool_calls,
+        Some(persisted_results.as_slice()),
+    ) {
+        persist(aborted_results).await;
+        return Err("aborted".to_string());
+    }
+
+    if let Some(cb) = &callbacks.on_tools_end {
+        cb(build_tools_end_payload(tool_results.as_slice()));
+    }
+
+    if persist_tool_messages {
+        persist(persisted_results.clone()).await;
+    }
+
+    Ok(ToolExecutionOutcome {
+        tool_results,
+        persisted_results,
+    })
 }

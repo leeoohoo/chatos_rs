@@ -3,6 +3,7 @@ use serde_json::Value;
 use ssh2::Session;
 use std::io::Read;
 use std::process::Stdio;
+use std::sync::mpsc;
 use std::time::Duration as StdDuration;
 use tokio::time::{timeout, Duration};
 
@@ -14,7 +15,7 @@ use super::build_ssh_args;
 use super::build_ssh_process_command;
 use super::configure_stream_timeout;
 use super::connect_tcp_stream;
-use super::create_jump_tunnel_stream;
+use super::create_jump_tunnel_stream_with_verification_channel;
 use super::encode_second_factor_required_error;
 use super::is_password_auth;
 use super::map_command_spawn_error;
@@ -32,10 +33,36 @@ pub(super) fn connect_ssh2_session_with_verification(
     timeout_duration: Duration,
     verification_code: Option<&str>,
 ) -> Result<ConnectedSshSession, String> {
+    connect_ssh2_session_with_interactive_verification(
+        connection,
+        timeout_duration,
+        verification_code,
+        None,
+        None,
+    )
+}
+
+pub(super) fn connect_ssh2_session_with_interactive_verification(
+    connection: &RemoteConnection,
+    timeout_duration: Duration,
+    verification_code: Option<&str>,
+    verification_code_rx: Option<mpsc::Receiver<String>>,
+    challenge_tx: Option<mpsc::Sender<String>>,
+) -> Result<ConnectedSshSession, String> {
     let timeout = StdDuration::from_millis(timeout_duration.as_millis().max(1) as u64);
     let timeout_ms = timeout_duration.as_millis().clamp(1000, u32::MAX as u128) as u32;
+    let mut verification_code_rx = verification_code_rx;
+    let mut challenge_tx = challenge_tx;
+    let jump_enabled = connection.jump_enabled;
     let stream = if connection.jump_enabled {
-        create_jump_tunnel_stream(connection, timeout, timeout_ms, verification_code)?
+        create_jump_tunnel_stream_with_verification_channel(
+            connection,
+            timeout,
+            timeout_ms,
+            verification_code,
+            verification_code_rx.take(),
+            challenge_tx.take(),
+        )?
     } else {
         let stream =
             connect_tcp_stream(connection.host.as_str(), connection.port, timeout, "远端")?;
@@ -55,7 +82,18 @@ pub(super) fn connect_ssh2_session_with_verification(
         connection.port,
         connection.host_key_policy.as_str(),
     )?;
-    authenticate_target_session(&session, connection, verification_code)?;
+    let (target_verification_code_rx, target_challenge_tx) = if jump_enabled {
+        (None, None)
+    } else {
+        (verification_code_rx, challenge_tx)
+    };
+    authenticate_target_session(
+        &session,
+        connection,
+        verification_code,
+        target_verification_code_rx,
+        target_challenge_tx,
+    )?;
 
     if !session.authenticated() {
         return Err("SSH 认证失败".to_string());

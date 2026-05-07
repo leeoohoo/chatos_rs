@@ -34,6 +34,12 @@ pub(crate) fn agent_id_from_metadata(metadata: Option<&serde_json::Value>) -> Op
         .or_else(|| metadata_text(metadata, &["chat_runtime", "contactAgentId"]))
 }
 
+#[cfg(test)]
+pub(crate) fn project_id_from_metadata(metadata: Option<&serde_json::Value>) -> Option<String> {
+    metadata_text(metadata, &["chat_runtime", "project_id"])
+        .or_else(|| metadata_text(metadata, &["chat_runtime", "projectId"]))
+}
+
 fn set_metadata_text(metadata: &mut serde_json::Value, scope: &str, key: &str, value: &str) {
     let Some(root) = metadata.as_object_mut() else {
         return;
@@ -125,13 +131,43 @@ pub(crate) fn project_scope_condition(project_id: &str) -> Document {
         doc! {
             "$or": [
                 {"project_id": "0"},
-                {"project_id": Bson::Null},
-                {"project_id": ""},
-                {"project_id": {"$exists": false}}
+                {"metadata.chat_runtime.project_id": "0"},
+                {"metadata.chat_runtime.projectId": "0"},
+                {
+                    "$and": [
+                        {
+                            "$or": [
+                                {"project_id": Bson::Null},
+                                {"project_id": ""},
+                                {"project_id": {"$exists": false}}
+                            ]
+                        },
+                        {
+                            "$or": [
+                                {"metadata.chat_runtime.project_id": Bson::Null},
+                                {"metadata.chat_runtime.project_id": ""},
+                                {"metadata.chat_runtime.project_id": {"$exists": false}}
+                            ]
+                        },
+                        {
+                            "$or": [
+                                {"metadata.chat_runtime.projectId": Bson::Null},
+                                {"metadata.chat_runtime.projectId": ""},
+                                {"metadata.chat_runtime.projectId": {"$exists": false}}
+                            ]
+                        }
+                    ]
+                }
             ]
         }
     } else {
-        doc! {"project_id": project_id}
+        doc! {
+            "$or": [
+                {"project_id": project_id},
+                {"metadata.chat_runtime.project_id": project_id},
+                {"metadata.chat_runtime.projectId": project_id}
+            ]
+        }
     }
 }
 
@@ -206,7 +242,7 @@ mod tests {
 
     use super::{
         agent_id_from_metadata, agent_lookup_conditions, contact_or_agent_presence_match,
-        normalize_session_metadata,
+        normalize_session_metadata, project_id_from_metadata, project_scope_condition,
     };
 
     #[test]
@@ -287,5 +323,56 @@ mod tests {
                 })
                 .is_some()
         }));
+    }
+
+    #[test]
+    fn project_id_from_metadata_reads_runtime_project_aliases() {
+        let metadata = json!({
+            "chat_runtime": {
+                "projectId": "project_legacy"
+            }
+        });
+        assert_eq!(
+            project_id_from_metadata(Some(&metadata)).as_deref(),
+            Some("project_legacy")
+        );
+    }
+
+    #[test]
+    fn project_scope_condition_includes_runtime_project_fields() {
+        let doc = project_scope_condition("project_123");
+        let rows = doc
+            .get_array("$or")
+            .expect("expected $or array in project scope match");
+        assert!(rows.iter().any(|item| {
+            item.as_document()
+                .and_then(|row| row.get_str("metadata.chat_runtime.project_id").ok())
+                .map(|value| value == "project_123")
+                .unwrap_or(false)
+        }));
+        assert!(rows.iter().any(|item| {
+            item.as_document()
+                .and_then(|row| row.get_str("metadata.chat_runtime.projectId").ok())
+                .map(|value| value == "project_123")
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn default_project_scope_does_not_match_non_default_runtime_project_by_missing_alias() {
+        let doc = project_scope_condition("0");
+        let rows = doc
+            .get_array("$or")
+            .expect("expected $or array in default project scope match");
+        let fallback_row = rows
+            .iter()
+            .filter_map(|item| item.as_document())
+            .find(|row| row.contains_key("$and"))
+            .expect("expected fallback $and row for default project scope");
+        let nested = fallback_row
+            .get_array("$and")
+            .expect("expected nested $and rows");
+        assert_eq!(nested.len(), 3);
+        assert!(nested.iter().all(|item| item.as_document().is_some()));
     }
 }

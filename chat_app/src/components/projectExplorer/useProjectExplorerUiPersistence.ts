@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import type React from 'react';
+import type { ExplorerContextMenuState } from './useProjectExplorerState';
 import type { WorkspaceTab } from './WorkspaceTabs';
 
 interface Params {
@@ -11,8 +12,8 @@ interface Params {
   setShowOnlyChanged: React.Dispatch<React.SetStateAction<boolean>>;
   workspaceTab: WorkspaceTab;
   setWorkspaceTab: React.Dispatch<React.SetStateAction<WorkspaceTab>>;
-  contextMenu: any;
-  setContextMenu: React.Dispatch<React.SetStateAction<any>>;
+  contextMenu: ExplorerContextMenuState | null;
+  setContextMenu: React.Dispatch<React.SetStateAction<ExplorerContextMenuState | null>>;
   isResizing: boolean;
   resizeStartX: React.MutableRefObject<number>;
   resizeStartWidth: React.MutableRefObject<number>;
@@ -29,7 +30,6 @@ export const useProjectExplorerUiPersistence = ({
   showOnlyChanged,
   setShowOnlyChanged,
   workspaceTab,
-  setWorkspaceTab,
   contextMenu,
   setContextMenu,
   isResizing,
@@ -62,19 +62,6 @@ export const useProjectExplorerUiPersistence = ({
       showOnlyChanged ? '1' : '0',
     );
   }, [projectId, showOnlyChanged]);
-
-  useEffect(() => {
-    if (!projectId || typeof window === 'undefined') {
-      setWorkspaceTab('files');
-      return;
-    }
-    const saved = window.localStorage.getItem(`project_workspace_tab_${projectId}`);
-    if (saved === 'team') {
-      setWorkspaceTab('team');
-      return;
-    }
-    setWorkspaceTab('files');
-  }, [projectId, setWorkspaceTab]);
 
   useEffect(() => {
     if (!projectId || typeof window === 'undefined') return;

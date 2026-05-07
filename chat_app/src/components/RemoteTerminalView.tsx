@@ -12,131 +12,20 @@ import { apiClient as globalApiClient } from '../lib/api/client';
 import { useAuthStore } from '../lib/auth/authStore';
 import { useTheme } from '../hooks/useTheme';
 import { cn } from '../lib/utils';
+import { RemoteTerminalHeader } from './remoteTerminal/RemoteTerminalHeader';
+import {
+  getThemeColors,
+  toXtermTheme,
+} from './remoteTerminal/terminalTheme';
+import type { ConnectionState } from './remoteTerminal/types';
+import {
+  buildWsUrl,
+  closeWebSocketSafely,
+} from './remoteTerminal/websocket';
 
 interface RemoteTerminalViewProps {
   className?: string;
 }
-
-type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
-
-const closeWebSocketSafely = (socket: WebSocket | null | undefined) => {
-  if (!socket) {
-    return;
-  }
-  if (socket.readyState === WebSocket.OPEN) {
-    socket.close();
-    return;
-  }
-  if (socket.readyState === WebSocket.CONNECTING) {
-    const closeOnOpen = () => {
-      try {
-        socket.close();
-      } catch {
-        // ignore
-      }
-    };
-    socket.addEventListener('open', closeOnOpen, { once: true });
-  }
-};
-
-const buildWsUrl = (
-  baseUrl: string,
-  path: string,
-  accessToken?: string | null,
-  verificationCode?: string | null,
-) => {
-  const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  const cleanedPath = path.startsWith('/') ? path : `/${path}`;
-  const rawUrl = (cleanedBase.startsWith('http://') || cleanedBase.startsWith('https://'))
-    ? cleanedBase.replace(/^http/, 'ws') + cleanedPath
-    : (() => {
-        const { protocol, host } = window.location;
-        const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
-        return `${wsProtocol}//${host}${cleanedBase}${cleanedPath}`;
-      })();
-  const wsUrl = new URL(rawUrl);
-  const token = (accessToken || '').trim();
-  if (token) {
-    wsUrl.searchParams.set('access_token', token);
-  }
-  const code = (verificationCode || '').trim();
-  if (code) {
-    wsUrl.searchParams.set('verification_code', code);
-  }
-  return wsUrl.toString();
-};
-
-const getThemeColors = (theme: 'light' | 'dark') => {
-  if (theme === 'dark') {
-    return {
-      background: '#0f172a',
-      foreground: '#e2e8f0',
-      cursor: '#f8fafc',
-      selection: 'rgba(148, 163, 184, 0.35)',
-      black: '#0f172a',
-      red: '#f87171',
-      green: '#34d399',
-      yellow: '#fbbf24',
-      blue: '#60a5fa',
-      magenta: '#c084fc',
-      cyan: '#22d3ee',
-      white: '#e2e8f0',
-      brightBlack: '#334155',
-      brightRed: '#fca5a5',
-      brightGreen: '#6ee7b7',
-      brightYellow: '#fde68a',
-      brightBlue: '#93c5fd',
-      brightMagenta: '#d8b4fe',
-      brightCyan: '#67e8f9',
-      brightWhite: '#f8fafc',
-    };
-  }
-  return {
-    background: '#ffffff',
-    foreground: '#0f172a',
-    cursor: '#0f172a',
-    selection: 'rgba(59, 130, 246, 0.25)',
-    black: '#0f172a',
-    red: '#dc2626',
-    green: '#16a34a',
-    yellow: '#d97706',
-    blue: '#2563eb',
-    magenta: '#7c3aed',
-    cyan: '#0891b2',
-    white: '#e2e8f0',
-    brightBlack: '#475569',
-    brightRed: '#ef4444',
-    brightGreen: '#22c55e',
-    brightYellow: '#f59e0b',
-    brightBlue: '#3b82f6',
-    brightMagenta: '#8b5cf6',
-    brightCyan: '#06b6d4',
-    brightWhite: '#f8fafc',
-  };
-};
-
-const toXtermTheme = (palette: ReturnType<typeof getThemeColors>) => ({
-  background: palette.background,
-  foreground: palette.foreground,
-  cursor: palette.cursor,
-  selectionBackground: palette.selection,
-  black: palette.black,
-  red: palette.red,
-  green: palette.green,
-  yellow: palette.yellow,
-  blue: palette.blue,
-  magenta: palette.magenta,
-  cyan: palette.cyan,
-  white: palette.white,
-  brightBlack: palette.brightBlack,
-  brightRed: palette.brightRed,
-  brightGreen: palette.brightGreen,
-  brightYellow: palette.brightYellow,
-  brightBlue: palette.brightBlue,
-  brightMagenta: palette.brightMagenta,
-  brightCyan: palette.brightCyan,
-  brightWhite: palette.brightWhite,
-});
 
 const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) => {
   const currentRemoteConnection = useChatStoreSelector((state) => state.currentRemoteConnection);
@@ -153,6 +42,8 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const lastSnapshotRef = useRef('');
   const lastConnectionIdRef = useRef<string | null>(null);
   const paletteRef = useRef(getThemeColors(actualTheme));
+  const skippedStrictModeProbeRef = useRef(false);
+  const pendingVerificationCodeRef = useRef<string | null>(null);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -162,7 +53,6 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const [verificationOpen, setVerificationOpen] = useState(false);
   const [verificationPrompt, setVerificationPrompt] = useState<string>('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [pendingVerificationCode, setPendingVerificationCode] = useState<string | null>(null);
 
   const apiBaseUrl = client.getBaseUrl();
   const palette = useMemo(() => getThemeColors(actualTheme), [actualTheme]);
@@ -257,7 +147,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setVerificationOpen(false);
       setVerificationPrompt('');
       setVerificationCode('');
-      setPendingVerificationCode(null);
+      pendingVerificationCodeRef.current = null;
       lastConnectionIdRef.current = null;
       lastSnapshotRef.current = '';
       return;
@@ -265,6 +155,16 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
 
     const term = terminalRef.current;
     if (!term) return;
+
+    if (
+      import.meta.env.DEV
+      && !skippedStrictModeProbeRef.current
+      && !pendingVerificationCodeRef.current
+      && connectSeq === 0
+    ) {
+      skippedStrictModeProbeRef.current = true;
+      return;
+    }
 
     const connectionChanged = lastConnectionIdRef.current !== currentRemoteConnection.id;
     if (connectionChanged) {
@@ -274,24 +174,34 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setVerificationOpen(false);
       setVerificationPrompt('');
       setVerificationCode('');
-      setPendingVerificationCode(null);
+      pendingVerificationCodeRef.current = null;
     }
 
+    const verificationCodeForAttempt = pendingVerificationCodeRef.current;
     const wsUrl = buildWsUrl(
       apiBaseUrl,
       `/remote-connections/${currentRemoteConnection.id}/ws`,
       accessToken,
-      pendingVerificationCode,
+      verificationCodeForAttempt,
     );
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
     setConnectionState('connecting');
     setErrorMessage(null);
 
+    const clearVerificationCodeForAttempt = () => {
+      if (
+        verificationCodeForAttempt
+        && pendingVerificationCodeRef.current === verificationCodeForAttempt
+      ) {
+        pendingVerificationCodeRef.current = null;
+        setVerificationCode('');
+      }
+    };
+
     ws.onopen = () => {
       if (socketRef.current !== ws) return;
       setConnectionState('connected');
-      setPendingVerificationCode(null);
       if (terminalRef.current) {
         ws.send(JSON.stringify({
           type: 'resize',
@@ -307,10 +217,12 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       try {
         const payload = JSON.parse(event.data as string);
         if (payload?.type === 'output' && typeof payload.data === 'string') {
+          clearVerificationCodeForAttempt();
           terminalRef.current?.write(payload.data);
           return;
         }
         if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+          clearVerificationCodeForAttempt();
           if (payload.data === lastSnapshotRef.current) {
             return;
           }
@@ -320,18 +232,24 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
           return;
         }
         if (payload?.type === 'state') {
+          clearVerificationCodeForAttempt();
           setBusy(Boolean(payload.busy));
           return;
         }
         if (payload?.type === 'error') {
           if (payload?.code === 'second_factor_required') {
+            pendingVerificationCodeRef.current = null;
             setVerificationPrompt(
               typeof payload?.challenge_prompt === 'string' ? payload.challenge_prompt : '',
             );
             setVerificationOpen(true);
             setConnectionState('error');
             setBusy(false);
-            setErrorMessage('需要验证码，请输入后继续连接');
+            setErrorMessage(
+              verificationCodeForAttempt
+                ? '验证码未通过或已过期，请重新输入后继续连接'
+                : '需要验证码，请输入后继续连接',
+            );
             return;
           }
           setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, '远端终端错误'));
@@ -373,50 +291,15 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
 
   return (
     <div className={cn('flex h-full flex-col bg-card', className)}>
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground truncate">{currentRemoteConnection.name}</div>
-          <div className="text-xs text-muted-foreground truncate">
-            {currentRemoteConnection.username}@{currentRemoteConnection.host}:{currentRemoteConnection.port}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
-          <span className={cn(
-            'inline-flex items-center gap-1',
-            connectionState === 'connected' ? 'text-emerald-500' : connectionState === 'error' ? 'text-destructive' : 'text-muted-foreground',
-          )}>
-            <span className={cn(
-              'inline-block h-2 w-2 rounded-full',
-              connectionState === 'connected' ? 'bg-emerald-500' : connectionState === 'error' ? 'bg-destructive' : 'bg-muted-foreground/50',
-            )} />
-            {connectionState === 'connected' ? '已连接' : connectionState === 'connecting' ? '连接中' : connectionState === 'error' ? '连接错误' : '未连接'}
-          </span>
-          <span>{busy ? '忙碌' : '空闲'}</span>
-          <button
-            type="button"
-            onClick={() => setConnectSeq((prev) => prev + 1)}
-            disabled={disconnecting}
-            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
-          >
-            重连
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleDisconnect()}
-            disabled={disconnecting || connectionState === 'disconnected'}
-            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            {disconnecting ? '断开中...' : '断开'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void openRemoteSftp(currentRemoteConnection.id)}
-            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
-          >
-            SFTP
-          </button>
-        </div>
-      </div>
+      <RemoteTerminalHeader
+        connection={currentRemoteConnection}
+        connectionState={connectionState}
+        busy={busy}
+        disconnecting={disconnecting}
+        onReconnect={() => setConnectSeq((prev) => prev + 1)}
+        onDisconnect={() => void handleDisconnect()}
+        onOpenSftp={() => void openRemoteSftp(currentRemoteConnection.id)}
+      />
 
       {errorMessage && (
         <div className="px-4 py-2 text-xs text-destructive">{errorMessage}</div>
@@ -444,7 +327,15 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
             return;
           }
           setVerificationOpen(false);
-          setPendingVerificationCode(trimmed);
+          const active = socketRef.current;
+          if (active && active.readyState === WebSocket.OPEN) {
+            active.send(JSON.stringify({ type: 'verification', code: trimmed }));
+            setVerificationCode('');
+            setConnectionState('connecting');
+            setErrorMessage(null);
+            return;
+          }
+          pendingVerificationCodeRef.current = trimmed;
           setConnectSeq((prev) => prev + 1);
         }}
       />

@@ -5,94 +5,20 @@ import {
   useChatStoreFromContext,
 } from "../lib/store/ChatStoreContext";
 import { apiClient as globalApiClient } from "../lib/api/client";
+import {
+  buildSummaryForm,
+  clampNumber,
+  DEFAULT_SUMMARY_FORM,
+  DEFAULT_SUMMARY_LIMITS,
+  getErrorMessage,
+  parseSummaryLimits,
+  rangeText,
+  type SummaryJobConfigForm,
+  type SummaryJobLimits,
+} from "./settings/summaryJobConfig";
 
 interface Props {
   onClose: () => void;
-}
-
-interface SummaryJobConfigForm {
-  enabled: boolean;
-  summary_model_config_id: string;
-  token_limit: number;
-  message_count_limit: number;
-  target_summary_tokens: number;
-  job_interval_seconds: number;
-}
-
-interface RangeLimit {
-  min: number;
-  max?: number;
-}
-
-interface SummaryJobLimits {
-  token_limit: RangeLimit;
-  message_count_limit: RangeLimit;
-  target_summary_tokens: RangeLimit;
-  job_interval_seconds: RangeLimit;
-}
-
-const DEFAULT_FORM: SummaryJobConfigForm = {
-  enabled: true,
-  summary_model_config_id: "",
-  token_limit: 6000,
-  message_count_limit: 8,
-  target_summary_tokens: 700,
-  job_interval_seconds: 30,
-};
-
-const DEFAULT_LIMITS: SummaryJobLimits = {
-  token_limit: { min: 500 },
-  message_count_limit: { min: 1 },
-  target_summary_tokens: { min: 200 },
-  job_interval_seconds: { min: 10 },
-};
-
-function clampNumber(value: number, range: RangeLimit): number {
-  if (!Number.isFinite(value)) {
-    return range.min;
-  }
-  if (Number.isFinite(range.max)) {
-    return Math.max(range.min, Math.min(range.max as number, value));
-  }
-  return Math.max(range.min, value);
-}
-
-function rangeText(range: RangeLimit): string {
-  if (Number.isFinite(range.max)) {
-    return `${range.min}-${range.max}`;
-  }
-  return `>=${range.min}`;
-}
-
-function parseRangeLimit(input: any, fallback: RangeLimit): RangeLimit {
-  const min = Number(input?.min);
-  const max = Number(input?.max);
-  if (Number.isFinite(min) && Number.isFinite(max) && max >= min) {
-    return { min, max };
-  }
-  if (Number.isFinite(min)) {
-    return { min };
-  }
-  return fallback;
-}
-
-function parseLimits(config: any): SummaryJobLimits {
-  const limits = config?.limits || {};
-  return {
-    token_limit: parseRangeLimit(limits?.token_limit, DEFAULT_LIMITS.token_limit),
-    message_count_limit: parseRangeLimit(
-      limits?.message_count_limit || limits?.round_limit,
-      DEFAULT_LIMITS.message_count_limit
-    ),
-    target_summary_tokens: parseRangeLimit(
-      limits?.target_summary_tokens,
-      DEFAULT_LIMITS.target_summary_tokens
-    ),
-    job_interval_seconds: parseRangeLimit(
-      limits?.job_interval_seconds,
-      DEFAULT_LIMITS.job_interval_seconds
-    ),
-  };
 }
 
 const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
@@ -106,13 +32,13 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
-  const [form, setForm] = React.useState<SummaryJobConfigForm>(DEFAULT_FORM);
-  const [limits, setLimits] = React.useState<SummaryJobLimits>(DEFAULT_LIMITS);
+  const [form, setForm] = React.useState<SummaryJobConfigForm>(DEFAULT_SUMMARY_FORM);
+  const [limits, setLimits] = React.useState<SummaryJobLimits>(DEFAULT_SUMMARY_LIMITS);
 
   const modelOptions = React.useMemo(
     () =>
       (Array.isArray(aiModelConfigs) ? aiModelConfigs : []).filter(
-        (item: any) => item?.enabled === true
+        (item) => item.enabled === true
       ),
     [aiModelConfigs]
   );
@@ -130,40 +56,17 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
       try {
         setLoading(true);
         const config = await client.getConversationSummaryJobConfig(effectiveUserId);
-        const loadedLimits = parseLimits(config);
+        const loadedLimits = parseSummaryLimits(config);
 
         if (!mounted) {
           return;
         }
 
         setLimits(loadedLimits);
-        setForm({
-          enabled: config?.enabled !== false,
-          summary_model_config_id: String(config?.summary_model_config_id || ""),
-          token_limit: clampNumber(
-            Number(config?.token_limit || DEFAULT_FORM.token_limit),
-            loadedLimits.token_limit
-          ),
-          message_count_limit: clampNumber(
-            Number(
-              config?.message_count_limit ||
-                config?.round_limit ||
-                DEFAULT_FORM.message_count_limit
-            ),
-            loadedLimits.message_count_limit
-          ),
-          target_summary_tokens: clampNumber(
-            Number(config?.target_summary_tokens || DEFAULT_FORM.target_summary_tokens),
-            loadedLimits.target_summary_tokens
-          ),
-          job_interval_seconds: clampNumber(
-            Number(config?.job_interval_seconds || DEFAULT_FORM.job_interval_seconds),
-            loadedLimits.job_interval_seconds
-          ),
-        });
-      } catch (e: any) {
+        setForm(buildSummaryForm(config, loadedLimits));
+      } catch (e: unknown) {
         if (mounted) {
-          setError(String(e?.message || e));
+          setError(getErrorMessage(e));
         }
       } finally {
         if (mounted) {
@@ -228,36 +131,24 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
         job_interval_seconds: jobIntervalSeconds,
       });
 
-      const savedLimits = parseLimits(saved);
+      const savedLimits = parseSummaryLimits(saved);
       setLimits(savedLimits);
-      setForm({
-        enabled: saved?.enabled !== false,
-        summary_model_config_id: String(saved?.summary_model_config_id || ""),
-        token_limit: clampNumber(
-          Number(saved?.token_limit || tokenLimit),
-          savedLimits.token_limit
-        ),
-        message_count_limit: clampNumber(
-          Number(saved?.message_count_limit || saved?.round_limit || messageCountLimit),
-          savedLimits.message_count_limit
-        ),
-        target_summary_tokens: clampNumber(
-          Number(saved?.target_summary_tokens || targetSummaryTokens),
-          savedLimits.target_summary_tokens
-        ),
-        job_interval_seconds: clampNumber(
-          Number(saved?.job_interval_seconds || jobIntervalSeconds),
-          savedLimits.job_interval_seconds
-        ),
-      });
+      setForm(buildSummaryForm(saved, savedLimits, {
+        enabled: form.enabled,
+        summary_model_config_id: form.summary_model_config_id,
+        token_limit: tokenLimit,
+        message_count_limit: messageCountLimit,
+        target_summary_tokens: targetSummaryTokens,
+        job_interval_seconds: jobIntervalSeconds,
+      }));
 
       if (clampedFields.length > 0) {
         setNotice(`已按安全范围自动调整：${clampedFields.join("、")}`);
       } else {
         setNotice("保存成功");
       }
-    } catch (e: any) {
-      setError(String(e?.message || e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     } finally {
       setSaving(false);
     }
