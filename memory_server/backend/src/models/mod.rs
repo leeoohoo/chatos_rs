@@ -59,7 +59,7 @@ pub use self::sessions::{
     Contact, CreateContactRequest, CreateSessionRequest, MemoryProject, MemoryProjectAgentLink,
     Session, UpdateSessionRequest,
 };
-pub use self::summaries::{AgentMemorySummarySource, SessionSummary};
+pub use self::summaries::SessionSummary;
 pub use self::turn_runtime_snapshots::{
     SyncTurnRuntimeSnapshotRequest, TurnRuntimeSnapshot, TurnRuntimeSnapshotLookupResponse,
 };

@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::models::{
-    AgentMemorySummarySource, AgentRecall, ComposeContextRequest, ComposeContextResponse, Message,
-    ProjectMemory, Session, SessionSummary,
+    AgentMemoryJobConfig, AgentRecall, AiModelConfig, ComposeContextRequest,
+    ComposeContextResponse, Message, ProjectMemory, Session, SessionSummary, SummaryJobConfig,
     SummaryRollupJobConfig,
 };
 use crate::repositories::{project_agent_links, sessions};
@@ -50,12 +50,6 @@ fn agent_id_from_metadata(metadata: Option<&serde_json::Value>) -> Option<String
 fn project_id_from_metadata(metadata: Option<&serde_json::Value>) -> Option<String> {
     metadata_string(metadata, &["chat_runtime", "project_id"])
         .or_else(|| metadata_string(metadata, &["chat_runtime", "projectId"]))
-}
-
-fn project_id_from_summary_metadata(metadata: Option<&serde_json::Value>) -> Option<String> {
-    metadata_string(metadata, &["legacy_session_mapping", "project_id"])
-        .or_else(|| metadata_string(metadata, &["project_id"]))
-        .or_else(|| metadata_string(metadata, &["projectId"]))
 }
 
 fn build_session_mapping_metadata(session: &Session) -> Option<serde_json::Value> {
@@ -304,7 +298,24 @@ pub struct EngineRunPendingRollupsResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct EngineRunSubjectMemoryJobRequest {
+struct EngineRunSubjectMemoryScopesRequest {
+    tenant_id: Option<String>,
+    source_id: Option<String>,
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineRunSubjectMemoryScopesResponse {
+    pub processed_scopes: usize,
+    pub generated_scopes: usize,
+    pub generated_memories: usize,
+    pub marked_source_summaries: usize,
+    pub marked_source_memories: usize,
+    pub failed_scopes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EngineUpsertSubjectMemoryScopeRequest {
     tenant_id: String,
     source_id: String,
     subject_id: String,
@@ -312,24 +323,9 @@ struct EngineRunSubjectMemoryJobRequest {
     source_thread_label: String,
     relation_subject_id: Option<String>,
     source_summary_type: Option<String>,
-    summary_prompt: Option<String>,
     prompt_title: Option<String>,
-    round_limit: Option<i64>,
-    token_limit: Option<i64>,
-    target_summary_tokens: Option<i64>,
-    keep_level0_count: Option<i64>,
-    max_level: Option<i64>,
     memory_metadata: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EngineRunSubjectMemoryJobResponse {
-    pub subject_id: String,
-    pub generated_level0: usize,
-    pub generated_rollups: usize,
-    pub generated_memories: usize,
-    pub marked_source_summaries: usize,
-    pub marked_source_memories: usize,
+    status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -434,21 +430,6 @@ struct EngineListSummariesByThreadLabelRequest {
     offset: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct EngineQuerySubjectMemoriesRequest {
-    tenant_id: String,
-    source_id: String,
-    subject_id: String,
-    memory_type: Option<String>,
-    level: Option<i64>,
-    max_level_exclusive: Option<i64>,
-    rollup_status: Option<String>,
-    relation_subject_id: Option<String>,
-    source_digest: Option<String>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 struct EngineDeleteSummaryResponse {
     reset_records: usize,
@@ -457,6 +438,113 @@ struct EngineDeleteSummaryResponse {
 #[derive(Debug, Clone, Deserialize)]
 struct EngineListThreadsResponse {
     items: Vec<EngineThread>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EngineUpsertModelProfileRequest {
+    name: String,
+    provider: String,
+    model: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    supports_images: Option<bool>,
+    supports_reasoning: Option<bool>,
+    supports_responses: Option<bool>,
+    temperature: Option<f64>,
+    thinking_level: Option<String>,
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EngineModelProfile {
+    id: String,
+    name: String,
+    provider: String,
+    model: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    supports_images: bool,
+    supports_reasoning: bool,
+    supports_responses: bool,
+    temperature: Option<f64>,
+    thinking_level: Option<String>,
+    enabled: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EngineListModelProfilesResponse {
+    items: Vec<EngineModelProfile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EngineUpsertJobPolicyRequest {
+    enabled: Option<bool>,
+    model_profile_id: Option<Option<String>>,
+    summary_prompt: Option<Option<String>>,
+    token_limit: Option<Option<i64>>,
+    round_limit: Option<Option<i64>>,
+    target_summary_tokens: Option<Option<i64>>,
+    interval_seconds: Option<Option<i64>>,
+    max_threads_per_tick: Option<Option<i64>>,
+    keep_level0_count: Option<Option<i64>>,
+    max_level: Option<Option<i64>>,
+    max_records_per_thread: Option<Option<i64>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EngineJobPolicy {
+    job_type: String,
+    enabled: bool,
+    model_profile_id: Option<String>,
+    summary_prompt: Option<String>,
+    token_limit: Option<i64>,
+    round_limit: Option<i64>,
+    target_summary_tokens: Option<i64>,
+    interval_seconds: Option<i64>,
+    max_threads_per_tick: Option<i64>,
+    keep_level0_count: Option<i64>,
+    max_level: Option<i64>,
+    max_records_per_thread: Option<i64>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EngineListJobPoliciesResponse {
+    items: Vec<EngineJobPolicy>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EngineListJobRunsResponse {
+    items: Vec<EngineJobRun>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineJobRun {
+    pub id: String,
+    pub job_type: String,
+    pub trigger_type: String,
+    pub tenant_id: Option<String>,
+    pub source_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub subject_id: Option<String>,
+    pub thread_label: Option<String>,
+    pub status: String,
+    pub input_count: i64,
+    pub output_count: i64,
+    pub processed_count: i64,
+    pub success_count: i64,
+    pub error_count: i64,
+    pub metadata: Option<serde_json::Value>,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EngineJobRunStatsResponse {
+    stats: serde_json::Value,
 }
 
 pub async fn compose_context(
@@ -601,6 +689,82 @@ pub async fn sync_session(
         let body = response.text().await.unwrap_or_default();
         return Err(format!(
             "memory engine sync session failed: status={} body={}",
+            status, body
+        ));
+    }
+
+    register_session_subject_memory_scopes(config, session).await?;
+
+    Ok(())
+}
+
+async fn register_session_subject_memory_scopes(
+    config: &AppConfig,
+    session: &Session,
+) -> Result<(), String> {
+    let tenant_id = session.user_id.trim();
+    if tenant_id.is_empty() {
+        return Ok(());
+    }
+
+    let metadata_ref = session.metadata.as_ref();
+    let agent_id = agent_id_from_metadata(metadata_ref);
+    let project_id = normalized_text(session.project_id.as_deref())
+        .or_else(|| project_id_from_metadata(metadata_ref));
+
+    if let Some(agent_id) = agent_id {
+        let agent_subject_id = format!("agent:{agent_id}");
+        let scope_key = format!("agent_recall:{agent_id}");
+        upsert_subject_memory_scope(
+            config,
+            scope_key.as_str(),
+            EngineUpsertSubjectMemoryScopeRequest {
+                tenant_id: tenant_id.to_string(),
+                source_id: "memory_server".to_string(),
+                subject_id: agent_subject_id.clone(),
+                memory_type: "agent_recall".to_string(),
+                source_thread_label: agent_subject_id.clone(),
+                relation_subject_id: Some(agent_subject_id),
+                source_summary_type: Some("thread_incremental".to_string()),
+                prompt_title: Some(format!("Agent recall {}", agent_id)),
+                memory_metadata: Some(serde_json::json!({
+                    "legacy_owner": "memory_server",
+                    "scope_type": "agent_recall",
+                    "agent_id": agent_id,
+                    "project_id": project_id,
+                })),
+                status: Some("active".to_string()),
+            },
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn upsert_subject_memory_scope(
+    config: &AppConfig,
+    scope_key: &str,
+    request: EngineUpsertSubjectMemoryScopeRequest,
+) -> Result<(), String> {
+    let endpoint = format!(
+        "{}/api/memory-engine/v1/subject-memory-scopes/{}",
+        engine_base_url(config),
+        urlencoding::encode(scope_key)
+    );
+
+    let response = build_client(config)?
+        .put(endpoint.as_str())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|err| format!("memory engine upsert subject memory scope request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine upsert subject memory scope failed: status={} body={}",
             status, body
         ));
     }
@@ -789,69 +953,6 @@ pub async fn list_agent_recalls(
         .collect())
 }
 
-async fn query_engine_subject_memories(
-    config: &AppConfig,
-    request: &EngineQuerySubjectMemoriesRequest,
-) -> Result<Vec<EngineSubjectMemory>, String> {
-    let endpoint = format!(
-        "{}/api/memory-engine/v1/subject-memories/query",
-        engine_base_url(config),
-    );
-
-    let response = build_client(config)?
-        .post(endpoint.as_str())
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| format!("memory engine query subject memories failed: {err}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "memory engine query subject memories failed: status={} body={}",
-            status, body
-        ));
-    }
-
-    response
-        .json::<EngineListSubjectMemoriesResponse>()
-        .await
-        .map(|payload| payload.items)
-        .map_err(|err| format!("memory engine query subject memories decode failed: {err}"))
-}
-
-pub async fn has_pending_agent_recalls_before_level(
-    config: &AppConfig,
-    tenant_id: &str,
-    agent_id: &str,
-    max_level: i64,
-) -> Result<bool, String> {
-    if max_level <= 0 {
-        return Ok(false);
-    }
-
-    let subject_id = format!("agent:{agent_id}");
-    let items = query_engine_subject_memories(
-        config,
-        &EngineQuerySubjectMemoriesRequest {
-            tenant_id: tenant_id.to_string(),
-            source_id: "memory_server".to_string(),
-            subject_id: subject_id.clone(),
-            memory_type: Some("agent_recall".to_string()),
-            level: None,
-            max_level_exclusive: Some(max_level.max(1)),
-            rollup_status: Some("pending".to_string()),
-            relation_subject_id: Some(subject_id),
-            source_digest: None,
-            limit: Some(1),
-            offset: Some(0),
-        },
-    )
-    .await?;
-
-    Ok(!items.is_empty())
-}
-
 pub async fn sync_message(
     config: &AppConfig,
     db: &crate::db::Db,
@@ -927,6 +1028,84 @@ fn engine_record_to_message(record: EngineRecord) -> Message {
     }
 }
 
+fn engine_model_profile_to_ai_model_config(item: EngineModelProfile) -> AiModelConfig {
+    AiModelConfig {
+        id: item.id,
+        user_id: "global".to_string(),
+        name: item.name,
+        provider: item.provider,
+        model: item.model,
+        base_url: item.base_url,
+        api_key: item.api_key,
+        supports_images: if item.supports_images { 1 } else { 0 },
+        supports_reasoning: if item.supports_reasoning { 1 } else { 0 },
+        supports_responses: if item.supports_responses { 1 } else { 0 },
+        temperature: item.temperature,
+        thinking_level: item.thinking_level,
+        enabled: if item.enabled { 1 } else { 0 },
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+    }
+}
+
+fn engine_job_policy_to_summary_job_config(
+    user_id: &str,
+    item: EngineJobPolicy,
+) -> SummaryJobConfig {
+    SummaryJobConfig {
+        user_id: user_id.to_string(),
+        enabled: if item.enabled { 1 } else { 0 },
+        summary_model_config_id: item.model_profile_id,
+        summary_prompt: item.summary_prompt,
+        token_limit: item.token_limit.unwrap_or(6000),
+        round_limit: item.round_limit.unwrap_or(8),
+        target_summary_tokens: item.target_summary_tokens.unwrap_or(700),
+        job_interval_seconds: item.interval_seconds.unwrap_or(30),
+        max_sessions_per_tick: item.max_threads_per_tick.unwrap_or(50),
+        updated_at: item.updated_at,
+    }
+}
+
+fn engine_job_policy_to_rollup_job_config(
+    user_id: &str,
+    item: EngineJobPolicy,
+) -> SummaryRollupJobConfig {
+    SummaryRollupJobConfig {
+        user_id: user_id.to_string(),
+        enabled: if item.enabled { 1 } else { 0 },
+        summary_model_config_id: item.model_profile_id,
+        summary_prompt: item.summary_prompt,
+        token_limit: item.token_limit.unwrap_or(6000),
+        round_limit: item.round_limit.unwrap_or(8),
+        target_summary_tokens: item.target_summary_tokens.unwrap_or(700),
+        job_interval_seconds: item.interval_seconds.unwrap_or(60),
+        keep_raw_level0_count: item.keep_level0_count.unwrap_or(5),
+        max_level: item.max_level.unwrap_or(4),
+        max_sessions_per_tick: item.max_threads_per_tick.unwrap_or(50),
+        updated_at: item.updated_at,
+    }
+}
+
+fn engine_job_policy_to_agent_memory_job_config(
+    user_id: &str,
+    item: EngineJobPolicy,
+) -> AgentMemoryJobConfig {
+    AgentMemoryJobConfig {
+        user_id: user_id.to_string(),
+        enabled: if item.enabled { 1 } else { 0 },
+        summary_model_config_id: item.model_profile_id,
+        summary_prompt: item.summary_prompt,
+        token_limit: item.token_limit.unwrap_or(6000),
+        round_limit: item.round_limit.unwrap_or(20),
+        target_summary_tokens: item.target_summary_tokens.unwrap_or(700),
+        job_interval_seconds: item.interval_seconds.unwrap_or(60),
+        keep_raw_level0_count: item.keep_level0_count.unwrap_or(5),
+        max_level: item.max_level.unwrap_or(4),
+        max_agents_per_tick: item.max_threads_per_tick.unwrap_or(50),
+        updated_at: item.updated_at,
+    }
+}
+
 fn engine_summary_to_session_summary(item: EngineSummary) -> SessionSummary {
     let summary_model = item
         .metadata
@@ -963,36 +1142,6 @@ fn engine_summary_to_session_summary(item: EngineSummary) -> SessionSummary {
         rolled_up_at: None,
         agent_memory_summarized: item.subject_memory_summarized,
         agent_memory_summarized_at: item.subject_memory_summarized_at,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-    }
-}
-
-fn engine_summary_to_agent_memory_summary_source(
-    item: EngineSummary,
-    project_id: Option<String>,
-) -> AgentMemorySummarySource {
-    let summary_model = item
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("summary_model"))
-        .and_then(|value| value.as_str())
-        .unwrap_or("memory_engine")
-        .to_string();
-
-    AgentMemorySummarySource {
-        id: item.id,
-        session_id: item.thread_id,
-        summary_text: item.summary_text,
-        summary_model,
-        trigger_type: item.summary_type,
-        source_start_message_id: item.source_record_start_id,
-        source_end_message_id: item.source_record_end_id,
-        source_message_count: item.source_record_count,
-        source_estimated_tokens: 0,
-        status: item.status,
-        level: item.level,
-        project_id,
         created_at: item.created_at,
         updated_at: item.updated_at,
     }
@@ -1558,36 +1707,6 @@ async fn list_engine_summaries_by_thread_label(
         .map_err(|err| format!("memory engine label summary query decode failed: {err}"))
 }
 
-pub async fn list_pending_agent_memory_summaries_by_agent(
-    config: &AppConfig,
-    tenant_id: &str,
-    agent_id: &str,
-) -> Result<Vec<AgentMemorySummarySource>, String> {
-    let thread_label = format!("agent:{agent_id}");
-    let summaries = list_engine_summaries_by_thread_label(
-        config,
-        tenant_id,
-        thread_label.as_str(),
-        Some("thread_incremental"),
-        Some("done"),
-        None,
-        Some(0),
-        5_000,
-        0,
-    )
-    .await?;
-
-    let mut out = summaries
-        .into_iter()
-        .map(|item| {
-            let project_id = project_id_from_summary_metadata(item.metadata.as_ref());
-            engine_summary_to_agent_memory_summary_source(item, project_id)
-        })
-        .collect::<Vec<_>>();
-    out.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-    Ok(out)
-}
-
 pub async fn list_summaries_by_thread_label(
     config: &AppConfig,
     tenant_id: &str,
@@ -1660,32 +1779,6 @@ pub async fn list_threads_by_label(
         .await
         .map(|payload| payload.items)
         .map_err(|err| format!("memory engine label thread query decode failed: {err}"))
-}
-
-pub async fn list_agent_ids_with_pending_agent_memory_by_user(
-    config: &AppConfig,
-    db: &crate::db::Db,
-    tenant_id: &str,
-    limit: i64,
-) -> Result<Vec<String>, String> {
-    let contacts = crate::repositories::contacts::list_contacts(db, tenant_id, Some("active"), 5_000, 0)
-        .await?;
-    let mut out = Vec::new();
-    for contact in contacts {
-        let items = list_pending_agent_memory_summaries_by_agent(
-            config,
-            tenant_id,
-            contact.agent_id.as_str(),
-        )
-        .await?;
-        if !items.is_empty() {
-            out.push(contact.agent_id);
-            if out.len() >= limit.max(1).min(5_000) as usize {
-                break;
-            }
-        }
-    }
-    Ok(out)
 }
 
 pub async fn list_all_summaries_by_session(
@@ -2107,73 +2200,489 @@ pub async fn get_review_repair_scope_status(
         .map_err(|err| format!("memory engine review repair status decode failed: {err}"))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn run_agent_recall_job(
+pub async fn run_subject_memory_scopes_once(
     config: &AppConfig,
-    tenant_id: &str,
-    agent_id: &str,
-    summary_prompt: Option<&str>,
-    round_limit: i64,
-    token_limit: i64,
-    target_summary_tokens: i64,
-    keep_level0_count: i64,
-    max_level: i64,
-) -> Result<EngineRunSubjectMemoryJobResponse, String> {
-    let base_url = engine_base_url(config);
-    let normalized_tenant = tenant_id.trim();
-    let normalized_agent = agent_id.trim();
-    if normalized_tenant.is_empty() {
-        return Err("empty tenant_id".to_string());
-    }
-    if normalized_agent.is_empty() {
-        return Err("empty agent_id".to_string());
-    }
-
-    let agent_subject_id = format!("agent:{normalized_agent}");
-    let request = EngineRunSubjectMemoryJobRequest {
-        tenant_id: normalized_tenant.to_string(),
-        source_id: "memory_server".to_string(),
-        subject_id: agent_subject_id.clone(),
-        memory_type: "agent_recall".to_string(),
-        source_thread_label: agent_subject_id.clone(),
-        relation_subject_id: Some(agent_subject_id.clone()),
-        source_summary_type: Some("thread_incremental".to_string()),
-        summary_prompt: summary_prompt.map(ToOwned::to_owned),
-        prompt_title: Some(format!("Agent recall {}", normalized_agent)),
-        round_limit: Some(round_limit.max(1)),
-        token_limit: Some(token_limit.max(500)),
-        target_summary_tokens: Some(target_summary_tokens.max(128)),
-        keep_level0_count: Some(keep_level0_count.max(0)),
-        max_level: Some(max_level.max(1)),
-        memory_metadata: Some(serde_json::json!({
-            "legacy_owner": "memory_server",
-            "agent_id": normalized_agent,
-        })),
-    };
-
+    tenant_id: Option<&str>,
+    source_id: Option<&str>,
+    limit: Option<i64>,
+) -> Result<EngineRunSubjectMemoryScopesResponse, String> {
     let endpoint = format!(
-        "{}/api/memory-engine/v1/jobs/subject-memories/run-once",
-        base_url
+        "{}/api/memory-engine/v1/jobs/subject-memory-scopes/run-once",
+        engine_base_url(config)
     );
+    let request = EngineRunSubjectMemoryScopesRequest {
+        tenant_id: tenant_id.map(ToOwned::to_owned),
+        source_id: source_id.map(ToOwned::to_owned),
+        limit,
+    };
 
     let response = build_client(config)?
         .post(endpoint.as_str())
         .json(&request)
         .send()
         .await
-        .map_err(|err| format!("memory engine run subject memory job request failed: {err}"))?;
+        .map_err(|err| format!("memory engine run subject memory scopes request failed: {err}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(format!(
-            "memory engine run subject memory job failed: status={} body={}",
+            "memory engine run subject memory scopes failed: status={} body={}",
             status, body
         ));
     }
 
     response
-        .json::<EngineRunSubjectMemoryJobResponse>()
+        .json::<EngineRunSubjectMemoryScopesResponse>()
         .await
-        .map_err(|err| format!("memory engine run subject memory job decode failed: {err}"))
+        .map_err(|err| format!("memory engine run subject memory scopes decode failed: {err}"))
+}
+
+pub async fn list_global_model_profiles(
+    config: &AppConfig,
+) -> Result<Vec<AiModelConfig>, String> {
+    let endpoint = format!(
+        "{}/api/memory-engine/v1/admin/model-profiles",
+        engine_base_url(config)
+    );
+
+    let response = build_client(config)?
+        .get(endpoint.as_str())
+        .send()
+        .await
+        .map_err(|err| format!("memory engine list model profiles request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine list model profiles failed: status={} body={}",
+            status, body
+        ));
+    }
+
+    response
+        .json::<EngineListModelProfilesResponse>()
+        .await
+        .map(|payload| {
+            payload
+                .items
+                .into_iter()
+                .map(engine_model_profile_to_ai_model_config)
+                .collect()
+        })
+        .map_err(|err| format!("memory engine list model profiles decode failed: {err}"))
+}
+
+pub async fn get_global_model_profile_by_id(
+    config: &AppConfig,
+    model_id: &str,
+) -> Result<Option<AiModelConfig>, String> {
+    let items = list_global_model_profiles(config).await?;
+    Ok(items.into_iter().find(|item| item.id == model_id))
+}
+
+pub async fn create_global_model_profile(
+    config: &AppConfig,
+    req: &AiModelConfig,
+) -> Result<AiModelConfig, String> {
+    let endpoint = format!(
+        "{}/api/memory-engine/v1/admin/model-profiles",
+        engine_base_url(config)
+    );
+    let request = EngineUpsertModelProfileRequest {
+        name: req.name.clone(),
+        provider: req.provider.clone(),
+        model: req.model.clone(),
+        base_url: req.base_url.clone(),
+        api_key: req.api_key.clone(),
+        supports_images: Some(req.supports_images == 1),
+        supports_reasoning: Some(req.supports_reasoning == 1),
+        supports_responses: Some(req.supports_responses == 1),
+        temperature: req.temperature,
+        thinking_level: req.thinking_level.clone(),
+        enabled: Some(req.enabled == 1),
+    };
+
+    let response = build_client(config)?
+        .post(endpoint.as_str())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|err| format!("memory engine create model profile request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine create model profile failed: status={} body={}",
+            status, body
+        ));
+    }
+
+    response
+        .json::<EngineModelProfile>()
+        .await
+        .map(engine_model_profile_to_ai_model_config)
+        .map_err(|err| format!("memory engine create model profile decode failed: {err}"))
+}
+
+pub async fn update_global_model_profile(
+    config: &AppConfig,
+    model_id: &str,
+    req: &AiModelConfig,
+) -> Result<Option<AiModelConfig>, String> {
+    let endpoint = format!(
+        "{}/api/memory-engine/v1/admin/model-profiles/{}",
+        engine_base_url(config),
+        urlencoding::encode(model_id)
+    );
+    let request = EngineUpsertModelProfileRequest {
+        name: req.name.clone(),
+        provider: req.provider.clone(),
+        model: req.model.clone(),
+        base_url: req.base_url.clone(),
+        api_key: req.api_key.clone(),
+        supports_images: Some(req.supports_images == 1),
+        supports_reasoning: Some(req.supports_reasoning == 1),
+        supports_responses: Some(req.supports_responses == 1),
+        temperature: req.temperature,
+        thinking_level: req.thinking_level.clone(),
+        enabled: Some(req.enabled == 1),
+    };
+
+    let response = build_client(config)?
+        .put(endpoint.as_str())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|err| format!("memory engine update model profile request failed: {err}"))?;
+
+    if response.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine update model profile failed: status={} body={}",
+            status, body
+        ));
+    }
+
+    response
+        .json::<EngineModelProfile>()
+        .await
+        .map(engine_model_profile_to_ai_model_config)
+        .map(Some)
+        .map_err(|err| format!("memory engine update model profile decode failed: {err}"))
+}
+
+pub async fn delete_global_model_profile(
+    config: &AppConfig,
+    model_id: &str,
+) -> Result<bool, String> {
+    let endpoint = format!(
+        "{}/api/memory-engine/v1/admin/model-profiles/{}",
+        engine_base_url(config),
+        urlencoding::encode(model_id)
+    );
+
+    let response = build_client(config)?
+        .delete(endpoint.as_str())
+        .send()
+        .await
+        .map_err(|err| format!("memory engine delete model profile request failed: {err}"))?;
+
+    if response.status().as_u16() == 404 {
+        return Ok(false);
+    }
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine delete model profile failed: status={} body={}",
+            status, body
+        ));
+    }
+    Ok(true)
+}
+
+async fn get_job_policy_raw(
+    config: &AppConfig,
+    job_type: &str,
+) -> Result<EngineJobPolicy, String> {
+    let endpoint = format!(
+        "{}/api/memory-engine/v1/admin/job-policies/{}",
+        engine_base_url(config),
+        urlencoding::encode(job_type)
+    );
+
+    let response = build_client(config)?
+        .get(endpoint.as_str())
+        .send()
+        .await
+        .map_err(|err| format!("memory engine get job policy request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine get job policy failed: status={} body={}",
+            status, body
+        ));
+    }
+
+    response
+        .json::<EngineJobPolicy>()
+        .await
+        .map_err(|err| format!("memory engine get job policy decode failed: {err}"))
+}
+
+async fn upsert_job_policy_raw(
+    config: &AppConfig,
+    job_type: &str,
+    req: &EngineUpsertJobPolicyRequest,
+) -> Result<EngineJobPolicy, String> {
+    let endpoint = format!(
+        "{}/api/memory-engine/v1/admin/job-policies/{}",
+        engine_base_url(config),
+        urlencoding::encode(job_type)
+    );
+
+    let response = build_client(config)?
+        .put(endpoint.as_str())
+        .json(req)
+        .send()
+        .await
+        .map_err(|err| format!("memory engine upsert job policy request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine upsert job policy failed: status={} body={}",
+            status, body
+        ));
+    }
+
+    response
+        .json::<EngineJobPolicy>()
+        .await
+        .map_err(|err| format!("memory engine upsert job policy decode failed: {err}"))
+}
+
+pub async fn get_global_summary_job_config(
+    config: &AppConfig,
+    user_id: &str,
+) -> Result<SummaryJobConfig, String> {
+    get_job_policy_raw(config, "summary")
+        .await
+        .map(|policy| engine_job_policy_to_summary_job_config(user_id, policy))
+}
+
+pub async fn put_global_summary_job_config(
+    config: &AppConfig,
+    req: &crate::models::UpsertSummaryJobConfigRequest,
+) -> Result<SummaryJobConfig, String> {
+    let policy = upsert_job_policy_raw(
+        config,
+        "summary",
+        &EngineUpsertJobPolicyRequest {
+            enabled: req.enabled,
+            model_profile_id: req.summary_model_config_id.clone(),
+            summary_prompt: req.summary_prompt.clone(),
+            token_limit: req.token_limit.map(Some),
+            round_limit: req.round_limit.map(Some),
+            target_summary_tokens: req.target_summary_tokens.map(Some),
+            interval_seconds: req.job_interval_seconds.map(Some),
+            max_threads_per_tick: req.max_sessions_per_tick.map(Some),
+            keep_level0_count: None,
+            max_level: None,
+            max_records_per_thread: None,
+        },
+    )
+    .await?;
+    Ok(engine_job_policy_to_summary_job_config(
+        req.user_id.as_str(),
+        policy,
+    ))
+}
+
+pub async fn get_global_rollup_job_config(
+    config: &AppConfig,
+    user_id: &str,
+) -> Result<SummaryRollupJobConfig, String> {
+    get_job_policy_raw(config, "rollup")
+        .await
+        .map(|policy| engine_job_policy_to_rollup_job_config(user_id, policy))
+}
+
+pub async fn put_global_rollup_job_config(
+    config: &AppConfig,
+    req: &crate::models::UpsertSummaryRollupJobConfigRequest,
+) -> Result<SummaryRollupJobConfig, String> {
+    let policy = upsert_job_policy_raw(
+        config,
+        "rollup",
+        &EngineUpsertJobPolicyRequest {
+            enabled: req.enabled,
+            model_profile_id: req.summary_model_config_id.clone(),
+            summary_prompt: req.summary_prompt.clone(),
+            token_limit: req.token_limit.map(Some),
+            round_limit: req.round_limit.map(Some),
+            target_summary_tokens: req.target_summary_tokens.map(Some),
+            interval_seconds: req.job_interval_seconds.map(Some),
+            max_threads_per_tick: req.max_sessions_per_tick.map(Some),
+            keep_level0_count: req.keep_raw_level0_count.map(Some),
+            max_level: req.max_level.map(Some),
+            max_records_per_thread: None,
+        },
+    )
+    .await?;
+    Ok(engine_job_policy_to_rollup_job_config(
+        req.user_id.as_str(),
+        policy,
+    ))
+}
+
+pub async fn get_global_agent_memory_job_config(
+    config: &AppConfig,
+    user_id: &str,
+) -> Result<AgentMemoryJobConfig, String> {
+    get_job_policy_raw(config, "subject_memory")
+        .await
+        .map(|policy| engine_job_policy_to_agent_memory_job_config(user_id, policy))
+}
+
+pub async fn put_global_agent_memory_job_config(
+    config: &AppConfig,
+    req: &crate::models::UpsertAgentMemoryJobConfigRequest,
+) -> Result<AgentMemoryJobConfig, String> {
+    let policy = upsert_job_policy_raw(
+        config,
+        "subject_memory",
+        &EngineUpsertJobPolicyRequest {
+            enabled: req.enabled,
+            model_profile_id: req.summary_model_config_id.clone(),
+            summary_prompt: req.summary_prompt.clone(),
+            token_limit: req.token_limit.map(Some),
+            round_limit: req.round_limit.map(Some),
+            target_summary_tokens: req.target_summary_tokens.map(Some),
+            interval_seconds: req.job_interval_seconds.map(Some),
+            max_threads_per_tick: req.max_agents_per_tick.map(Some),
+            keep_level0_count: req.keep_raw_level0_count.map(Some),
+            max_level: req.max_level.map(Some),
+            max_records_per_thread: None,
+        },
+    )
+    .await?;
+    Ok(engine_job_policy_to_agent_memory_job_config(
+        req.user_id.as_str(),
+        policy,
+    ))
+}
+
+pub async fn list_engine_job_runs(
+    config: &AppConfig,
+    job_type: Option<&str>,
+    thread_id: Option<&str>,
+    status: Option<&str>,
+    tenant_id: Option<&str>,
+    source_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<EngineJobRun>, String> {
+    let mut endpoint = format!(
+        "{}/api/memory-engine/v1/admin/job-runs?limit={}",
+        engine_base_url(config),
+        limit.max(1).min(1000)
+    );
+    if let Some(value) = job_type.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&job_type=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+    if let Some(value) = thread_id.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&thread_id=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+    if let Some(value) = status.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&status=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+    if let Some(value) = tenant_id.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&tenant_id=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+    if let Some(value) = source_id.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&source_id=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+
+    let response = build_client(config)?
+        .get(endpoint.as_str())
+        .send()
+        .await
+        .map_err(|err| format!("memory engine list job runs request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status_code = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine list job runs failed: status={} body={}",
+            status_code, body
+        ));
+    }
+
+    response
+        .json::<EngineListJobRunsResponse>()
+        .await
+        .map(|payload| payload.items)
+        .map_err(|err| format!("memory engine list job runs decode failed: {err}"))
+}
+
+pub async fn get_engine_job_run_stats(
+    config: &AppConfig,
+    job_type: Option<&str>,
+    tenant_id: Option<&str>,
+    source_id: Option<&str>,
+    since_hours: i64,
+) -> Result<serde_json::Value, String> {
+    let mut endpoint = format!(
+        "{}/api/memory-engine/v1/admin/job-runs/stats?since_hours={}",
+        engine_base_url(config),
+        since_hours.max(1)
+    );
+    if let Some(value) = job_type.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&job_type=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+    if let Some(value) = tenant_id.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&tenant_id=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+    if let Some(value) = source_id.map(str::trim).filter(|value| !value.is_empty()) {
+        endpoint.push_str("&source_id=");
+        endpoint.push_str(urlencoding::encode(value).as_ref());
+    }
+
+    let response = build_client(config)?
+        .get(endpoint.as_str())
+        .send()
+        .await
+        .map_err(|err| format!("memory engine job stats request failed: {err}"))?;
+
+    if !response.status().is_success() {
+        let status_code = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "memory engine job stats failed: status={} body={}",
+            status_code, body
+        ));
+    }
+
+    response
+        .json::<EngineJobRunStatsResponse>()
+        .await
+        .map(|payload| payload.stats)
+        .map_err(|err| format!("memory engine job stats decode failed: {err}"))
 }

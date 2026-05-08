@@ -1,12 +1,13 @@
-use crate::ai::AiClient;
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{
-    EngineRecord, EngineSummary, GetThreadRepairScopeStatusRequest,
+    CreateEngineJobRunRequest, EngineRecord, EngineSummary, FinishEngineJobRunRequest,
+    GetThreadRepairScopeStatusRequest,
     GetThreadRepairScopeStatusResponse, RunThreadRepairScopeRequest,
     RunThreadRepairScopeResponse, RunThreadRepairSummaryResponse, RunThreadSummaryResponse,
 };
-use crate::repositories::{records, summaries, threads};
+use crate::repositories::{control_plane as cp_repo, records, summaries, threads};
+use crate::services::control_plane;
 
 const DEFAULT_MAX_RECORDS: i64 = 20;
 const DEFAULT_ROLLUP_TOKEN_LIMIT: i64 = 6000;
@@ -68,15 +69,68 @@ pub async fn run_thread_summary(
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
+    let pending_before_count = records::count_records(
+        db,
+        thread_id,
+        Some(tenant_id),
+        Some(source_id),
+        None,
+        None,
+        Some("pending"),
+    )
+    .await?;
+    let job_run = cp_repo::create_job_run(
+        db,
+        CreateEngineJobRunRequest {
+            job_type: "summary".to_string(),
+            trigger_type: "thread_direct".to_string(),
+            tenant_id: Some(tenant_id.to_string()),
+            source_id: Some(source_id.to_string()),
+            thread_id: Some(thread_id.to_string()),
+            subject_id: Some(thread.subject_id.clone()),
+            thread_label: None,
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "summary_l0",
+                "compat_trigger_type": "manual_session",
+                "pending_before_count": pending_before_count,
+            })),
+        },
+    )
+    .await?;
 
     let pending_records = records::list_pending_records(
         db,
         thread_id,
         max_records.unwrap_or(DEFAULT_MAX_RECORDS as usize).max(1) as i64,
     )
-    .await?;
+    .await
+    .inspect_err(|err| {
+        let _ = err;
+    })?;
 
     if pending_records.is_empty() {
+        let _ = cp_repo::finish_job_run(
+            db,
+            job_run.id.as_str(),
+            FinishEngineJobRunRequest {
+                status: "done".to_string(),
+                input_count: 0,
+                output_count: 0,
+                processed_count: 0,
+                success_count: 0,
+                error_count: 0,
+                metadata: Some(serde_json::json!({
+                    "compat_job_type": "summary_l0",
+                    "compat_trigger_type": "manual_session",
+                    "pending_before_count": pending_before_count,
+                    "selected_count": 0,
+                    "marked_count": 0,
+                    "pending_after_count": pending_before_count,
+                })),
+                error_message: None,
+            },
+        )
+        .await;
         return Ok(RunThreadSummaryResponse {
             thread_id: thread_id.to_string(),
             generated: false,
@@ -85,7 +139,8 @@ pub async fn run_thread_summary(
         });
     }
 
-    let summary_text = build_summary_text(config, thread.title.as_deref(), &pending_records).await?;
+    let summary_text =
+        build_summary_text(config, db, thread.title.as_deref(), &pending_records).await?;
     let summary = summaries::create_thread_summary(
         db,
         tenant_id,
@@ -105,6 +160,39 @@ pub async fn run_thread_summary(
         .collect::<Vec<_>>();
     records::mark_records_summarized(db, thread_id, record_ids.as_slice(), summary.id.as_str())
         .await?;
+    let pending_after_count = records::count_records(
+        db,
+        thread_id,
+        Some(tenant_id),
+        Some(source_id),
+        None,
+        None,
+        Some("pending"),
+    )
+    .await?;
+    let _ = cp_repo::finish_job_run(
+        db,
+        job_run.id.as_str(),
+        FinishEngineJobRunRequest {
+            status: "done".to_string(),
+            input_count: pending_records.len() as i64,
+            output_count: 1,
+            processed_count: pending_records.len() as i64,
+            success_count: pending_records.len() as i64,
+            error_count: 0,
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "summary_l0",
+                "compat_trigger_type": "manual_session",
+                "pending_before_count": pending_before_count,
+                "selected_count": pending_records.len(),
+                "marked_count": pending_records.len(),
+                "pending_after_count": pending_after_count,
+                "generated_summary_id": summary.id,
+            })),
+            error_message: None,
+        },
+    )
+    .await;
 
     Ok(RunThreadSummaryResponse {
         thread_id: thread_id.to_string(),
@@ -125,6 +213,34 @@ pub async fn run_thread_repair_summary(
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
+    let pending_before_count = records::count_records(
+        db,
+        thread_id,
+        Some(tenant_id),
+        Some(source_id),
+        None,
+        None,
+        Some("pending"),
+    )
+    .await?;
+    let job_run = cp_repo::create_job_run(
+        db,
+        CreateEngineJobRunRequest {
+            job_type: "thread_repair".to_string(),
+            trigger_type: "thread_direct".to_string(),
+            tenant_id: Some(tenant_id.to_string()),
+            source_id: Some(source_id.to_string()),
+            thread_id: Some(thread_id.to_string()),
+            subject_id: Some(thread.subject_id.clone()),
+            thread_label: None,
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "summary_review_repair",
+                "compat_trigger_type": "manual_review_repair",
+                "pending_before_count": pending_before_count,
+            })),
+        },
+    )
+    .await?;
 
     let selected_records = records::list_recent_records(
         db,
@@ -134,6 +250,28 @@ pub async fn run_thread_repair_summary(
     .await?;
 
     if selected_records.is_empty() {
+        let _ = cp_repo::finish_job_run(
+            db,
+            job_run.id.as_str(),
+            FinishEngineJobRunRequest {
+                status: "done".to_string(),
+                input_count: 0,
+                output_count: 0,
+                processed_count: 0,
+                success_count: 0,
+                error_count: 0,
+                metadata: Some(serde_json::json!({
+                    "compat_job_type": "summary_review_repair",
+                    "compat_trigger_type": "manual_review_repair",
+                    "pending_before_count": pending_before_count,
+                    "selected_count": 0,
+                    "marked_count": 0,
+                    "pending_after_count": pending_before_count,
+                })),
+                error_message: None,
+            },
+        )
+        .await;
         return Ok(RunThreadRepairSummaryResponse {
             thread_id: thread_id.to_string(),
             generated: false,
@@ -143,7 +281,7 @@ pub async fn run_thread_repair_summary(
     }
 
     let summary_text =
-        build_repair_summary_text(config, thread.title.as_deref(), &selected_records).await?;
+        build_repair_summary_text(config, db, thread.title.as_deref(), &selected_records).await?;
     let summary = summaries::create_thread_summary_with_type(
         db,
         tenant_id,
@@ -162,6 +300,29 @@ pub async fn run_thread_repair_summary(
         })),
     )
     .await?;
+    let _ = cp_repo::finish_job_run(
+        db,
+        job_run.id.as_str(),
+        FinishEngineJobRunRequest {
+            status: "done".to_string(),
+            input_count: selected_records.len() as i64,
+            output_count: 1,
+            processed_count: selected_records.len() as i64,
+            success_count: selected_records.len() as i64,
+            error_count: 0,
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "summary_review_repair",
+                "compat_trigger_type": "manual_review_repair",
+                "pending_before_count": pending_before_count,
+                "selected_count": selected_records.len(),
+                "marked_count": 0,
+                "pending_after_count": pending_before_count,
+                "generated_summary_id": summary.id,
+            })),
+            error_message: None,
+        },
+    )
+    .await;
 
     Ok(RunThreadRepairSummaryResponse {
         thread_id: thread_id.to_string(),
@@ -321,6 +482,23 @@ pub async fn run_thread_rollup(
     let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
         .await?
         .ok_or_else(|| "thread not found".to_string())?;
+    let job_run = cp_repo::create_job_run(
+        db,
+        CreateEngineJobRunRequest {
+            job_type: "rollup".to_string(),
+            trigger_type: "thread_direct".to_string(),
+            tenant_id: Some(tenant_id.to_string()),
+            source_id: Some(source_id.to_string()),
+            thread_id: Some(thread_id.to_string()),
+            subject_id: Some(thread.subject_id.clone()),
+            thread_label: None,
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "summary_rollup",
+                "compat_trigger_type": "manual_rollup",
+            })),
+        },
+    )
+    .await?;
 
     let selection = select_rollup_batch(
         db,
@@ -333,6 +511,27 @@ pub async fn run_thread_rollup(
     .await?;
 
     let Some((level, selected, trigger_reason)) = selection else {
+        let _ = cp_repo::finish_job_run(
+            db,
+            job_run.id.as_str(),
+            FinishEngineJobRunRequest {
+                status: "done".to_string(),
+                input_count: 0,
+                output_count: 0,
+                processed_count: 0,
+                success_count: 0,
+                error_count: 0,
+                metadata: Some(serde_json::json!({
+                    "compat_job_type": "summary_rollup",
+                    "compat_trigger_type": "manual_rollup",
+                    "selected_count": 0,
+                    "marked_count": 0,
+                    "pending_after_count": 0,
+                })),
+                error_message: None,
+            },
+        )
+        .await;
         return Ok(ThreadRollupResult {
             generated: 0,
             marked: 0,
@@ -363,6 +562,29 @@ pub async fn run_thread_rollup(
             existing.id.as_str(),
         )
         .await?;
+        let _ = cp_repo::finish_job_run(
+            db,
+            job_run.id.as_str(),
+            FinishEngineJobRunRequest {
+                status: "done".to_string(),
+                input_count: selected.len() as i64,
+                output_count: 0,
+                processed_count: selected.len() as i64,
+                success_count: marked as i64,
+                error_count: 0,
+                metadata: Some(serde_json::json!({
+                    "compat_job_type": "summary_rollup",
+                    "compat_trigger_type": "manual_rollup",
+                    "selected_count": selected.len(),
+                    "marked_count": marked,
+                    "pending_after_count": 0,
+                    "rollup_summary_id": existing.id,
+                    "trigger_reason": trigger_reason,
+                })),
+                error_message: None,
+            },
+        )
+        .await;
         return Ok(ThreadRollupResult {
             generated: 0,
             marked,
@@ -390,6 +612,7 @@ pub async fn run_thread_rollup(
     } else {
         build_rollup_summary_text(
             config,
+            db,
             thread.title.as_deref(),
             summarizable.as_slice(),
             settings,
@@ -434,6 +657,29 @@ pub async fn run_thread_rollup(
         created.id.as_str(),
     )
     .await?;
+    let _ = cp_repo::finish_job_run(
+        db,
+        job_run.id.as_str(),
+        FinishEngineJobRunRequest {
+            status: "done".to_string(),
+            input_count: selected.len() as i64,
+            output_count: 1,
+            processed_count: selected.len() as i64,
+            success_count: marked as i64,
+            error_count: 0,
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "summary_rollup",
+                "compat_trigger_type": "manual_rollup",
+                "selected_count": selected.len(),
+                "marked_count": marked,
+                "pending_after_count": 0,
+                "rollup_summary_id": created.id,
+                "trigger_reason": trigger_reason,
+            })),
+            error_message: None,
+        },
+    )
+    .await;
 
     Ok(ThreadRollupResult {
         generated: 1,
@@ -443,11 +689,12 @@ pub async fn run_thread_rollup(
 
 async fn build_summary_text(
     config: &AppConfig,
+    db: &Db,
     title: Option<&str>,
     records: &[EngineRecord],
 ) -> Result<String, String> {
     let rule_based = build_rule_based_summary(title, records);
-    let ai = AiClient::new(config)?;
+    let ai = control_plane::build_ai_client_for_job(config, db, "summary").await?;
     if !ai.is_enabled() {
         return Ok(rule_based);
     }
@@ -470,11 +717,12 @@ async fn build_summary_text(
 
 async fn build_repair_summary_text(
     config: &AppConfig,
+    db: &Db,
     title: Option<&str>,
     records: &[EngineRecord],
 ) -> Result<String, String> {
     let rule_based = build_rule_based_repair_summary(title, records);
-    let ai = AiClient::new(config)?;
+    let ai = control_plane::build_ai_client_for_job(config, db, "thread_repair").await?;
     if !ai.is_enabled() {
         return Ok(rule_based);
     }
@@ -504,6 +752,7 @@ async fn build_repair_summary_text(
 
 async fn build_rollup_summary_text(
     config: &AppConfig,
+    db: &Db,
     title: Option<&str>,
     items: &[String],
     settings: &RollupSettings,
@@ -511,7 +760,7 @@ async fn build_rollup_summary_text(
     target_level: i64,
 ) -> Result<String, String> {
     let rule_based = build_rule_based_rollup_summary(items, level, target_level);
-    let ai = AiClient::new(config)?;
+    let ai = control_plane::build_ai_client_for_job(config, db, "rollup").await?;
     if !ai.is_enabled() {
         return Ok(rule_based);
     }

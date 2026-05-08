@@ -5,13 +5,43 @@ use crate::db::Db;
 use super::index_helpers::{ensure_index, ensure_unique_index};
 
 pub async fn init_schema(db: &Db) -> Result<(), String> {
+    ensure_control_plane_indexes(db).await?;
     ensure_source_indexes(db).await?;
     ensure_subject_indexes(db).await?;
+    ensure_subject_memory_scope_indexes(db).await?;
     ensure_subject_memory_indexes(db).await?;
     ensure_thread_indexes(db).await?;
     ensure_record_indexes(db).await?;
     ensure_summary_indexes(db).await?;
     Ok(())
+}
+
+async fn ensure_control_plane_indexes(db: &Db) -> Result<(), String> {
+    ensure_unique_index(db.collection("engine_model_profiles"), doc! {"id": 1}).await?;
+    ensure_index(
+        db.collection("engine_model_profiles"),
+        doc! {"enabled": 1, "updated_at": -1},
+    )
+    .await?;
+
+    ensure_unique_index(db.collection("engine_job_policies"), doc! {"job_type": 1}).await?;
+    ensure_index(
+        db.collection("engine_job_policies"),
+        doc! {"enabled": 1, "updated_at": -1},
+    )
+    .await?;
+
+    ensure_unique_index(db.collection("engine_job_runs"), doc! {"id": 1}).await?;
+    ensure_index(
+        db.collection("engine_job_runs"),
+        doc! {"job_type": 1, "status": 1, "started_at": -1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("engine_job_runs"),
+        doc! {"tenant_id": 1, "source_id": 1, "started_at": -1},
+    )
+    .await
 }
 
 async fn ensure_source_indexes(db: &Db) -> Result<(), String> {
@@ -33,6 +63,24 @@ async fn ensure_subject_indexes(db: &Db) -> Result<(), String> {
     ensure_index(
         db.collection("engine_subjects"),
         doc! {"tenant_id": 1, "source_id": 1, "status": 1, "updated_at": -1},
+    )
+    .await
+}
+
+async fn ensure_subject_memory_scope_indexes(db: &Db) -> Result<(), String> {
+    ensure_unique_index(
+        db.collection("engine_subject_memory_scopes"),
+        doc! {"tenant_id": 1, "source_id": 1, "scope_key": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("engine_subject_memory_scopes"),
+        doc! {"status": 1, "source_id": 1, "updated_at": -1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("engine_subject_memory_scopes"),
+        doc! {"tenant_id": 1, "source_id": 1, "subject_id": 1, "memory_type": 1, "updated_at": -1},
     )
     .await
 }

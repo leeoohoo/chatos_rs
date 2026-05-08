@@ -139,7 +139,7 @@ pub async fn ai_create_agent(
     req: AiCreateAgentRequest,
 ) -> Result<AiCreateAgentResult, (StatusCode, String)> {
     let request = NormalizedRequest::from_request(scope_user_id, req)?;
-    let runtime = resolve_model_runtime(db, config, &request).await?;
+    let runtime = resolve_model_runtime(config, &request).await?;
     let http = Client::builder()
         .connect_timeout(Duration::from_secs(10))
         // In WSL deployments we've seen stale pooled sockets cause follow-up

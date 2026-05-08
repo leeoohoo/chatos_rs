@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::Duration;
 use crate::jobs;
-use crate::repositories::{contacts, jobs as job_repo, projects, sessions};
-use crate::services::{memory_engine_client, realtime::subscribe_job_run_events};
+use crate::repositories::{contacts, projects, sessions};
+use crate::services::memory_engine_client;
 
 use super::{
     ensure_admin, ensure_session_access, require_auth, resolve_scope_user_id, SharedState,
@@ -228,21 +228,24 @@ pub(super) async fn run_rollup_once(
         Err(err) => return err,
     };
     let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    let rollup_cfg =
-        match crate::repositories::configs::get_effective_summary_rollup_job_config(
-            &state.pool,
-            scope_user_id.as_str(),
-        )
-        .await
-        {
-            Ok(cfg) => cfg,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"ok": false, "error": err})),
-                )
-            }
-        };
+    let rollup_cfg = match memory_engine_client::get_global_rollup_job_config(
+        &state.config,
+        scope_user_id.as_str(),
+    )
+    .await
+    {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "ok": false,
+                    "backend": "memory_engine",
+                    "error": err
+                })),
+            )
+        }
+    };
 
     match memory_engine_client::run_pending_rollups_once(
         &state.config,
@@ -280,13 +283,36 @@ pub(super) async fn run_agent_memory_once(
         Err(err) => return err,
     };
     let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    match jobs::agent_memory::run_once(&state.pool, &state.config, scope_user_id.as_str())
-        .await
+    match memory_engine_client::run_subject_memory_scopes_once(
+        &state.config,
+        Some(scope_user_id.as_str()),
+        Some("memory_server"),
+        Some(50),
+    )
+    .await
     {
-        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Ok(data) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "backend": "memory_engine",
+                "data": {
+                    "processed_agents": data.processed_scopes,
+                    "summarized_agents": data.generated_scopes,
+                    "generated_recalls": data.generated_memories,
+                    "marked_source_summaries": data.marked_source_summaries,
+                    "marked_source_recalls": data.marked_source_memories,
+                    "failed_agents": data.failed_scopes
+                }
+            })),
+        ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"ok": false, "error": err})),
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "ok": false,
+                "backend": "memory_engine",
+                "error": err
+            })),
         ),
     }
 }
@@ -382,6 +408,91 @@ fn agent_id_from_metadata(metadata: Option<&serde_json::Value>) -> Option<String
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
+}
+
+fn metadata_i64(metadata: Option<&serde_json::Value>, key: &str) -> Option<i64> {
+    metadata.and_then(|value| value.get(key)).and_then(|value| value.as_i64())
+}
+
+fn metadata_string_value(metadata: Option<&serde_json::Value>, key: &str) -> Option<String> {
+    metadata
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn engine_job_run_session_id(item: &memory_engine_client::EngineJobRun) -> Option<String> {
+    item.thread_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn compat_job_type(item: &memory_engine_client::EngineJobRun) -> String {
+    metadata_string_value(item.metadata.as_ref(), "compat_job_type").unwrap_or_else(|| {
+        match item.job_type.as_str() {
+            "summary" => {
+                if item.thread_id.is_some() {
+                    "summary_l0".to_string()
+                } else {
+                    "summary_batch".to_string()
+                }
+            }
+            "rollup" => {
+                if item.thread_id.is_some() {
+                    "summary_rollup".to_string()
+                } else {
+                    "summary_rollup_batch".to_string()
+                }
+            }
+            "subject_memory" => "agent_memory".to_string(),
+            "thread_repair" => {
+                if item.thread_id.is_some() {
+                    "summary_review_repair".to_string()
+                } else {
+                    "summary_review_repair_batch".to_string()
+                }
+            }
+            other => other.to_string(),
+        }
+    })
+}
+
+fn compat_trigger_type(item: &memory_engine_client::EngineJobRun) -> String {
+    metadata_string_value(item.metadata.as_ref(), "compat_trigger_type")
+        .unwrap_or_else(|| item.trigger_type.clone())
+}
+
+fn engine_job_run_to_compat_row(item: &memory_engine_client::EngineJobRun) -> serde_json::Value {
+    let session_id = engine_job_run_session_id(item);
+    let metadata = item.metadata.as_ref();
+
+    let pending_before_count = metadata_i64(metadata, "pending_before_count");
+    let selected_count = metadata_i64(metadata, "selected_count")
+        .or(Some(item.processed_count));
+    let marked_count = metadata_i64(metadata, "marked_count")
+        .or(Some(item.success_count));
+    let pending_after_count = metadata_i64(metadata, "pending_after_count");
+
+    json!({
+        "id": item.id,
+        "job_type": compat_job_type(item),
+        "session_id": session_id,
+        "status": item.status,
+        "trigger_type": compat_trigger_type(item),
+        "input_count": item.input_count,
+        "output_count": item.output_count,
+        "pending_before_count": pending_before_count,
+        "selected_count": selected_count,
+        "marked_count": marked_count,
+        "pending_after_count": pending_after_count,
+        "error_message": item.error_message,
+        "started_at": item.started_at,
+        "finished_at": item.finished_at,
+    })
 }
 
 fn looks_like_short_session_prefix(raw: &str) -> bool {
@@ -610,11 +721,13 @@ pub(super) async fn list_job_runs(
         return err;
     }
 
-    match job_repo::list_job_runs(
-        &state.pool,
+    match memory_engine_client::list_engine_job_runs(
+        &state.config,
         q.job_type.as_deref(),
         q.session_id.as_deref(),
         q.status.as_deref(),
+        None,
+        Some("memory_server"),
         q.limit.unwrap_or(100),
     )
     .await
@@ -625,14 +738,14 @@ pub(super) async fn list_job_runs(
             let mut agent_name_cache: HashMap<String, Option<String>> = HashMap::new();
 
             for item in &items {
-                let Some(session_id) = item.session_id.as_deref() else {
+                let Some(session_id) = engine_job_run_session_id(item) else {
                     continue;
                 };
-                if session_labels.contains_key(session_id) {
+                if session_labels.contains_key(session_id.as_str()) {
                     continue;
                 }
 
-                let label_value = match resolve_session_for_job_run(&state, session_id).await {
+                let label_value = match resolve_session_for_job_run(&state, session_id.as_str()).await {
                     Ok(SessionLookupResult {
                         session: Some(session),
                         match_mode,
@@ -642,7 +755,7 @@ pub(super) async fn list_job_runs(
                         trimmed_len,
                     }) => {
                         let display_session_id =
-                            effective_session_id.as_deref().unwrap_or(session_id);
+                            effective_session_id.as_deref().unwrap_or(session_id.as_str());
                         let project_id = normalize_text(session.project_id.as_deref())
                             .unwrap_or_else(|| "0".to_string());
                         let project_cache_key = format!("{}|{}", session.user_id, project_id);
@@ -741,7 +854,7 @@ pub(super) async fn list_job_runs(
                         "session_contact_label": Value::Null,
                         "session_project_label": Value::Null,
                         "session_agent_label": Value::Null,
-                        "session_display": format!("会话不存在: {}", short_id(session_id)),
+                        "session_display": format!("会话不存在: {}", short_id(session_id.as_str())),
                         "session_resolve_status": "missing_session",
                         "session_resolve_detail": detail,
                         "session_resolve_match_mode": match_mode,
@@ -755,7 +868,7 @@ pub(super) async fn list_job_runs(
                         "session_contact_label": Value::Null,
                         "session_project_label": Value::Null,
                         "session_agent_label": Value::Null,
-                        "session_display": format!("会话查询失败: {}", short_id(session_id)),
+                        "session_display": format!("会话查询失败: {}", short_id(session_id.as_str())),
                         "session_resolve_status": "lookup_error",
                         "session_resolve_detail": err,
                         "session_resolve_match_mode": "lookup_error",
@@ -767,22 +880,12 @@ pub(super) async fn list_job_runs(
                     }),
                 };
 
-                session_labels.insert(session_id.to_string(), label_value);
+                session_labels.insert(session_id, label_value);
             }
 
             let mut out = Vec::with_capacity(items.len());
             for item in items {
-                let mut row = match serde_json::to_value(item) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(
-                                json!({"error": "serialize job run failed", "detail": err.to_string()}),
-                            ),
-                        );
-                    }
-                };
+                let mut row = engine_job_run_to_compat_row(&item);
                 if let Some(session_id) = row.get("session_id").and_then(|v| v.as_str()) {
                     if let Some(extra) = session_labels.get(session_id) {
                         if let Some(dst) = row.as_object_mut() {
@@ -806,28 +909,6 @@ pub(super) async fn list_job_runs(
     }
 }
 
-fn job_run_matches_filters(
-    item: &crate::models::JobRun,
-    q: &JobRunsStreamQuery,
-) -> bool {
-    if let Some(job_type) = q.job_type.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        if item.job_type != job_type {
-            return false;
-        }
-    }
-    if let Some(session_id) = q.session_id.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        if item.session_id.as_deref() != Some(session_id) {
-            return false;
-        }
-    }
-    if let Some(status) = q.status.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        if item.status != status {
-            return false;
-        }
-    }
-    true
-}
-
 pub(super) async fn stream_job_runs(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -841,19 +922,24 @@ pub(super) async fn stream_job_runs(
         return Err(err);
     }
 
-    let initial_items = match job_repo::list_job_runs(
-        &state.pool,
+    let initial_items = match memory_engine_client::list_engine_job_runs(
+        &state.config,
         q.job_type.as_deref(),
         q.session_id.as_deref(),
         q.status.as_deref(),
+        None,
+        Some("memory_server"),
         q.limit.unwrap_or(500),
     )
     .await
     {
-        Ok(items) => items,
+        Ok(items) => items
+            .into_iter()
+            .map(|item| engine_job_run_to_compat_row(&item))
+            .collect::<Vec<_>>(),
         Err(err) => {
             return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::BAD_GATEWAY,
                 Json(json!({"error": "list job runs failed", "detail": err})),
             ));
         }
@@ -863,37 +949,41 @@ pub(super) async fn stream_job_runs(
         "items": initial_items,
     })).unwrap_or_else(|_| Event::default().event("snapshot").data("{\"items\":[]}"));
 
-    let rx = subscribe_job_run_events();
     let filters = q;
     let event_stream = stream::unfold(
-        (Some(initial_event), rx, filters),
-        |(initial, mut rx, filters)| async move {
+        (Some(initial_event), filters, state.config.clone()),
+        |(initial, filters, config)| async move {
             if let Some(event) = initial {
-                return Some((Ok(event), (None, rx, filters)));
+                return Some((Ok(event), (None, filters, config)));
             }
 
-            loop {
-                match rx.recv().await {
-                    Ok(payload) => {
-                        if !job_run_matches_filters(&payload.job_run, &filters) {
-                            continue;
-                        }
-                        let event = Event::default()
-                            .event(payload.action)
-                            .json_data(json!({
-                                "action": payload.action,
-                                "job_run": payload.job_run,
-                            }))
-                            .unwrap_or_else(|_| Event::default().event("upsert").data("{}"));
-                        return Some((Ok(event), (None, rx, filters)));
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        let resync = Event::default().event("resync").data("{}");
-                        return Some((Ok(resync), (None, rx, filters)));
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let items = match memory_engine_client::list_engine_job_runs(
+                &config,
+                filters.job_type.as_deref(),
+                filters.session_id.as_deref(),
+                filters.status.as_deref(),
+                None,
+                Some("memory_server"),
+                filters.limit.unwrap_or(500),
+            )
+            .await
+            {
+                Ok(items) => items
+                    .into_iter()
+                    .map(|item| engine_job_run_to_compat_row(&item))
+                    .collect::<Vec<_>>(),
+                Err(_) => {
+                    let resync = Event::default().event("resync").data("{}");
+                    return Some((Ok(resync), (None, filters, config)));
                 }
-            }
+            };
+
+            let event = Event::default()
+                .event("snapshot")
+                .json_data(json!({ "items": items }))
+                .unwrap_or_else(|_| Event::default().event("snapshot").data("{\"items\":[]}"));
+            Some((Ok(event), (None, filters, config)))
         },
     );
 
@@ -916,10 +1006,18 @@ pub(super) async fn job_stats(
         return err;
     }
 
-    match job_repo::job_stats(&state.pool).await {
+    match memory_engine_client::get_engine_job_run_stats(
+        &state.config,
+        None,
+        None,
+        Some("memory_server"),
+        24,
+    )
+    .await
+    {
         Ok(stats) => (StatusCode::OK, Json(json!({"stats": stats}))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "job stats failed", "detail": err})),
         ),
     }

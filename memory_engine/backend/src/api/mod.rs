@@ -4,11 +4,13 @@ use axum::{routing::{get, post, put}, Router};
 
 use crate::state::AppState;
 
+mod admin_api;
 mod context_api;
 mod health_api;
 mod jobs_api;
 mod records_api;
 mod sources_api;
+mod subject_memory_scopes_api;
 mod subject_memories_api;
 mod subjects_api;
 mod summaries_api;
@@ -17,8 +19,40 @@ mod threads_api;
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health_api::health))
+        .route(
+            "/api/memory-engine/v1/admin/model-profiles",
+            get(admin_api::list_model_profiles).post(admin_api::create_model_profile),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/model-profiles/:model_id",
+            put(admin_api::update_model_profile).delete(admin_api::delete_model_profile),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/job-policies",
+            get(admin_api::list_job_policies),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/job-policies/:job_type",
+            get(admin_api::get_job_policy).put(admin_api::upsert_job_policy),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/job-runs",
+            get(admin_api::list_job_runs),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/job-runs/stats",
+            get(admin_api::job_run_stats),
+        )
         .route("/api/memory-engine/v1/sources/:source_id", put(sources_api::upsert_source))
         .route("/api/memory-engine/v1/subjects/:subject_id", put(subjects_api::upsert_subject))
+        .route(
+            "/api/memory-engine/v1/subject-memory-scopes",
+            get(subject_memory_scopes_api::list_subject_memory_scopes),
+        )
+        .route(
+            "/api/memory-engine/v1/subject-memory-scopes/:scope_key",
+            put(subject_memory_scopes_api::upsert_subject_memory_scope),
+        )
         .route(
             "/api/memory-engine/v1/subjects/:subject_id/memories/:memory_key",
             put(subject_memories_api::upsert_subject_memory),
@@ -92,6 +126,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/memory-engine/v1/jobs/subject-memories/run-once",
             post(jobs_api::run_subject_memory_job_once),
+        )
+        .route(
+            "/api/memory-engine/v1/jobs/subject-memory-scopes/run-once",
+            post(jobs_api::run_subject_memory_scopes_once),
         )
         .route(
             "/api/memory-engine/v1/jobs/thread-repair-scope/run-once",

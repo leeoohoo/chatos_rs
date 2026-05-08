@@ -4,6 +4,7 @@ use reqwest::Client;
 use serde_json::json;
 
 use crate::config::AppConfig;
+use crate::models::EngineModelProfile;
 
 #[derive(Clone)]
 pub struct AiClient {
@@ -18,16 +19,37 @@ pub struct AiClient {
 
 impl AiClient {
     pub fn new(config: &AppConfig) -> Result<Self, String> {
+        Self::new_with_profile(config, None)
+    }
+
+    pub fn new_with_profile(
+        config: &AppConfig,
+        profile: Option<&EngineModelProfile>,
+    ) -> Result<Self, String> {
         let http = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|err| err.to_string())?;
+        let api_key = profile
+            .and_then(|item| item.api_key.clone())
+            .or_else(|| config.openai_api_key.clone());
+        let base_url = profile
+            .and_then(|item| item.base_url.clone())
+            .unwrap_or_else(|| config.openai_base_url.clone());
+        let model = profile
+            .map(|item| item.model.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| config.openai_model.trim().to_string());
+        let temperature = profile
+            .and_then(|item| item.temperature)
+            .unwrap_or(config.openai_temperature)
+            .clamp(0.0, 2.0);
         Ok(Self {
             http,
-            api_key: config.openai_api_key.clone(),
-            base_url: normalize_base_url(config.openai_base_url.as_str()),
-            model: config.openai_model.trim().to_string(),
-            temperature: config.openai_temperature.clamp(0.0, 2.0),
+            api_key,
+            base_url: normalize_base_url(base_url.as_str()),
+            model,
+            temperature,
             timeout_secs: config.ai_request_timeout_secs,
             allow_rule_fallback: config.allow_rule_summary_fallback,
         })

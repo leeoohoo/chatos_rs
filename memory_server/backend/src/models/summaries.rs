@@ -29,25 +29,3 @@ pub struct SessionSummary {
     pub created_at: String,
     pub updated_at: String,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentMemorySummarySource {
-    pub id: String,
-    pub session_id: String,
-    pub summary_text: String,
-    pub summary_model: String,
-    pub trigger_type: String,
-    pub source_start_message_id: Option<String>,
-    pub source_end_message_id: Option<String>,
-    #[serde(default = "default_i64_0")]
-    pub source_message_count: i64,
-    #[serde(default = "default_i64_0")]
-    pub source_estimated_tokens: i64,
-    #[serde(default = "default_pending")]
-    pub status: String,
-    #[serde(default = "default_i64_0")]
-    pub level: i64,
-    pub project_id: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}

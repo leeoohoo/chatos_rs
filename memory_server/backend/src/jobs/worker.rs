@@ -6,10 +6,8 @@ use parking_lot::Mutex;
 use tokio::time::{self, MissedTickBehavior};
 use tracing::{info, warn};
 
-use crate::repositories::{configs, sessions};
+use crate::repositories::sessions;
 use crate::state::AppState;
-
-use super::agent_memory;
 
 #[derive(Default)]
 struct WorkerState {
@@ -45,117 +43,31 @@ async fn tick_once(
     let now_ts = chrono::Utc::now().timestamp();
 
     for user_id in user_ids {
-        let summary_cfg =
-            configs::get_effective_summary_job_config(&state.pool, user_id.as_str()).await?;
-        if summary_cfg.enabled == 1 {
-            let key = format!("summary:{}", user_id);
-            if is_due(
-                &worker_state,
-                key.as_str(),
-                now_ts,
-                summary_cfg.job_interval_seconds,
-            ) {
-                match crate::services::memory_engine_client::run_pending_summaries_once(
-                    &state.config,
-                    Some(user_id.as_str()),
-                    Some(summary_cfg.max_sessions_per_tick.max(1)),
-                )
-                .await
-                {
-                    Ok(result) => {
-                        info!(
-                            "[MEMORY-WORKER] engine summary run user_id={} processed_threads={} summarized_threads={} max_sessions_per_tick={}",
-                            user_id,
-                            result.processed_threads,
-                            result.summarized_threads,
-                            summary_cfg.max_sessions_per_tick
-                        );
-                    }
-                    Err(err) => {
-                        warn!(
-                            "[MEMORY-WORKER] engine summary run failed user_id={} error={}",
-                            user_id, err
-                        );
-                    }
-                }
-                mark_run(&worker_state, key.as_str(), now_ts);
-            }
+        let summary_key = format!("summary:{}", user_id);
+        if is_due(&worker_state, summary_key.as_str(), now_ts, 60) {
+            info!(
+                "[MEMORY-WORKER] skip summary dispatch for user_id={} because memory_engine now owns summary scheduling",
+                user_id
+            );
+            mark_run(&worker_state, summary_key.as_str(), now_ts);
         }
 
-        let rollup_cfg =
-            configs::get_effective_summary_rollup_job_config(&state.pool, user_id.as_str()).await?;
-        if rollup_cfg.enabled == 1 {
-            let key = format!("rollup:{}", user_id);
-            if is_due(
-                &worker_state,
-                key.as_str(),
-                now_ts,
-                rollup_cfg.job_interval_seconds,
-            ) {
-                let result = crate::services::memory_engine_client::run_pending_rollups_once(
-                    &state.config,
-                    user_id.as_str(),
-                    &rollup_cfg,
-                )
-                .await;
-                match result {
-                    Ok(result) => {
-                        info!(
-                            "[MEMORY-WORKER] engine rollup run user_id={} processed={} rolled_up={} generated={} marked={} failed={}",
-                            user_id,
-                            result.processed_threads,
-                            result.rolled_up_threads,
-                            result.generated_summaries,
-                            result.marked_summaries,
-                            result.failed_threads
-                        );
-                    }
-                    Err(err) => {
-                        warn!(
-                            "[MEMORY-WORKER] engine rollup run failed user_id={} error={}",
-                            user_id, err
-                        );
-                    }
-                }
-                mark_run(&worker_state, key.as_str(), now_ts);
-            }
+        let rollup_key = format!("rollup:{}", user_id);
+        if is_due(&worker_state, rollup_key.as_str(), now_ts, 60) {
+            info!(
+                "[MEMORY-WORKER] skip rollup dispatch for user_id={} because memory_engine now owns rollup scheduling",
+                user_id
+            );
+            mark_run(&worker_state, rollup_key.as_str(), now_ts);
         }
 
-        let agent_memory_cfg =
-            configs::get_effective_agent_memory_job_config(&state.pool, user_id.as_str()).await?;
-        if agent_memory_cfg.enabled == 1 {
-            let key = format!("agent_memory:{}", user_id);
-            if is_due(
-                &worker_state,
-                key.as_str(),
-                now_ts,
-                agent_memory_cfg.job_interval_seconds,
-            ) {
-                let result =
-                    agent_memory::run_once(&state.pool, &state.config, user_id.as_str())
-                        .await;
-                match result {
-                    Ok(result) => {
-                        info!(
-                            "[MEMORY-WORKER] agent memory run user_id={} processed={} summarized={} generated={} marked_summaries={} marked_recalls={} failed={}",
-                            user_id,
-                            result.processed_agents,
-                            result.summarized_agents,
-                            result.generated_recalls,
-                            result.marked_source_summaries,
-                            result.marked_source_recalls,
-                            result.failed_agents
-                        );
-                    }
-                    Err(err) => {
-                        warn!(
-                            "[MEMORY-WORKER] agent memory run failed user_id={} error={}",
-                            user_id, err
-                        );
-                    }
-                }
-                mark_run(&worker_state, key.as_str(), now_ts);
-            }
+        let key = format!("agent_memory:{}", user_id);
+        if is_due(&worker_state, key.as_str(), now_ts, 60) {
+            info!(
+                "[MEMORY-WORKER] skip agent memory dispatch for user_id={} because memory_engine now owns subject_memory scheduling",
+                user_id
+            );
+            mark_run(&worker_state, key.as_str(), now_ts);
         }
     }
 

@@ -8,7 +8,7 @@ use crate::models::{
     UpsertAgentMemoryJobConfigRequest, UpsertSummaryJobConfigRequest,
     UpsertSummaryRollupJobConfigRequest,
 };
-use crate::repositories::configs;
+use crate::services::memory_engine_client;
 
 use super::{require_auth, resolve_scope_user_id, SharedState};
 
@@ -27,18 +27,18 @@ pub(super) async fn get_summary_job_config(
         Err(err) => return err,
     };
     let user_id = resolve_scope_user_id(&auth, q.user_id);
-    match configs::get_summary_job_config(&state.pool, user_id.as_str()).await {
+    match memory_engine_client::get_global_summary_job_config(&state.config, user_id.as_str()).await {
         Ok(cfg) => (
             StatusCode::OK,
             Json(json!({
-                "config": cfg,
+                "config": Some(cfg),
                 "config_role": "memory_engine_summary",
                 "backend": "memory_engine",
                 "memory_engine_enabled": true,
             })),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "get summary job config failed", "detail": err})),
         ),
     }
@@ -55,7 +55,7 @@ pub(super) async fn put_summary_job_config(
     };
     req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
 
-    match configs::upsert_summary_job_config(&state.pool, req).await {
+    match memory_engine_client::put_global_summary_job_config(&state.config, &req).await {
         Ok(cfg) => (
             StatusCode::OK,
             Json(json!({
@@ -66,7 +66,7 @@ pub(super) async fn put_summary_job_config(
             })),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "save summary job config failed", "detail": err})),
         ),
     }
@@ -82,10 +82,10 @@ pub(super) async fn get_summary_rollup_job_config(
         Err(err) => return err,
     };
     let user_id = resolve_scope_user_id(&auth, q.user_id);
-    match configs::get_summary_rollup_job_config(&state.pool, user_id.as_str()).await {
+    match memory_engine_client::get_global_rollup_job_config(&state.config, user_id.as_str()).await {
         Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "get summary rollup job config failed", "detail": err})),
         ),
     }
@@ -102,10 +102,10 @@ pub(super) async fn put_summary_rollup_job_config(
     };
     req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
 
-    match configs::upsert_summary_rollup_job_config(&state.pool, req).await {
+    match memory_engine_client::put_global_rollup_job_config(&state.config, &req).await {
         Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "save summary rollup job config failed", "detail": err})),
         ),
     }
@@ -121,10 +121,10 @@ pub(super) async fn get_agent_memory_job_config(
         Err(err) => return err,
     };
     let user_id = resolve_scope_user_id(&auth, q.user_id);
-    match configs::get_agent_memory_job_config(&state.pool, user_id.as_str()).await {
+    match memory_engine_client::get_global_agent_memory_job_config(&state.config, user_id.as_str()).await {
         Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "get agent memory job config failed", "detail": err})),
         ),
     }
@@ -141,10 +141,10 @@ pub(super) async fn put_agent_memory_job_config(
     };
     req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
 
-    match configs::upsert_agent_memory_job_config(&state.pool, req).await {
+    match memory_engine_client::put_global_agent_memory_job_config(&state.config, &req).await {
         Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "save agent memory job config failed", "detail": err})),
         ),
     }

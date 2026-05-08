@@ -2,9 +2,8 @@ use axum::http::StatusCode;
 use serde_json::Value;
 
 use crate::config::AppConfig;
-use crate::db::Db;
 use crate::models::AiModelConfig;
-use crate::repositories::configs;
+use crate::services::memory_engine_client;
 
 use super::{
     bad_request_error, internal_error,
@@ -13,20 +12,16 @@ use super::{
 };
 
 pub(super) async fn resolve_model_runtime(
-    db: &Db,
     config: &AppConfig,
     request: &NormalizedRequest,
 ) -> Result<ModelRuntime, (StatusCode, String)> {
     if let Some(model_config_id) = request.model_config_id.as_deref() {
-        let item = configs::get_model_config_by_id(db, model_config_id)
+        let item = memory_engine_client::get_global_model_profile_by_id(config, model_config_id)
             .await
-            .map_err(|err| internal_error(format!("load selected model config failed: {err}")))?;
+            .map_err(|err| internal_error(format!("load selected global model config failed: {err}")))?;
         let Some(item) = item else {
             return Err(bad_request_error("所选创建模型不存在"));
         };
-        if item.user_id != request.scope_user_id {
-            return Err(bad_request_error("所选创建模型不属于当前作用域账号"));
-        }
         if item.enabled != 1 {
             return Err(bad_request_error("所选创建模型未启用"));
         }
@@ -37,9 +32,9 @@ pub(super) async fn resolve_model_runtime(
         return model_runtime_from_value(config, value);
     }
 
-    let enabled_items = configs::list_model_configs(db, request.scope_user_id.as_str())
+    let enabled_items = memory_engine_client::list_global_model_profiles(config)
         .await
-        .map_err(|err| internal_error(format!("load model configs failed: {err}")))?
+        .map_err(|err| internal_error(format!("load global model configs failed: {err}")))?
         .into_iter()
         .filter(|item| item.enabled == 1)
         .collect::<Vec<_>>();
@@ -48,7 +43,7 @@ pub(super) async fn resolve_model_runtime(
     }
     if enabled_items.len() > 1 {
         return Err(bad_request_error(
-            "已配置多个启用模型，请传 model_config_id 指定用于创建智能体的模型",
+            "已配置多个启用的全局模型，请传 model_config_id 指定用于创建智能体的模型",
         ));
     }
 
@@ -59,7 +54,7 @@ pub(super) async fn resolve_model_runtime(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             bad_request_error(
-                "请先在 Memory 的模型配置中启用一个可用模型，或配置 MEMORY_SERVER_OPENAI_API_KEY",
+                "请先在 Memory Engine 的全局模型配置中启用一个可用模型，或配置 MEMORY_SERVER_OPENAI_API_KEY",
             )
         })?;
 

@@ -8,10 +8,14 @@ use crate::ai::AiClient;
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{
-    now_rfc3339, EngineSubjectMemory, RunSubjectMemoryJobRequest, RunSubjectMemoryJobResponse,
-    UpsertSubjectMemoryRequest,
+    now_rfc3339, CreateEngineJobRunRequest, EngineSubjectMemory, EngineSubjectMemoryScope,
+    FinishEngineJobRunRequest, RunSubjectMemoryJobRequest, RunSubjectMemoryJobResponse,
+    RunSubjectMemoryScopesResponse, UpsertSubjectMemoryRequest,
 };
-use crate::repositories::{subject_memories, summaries};
+use crate::repositories::{
+    control_plane as cp_repo, subject_memories, subject_memory_scopes, summaries,
+};
+use crate::services::control_plane;
 
 const DEFAULT_TOKEN_LIMIT: i64 = 6000;
 const DEFAULT_ROUND_LIMIT: i64 = 20;
@@ -65,7 +69,30 @@ pub async fn run_subject_memory_job(
     db: &Db,
     req: RunSubjectMemoryJobRequest,
 ) -> Result<RunSubjectMemoryJobResponse, String> {
-    let settings = build_settings(&req)?;
+    let settings = build_settings_with_policy(db, &req).await?;
+    let job_run = cp_repo::create_job_run(
+        db,
+        CreateEngineJobRunRequest {
+            job_type: "subject_memory".to_string(),
+            trigger_type: "subject_direct".to_string(),
+            tenant_id: Some(req.tenant_id.clone()),
+            source_id: Some(req.source_id.clone()),
+            thread_id: None,
+            subject_id: Some(req.subject_id.clone()),
+            thread_label: Some(req.source_thread_label.clone()),
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "agent_memory",
+                "compat_trigger_type": if req.source_id == "memory_server" {
+                    "memory_server_worker"
+                } else {
+                    "manual_subject_memory"
+                },
+                "memory_type": req.memory_type,
+                "relation_subject_id": settings.relation_subject_id,
+            })),
+        },
+    )
+    .await?;
 
     let pending_summaries = summaries::list_summaries_by_thread_label(
         db,
@@ -133,6 +160,7 @@ pub async fn run_subject_memory_job(
                 .collect::<Vec<_>>();
             let build = build_subject_memory_from_summaries(
                 config,
+                db,
                 settings.prompt_title.as_str(),
                 settings.summary_prompt.as_deref(),
                 selected_texts.as_slice(),
@@ -264,6 +292,7 @@ pub async fn run_subject_memory_job(
             } else {
                 build_subject_memory_rollup(
                     config,
+                    db,
                     settings.prompt_title.as_str(),
                     settings.summary_prompt.as_deref(),
                     summarizable.as_slice(),
@@ -326,14 +355,102 @@ pub async fn run_subject_memory_job(
         }
     }
 
-    Ok(RunSubjectMemoryJobResponse {
+    let response = RunSubjectMemoryJobResponse {
         subject_id: req.subject_id,
         generated_level0,
         generated_rollups,
         generated_memories: generated_level0 + generated_rollups,
         marked_source_summaries,
         marked_source_memories,
-    })
+    };
+
+    let _ = cp_repo::finish_job_run(
+        db,
+        job_run.id.as_str(),
+        FinishEngineJobRunRequest {
+            status: "done".to_string(),
+            input_count: (pending_summaries.len() as i64).max(0),
+            output_count: response.generated_memories as i64,
+            processed_count: pending_summaries.len() as i64,
+            success_count: response.generated_memories as i64,
+            error_count: 0,
+            metadata: Some(serde_json::json!({
+                "compat_job_type": "agent_memory",
+                "compat_trigger_type": if req.source_id == "memory_server" {
+                    "memory_server_worker"
+                } else {
+                    "manual_subject_memory"
+                },
+                "memory_type": req.memory_type,
+                "relation_subject_id": settings.relation_subject_id,
+                "selected_count": pending_summaries.len(),
+                "marked_count": response.marked_source_summaries + response.marked_source_memories,
+                "generated_level0": response.generated_level0,
+                "generated_rollups": response.generated_rollups,
+            })),
+            error_message: None,
+        },
+    )
+    .await;
+
+    Ok(response)
+}
+
+pub async fn run_registered_subject_memory_scopes(
+    config: &AppConfig,
+    db: &Db,
+    tenant_id: Option<&str>,
+    source_id: Option<&str>,
+    limit: i64,
+) -> Result<RunSubjectMemoryScopesResponse, String> {
+    let scopes = subject_memory_scopes::list_active_subject_memory_scopes(
+        db,
+        tenant_id,
+        source_id,
+        limit,
+    )
+    .await?;
+    if scopes.is_empty() {
+        return Ok(RunSubjectMemoryScopesResponse {
+            processed_scopes: 0,
+            generated_scopes: 0,
+            generated_memories: 0,
+            marked_source_summaries: 0,
+            marked_source_memories: 0,
+            failed_scopes: 0,
+        });
+    }
+
+    let mut out = RunSubjectMemoryScopesResponse {
+        processed_scopes: scopes.len(),
+        generated_scopes: 0,
+        generated_memories: 0,
+        marked_source_summaries: 0,
+        marked_source_memories: 0,
+        failed_scopes: 0,
+    };
+
+    for scope in scopes {
+        match run_scope_once(config, db, &scope).await {
+            Ok(result) => {
+                if result.generated_memories > 0 {
+                    out.generated_scopes += 1;
+                }
+                out.generated_memories += result.generated_memories;
+                out.marked_source_summaries += result.marked_source_summaries;
+                out.marked_source_memories += result.marked_source_memories;
+            }
+            Err(err) => {
+                out.failed_scopes += 1;
+                info!(
+                    "[MEMORY-ENGINE-SUBJECT] scope run failed tenant_id={} source_id={} scope_key={} error={}",
+                    scope.tenant_id, scope.source_id, scope.scope_key, err
+                );
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 fn build_settings(req: &RunSubjectMemoryJobRequest) -> Result<SubjectMemoryJobSettings, String> {
@@ -384,6 +501,78 @@ fn build_settings(req: &RunSubjectMemoryJobRequest) -> Result<SubjectMemoryJobSe
         memory_metadata: req.memory_metadata.clone(),
     })
 }
+
+async fn build_settings_with_policy(
+    db: &Db,
+    req: &RunSubjectMemoryJobRequest,
+) -> Result<SubjectMemoryJobSettings, String> {
+    let mut settings = build_settings(req)?;
+    let policy = cp_repo::get_effective_job_policy(db, "subject_memory").await?;
+
+    if settings.summary_prompt.is_none() {
+        settings.summary_prompt = policy.summary_prompt.clone();
+    }
+    if req.round_limit.is_none() {
+        settings.round_limit = policy.round_limit.unwrap_or(settings.round_limit).max(1);
+    }
+    if req.token_limit.is_none() {
+        settings.token_limit = policy.token_limit.unwrap_or(settings.token_limit).max(500);
+    }
+    if req.target_summary_tokens.is_none() {
+        settings.target_summary_tokens = policy
+            .target_summary_tokens
+            .unwrap_or(settings.target_summary_tokens)
+            .max(128);
+    }
+    if req.keep_level0_count.is_none() {
+        settings.keep_level0_count = policy.keep_level0_count.unwrap_or(settings.keep_level0_count).max(0);
+    }
+    if req.max_level.is_none() {
+        settings.max_level = policy.max_level.unwrap_or(settings.max_level).max(1);
+    }
+
+    Ok(settings)
+}
+
+async fn run_scope_once(
+    config: &AppConfig,
+    db: &Db,
+    scope: &EngineSubjectMemoryScope,
+) -> Result<RunSubjectMemoryJobResponse, String> {
+    let response = run_subject_memory_job(
+        config,
+        db,
+        RunSubjectMemoryJobRequest {
+            tenant_id: scope.tenant_id.clone(),
+            source_id: scope.source_id.clone(),
+            subject_id: scope.subject_id.clone(),
+            memory_type: scope.memory_type.clone(),
+            source_thread_label: scope.source_thread_label.clone(),
+            relation_subject_id: scope.relation_subject_id.clone(),
+            source_summary_type: scope.source_summary_type.clone(),
+            summary_prompt: None,
+            prompt_title: scope.prompt_title.clone(),
+            round_limit: None,
+            token_limit: None,
+            target_summary_tokens: None,
+            keep_level0_count: None,
+            max_level: None,
+            memory_metadata: scope.memory_metadata.clone(),
+        },
+    )
+    .await?;
+
+    subject_memory_scopes::touch_subject_memory_scope_run(
+        db,
+        scope.tenant_id.as_str(),
+        scope.source_id.as_str(),
+        scope.scope_key.as_str(),
+    )
+    .await?;
+
+    Ok(response)
+}
+
 
 fn select_summary_batch(
     candidates: &[PendingSourceSummary],
@@ -508,13 +697,14 @@ async fn mark_summary_sources_subject_memory_summarized(
 
 async fn build_subject_memory_from_summaries(
     config: &AppConfig,
+    db: &Db,
     prompt_title: &str,
     summary_prompt: Option<&str>,
     items: &[String],
     token_limit: i64,
     target_summary_tokens: i64,
 ) -> Result<SummaryBuildResult, String> {
-    let ai = AiClient::new(config)?;
+    let ai = control_plane::build_ai_client_for_job(config, db, "subject_memory").await?;
     if !ai.is_enabled() {
         return Ok(SummaryBuildResult {
             text: build_rule_based_subject_memory(prompt_title, items, target_summary_tokens),
@@ -539,6 +729,7 @@ async fn build_subject_memory_from_summaries(
 
 async fn build_subject_memory_rollup(
     config: &AppConfig,
+    db: &Db,
     prompt_title: &str,
     summary_prompt: Option<&str>,
     items: &[String],
@@ -547,7 +738,7 @@ async fn build_subject_memory_rollup(
     level: i64,
     target_level: i64,
 ) -> Result<SummaryBuildResult, String> {
-    let ai = AiClient::new(config)?;
+    let ai = control_plane::build_ai_client_for_job(config, db, "subject_memory").await?;
     if !ai.is_enabled() {
         return Ok(SummaryBuildResult {
             text: build_rule_based_rollup_memory(prompt_title, items, level, target_level),

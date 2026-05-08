@@ -4,8 +4,8 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::models::UpsertAiModelConfigRequest;
-use crate::repositories::configs;
+use crate::models::{AiModelConfig, UpsertAiModelConfigRequest};
+use crate::services::memory_engine_client;
 
 use super::{build_ai_client, require_auth, resolve_scope_user_id, SharedState};
 
@@ -23,12 +23,12 @@ pub(super) async fn list_model_configs(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let user_id = resolve_scope_user_id(&auth, q.user_id);
+    let _user_id = resolve_scope_user_id(&auth, q.user_id);
 
-    match configs::list_model_configs(&state.pool, user_id.as_str()).await {
+    match memory_engine_client::list_global_model_profiles(&state.config).await {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "list model configs failed", "detail": err})),
         ),
     }
@@ -50,10 +50,28 @@ pub(super) async fn create_model_config(
         Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))),
     };
 
-    match configs::create_model_config(&state.pool, req).await {
+    let dto = AiModelConfig {
+        id: String::new(),
+        user_id: req.user_id,
+        name: req.name,
+        provider: req.provider,
+        model: req.model,
+        base_url: req.base_url,
+        api_key: req.api_key,
+        supports_images: if req.supports_images.unwrap_or(false) { 1 } else { 0 },
+        supports_reasoning: if req.supports_reasoning.unwrap_or(false) { 1 } else { 0 },
+        supports_responses: if req.supports_responses.unwrap_or(false) { 1 } else { 0 },
+        temperature: req.temperature,
+        thinking_level: req.thinking_level,
+        enabled: if req.enabled.unwrap_or(true) { 1 } else { 0 },
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    match memory_engine_client::create_global_model_profile(&state.config, &dto).await {
         Ok(item) => (StatusCode::OK, Json(json!(item))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "create model config failed", "detail": err})),
         ),
     }
@@ -69,39 +87,42 @@ pub(super) async fn update_model_config(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let existing = match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
-        Ok(Some(cfg)) => cfg,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "model config not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load model config failed", "detail": err})),
-            )
-        }
-    };
-    if !auth.is_admin() && existing.user_id != auth.user_id {
+    if !auth.is_admin() {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
     }
-    req.user_id = existing.user_id;
+    req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
 
     let req = match normalize_model_config_request(req) {
         Ok(v) => v,
         Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))),
     };
 
-    match configs::update_model_config(&state.pool, model_id.as_str(), req).await {
+    let dto = AiModelConfig {
+        id: model_id.clone(),
+        user_id: req.user_id,
+        name: req.name,
+        provider: req.provider,
+        model: req.model,
+        base_url: req.base_url,
+        api_key: req.api_key,
+        supports_images: if req.supports_images.unwrap_or(false) { 1 } else { 0 },
+        supports_reasoning: if req.supports_reasoning.unwrap_or(false) { 1 } else { 0 },
+        supports_responses: if req.supports_responses.unwrap_or(false) { 1 } else { 0 },
+        temperature: req.temperature,
+        thinking_level: req.thinking_level,
+        enabled: if req.enabled.unwrap_or(true) { 1 } else { 0 },
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    match memory_engine_client::update_global_model_profile(&state.config, model_id.as_str(), &dto).await {
         Ok(Some(item)) => (StatusCode::OK, Json(json!(item))),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "model config not found"})),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "update model config failed", "detail": err})),
         ),
     }
@@ -179,33 +200,18 @@ pub(super) async fn delete_model_config(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let existing = match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
-        Ok(Some(cfg)) => cfg,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "model config not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load model config failed", "detail": err})),
-            )
-        }
-    };
-    if !auth.is_admin() && existing.user_id != auth.user_id {
+    if !auth.is_admin() {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
     }
 
-    match configs::delete_model_config(&state.pool, model_id.as_str()).await {
+    match memory_engine_client::delete_global_model_profile(&state.config, model_id.as_str()).await {
         Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "model config not found"})),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "delete model config failed", "detail": err})),
         ),
     }
@@ -220,25 +226,25 @@ pub(super) async fn test_model_config(
         Ok(v) => v,
         Err(err) => return err,
     };
+    if !auth.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
 
-    let cfg = match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
-        Ok(Some(cfg)) => cfg,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "model config not found"})),
-            )
-        }
+    let cfg = match memory_engine_client::list_global_model_profiles(&state.config).await {
+        Ok(items) => items.into_iter().find(|item| item.id == model_id),
         Err(err) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::BAD_GATEWAY,
                 Json(json!({"error": "load model config failed", "detail": err})),
             )
         }
     };
-    if !auth.is_admin() && cfg.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
-    }
+    let Some(cfg) = cfg else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "model config not found"})),
+        );
+    };
 
     let ai = match build_ai_client(&state) {
         Ok(client) => client,

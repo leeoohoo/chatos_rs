@@ -7,6 +7,7 @@ use crate::models::{
     GetThreadRepairScopeStatusRequest, GetThreadRepairScopeStatusResponse,
     RunPendingRollupsRequest, RunPendingRollupsResponse, RunPendingSummariesRequest,
     RunPendingSummariesResponse, RunSubjectMemoryJobRequest, RunSubjectMemoryJobResponse,
+    RunSubjectMemoryScopesRequest, RunSubjectMemoryScopesResponse,
     RunThreadRepairScopeRequest, RunThreadRepairScopeResponse,
 };
 use crate::services::summary;
@@ -82,6 +83,24 @@ pub async fn run_subject_memory_job_once(
         .await
         .map(Json)
         .map_err(internal_error)
+}
+
+pub async fn run_subject_memory_scopes_once(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RunSubjectMemoryScopesRequest>,
+) -> Result<Json<RunSubjectMemoryScopesResponse>, (axum::http::StatusCode, String)> {
+    subject_memory::run_registered_subject_memory_scopes(
+        &state.config,
+        &state.pool,
+        req.tenant_id.as_deref(),
+        req.source_id.as_deref(),
+        req.limit
+            .unwrap_or(state.config.worker_max_threads_per_tick)
+            .max(1),
+    )
+    .await
+    .map(Json)
+    .map_err(internal_error)
 }
 
 pub async fn run_thread_repair_scope_once(
