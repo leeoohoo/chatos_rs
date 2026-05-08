@@ -3,9 +3,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::models::{CreateSessionRequest, UpdateSessionRequest};
 use crate::repositories::sessions;
+use crate::services::memory_engine_client;
 
 use super::{ensure_admin, ensure_session_access, require_auth, SharedState};
 
@@ -45,7 +47,15 @@ pub(super) async fn create_session(
     }
 
     match sessions::create_session(&state.pool, req).await {
-        Ok(session) => (StatusCode::OK, Json(json!(session))),
+        Ok(session) => {
+            if let Err(err) = memory_engine_client::sync_session(&state.config, &session).await {
+                warn!(
+                    "[MEMORY-ENGINE-SYNC] create_session sync failed: session_id={} error={}",
+                    session.id, err
+                );
+            }
+            (StatusCode::OK, Json(json!(session)))
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "create session failed", "detail": err})),
@@ -80,7 +90,15 @@ pub(super) async fn sync_session(
     )
     .await
     {
-        Ok(session) => (StatusCode::OK, Json(json!(session))),
+        Ok(session) => {
+            if let Err(err) = memory_engine_client::sync_session(&state.config, &session).await {
+                warn!(
+                    "[MEMORY-ENGINE-SYNC] sync_session sync failed: session_id={} error={}",
+                    session.id, err
+                );
+            }
+            (StatusCode::OK, Json(json!(session)))
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "sync session failed", "detail": err})),
@@ -137,7 +155,28 @@ pub(super) async fn delete_session(
     }
 
     match sessions::delete_session(&state.pool, session_id.as_str()).await {
-        Ok(true) => (StatusCode::OK, Json(json!({ "success": true }))),
+        Ok(true) => {
+            match sessions::get_session_by_id(&state.pool, session_id.as_str()).await {
+                Ok(Some(session)) => {
+                    if let Err(err) =
+                        memory_engine_client::sync_session(&state.config, &session).await
+                    {
+                        warn!(
+                            "[MEMORY-ENGINE-SYNC] delete_session sync failed: session_id={} error={}",
+                            session.id, err
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    warn!(
+                        "[MEMORY-ENGINE-SYNC] load archived session after delete failed: session_id={} error={}",
+                        session_id, err
+                    );
+                }
+            }
+            (StatusCode::OK, Json(json!({ "success": true })))
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "session not found"})),
@@ -190,7 +229,15 @@ pub(super) async fn update_session(
     }
 
     match sessions::update_session(&state.pool, session_id.as_str(), req).await {
-        Ok(Some(session)) => (StatusCode::OK, Json(json!(session))),
+        Ok(Some(session)) => {
+            if let Err(err) = memory_engine_client::sync_session(&state.config, &session).await {
+                warn!(
+                    "[MEMORY-ENGINE-SYNC] update_session sync failed: session_id={} error={}",
+                    session.id, err
+                );
+            }
+            (StatusCode::OK, Json(json!(session)))
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "session not found"})),

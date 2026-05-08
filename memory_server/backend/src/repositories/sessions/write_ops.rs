@@ -6,10 +6,38 @@ use crate::models::{CreateSessionRequest, Session, UpdateSessionRequest};
 
 use super::super::session_support::{
     agent_id_from_metadata, contact_id_from_metadata, is_duplicate_key_error,
-    normalize_project_scope, normalize_session_metadata,
+    normalize_project_scope, normalize_session_metadata, project_scope_condition,
 };
-use super::read_ops::{find_active_session_by_contact_project, get_session_by_id};
+use super::read_ops::get_session_by_id;
 use super::{collection, now_rfc3339};
+
+async fn find_active_session_by_contact_project(
+    db: &Db,
+    user_id: &str,
+    project_id: &str,
+    contact_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<Option<Session>, String> {
+    let conditions = super::super::session_support::build_contact_or_conditions(contact_id, agent_id);
+    if conditions.is_empty() {
+        return Ok(None);
+    }
+
+    let mut filter = doc! {
+        "user_id": user_id,
+        "status": "active",
+    };
+    let mut and_conditions: Vec<mongodb::bson::Document> = Vec::new();
+    and_conditions.push(doc! {"$or": conditions});
+    and_conditions.push(project_scope_condition(project_id));
+    filter.insert("$and", and_conditions);
+
+    collection(db)
+        .find_one(filter)
+        .sort(doc! {"updated_at": -1, "created_at": -1})
+        .await
+        .map_err(|e| e.to_string())
+}
 
 pub async fn create_session(db: &Db, req: CreateSessionRequest) -> Result<Session, String> {
     let normalized_project_id = normalize_project_scope(req.project_id.clone());

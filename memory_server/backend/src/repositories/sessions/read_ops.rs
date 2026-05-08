@@ -1,6 +1,6 @@
 use futures_util::TryStreamExt;
 use mongodb::bson::doc;
-use mongodb::options::{FindOneOptions, FindOptions};
+use mongodb::options::FindOptions;
 use std::collections::HashSet;
 
 use crate::db::Db;
@@ -8,50 +8,9 @@ use crate::models::Session;
 
 use super::super::session_support::{
     agent_lookup_conditions, build_contact_or_conditions, contact_or_agent_presence_match,
-    insert_project_scope_filter, normalize_project_scope, project_scope_condition,
+    insert_project_scope_filter, normalize_project_scope,
 };
 use super::{collection, normalize_optional_text};
-
-pub(super) async fn find_active_session_by_contact_project(
-    db: &Db,
-    user_id: &str,
-    project_id: &str,
-    contact_id: Option<&str>,
-    agent_id: Option<&str>,
-) -> Result<Option<Session>, String> {
-    let conditions = build_contact_or_conditions(contact_id, agent_id);
-    if conditions.is_empty() {
-        return Ok(None);
-    }
-
-    let mut filter = doc! {
-        "user_id": user_id,
-        "status": "active",
-    };
-    let mut and_conditions: Vec<mongodb::bson::Document> = Vec::new();
-    and_conditions.push(doc! {"$or": conditions});
-    and_conditions.push(project_scope_condition(project_id));
-    filter.insert("$and", and_conditions);
-
-    let options = FindOneOptions::builder()
-        .sort(doc! {"updated_at": -1, "created_at": -1})
-        .build();
-    collection(db)
-        .find_one(filter)
-        .with_options(options)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-pub async fn get_active_session_by_contact_project(
-    db: &Db,
-    user_id: &str,
-    project_id: &str,
-    contact_id: Option<&str>,
-    agent_id: Option<&str>,
-) -> Result<Option<Session>, String> {
-    find_active_session_by_contact_project(db, user_id, project_id, contact_id, agent_id).await
-}
 
 pub async fn list_sessions(
     db: &Db,
@@ -184,46 +143,43 @@ pub async fn list_sessions_by_contact(
     Ok(deduped)
 }
 
-pub async fn list_session_ids_by_scope(
+pub async fn list_sessions_by_contact_all(
     db: &Db,
     user_id: &str,
-    project_id: &str,
-    contact_id: Option<&str>,
-    agent_id: Option<&str>,
+    contact_id: &str,
+    project_id: Option<&str>,
+    status: Option<&str>,
     limit: i64,
-) -> Result<Vec<String>, String> {
-    let conditions = build_contact_or_conditions(contact_id, agent_id);
-    if conditions.is_empty() {
-        return Ok(Vec::new());
+    offset: i64,
+) -> Result<Vec<Session>, String> {
+    let limit = limit.max(1).min(5_000) as u64;
+    let offset = offset.max(0) as u64;
+
+    let mut filter = doc! {
+        "user_id": user_id,
+        "$or": build_contact_or_conditions(Some(contact_id), None),
+    };
+    if let Some(v) = status {
+        filter.insert("status", v);
     }
 
-    let filter = doc! {
-        "user_id": user_id,
-        "status": "active",
-        "$and": [
-            {"$or": conditions},
-            project_scope_condition(project_id),
-        ],
-    };
+    if let Some(project_id) = normalize_optional_text(project_id) {
+        insert_project_scope_filter(&mut filter, project_id.as_str());
+    }
+
     let options = FindOptions::builder()
-        .projection(doc! {"_id": 0, "id": 1})
         .sort(doc! {"updated_at": -1, "created_at": -1})
-        .limit(Some(limit.max(1).min(5000)))
+        .limit(Some(limit as i64))
+        .skip(Some(offset))
         .build();
 
-    let cursor = db
-        .collection::<mongodb::bson::Document>("sessions")
+    let cursor = collection(db)
         .find(filter)
         .with_options(options)
         .await
         .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> =
-        cursor.try_collect().await.map_err(|e| e.to_string())?;
 
-    Ok(docs
-        .into_iter()
-        .filter_map(|doc| doc.get_str("id").ok().map(|value| value.to_string()))
-        .collect())
+    cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
 pub async fn get_session_by_id(db: &Db, session_id: &str) -> Result<Option<Session>, String> {

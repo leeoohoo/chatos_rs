@@ -15,7 +15,6 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
-use crate::ai::AiClient;
 use crate::config::AppConfig;
 use crate::repositories::auth;
 use crate::services::realtime::init_job_run_realtime_bus;
@@ -54,8 +53,7 @@ async fn main() -> Result<(), String> {
         );
 
     if config.worker_enabled {
-        let ai = AiClient::new(config.ai_request_timeout_secs, &config)?;
-        jobs::worker::start(state.clone(), ai);
+        jobs::worker::start(state.clone());
     }
 
     let addr = format!("{}:{}", config.host, config.port);

@@ -2,15 +2,11 @@ use std::collections::HashSet;
 
 use tracing::{info, warn};
 
-use super::agent_memory_generation::{
-    generate_level0_recall_from_summaries, generate_rollup_recall,
-};
-use super::agent_memory_support::resolve_model_config;
 use super::job_support;
-use crate::ai::AiClient;
+use crate::config::AppConfig;
 use crate::db::Db;
-use crate::models::AiModelConfig;
-use crate::repositories::{configs, locks, memories, summaries};
+use crate::repositories::{configs, contacts, locks};
+use crate::services::memory_engine_client;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentMemoryRunResult {
@@ -24,11 +20,11 @@ pub struct AgentMemoryRunResult {
 
 pub async fn run_once(
     pool: &Db,
-    ai: &AiClient,
+    app_config: &AppConfig,
     user_id: &str,
 ) -> Result<AgentMemoryRunResult, String> {
-    let config = configs::get_effective_agent_memory_job_config(pool, user_id).await?;
-    if config.enabled != 1 {
+    let job_config = configs::get_effective_agent_memory_job_config(pool, user_id).await?;
+    if job_config.enabled != 1 {
         return Ok(AgentMemoryRunResult {
             processed_agents: 0,
             summarized_agents: 0,
@@ -39,20 +35,19 @@ pub async fn run_once(
         });
     }
 
-    let model_cfg =
-        resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
-
-    let max_agents_per_tick = config.max_agents_per_tick.max(1);
-    let summary_agents = summaries::list_agent_ids_with_pending_agent_memory_by_user(
+    let max_agents_per_tick = job_config.max_agents_per_tick.max(1);
+    let summary_agents = memory_engine_client::list_agent_ids_with_pending_agent_memory_by_user(
+        app_config,
         pool,
         user_id,
         max_agents_per_tick,
     )
     .await?;
-    let recall_agents = memories::list_agent_ids_with_pending_recall_rollup_by_user(
+    let recall_agents = list_agent_ids_with_pending_recall_rollup(
         pool,
+        app_config,
         user_id,
-        config.max_level,
+        job_config.max_level,
         max_agents_per_tick,
     )
     .await?;
@@ -80,16 +75,15 @@ pub async fn run_once(
     for agent_id in agent_ids {
         match process_agent(
             pool,
-            ai,
+            app_config,
             user_id,
             agent_id.as_str(),
-            model_cfg.as_ref(),
-            config.summary_prompt.as_deref(),
-            config.round_limit,
-            config.token_limit,
-            config.target_summary_tokens,
-            config.keep_raw_level0_count,
-            config.max_level,
+            job_config.summary_prompt.as_deref(),
+            job_config.round_limit,
+            job_config.token_limit,
+            job_config.target_summary_tokens,
+            job_config.keep_raw_level0_count,
+            job_config.max_level,
         )
         .await
         {
@@ -114,12 +108,12 @@ pub async fn run_once(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_agent(
     pool: &Db,
-    ai: &AiClient,
+    config: &AppConfig,
     user_id: &str,
     agent_id: &str,
-    model_cfg: Option<&AiModelConfig>,
     summary_prompt: Option<&str>,
     round_limit: i64,
     token_limit: i64,
@@ -141,10 +135,9 @@ async fn process_agent(
 
     let result = process_agent_locked(
         pool,
-        ai,
+        config,
         user_id,
         agent_id,
-        model_cfg,
         summary_prompt,
         round_limit,
         token_limit,
@@ -169,10 +162,9 @@ async fn process_agent(
 #[allow(clippy::too_many_arguments)]
 async fn process_agent_locked(
     pool: &Db,
-    ai: &AiClient,
+    config: &AppConfig,
     user_id: &str,
     agent_id: &str,
-    model_cfg: Option<&AiModelConfig>,
     summary_prompt: Option<&str>,
     round_limit: i64,
     token_limit: i64,
@@ -182,45 +174,17 @@ async fn process_agent_locked(
     lock_handle: &locks::JobLockHandle,
     lease_seconds: i64,
 ) -> Result<(usize, usize, usize), String> {
-    let mut generated_recalls = 0usize;
-    let mut marked_source_summaries = 0usize;
-    let mut marked_source_recalls = 0usize;
-
     if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
         warn!(
-            "[MEMORY-AGENT-RECALL] refresh lock failed before l0: user_id={} agent_id={} error={}",
+            "[MEMORY-AGENT-RECALL] refresh lock failed before engine run: user_id={} agent_id={} error={}",
             user_id, agent_id, err
         );
     }
 
-    let (generated_l0, marked_summaries) = generate_level0_recall_from_summaries(
-        pool,
-        ai,
+    let result = memory_engine_client::run_agent_recall_job(
+        config,
         user_id,
         agent_id,
-        model_cfg,
-        summary_prompt,
-        round_limit.max(1),
-        token_limit.max(500),
-        target_summary_tokens.max(200),
-    )
-    .await?;
-    generated_recalls += generated_l0;
-    marked_source_summaries += marked_summaries;
-
-    if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
-        warn!(
-            "[MEMORY-AGENT-RECALL] refresh lock failed before rollup: user_id={} agent_id={} error={}",
-            user_id, agent_id, err
-        );
-    }
-
-    let (generated_rollup, marked_recalls) = generate_rollup_recall(
-        pool,
-        ai,
-        user_id,
-        agent_id,
-        model_cfg,
         summary_prompt,
         round_limit.max(1),
         token_limit.max(500),
@@ -229,12 +193,38 @@ async fn process_agent_locked(
         max_level.max(1),
     )
     .await?;
-    generated_recalls += generated_rollup;
-    marked_source_recalls += marked_recalls;
 
     Ok((
-        generated_recalls,
-        marked_source_summaries,
-        marked_source_recalls,
+        result.generated_memories,
+        result.marked_source_summaries,
+        result.marked_source_memories,
     ))
+}
+
+async fn list_agent_ids_with_pending_recall_rollup(
+    pool: &Db,
+    config: &AppConfig,
+    user_id: &str,
+    max_level: i64,
+    max_agents_per_tick: i64,
+) -> Result<Vec<String>, String> {
+    let contacts = contacts::list_contacts(pool, user_id, Some("active"), 5_000, 0).await?;
+    let mut out = Vec::new();
+    for contact in contacts {
+        let has_pending = memory_engine_client::has_pending_agent_recalls_before_level(
+            config,
+            user_id,
+            contact.agent_id.as_str(),
+            max_level,
+        )
+        .await?;
+        if has_pending {
+            out.push(contact.agent_id);
+            if out.len() >= max_agents_per_tick as usize {
+                break;
+            }
+        }
+    }
+
+    Ok(out)
 }

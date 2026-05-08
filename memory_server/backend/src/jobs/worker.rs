@@ -6,18 +6,17 @@ use parking_lot::Mutex;
 use tokio::time::{self, MissedTickBehavior};
 use tracing::{info, warn};
 
-use crate::ai::AiClient;
 use crate::repositories::{configs, sessions};
 use crate::state::AppState;
 
-use super::{agent_memory, rollup, summary};
+use super::agent_memory;
 
 #[derive(Default)]
 struct WorkerState {
     last_run_ts: HashMap<String, i64>,
 }
 
-pub fn start(state: Arc<AppState>, ai: AiClient) {
+pub fn start(state: Arc<AppState>) {
     tokio::spawn(async move {
         let worker_state = Arc::new(Mutex::new(WorkerState::default()));
         let mut ticker = time::interval(Duration::from_secs(10));
@@ -27,7 +26,7 @@ pub fn start(state: Arc<AppState>, ai: AiClient) {
 
         loop {
             ticker.tick().await;
-            if let Err(err) = tick_once(state.clone(), ai.clone(), worker_state.clone()).await {
+            if let Err(err) = tick_once(state.clone(), worker_state.clone()).await {
                 warn!("[MEMORY-WORKER] tick failed: {}", err);
             }
         }
@@ -36,7 +35,6 @@ pub fn start(state: Arc<AppState>, ai: AiClient) {
 
 async fn tick_once(
     state: Arc<AppState>,
-    ai: AiClient,
     worker_state: Arc<Mutex<WorkerState>>,
 ) -> Result<(), String> {
     let user_ids = sessions::list_active_user_ids(&state.pool, 500).await?;
@@ -57,22 +55,25 @@ async fn tick_once(
                 now_ts,
                 summary_cfg.job_interval_seconds,
             ) {
-                let result = summary::run_once(&state.pool, &ai, user_id.as_str()).await;
-                match result {
+                match crate::services::memory_engine_client::run_pending_summaries_once(
+                    &state.config,
+                    Some(user_id.as_str()),
+                    Some(summary_cfg.max_sessions_per_tick.max(1)),
+                )
+                .await
+                {
                     Ok(result) => {
                         info!(
-                            "[MEMORY-WORKER] summary run user_id={} processed={} summarized={} generated={} marked={} failed={}",
+                            "[MEMORY-WORKER] engine summary run user_id={} processed_threads={} summarized_threads={} max_sessions_per_tick={}",
                             user_id,
-                            result.processed_sessions,
-                            result.summarized_sessions,
-                            result.generated_summaries,
-                            result.marked_messages,
-                            result.failed_sessions
+                            result.processed_threads,
+                            result.summarized_threads,
+                            summary_cfg.max_sessions_per_tick
                         );
                     }
                     Err(err) => {
                         warn!(
-                            "[MEMORY-WORKER] summary run failed user_id={} error={}",
+                            "[MEMORY-WORKER] engine summary run failed user_id={} error={}",
                             user_id, err
                         );
                     }
@@ -91,22 +92,27 @@ async fn tick_once(
                 now_ts,
                 rollup_cfg.job_interval_seconds,
             ) {
-                let result = rollup::run_once(&state.pool, &ai, user_id.as_str()).await;
+                let result = crate::services::memory_engine_client::run_pending_rollups_once(
+                    &state.config,
+                    user_id.as_str(),
+                    &rollup_cfg,
+                )
+                .await;
                 match result {
                     Ok(result) => {
                         info!(
-                            "[MEMORY-WORKER] rollup run user_id={} processed={} rolled_up={} generated={} marked={} failed={}",
+                            "[MEMORY-WORKER] engine rollup run user_id={} processed={} rolled_up={} generated={} marked={} failed={}",
                             user_id,
-                            result.processed_sessions,
-                            result.rolled_up_sessions,
+                            result.processed_threads,
+                            result.rolled_up_threads,
                             result.generated_summaries,
                             result.marked_summaries,
-                            result.failed_sessions
+                            result.failed_threads
                         );
                     }
                     Err(err) => {
                         warn!(
-                            "[MEMORY-WORKER] rollup run failed user_id={} error={}",
+                            "[MEMORY-WORKER] engine rollup run failed user_id={} error={}",
                             user_id, err
                         );
                     }
@@ -125,7 +131,9 @@ async fn tick_once(
                 now_ts,
                 agent_memory_cfg.job_interval_seconds,
             ) {
-                let result = agent_memory::run_once(&state.pool, &ai, user_id.as_str()).await;
+                let result =
+                    agent_memory::run_once(&state.pool, &state.config, user_id.as_str())
+                        .await;
                 match result {
                     Ok(result) => {
                         info!(

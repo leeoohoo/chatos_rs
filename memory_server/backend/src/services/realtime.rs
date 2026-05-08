@@ -26,10 +26,3 @@ pub fn init_job_run_realtime_bus() {
 pub fn subscribe_job_run_events() -> broadcast::Receiver<JobRunRealtimeEvent> {
     job_run_realtime_bus().subscribe()
 }
-
-pub fn publish_job_run_event(action: &'static str, job_run: &JobRun) {
-    let _ = job_run_realtime_bus().send(JobRunRealtimeEvent {
-        action,
-        job_run: job_run.clone(),
-    });
-}

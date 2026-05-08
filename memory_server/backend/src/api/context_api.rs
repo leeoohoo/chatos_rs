@@ -21,7 +21,7 @@ pub(super) async fn compose_context(
         return err;
     }
 
-    match context::compose_context(&state.pool, req).await {
+    match context::compose_context(&state.config, &state.pool, req).await {
         Ok(ctx) => (StatusCode::OK, Json(json!(ctx))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

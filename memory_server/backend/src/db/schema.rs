@@ -2,23 +2,17 @@ use mongodb::bson::doc;
 use tracing::info;
 
 use super::index_helpers::{ensure_index, ensure_unique_index, ensure_unique_partial_index};
-use super::normalize::{
-    normalize_agent_plugin_sources, normalize_running_job_runs, normalize_summary_status,
-};
+use super::normalize::{normalize_agent_plugin_sources, normalize_running_job_runs};
 use super::Db;
 
 pub async fn init_schema(db: &Db) -> Result<(), String> {
     ensure_session_indexes(db).await?;
-    ensure_message_indexes(db).await?;
-    ensure_summary_indexes(db).await?;
     ensure_config_indexes(db).await?;
     ensure_job_run_indexes(db).await?;
     ensure_job_lock_indexes(db).await?;
     ensure_agent_skill_indexes(db).await?;
-    ensure_project_memory_indexes(db).await?;
     ensure_turn_runtime_snapshot_indexes(db).await?;
 
-    normalize_summary_status(db).await?;
     normalize_agent_plugin_sources(db).await?;
 
     info!("[MEMORY-SERVER] mongodb indexes initialized");
@@ -52,65 +46,6 @@ async fn ensure_session_indexes(db: &Db) -> Result<(), String> {
         doc! {
             "status": "active",
             "metadata.contact.agent_id": {"$exists": true, "$type": "string"},
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn ensure_message_indexes(db: &Db) -> Result<(), String> {
-    ensure_unique_index(db.collection("messages"), doc! {"id": 1}).await?;
-    ensure_index(
-        db.collection("messages"),
-        doc! {"session_id": 1, "created_at": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("messages"),
-        doc! {"session_id": 1, "summary_status": 1, "created_at": 1},
-    )
-    .await?;
-    ensure_index(db.collection("messages"), doc! {"summary_id": 1}).await?;
-    Ok(())
-}
-
-async fn ensure_summary_indexes(db: &Db) -> Result<(), String> {
-    ensure_unique_index(db.collection("session_summaries_v2"), doc! {"id": 1}).await?;
-    ensure_index(
-        db.collection("session_summaries_v2"),
-        doc! {"session_id": 1, "created_at": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("session_summaries_v2"),
-        doc! {"session_id": 1, "status": 1, "created_at": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("session_summaries_v2"),
-        doc! {"session_id": 1, "level": 1, "status": 1, "created_at": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("session_summaries_v2"),
-        doc! {"status": 1, "level": 1, "agent_memory_summarized": 1, "created_at": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("session_summaries_v2"),
-        doc! {"level": 1, "agent_memory_summarized": 1, "created_at": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("session_summaries_v2"),
-        doc! {"rollup_summary_id": 1},
-    )
-    .await?;
-    ensure_unique_partial_index(
-        db.collection("session_summaries_v2"),
-        doc! {"session_id": 1, "level": 1, "source_digest": 1},
-        doc! {
-            "source_digest": {"$exists": true, "$type": "string"},
         },
     )
     .await?;
@@ -214,95 +149,6 @@ async fn ensure_agent_skill_indexes(db: &Db) -> Result<(), String> {
     ensure_index(
         db.collection("contacts"),
         doc! {"user_id": 1, "status": 1, "updated_at": -1},
-    )
-    .await?;
-    Ok(())
-}
-
-async fn ensure_project_memory_indexes(db: &Db) -> Result<(), String> {
-    ensure_unique_index(db.collection("memory_projects"), doc! {"id": 1}).await?;
-    ensure_unique_index(
-        db.collection("memory_projects"),
-        doc! {"user_id": 1, "project_id": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("memory_projects"),
-        doc! {"user_id": 1, "status": 1, "updated_at": -1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("memory_projects"),
-        doc! {"user_id": 1, "is_virtual": 1, "updated_at": -1},
-    )
-    .await?;
-
-    ensure_unique_index(db.collection("memory_project_agent_links"), doc! {"id": 1}).await?;
-    ensure_unique_index(
-        db.collection("memory_project_agent_links"),
-        doc! {"user_id": 1, "project_id": 1, "agent_id": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("memory_project_agent_links"),
-        doc! {"user_id": 1, "contact_id": 1, "updated_at": -1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("memory_project_agent_links"),
-        doc! {"user_id": 1, "project_id": 1, "updated_at": -1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("memory_project_agent_links"),
-        doc! {"user_id": 1, "agent_id": 1, "updated_at": -1},
-    )
-    .await?;
-
-    ensure_unique_index(db.collection("project_memories"), doc! {"id": 1}).await?;
-    ensure_unique_index(
-        db.collection("project_memories"),
-        doc! {"user_id": 1, "contact_id": 1, "project_id": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("project_memories"),
-        doc! {"user_id": 1, "agent_id": 1, "updated_at": -1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("project_memories"),
-        doc! {"user_id": 1, "agent_id": 1, "recall_summarized": 1, "updated_at": 1},
-    )
-    .await?;
-
-    ensure_unique_index(db.collection("agent_recalls"), doc! {"id": 1}).await?;
-    ensure_unique_index(
-        db.collection("agent_recalls"),
-        doc! {"user_id": 1, "agent_id": 1, "recall_key": 1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("agent_recalls"),
-        doc! {"user_id": 1, "agent_id": 1, "updated_at": -1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("agent_recalls"),
-        doc! {"user_id": 1, "agent_id": 1, "level": -1, "updated_at": -1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("agent_recalls"),
-        doc! {"user_id": 1, "agent_id": 1, "level": 1, "rolled_up": 1, "updated_at": 1},
-    )
-    .await?;
-    ensure_unique_partial_index(
-        db.collection("agent_recalls"),
-        doc! {"user_id": 1, "agent_id": 1, "level": 1, "source_digest": 1},
-        doc! {
-            "source_digest": {"$exists": true, "$type": "string"},
-        },
     )
     .await?;
     Ok(())

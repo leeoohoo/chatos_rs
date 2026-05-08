@@ -14,7 +14,6 @@ pub struct AiClient {
     default_model: String,
     default_temperature: f64,
     request_timeout_secs: u64,
-    allow_local_fallback: bool,
 }
 
 impl AiClient {
@@ -30,7 +29,6 @@ impl AiClient {
             default_model: normalize_model_name(config.openai_model.as_str()),
             default_temperature: config.openai_temperature.clamp(0.0, 2.0),
             request_timeout_secs: timeout_secs,
-            allow_local_fallback: config.allow_local_summary_fallback,
         })
     }
 
@@ -112,10 +110,6 @@ impl AiClient {
                     max_tokens,
                 )
                 .await;
-        }
-
-        if self.allow_local_fallback {
-            return Ok(local_fallback_summary(chunks, max_tokens as usize));
         }
 
         Err(
@@ -594,30 +588,4 @@ fn extract_responses_output_text(value: &serde_json::Value) -> Option<String> {
     } else {
         Some(parts.join("\n"))
     }
-}
-
-fn local_fallback_summary(chunks: &[String], max_tokens: usize) -> String {
-    let mut lines = vec![
-        "[fallback-summary] 未配置可用模型，使用本地降级摘要。".to_string(),
-        "关键要点：".to_string(),
-    ];
-
-    for chunk in chunks.iter().take(8) {
-        let short = chunk
-            .lines()
-            .take(3)
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(260)
-            .collect::<String>();
-        lines.push(format!("- {}", short));
-    }
-
-    let mut out = lines.join("\n");
-    let approx_chars = max_tokens.saturating_mul(4);
-    if out.len() > approx_chars {
-        out = out.chars().take(approx_chars).collect();
-    }
-    out
 }

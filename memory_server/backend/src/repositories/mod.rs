@@ -6,15 +6,11 @@ pub mod configs;
 pub mod contacts;
 pub mod jobs;
 pub mod locks;
-pub mod memories;
-pub mod messages;
 pub mod project_agent_links;
 pub mod projects;
 mod session_support;
 pub mod sessions;
 pub mod skills;
-pub mod summaries;
-mod summaries_support;
 pub mod turn_runtime_snapshots;
 
 pub fn normalize_optional_text(value: Option<&str>) -> Option<String> {

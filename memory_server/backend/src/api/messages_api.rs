@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::models::{BatchCreateMessagesRequest, CreateMessageRequest};
-use crate::repositories::messages;
+use crate::services::memory_engine_client;
 
 use super::{ensure_admin, ensure_session_access, require_auth, SharedState};
 
@@ -43,10 +43,12 @@ pub(super) async fn create_message(
         return err;
     }
 
-    match messages::create_message(&state.pool, session_id.as_str(), req).await {
+    match memory_engine_client::create_message(&state.config, &state.pool, session_id.as_str(), req)
+        .await
+    {
         Ok(message) => (StatusCode::OK, Json(json!(message))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "create message failed", "detail": err})),
         ),
     }
@@ -66,26 +68,32 @@ pub(super) async fn sync_message(
         return err;
     }
 
-    let created_at = req
-        .created_at
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    let input = messages::SyncMessageInput {
-        message_id,
+    let input = memory_engine_client::MessageSyncRequest {
+        message_id: Some(message_id),
         role: req.role,
         content: req.content,
         message_mode: req.message_mode,
         message_source: req.message_source,
-        tool_calls_json: req.tool_calls.map(|v| v.to_string()),
+        tool_calls: req.tool_calls,
         tool_call_id: req.tool_call_id,
         reasoning: req.reasoning,
-        metadata_json: req.metadata.map(|v| v.to_string()),
-        created_at,
+        metadata: req.metadata,
+        created_at: req
+            .created_at
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
     };
 
-    match messages::upsert_message_sync(&state.pool, session_id.as_str(), input).await {
+    match memory_engine_client::sync_message_input(
+        &state.config,
+        &state.pool,
+        session_id.as_str(),
+        input,
+    )
+    .await
+    {
         Ok(message) => (StatusCode::OK, Json(json!(message))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "sync message failed", "detail": err})),
         ),
     }
@@ -105,10 +113,17 @@ pub(super) async fn batch_create_messages(
         return err;
     }
 
-    match messages::batch_create_messages(&state.pool, session_id.as_str(), req.messages).await {
+    match memory_engine_client::batch_create_messages(
+        &state.config,
+        &state.pool,
+        session_id.as_str(),
+        req.messages,
+    )
+    .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "batch create messages failed", "detail": err})),
         ),
     }
@@ -132,12 +147,18 @@ pub(super) async fn list_messages(
     let limit = q.limit.unwrap_or(100);
     let offset = q.offset.unwrap_or(0);
 
-    match messages::list_messages_by_session(&state.pool, session_id.as_str(), limit, offset, asc)
-        .await
-    {
+    match memory_engine_client::list_messages(
+        &state.config,
+        &state.pool,
+        session_id.as_str(),
+        limit,
+        offset,
+        asc,
+    )
+    .await {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "list messages failed", "detail": err})),
         ),
     }
@@ -156,13 +177,15 @@ pub(super) async fn clear_session_messages(
         return err;
     }
 
-    match messages::delete_messages_by_session(&state.pool, session_id.as_str()).await {
+    match memory_engine_client::clear_session_messages(&state.config, &state.pool, session_id.as_str())
+        .await
+    {
         Ok(deleted) => (
             StatusCode::OK,
             Json(json!({"deleted": deleted, "success": true})),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "clear messages failed", "detail": err})),
         ),
     }
@@ -181,14 +204,16 @@ pub(super) async fn get_message(
         return err;
     }
 
-    match messages::get_message_by_id(&state.pool, message_id.as_str()).await {
+    match memory_engine_client::get_message(&state.config, &state.pool, message_id.as_str(), None)
+        .await
+    {
         Ok(Some(item)) => (StatusCode::OK, Json(json!(item))),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "message not found"})),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "get message failed", "detail": err})),
         ),
     }
@@ -207,14 +232,16 @@ pub(super) async fn delete_message(
         return err;
     }
 
-    match messages::delete_message_by_id(&state.pool, message_id.as_str()).await {
+    match memory_engine_client::delete_message(&state.config, &state.pool, message_id.as_str(), None)
+        .await
+    {
         Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "message not found"})),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "delete message failed", "detail": err})),
         ),
     }

@@ -10,14 +10,12 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::Duration;
-
 use crate::jobs;
 use crate::repositories::{contacts, jobs as job_repo, projects, sessions};
-use crate::services::realtime::subscribe_job_run_events;
+use crate::services::{memory_engine_client, realtime::subscribe_job_run_events};
 
 use super::{
-    build_ai_client, ensure_admin, ensure_session_access, require_auth, resolve_scope_user_id,
-    SharedState,
+    ensure_admin, ensure_session_access, require_auth, resolve_scope_user_id, SharedState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -44,29 +42,41 @@ pub(super) async fn run_summary_once(
         Err(err) => return err,
     };
     let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    let ai = match build_ai_client(&state) {
-        Ok(client) => client,
-        Err(err) => return err,
-    };
-
     let result = if let Some(session_id) = req.session_id.as_deref() {
         if let Err(err) = ensure_session_access(state.as_ref(), &auth, session_id).await {
             return err;
         }
-        jobs::summary::run_once_for_session(&state.pool, &ai, scope_user_id.as_str(), session_id)
+        memory_engine_client::run_thread_summary(&state.config, scope_user_id.as_str(), session_id)
             .await
-            .map(|r| json!({"session_id": session_id, "result": r}))
+            .map(|r| json!({
+                "session_id": session_id,
+                "engine": true,
+                "backend": "memory_engine",
+                "result": r
+            }))
     } else {
-        jobs::summary::run_once(&state.pool, &ai, scope_user_id.as_str())
+        memory_engine_client::run_pending_summaries_once(
+            &state.config,
+            Some(scope_user_id.as_str()),
+            None,
+        )
             .await
-            .map(|r| json!(r))
+            .map(|r| json!({
+                "engine": true,
+                "backend": "memory_engine",
+                "result": r
+            }))
     };
 
     match result {
         Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"ok": false, "error": err})),
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "ok": false,
+                "backend": "memory_engine",
+                "error": err
+            })),
         ),
     }
 }
@@ -81,11 +91,6 @@ pub(super) async fn run_review_repair_once(
         Err(err) => return err,
     };
     let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    let ai = match build_ai_client(&state) {
-        Ok(client) => client,
-        Err(err) => return err,
-    };
-
     let project_id = req
         .project_id
         .as_deref()
@@ -116,9 +121,8 @@ pub(super) async fn run_review_repair_once(
         );
     }
 
-    match jobs::summary::run_review_repair_for_scope(
-        &state.pool,
-        &ai,
+    match jobs::review_repair::run_once_for_scope(
+        &state.config,
         scope_user_id.as_str(),
         project_id.as_str(),
         contact_id.as_deref(),
@@ -126,10 +130,21 @@ pub(super) async fn run_review_repair_once(
     )
     .await
     {
-        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Ok(data) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "backend": "memory_engine",
+                "data": data
+            })),
+        ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"ok": false, "error": err})),
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "ok": false,
+                "backend": "memory_engine",
+                "error": err
+            })),
         ),
     }
 }
@@ -175,8 +190,8 @@ pub(super) async fn get_review_repair_status(
         );
     }
 
-    match jobs::summary::get_review_repair_status_for_scope(
-        &state.pool,
+    match jobs::review_repair::get_status_for_scope(
+        &state.config,
         scope_user_id.as_str(),
         project_id.as_str(),
         contact_id.as_deref(),
@@ -184,10 +199,21 @@ pub(super) async fn get_review_repair_status(
     )
     .await
     {
-        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Ok(data) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "backend": "memory_engine",
+                "data": data
+            })),
+        ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"ok": false, "error": err})),
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "ok": false,
+                "backend": "memory_engine",
+                "error": err
+            })),
         ),
     }
 }
@@ -202,16 +228,44 @@ pub(super) async fn run_rollup_once(
         Err(err) => return err,
     };
     let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    let ai = match build_ai_client(&state) {
-        Ok(client) => client,
-        Err(err) => return err,
-    };
+    let rollup_cfg =
+        match crate::repositories::configs::get_effective_summary_rollup_job_config(
+            &state.pool,
+            scope_user_id.as_str(),
+        )
+        .await
+        {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"ok": false, "error": err})),
+                )
+            }
+        };
 
-    match jobs::rollup::run_once(&state.pool, &ai, scope_user_id.as_str()).await {
-        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+    match memory_engine_client::run_pending_rollups_once(
+        &state.config,
+        scope_user_id.as_str(),
+        &rollup_cfg,
+    )
+    .await
+    {
+        Ok(data) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "backend": "memory_engine",
+                "data": data
+            })),
+        ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"ok": false, "error": err})),
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "ok": false,
+                "backend": "memory_engine",
+                "error": err
+            })),
         ),
     }
 }
@@ -226,12 +280,9 @@ pub(super) async fn run_agent_memory_once(
         Err(err) => return err,
     };
     let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    let ai = match build_ai_client(&state) {
-        Ok(client) => client,
-        Err(err) => return err,
-    };
-
-    match jobs::agent_memory::run_once(&state.pool, &ai, scope_user_id.as_str()).await {
+    match jobs::agent_memory::run_once(&state.pool, &state.config, scope_user_id.as_str())
+        .await
+    {
         Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

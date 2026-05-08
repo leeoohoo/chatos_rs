@@ -4,7 +4,8 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::models::{SyncTurnRuntimeSnapshotRequest, TurnRuntimeSnapshotLookupResponse};
-use crate::repositories::{messages, sessions, turn_runtime_snapshots};
+use crate::repositories::{sessions, turn_runtime_snapshots};
+use crate::services::memory_engine_client;
 
 use super::{ensure_session_access, require_auth, SharedState};
 
@@ -75,16 +76,16 @@ pub(super) async fn get_latest_turn_runtime_snapshot(
         return err;
     }
 
-    let latest_user_message = match messages::get_latest_user_message_by_session(
+    let latest_user_message = match memory_engine_client::get_latest_user_message_by_session(
+        &state.config,
         &state.pool,
         session_id.as_str(),
     )
-    .await
-    {
+    .await {
         Ok(value) => value,
         Err(err) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::BAD_GATEWAY,
                 Json(json!({"error": "load latest user message failed", "detail": err})),
             )
         }

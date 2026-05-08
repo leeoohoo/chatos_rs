@@ -3,7 +3,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::repositories::memories as memories_repo;
+use crate::services::memory_engine_client;
 
 use super::super::SharedState;
 use super::contracts::ListContactMemoriesQuery;
@@ -31,18 +31,19 @@ pub(in crate::api) async fn list_contact_project_memories(
 
     let list_result = match target_project_id {
         Some(project_id) => {
-            memories_repo::list_project_memories(
-                &state.pool,
+            memory_engine_client::list_project_memories_for_contact(
+                &state.config,
                 contact.user_id.as_str(),
                 contact.id.as_str(),
-                project_id.as_str(),
+                Some(project_id.as_str()),
                 limit,
                 offset,
             )
             .await
         }
         None => {
-            memories_repo::list_project_memories_by_contact(
+            memory_engine_client::list_project_memories_by_contact(
+                &state.config,
                 &state.pool,
                 contact.user_id.as_str(),
                 contact.id.as_str(),
@@ -80,11 +81,11 @@ pub(in crate::api) async fn list_contact_project_memories_by_project(
 
     let limit = q.limit.unwrap_or(200);
     let offset = q.offset.unwrap_or(0);
-    match memories_repo::list_project_memories(
-        &state.pool,
+    match memory_engine_client::list_project_memories_for_contact(
+        &state.config,
         contact.user_id.as_str(),
         contact.id.as_str(),
-        project_id.as_str(),
+        Some(project_id.as_str()),
         limit,
         offset,
     )
@@ -108,15 +109,14 @@ pub(in crate::api) async fn list_contact_agent_recalls(
 
     let limit = q.limit.unwrap_or(200);
     let offset = q.offset.unwrap_or(0);
-    match memories_repo::list_agent_recalls(
-        &state.pool,
+    match memory_engine_client::list_agent_recalls(
+        &state.config,
         contact.user_id.as_str(),
         contact.agent_id.as_str(),
         limit,
         offset,
     )
-    .await
-    {
+    .await {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => internal_error("list agent recalls failed", err),
     }

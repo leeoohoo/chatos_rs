@@ -6,6 +6,8 @@ pub struct AppConfig {
     pub port: u16,
     pub mongodb_uri: String,
     pub mongodb_database: String,
+    pub memory_engine_base_url: String,
+    pub memory_engine_timeout_secs: u64,
     pub service_token: Option<String>,
     pub auth_secret: String,
     pub auth_token_ttl_hours: i64,
@@ -15,7 +17,6 @@ pub struct AppConfig {
     pub openai_base_url: String,
     pub openai_model: String,
     pub openai_temperature: f64,
-    pub allow_local_summary_fallback: bool,
 }
 
 impl AppConfig {
@@ -32,6 +33,14 @@ impl AppConfig {
 
         let mongodb_database = env_text("MEMORY_SERVER_MONGODB_DATABASE")
             .unwrap_or_else(|| "memory_server".to_string());
+
+        let memory_engine_base_url = env_text("MEMORY_ENGINE_BASE_URL")
+            .unwrap_or_else(|| "http://127.0.0.1:7081".to_string());
+        let memory_engine_timeout_secs = env::var("MEMORY_ENGINE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(15)
+            .max(3);
 
         let service_token = env_text("MEMORY_SERVER_SERVICE_TOKEN");
 
@@ -71,16 +80,13 @@ impl AppConfig {
             .unwrap_or(0.2)
             .clamp(0.0, 2.0);
 
-        let allow_local_summary_fallback = env::var("MEMORY_SERVER_ALLOW_LOCAL_SUMMARY_FALLBACK")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
-
         Self {
             host,
             port,
             mongodb_uri,
             mongodb_database,
+            memory_engine_base_url,
+            memory_engine_timeout_secs,
             service_token,
             auth_secret,
             auth_token_ttl_hours,
@@ -90,7 +96,6 @@ impl AppConfig {
             openai_base_url,
             openai_model,
             openai_temperature,
-            allow_local_summary_fallback,
         }
     }
 }

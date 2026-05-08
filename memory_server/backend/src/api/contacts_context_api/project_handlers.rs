@@ -7,9 +7,9 @@ use serde_json::{json, Value};
 
 use crate::models::{MemoryProject, MemoryProjectAgentLink, ProjectMemory};
 use crate::repositories::{
-    memories as memories_repo, project_agent_links as project_agent_links_repo,
-    projects as projects_repo, sessions, summaries as summaries_repo,
+    project_agent_links as project_agent_links_repo, projects as projects_repo,
 };
+use crate::services::memory_engine_client;
 
 use super::super::{
     default_project_name, normalize_project_scope_id, pick_latest_timestamp, SharedState,
@@ -44,15 +44,15 @@ pub(in crate::api) async fn list_contact_projects(
         Err(err) => return internal_error("list contact projects failed", err),
     };
 
-    let memories = match memories_repo::list_project_memories_by_contact(
+    let memories = match memory_engine_client::list_project_memories_by_contact(
+        &state.config,
         &state.pool,
         contact.user_id.as_str(),
         contact.id.as_str(),
         2_000,
         0,
     )
-    .await
-    {
+    .await {
         Ok(items) => items,
         Err(err) => return internal_error("list contact project memories failed", err),
     };
@@ -83,19 +83,25 @@ pub(in crate::api) async fn list_contact_projects(
             ordered_project_ids.push(pid.clone());
         }
     }
-    if let Ok(session_rows) = sessions::list_sessions_by_agent(
-        &state.pool,
+    if let Ok(thread_rows) = memory_engine_client::list_threads_by_label(
+        &state.config,
         contact.user_id.as_str(),
-        contact.agent_id.as_str(),
-        None,
+        format!("agent:{}", contact.agent_id).as_str(),
         Some("active"),
         500,
         0,
     )
     .await
     {
-        for session in session_rows {
-            let pid = normalize_project_scope_id(session.project_id.as_deref());
+        for thread in thread_rows {
+            let pid = normalize_project_scope_id(
+                thread
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("legacy_session_mapping"))
+                    .and_then(|mapping| mapping.get("project_id"))
+                    .and_then(Value::as_str),
+            );
             if !ordered_project_ids
                 .iter()
                 .any(|existing| existing == pid.as_str())
@@ -182,34 +188,24 @@ pub(in crate::api) async fn list_contact_project_summaries(
     };
 
     let normalized_project_id = normalize_project_scope_id(Some(project_id.as_str()));
-    let session = match sessions::get_active_session_by_contact_project(
-        &state.pool,
+    let thread_label = format!("contact_project:{}:{}", contact.id, normalized_project_id);
+
+    match memory_engine_client::list_summaries_by_thread_label(
+        &state.config,
         contact.user_id.as_str(),
-        normalized_project_id.as_str(),
-        Some(contact.id.as_str()),
-        Some(contact.agent_id.as_str()),
+        thread_label.as_str(),
+        Some("thread_incremental"),
+        Some("done"),
+        None,
+        None,
+        500,
+        0,
     )
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => return internal_error("resolve contact project session failed", err),
-    };
-
-    let Some(session) = session else {
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "session_id": Value::Null,
-                "items": [],
-            })),
-        );
-    };
-
-    match summaries_repo::list_all_summaries_by_session(&state.pool, session.id.as_str()).await {
+    .await {
         Ok(items) => (
             StatusCode::OK,
             Json(json!({
-                "session_id": session.id,
+                "session_id": Value::Null,
                 "items": items,
             })),
         ),

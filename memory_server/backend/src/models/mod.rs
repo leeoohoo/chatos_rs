@@ -52,7 +52,6 @@ pub use self::job_configs::{
     AgentMemoryJobConfig, JobRun, SummaryJobConfig, SummaryRollupJobConfig,
     UpsertAgentMemoryJobConfigRequest, UpsertSummaryJobConfigRequest,
     UpsertSummaryRollupJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
-    REVIEW_REPAIR_SUMMARY_PROMPT_TEMPLATE,
 };
 pub use self::memories::{AgentRecall, ProjectMemory};
 pub use self::messages::{BatchCreateMessagesRequest, CreateMessageRequest, Message};
@@ -60,7 +59,7 @@ pub use self::sessions::{
     Contact, CreateContactRequest, CreateSessionRequest, MemoryProject, MemoryProjectAgentLink,
     Session, UpdateSessionRequest,
 };
-pub use self::summaries::{CreateSummaryInput, SessionSummary};
+pub use self::summaries::{AgentMemorySummarySource, SessionSummary};
 pub use self::turn_runtime_snapshots::{
     SyncTurnRuntimeSnapshotRequest, TurnRuntimeSnapshot, TurnRuntimeSnapshotLookupResponse,
 };

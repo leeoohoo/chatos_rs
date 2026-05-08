@@ -3,8 +3,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
-use crate::repositories::summaries;
+use crate::services::memory_engine_client;
 
 use super::{ensure_session_access, require_auth, SharedState};
 
@@ -30,25 +31,27 @@ pub(super) async fn list_summaries(
         return err;
     }
 
-    match summaries::list_summaries(
+    let status_filter = q.status.as_deref().and_then(|status| {
+        if status.eq_ignore_ascii_case("all") {
+            None
+        } else {
+            Some(status)
+        }
+    });
+
+    match memory_engine_client::list_summaries(
+        &state.config,
         &state.pool,
         session_id.as_str(),
         q.level,
-        q.status.as_deref().and_then(|status| {
-            if status.eq_ignore_ascii_case("all") {
-                None
-            } else {
-                Some(status)
-            }
-        }),
+        status_filter,
         q.limit.unwrap_or(100),
         q.offset.unwrap_or(0),
     )
-    .await
-    {
+    .await {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "list summaries failed", "detail": err})),
         ),
     }
@@ -67,11 +70,25 @@ pub(super) async fn summary_levels(
         return err;
     }
 
-    match summaries::list_summary_level_stats(&state.pool, session_id.as_str()).await {
-        Ok(levels) => {
-            let items: Vec<Value> = levels
+    match memory_engine_client::list_all_summaries_by_session(
+        &state.config,
+        &state.pool,
+        session_id.as_str(),
+    )
+    .await {
+        Ok(items) => {
+            let mut levels = BTreeMap::<i64, (i64, i64)>::new();
+            for item in items {
+                let entry = levels.entry(item.level).or_insert((0, 0));
+                entry.0 += 1;
+                if item.status == "pending" {
+                    entry.1 += 1;
+                }
+            }
+
+            let payload: Vec<Value> = levels
                 .into_iter()
-                .map(|(level, total, pending)| {
+                .map(|(level, (total, pending))| {
                     json!({
                         "level": level,
                         "total": total,
@@ -80,10 +97,10 @@ pub(super) async fn summary_levels(
                     })
                 })
                 .collect();
-            (StatusCode::OK, Json(json!({"items": items})))
+            (StatusCode::OK, Json(json!({"items": payload})))
         }
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "list summary levels failed", "detail": err})),
         ),
     }
@@ -102,7 +119,12 @@ pub(super) async fn summary_graph(
         return err;
     }
 
-    match summaries::list_all_summaries_by_session(&state.pool, session_id.as_str()).await {
+    match memory_engine_client::list_all_summaries_by_session(
+        &state.config,
+        &state.pool,
+        session_id.as_str(),
+    )
+    .await {
         Ok(items) => {
             let nodes: Vec<Value> = items
                 .iter()
@@ -141,7 +163,7 @@ pub(super) async fn summary_graph(
             )
         }
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "summary graph failed", "detail": err})),
         ),
     }
@@ -160,7 +182,13 @@ pub(super) async fn delete_summary(
         return err;
     }
 
-    match summaries::delete_summary(&state.pool, session_id.as_str(), summary_id.as_str()).await {
+    match memory_engine_client::delete_summary(
+        &state.config,
+        &state.pool,
+        session_id.as_str(),
+        summary_id.as_str(),
+    )
+    .await {
         Ok(reset_messages) if reset_messages > 0 => (
             StatusCode::OK,
             Json(json!({"success": true, "reset_messages": reset_messages})),
@@ -170,7 +198,7 @@ pub(super) async fn delete_summary(
             Json(json!({"error": "summary not found"})),
         ),
         Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(json!({"error": "delete summary failed", "detail": err})),
         ),
     }

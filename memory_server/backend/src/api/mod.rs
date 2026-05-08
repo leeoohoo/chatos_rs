@@ -19,7 +19,6 @@ mod contacts_crud_api;
 mod context_api;
 mod jobs_api;
 mod messages_api;
-mod messages_summaries_api;
 mod projects_api;
 mod projects_base_api;
 mod projects_links_api;
@@ -68,17 +67,17 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/memory/v1/sessions/:session_id/messages",
-            post(messages_summaries_api::create_message)
-                .get(messages_summaries_api::list_messages)
-                .delete(messages_summaries_api::clear_session_messages),
+            post(messages_api::create_message)
+                .get(messages_api::list_messages)
+                .delete(messages_api::clear_session_messages),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/messages/:message_id/sync",
-            put(messages_summaries_api::sync_message),
+            put(messages_api::sync_message),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/messages/batch",
-            post(messages_summaries_api::batch_create_messages),
+            post(messages_api::batch_create_messages),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/:turn_id/sync",
@@ -178,23 +177,23 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/memory/v1/messages/:message_id",
-            get(messages_summaries_api::get_message).delete(messages_summaries_api::delete_message),
+            get(messages_api::get_message).delete(messages_api::delete_message),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/summaries",
-            get(messages_summaries_api::list_summaries),
+            get(summaries_api::list_summaries),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/summaries/levels",
-            get(messages_summaries_api::summary_levels),
+            get(summaries_api::summary_levels),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/summaries/graph",
-            get(messages_summaries_api::summary_graph),
+            get(summaries_api::summary_graph),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/summaries/:summary_id",
-            delete(messages_summaries_api::delete_summary),
+            delete(summaries_api::delete_summary),
         )
         .route(
             "/api/memory/v1/configs/models",

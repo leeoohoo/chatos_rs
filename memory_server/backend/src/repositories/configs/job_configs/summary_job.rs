@@ -2,10 +2,11 @@ use mongodb::bson::doc;
 
 use crate::db::Db;
 use crate::models::{
-    SummaryJobConfig, UpsertSummaryJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+    SummaryJobConfig, UpsertSummaryJobConfigRequest,
+    DEFAULT_SUMMARY_PROMPT_TEMPLATE,
 };
 
-use super::super::super::{auth::ADMIN_USER_ID, now_rfc3339};
+use super::super::super::now_rfc3339;
 use super::shared::summary_job_collection;
 
 fn default_summary_job_config(user_id: &str) -> SummaryJobConfig {
@@ -48,8 +49,8 @@ pub async fn get_effective_summary_job_config(
         return Ok(cfg);
     }
 
-    if user_id != ADMIN_USER_ID {
-        if let Some(admin_cfg) = fetch_summary_job_config(db, ADMIN_USER_ID).await? {
+    if user_id != crate::auth::ADMIN_USER_ID {
+        if let Some(admin_cfg) = fetch_summary_job_config(db, crate::auth::ADMIN_USER_ID).await? {
             return Ok(SummaryJobConfig {
                 user_id: user_id.to_string(),
                 enabled: admin_cfg.enabled,

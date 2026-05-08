@@ -1,22 +1,9 @@
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::FindOptions;
-use uuid::Uuid;
 
 use crate::db::Db;
 use crate::models::JobRun;
-use crate::services::realtime::publish_job_run_event;
-
-use super::now_rfc3339;
-
-fn running_job_timeout_seconds() -> i64 {
-    std::env::var("MEMORY_SERVER_RUNNING_JOB_TIMEOUT_SECONDS")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(600)
-        .max(60)
-}
 
 fn collection(db: &Db) -> mongodb::Collection<JobRun> {
     db.collection::<JobRun>("job_runs")
@@ -29,118 +16,6 @@ fn doc_i64(doc: &Document, key: &str) -> i64 {
         Some(Bson::Double(v)) => *v as i64,
         _ => 0,
     }
-}
-
-fn is_duplicate_key_error(err: &mongodb::error::Error) -> bool {
-    let text = err.to_string().to_ascii_lowercase();
-    text.contains("e11000") || text.contains("duplicate key")
-}
-
-pub fn is_already_running_error(err: &str) -> bool {
-    err.to_ascii_lowercase().contains("job already running")
-}
-
-pub async fn create_job_run(
-    db: &Db,
-    job_type: &str,
-    session_id: Option<&str>,
-    trigger_type: Option<&str>,
-    input_count: i64,
-) -> Result<JobRun, String> {
-    let job = JobRun {
-        id: Uuid::new_v4().to_string(),
-        job_type: job_type.to_string(),
-        session_id: session_id.map(|v| v.to_string()),
-        status: "running".to_string(),
-        trigger_type: trigger_type.map(|v| v.to_string()),
-        input_count,
-        output_count: 0,
-        pending_before_count: None,
-        selected_count: None,
-        marked_count: None,
-        pending_after_count: None,
-        error_message: None,
-        started_at: now_rfc3339(),
-        finished_at: None,
-    };
-
-    if let Err(err) = collection(db).insert_one(job.clone()).await {
-        if session_id.is_some() && is_duplicate_key_error(&err) {
-            return Err(format!(
-                "job already running: job_type={} session_id={}",
-                job_type,
-                session_id.unwrap_or("")
-            ));
-        }
-        return Err(err.to_string());
-    }
-
-    publish_job_run_event("upsert", &job);
-    Ok(job)
-}
-
-pub async fn finish_job_run(
-    db: &Db,
-    job_run_id: &str,
-    status: &str,
-    output_count: i64,
-    error_message: Option<&str>,
-) -> Result<(), String> {
-    collection(db)
-        .update_one(
-            doc! {"id": job_run_id},
-            doc! {
-                "$set": {
-                    "status": status,
-                    "output_count": output_count,
-                    "error_message": error_message,
-                    "finished_at": now_rfc3339(),
-                }
-            },
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if let Some(job_run) = collection(db)
-        .find_one(doc! {"id": job_run_id})
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        publish_job_run_event("upsert", &job_run);
-    }
-    Ok(())
-}
-
-pub async fn update_job_run_diagnostics(
-    db: &Db,
-    job_run_id: &str,
-    pending_before_count: Option<i64>,
-    selected_count: Option<i64>,
-    marked_count: Option<i64>,
-    pending_after_count: Option<i64>,
-) -> Result<(), String> {
-    collection(db)
-        .update_one(
-            doc! {"id": job_run_id},
-            doc! {
-                "$set": {
-                    "pending_before_count": pending_before_count,
-                    "selected_count": selected_count,
-                    "marked_count": marked_count,
-                    "pending_after_count": pending_after_count,
-                }
-            },
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    if let Some(job_run) = collection(db)
-        .find_one(doc! {"id": job_run_id})
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        publish_job_run_event("upsert", &job_run);
-    }
-    Ok(())
 }
 
 pub async fn list_job_runs(
@@ -173,67 +48,6 @@ pub async fn list_job_runs(
         .map_err(|e| e.to_string())?;
 
     cursor.try_collect().await.map_err(|e| e.to_string())
-}
-
-pub async fn count_job_runs_for_sessions(
-    db: &Db,
-    job_type: &str,
-    session_ids: &[String],
-    status: Option<&str>,
-) -> Result<i64, String> {
-    if session_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let mut filter = doc! {
-        "job_type": job_type,
-        "session_id": {"$in": session_ids.to_vec()},
-    };
-    if let Some(value) = status {
-        filter.insert("status", value);
-    }
-
-    collection(db)
-        .count_documents(filter)
-        .await
-        .map(|count| count as i64)
-        .map_err(|e| e.to_string())
-}
-
-pub async fn cleanup_stale_running_job_runs(
-    db: &Db,
-    job_type: &str,
-    session_ids: &[String],
-) -> Result<u64, String> {
-    if session_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let timeout_seconds = running_job_timeout_seconds();
-    let stale_before = (chrono::Utc::now() - chrono::Duration::seconds(timeout_seconds)).to_rfc3339();
-    let result = collection(db)
-        .update_many(
-            doc! {
-                "job_type": job_type,
-                "session_id": {"$in": session_ids.to_vec()},
-                "status": "running",
-                "started_at": {"$lte": stale_before},
-            },
-            doc! {
-                "$set": {
-                    "status": "failed",
-                    "error_message": format!(
-                        "timed_out: exceeded {}s without completion",
-                        timeout_seconds
-                    ),
-                    "finished_at": now_rfc3339(),
-                }
-            },
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(result.modified_count)
 }
 
 pub async fn job_stats(db: &Db) -> Result<serde_json::Value, String> {

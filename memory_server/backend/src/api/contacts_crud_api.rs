@@ -8,6 +8,7 @@ use crate::models::{CreateContactRequest, CreateMemoryAgentRequest, MemoryAgent}
 use crate::repositories::{
     agents as agents_repo, auth as auth_repo, contacts as contacts_repo, sessions,
 };
+use crate::services::memory_engine_client;
 
 use super::{
     ensure_agent_read_access, ensure_contact_manage_access, require_auth, resolve_scope_user_id,
@@ -344,6 +345,36 @@ pub(super) async fn delete_contact(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "archive contact sessions failed", "detail": err})),
         );
+    }
+
+    match sessions::list_sessions_by_contact_all(
+        &state.pool,
+        contact.user_id.as_str(),
+        contact.id.as_str(),
+        None,
+        Some("archived"),
+        500,
+        0,
+    )
+    .await
+    {
+        Ok(items) => {
+            for session in items {
+                if let Err(err) = memory_engine_client::sync_session(&state.config, &session).await
+                {
+                    tracing::warn!(
+                        "[MEMORY-ENGINE-SYNC] archive contact session sync failed: session_id={} error={}",
+                        session.id, err
+                    );
+                }
+            }
+        }
+        Err(err) => {
+            tracing::warn!(
+                "[MEMORY-ENGINE-SYNC] list archived contact sessions failed: contact_id={} error={}",
+                contact.id, err
+            );
+        }
     }
 
     match contacts_repo::delete_contact_by_id(&state.pool, contact_id.as_str()).await {

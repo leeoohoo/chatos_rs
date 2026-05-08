@@ -28,7 +28,15 @@ pub(super) async fn get_summary_job_config(
     };
     let user_id = resolve_scope_user_id(&auth, q.user_id);
     match configs::get_summary_job_config(&state.pool, user_id.as_str()).await {
-        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Ok(cfg) => (
+            StatusCode::OK,
+            Json(json!({
+                "config": cfg,
+                "config_role": "memory_engine_summary",
+                "backend": "memory_engine",
+                "memory_engine_enabled": true,
+            })),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "get summary job config failed", "detail": err})),
@@ -48,7 +56,15 @@ pub(super) async fn put_summary_job_config(
     req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
 
     match configs::upsert_summary_job_config(&state.pool, req).await {
-        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Ok(cfg) => (
+            StatusCode::OK,
+            Json(json!({
+                "config": cfg,
+                "config_role": "memory_engine_summary",
+                "backend": "memory_engine",
+                "memory_engine_enabled": true,
+            })),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "save summary job config failed", "detail": err})),
