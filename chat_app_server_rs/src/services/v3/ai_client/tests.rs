@@ -182,10 +182,6 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
                 }]
             }),
         ),
-        MockProviderStep::text(
-            StatusCode::BAD_REQUEST,
-            "No tool call found for function_call_output item",
-        ),
         MockProviderStep::json(
             StatusCode::OK,
             json!({
@@ -219,7 +215,7 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
     );
 
     let requests = captured.lock().await.clone();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 2);
 
     assert_eq!(
         requests[0]
@@ -227,27 +223,14 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
             .and_then(|value| value.as_str()),
         Some("prev_resp_seed")
     );
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_tool_1")
-    );
+    assert!(requests[1].get("previous_response_id").is_none());
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            items.iter().all(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-            })
-        })
-        .unwrap_or(false));
-
-    assert!(requests[2].get("previous_response_id").is_none());
-    assert!(requests[2]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
+            let has_user = items.iter().any(|item| {
+                item.get("role").and_then(|value| value.as_str()) == Some("user")
+            });
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str()) == Some("call_tool_1")
@@ -256,7 +239,7 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
                     && item.get("call_id").and_then(|value| value.as_str()) == Some("call_tool_1")
             });
-            has_call && has_output
+            has_user && has_call && has_output
         })
         .unwrap_or(false));
 }
@@ -368,10 +351,6 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
     ];
     let steps = vec![
         MockProviderStep::sse(first_stream_events),
-        MockProviderStep::text(
-            StatusCode::BAD_REQUEST,
-            "No tool call found for function_call_output item",
-        ),
         MockProviderStep::sse(third_stream_events),
     ];
     let (base_url, captured, server) = start_mock_provider(steps).await;
@@ -400,19 +379,13 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
     );
 
     let requests = captured.lock().await.clone();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 2);
 
     assert_eq!(
         requests[0]
             .get("previous_response_id")
             .and_then(|value| value.as_str()),
         Some("prev_resp_stream_seed")
-    );
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_stream_tool_1")
     );
     assert!(requests[0]
         .get("stream")
@@ -422,16 +395,14 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
         .get("stream")
         .and_then(|value| value.as_bool())
         .unwrap_or(false));
-    assert!(requests[2]
-        .get("stream")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false));
-
-    assert!(requests[2].get("previous_response_id").is_none());
-    assert!(requests[2]
+    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
+            let has_user = items.iter().any(|item| {
+                item.get("role").and_then(|value| value.as_str()) == Some("user")
+            });
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str())
@@ -442,7 +413,7 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
                     && item.get("call_id").and_then(|value| value.as_str())
                         == Some("call_stream_tool_1")
             });
-            has_call && has_output
+            has_user && has_call && has_output
         })
         .unwrap_or(false));
 }
@@ -462,16 +433,6 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
             }]
         }
     })];
-    let second_stream_events = vec![json!({
-        "type": "response.failed",
-        "response": {
-            "id": "resp_stream_failed_mid",
-            "status": "failed",
-            "error": {
-                "message": "No tool call found for function_call_output item"
-            }
-        }
-    })];
     let third_stream_events = vec![json!({
         "type": "response.completed",
         "response": {
@@ -482,7 +443,6 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
     })];
     let steps = vec![
         MockProviderStep::sse(first_stream_events),
-        MockProviderStep::sse(second_stream_events),
         MockProviderStep::sse(third_stream_events),
     ];
     let (base_url, captured, server) = start_mock_provider(steps).await;
@@ -511,7 +471,7 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
     );
 
     let requests = captured.lock().await.clone();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 2);
 
     assert_eq!(
         requests[0]
@@ -519,27 +479,14 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
             .and_then(|value| value.as_str()),
         Some("prev_resp_stream_failed")
     );
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_stream_failed_seed")
-    );
-    assert!(requests[2].get("previous_response_id").is_none());
-
+    assert!(requests[1].get("previous_response_id").is_none());
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            items.iter().all(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-            })
-        })
-        .unwrap_or(false));
-    assert!(requests[2]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
+            let has_user = items.iter().any(|item| {
+                item.get("role").and_then(|value| value.as_str()) == Some("user")
+            });
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str())
@@ -550,7 +497,7 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
                     && item.get("call_id").and_then(|value| value.as_str())
                         == Some("call_stream_failed_1")
             });
-            has_call && has_output
+            has_user && has_call && has_output
         })
         .unwrap_or(false));
 }
@@ -570,20 +517,6 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
             }]
         }
     })];
-    let second_stream_events = vec![
-        json!({
-            "type": "error",
-            "error": {
-                "message": "No tool call found for function_call_output item"
-            }
-        }),
-        json!({
-            "type": "response.failed",
-            "response": {
-                "id": "resp_stream_mix_mid"
-            }
-        }),
-    ];
     let third_stream_events = vec![json!({
         "type": "response.completed",
         "response": {
@@ -594,7 +527,6 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
     })];
     let steps = vec![
         MockProviderStep::sse(first_stream_events),
-        MockProviderStep::sse(second_stream_events),
         MockProviderStep::sse(third_stream_events),
     ];
     let (base_url, captured, server) = start_mock_provider(steps).await;
@@ -623,7 +555,7 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
     );
 
     let requests = captured.lock().await.clone();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 2);
 
     assert_eq!(
         requests[0]
@@ -631,17 +563,14 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
             .and_then(|value| value.as_str()),
         Some("prev_resp_stream_mix")
     );
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_stream_mix_seed")
-    );
-    assert!(requests[2].get("previous_response_id").is_none());
-    assert!(requests[2]
+    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
+            let has_user = items.iter().any(|item| {
+                item.get("role").and_then(|value| value.as_str()) == Some("user")
+            });
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str())
@@ -652,7 +581,7 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
                     && item.get("call_id").and_then(|value| value.as_str())
                         == Some("call_stream_mix_1")
             });
-            has_call && has_output
+            has_user && has_call && has_output
         })
         .unwrap_or(false));
 }
@@ -672,20 +601,6 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
             }]
         }
     })];
-    let second_stream_events = vec![
-        json!({
-            "type": "error",
-            "error": {
-                "message": "No tool call found for function_call_output item"
-            }
-        }),
-        json!({
-            "type": "response.failed",
-            "response": {
-                "id": "resp_stream_round_fail"
-            }
-        }),
-    ];
     let third_stream_events = vec![json!({
         "type": "response.completed",
         "response": {
@@ -709,7 +624,6 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
     })];
     let steps = vec![
         MockProviderStep::sse(first_stream_events),
-        MockProviderStep::sse(second_stream_events),
         MockProviderStep::sse(third_stream_events),
         MockProviderStep::sse(fourth_stream_events),
     ];
@@ -739,21 +653,17 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
     );
 
     let requests = captured.lock().await.clone();
-    assert_eq!(requests.len(), 4);
-
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_stream_round_1")
-    );
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1].get("previous_response_id").is_none());
     assert!(requests[2].get("previous_response_id").is_none());
-    assert!(requests[3].get("previous_response_id").is_none());
 
-    assert!(requests[2]
+    assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
+            let has_user = items.iter().any(|item| {
+                item.get("role").and_then(|value| value.as_str()) == Some("user")
+            });
             let call_1 = items
                 .iter()
                 .filter(|item| {
@@ -771,14 +681,17 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
                             == Some("call_stream_round_1")
                 })
                 .count();
-            call_1 == 1 && output_1 == 1
+            has_user && call_1 == 1 && output_1 == 1
         })
         .unwrap_or(false));
 
-    assert!(requests[3]
+    assert!(requests[2]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
+            let has_user = items.iter().any(|item| {
+                item.get("role").and_then(|value| value.as_str()) == Some("user")
+            });
             let call_1 = items
                 .iter()
                 .filter(|item| {
@@ -813,7 +726,7 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
                             == Some("call_stream_round_2")
                 })
                 .count();
-            call_1 == 1 && output_1 == 1 && call_2 == 1 && output_2 == 1
+            has_user && call_1 == 1 && output_1 == 1 && call_2 == 1 && output_2 == 1
         })
         .unwrap_or(false));
 }

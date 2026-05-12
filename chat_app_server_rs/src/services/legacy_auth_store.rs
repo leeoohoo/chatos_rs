@@ -59,12 +59,6 @@ fn legacy_mongodb_uri() -> String {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::env::var("MEMORY_SERVER_MONGODB_URI")
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
         .unwrap_or_else(|| DEFAULT_LEGACY_AUTH_MONGODB_URI.to_string())
 }
 
@@ -73,11 +67,5 @@ fn legacy_mongodb_database() -> String {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::env::var("MEMORY_SERVER_MONGODB_DATABASE")
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
         .unwrap_or_else(|| DEFAULT_LEGACY_AUTH_MONGODB_DATABASE.to_string())
 }

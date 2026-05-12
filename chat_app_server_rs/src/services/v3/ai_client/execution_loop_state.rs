@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde_json::Value;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
@@ -125,38 +127,50 @@ impl AiClient {
 
         let assistant_item =
             build_assistant_response_item(ai_response.content.as_str(), force_text_content);
-        if let Some(items) = stateless_context_items.as_mut() {
-            append_tool_turn_items(
-                items,
-                assistant_item.as_ref(),
-                include_tool_items,
-                tool_call_items,
-                tool_outputs,
-            );
-        }
-
-        let mut next_input = Value::Array(tool_outputs.to_vec());
-        let mut next_prev_id = ai_response.response_id.clone();
-        let mut next_use_prev_id = should_use_prev_id_for_next_turn(
+        let response_id = ai_response.response_id.clone();
+        let would_use_prev_id = should_use_prev_id_for_next_turn(
             prefer_stateless,
             *can_use_prev_id,
-            next_prev_id.is_some(),
+            response_id.is_some(),
         );
-        if use_prev_id && next_prev_id.is_none() {
+        if would_use_prev_id {
+            warn!(
+                "[AI_V3] tool execution completed; disable previous_response_id for next turn to force fresh memory context rebuild"
+            );
+        } else if use_prev_id && response_id.is_none() {
             warn!("[AI_V3] missing response_id for tool call; fallback to stateless input");
+        }
+        if would_use_prev_id || (use_prev_id && response_id.is_none()) {
             if let Some(sid) = session_id {
                 self.prev_response_id_disabled_sessions.insert(sid.clone());
             }
             *can_use_prev_id = false;
-            next_use_prev_id = false;
         }
 
-        let needs_fresh_stateless_context = stateless_context_items.is_none();
-        if !next_use_prev_id {
-            let mut stateless = if let Some(items) = stateless_context_items.clone() {
+        let current_items = build_current_input_items(raw_input, force_text_content);
+        let stateless = if session_id.is_some() {
+            let mut rebuilt = self
+                .build_stateless_items(
+                    session_id.cloned(),
+                    adaptive_history_limit,
+                    stable_prefix_mode,
+                    force_text_content,
+                    prefixed_input_items,
+                    &current_items,
+                    include_tool_items,
+                )
+                .await;
+            merge_missing_tool_turn_items(
+                &mut rebuilt,
+                include_tool_items,
+                tool_call_items,
+                tool_outputs,
+            );
+            rebuilt
+        } else {
+            let mut local = if let Some(items) = stateless_context_items.clone() {
                 items
             } else {
-                let current_items = build_current_input_items(raw_input, force_text_content);
                 self.build_stateless_items(
                     session_id.cloned(),
                     adaptive_history_limit,
@@ -168,36 +182,78 @@ impl AiClient {
                 )
                 .await
             };
+            append_tool_turn_items(
+                &mut local,
+                assistant_item.as_ref(),
+                include_tool_items,
+                tool_call_items,
+                tool_outputs,
+            );
+            local
+        };
+        *stateless_context_items = Some(stateless.clone());
 
-            if needs_fresh_stateless_context {
-                append_tool_turn_items(
-                    &mut stateless,
-                    assistant_item.as_ref(),
-                    include_tool_items,
-                    tool_call_items,
-                    tool_outputs,
-                );
-                *stateless_context_items = Some(stateless.clone());
-            }
-
-            next_input = Value::Array(stateless);
-            next_prev_id = None;
-        }
-
-        (next_input, next_prev_id, next_use_prev_id)
+        (Value::Array(stateless), None, false)
     }
 }
 
-fn build_assistant_response_item(content: &str, force_text_content: bool) -> Option<Value> {
-    if content.is_empty() {
-        return None;
+fn merge_missing_tool_turn_items(
+    items: &mut Vec<Value>,
+    include_tool_items: bool,
+    tool_call_items: &[Value],
+    tool_outputs: &[Value],
+) {
+    if !include_tool_items {
+        return;
     }
 
-    Some(to_message_item(
-        "assistant",
-        &Value::String(content.to_string()),
-        force_text_content,
-    ))
+    let mut existing_call_ids: HashSet<String> = items
+        .iter()
+        .filter(|item| item.get("type").and_then(|value| value.as_str()) == Some("function_call"))
+        .filter_map(|item| {
+            item.get("call_id")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string())
+        })
+        .collect();
+    let mut pending_call_ids = HashSet::new();
+
+    for item in tool_call_items {
+        let Some(call_id) = item.get("call_id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if call_id.is_empty() {
+            continue;
+        }
+        pending_call_ids.insert(call_id.to_string());
+        if existing_call_ids.insert(call_id.to_string()) {
+            items.push(item.clone());
+        }
+    }
+
+    let mut existing_output_ids: HashSet<String> = items
+        .iter()
+        .filter(|item| {
+            item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+        })
+        .filter_map(|item| {
+            item.get("call_id")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string())
+        })
+        .collect();
+
+    for item in tool_outputs {
+        let Some(call_id) = item.get("call_id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if call_id.is_empty() || !pending_call_ids.contains(call_id) {
+            continue;
+        }
+        if existing_output_ids.insert(call_id.to_string()) {
+            items.push(item.clone());
+        }
+    }
 }
 
 fn append_tool_turn_items(
@@ -214,4 +270,16 @@ fn append_tool_turn_items(
         items.extend(tool_call_items.iter().cloned());
         items.extend(tool_outputs.iter().cloned());
     }
+}
+
+fn build_assistant_response_item(content: &str, force_text_content: bool) -> Option<Value> {
+    if content.is_empty() {
+        return None;
+    }
+
+    Some(to_message_item(
+        "assistant",
+        &Value::String(content.to_string()),
+        force_text_content,
+    ))
 }

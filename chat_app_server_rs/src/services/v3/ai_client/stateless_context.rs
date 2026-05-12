@@ -181,14 +181,7 @@ impl AiClient {
             }
         }
 
-        if let Some(last) = items.last() {
-            if last.get("type").and_then(|v| v.as_str()) == Some("message")
-                && last.get("role").and_then(|v| v.as_str()) == Some("user")
-            {
-                items.pop();
-            }
-        }
-        items.extend_from_slice(current_input_items);
+        splice_current_input_items(&mut items, current_input_items);
         info!(
             "[AI_V3] stateless items built: stable_prefix_mode={}, memory_summary_used={}, summaries={}, history_messages={}, total_items={}",
             stable_prefix_mode,
@@ -198,5 +191,119 @@ impl AiClient {
             items.len()
         );
         items
+    }
+}
+
+fn splice_current_input_items(items: &mut Vec<Value>, current_input_items: &[Value]) {
+    if current_input_items.is_empty() {
+        return;
+    }
+
+    if let Some(index) = items.iter().rposition(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("message")
+            && item.get("role").and_then(|value| value.as_str()) == Some("user")
+    }) {
+        items.splice(index..=index, current_input_items.iter().cloned());
+        return;
+    }
+
+    items.extend_from_slice(current_input_items);
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::splice_current_input_items;
+
+    #[test]
+    fn splice_current_input_items_replaces_latest_user_in_place() {
+        let mut items = vec![
+            json!({
+                "type": "message",
+                "role": "system",
+                "content": [{"type": "input_text", "text": "[summary]"}]
+            }),
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "old user"}]
+            }),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "calling tool"}]
+            }),
+            json!({
+                "type": "function_call",
+                "call_id": "call_1"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_1"
+            }),
+        ];
+
+        splice_current_input_items(
+            &mut items,
+            &[json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "new user"}]
+            })],
+        );
+
+        assert_eq!(
+            items,
+            vec![
+                json!({
+                    "type": "message",
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "[summary]"}]
+                }),
+                json!({
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "new user"}]
+                }),
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "calling tool"}]
+                }),
+                json!({
+                    "type": "function_call",
+                    "call_id": "call_1"
+                }),
+                json!({
+                    "type": "function_call_output",
+                    "call_id": "call_1"
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn splice_current_input_items_appends_when_history_has_no_user() {
+        let mut items = vec![json!({
+            "type": "message",
+            "role": "system",
+            "content": [{"type": "input_text", "text": "[summary]"}]
+        })];
+
+        splice_current_input_items(
+            &mut items,
+            &[json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            })],
+        );
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[1].get("role").and_then(|value| value.as_str()),
+            Some("user")
+        );
     }
 }

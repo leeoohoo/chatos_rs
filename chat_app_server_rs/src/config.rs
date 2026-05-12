@@ -126,12 +126,6 @@ impl Config {
                     .map(|v| v.trim().to_string())
                     .filter(|v| !v.is_empty())
             })
-            .or_else(|| {
-                std::env::var("MEMORY_SERVER_AUTH_SECRET")
-                    .ok()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-            })
             .unwrap_or_else(|| "dev-only-change-me-please".to_string());
         let auth_access_token_ttl_seconds =
             read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);

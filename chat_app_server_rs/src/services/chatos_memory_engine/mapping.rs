@@ -89,7 +89,10 @@ pub(crate) fn build_thread_mapping(session: &Session) -> Result<ChatosThreadMapp
             "contact_id": contact_id,
             "agent_id": agent_id,
         },
-        "source_metadata": session.metadata.clone(),
+        // Persist only the original Chatos-side session metadata. If we write
+        // back the full engine thread metadata here, source_metadata will nest
+        // recursively on every session sync and eventually become unreadable.
+        "source_metadata": extract_source_metadata_for_engine(session.metadata.as_ref()),
     });
 
     Ok(ChatosThreadMapping {
@@ -100,6 +103,17 @@ pub(crate) fn build_thread_mapping(session: &Session) -> Result<ChatosThreadMapp
         labels,
         metadata,
     })
+}
+
+fn extract_source_metadata_for_engine(metadata: Option<&Value>) -> Value {
+    let Some(metadata) = metadata else {
+        return Value::Null;
+
+    if let Some(source_metadata) = metadata.get("source_metadata") {
+        return source_metadata.clone();
+    }
+
+    metadata.clone()
 }
 
 pub(crate) fn build_review_repair_scope(
