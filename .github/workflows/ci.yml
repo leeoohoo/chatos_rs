@@ -192,33 +192,6 @@ jobs:
       - name: cargo test
         run: cargo test -q
 
-  memory-server-backend:
-    name: memory_server/backend (Rust)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: memory_server/backend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust deps
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: memory_server/backend -> target
-
-      - name: cargo check
-        run: cargo check
-
-      - name: non-test unwrap/expect audit
-        run: python ../../scripts/check-non-test-unwrap-expect.py
-
-      - name: cargo test
-        run: cargo test -q
-
   chat-app-frontend:
     name: chat_app (TypeScript)
     runs-on: ubuntu-latest
@@ -253,32 +226,6 @@ jobs:
 
       - name: hotspot line budgets
         run: bash ../scripts/check-hotspot-line-budgets.sh
-
-  memory-server-frontend:
-    name: memory_server/frontend (TypeScript)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: memory_server/frontend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: memory_server/frontend/package-lock.json
-
-      - name: npm ci
-        run: npm ci
-
-      - name: type-check
-        run: npm run type-check
-
-      - name: build
-        run: npm run build
 
   openai-codex-gateway:
     name: openai-codex-gateway (Python)

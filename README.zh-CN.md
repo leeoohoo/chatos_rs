@@ -12,7 +12,7 @@
 - 外部系统接入协议不统一
 
 `Chatos RS` 的设计就是为了解决这些问题：  
-通过“主对话服务 + 记忆服务 + 网关层”实现持续上下文、成本控制和可集成性。
+通过“主对话服务 + 外部记忆平台接入 + 网关层”实现持续上下文、成本控制和可集成性。
 
 ## 核心优势
 1. 长期记忆能力
@@ -25,7 +25,7 @@
 - 支持工具调用与 MCP 场景，适合接入工程工作流与外部能力。
 
 4. 架构可扩展
-- 前端、主后端、记忆服务、网关解耦，支持独立部署与水平扩展。
+- 前端、主后端、外部记忆平台、网关解耦，支持独立部署与水平扩展。
 
 5. 生态兼容性强
 - 提供 OpenAI 兼容接口，已有客户端和 SDK 可低成本接入。
@@ -33,7 +33,6 @@
 ## 架构分层
 - `chat_app/`：主前端交互层
 - `chat_app_server_rs/`：主后端编排层（会话、消息、工具、流式响应）
-- `memory_server/`：记忆域（总结、再总结、记忆检索、管理台）
 - `openai-codex-gateway/`：OpenAI 兼容网关层
 
 ## 本地一键启动
@@ -53,8 +52,6 @@
 默认日志路径：
 - `/tmp/chatos_rs_dev/backend.log`
 - `/tmp/chatos_rs_dev/frontend.log`
-- `/tmp/chatos_rs_dev/memory_backend.log`
-- `/tmp/chatos_rs_dev/memory_frontend.log`
 
 ## 开发方案归档
 方案/评估/契约文档统一收纳在：
@@ -65,8 +62,6 @@
 - [chat_app 中文](./chat_app/README.zh-CN.md)
 - [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [memory_server English](./memory_server/README.en.md)
-- [memory_server 中文](./memory_server/README.zh-CN.md)
 - [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
 - [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
 

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
 use crate::core::tool_registry::ToolRegistry;
-use crate::services::memory_server_client;
+use crate::services::{chatos_agents, chatos_skills};
 
 #[derive(Debug, Clone)]
 pub struct MemoryPluginReaderOptions {
@@ -88,10 +88,9 @@ impl MemoryPluginReaderService {
                 let agent_id = bound_agent_id.clone();
 
                 let payload = block_on_result(async move {
-                    let runtime_context =
-                        memory_server_client::get_memory_agent_runtime_context(agent_id.as_str())
-                            .await?
-                            .ok_or_else(|| format!("agent runtime context not found: {}", agent_id))?;
+                    let runtime_context = chatos_agents::get_agent_runtime_context(agent_id.as_str())
+                        .await?
+                        .ok_or_else(|| format!("agent runtime context not found: {}", agent_id))?;
 
                     let mut resolved_source: Option<String> = None;
                     let mut resolved_plugin_ref: Option<String> = None;
@@ -114,8 +113,11 @@ impl MemoryPluginReaderService {
                             requested_plugin_ref
                         )
                     })?;
-                    let plugin = memory_server_client::get_memory_skill_plugin(resolved_source.as_str())
-                        .await?
+                    let plugin = chatos_skills::get_skill_plugin(
+                        runtime_context.user_id.as_str(),
+                        resolved_source.as_str(),
+                    )
+                    .await?
                         .ok_or_else(|| format!("plugin not found: {}", resolved_source))?;
                     let runtime_entry = runtime_context
                         .runtime_plugins

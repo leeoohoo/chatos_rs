@@ -4,6 +4,13 @@ use sqlx::{Row, SqlitePool};
 
 pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     let statements = vec![
+        r#"CREATE TABLE IF NOT EXISTS auth_users (
+            user_id TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -15,6 +22,94 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             archived_at TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS agents (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            category TEXT,
+            role_definition TEXT NOT NULL,
+            plugin_sources TEXT NOT NULL DEFAULT '[]',
+            skills TEXT NOT NULL DEFAULT '[]',
+            skill_ids TEXT NOT NULL DEFAULT '[]',
+            default_skill_ids TEXT NOT NULL DEFAULT '[]',
+            mcp_policy TEXT,
+            project_policy TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS memory_skill_plugins (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            name TEXT NOT NULL,
+            category TEXT,
+            description TEXT,
+            version TEXT,
+            repository TEXT,
+            branch TEXT,
+            cache_path TEXT,
+            content TEXT,
+            commands TEXT NOT NULL DEFAULT '[]',
+            command_count INTEGER NOT NULL DEFAULT 0,
+            installed INTEGER NOT NULL DEFAULT 0,
+            discoverable_skills INTEGER NOT NULL DEFAULT 0,
+            installed_skill_count INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, source)
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS memory_skills (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            plugin_source TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            content TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            version TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, plugin_source, source_path)
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS chatos_contacts (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            agent_name_snapshot TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, agent_id)
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS chatos_memory_projects (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            root_path TEXT,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            is_virtual INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            archived_at TEXT,
+            UNIQUE(user_id, project_id)
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS chatos_project_agent_links (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            contact_id TEXT,
+            latest_session_id TEXT,
+            first_bound_at TEXT NOT NULL,
+            last_bound_at TEXT NOT NULL,
+            last_message_at TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, project_id, agent_id)
         )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_configs (
             id TEXT PRIMARY KEY,
@@ -93,22 +188,6 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id) ON DELETE CASCADE
-        )"#,
-        r#"CREATE TABLE IF NOT EXISTS ai_model_configs (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            provider TEXT DEFAULT 'openai',
-            model TEXT NOT NULL,
-            thinking_level TEXT,
-            api_key TEXT,
-            base_url TEXT,
-            user_id TEXT,
-            enabled INTEGER DEFAULT 1,
-            supports_images INTEGER DEFAULT 0,
-            supports_reasoning INTEGER DEFAULT 0,
-            supports_responses INTEGER DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
         r#"CREATE TABLE IF NOT EXISTS system_contexts (
             id TEXT PRIMARY KEY,
@@ -222,6 +301,22 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             settings TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS ai_model_configs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            name TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            thinking_level TEXT,
+            api_key TEXT,
+            base_url TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            supports_images INTEGER NOT NULL DEFAULT 0,
+            supports_reasoning INTEGER NOT NULL DEFAULT 0,
+            supports_responses INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
     ];
 
     for sql in statements {
@@ -231,32 +326,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             .map_err(|e| format!("create table failed: {e}"))?;
     }
 
-    ensure_ai_model_config_columns_sqlite(pool).await?;
-
-    ensure_column(
-        pool,
-        "ai_model_configs",
-        "supports_images",
-        "INTEGER DEFAULT 0",
-    )
-    .await
-    .ok();
-    ensure_column(
-        pool,
-        "ai_model_configs",
-        "supports_reasoning",
-        "INTEGER DEFAULT 0",
-    )
-    .await
-    .ok();
-    ensure_column(
-        pool,
-        "ai_model_configs",
-        "supports_responses",
-        "INTEGER DEFAULT 0",
-    )
-    .await
-    .ok();
+    ensure_legacy_ai_model_config_columns_sqlite(pool).await.ok();
     ensure_column(pool, "sessions", "status", "TEXT NOT NULL DEFAULT 'active'")
         .await
         .ok();
@@ -369,6 +439,8 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_status_created_at ON sessions(user_id, status, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_skill_plugins_user_updated_at ON memory_skill_plugins(user_id, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_memory_skills_user_plugin_updated_at ON memory_skills(user_id, plugin_source, updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_server_name ON mcp_change_logs(server_name)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_project_id ON mcp_change_logs(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_conversation_id ON mcp_change_logs(conversation_id)",
@@ -384,7 +456,6 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         "CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_configs_user_id ON mcp_configs(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_configs_enabled ON mcp_configs(enabled)",
-        "CREATE INDEX IF NOT EXISTS idx_ai_model_configs_user_id ON ai_model_configs(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_system_contexts_user_id ON system_contexts(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
@@ -410,7 +481,18 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     Ok(())
 }
 
-async fn ensure_ai_model_config_columns_sqlite(pool: &SqlitePool) -> Result<(), String> {
+async fn ensure_legacy_ai_model_config_columns_sqlite(pool: &SqlitePool) -> Result<(), String> {
+    let table_exists = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_model_configs' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("read ai_model_configs existence failed: {e}"))?
+    .is_some();
+    if !table_exists {
+        return Ok(());
+    }
+
     let rows = sqlx::query("PRAGMA table_info(ai_model_configs)")
         .fetch_all(pool)
         .await
@@ -428,6 +510,29 @@ async fn ensure_ai_model_config_columns_sqlite(pool: &SqlitePool) -> Result<(), 
             .await
             .map_err(|e| format!("add thinking_level column failed: {e}"))?;
     }
+    if !cols.contains("supports_images") {
+        sqlx::query("ALTER TABLE ai_model_configs ADD COLUMN supports_images INTEGER DEFAULT 0")
+            .execute(pool)
+            .await
+            .map_err(|e| format!("add supports_images column failed: {e}"))?;
+    }
+    if !cols.contains("supports_reasoning") {
+        sqlx::query("ALTER TABLE ai_model_configs ADD COLUMN supports_reasoning INTEGER DEFAULT 0")
+            .execute(pool)
+            .await
+            .map_err(|e| format!("add supports_reasoning column failed: {e}"))?;
+    }
+    if !cols.contains("supports_responses") {
+        sqlx::query("ALTER TABLE ai_model_configs ADD COLUMN supports_responses INTEGER DEFAULT 0")
+            .execute(pool)
+            .await
+            .map_err(|e| format!("add supports_responses column failed: {e}"))?;
+    }
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_model_configs_user_id ON ai_model_configs(user_id)",
+    )
+    .execute(pool)
+    .await;
     Ok(())
 }
 

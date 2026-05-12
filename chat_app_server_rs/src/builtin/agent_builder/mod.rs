@@ -9,9 +9,8 @@ use serde_json::{json, Value};
 use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
 use crate::core::tool_registry::ToolRegistry;
-use crate::services::memory_server_client::{
-    self, CreateMemoryAgentRequestDto, UpdateMemoryAgentRequestDto,
-};
+use crate::models::chatos_agent_types::{CreateChatosAgentRequest, UpdateChatosAgentRequest};
+use crate::services::chatos_agents;
 
 use self::profile::recommend_profile;
 use self::support::{
@@ -120,13 +119,17 @@ impl AgentBuilderService {
                 let user_id = optional_string(&args, "user_id")
                     .or_else(|| default_user_id.map(|value| value.to_string()));
                 let result = block_on_result(async move {
-                    let agents = memory_server_client::list_memory_agents(
-                        user_id.as_deref(),
-                        Some(true),
-                        Some(300),
-                        0,
-                    )
-                    .await?;
+                    let Some(scope_user_id) = user_id else {
+                        return Err("user_id is required".to_string());
+                    };
+                    let agents =
+                        chatos_agents::list_agents(
+                            scope_user_id.as_str(),
+                            Some(true),
+                            Some(300),
+                            0,
+                        )
+                            .await?;
                     let mut skill_map: HashMap<String, Value> = HashMap::new();
                     for agent in agents {
                         for skill in agent.skills {
@@ -214,7 +217,7 @@ impl AgentBuilderService {
                 let role_definition = required_string(&args, "role_definition")?;
                 let user_id = optional_string(&args, "user_id")
                     .or_else(|| default_user_id.map(|value| value.to_string()));
-                let payload = CreateMemoryAgentRequestDto {
+                let payload = CreateChatosAgentRequest {
                     user_id,
                     name,
                     description: optional_string(&args, "description"),
@@ -229,7 +232,7 @@ impl AgentBuilderService {
                     enabled: args.get("enabled").and_then(Value::as_bool),
                 };
 
-                let created = block_on_result(memory_server_client::create_memory_agent(&payload))?;
+                let created = block_on_result(chatos_agents::create_agent(&payload))?;
                 Ok(text_result(json!({
                     "created": true,
                     "agent": created,
@@ -275,7 +278,7 @@ impl AgentBuilderService {
             }),
             Arc::new(move |args, _default_user_id| {
                 let agent_id = required_string(&args, "agent_id")?;
-                let payload = UpdateMemoryAgentRequestDto {
+                let payload = UpdateChatosAgentRequest {
                     name: optional_string(&args, "name"),
                     description: optional_string(&args, "description"),
                     category: optional_string(&args, "category"),
@@ -289,7 +292,7 @@ impl AgentBuilderService {
                     enabled: args.get("enabled").and_then(Value::as_bool),
                 };
 
-                let updated = block_on_result(memory_server_client::update_memory_agent(
+                let updated = block_on_result(chatos_agents::update_agent(
                     agent_id.as_str(),
                     &payload,
                 ))?;

@@ -1,7 +1,7 @@
 use sqlx::SqlitePool;
 
 use crate::models::session::Session;
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 
 pub async fn ensure_sqlite_session_present(
     pool: &SqlitePool,
@@ -23,11 +23,11 @@ pub async fn ensure_sqlite_session_present(
         return Ok(());
     }
 
-    let session = memory_server_client::get_session_by_id(conversation_id)
+    let session = chatos_sessions::get_session_by_id(conversation_id)
         .await
         .map_err(|err| {
             format!(
-                "load conversation {} from memory server failed: {}",
+                "load conversation {} from chatos session store failed: {}",
                 conversation_id, err
             )
         })?

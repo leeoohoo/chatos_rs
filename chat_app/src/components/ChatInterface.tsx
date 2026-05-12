@@ -31,6 +31,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setShowMcpManager,
     showAiModelManager,
     setShowAiModelManager,
+    showAgentManager,
+    setShowAgentManager,
     showNotepadPanel,
     setShowNotepadPanel,
     showUserSettings,
@@ -77,6 +79,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onOpenApplications={() => setShowApplicationsPanel(true)}
         onOpenMcpManager={() => setShowMcpManager(true)}
         onOpenAiModelManager={() => setShowAiModelManager(true)}
+        onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
         onOpenUserSettings={() => setShowUserSettings(true)}
         onLogout={logout}
@@ -109,6 +112,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setShowNotepadPanel={setShowNotepadPanel}
         showAiModelManager={showAiModelManager}
         setShowAiModelManager={setShowAiModelManager}
+        showAgentManager={showAgentManager}
+        setShowAgentManager={setShowAgentManager}
         showUserSettings={showUserSettings}
         setShowUserSettings={setShowUserSettings}
         showApplicationsPanel={showApplicationsPanel}

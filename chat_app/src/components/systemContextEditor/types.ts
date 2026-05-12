@@ -47,8 +47,6 @@ export type AiModelConfigLike = {
   model_name?: string;
   model?: string;
   provider?: string;
-  api_key?: string;
-  base_url?: string;
 };
 
 export interface SystemContextDraftGenerateResponse {
@@ -88,16 +86,19 @@ export interface SystemContextEditorStoreLike {
     constraints?: string[];
     forbidden?: string[];
     candidate_count?: number;
-    ai_model_config?: Record<string, unknown>;
+    model_config_id?: string;
+    ai_model_config?: { temperature?: number };
   }) => Promise<SystemContextDraftGenerateResponse | null | undefined>;
   optimizeSystemContextDraft?: (payload: {
     content: string;
     goal?: string;
     keep_intent?: boolean;
-    ai_model_config?: Record<string, unknown>;
+    model_config_id?: string;
+    ai_model_config?: { temperature?: number };
   }) => Promise<SystemContextDraftOptimizeResponse | null | undefined>;
   evaluateSystemContextDraft?: (payload: {
     content: string;
+    model_config_id?: string;
   }) => Promise<SystemContextDraftEvaluateResponse | null | undefined>;
   aiModelConfigs?: AiModelConfigLike[];
   selectedModelId?: string | null;

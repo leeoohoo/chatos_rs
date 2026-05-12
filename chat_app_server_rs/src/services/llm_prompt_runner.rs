@@ -1,8 +1,7 @@
 use serde_json::{json, Value};
 
-use crate::config::Config;
-use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::messages::select_preferred_text;
+use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::services::v2::ai_request_handler as v2_handler;
 use crate::services::v2::message_manager as v2_message_manager;
 use crate::services::v3::ai_request_handler as v3_handler;
@@ -20,21 +19,22 @@ pub struct PromptRunnerRuntime {
 }
 
 impl PromptRunnerRuntime {
-    pub fn from_ai_model_config(model_cfg: &Value, default_model: &str) -> Result<Self, String> {
-        let cfg = Config::try_get()?;
-        let resolved = resolve_chat_model_config(
-            model_cfg,
+    pub async fn from_ai_model_config(
+        model_config_id: Option<String>,
+        user_id: Option<String>,
+        model_cfg: &Value,
+        default_model: &str,
+    ) -> Result<Self, String> {
+        let resolved = resolve_model_runtime_for_request(
+            model_config_id.as_deref(),
+            Some(model_cfg),
+            None,
+            user_id.as_deref(),
             default_model,
-            &cfg.openai_api_key,
-            &cfg.openai_base_url,
             Some(false),
             true,
-        );
-
-        let supports_responses = model_cfg
-            .get("supports_responses")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
+        )
+        .await?;
 
         Ok(Self {
             model: resolved.model,
@@ -43,7 +43,7 @@ impl PromptRunnerRuntime {
             temperature: resolved.temperature,
             api_key: resolved.api_key,
             base_url: resolved.base_url,
-            supports_responses,
+            supports_responses: resolved.supports_responses,
         })
     }
 }
@@ -76,6 +76,8 @@ pub async fn run_text_prompt_with_runtime(
 }
 
 pub async fn run_text_prompt_with_model_config(
+    model_config_id: Option<String>,
+    user_id: Option<String>,
     model_cfg: Option<Value>,
     system_prompt: &str,
     user_prompt: &str,
@@ -84,7 +86,14 @@ pub async fn run_text_prompt_with_model_config(
     purpose: &str,
 ) -> Result<String, String> {
     let model_cfg = model_cfg.unwrap_or_else(|| json!({}));
-    let runtime = PromptRunnerRuntime::from_ai_model_config(&model_cfg, default_model)?;
+    let runtime =
+        PromptRunnerRuntime::from_ai_model_config(
+            model_config_id,
+            user_id,
+            &model_cfg,
+            default_model,
+        )
+            .await?;
     run_text_prompt_with_runtime(&runtime, system_prompt, user_prompt, max_tokens, purpose).await
 }
 

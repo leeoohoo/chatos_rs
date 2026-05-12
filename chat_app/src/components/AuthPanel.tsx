@@ -22,7 +22,7 @@ export function AuthPanel() {
         <h1 className="text-xl font-semibold text-gray-900 mb-1">
           登录
         </h1>
-        <p className="text-sm text-gray-500 mb-5">使用 memory_server 账号继续</p>
+        <p className="text-sm text-gray-500 mb-5">使用平台账号继续</p>
 
         <form onSubmit={onSubmit} className="space-y-3">
           <div>

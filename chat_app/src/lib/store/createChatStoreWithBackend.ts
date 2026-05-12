@@ -233,7 +233,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createApplicationActions({ set, get, client, getUserIdParam }),
 
                     // AI模型管理（拆分到独立模块）
-                    ...createAiModelActions({ set, get, client, getUserIdParam }),
+                    ...createAiModelActions({ set, get, client }),
 
                     // 智能体/系统上下文（拆分到独立模块）
                     ...createAgentActions({ set, get, client, getUserIdParam }),

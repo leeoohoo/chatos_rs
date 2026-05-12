@@ -1,8 +1,8 @@
 use mongodb::bson::{doc, Bson, Document};
 
 use crate::core::mongo_cursor::collect_map_sorted_desc;
-use crate::core::mongo_query::filter_optional_user_id;
 use crate::core::sql_query::build_select_all_with_optional_user_id;
+use crate::db::{self, Database};
 use crate::models::ai_model_config::{AiModelConfig, AiModelConfigRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 use crate::utils::model_config::normalize_provider;
@@ -12,13 +12,13 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
     let provider = normalize_provider(&provider_raw);
     Some(AiModelConfig {
         id: doc.get_str("id").ok()?.to_string(),
+        user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
         name: doc.get_str("name").ok()?.to_string(),
         provider,
         model: doc.get_str("model").ok()?.to_string(),
         thinking_level: doc.get_str("thinking_level").ok().map(|s| s.to_string()),
         api_key: doc.get_str("api_key").ok().map(|s| s.to_string()),
         base_url: doc.get_str("base_url").ok().map(|s| s.to_string()),
-        user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
         enabled: doc.get_bool("enabled").unwrap_or(true),
         supports_images: doc.get_bool("supports_images").unwrap_or(false),
         supports_reasoning: doc.get_bool("supports_reasoning").unwrap_or(false),
@@ -28,12 +28,40 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
     })
 }
 
-pub async fn list_ai_model_configs(user_id: Option<String>) -> Result<Vec<AiModelConfig>, String> {
+async fn has_legacy_ai_model_configs_storage() -> Result<bool, String> {
+    let db = db::get_db().await?;
+    match db.as_ref() {
+        Database::Mongo { db, .. } => {
+            let names = db
+                .list_collection_names(None)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(names.iter().any(|name| name == "ai_model_configs"))
+        }
+        Database::Sqlite(pool) => {
+            let row = sqlx::query(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_model_configs' LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(row.is_some())
+        }
+    }
+}
+
+pub async fn list_ai_model_configs(user_id: Option<&str>) -> Result<Vec<AiModelConfig>, String> {
+    if !has_legacy_ai_model_configs_storage().await? {
+        return Ok(Vec::new());
+    }
     with_db(
         |db| {
-            let user_id = user_id.clone();
+            let user_id = user_id.map(|item| item.to_string());
             Box::pin(async move {
-                let filter = filter_optional_user_id(user_id);
+                let filter = match user_id {
+                    Some(user_id) => doc! { "user_id": user_id },
+                    None => Document::new(),
+                };
                 let cursor = db
                     .collection::<Document>("ai_model_configs")
                     .find(filter, None)
@@ -46,18 +74,15 @@ pub async fn list_ai_model_configs(user_id: Option<String>) -> Result<Vec<AiMode
             })
         },
         |pool| {
-            let user_id = user_id.clone();
+            let user_id = user_id.map(|item| item.to_string());
             Box::pin(async move {
-                let query = build_select_all_with_optional_user_id(
-                    "ai_model_configs",
-                    user_id.is_some(),
-                    true,
-                );
-                let mut q = sqlx::query_as::<_, AiModelConfigRow>(&query);
-                if let Some(uid) = user_id {
-                    q = q.bind(uid);
+                let query =
+                    build_select_all_with_optional_user_id("ai_model_configs", user_id.is_some(), true);
+                let mut sql = sqlx::query_as::<_, AiModelConfigRow>(&query);
+                if let Some(user_id) = user_id {
+                    sql = sql.bind(user_id);
                 }
-                let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
+                let rows = sql.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows.into_iter().map(|r| r.to_model()).collect())
             })
         },
@@ -95,110 +120,171 @@ pub async fn get_ai_model_config_by_id(id: &str) -> Result<Option<AiModelConfig>
     .await
 }
 
-pub async fn create_ai_model_config(data: &AiModelConfig) -> Result<AiModelConfig, String> {
+pub async fn create_ai_model_config(config: &AiModelConfig) -> Result<AiModelConfig, String> {
     let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
-    let data_mongo = data.clone();
-    let data_sqlite = data.clone();
+    let config_mongo = config.clone();
+    let config_sqlite = config.clone();
     with_db(
         |db| {
             let doc = to_doc(doc_from_pairs(vec![
-                ("id", Bson::String(data_mongo.id.clone())),
-                ("name", Bson::String(data_mongo.name.clone())),
-                ("provider", Bson::String(normalize_provider(&data_mongo.provider))),
-                ("model", Bson::String(data_mongo.model.clone())),
-                ("thinking_level", crate::core::values::optional_string_bson(data_mongo.thinking_level.clone())),
-                ("api_key", crate::core::values::optional_string_bson(data_mongo.api_key.clone())),
-                ("base_url", crate::core::values::optional_string_bson(data_mongo.base_url.clone())),
-                ("user_id", crate::core::values::optional_string_bson(data_mongo.user_id.clone())),
-                ("enabled", Bson::Boolean(data_mongo.enabled)),
-                ("supports_images", Bson::Boolean(data_mongo.supports_images)),
-                ("supports_reasoning", Bson::Boolean(data_mongo.supports_reasoning)),
-                ("supports_responses", Bson::Boolean(data_mongo.supports_responses)),
+                ("id", Bson::String(config_mongo.id.clone())),
+                (
+                    "user_id",
+                    crate::core::values::optional_string_bson(config_mongo.user_id.clone()),
+                ),
+                ("name", Bson::String(config_mongo.name.clone())),
+                ("provider", Bson::String(config_mongo.provider.clone())),
+                ("model", Bson::String(config_mongo.model.clone())),
+                (
+                    "thinking_level",
+                    crate::core::values::optional_string_bson(config_mongo.thinking_level.clone()),
+                ),
+                (
+                    "api_key",
+                    crate::core::values::optional_string_bson(config_mongo.api_key.clone()),
+                ),
+                (
+                    "base_url",
+                    crate::core::values::optional_string_bson(config_mongo.base_url.clone()),
+                ),
+                ("enabled", Bson::Boolean(config_mongo.enabled)),
+                ("supports_images", Bson::Boolean(config_mongo.supports_images)),
+                (
+                    "supports_reasoning",
+                    Bson::Boolean(config_mongo.supports_reasoning),
+                ),
+                (
+                    "supports_responses",
+                    Bson::Boolean(config_mongo.supports_responses),
+                ),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("ai_model_configs").insert_one(doc, None).await.map_err(|e| e.to_string())?;
-                Ok(data_mongo.clone())
+                db.collection::<Document>("ai_model_configs")
+                    .insert_one(doc, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(AiModelConfig {
+                    created_at: now_mongo.clone(),
+                    updated_at: now_mongo,
+                    ..config_mongo
+                })
             })
         },
         |pool| {
             Box::pin(async move {
-                sqlx::query("INSERT INTO ai_model_configs (id, name, provider, model, thinking_level, api_key, base_url, user_id, enabled, supports_images, supports_reasoning, supports_responses, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                    .bind(&data_sqlite.id)
-                    .bind(&data_sqlite.name)
-                    .bind(normalize_provider(&data_sqlite.provider))
-                    .bind(&data_sqlite.model)
-                    .bind(&data_sqlite.thinking_level)
-                    .bind(&data_sqlite.api_key)
-                    .bind(&data_sqlite.base_url)
-                    .bind(&data_sqlite.user_id)
-                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.enabled))
-                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.supports_images))
-                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.supports_reasoning))
-                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.supports_responses))
-                    .bind(&now_sqlite)
-                    .bind(&now_sqlite)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(data_sqlite.clone())
+                sqlx::query(
+                    "INSERT INTO ai_model_configs (id, user_id, name, provider, model, thinking_level, api_key, base_url, enabled, supports_images, supports_reasoning, supports_responses, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&config_sqlite.id)
+                .bind(&config_sqlite.user_id)
+                .bind(&config_sqlite.name)
+                .bind(&config_sqlite.provider)
+                .bind(&config_sqlite.model)
+                .bind(&config_sqlite.thinking_level)
+                .bind(&config_sqlite.api_key)
+                .bind(&config_sqlite.base_url)
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.enabled))
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.supports_images))
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.supports_reasoning))
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.supports_responses))
+                .bind(&now_sqlite)
+                .bind(&now_sqlite)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok(AiModelConfig {
+                    created_at: now_sqlite.clone(),
+                    updated_at: now_sqlite,
+                    ..config_sqlite
+                })
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
-pub async fn update_ai_model_config(id: &str, updates: &AiModelConfig) -> Result<(), String> {
+pub async fn update_ai_model_config(id: &str, config: &AiModelConfig) -> Result<(), String> {
     let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
-    let updates_mongo = updates.clone();
-    let updates_sqlite = updates.clone();
+    let config_mongo = config.clone();
+    let config_sqlite = config.clone();
     with_db(
         |db| {
             let id = id.to_string();
             Box::pin(async move {
                 let mut set_doc = Document::new();
-                set_doc.insert("name", updates_mongo.name.clone());
-                set_doc.insert("provider", normalize_provider(&updates_mongo.provider));
-                set_doc.insert("model", updates_mongo.model.clone());
-                set_doc.insert("thinking_level", crate::core::values::optional_string_bson(updates_mongo.thinking_level.clone()));
-                set_doc.insert("api_key", crate::core::values::optional_string_bson(updates_mongo.api_key.clone()));
-                set_doc.insert("base_url", crate::core::values::optional_string_bson(updates_mongo.base_url.clone()));
-                set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
-                set_doc.insert("supports_images", Bson::Boolean(updates_mongo.supports_images));
-                set_doc.insert("supports_reasoning", Bson::Boolean(updates_mongo.supports_reasoning));
-                set_doc.insert("supports_responses", Bson::Boolean(updates_mongo.supports_responses));
+                set_doc.insert(
+                    "user_id",
+                    crate::core::values::optional_string_bson(config_mongo.user_id.clone()),
+                );
+                set_doc.insert("name", config_mongo.name.clone());
+                set_doc.insert("provider", config_mongo.provider.clone());
+                set_doc.insert("model", config_mongo.model.clone());
+                set_doc.insert(
+                    "thinking_level",
+                    crate::core::values::optional_string_bson(config_mongo.thinking_level.clone()),
+                );
+                set_doc.insert(
+                    "api_key",
+                    crate::core::values::optional_string_bson(config_mongo.api_key.clone()),
+                );
+                set_doc.insert(
+                    "base_url",
+                    crate::core::values::optional_string_bson(config_mongo.base_url.clone()),
+                );
+                set_doc.insert("enabled", Bson::Boolean(config_mongo.enabled));
+                set_doc.insert(
+                    "supports_images",
+                    Bson::Boolean(config_mongo.supports_images),
+                );
+                set_doc.insert(
+                    "supports_reasoning",
+                    Bson::Boolean(config_mongo.supports_reasoning),
+                );
+                set_doc.insert(
+                    "supports_responses",
+                    Bson::Boolean(config_mongo.supports_responses),
+                );
                 set_doc.insert("updated_at", now_mongo.clone());
-                db.collection::<Document>("ai_model_configs").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
+                db.collection::<Document>("ai_model_configs")
+                    .update_one(doc! { "id": id }, doc! { "$set": set_doc }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
         |pool| {
             let id = id.to_string();
             Box::pin(async move {
-                sqlx::query("UPDATE ai_model_configs SET name = ?, provider = ?, model = ?, thinking_level = ?, api_key = ?, base_url = ?, enabled = ?, supports_images = ?, supports_reasoning = ?, supports_responses = ?, updated_at = ? WHERE id = ?")
-                    .bind(&updates_sqlite.name)
-                    .bind(normalize_provider(&updates_sqlite.provider))
-                    .bind(&updates_sqlite.model)
-                    .bind(&updates_sqlite.thinking_level)
-                    .bind(&updates_sqlite.api_key)
-                    .bind(&updates_sqlite.base_url)
-                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.enabled))
-                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.supports_images))
-                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.supports_reasoning))
-                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.supports_responses))
-                    .bind(&now_sqlite)
-                    .bind(&id)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                sqlx::query(
+                    "UPDATE ai_model_configs SET user_id = ?, name = ?, provider = ?, model = ?, thinking_level = ?, api_key = ?, base_url = ?, enabled = ?, supports_images = ?, supports_reasoning = ?, supports_responses = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(&config_sqlite.user_id)
+                .bind(&config_sqlite.name)
+                .bind(&config_sqlite.provider)
+                .bind(&config_sqlite.model)
+                .bind(&config_sqlite.thinking_level)
+                .bind(&config_sqlite.api_key)
+                .bind(&config_sqlite.base_url)
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.enabled))
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.supports_images))
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.supports_reasoning))
+                .bind(crate::core::values::bool_to_sqlite_int(config_sqlite.supports_responses))
+                .bind(&now_sqlite)
+                .bind(&id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn delete_ai_model_config(id: &str) -> Result<(), String> {
@@ -207,7 +293,7 @@ pub async fn delete_ai_model_config(id: &str) -> Result<(), String> {
             let id = id.to_string();
             Box::pin(async move {
                 db.collection::<Document>("ai_model_configs")
-                    .delete_one(doc! { "id": id }, None)
+                    .delete_one(doc! { "id": &id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
                 Ok(())

@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::validation::normalize_non_empty;
-use crate::services::memory_server_client;
+use crate::models::memory_mapping_types::{MemoryContactDto, SyncProjectAgentLinkRequestDto};
+use crate::services::chatos_memory_mappings;
 use crate::services::realtime::publish_project_members_updated;
 
 use super::contracts::{AddProjectContactRequest, ProjectContactsQuery};
@@ -22,7 +23,7 @@ pub(super) async fn list_project_contacts(
         return map_project_access_error(err);
     }
 
-    match memory_server_client::list_project_contacts(
+    match chatos_memory_mappings::list_project_contacts(
         id.as_str(),
         query.limit,
         query.offset.unwrap_or(0),
@@ -57,10 +58,10 @@ pub(super) async fn add_project_contact(
     };
 
     let page_size = 500;
-    let mut matched_contact: Option<memory_server_client::MemoryContactDto> = None;
+    let mut matched_contact: Option<MemoryContactDto> = None;
     for page in 0..20 {
         let offset = page * page_size;
-        let rows = match memory_server_client::list_memory_contacts(
+        let rows = match chatos_memory_mappings::list_memory_contacts(
             Some(auth.user_id.as_str()),
             Some(page_size),
             offset,
@@ -88,8 +89,8 @@ pub(super) async fn add_project_contact(
         );
     };
 
-    match memory_server_client::sync_project_agent_link(
-        &memory_server_client::SyncProjectAgentLinkRequestDto {
+    match chatos_memory_mappings::sync_project_agent_link(
+        &SyncProjectAgentLinkRequestDto {
             user_id: Some(auth.user_id.clone()),
             project_id: Some(id.clone()),
             agent_id: Some(contact.agent_id),
@@ -128,7 +129,7 @@ pub(super) async fn remove_project_contact(
         return map_project_access_error(err);
     }
 
-    let linked_rows = match memory_server_client::list_project_contacts(id.as_str(), Some(500), 0)
+    let linked_rows = match chatos_memory_mappings::list_project_contacts(id.as_str(), Some(500), 0)
         .await
     {
         Ok(items) => items,
@@ -150,8 +151,8 @@ pub(super) async fn remove_project_contact(
         );
     };
 
-    match memory_server_client::sync_project_agent_link(
-        &memory_server_client::SyncProjectAgentLinkRequestDto {
+    match chatos_memory_mappings::sync_project_agent_link(
+        &SyncProjectAgentLinkRequestDto {
             user_id: Some(auth.user_id.clone()),
             project_id: Some(id.clone()),
             agent_id: Some(linked.agent_id),

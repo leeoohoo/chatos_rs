@@ -93,6 +93,7 @@ export const normalizeAgent = (agent: MemoryAgentResponse): AgentConfig => ({
   id: agent.id,
   name: agent.name,
   description: agent.description || '',
+  category: agent.category || '',
   ai_model_config_id: '',
   enabled: agent.enabled !== false,
   project_id: typeof agent.project_policy?.project_id === 'string' ? agent.project_policy.project_id : null,

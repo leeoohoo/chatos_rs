@@ -4,6 +4,55 @@ export interface MemoryAgentSkillResponse {
   content: string;
 }
 
+export interface MemorySkillResponse {
+  id: string;
+  user_id: string;
+  plugin_source: string;
+  name: string;
+  description?: string | null;
+  content: string;
+  source_path: string;
+  version?: string | null;
+  updated_at: string;
+}
+
+export interface MemorySkillPluginCommandResponse {
+  name: string;
+  source_path: string;
+  description?: string | null;
+  argument_hint?: string | null;
+  content: string;
+}
+
+export interface MemorySkillPluginResponse {
+  id: string;
+  user_id: string;
+  source: string;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  version?: string | null;
+  repository?: string | null;
+  branch?: string | null;
+  cache_path?: string | null;
+  content?: string | null;
+  commands?: MemorySkillPluginCommandResponse[];
+  command_count?: number;
+  installed: boolean;
+  discoverable_skills: number;
+  installed_skill_count: number;
+  updated_at: string;
+}
+
+export interface AiCreateAgentResponse {
+  created: boolean;
+  agent: MemoryAgentResponse;
+  source?: string;
+  model?: string;
+  provider?: string;
+  content?: string | null;
+}
+
 export interface MemoryAgentRuntimePluginSummaryResponse {
   source: string;
   name: string;
@@ -52,6 +101,18 @@ export interface MemoryAgentResponse {
   updated_at?: string;
 }
 
+export interface MemoryAgentSessionResponse {
+  id: string;
+  user_id: string;
+  project_id?: string | null;
+  title?: string | null;
+  metadata?: Record<string, unknown> | string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  archived_at?: string | null;
+}
+
 export interface MemoryAgentRuntimeContextResponse {
   agent_id: string;
   name: string;
@@ -67,6 +128,52 @@ export interface MemoryAgentRuntimeContextResponse {
   mcp_policy?: Record<string, unknown> | null;
   project_policy?: Record<string, unknown> | null;
   updated_at?: string;
+}
+
+export interface CreateAgentPayload {
+  user_id?: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  role_definition: string;
+  plugin_sources?: string[];
+  skills?: MemoryAgentSkillResponse[];
+  skill_ids?: string[];
+  default_skill_ids?: string[];
+  mcp_policy?: Record<string, unknown> | null;
+  project_policy?: Record<string, unknown> | null;
+  enabled?: boolean;
+}
+
+export interface UpdateAgentPayload {
+  name?: string;
+  description?: string | null;
+  category?: string | null;
+  role_definition?: string;
+  plugin_sources?: string[];
+  skills?: MemoryAgentSkillResponse[];
+  skill_ids?: string[];
+  default_skill_ids?: string[];
+  mcp_policy?: Record<string, unknown> | null;
+  project_policy?: Record<string, unknown> | null;
+  enabled?: boolean;
+}
+
+export interface AiCreateAgentPayload {
+  user_id?: string;
+  model_config_id?: string;
+  requirement: string;
+  name?: string;
+  category?: string;
+  description?: string;
+  role_definition?: string;
+  skill_ids?: string[];
+  skill_prompts?: string[];
+  enabled?: boolean;
+  mcp_enabled?: boolean;
+  enabled_mcp_ids?: string[];
+  project_id?: string;
+  project_root?: string;
 }
 
 export interface StreamChatOptions {
@@ -88,12 +195,11 @@ export interface StreamChatCommandResponse {
 }
 
 export interface StreamChatModelConfigPayload {
+  id?: string;
   provider: string;
   model_name: string;
   temperature?: number;
   thinking_level?: string | null;
-  api_key?: string;
-  base_url?: string;
   supports_images?: boolean;
   supports_reasoning?: boolean;
   supports_responses?: boolean;

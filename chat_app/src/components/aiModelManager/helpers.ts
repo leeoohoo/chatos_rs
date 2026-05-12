@@ -80,10 +80,18 @@ export const buildAiModelConfig = (
 };
 
 export const canSubmitAiModelForm = (formData: AiModelFormData): boolean => {
+  return canSubmitAiModelFormWithOptions(formData);
+};
+
+export const canSubmitAiModelFormWithOptions = (
+  formData: AiModelFormData,
+  options?: { requireApiKey?: boolean },
+): boolean => {
+  const requireApiKey = options?.requireApiKey === true;
   return Boolean(
     formData.name.trim()
       && formData.base_url.trim()
-      && formData.api_key.trim()
-      && formData.model_name.trim(),
+      && formData.model_name.trim()
+      && (!requireApiKey || formData.api_key.trim()),
   );
 };

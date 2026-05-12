@@ -141,23 +141,6 @@ export interface ConversationMessagePayload {
   metadata?: Record<string, unknown> | null;
 }
 
-export interface SessionSummaryJobConfigPayload {
-  user_id?: string;
-  enabled?: boolean;
-  summary_model_config_id?: string | null;
-  token_limit?: number;
-  message_count_limit?: number;
-  round_limit?: number;
-  target_summary_tokens?: number;
-  job_interval_seconds?: number;
-}
-
-export interface SessionSummaryJobConfigResponse extends SessionSummaryJobConfigPayload {
-  id?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
 export interface SessionSummaryResponse {
   id: string;
   conversation_id?: string;

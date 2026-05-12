@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
 use crate::core::mcp_tools::ToolInfo;
-use crate::services::memory_server_client::{
+use crate::models::memory_runtime_types::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotBuiltinMcpPromptDto,
     TurnRuntimeSnapshotRuntimeDto, TurnRuntimeSnapshotSelectedCommandDto,
     TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,

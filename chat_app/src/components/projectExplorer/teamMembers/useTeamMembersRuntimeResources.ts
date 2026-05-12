@@ -294,6 +294,9 @@ export const useTeamMembersRuntimeResources = ({
         return;
       }
       await store.loadMessages(selectedSessionId);
+      await refreshReviewRepairStatus(selectedSessionId).catch((error) => {
+        console.error('Failed to refresh team review repair status after completion:', error);
+      });
     },
   });
 

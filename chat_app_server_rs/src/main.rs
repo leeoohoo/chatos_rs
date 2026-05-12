@@ -44,6 +44,36 @@ async fn main() {
         std::process::exit(1);
     }
 
+    match services::auth_user_backfill::backfill_legacy_auth_users().await {
+        Ok(report) => {
+            info!(
+                "Legacy auth-user backfill finished: legacy_count={} created_count={} skipped_existing_count={} skipped_invalid_count={}",
+                report.legacy_count,
+                report.created_count,
+                report.skipped_existing_count,
+                report.skipped_invalid_count
+            );
+        }
+        Err(err) => {
+            warn!("Legacy auth-user backfill failed: {err}");
+        }
+    }
+
+    match services::memory_engine_source_bootstrap::ensure_chatos_memory_engine_source().await {
+        Ok(report) => {
+            info!(
+                "Chatos memory_engine source ensured: source_id={} source_type={} status={} sdk_enabled={}",
+                report.source_id,
+                report.source_type,
+                report.status,
+                report.sdk_enabled
+            );
+        }
+        Err(err) => {
+            warn!("Chatos memory_engine source bootstrap failed: {err}");
+        }
+    }
+
     services::workspace_realtime_watcher::start_workspace_realtime_watcher();
 
     info!("Memory-only mode enabled, skip local session background jobs");

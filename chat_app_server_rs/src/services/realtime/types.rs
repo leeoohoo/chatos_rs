@@ -6,8 +6,8 @@ use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::models::terminal::Terminal;
+use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::services::task_manager::{TaskDraft, TaskRecord};
-use crate::services::memory_server_client::MemoryContactDto;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReviewRepairRealtimePayload {

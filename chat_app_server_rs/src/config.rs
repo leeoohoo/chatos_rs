@@ -27,10 +27,8 @@ pub struct Config {
     pub summary_retry_on_context_overflow: bool,
     pub auth_jwt_secret: String,
     pub auth_access_token_ttl_seconds: i64,
-    pub memory_server_base_url: String,
-    pub memory_server_service_token: String,
-    pub memory_server_context_timeout_ms: i64,
-    pub memory_server_request_timeout_ms: i64,
+    pub memory_engine_base_url: String,
+    pub memory_engine_request_timeout_ms: i64,
 }
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -119,18 +117,28 @@ impl Config {
             .to_lowercase()
             != "false";
         let auth_jwt_secret = std::env::var("AUTH_JWT_SECRET")
-            .unwrap_or_else(|_| "dev-only-change-me-please".to_string());
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                std::env::var("AUTH_COMPAT_SECRET")
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            })
+            .or_else(|| {
+                std::env::var("MEMORY_SERVER_AUTH_SECRET")
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            })
+            .unwrap_or_else(|| "dev-only-change-me-please".to_string());
         let auth_access_token_ttl_seconds =
             read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
-        let memory_server_base_url = std::env::var("MEMORY_SERVER_BASE_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:7080/api/memory/v1".to_string());
-        let memory_server_service_token =
-            std::env::var("MEMORY_SERVER_SERVICE_TOKEN").unwrap_or_default();
-        let memory_server_context_timeout_ms =
-            read_int("MEMORY_SERVER_CONTEXT_TIMEOUT_MS", 3000).max(300);
-        let memory_server_request_timeout_ms =
-            read_int("MEMORY_SERVER_REQUEST_TIMEOUT_MS", 5000).max(300);
-
+        let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:7081/api/memory-engine/v1".to_string());
+        let memory_engine_request_timeout_ms =
+            read_int("MEMORY_ENGINE_REQUEST_TIMEOUT_MS", 5000).max(300);
         Ok(Config {
             openai_api_key,
             openai_base_url,
@@ -156,10 +164,8 @@ impl Config {
             summary_retry_on_context_overflow,
             auth_jwt_secret,
             auth_access_token_ttl_seconds,
-            memory_server_base_url,
-            memory_server_service_token,
-            memory_server_context_timeout_ms,
-            memory_server_request_timeout_ms,
+            memory_engine_base_url,
+            memory_engine_request_timeout_ms,
         })
     }
 
@@ -235,26 +241,14 @@ impl Config {
             "    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}",
             self.auth_access_token_ttl_seconds
         );
-        println!("  - Memory Server 上下文配置:");
+        println!("  - Memory Engine 配置:");
         println!(
-            "    • MEMORY_SERVER_BASE_URL: {}",
-            self.memory_server_base_url
+            "    • MEMORY_ENGINE_BASE_URL: {}",
+            self.memory_engine_base_url
         );
         println!(
-            "    • MEMORY_SERVER_SERVICE_TOKEN: {}",
-            if self.memory_server_service_token.is_empty() {
-                "未设置"
-            } else {
-                "已设置"
-            }
-        );
-        println!(
-            "    • MEMORY_SERVER_CONTEXT_TIMEOUT_MS: {}",
-            self.memory_server_context_timeout_ms
-        );
-        println!(
-            "    • MEMORY_SERVER_REQUEST_TIMEOUT_MS: {}",
-            self.memory_server_request_timeout_ms
+            "    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}",
+            self.memory_engine_request_timeout_ms
         );
     }
 }

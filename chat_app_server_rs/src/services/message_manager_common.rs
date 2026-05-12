@@ -7,11 +7,12 @@ use tracing::error;
 
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
+use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::ai_common::{
     build_assistant_message_metadata, build_tool_result_metadata,
 };
-use crate::services::memory_server_client;
+use crate::services::{chatos_memory_engine, chatos_sessions};
 
 #[derive(Debug, Default, Clone)]
 struct Stats {
@@ -177,7 +178,7 @@ impl MessageManagerCore {
     }
 
     async fn persist_message(&self, message: Message) -> Result<Message, String> {
-        memory_server_client::upsert_message(&message).await
+        chatos_sessions::upsert_message(&message).await
     }
 
     pub(crate) async fn get_session_messages(
@@ -186,14 +187,14 @@ impl MessageManagerCore {
         limit: Option<i64>,
     ) -> Vec<Message> {
         let result = if let Some(value) = limit {
-            memory_server_client::list_messages(session_id, Some(value), 0, false)
+            chatos_sessions::list_messages(session_id, Some(value), 0, false)
                 .await
                 .map(|mut items| {
                     items.reverse();
                     items
                 })
         } else {
-            memory_server_client::list_messages(session_id, None, 0, true).await
+            chatos_sessions::list_messages(session_id, None, 0, true).await
         };
 
         match result {
@@ -217,10 +218,10 @@ impl MessageManagerCore {
         filter_empty_summaries: bool,
     ) -> (Vec<SessionSummaryV2>, Vec<Message>) {
         let mut summaries =
-            match memory_server_client::list_summaries(session_id, memory_summary_limit, 0).await {
+            match chatos_sessions::list_summaries(session_id, memory_summary_limit, 0).await {
                 Ok(items) => items,
                 Err(err) => {
-                    error!("list_summaries from memory_server failed: {}", err);
+                    error!("list_summaries from chatos session store failed: {}", err);
                     Vec::new()
                 }
             };
@@ -235,7 +236,7 @@ impl MessageManagerCore {
         }
 
         let mut messages =
-            match memory_server_client::list_messages(session_id, None, 0, true).await {
+            match chatos_sessions::list_messages(session_id, None, 0, true).await {
                 Ok(items) => items,
                 Err(err) => {
                     error!("get_session_memory_history list_messages failed: {}", err);
@@ -271,7 +272,7 @@ impl MessageManagerCore {
         session_id: &str,
         memory_summary_limit: usize,
     ) -> ChatHistoryContext {
-        match try_get_memory_chat_history_context_from_memory_server(
+        match try_get_memory_chat_history_context_from_memory_engine(
             session_id,
             memory_summary_limit,
         )
@@ -280,7 +281,7 @@ impl MessageManagerCore {
             Ok(context) => context,
             Err(err) => {
                 error!(
-                    "get_memory_chat_history_context memory_server failed: session_id={} error={}",
+                    "get_memory_chat_history_context memory_engine failed: session_id={} error={}",
                     session_id, err
                 );
                 ChatHistoryContext {
@@ -304,7 +305,7 @@ impl MessageManagerCore {
             return Some(cached);
         }
 
-        let result = memory_server_client::get_message_by_id(message_id).await;
+        let result = chatos_sessions::get_message_by_id(message_id).await;
 
         match result {
             Ok(Some(message)) => {
@@ -365,14 +366,29 @@ impl MessageManagerCore {
     }
 }
 
-async fn try_get_memory_chat_history_context_from_memory_server(
+async fn try_get_memory_chat_history_context_from_memory_engine(
     session_id: &str,
     memory_summary_limit: usize,
 ) -> Result<ChatHistoryContext, String> {
-    let payload = memory_server_client::compose_context(session_id, memory_summary_limit).await?;
+    let session = chatos_sessions::get_session_by_id(session_id)
+        .await?
+        .ok_or_else(|| format!("session not found: {session_id}"))?;
+    try_get_memory_chat_history_context_via_sdk(&session, memory_summary_limit).await
+}
+
+async fn try_get_memory_chat_history_context_via_sdk(
+    session: &Session,
+    memory_summary_limit: usize,
+) -> Result<ChatHistoryContext, String> {
+    let payload = chatos_memory_engine::compose_chatos_context(
+        session,
+        memory_summary_limit,
+        true,
+    )
+    .await?;
     Ok(ChatHistoryContext {
-        merged_summary: payload.0,
-        summary_count: payload.1,
-        messages: payload.2,
+        merged_summary: payload.merged_summary,
+        summary_count: payload.summary_count,
+        messages: payload.messages,
     })
 }

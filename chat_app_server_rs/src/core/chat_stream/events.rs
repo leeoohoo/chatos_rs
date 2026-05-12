@@ -5,8 +5,8 @@ use serde_json::{json, Value};
 
 use crate::core::messages::message_turn_id;
 use crate::models::message::Message;
+use crate::services::chatos_sessions;
 use crate::services::realtime::publish_chat_stream_event;
-use crate::services::memory_server_client;
 use crate::utils::abort_registry;
 use crate::utils::events::Events;
 use crate::utils::sse::SseSender;
@@ -130,7 +130,7 @@ async fn resolve_persisted_turn_messages(
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
 
-    let messages = memory_server_client::list_messages(conversation_id, None, 0, true)
+    let messages = chatos_sessions::list_messages(conversation_id, None, 0, true)
         .await
         .ok()?;
     if messages.is_empty() {

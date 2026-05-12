@@ -52,7 +52,6 @@ export interface AiModelConfigCreatePayload {
   thinking_level?: string;
   api_key: string;
   base_url: string;
-  user_id?: string;
   enabled: boolean;
   supports_images?: boolean;
   supports_reasoning?: boolean;
@@ -68,8 +67,6 @@ export interface AiModelConfigUpdatePayload {
   thinking_level?: string;
   api_key?: string;
   base_url?: string;
-  user_id?: string;
-  userId?: string;
   enabled?: boolean;
   supports_images?: boolean;
   supports_reasoning?: boolean;
@@ -85,8 +82,6 @@ export interface AiModelConfigResponse {
   thinking_level?: string;
   api_key?: string;
   base_url?: string;
-  user_id?: string | null;
-  userId?: string | null;
   enabled?: boolean;
   supports_images?: boolean;
   supports_reasoning?: boolean;
@@ -111,11 +106,6 @@ export interface SystemContextUpdatePayload {
 }
 
 export interface SystemContextModelConfigPayload {
-  model_name?: string;
-  model?: string;
-  provider?: string;
-  api_key?: string;
-  base_url?: string;
   temperature?: number;
 }
 
@@ -164,6 +154,7 @@ export interface SystemContextDraftGeneratePayload {
   constraints?: string[];
   forbidden?: string[];
   candidate_count?: number;
+  model_config_id?: string;
   ai_model_config?: SystemContextModelConfigPayload;
 }
 
@@ -176,6 +167,7 @@ export interface SystemContextDraftOptimizePayload {
   content: string;
   goal?: string;
   keep_intent?: boolean;
+  model_config_id?: string;
   ai_model_config?: SystemContextModelConfigPayload;
 }
 
@@ -187,6 +179,7 @@ export interface SystemContextDraftOptimizeResponse {
 
 export interface SystemContextDraftEvaluatePayload {
   content: string;
+  model_config_id?: string;
 }
 
 export interface SystemContextDraftEvaluateResponse {

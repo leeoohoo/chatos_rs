@@ -23,8 +23,6 @@ import type {
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
-  SessionSummaryJobConfigPayload,
-  SessionSummaryJobConfigResponse,
   StopChatResponse,
   StreamChatAttachmentPayload,
   StreamChatCommandResponse,
@@ -101,9 +99,6 @@ export interface RuntimeFacade {
   deleteNotepadNote(noteId: string): Promise<NotepadDeleteNoteResponse>;
   listNotepadTags(): Promise<NotepadTagsResponse>;
   searchNotepadNotes(options: NotepadSearchOptions): Promise<NotepadNotesResponse>;
-  getConversationSummaryJobConfig(userId?: string): Promise<SessionSummaryJobConfigResponse>;
-  updateConversationSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
-  patchConversationSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
   getConversationSummaries(
     conversationId: string,
     options?: { limit?: number; offset?: number },
@@ -210,15 +205,6 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async searchNotepadNotes(options) {
     return notepadApi.searchNotepadNotes(this.getRequestFn(), options);
-  },
-  async getConversationSummaryJobConfig(userId) {
-    return summaryApi.getConversationSummaryJobConfig(this.getRequestFn(), userId);
-  },
-  async updateConversationSummaryJobConfig(payload) {
-    return summaryApi.updateConversationSummaryJobConfig(this.getRequestFn(), payload);
-  },
-  async patchConversationSummaryJobConfig(payload) {
-    return summaryApi.patchConversationSummaryJobConfig(this.getRequestFn(), payload);
   },
   async getConversationSummaries(conversationId, options) {
     return summaryApi.getConversationSummaries(this.getRequestFn(), conversationId, options);

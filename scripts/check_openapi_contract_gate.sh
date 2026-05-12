@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASELINE_FILE="$ROOT_DIR/.github/api-path-baseline.txt"
 MAIN_CONTRACT="$ROOT_DIR/.github/api-contract/chat_app_server_rs.openapi.yaml"
-MEMORY_CONTRACT="$ROOT_DIR/.github/api-contract/memory_server.openapi.yaml"
 POLICY_FILE="${OPENAPI_GATE_POLICY_FILE:-$ROOT_DIR/.github/api-contract/openapi-gate-policy.env}"
 
 count_contract_paths() {
@@ -98,7 +97,6 @@ is_non_negative_number() {
 load_policy() {
   OPENAPI_GATE_MODE="advisory"
   OPENAPI_MAIN_MIN_COVERAGE_RATIO="0"
-  OPENAPI_MEMORY_MIN_COVERAGE_RATIO="0"
   OPENAPI_GATE_WAIVER_FILE=".github/api-contract/waivers/openapi_gate_waiver.env"
   OPENAPI_GATE_WAIVER_MAX_HOURS="24"
 
@@ -187,13 +185,9 @@ if [[ "$OPENAPI_GATE_MODE" != "advisory" && "$OPENAPI_GATE_MODE" != "required" ]
 fi
 
 main_baseline_count="$(awk -F= '/^main_backend_endpoint_count=/{print $2}' "$BASELINE_FILE")"
-memory_baseline_count="$(awk -F= '/^memory_backend_endpoint_count=/{print $2}' "$BASELINE_FILE")"
-
 main_contract_count="$(count_contract_paths "$MAIN_CONTRACT")"
-memory_contract_count="$(count_contract_paths "$MEMORY_CONTRACT")"
 
 main_ratio="$(to_ratio "${main_contract_count:-0}" "${main_baseline_count:-0}")"
-memory_ratio="$(to_ratio "${memory_contract_count:-0}" "${memory_baseline_count:-0}")"
 
 echo "[INFO] OpenAPI gate snapshot:"
 echo "  mode:                            $OPENAPI_GATE_MODE"
@@ -201,10 +195,6 @@ echo "  main backend baseline endpoints:   ${main_baseline_count:-0}"
 echo "  main backend openapi paths:        ${main_contract_count:-0}"
 echo "  main backend coverage ratio:       ${main_ratio}%"
 echo "  main backend minimum ratio:        ${OPENAPI_MAIN_MIN_COVERAGE_RATIO}%"
-echo "  memory backend baseline endpoints: ${memory_baseline_count:-0}"
-echo "  memory backend openapi paths:      ${memory_contract_count:-0}"
-echo "  memory backend coverage ratio:     ${memory_ratio}%"
-echo "  memory backend minimum ratio:      ${OPENAPI_MEMORY_MIN_COVERAGE_RATIO}%"
 
 if [[ "$OPENAPI_GATE_MODE" == "advisory" ]]; then
   echo "[OK] OpenAPI gate is in advisory mode (non-blocking)."
@@ -212,17 +202,12 @@ if [[ "$OPENAPI_GATE_MODE" == "advisory" ]]; then
 fi
 
 main_ok="false"
-memory_ok="false"
 
 if ratio_meets_threshold "$main_ratio" "$OPENAPI_MAIN_MIN_COVERAGE_RATIO"; then
   main_ok="true"
 fi
 
-if ratio_meets_threshold "$memory_ratio" "$OPENAPI_MEMORY_MIN_COVERAGE_RATIO"; then
-  memory_ok="true"
-fi
-
-if [[ "$main_ok" == "true" && "$memory_ok" == "true" ]]; then
+if [[ "$main_ok" == "true" ]]; then
   echo "[OK] OpenAPI required gate passed."
   exit 0
 fi
@@ -236,9 +221,6 @@ fi
 echo "[ERROR] OpenAPI required gate failed."
 if [[ "$main_ok" != "true" ]]; then
   echo "  - main backend ratio ${main_ratio}% is below ${OPENAPI_MAIN_MIN_COVERAGE_RATIO}%"
-fi
-if [[ "$memory_ok" != "true" ]]; then
-  echo "  - memory backend ratio ${memory_ratio}% is below ${OPENAPI_MEMORY_MIN_COVERAGE_RATIO}%"
 fi
 echo "[INFO] Expand OpenAPI contracts or apply a time-bounded emergency waiver:"
 echo "       $waiver_file"

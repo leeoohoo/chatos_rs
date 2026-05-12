@@ -107,11 +107,6 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     }
 
     return {
-      model_name: selectedModelConfig.model_name || selectedModelConfig.model,
-      model: selectedModelConfig.model,
-      provider: selectedModelConfig.provider,
-      api_key: selectedModelConfig.api_key,
-      base_url: selectedModelConfig.base_url,
       temperature: 0.5,
     };
   }, [selectedModelConfig]);
@@ -246,6 +241,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         constraints: splitLines(assistantForm.constraintsText),
         forbidden: splitLines(assistantForm.forbiddenText),
         candidate_count: 3,
+        model_config_id: selectedModelConfig?.id,
         ai_model_config: getModelPayload(),
       });
 
@@ -302,6 +298,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         content,
         goal: assistantForm.optimizeGoal.trim() || undefined,
         keep_intent: true,
+        model_config_id: selectedModelConfig?.id,
         ai_model_config: getModelPayload(),
       });
 
@@ -350,7 +347,10 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     setAssistantBusy(true);
     setAssistantError(null);
     try {
-      const response = await evaluateSystemContextDraft({ content });
+      const response = await evaluateSystemContextDraft({
+        content,
+        model_config_id: selectedModelConfig?.id,
+      });
       if (response?.report) {
         setQualityReport(response.report);
       } else {
@@ -361,7 +361,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     } finally {
       setAssistantBusy(false);
     }
-  }, [evaluateSystemContextDraft, formData.content]);
+  }, [evaluateSystemContextDraft, formData.content, selectedModelConfig?.id]);
 
   const handleNameChange = useCallback((value: string) => {
     setFormData((prev) => ({ ...prev, name: value }));

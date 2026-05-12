@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use crate::services::memory_server_client::{
-    MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
+use crate::models::chatos_agent_types::{
+    ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,
 };
 
 use super::types::{
@@ -10,7 +10,7 @@ use super::types::{
 
 pub fn parse_contact_command_invocation(
     user_message: &str,
-    runtime_context: Option<&MemoryAgentRuntimeContextDto>,
+    runtime_context: Option<&ChatosAgentRuntimeContextDto>,
 ) -> Option<ParsedContactCommandInvocation> {
     let trimmed = user_message.trim();
     let command_line = trimmed.strip_prefix('/')?;
@@ -138,7 +138,7 @@ fn normalize_lookup_token(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-fn command_aliases(command: &MemoryAgentRuntimeCommandSummaryDto) -> Vec<String> {
+fn command_aliases(command: &ChatosAgentRuntimeCommandSummaryDto) -> Vec<String> {
     let mut out = Vec::new();
     let command_ref = command.command_ref.trim();
     if !command_ref.is_empty() {

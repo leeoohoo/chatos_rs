@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::validation::normalize_non_empty_str;
 use crate::repositories::db::with_db;
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 
 use super::types::RealtimeEventEnvelope;
 
@@ -95,11 +95,11 @@ pub async fn resolve_conversation_scope(
         return Ok(scope);
     }
 
-    let session = memory_server_client::get_session_by_id(conversation_id.as_str())
+    let session = chatos_sessions::get_session_by_id(conversation_id.as_str())
         .await
         .map_err(|err| {
             format!(
-                "load conversation {} from memory server failed: {}",
+                "load conversation {} from chatos session store failed: {}",
                 conversation_id, err
             )
         })?;

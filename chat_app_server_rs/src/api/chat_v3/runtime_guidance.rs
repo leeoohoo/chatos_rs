@@ -8,7 +8,7 @@ use crate::core::auth::AuthUser;
 use crate::core::chat_runtime::project_id_from_metadata;
 use crate::core::user_scope::resolve_user_id;
 use crate::services::ai_common::normalize_turn_id;
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 use crate::services::runtime_guidance_manager::{runtime_guidance_manager, EnqueueGuidanceError};
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
@@ -74,7 +74,7 @@ pub(super) async fn submit_runtime_guidance(
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
-    let target_session = match memory_server_client::get_session_by_id(session_id).await {
+    let target_session = match chatos_sessions::get_session_by_id(session_id).await {
         Ok(Some(session)) => session,
         Ok(None) => {
             return (

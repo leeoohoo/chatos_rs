@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use mongodb::bson::Document;
 
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 
 use super::path_support::{normalize_change_kind, parse_doc_bool};
 use super::ChangeLogItem;
@@ -22,7 +22,7 @@ pub(super) async fn load_conversation_meta_map(
     }
 
     for conversation_id in conversation_ids {
-        match memory_server_client::get_session_by_id(conversation_id).await {
+        match chatos_sessions::get_session_by_id(conversation_id).await {
             Ok(Some(conversation)) => {
                 let title = conversation.title.trim().to_string();
                 let project_id = conversation

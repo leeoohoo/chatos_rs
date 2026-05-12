@@ -65,10 +65,9 @@ export const deleteMcpConfig = (request: ApiRequestFn, id: string): Promise<{ su
   });
 };
 
-export const getAiModelConfigs = (request: ApiRequestFn, userId?: string): Promise<AiModelConfigResponse[]> => {
-  const query = buildQuery({ user_id: userId });
-  debugLog('🔍 getAiModelConfigs API调用:', { userId, query });
-  return request<AiModelConfigResponse[]>(`/ai-model-configs${query}`);
+export const getAiModelConfigs = (request: ApiRequestFn): Promise<AiModelConfigResponse[]> => {
+  debugLog('🔍 getAiModelConfigs API调用');
+  return request<AiModelConfigResponse[]>('/ai-model-configs');
 };
 
 export const createAiModelConfig = (
@@ -81,7 +80,6 @@ export const createAiModelConfig = (
     thinking_level?: string;
     api_key: string;
     base_url: string;
-    user_id?: string;
     enabled: boolean;
     supports_images?: boolean;
     supports_reasoning?: boolean;

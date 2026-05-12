@@ -64,10 +64,10 @@ export interface StreamChatLogPayload {
   turn_id: string;
   message: string;
   model_config: {
+    id: string;
     model: string;
     provider: string;
     base_url: string;
-    api_key: string;
     temperature: number;
     thinking_level?: string | null;
     supports_images: boolean;

@@ -31,23 +31,23 @@ mod tests {
         ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
         CONTACT_SKILL_READER_TOOL_NAME,
     };
-    use crate::services::memory_server_client::{
-        MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
-        MemoryAgentRuntimePluginSummaryDto, MemoryAgentRuntimeSkillSummaryDto,
+    use crate::models::chatos_agent_types::{
+        ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,
+        ChatosAgentRuntimePluginSummaryDto, ChatosAgentRuntimeSkillSummaryDto,
     };
     use serde_json::json;
 
     #[test]
     fn builds_contact_prompt_with_plugin_and_skill_summaries() {
         let prompt = compose_contact_system_prompt(
-            Some(&MemoryAgentRuntimeContextDto {
+            Some(&ChatosAgentRuntimeContextDto {
                 agent_id: "agent_1".to_string(),
                 name: "小林".to_string(),
                 description: Some("负责前端排障".to_string()),
                 category: Some("frontend".to_string()),
                 role_definition: "专注组件与状态问题".to_string(),
                 plugin_sources: vec!["frontend_toolkit".to_string()],
-                runtime_plugins: vec![MemoryAgentRuntimePluginSummaryDto {
+                runtime_plugins: vec![ChatosAgentRuntimePluginSummaryDto {
                     source: "frontend_toolkit".to_string(),
                     name: "前端工具箱".to_string(),
                     category: Some("frontend".to_string()),
@@ -57,7 +57,7 @@ mod tests {
                 }],
                 skills: Vec::new(),
                 skill_ids: vec!["skill_a".to_string()],
-                runtime_skills: vec![MemoryAgentRuntimeSkillSummaryDto {
+                runtime_skills: vec![ChatosAgentRuntimeSkillSummaryDto {
                     id: "skill_a".to_string(),
                     name: "组件排障".to_string(),
                     description: Some("定位 UI 异常".to_string()),
@@ -66,7 +66,7 @@ mod tests {
                     source_path: Some("skills/ui/SKILL.md".to_string()),
                     updated_at: Some("2026-03-24T00:00:00Z".to_string()),
                 }],
-                runtime_commands: vec![MemoryAgentRuntimeCommandSummaryDto {
+                runtime_commands: vec![ChatosAgentRuntimeCommandSummaryDto {
                     command_ref: "CMD1".to_string(),
                     name: "team-debug".to_string(),
                     description: Some("并行调试命令".to_string()),
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn parses_explicit_contact_command_invocation() {
-        let runtime_context = MemoryAgentRuntimeContextDto {
+        let runtime_context = ChatosAgentRuntimeContextDto {
             agent_id: "agent_1".to_string(),
             name: "小林".to_string(),
             description: None,
@@ -110,7 +110,7 @@ mod tests {
             skills: vec![],
             skill_ids: vec![],
             runtime_skills: vec![],
-            runtime_commands: vec![MemoryAgentRuntimeCommandSummaryDto {
+            runtime_commands: vec![ChatosAgentRuntimeCommandSummaryDto {
                 command_ref: "CMD1".to_string(),
                 name: "team-debug".to_string(),
                 description: Some("并行调试命令".to_string()),

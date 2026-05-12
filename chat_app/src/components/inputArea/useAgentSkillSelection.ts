@@ -51,7 +51,7 @@ export const useAgentSkillSelection = ({
 
     setResolvedAgentForSkills(baseAgent);
     setSkillsLoading(true);
-    void client.getMemoryAgentRuntimeContext(agentId)
+    void client.getAgentRuntimeContext(agentId)
       .then((runtime) => {
         if (cancelled) {
           return;

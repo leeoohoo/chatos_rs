@@ -1,4 +1,4 @@
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 
 fn is_default_title(title: &str) -> bool {
     let t = title.trim().to_lowercase();
@@ -37,14 +37,13 @@ pub async fn maybe_rename_session_title(
         return false;
     }
 
-    if let Ok(Some(session)) = memory_server_client::get_session_by_id(session_id).await {
+    if let Ok(Some(session)) = chatos_sessions::get_session_by_id(session_id).await {
         if !is_default_title(&session.title) {
             return false;
         }
         let new_title = derive_title_from_content(user_content, max_len);
         if new_title != session.title {
-            let _ =
-                memory_server_client::update_session(session_id, Some(new_title), None, None).await;
+            let _ = chatos_sessions::update_session(session_id, Some(new_title), None, None).await;
             return true;
         }
     }

@@ -6,13 +6,14 @@ use serde_json::Value;
 
 use crate::core::mcp_runtime::McpServerBundle;
 use crate::core::mcp_tools::ToolInfo;
-use crate::services::memory_server_client::TurnRuntimeSnapshotSelectedCommandDto;
+use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct ChatStreamRequest {
     #[serde(rename = "conversation_id", alias = "conversationId")]
     pub conversation_id: Option<String>,
     pub content: Option<String>,
+    pub model_config_id: Option<String>,
     pub ai_model_config: Option<Value>,
     pub user_id: Option<String>,
     pub attachments: Option<Vec<Value>>,

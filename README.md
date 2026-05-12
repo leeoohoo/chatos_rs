@@ -14,7 +14,6 @@ Chatos RS 是一个面向工程协作场景的 AI 平台，统一了对话协作
 ## Architecture
 - `chat_app/`: Frontend interaction layer
 - `chat_app_server_rs/`: Main orchestration backend
-- `memory_server/`: Memory domain service
 - `openai-codex-gateway/`: OpenAI-compatible gateway
 
 ## Quick Start
@@ -34,8 +33,6 @@ Useful commands:
 Default logs:
 - `/tmp/chatos_rs_dev/backend.log`
 - `/tmp/chatos_rs_dev/frontend.log`
-- `/tmp/chatos_rs_dev/memory_backend.log`
-- `/tmp/chatos_rs_dev/memory_frontend.log`
 
 ## Language Docs
 - [中文](./README.zh-CN.md)
@@ -46,8 +43,6 @@ Default logs:
 - [chat_app 中文](./chat_app/README.zh-CN.md)
 - [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [memory_server English](./memory_server/README.en.md)
-- [memory_server 中文](./memory_server/README.zh-CN.md)
 - [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
 - [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
 

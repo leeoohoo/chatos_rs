@@ -12,6 +12,7 @@ use crate::core::messages::{
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
+use crate::services::chatos_sessions;
 
 use super::contracts::{CreateMessageRequest, PageQuery};
 use super::history::{
@@ -43,7 +44,7 @@ pub(super) async fn get_session_messages(
     let result = if compact {
         if compact_recent_strategy {
             let window = limit.unwrap_or(400).max(1).saturating_mul(8).min(5000);
-            match crate::services::memory_server_client::list_messages(
+            match chatos_sessions::list_messages(
                 &conversation_id,
                 Some(window),
                 0,
@@ -55,7 +56,7 @@ pub(super) async fn get_session_messages(
                     messages.reverse();
                     Ok(compact_messages_for_display(messages, limit, offset))
                 }
-                Err(_) => crate::services::memory_server_client::list_messages(
+                Err(_) => chatos_sessions::list_messages(
                     &conversation_id,
                     None,
                     0,
@@ -65,12 +66,12 @@ pub(super) async fn get_session_messages(
                 .map(|messages| compact_messages_for_display(messages, limit, offset)),
             }
         } else {
-            crate::services::memory_server_client::list_messages(&conversation_id, None, 0, true)
+            chatos_sessions::list_messages(&conversation_id, None, 0, true)
                 .await
                 .map(|messages| compact_messages_for_display(messages, limit, offset))
         }
     } else if let Some(v) = limit {
-        crate::services::memory_server_client::list_messages(
+        chatos_sessions::list_messages(
             &conversation_id,
             Some(v),
             offset,
@@ -82,7 +83,7 @@ pub(super) async fn get_session_messages(
             messages
         })
     } else {
-        crate::services::memory_server_client::list_messages(&conversation_id, None, 0, true).await
+        chatos_sessions::list_messages(&conversation_id, None, 0, true).await
     };
 
     match result {
@@ -253,7 +254,7 @@ pub(super) async fn get_session_turn_runtime_context_latest(
         return map_session_access_error(err);
     }
 
-    match crate::services::memory_server_client::get_latest_turn_runtime_snapshot(&conversation_id)
+    match chatos_sessions::get_latest_turn_runtime_snapshot(&conversation_id)
         .await
     {
         Ok(payload) => (
@@ -280,7 +281,7 @@ pub(super) async fn get_session_turn_runtime_context_by_turn(
         return map_session_access_error(err);
     }
 
-    match crate::services::memory_server_client::get_turn_runtime_snapshot_by_turn(
+    match chatos_sessions::get_turn_runtime_snapshot_by_turn(
         &conversation_id,
         &turn_id,
     )

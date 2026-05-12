@@ -7,12 +7,13 @@ use crate::core::builtin_mcp_prompt::{
     inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
     BuiltinMcpPromptBuildResult,
 };
+use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
 use crate::core::chat_runtime::parse_implicit_command_selections_from_tools_end;
 use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
 use crate::services::ai_client_common::AiClientCallbacks;
-use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
+use crate::services::chatos_sessions;
 use crate::services::task_board_prompt::build_task_board_prompt;
 
 use super::types::{ResolvedChatStreamContext, ToolMetadataMap};
@@ -88,7 +89,7 @@ pub(crate) async fn sync_chat_turn_snapshot(
         unavailable_builtin_tools,
         builtin_mcp_prompt_debug: Some(&builtin_prompt_debug),
     });
-    memory_server_client::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
+    chatos_sessions::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
         .await
         .map(|_| ())
 }

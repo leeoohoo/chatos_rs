@@ -36,3 +36,4 @@ __pycache__/
 /chat_app_server_rs/docs
 /chat_app_server_rs/docs/*
 /docs/
+/memory_engine_ext/*

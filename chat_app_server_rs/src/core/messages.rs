@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::models::message::Message;
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 use crate::services::ai_common::{
     extract_response_id_from_metadata, extract_response_status_from_metadata,
     is_non_terminal_response_status,
@@ -214,7 +214,7 @@ pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message
     let role = message.role.clone();
     let content = message.content.clone();
 
-    let saved = memory_server_client::upsert_message(&message).await?;
+    let saved = chatos_sessions::upsert_message(&message).await?;
     if role == "user" {
         let _ = maybe_rename_session_title(&session_id, &content, 30).await;
     }

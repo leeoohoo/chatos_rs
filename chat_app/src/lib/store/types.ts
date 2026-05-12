@@ -366,6 +366,23 @@ export interface ChatActions {
   setSelectedModel: (modelId: string | null) => void;
   // 智能体
   loadAgents: (options?: { force?: boolean }) => Promise<void>;
+  createAgent: (agent: AgentConfig) => Promise<AgentConfig | null>;
+  updateAgent: (agent: AgentConfig) => Promise<AgentConfig | null>;
+  deleteAgent: (agentId: string) => Promise<void>;
+  aiCreateAgent: (payload: {
+    requirement: string;
+    name?: string;
+    category?: string;
+    description?: string;
+    role_definition?: string;
+    skill_ids?: string[];
+    skill_prompts?: string[];
+    enabled?: boolean;
+    mcp_enabled?: boolean;
+    enabled_mcp_ids?: string[];
+    project_id?: string;
+    project_root?: string;
+  }) => Promise<AgentConfig | null>;
   setSelectedAgent: (agentId: string | null) => void;
   loadSystemContexts: () => Promise<void>;
   createSystemContext: (name: string, content: string, appIds?: string[]) => Promise<SystemContextResponse | null>;

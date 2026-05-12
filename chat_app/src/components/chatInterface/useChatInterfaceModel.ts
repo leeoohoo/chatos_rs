@@ -273,6 +273,8 @@ export const useChatInterfaceModel = ({
     setShowMcpManager: controller.setShowMcpManager,
     showAiModelManager: controller.showAiModelManager,
     setShowAiModelManager: controller.setShowAiModelManager,
+    showAgentManager: controller.showAgentManager,
+    setShowAgentManager: controller.setShowAgentManager,
     showNotepadPanel: controller.showNotepadPanel,
     setShowNotepadPanel: controller.setShowNotepadPanel,
     showUserSettings: controller.showUserSettings,

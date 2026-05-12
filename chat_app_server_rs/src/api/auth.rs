@@ -4,8 +4,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::config::Config;
-use crate::core::auth::AuthUser;
-use crate::services::memory_server_client;
+use crate::core::auth::{build_auth_token, AuthUser};
+use crate::repositories::auth_users;
 
 #[derive(Debug, Deserialize)]
 struct LoginRequest {
@@ -33,7 +33,7 @@ pub fn router() -> Router {
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {
-    // 统一账号体系后，register 等价于 login（由 memory_server 决定是否自动创建普通用户）。
+    // 过渡阶段 register 仍等价于 login；后续用户管理完全并回 chatos 后再单独开放注册语义。
     login_inner(req.username, req.email, req.password).await
 }
 
@@ -67,26 +67,19 @@ async fn login_inner(
         );
     };
 
-    match memory_server_client::auth_login(username.as_str(), password.as_str()).await {
-        Ok(resp) => match Config::try_get() {
-            Ok(cfg) => (
-                StatusCode::OK,
-                Json(json!({
-                    "access_token": resp.token,
-                    "token_type": "Bearer",
-                    "expires_in": cfg.auth_access_token_ttl_seconds,
-                    "user": user_public_value(resp.user_id.as_str(), resp.role.as_str()),
-                })),
-            ),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "服务配置未初始化",
-                    "detail": err
-                })),
-            ),
-        },
-        Err(err) => map_memory_auth_error("登录失败", err),
+    match auth_users::verify_user_password(username.as_str(), password.as_str()).await {
+        Ok(Some(user)) => build_login_success_response(&user),
+        Ok(None) => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "用户名或密码错误"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "登录失败",
+                "detail": err
+            })),
+        ),
     }
 }
 
@@ -113,21 +106,32 @@ fn user_public_value(user_id: &str, role: &str) -> Value {
     })
 }
 
-fn map_memory_auth_error(scene: &str, err: String) -> (StatusCode, Json<Value>) {
-    if err.contains("status=401") {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "用户名或密码错误"})),
-        );
+fn build_login_success_response(user: &auth_users::AuthUserRecord) -> (StatusCode, Json<Value>) {
+    match Config::try_get() {
+        Ok(cfg) => match build_auth_token(user.user_id.as_str(), user.role.as_str()) {
+            Ok(token) => (
+                StatusCode::OK,
+                Json(json!({
+                    "access_token": token,
+                    "token_type": "Bearer",
+                    "expires_in": cfg.auth_access_token_ttl_seconds,
+                    "user": user_public_value(user.user_id.as_str(), user.role.as_str()),
+                })),
+            ),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "生成登录令牌失败",
+                    "detail": err
+                })),
+            ),
+        },
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "服务配置未初始化",
+                "detail": err
+            })),
+        ),
     }
-    if err.contains("status=400") {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": scene, "detail": err})),
-        );
-    }
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(json!({"error": "认证服务不可用", "detail": err})),
-    )
 }

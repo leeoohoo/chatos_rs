@@ -12,6 +12,16 @@ export interface MemoryAgentsQueryOptions extends PagingOptions {
   enabled?: boolean;
 }
 
+export interface MemorySkillsQueryOptions extends PagingOptions {
+  plugin_source?: string;
+  query?: string;
+}
+
+export interface MemoryAgentSessionsQueryOptions extends PagingOptions {
+  project_id?: string;
+  status?: string;
+}
+
 export interface DeleteSuccessResponse {
   success?: boolean;
   deleted?: boolean;

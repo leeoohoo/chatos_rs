@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::resolve_user_id;
-use crate::services::memory_server_client;
+use crate::models::memory_mapping_types::CreateMemoryContactRequestDto;
+use crate::services::chatos_memory_mappings;
 use crate::services::realtime::publish_contacts_updated;
 
 #[derive(Debug, Deserialize)]
@@ -66,7 +67,7 @@ async fn list_contacts(
         Err(err) => return err,
     };
 
-    match memory_server_client::list_memory_contacts(
+    match chatos_memory_mappings::list_memory_contacts(
         Some(user_id.as_str()),
         query.limit,
         query.offset.unwrap_or(0),
@@ -85,7 +86,7 @@ async fn get_contact(
     auth: AuthUser,
     Path(contact_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    match memory_server_client::get_memory_contact(contact_id.as_str()).await {
+    match chatos_memory_mappings::get_memory_contact(contact_id.as_str()).await {
         Ok(Some(contact)) => {
             if contact.user_id != auth.user_id {
                 return (
@@ -122,7 +123,7 @@ async fn create_contact(
         );
     }
 
-    let payload = memory_server_client::CreateMemoryContactRequestDto {
+    let payload = CreateMemoryContactRequestDto {
         user_id: Some(user_id),
         agent_id,
         agent_name_snapshot: req
@@ -133,7 +134,7 @@ async fn create_contact(
             .map(ToOwned::to_owned),
     };
 
-    match memory_server_client::create_memory_contact(&payload).await {
+    match chatos_memory_mappings::create_memory_contact(&payload).await {
         Ok(result) => {
             publish_contacts_updated(
                 auth.user_id.as_str(),
@@ -164,7 +165,7 @@ async fn delete_contact(
     Path(contact_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     let user_id = auth.user_id.clone();
-    match memory_server_client::delete_memory_contact(contact_id.as_str()).await {
+    match chatos_memory_mappings::delete_memory_contact(contact_id.as_str()).await {
         Ok(true) => {
             publish_contacts_updated(
                 user_id.as_str(),
@@ -190,7 +191,7 @@ async fn list_contact_project_memories(
     Path((contact_id, project_id)): Path<(String, String)>,
     Query(query): Query<ContactMemoryQuery>,
 ) -> (StatusCode, Json<Value>) {
-    match memory_server_client::list_contact_project_memories(
+    match chatos_memory_mappings::list_contact_project_memories(
         contact_id.as_str(),
         project_id.as_str(),
         query.limit,
@@ -211,7 +212,7 @@ async fn list_contact_project_memories_by_contact(
     Path(contact_id): Path<String>,
     Query(query): Query<ContactMemoryQuery>,
 ) -> (StatusCode, Json<Value>) {
-    match memory_server_client::list_contact_project_memories_by_contact(
+    match chatos_memory_mappings::list_contact_project_memories_by_contact(
         contact_id.as_str(),
         query.limit,
         query.offset.unwrap_or(0),
@@ -231,7 +232,7 @@ async fn list_contact_projects(
     Path(contact_id): Path<String>,
     Query(query): Query<ContactMemoryQuery>,
 ) -> (StatusCode, Json<Value>) {
-    match memory_server_client::list_contact_projects(
+    match chatos_memory_mappings::list_contact_projects(
         contact_id.as_str(),
         query.limit,
         query.offset.unwrap_or(0),
@@ -251,7 +252,7 @@ async fn list_contact_agent_recalls(
     Path(contact_id): Path<String>,
     Query(query): Query<ContactMemoryQuery>,
 ) -> (StatusCode, Json<Value>) {
-    match memory_server_client::list_contact_agent_recalls(
+    match chatos_memory_mappings::list_contact_agent_recalls(
         contact_id.as_str(),
         query.limit,
         query.offset.unwrap_or(0),

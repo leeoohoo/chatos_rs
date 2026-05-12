@@ -28,7 +28,6 @@ done < <(
   du -sh \
     "$ROOT_DIR/chat_app" \
     "$ROOT_DIR/chat_app_server_rs" \
-    "$ROOT_DIR/memory_server" \
     "$ROOT_DIR/openai-codex-gateway" \
     "$ROOT_DIR/target-shared" \
     "$ROOT_DIR/docs" 2>/dev/null | sort -hr
@@ -45,16 +44,12 @@ done < <(
     "chat_app_server_rs/data" \
     "chat_app_server_rs/logs" \
     "chat_app_server_rs/docs" \
-    "memory_server/backend/target" \
-    "memory_server/backend/data" \
-    "memory_server/frontend/node_modules" \
-    "memory_server/frontend/dist" \
     "target-shared"
 ) | sort -hr
 
 print_header "Large Files Over 20MB"
 find "$ROOT_DIR" \
-  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/memory_server/backend/target" -o -path "$ROOT_DIR/memory_server/frontend/node_modules" -o -path "$ROOT_DIR/target-shared" \) -prune \
+  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
   -o \( -type f -size +20M -print \) | sed "s#^$ROOT_DIR/##" | sort | head -n "$TOP_N"
 
 print_header "Tracked Runtime Artifacts"
@@ -62,7 +57,7 @@ git -C "$ROOT_DIR" ls-files | rg '(^|/)(__pycache__/|.*\.pyc$|.*\.pyo$|.*\.sqlit
 
 print_header "Local Runtime And Cache Artifacts"
 find "$ROOT_DIR" \
-  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/memory_server/backend/target" -o -path "$ROOT_DIR/memory_server/frontend/node_modules" -o -path "$ROOT_DIR/target-shared" \) -prune \
+  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
   -o \( -name '.DS_Store' -o -name '__pycache__' -o -name '*.pyc' -o -name '*.pyo' -o -name '*.sqlite3' -o -name '*.sqlite3-shm' -o -name '*.sqlite3-wal' -o -name '*.db' -o -name '*.db-shm' -o -name '*.db-wal' \) -print \
   | sed "s#^$ROOT_DIR/##" | sort | head -n "$TOP_N"
 

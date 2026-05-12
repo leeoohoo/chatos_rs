@@ -4,14 +4,13 @@ use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
 
 use crate::core::time::now_rfc3339;
+use crate::models::memory_mapping_types::MemoryContactDto;
+use crate::models::memory_runtime_types::{ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto};
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
-use crate::models::terminal::Terminal;
 use crate::models::session_summary_v2::SessionSummaryV2;
-use crate::services::memory_server_client::{
-    MemoryContactDto, ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
-};
+use crate::models::terminal::Terminal;
 use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 use super::types::{

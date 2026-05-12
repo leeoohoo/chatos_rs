@@ -40,13 +40,13 @@ struct McpConfigRequest {
 
 #[derive(Debug, Deserialize)]
 struct AiModelConfigRequest {
+    id: Option<String>,
     name: Option<String>,
     provider: Option<String>,
     model: Option<String>,
     thinking_level: Option<String>,
     api_key: Option<String>,
     base_url: Option<String>,
-    user_id: Option<String>,
     enabled: Option<bool>,
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,

@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MAIN_API_DIR="$ROOT_DIR/chat_app_server_rs/src/api"
-MEMORY_API_DIR="$ROOT_DIR/memory_server/backend/src/api"
 
 extract_endpoints_from_file() {
   local file="$1"
@@ -101,6 +100,9 @@ extract_endpoints_from_file() {
 
 collect_endpoints() {
   local dir="$1"
+  if [[ ! -d "$dir" ]]; then
+    return
+  fi
   find "$dir" -type f -name '*.rs' | sort | while IFS= read -r file; do
     extract_endpoints_from_file "$file"
   done | sed '/^[[:space:]]*$/d' | sort -u
@@ -112,21 +114,15 @@ count_lines() {
 }
 
 main_endpoints="$(collect_endpoints "$MAIN_API_DIR")"
-memory_endpoints="$(collect_endpoints "$MEMORY_API_DIR")"
 
 main_count="$(count_lines "$main_endpoints")"
-memory_count="$(count_lines "$memory_endpoints")"
 
 cat <<EOF
 # API Path Baseline
 
 main_backend_endpoint_count=${main_count}
-memory_backend_endpoint_count=${memory_count}
-total_endpoint_count=$((main_count + memory_count))
+total_endpoint_count=${main_count}
 
 ## chat_app_server_rs endpoints (method + path)
 ${main_endpoints}
-
-## memory_server endpoints (method + path)
-${memory_endpoints}
 EOF

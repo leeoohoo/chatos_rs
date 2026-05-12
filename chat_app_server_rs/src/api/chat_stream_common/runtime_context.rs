@@ -16,7 +16,11 @@ use crate::core::mcp_runtime::{
     contact_agent_skill_reader_server, empty_mcp_server_bundle, has_any_mcp_server,
     load_mcp_servers_by_selection, normalize_mcp_ids,
 };
-use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
+use crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto;
+use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
+use crate::services::{
+    chatos_agents, chatos_memory_engine, chatos_memory_mappings, chatos_sessions, chatos_skills,
+};
 
 use super::types::{ChatStreamRequest, ResolvedChatStreamContext};
 
@@ -27,7 +31,7 @@ pub(crate) async fn resolve_chat_stream_context(
     default_system_prompt: Option<String>,
     use_active_system_context: bool,
 ) -> ResolvedChatStreamContext {
-    let memory_session = memory_server_client::get_session_by_id(session_id)
+    let memory_session = chatos_sessions::get_session_by_id(session_id)
         .await
         .ok()
         .flatten();
@@ -47,7 +51,7 @@ pub(crate) async fn resolve_chat_stream_context(
 
     if contact_agent_id.is_none() {
         if let Some(contact_id) = runtime_metadata.contact_id.as_deref() {
-            if let Ok(contacts) = memory_server_client::list_memory_contacts(
+            if let Ok(contacts) = chatos_memory_mappings::list_memory_contacts(
                 effective_user_id.as_deref(),
                 Some(500),
                 0,
@@ -69,7 +73,7 @@ pub(crate) async fn resolve_chat_stream_context(
 
     let contact_runtime_context = match contact_agent_id.as_deref() {
         Some(agent_id) => {
-            match memory_server_client::get_memory_agent_runtime_context(agent_id).await {
+            match chatos_agents::get_agent_runtime_context(agent_id).await {
                 Ok(value) => value,
                 Err(err) => {
                     warn!(
@@ -193,11 +197,14 @@ pub(crate) async fn resolve_chat_stream_context(
 
     let builtin_mcp_system_prompt = compose_builtin_mcp_system_prompt(builtin_servers.as_slice());
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
-    let memory_summary_prompt = memory_server_client::compose_context(session_id, 2)
-        .await
-        .ok()
-        .and_then(|payload| payload.0)
-        .and_then(|value| normalize_optional_text(Some(value.as_str())));
+    let memory_summary_prompt = match memory_session.as_ref() {
+        Some(session) => chatos_memory_engine::compose_chatos_context(session, 2, true)
+            .await
+            .ok()
+            .and_then(|payload| payload.merged_summary)
+            .and_then(|value| normalize_optional_text(Some(value.as_str()))),
+        None => None,
+    };
 
     ResolvedChatStreamContext {
         effective_user_id,
@@ -220,7 +227,7 @@ pub(crate) async fn resolve_chat_stream_context(
 }
 
 async fn build_contact_skill_prompt_mode(
-    runtime_context: Option<&memory_server_client::MemoryAgentRuntimeContextDto>,
+    runtime_context: Option<&ChatosAgentRuntimeContextDto>,
     skills_enabled: bool,
     selected_skill_ids: &[String],
 ) -> ContactSkillPromptMode {
@@ -242,7 +249,7 @@ async fn build_contact_skill_prompt_mode(
         .filter(|item| !item.is_empty())
         .collect::<HashSet<_>>();
     let mut selected_skills = Vec::new();
-    let mut selected_plugin_sources = Vec::new();
+    let mut selected_plugin_sources: Vec<String> = Vec::new();
 
     for (index, runtime_skill) in agent.runtime_skills.iter().enumerate() {
         let skill_id = runtime_skill.id.trim();
@@ -266,7 +273,7 @@ async fn build_contact_skill_prompt_mode(
                     updated_at: runtime_skill.updated_at.clone(),
                 })
         } else {
-            match memory_server_client::get_memory_skill(skill_id).await {
+            match chatos_skills::get_skill(agent.user_id.as_str(), skill_id).await {
                 Ok(Some(full_skill)) => Some(ContactSelectedSkillPrompt {
                     skill_ref: contact_skill_ref(index),
                     id: full_skill.id,
@@ -349,7 +356,7 @@ async fn build_contact_skill_prompt_mode(
 
     let mut selected_plugins = Vec::new();
     for plugin_source in selected_plugin_sources {
-        match memory_server_client::get_memory_skill_plugin(plugin_source.as_str()).await {
+        match chatos_skills::get_skill_plugin(agent.user_id.as_str(), plugin_source.as_str()).await {
             Ok(Some(plugin)) => {
                 let runtime_plugin_index = agent
                     .runtime_plugins

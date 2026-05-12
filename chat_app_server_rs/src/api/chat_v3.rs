@@ -17,7 +17,6 @@ use crate::api::chat_stream_common::{
 };
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
-use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::auth::AuthUser;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
@@ -28,7 +27,9 @@ use crate::core::chat_stream::{
 };
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::services::ai_common::normalize_turn_id;
-use crate::services::memory_server_client;
+use crate::services::access_token_scope;
+use crate::services::chatos_sessions;
+use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::task_board_prompt::build_runtime_prefixed_input_items;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
@@ -69,12 +70,12 @@ async fn agent_chat_stream(
     if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
         return Err(err);
     }
-    validate_chat_stream_request(&req, true)?;
+    validate_chat_stream_request(&req, true).await?;
     let conversation_id = req.conversation_id.clone().unwrap_or_default();
 
     abort_registry::reset(&conversation_id);
     let (sse, sender) = sse_channel();
-    memory_server_client::spawn_with_current_access_token(stream_chat_v3(Some(sender), req));
+    access_token_scope::spawn_with_current_access_token(stream_chat_v3(Some(sender), req));
     Ok(sse)
 }
 
@@ -85,12 +86,12 @@ async fn agent_chat_send(
     if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
         return Err(err);
     }
-    validate_chat_stream_request(&req, true)?;
+    validate_chat_stream_request(&req, true).await?;
     let conversation_id = req.conversation_id.clone().unwrap_or_default();
     let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
 
     abort_registry::reset(&conversation_id);
-    memory_server_client::spawn_with_current_access_token(stream_chat_v3(None, req));
+    access_token_scope::spawn_with_current_access_token(stream_chat_v3(None, req));
 
     Ok((
         StatusCode::ACCEPTED,
@@ -103,7 +104,7 @@ async fn agent_chat_send(
 }
 
 async fn reset_conversation(Path(conversation_id): Path<String>) -> Json<Value> {
-    let _ = memory_server_client::delete_messages_by_session(&conversation_id).await;
+    let _ = chatos_sessions::delete_messages_by_session(&conversation_id).await;
     Json(json!({
         "success": true,
         "message": "对话线程重置成功",
@@ -154,38 +155,39 @@ async fn stream_chat_v3(sender: Option<SseSender>, req: ChatStreamRequest) {
             user_message_id: None,
         }),
     );
-    let cfg = match Config::try_get() {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str(), None);
-            initial_sink.send_done();
-            return;
-        }
-    };
+    if let Err(err) = Config::try_get() {
+        send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str(), None);
+        initial_sink.send_done();
+        return;
+    }
 
     send_start_event(&initial_sink, &session_id);
 
     maybe_spawn_session_title_rename(true, &session_id, &content, 30);
 
-    let model_cfg: Value = req.ai_model_config.clone().unwrap_or_else(|| json!({}));
-    if model_cfg
-        .get("supports_responses")
-        .and_then(|v| v.as_bool())
-        != Some(true)
+    let model_runtime = match resolve_model_runtime_for_request(
+        req.model_config_id.as_deref(),
+        req.ai_model_config.as_ref(),
+        req.conversation_id.as_deref(),
+        req.user_id.as_deref(),
+        "gpt-4o",
+        req.reasoning_enabled,
+        true,
+    )
+    .await
     {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            send_error_event(&initial_sink, format!("解析模型配置失败: {err}").as_str(), None);
+            initial_sink.send_done();
+            return;
+        }
+    };
+    if !model_runtime.supports_responses {
         send_error_event(&initial_sink, "当前模型未启用 Responses API", None);
         initial_sink.send_done();
         return;
     }
-
-    let model_runtime = resolve_chat_model_config(
-        &model_cfg,
-        "gpt-4o",
-        &cfg.openai_api_key,
-        &cfg.openai_base_url,
-        req.reasoning_enabled,
-        true,
-    );
 
     let mut ai_server = AiServer::new(
         model_runtime.api_key.clone(),

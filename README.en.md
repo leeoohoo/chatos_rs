@@ -12,7 +12,7 @@ Typical issues in engineering-grade chat AI systems:
 - External integrations are difficult when protocol expectations differ.
 
 `Chatos RS` addresses these with a layered architecture:
-main chat service + memory service + compatibility gateway.
+main chat service + external memory platform integration + compatibility gateway.
 
 ## Core Advantages
 1. Long-term memory by design
@@ -25,7 +25,7 @@ main chat service + memory service + compatibility gateway.
 - Built for tool calls and MCP-like workflows, making it practical for real engineering pipelines.
 
 4. Scalable architecture
-- Frontend, backend, memory domain, and gateway are decoupled and can scale independently.
+- Frontend, backend, external memory platform, and gateway are decoupled and can scale independently.
 
 5. Strong ecosystem compatibility
 - Exposes OpenAI-compatible APIs so existing clients and SDKs can integrate with low migration effort.
@@ -33,7 +33,6 @@ main chat service + memory service + compatibility gateway.
 ## Architecture Layers
 - `chat_app/`: frontend interaction layer
 - `chat_app_server_rs/`: main orchestration backend (sessions, messages, tools, streaming)
-- `memory_server/`: memory domain (summaries, rollups, memory retrieval, admin console)
 - `openai-codex-gateway/`: OpenAI-compatible gateway layer
 
 ## Quick Start
@@ -53,8 +52,6 @@ Useful commands:
 Default runtime logs:
 - `/tmp/chatos_rs_dev/backend.log`
 - `/tmp/chatos_rs_dev/frontend.log`
-- `/tmp/chatos_rs_dev/memory_backend.log`
-- `/tmp/chatos_rs_dev/memory_frontend.log`
 
 ## Development Plans Archive
 Historical plans/assessments/contracts are centralized at:
@@ -65,8 +62,6 @@ Historical plans/assessments/contracts are centralized at:
 - [chat_app 中文](./chat_app/README.zh-CN.md)
 - [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [memory_server English](./memory_server/README.en.md)
-- [memory_server 中文](./memory_server/README.zh-CN.md)
 - [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
 - [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
 

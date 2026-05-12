@@ -1,8 +1,9 @@
 use serde_json::{json, Value};
 
-use crate::services::memory_server_client::{
-    self, SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotSystemMessageDto,
+use crate::models::memory_runtime_types::{
+    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotSystemMessageDto,
 };
+use crate::services::chatos_sessions;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
 use crate::utils::events::Events;
@@ -337,8 +338,7 @@ async fn sync_task_board_turn_snapshot(
     turn_id: &str,
     task_board_prompt: &str,
 ) -> Result<(), String> {
-    let lookup =
-        memory_server_client::get_turn_runtime_snapshot_by_turn(session_id, turn_id).await?;
+    let lookup = chatos_sessions::get_turn_runtime_snapshot_by_turn(session_id, turn_id).await?;
     let payload = if let Some(snapshot) = lookup.snapshot {
         SyncTurnRuntimeSnapshotRequestDto {
             user_message_id: snapshot.user_message_id,
@@ -369,7 +369,7 @@ async fn sync_task_board_turn_snapshot(
             runtime: None,
         }
     };
-    memory_server_client::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
+    chatos_sessions::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
         .await
         .map(|_| ())
 }
@@ -434,7 +434,7 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{format_task_board_prompt, upsert_task_board_system_messages};
-    use crate::services::memory_server_client::TurnRuntimeSnapshotSystemMessageDto;
+    use crate::models::memory_runtime_types::TurnRuntimeSnapshotSystemMessageDto;
     use crate::services::task_manager::TaskRecord;
 
     fn build_task(id: &str, title: &str, status: &str) -> TaskRecord {

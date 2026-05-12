@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-if [[ -z "${CHATOS_RS_SHELL_SANITIZED-}" ]]; then export CHATOS_RS_SHELL_SANITIZED=1; export CHATOS_RS_SCRIPT_PATH="$0"; exec bash <(tr -d '\r' < "$0") "$@"; fi # CRLF-safe bootstrap for `bash restart_services.sh` #
+if [[ -z "${CHATOS_RS_SHELL_SANITIZED-}" ]]; then export CHATOS_RS_SHELL_SANITIZED=1; export CHATOS_RS_SCRIPT_PATH="$0"; exec bash <(tr -d '\r' < "$0") "$@"; fi
 
 set -euo pipefail
 
@@ -7,24 +7,10 @@ SCRIPT_PATH="${CHATOS_RS_SCRIPT_PATH:-${BASH_SOURCE[0]}}"
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 MAIN_BACKEND_DIR="$ROOT_DIR/chat_app_server_rs"
 MAIN_FRONTEND_DIR="$ROOT_DIR/chat_app"
-MEMORY_ENGINE_ROOT_DIR="$ROOT_DIR/memory_engine"
-MEMORY_ENGINE_BACKEND_DIR="$MEMORY_ENGINE_ROOT_DIR/backend"
-MEMORY_ENGINE_FRONTEND_DIR="$MEMORY_ENGINE_ROOT_DIR/frontend"
-MEMORY_ROOT_DIR="$ROOT_DIR/memory_server"
-MEMORY_BACKEND_DIR="$MEMORY_ROOT_DIR/backend"
-MEMORY_FRONTEND_DIR="$MEMORY_ROOT_DIR/frontend"
-MEMORY_ENGINE_BACKEND_ENV_FILE="$MEMORY_ENGINE_BACKEND_DIR/.env"
-MEMORY_BACKEND_ENV_FILE="$MEMORY_BACKEND_DIR/.env"
 
 MAIN_BACKEND_PORT="${MAIN_BACKEND_PORT:-${BACKEND_PORT:-3997}}"
 LEGACY_MAIN_BACKEND_PORT=3001
 MAIN_FRONTEND_PORT="${FRONTEND_PORT:-8088}"
-MEMORY_ENGINE_BACKEND_PORT="${MEMORY_ENGINE_BACKEND_PORT:-${MEMORY_ENGINE_PORT:-}}"
-MEMORY_ENGINE_FRONTEND_PORT="${MEMORY_ENGINE_FRONTEND_PORT:-4178}"
-MEMORY_ENGINE_FRONTEND_HOST="${MEMORY_ENGINE_FRONTEND_HOST:-0.0.0.0}"
-MEMORY_BACKEND_PORT="${MEMORY_SERVER_BACKEND_PORT:-}"
-MEMORY_FRONTEND_PORT="${MEMORY_SERVER_FRONTEND_PORT:-5176}"
-MEMORY_FRONTEND_HOST="${MEMORY_SERVER_FRONTEND_HOST:-0.0.0.0}"
 
 if command -v shasum >/dev/null 2>&1; then
   ROOT_HASH="$(printf '%s' "$ROOT_DIR" | shasum | awk '{print substr($1,1,8)}')"
@@ -33,60 +19,25 @@ elif command -v sha1sum >/dev/null 2>&1; then
 else
   ROOT_HASH="default"
 fi
+
 RUNTIME_DIR="${RUNTIME_DIR:-/tmp/chatos_rs_dev_${ROOT_HASH}}"
 LEGACY_RUNTIME_DIR="/tmp/chatos_rs_dev"
 STOP_BY_PORT="${STOP_BY_PORT:-1}"
+
 MAIN_BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 MAIN_FRONTEND_PID_FILE="$RUNTIME_DIR/frontend.pid"
-MEMORY_ENGINE_BACKEND_PID_FILE="$RUNTIME_DIR/memory_engine_backend.pid"
-MEMORY_ENGINE_FRONTEND_PID_FILE="$RUNTIME_DIR/memory_engine_frontend.pid"
-MEMORY_BACKEND_PID_FILE="$RUNTIME_DIR/memory_backend.pid"
-MEMORY_FRONTEND_PID_FILE="$RUNTIME_DIR/memory_frontend.pid"
 MAIN_BACKEND_LOG_FILE="$RUNTIME_DIR/backend.log"
 MAIN_FRONTEND_LOG_FILE="$RUNTIME_DIR/frontend.log"
-MEMORY_ENGINE_BACKEND_LOG_FILE="$RUNTIME_DIR/memory_engine_backend.log"
-MEMORY_ENGINE_FRONTEND_LOG_FILE="$RUNTIME_DIR/memory_engine_frontend.log"
-MEMORY_BACKEND_LOG_FILE="$RUNTIME_DIR/memory_backend.log"
-MEMORY_FRONTEND_LOG_FILE="$RUNTIME_DIR/memory_frontend.log"
 MAIN_BACKEND_BINARY="$ROOT_DIR/target-shared/debug/chat_app_server_rs"
-MEMORY_ENGINE_BACKEND_BINARY="$ROOT_DIR/target-shared/debug/memory_engine"
-MEMORY_BACKEND_BINARY="$ROOT_DIR/target-shared/debug/memory_server"
+
 LEGACY_MAIN_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/backend.pid"
 LEGACY_MAIN_FRONTEND_PID_FILE="$LEGACY_RUNTIME_DIR/frontend.pid"
-LEGACY_MEMORY_ENGINE_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/memory_engine_backend.pid"
-LEGACY_MEMORY_ENGINE_FRONTEND_PID_FILE="$LEGACY_RUNTIME_DIR/memory_engine_frontend.pid"
-LEGACY_MEMORY_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/memory_backend.pid"
-LEGACY_MEMORY_FRONTEND_PID_FILE="$LEGACY_RUNTIME_DIR/memory_frontend.pid"
 
 need_cmd() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "[ERROR] 缺少命令: $cmd"
     exit 1
-  fi
-}
-
-read_memory_port_from_env_file() {
-  local env_file="$1"
-  if [[ ! -f "$env_file" ]]; then
-    return
-  fi
-  local port
-  port="$(grep -E '^[[:space:]]*MEMORY_SERVER_PORT=' "$env_file" | tail -n 1 | cut -d '=' -f 2- | tr -d '"' | tr -d "'" | tr -d '[:space:]' || true)"
-  if [[ -n "$port" ]]; then
-    MEMORY_BACKEND_PORT="$port"
-  fi
-}
-
-read_memory_engine_port_from_env_file() {
-  local env_file="$1"
-  if [[ ! -f "$env_file" ]]; then
-    return
-  fi
-  local port
-  port="$(grep -E '^[[:space:]]*MEMORY_ENGINE_PORT=' "$env_file" | tail -n 1 | cut -d '=' -f 2- | tr -d '"' | tr -d "'" | tr -d '[:space:]' || true)"
-  if [[ -n "$port" ]]; then
-    MEMORY_ENGINE_BACKEND_PORT="$port"
   fi
 }
 
@@ -208,101 +159,6 @@ launch_service() {
   echo $! >"$pid_file"
 }
 
-prepare() {
-  need_cmd bash
-  need_cmd npm
-  need_cmd cargo
-
-  if [[ ! -d "$MAIN_BACKEND_DIR" || ! -d "$MAIN_FRONTEND_DIR" ]]; then
-    echo "[ERROR] 原项目目录不完整: $MAIN_BACKEND_DIR / $MAIN_FRONTEND_DIR"
-    exit 1
-  fi
-
-  if [[ ! -d "$MEMORY_ENGINE_BACKEND_DIR" || ! -d "$MEMORY_ENGINE_FRONTEND_DIR" ]]; then
-    echo "[ERROR] memory_engine 目录不完整: $MEMORY_ENGINE_BACKEND_DIR / $MEMORY_ENGINE_FRONTEND_DIR"
-    exit 1
-  fi
-
-  if [[ ! -d "$MEMORY_BACKEND_DIR" || ! -d "$MEMORY_FRONTEND_DIR" ]]; then
-    echo "[ERROR] memory_server 目录不完整: $MEMORY_BACKEND_DIR / $MEMORY_FRONTEND_DIR"
-    exit 1
-  fi
-
-  mkdir -p "$RUNTIME_DIR"
-
-  if [[ ! -f "$MEMORY_BACKEND_ENV_FILE" && -f "$MEMORY_BACKEND_DIR/.env.example" ]]; then
-    echo "[INFO] memory_server backend/.env 不存在，自动从 .env.example 复制"
-    cp "$MEMORY_BACKEND_DIR/.env.example" "$MEMORY_BACKEND_ENV_FILE"
-  fi
-  if [[ ! -f "$MEMORY_ENGINE_BACKEND_ENV_FILE" && -f "$MEMORY_ENGINE_BACKEND_DIR/.env.example" ]]; then
-    echo "[INFO] memory_engine backend/.env 不存在，自动从 .env.example 复制"
-    cp "$MEMORY_ENGINE_BACKEND_DIR/.env.example" "$MEMORY_ENGINE_BACKEND_ENV_FILE"
-  fi
-
-  if [[ -z "$MEMORY_ENGINE_BACKEND_PORT" ]]; then
-    read_memory_engine_port_from_env_file "$MEMORY_ENGINE_BACKEND_ENV_FILE"
-  fi
-  MEMORY_ENGINE_BACKEND_PORT="${MEMORY_ENGINE_BACKEND_PORT:-7081}"
-  if [[ -z "$MEMORY_BACKEND_PORT" ]]; then
-    read_memory_port_from_env_file "$MEMORY_BACKEND_ENV_FILE"
-  fi
-  MEMORY_BACKEND_PORT="${MEMORY_BACKEND_PORT:-7080}"
-}
-
-start_main_backend() {
-  launch_service \
-    "原项目 backend" \
-    "$MAIN_BACKEND_PORT" \
-    "$MAIN_BACKEND_PID_FILE" \
-    "$MAIN_BACKEND_LOG_FILE" \
-    "cd \"$MAIN_BACKEND_DIR\" && cargo build --bin chat_app_server_rs && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" exec \"$MAIN_BACKEND_BINARY\""
-}
-
-start_main_frontend() {
-  launch_service \
-    "原项目 frontend" \
-    "$MAIN_FRONTEND_PORT" \
-    "$MAIN_FRONTEND_PID_FILE" \
-    "$MAIN_FRONTEND_LOG_FILE" \
-    "cd \"$MAIN_FRONTEND_DIR\" && exec npm run dev -- --host 0.0.0.0 --port \"$MAIN_FRONTEND_PORT\""
-}
-
-start_memory_engine_backend() {
-  launch_service \
-    "memory engine backend" \
-    "$MEMORY_ENGINE_BACKEND_PORT" \
-    "$MEMORY_ENGINE_BACKEND_PID_FILE" \
-    "$MEMORY_ENGINE_BACKEND_LOG_FILE" \
-    "cd \"$MEMORY_ENGINE_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo build --bin memory_engine && exec \"$MEMORY_ENGINE_BACKEND_BINARY\""
-}
-
-start_memory_engine_frontend() {
-  launch_service \
-    "memory engine frontend" \
-    "$MEMORY_ENGINE_FRONTEND_PORT" \
-    "$MEMORY_ENGINE_FRONTEND_PID_FILE" \
-    "$MEMORY_ENGINE_FRONTEND_LOG_FILE" \
-    "cd \"$MEMORY_ENGINE_FRONTEND_DIR\" && exec npm run dev -- --host \"$MEMORY_ENGINE_FRONTEND_HOST\" --port \"$MEMORY_ENGINE_FRONTEND_PORT\""
-}
-
-start_memory_backend() {
-  launch_service \
-    "memory backend" \
-    "$MEMORY_BACKEND_PORT" \
-    "$MEMORY_BACKEND_PID_FILE" \
-    "$MEMORY_BACKEND_LOG_FILE" \
-    "cd \"$MEMORY_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo build --bin memory_server && exec \"$MEMORY_BACKEND_BINARY\""
-}
-
-start_memory_frontend() {
-  launch_service \
-    "memory frontend" \
-    "$MEMORY_FRONTEND_PORT" \
-    "$MEMORY_FRONTEND_PID_FILE" \
-    "$MEMORY_FRONTEND_LOG_FILE" \
-    "cd \"$MEMORY_FRONTEND_DIR\" && exec npm run dev -- --host \"$MEMORY_FRONTEND_HOST\" --port \"$MEMORY_FRONTEND_PORT\""
-}
-
 check_alive() {
   local name="$1"
   local pid_file="$2"
@@ -367,22 +223,44 @@ wait_port_released() {
   done
 }
 
+prepare() {
+  need_cmd bash
+  need_cmd npm
+  need_cmd cargo
+
+  if [[ ! -d "$MAIN_BACKEND_DIR" || ! -d "$MAIN_FRONTEND_DIR" ]]; then
+    echo "[ERROR] 项目目录不完整: $MAIN_BACKEND_DIR / $MAIN_FRONTEND_DIR"
+    exit 1
+  fi
+
+  mkdir -p "$RUNTIME_DIR"
+}
+
+start_main_backend() {
+  launch_service \
+    "原项目 backend" \
+    "$MAIN_BACKEND_PORT" \
+    "$MAIN_BACKEND_PID_FILE" \
+    "$MAIN_BACKEND_LOG_FILE" \
+    "cd \"$MAIN_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo build --bin chat_app_server_rs && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" exec \"$MAIN_BACKEND_BINARY\""
+}
+
+start_main_frontend() {
+  launch_service \
+    "原项目 frontend" \
+    "$MAIN_FRONTEND_PORT" \
+    "$MAIN_FRONTEND_PID_FILE" \
+    "$MAIN_FRONTEND_LOG_FILE" \
+    "cd \"$MAIN_FRONTEND_DIR\" && exec npm run dev -- --host 0.0.0.0 --port \"$MAIN_FRONTEND_PORT\""
+}
+
 do_stop() {
   stop_from_pid_file "原项目 backend" "$MAIN_BACKEND_PID_FILE"
   stop_from_pid_file "原项目 frontend" "$MAIN_FRONTEND_PID_FILE"
-  stop_from_pid_file "memory engine backend" "$MEMORY_ENGINE_BACKEND_PID_FILE"
-  stop_from_pid_file "memory engine frontend" "$MEMORY_ENGINE_FRONTEND_PID_FILE"
-  stop_from_pid_file "memory backend" "$MEMORY_BACKEND_PID_FILE"
-  stop_from_pid_file "memory frontend" "$MEMORY_FRONTEND_PID_FILE"
 
-  # One-time migration cleanup: old runtime dir before hash isolation.
   if [[ "$LEGACY_RUNTIME_DIR" != "$RUNTIME_DIR" ]]; then
     stop_from_pid_file "原项目 backend(legacy runtime)" "$LEGACY_MAIN_BACKEND_PID_FILE"
     stop_from_pid_file "原项目 frontend(legacy runtime)" "$LEGACY_MAIN_FRONTEND_PID_FILE"
-    stop_from_pid_file "memory engine backend(legacy runtime)" "$LEGACY_MEMORY_ENGINE_BACKEND_PID_FILE"
-    stop_from_pid_file "memory engine frontend(legacy runtime)" "$LEGACY_MEMORY_ENGINE_FRONTEND_PID_FILE"
-    stop_from_pid_file "memory backend(legacy runtime)" "$LEGACY_MEMORY_BACKEND_PID_FILE"
-    stop_from_pid_file "memory frontend(legacy runtime)" "$LEGACY_MEMORY_FRONTEND_PID_FILE"
   fi
 
   if [[ "$STOP_BY_PORT" == "1" ]]; then
@@ -391,10 +269,6 @@ do_stop() {
       stop_from_port "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT"
     fi
     stop_from_port "原项目 frontend" "$MAIN_FRONTEND_PORT"
-    stop_from_port "memory engine backend" "$MEMORY_ENGINE_BACKEND_PORT"
-    stop_from_port "memory engine frontend" "$MEMORY_ENGINE_FRONTEND_PORT"
-    stop_from_port "memory backend" "$MEMORY_BACKEND_PORT"
-    stop_from_port "memory frontend" "$MEMORY_FRONTEND_PORT"
   else
     echo "[INFO] 跳过按端口全局停止 (STOP_BY_PORT=${STOP_BY_PORT})，仅按 PID 文件停止，避免误伤其他项目。"
     stop_project_owned_port_processes "原项目 backend" "$MAIN_BACKEND_PORT"
@@ -402,10 +276,6 @@ do_stop() {
       stop_project_owned_port_processes "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT"
     fi
     stop_project_owned_port_processes "原项目 frontend" "$MAIN_FRONTEND_PORT"
-    stop_project_owned_port_processes "memory engine backend" "$MEMORY_ENGINE_BACKEND_PORT"
-    stop_project_owned_port_processes "memory engine frontend" "$MEMORY_ENGINE_FRONTEND_PORT"
-    stop_project_owned_port_processes "memory backend" "$MEMORY_BACKEND_PORT"
-    stop_project_owned_port_processes "memory frontend" "$MEMORY_FRONTEND_PORT"
   fi
 
   wait_port_released "原项目 backend" "$MAIN_BACKEND_PORT" || return 1
@@ -413,88 +283,45 @@ do_stop() {
     wait_port_released "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT" || return 1
   fi
   wait_port_released "原项目 frontend" "$MAIN_FRONTEND_PORT" || return 1
-  wait_port_released "memory engine backend" "$MEMORY_ENGINE_BACKEND_PORT" || return 1
-  wait_port_released "memory engine frontend" "$MEMORY_ENGINE_FRONTEND_PORT" || return 1
-  wait_port_released "memory backend" "$MEMORY_BACKEND_PORT" || return 1
-  wait_port_released "memory frontend" "$MEMORY_FRONTEND_PORT" || return 1
 }
 
 run_start_sequence() {
   local backend_timeout="${MAIN_BACKEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-120}}"
   local frontend_timeout="${MAIN_FRONTEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}}"
-  local memory_engine_backend_timeout="${MEMORY_ENGINE_BACKEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-90}}"
-  local memory_engine_frontend_timeout="${MEMORY_ENGINE_FRONTEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}}"
-  local memory_backend_timeout="${MEMORY_BACKEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-90}}"
-  local memory_frontend_timeout="${MEMORY_FRONTEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}}"
 
   start_main_backend &&
-    start_main_frontend &&
-    start_memory_engine_backend &&
-    start_memory_engine_frontend &&
-    start_memory_backend &&
-    start_memory_frontend &&
-    sleep 2 &&
+    start_main_frontend
+
+  sleep 2 &&
     check_alive "原项目 backend" "$MAIN_BACKEND_PID_FILE" "$MAIN_BACKEND_LOG_FILE" &&
     check_alive "原项目 frontend" "$MAIN_FRONTEND_PID_FILE" "$MAIN_FRONTEND_LOG_FILE" &&
-    check_alive "memory engine backend" "$MEMORY_ENGINE_BACKEND_PID_FILE" "$MEMORY_ENGINE_BACKEND_LOG_FILE" &&
-    check_alive "memory engine frontend" "$MEMORY_ENGINE_FRONTEND_PID_FILE" "$MEMORY_ENGINE_FRONTEND_LOG_FILE" &&
-    check_alive "memory backend" "$MEMORY_BACKEND_PID_FILE" "$MEMORY_BACKEND_LOG_FILE" &&
-    check_alive "memory frontend" "$MEMORY_FRONTEND_PID_FILE" "$MEMORY_FRONTEND_LOG_FILE" &&
     wait_http_ready "原项目 backend" "http://127.0.0.1:$MAIN_BACKEND_PORT/health" "$backend_timeout" &&
-    wait_http_ready "原项目 frontend" "http://127.0.0.1:$MAIN_FRONTEND_PORT" "$frontend_timeout" &&
-    wait_http_ready "memory engine backend" "http://127.0.0.1:$MEMORY_ENGINE_BACKEND_PORT/health" "$memory_engine_backend_timeout" &&
-    wait_http_ready "memory engine frontend" "http://127.0.0.1:$MEMORY_ENGINE_FRONTEND_PORT" "$memory_engine_frontend_timeout" &&
-    wait_http_ready "memory backend" "http://127.0.0.1:$MEMORY_BACKEND_PORT/health" "$memory_backend_timeout" &&
-    wait_http_ready "memory frontend" "http://127.0.0.1:$MEMORY_FRONTEND_PORT" "$memory_frontend_timeout"
+    wait_http_ready "原项目 frontend" "http://127.0.0.1:$MAIN_FRONTEND_PORT" "$frontend_timeout"
 }
 
 print_runtime_info() {
   echo "[OK] 全部服务已在后台运行"
   echo "  原项目 backend pid: $(cat "$MAIN_BACKEND_PID_FILE")"
   echo "  原项目 frontend pid: $(cat "$MAIN_FRONTEND_PID_FILE")"
-  echo "  memory engine backend pid: $(cat "$MEMORY_ENGINE_BACKEND_PID_FILE")"
-  echo "  memory engine frontend pid: $(cat "$MEMORY_ENGINE_FRONTEND_PID_FILE")"
-  echo "  memory backend pid: $(cat "$MEMORY_BACKEND_PID_FILE")"
-  echo "  memory frontend pid: $(cat "$MEMORY_FRONTEND_PID_FILE")"
   echo
   echo "  原项目 backend log: $MAIN_BACKEND_LOG_FILE"
   echo "  原项目 frontend log: $MAIN_FRONTEND_LOG_FILE"
-  echo "  memory engine backend log: $MEMORY_ENGINE_BACKEND_LOG_FILE"
-  echo "  memory engine frontend log: $MEMORY_ENGINE_FRONTEND_LOG_FILE"
-  echo "  memory backend log: $MEMORY_BACKEND_LOG_FILE"
-  echo "  memory frontend log: $MEMORY_FRONTEND_LOG_FILE"
   echo
   echo "  原项目 frontend url: http://localhost:$MAIN_FRONTEND_PORT"
   echo "  原项目 backend url: http://localhost:$MAIN_BACKEND_PORT"
-  echo "  memory engine backend url: http://localhost:$MEMORY_ENGINE_BACKEND_PORT"
-  echo "  memory engine frontend url: http://localhost:$MEMORY_ENGINE_FRONTEND_PORT"
-  echo "  memory frontend url: http://localhost:$MEMORY_FRONTEND_PORT"
-  echo "  memory backend url: http://localhost:$MEMORY_BACKEND_PORT"
 }
 
 status() {
-  local main_backend_pid main_frontend_pid memory_engine_backend_pid memory_engine_frontend_pid memory_backend_pid memory_frontend_pid
+  local main_backend_pid main_frontend_pid
   main_backend_pid="$(cat "$MAIN_BACKEND_PID_FILE" 2>/dev/null || true)"
   main_frontend_pid="$(cat "$MAIN_FRONTEND_PID_FILE" 2>/dev/null || true)"
-  memory_engine_backend_pid="$(cat "$MEMORY_ENGINE_BACKEND_PID_FILE" 2>/dev/null || true)"
-  memory_engine_frontend_pid="$(cat "$MEMORY_ENGINE_FRONTEND_PID_FILE" 2>/dev/null || true)"
-  memory_backend_pid="$(cat "$MEMORY_BACKEND_PID_FILE" 2>/dev/null || true)"
-  memory_frontend_pid="$(cat "$MEMORY_FRONTEND_PID_FILE" 2>/dev/null || true)"
 
   echo "[INFO] runtime dir: $RUNTIME_DIR"
   echo "  原项目 backend pid: ${main_backend_pid:-N/A}"
   echo "  原项目 frontend pid: ${main_frontend_pid:-N/A}"
-  echo "  memory engine backend pid: ${memory_engine_backend_pid:-N/A}"
-  echo "  memory engine frontend pid: ${memory_engine_frontend_pid:-N/A}"
-  echo "  memory backend pid: ${memory_backend_pid:-N/A}"
-  echo "  memory frontend pid: ${memory_frontend_pid:-N/A}"
   echo
   echo "  原项目 backend log: $MAIN_BACKEND_LOG_FILE"
   echo "  原项目 frontend log: $MAIN_FRONTEND_LOG_FILE"
-  echo "  memory engine backend log: $MEMORY_ENGINE_BACKEND_LOG_FILE"
-  echo "  memory engine frontend log: $MEMORY_ENGINE_FRONTEND_LOG_FILE"
-  echo "  memory backend log: $MEMORY_BACKEND_LOG_FILE"
-  echo "  memory frontend log: $MEMORY_FRONTEND_LOG_FILE"
 }
 
 CMD="${1:-restart}"

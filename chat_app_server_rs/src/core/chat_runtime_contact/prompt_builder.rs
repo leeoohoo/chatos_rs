@@ -1,4 +1,4 @@
-use crate::services::memory_server_client::MemoryAgentRuntimeContextDto;
+use crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto;
 
 use super::types::{
     contact_plugin_ref, contact_skill_ref, ContactSkillPromptMode, ParsedContactCommandInvocation,
@@ -50,7 +50,7 @@ pub fn compose_contact_command_system_prompt(
 }
 
 pub fn compose_contact_system_prompt(
-    runtime_context: Option<&MemoryAgentRuntimeContextDto>,
+    runtime_context: Option<&ChatosAgentRuntimeContextDto>,
     skill_mode: &ContactSkillPromptMode,
 ) -> Option<String> {
     #[derive(Clone)]

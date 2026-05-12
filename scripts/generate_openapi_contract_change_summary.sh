@@ -76,10 +76,8 @@ done < <(
 POLICY_KEYS=(
   OPENAPI_GATE_MODE
   OPENAPI_MAIN_MIN_COVERAGE_RATIO
-  OPENAPI_MEMORY_MIN_COVERAGE_RATIO
   OPENAPI_METHOD_GATE_MODE
   OPENAPI_METHOD_MAIN_MIN_COVERAGE_RATIO
-  OPENAPI_METHOD_MEMORY_MIN_COVERAGE_RATIO
   OPENAPI_QUALITY_GATE_MODE
   OPENAPI_QUALITY_MIN_SUMMARY_RATIO
   OPENAPI_QUALITY_MIN_PATH_PARAM_RATIO
@@ -150,13 +148,14 @@ import yaml
 ROOT = Path(os.environ['ROOT_DIR'])
 files = [
     ('main', ROOT / '.github/api-contract/chat_app_server_rs.openapi.yaml'),
-    ('memory', ROOT / '.github/api-contract/memory_server.openapi.yaml'),
 ]
 methods = {'get', 'post', 'put', 'patch', 'delete', 'head', 'options'}
 
 print('| service | paths | operations | operationId count |')
 print('| --- | ---: | ---: | ---: |')
 for name, path in files:
+    if not path.exists():
+        continue
     data = yaml.safe_load(path.read_text()) or {}
     paths = data.get('paths') or {}
     path_count = len(paths)

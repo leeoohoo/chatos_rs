@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAIN_CONTRACT="$ROOT_DIR/.github/api-contract/chat_app_server_rs.openapi.yaml"
-MEMORY_CONTRACT="$ROOT_DIR/.github/api-contract/memory_server.openapi.yaml"
 POLICY_FILE="${OPENAPI_GATE_POLICY_FILE:-$ROOT_DIR/.github/api-contract/openapi-gate-policy.env}"
 
 ratio_meets_threshold() {
@@ -251,7 +250,6 @@ fi
 metrics_file="$(mktemp)"
 trap 'rm -f "$metrics_file"' EXIT
 collect_metrics "$MAIN_CONTRACT" "main" > "$metrics_file"
-collect_metrics "$MEMORY_CONTRACT" "memory" >> "$metrics_file"
 
 # shellcheck disable=SC1090
 source "$metrics_file"
@@ -263,11 +261,6 @@ echo "  main summary ratio:                        ${main_summary_ratio:-0}%"
 echo "  main path-parameter completeness ratio:    ${main_path_param_ratio:-0}%"
 echo "  main response-description ratio:           ${main_response_desc_ratio:-0}%"
 echo "  main success-response ratio:               ${main_success_response_ratio:-0}%"
-echo "  memory total operations:                   ${memory_total_ops:-0}"
-echo "  memory summary ratio:                      ${memory_summary_ratio:-0}%"
-echo "  memory path-parameter completeness ratio:  ${memory_path_param_ratio:-0}%"
-echo "  memory response-description ratio:         ${memory_response_desc_ratio:-0}%"
-echo "  memory success-response ratio:             ${memory_success_response_ratio:-0}%"
 echo "  thresholds:"
 echo "    summary >= ${OPENAPI_QUALITY_MIN_SUMMARY_RATIO}%"
 echo "    path-parameter completeness >= ${OPENAPI_QUALITY_MIN_PATH_PARAM_RATIO}%"
@@ -280,7 +273,6 @@ if [[ "$OPENAPI_QUALITY_GATE_MODE" == "advisory" ]]; then
 fi
 
 main_ok="true"
-memory_ok="true"
 
 check_service_metrics() {
   local service="$1"
@@ -311,11 +303,8 @@ check_service_metrics() {
 if ! check_service_metrics "main backend" "${main_summary_ratio:-0}" "${main_path_param_ratio:-0}" "${main_response_desc_ratio:-0}" "${main_success_response_ratio:-0}"; then
   main_ok="false"
 fi
-if ! check_service_metrics "memory backend" "${memory_summary_ratio:-0}" "${memory_path_param_ratio:-0}" "${memory_response_desc_ratio:-0}" "${memory_success_response_ratio:-0}"; then
-  memory_ok="false"
-fi
 
-if [[ "$main_ok" == "true" && "$memory_ok" == "true" ]]; then
+if [[ "$main_ok" == "true" ]]; then
   echo "[OK] OpenAPI quality required gate passed."
   exit 0
 fi

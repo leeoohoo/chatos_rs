@@ -77,7 +77,9 @@ score 与 report 字段取值范围均为 0-100。"#,
     );
 
     let raw = match run_text_prompt(
-        input.ai_model_config,
+        input.model_config_id,
+        input.user_id.clone(),
+        input.ai_model_config.and_then(|value| value.into_value()),
         system_prompt,
         user_prompt.as_str(),
         Some(2200),
@@ -156,7 +158,9 @@ pub async fn optimize_draft(input: OptimizeDraftInput) -> Result<Value, SystemCo
     );
 
     let raw = match run_text_prompt(
-        input.ai_model_config,
+        input.model_config_id,
+        input.user_id.clone(),
+        input.ai_model_config.and_then(|value| value.into_value()),
         system_prompt,
         user_prompt.as_str(),
         Some(2400),
@@ -224,7 +228,9 @@ pub async fn evaluate_draft(input: EvaluateDraftInput) -> Result<Value, SystemCo
     );
 
     let report = match run_text_prompt(
-        input.ai_model_config,
+        input.model_config_id,
+        None,
+        input.ai_model_config.and_then(|value| value.into_value()),
         system_prompt,
         user_prompt.as_str(),
         Some(1200),

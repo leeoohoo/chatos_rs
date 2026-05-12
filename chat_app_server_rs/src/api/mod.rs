@@ -18,14 +18,15 @@ use tracing::{info, info_span};
 
 use crate::config::Config;
 use crate::core::auth::{
-    access_token_from_headers, access_token_from_raw, AuthHeaderError, AuthUser,
+    access_token_from_headers, access_token_from_raw, resolve_auth_user_from_token,
+    AuthHeaderError,
 };
-use crate::services::memory_server_client;
+use crate::services::access_token_scope;
 
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
-pub mod agent_builder;
+pub mod agents;
 pub mod applications;
 pub mod auth;
 mod chat_stream_common;
@@ -37,13 +38,13 @@ pub mod contacts;
 mod conversation_semantics;
 pub mod fs;
 pub mod git;
-pub mod memory_agents;
 pub mod messages;
+pub mod memory_compat;
+pub mod memory_mappings;
 pub mod notepad;
 pub mod projects;
 pub mod realtime;
 pub mod remote_connections;
-pub mod session_summary_job_config;
 pub mod sessions;
 pub mod system_contexts;
 pub mod task_manager;
@@ -123,8 +124,9 @@ pub fn router() -> Result<Router, String> {
         .merge(contacts::router())
         .merge(sessions::router())
         .merge(messages::router())
-        .merge(memory_agents::router())
-        .merge(agent_builder::router())
+        .merge(memory_compat::router())
+        .merge(memory_mappings::router())
+        .merge(agents::router())
         .merge(chat_v2::router())
         .merge(chat_v3::router())
         .merge(code_nav::router())
@@ -132,7 +134,6 @@ pub fn router() -> Result<Router, String> {
         .merge(projects::router())
         .merge(realtime::router())
         .merge(remote_connections::router())
-        .merge(session_summary_job_config::router())
         .merge(task_manager::router())
         .merge(ui_prompts::router())
         .merge(terminals::router())
@@ -216,28 +217,12 @@ async fn require_auth(
         }
         Err(err) => return Err(err.into_response()),
     };
-    let auth_user = match memory_server_client::auth_me(access_token.as_str()).await {
-        Ok(me) => AuthUser {
-            user_id: me.user_id,
-            role: me.role,
-        },
-        Err(err) => {
-            if err.contains("status=401") || err.contains("status=403") {
-                return Err(AuthHeaderError::InvalidOrExpiredToken.into_response());
-            }
-            return Err((
-                StatusCode::BAD_GATEWAY,
-                Json(json!({
-                    "error": "认证服务不可用",
-                    "detail": err
-                })),
-            ));
-        }
-    };
+    let auth_user = resolve_auth_user_from_token(access_token.as_str())
+        .map_err(|err| err.into_response())?;
 
     req.extensions_mut().insert(auth_user);
-    let response =
-        memory_server_client::with_access_token_scope(Some(access_token), next.run(req)).await;
+    let response = access_token_scope::with_access_token_scope(Some(access_token), next.run(req))
+        .await;
     Ok(response)
 }
 

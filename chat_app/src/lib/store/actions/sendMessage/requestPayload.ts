@@ -63,10 +63,10 @@ export const buildChatRequestLogPayload = ({
   turn_id: turnId,
   message: content,
   model_config: {
+    id: selectedModel.id,
     model: selectedModel.model_name,
     provider: selectedModel.provider,
     base_url: selectedModel.base_url,
-    api_key: selectedModel.api_key || '',
     temperature: chatConfig.temperature,
     thinking_level: selectedModel.thinking_level,
     supports_images: selectedModel.supports_images === true,

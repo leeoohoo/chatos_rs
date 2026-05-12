@@ -1,4 +1,4 @@
-use crate::services::memory_server_client::MemorySkillPluginCommandDto;
+use crate::models::chatos_agent_types::ChatosSkillPluginCommandDto;
 
 pub const CONTACT_SKILL_READER_TOOL_NAME: &str = "memory_skill_reader_get_skill_detail";
 pub const CONTACT_COMMAND_READER_TOOL_NAME: &str = "memory_command_reader_get_command_detail";
@@ -48,7 +48,7 @@ pub struct ContactSelectedPluginPrompt {
     pub repository: Option<String>,
     pub branch: Option<String>,
     pub content: Option<String>,
-    pub commands: Vec<MemorySkillPluginCommandDto>,
+    pub commands: Vec<ChatosSkillPluginCommandDto>,
     pub updated_at: Option<String>,
 }
 

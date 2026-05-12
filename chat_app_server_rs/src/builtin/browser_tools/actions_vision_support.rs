@@ -11,7 +11,7 @@ use crate::core::chat_runtime::{
 };
 use crate::models::{ai_model_config::AiModelConfig, session::Session};
 use crate::repositories::ai_model_configs;
-use crate::services::memory_server_client;
+use crate::services::{chatos_agents, chatos_sessions};
 use crate::utils::attachments::is_vision_model;
 
 use super::actions_shared::normalize_inline_text;
@@ -184,7 +184,6 @@ pub(super) fn ai_model_config_to_runtime_value(model_cfg: &AiModelConfig) -> Val
         "thinking_level": model_cfg.thinking_level,
         "api_key": model_cfg.api_key,
         "base_url": model_cfg.base_url,
-        "user_id": model_cfg.user_id,
         "enabled": model_cfg.enabled,
         "supports_images": model_cfg.supports_images,
         "supports_reasoning": model_cfg.supports_reasoning,
@@ -287,7 +286,7 @@ async fn load_browser_vision_session(
     conversation_id: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Session> {
-    match memory_server_client::get_session_by_id(conversation_id).await {
+    match chatos_sessions::get_session_by_id(conversation_id).await {
         Ok(Some(session)) => Some(session),
         Ok(None) => {
             warnings.push(format!("conversation not found: {}", conversation_id));
@@ -338,7 +337,7 @@ async fn populate_contact_prompt(
         return;
     };
 
-    match memory_server_client::get_memory_agent_runtime_context(contact_agent_id.as_str()).await {
+    match chatos_agents::get_agent_runtime_context(contact_agent_id.as_str()).await {
         Ok(Some(runtime)) => {
             context.contact_system_prompt = normalize_non_empty(
                 compose_contact_system_prompt(
@@ -404,11 +403,11 @@ async fn append_user_model_candidates(
     out: &mut Vec<BrowserVisionCandidate>,
     seen: &mut HashSet<String>,
 ) {
-    let Some(user_id) = prepared.user_id.as_deref() else {
+    let Some(_user_id) = prepared.user_id.as_deref() else {
         return;
     };
 
-    match ai_model_configs::list_ai_model_configs(Some(user_id.to_string())).await {
+    match ai_model_configs::list_ai_model_configs(prepared.user_id.as_deref()).await {
         Ok(configs) => {
             for model_cfg in configs.into_iter().filter(|cfg| cfg.enabled) {
                 if prepared.selected_model_id.as_deref() == Some(model_cfg.id.as_str()) {
@@ -441,5 +440,8 @@ async fn load_session_model_cfg_value(session: &Session) -> Result<Value, String
     else {
         return Ok(json!({}));
     };
+    if model_cfg.user_id.as_deref() != session.user_id.as_deref() {
+        return Ok(json!({}));
+    }
     Ok(ai_model_config_to_runtime_value(&model_cfg))
 }

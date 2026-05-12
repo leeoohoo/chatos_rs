@@ -6,7 +6,7 @@ use crate::core::chat_runtime::{
     project_id_from_metadata as runtime_project_id_from_metadata,
 };
 use crate::models::message::Message;
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 
 const FULL_SESSION_MESSAGES_PAGE_SIZE: i64 = 500;
 
@@ -15,7 +15,7 @@ pub(super) async fn list_all_session_messages(session_id: &str) -> Result<Vec<Me
     let mut all_messages: Vec<Message> = Vec::new();
 
     loop {
-        let batch = memory_server_client::list_messages(
+        let batch = chatos_sessions::list_messages(
             session_id,
             Some(FULL_SESSION_MESSAGES_PAGE_SIZE),
             offset,

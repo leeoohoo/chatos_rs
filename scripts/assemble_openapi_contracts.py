@@ -18,10 +18,6 @@ SERVICES: Dict[str, Dict[str, Path]] = {
         "fragment_dir": FRAGMENTS_DIR / "chat_app_server_rs",
         "output_file": CONTRACT_DIR / "chat_app_server_rs.openapi.yaml",
     },
-    "memory_server": {
-        "fragment_dir": FRAGMENTS_DIR / "memory_server",
-        "output_file": CONTRACT_DIR / "memory_server.openapi.yaml",
-    },
 }
 
 
@@ -91,7 +87,10 @@ def merge_service(fragment_dir: Path) -> dict:
 def assemble_all() -> Dict[str, dict]:
     assembled: Dict[str, dict] = {}
     for service, cfg in SERVICES.items():
-        assembled[service] = merge_service(cfg["fragment_dir"])
+        fragment_dir = cfg["fragment_dir"]
+        if not fragment_dir.exists():
+            continue
+        assembled[service] = merge_service(fragment_dir)
     return assembled
 
 

@@ -13,7 +13,6 @@ interface Deps {
   set: (updater: (state: ChatStoreDraft) => void) => void;
   get: () => ChatState & ChatActions;
   client: ApiClient;
-  getUserIdParam: () => string;
 }
 
 interface LoadAiModelConfigsOptions {
@@ -26,13 +25,11 @@ interface AiModelConfigsCacheEntry {
 }
 
 interface AiModelConfigsClientCacheState {
-  cache: Map<string, AiModelConfigsCacheEntry>;
-  inflight: Map<string, Promise<AiModelConfig[]>>;
+  cache: AiModelConfigsCacheEntry | null;
+  inflight: Promise<AiModelConfig[]> | null;
 }
 
 const aiModelConfigsClientCaches = new WeakMap<ApiClient, AiModelConfigsClientCacheState>();
-
-const normalizeUserId = (userId: string): string => String(userId || '').trim();
 
 const getOrCreateClientCacheState = (apiClient: ApiClient): AiModelConfigsClientCacheState => {
   const existing = aiModelConfigsClientCaches.get(apiClient);
@@ -40,28 +37,26 @@ const getOrCreateClientCacheState = (apiClient: ApiClient): AiModelConfigsClient
     return existing;
   }
   const next: AiModelConfigsClientCacheState = {
-    cache: new Map(),
-    inflight: new Map(),
+    cache: null,
+    inflight: null,
   };
   aiModelConfigsClientCaches.set(apiClient, next);
   return next;
 };
 
-export function createAiModelActions({ set, get, client, getUserIdParam }: Deps) {
-  const syncLoadedAiModelConfigs = (userId: string, configs: AiModelConfig[]) => {
-    getOrCreateClientCacheState(client).cache.set(normalizeUserId(userId), {
+export function createAiModelActions({ set, get, client }: Deps) {
+  const syncLoadedAiModelConfigs = (configs: AiModelConfig[]) => {
+    getOrCreateClientCacheState(client).cache = {
       configs,
       stale: false,
-    });
+    };
   };
 
   return {
     loadAiModelConfigs: async (options?: LoadAiModelConfigsOptions) => {
       try {
-        const userId = getUserIdParam();
-        const cacheKey = normalizeUserId(userId);
         const cacheState = getOrCreateClientCacheState(client);
-        const cached = cacheState.cache.get(cacheKey);
+        const cached = cacheState.cache;
         if (!options?.force && cached && !cached.stale) {
           set((state) => {
             state.aiModelConfigs = cached.configs;
@@ -69,18 +64,18 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: Deps)
           return;
         }
 
-        let inflight = cacheState.inflight.get(cacheKey);
+        let inflight = cacheState.inflight;
         if (!inflight) {
-          inflight = client.getAiModelConfigs(userId)
+          inflight = client.getAiModelConfigs()
             .then((list) => list.map(normalizeAiModelConfig))
             .then((configs) => {
-              syncLoadedAiModelConfigs(userId, configs);
+              syncLoadedAiModelConfigs(configs);
               return configs;
             })
             .finally(() => {
-              cacheState.inflight.delete(cacheKey);
+              cacheState.inflight = null;
             });
-          cacheState.inflight.set(cacheKey, inflight);
+          cacheState.inflight = inflight;
         }
 
         const configs = await inflight;
@@ -96,7 +91,6 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: Deps)
     },
     updateAiModelConfig: async (config: AiModelConfig) => {
       try {
-        const userId = getUserIdParam();
         const existingConfig = get().aiModelConfigs.find((item) => item.id === config.id);
         const method = existingConfig ? 'update' : 'create';
         const provider = config.provider || 'gpt';
@@ -113,7 +107,6 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: Deps)
           supports_images: config.supports_images === true,
           supports_reasoning: config.supports_reasoning === true,
           supports_responses: config.supports_responses === true,
-          user_id: userId,
         };
         if (method === 'update') {
           await client.updateAiModelConfig(config.id!, apiData);
@@ -121,13 +114,12 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: Deps)
           await client.createAiModelConfig(apiData);
         }
         const cacheState = getOrCreateClientCacheState(client);
-        const cacheKey = normalizeUserId(userId);
-        const cached = cacheState.cache.get(cacheKey);
+        const cached = cacheState.cache;
         if (cached) {
-          cacheState.cache.set(cacheKey, {
+          cacheState.cache = {
             ...cached,
             stale: true,
-          });
+          };
         }
         await get().loadAiModelConfigs({ force: true });
       } catch (error) {
@@ -141,12 +133,13 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: Deps)
       try {
         await client.deleteAiModelConfig(id);
         const cacheState = getOrCreateClientCacheState(client);
-        cacheState.cache.forEach((entry, key) => {
-          cacheState.cache.set(key, {
-            configs: entry.configs.filter((item) => item.id !== id),
+        if (cacheState.cache) {
+          cacheState.cache = {
+            ...cacheState.cache,
+            configs: cacheState.cache.configs.filter((item) => item.id !== id),
             stale: false,
-          });
-        });
+          };
+        }
         set((state) => {
           state.aiModelConfigs = state.aiModelConfigs.filter((item) => item.id !== id);
         });

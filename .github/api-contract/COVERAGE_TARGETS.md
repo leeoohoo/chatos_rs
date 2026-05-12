@@ -42,15 +42,15 @@
 ## Milestones
 
 1. M1 (bootstrap):
-- Contracts exist for both services.
-- Core health and high-frequency chat/memory session paths are present.
+- Contract exists for the main service.
+- Core health and high-frequency chat/session paths are present.
 
 2. M2 (adoption):
 - OpenAPI path count reaches at least 30% of baseline endpoint count.
 - Contract updates are required for backend endpoint additions.
 
 3. M2.5 (required floor):
-- CI enforces minimum coverage floor (currently 60% for both backends).
+- CI enforces minimum coverage floor (currently 60% for the main backend).
 - Emergency exceptions require explicit waiver metadata and expiration.
 - Waiver lifetime is policy-bounded (default max: 24h).
 

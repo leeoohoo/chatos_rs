@@ -10,8 +10,11 @@ use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
+use crate::models::memory_mapping_types::{
+    SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
+};
 use crate::repositories::projects as projects_repo;
-use crate::services::memory_server_client;
+use crate::services::{chatos_memory_mappings, chatos_sessions};
 use crate::services::realtime::publish_sessions_updated;
 
 use super::contracts::{CreateSessionRequest, SessionQuery, UpdateSessionRequest};
@@ -56,7 +59,7 @@ pub(super) async fn list_sessions(
         })
         .unwrap_or(false);
 
-    let result = memory_server_client::list_sessions(
+    let result = chatos_sessions::list_sessions(
         Some(user_id.as_str()),
         project_id.as_deref(),
         limit,
@@ -101,7 +104,7 @@ pub(super) async fn create_session(
     };
 
     let _ = description;
-    match memory_server_client::create_session(user_id.clone(), title, project_id, metadata).await {
+    match chatos_sessions::create_session(user_id.clone(), title, project_id, metadata).await {
         Ok(saved) => {
             let metadata = saved.metadata.as_ref();
             let project_id = normalize_project_scope(saved.project_id.as_deref());
@@ -115,8 +118,8 @@ pub(super) async fn create_session(
                         .map(|owner| owner == user_id.as_str())
                         .unwrap_or(true);
                     if same_owner {
-                        if let Err(err) = memory_server_client::sync_memory_project(
-                            &memory_server_client::SyncMemoryProjectRequestDto {
+                        if let Err(err) = chatos_memory_mappings::sync_memory_project(
+                            &SyncMemoryProjectRequestDto {
                                 user_id: Some(user_id.clone()),
                                 project_id: Some(project.id.clone()),
                                 name: Some(project.name.clone()),
@@ -135,8 +138,8 @@ pub(super) async fn create_session(
                         }
                     }
                 }
-            } else if let Err(err) = memory_server_client::sync_memory_project(
-                &memory_server_client::SyncMemoryProjectRequestDto {
+            } else if let Err(err) = chatos_memory_mappings::sync_memory_project(
+                &SyncMemoryProjectRequestDto {
                     user_id: Some(user_id.clone()),
                     project_id: Some("0".to_string()),
                     name: Some("未指定项目".to_string()),
@@ -154,8 +157,8 @@ pub(super) async fn create_session(
                 );
             }
             if let Some(agent_id) = contact_agent_id_from_metadata(metadata) {
-                if let Err(err) = memory_server_client::sync_project_agent_link(
-                    &memory_server_client::SyncProjectAgentLinkRequestDto {
+                if let Err(err) = chatos_memory_mappings::sync_project_agent_link(
+                    &SyncProjectAgentLinkRequestDto {
                         user_id: Some(user_id.clone()),
                         project_id: Some(project_id.clone()),
                         agent_id: Some(agent_id),
@@ -215,7 +218,7 @@ pub(super) async fn update_session(
     }
 
     let _ = req.description;
-    match memory_server_client::update_session(&id, req.title.clone(), None, req.metadata.clone())
+    match chatos_sessions::update_session(&id, req.title.clone(), None, req.metadata.clone())
         .await
     {
         Ok(Some(session)) => {
@@ -244,12 +247,18 @@ pub(super) async fn delete_session(
     auth: AuthUser,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&id, &auth).await {
-        return map_session_access_error(err);
-    }
+    let session = match ensure_owned_session(&id, &auth).await {
+        Ok(session) => session,
+        Err(err) => return map_session_access_error(err),
+    };
 
-    match memory_server_client::delete_session(&id).await {
+    match chatos_sessions::delete_session(&id).await {
         Ok(true) => {
+            let _archived_session = chatos_sessions::get_session_by_id(&id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(session);
             publish_sessions_updated(
                 auth.user_id.as_str(),
                 "session_deleted",

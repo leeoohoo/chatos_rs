@@ -8,6 +8,7 @@ import AiModelManagerForm from './aiModelManager/AiModelManagerForm';
 import {
   buildAiModelConfig,
   canSubmitAiModelForm,
+  canSubmitAiModelFormWithOptions,
   getDefaultAiModelFormData,
   toAiModelFormData,
 } from './aiModelManager/helpers';
@@ -47,7 +48,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
 
   const handleAddServer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmitAiModelForm(formData)) {
+    if (!canSubmitAiModelFormWithOptions(formData, { requireApiKey: true })) {
       return;
     }
 

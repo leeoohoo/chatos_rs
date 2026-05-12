@@ -10,6 +10,7 @@ interface HeaderBarProps {
   onOpenApplications: () => void;
   onOpenMcpManager: () => void;
   onOpenAiModelManager: () => void;
+  onOpenAgentManager: () => void;
   onOpenSystemContextEditor: () => void;
   onOpenUserSettings: () => void;
   onLogout: () => void;
@@ -24,6 +25,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenApplications,
   onOpenMcpManager,
   onOpenAiModelManager,
+  onOpenAgentManager,
   onOpenSystemContextEditor,
   onOpenUserSettings,
   onLogout,
@@ -139,6 +141,15 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
               <button
                 onClick={() => {
                   setShowUserMenu(false);
+                  onOpenAgentManager();
+                }}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
+              >
+                智能体管理
+              </button>
+              <button
+                onClick={() => {
+                  setShowUserMenu(false);
                   onOpenAiModelManager();
                 }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
@@ -161,7 +172,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
-                用户参数设置
+                运行参数
               </button>
               <div className="my-1 border-t border-border" />
               <button

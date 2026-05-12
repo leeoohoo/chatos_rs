@@ -1,28 +1,47 @@
 # API Surface Baseline
 
-main_backend_route_count=111
-memory_backend_route_count=53
-total_route_count=164
+main_backend_route_count=166
+total_route_count=166
 
 ## chat_app_server_rs/src/api (.route lines)
-chat_app_server_rs/src/api/agent_builder.rs: Router::new().route("/api/agent-builder/ai-create", post(ai_create))
+chat_app_server_rs/src/api/agents.rs: .route(
+chat_app_server_rs/src/api/agents.rs: .route(
+chat_app_server_rs/src/api/agents.rs: .route(
+chat_app_server_rs/src/api/agents.rs: .route(
+chat_app_server_rs/src/api/agents.rs: .route(
+chat_app_server_rs/src/api/agents.rs: .route(
+chat_app_server_rs/src/api/agents.rs: .route("/api/agent-builder/ai-create", axum::routing::post(ai_create))
+chat_app_server_rs/src/api/agents.rs: .route("/api/agents", get(list_agents).post(create_agent))
+chat_app_server_rs/src/api/agents.rs: .route("/api/agents/:agent_id/sessions", get(list_agent_sessions))
+chat_app_server_rs/src/api/agents.rs: .route("/api/agents/ai-create", axum::routing::post(ai_create))
+chat_app_server_rs/src/api/agents.rs: .route("/api/memory-agents", get(list_agents).post(create_agent))
+chat_app_server_rs/src/api/agents.rs: .route("/api/skills", get(list_skills))
+chat_app_server_rs/src/api/agents.rs: .route("/api/skills/:skill_id", get(get_skill))
+chat_app_server_rs/src/api/agents.rs: .route("/api/skills/import-git", axum::routing::post(import_skills_from_git))
+chat_app_server_rs/src/api/agents.rs: .route("/api/skills/plugins", get(list_skill_plugins))
+chat_app_server_rs/src/api/agents.rs: .route("/api/skills/plugins/detail", get(get_skill_plugin))
 chat_app_server_rs/src/api/applications.rs: .route(
 chat_app_server_rs/src/api/applications.rs: .route("/", get(list_apps).post(create_app))
 chat_app_server_rs/src/api/auth.rs: .route("/api/auth/login", post(login))
 chat_app_server_rs/src/api/auth.rs: .route("/api/auth/me", axum::routing::get(me))
 chat_app_server_rs/src/api/auth.rs: .route("/api/auth/register", post(register))
 chat_app_server_rs/src/api/chat_v2.rs: .route(
-chat_app_server_rs/src/api/chat_v2.rs: .route(
+chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/chat/send", post(agent_chat_send))
 chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/chat/stream", post(agent_chat_stream))
 chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/status", get(agent_status))
 chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/tools", get(agent_tools))
 chat_app_server_rs/src/api/chat_v2.rs: .route("/api/chat/stop", post(stop_chat))
 chat_app_server_rs/src/api/chat_v3.rs: .route(
 chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/guide", post(submit_runtime_guidance))
+chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/send", post(agent_chat_send))
 chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/stop", post(stop_chat))
 chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/stream", post(agent_chat_stream))
 chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/status", get(agent_status))
 chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/tools", get(agent_tools))
+chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/capabilities", post(capabilities))
+chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/definition", post(definition))
+chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/document-symbols", post(document_symbols))
+chat_app_server_rs/src/api/code_nav.rs: .route("/api/code-nav/references", post(references))
 chat_app_server_rs/src/api/configs.rs: .route(
 chat_app_server_rs/src/api/configs.rs: .route(
 chat_app_server_rs/src/api/configs.rs: .route(
@@ -43,10 +62,40 @@ chat_app_server_rs/src/api/fs.rs: .route("/api/fs/mkdir", post(create_dir))
 chat_app_server_rs/src/api/fs.rs: .route("/api/fs/move", post(move_entry))
 chat_app_server_rs/src/api/fs.rs: .route("/api/fs/read", get(read_file))
 chat_app_server_rs/src/api/fs.rs: .route("/api/fs/search", get(search_entries))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/search-content", get(search_content))
 chat_app_server_rs/src/api/fs.rs: .route("/api/fs/touch", post(create_file))
-chat_app_server_rs/src/api/memory_agents.rs: .route(
-chat_app_server_rs/src/api/memory_agents.rs: .route(
-chat_app_server_rs/src/api/memory_agents.rs: .route("/api/memory-agents", get(list_agents).post(create_agent))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/branch", post(create_branch))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/branches", get(branches))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/checkout", post(checkout))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/client", get(client))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/commit", post(commit))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/compare", get(compare))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/diff", get(diff))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/fetch", post(fetch))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/merge", post(merge_branch))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/pull", post(pull))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/push", post(push))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/stage", post(stage))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/status", get(status))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/summary", get(summary))
+chat_app_server_rs/src/api/git.rs: .route("/api/git/unstage", post(unstage))
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_compat.rs: .route(
+chat_app_server_rs/src/api/memory_mappings.rs: .route(
+chat_app_server_rs/src/api/memory_mappings.rs: .route(
+chat_app_server_rs/src/api/memory_mappings.rs: .route("/api/memory/projects", get(list_memory_projects))
+chat_app_server_rs/src/api/memory_mappings.rs: .route("/api/memory/projects/sync", post(sync_memory_project))
 chat_app_server_rs/src/api/messages.rs: .route("/api/messages", get(list_messages).post(create_message))
 chat_app_server_rs/src/api/messages.rs: .route("/api/messages/:id", get(get_message).delete(delete_message))
 chat_app_server_rs/src/api/mod.rs: .route("/", axum::routing::get(root))
@@ -62,12 +111,13 @@ chat_app_server_rs/src/api/projects.rs: .route(
 chat_app_server_rs/src/api/projects.rs: .route(
 chat_app_server_rs/src/api/projects.rs: .route(
 chat_app_server_rs/src/api/projects.rs: .route(
+chat_app_server_rs/src/api/projects.rs: .route(
+chat_app_server_rs/src/api/projects.rs: .route(
 chat_app_server_rs/src/api/projects.rs: .route("/api/projects", get(list_projects).post(create_project))
 chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/changes", get(list_project_changes))
 chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/analyze", post(analyze_project_run))
-chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/catalog", get(get_project_run_catalog))
-chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/default", post(set_project_run_default))
 chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/execute", post(execute_project_run))
+chat_app_server_rs/src/api/realtime.rs: axum::Router::new().route("/api/realtime/ws", axum::routing::get(realtime_ws))
 chat_app_server_rs/src/api/remote_connections.rs: .route(
 chat_app_server_rs/src/api/remote_connections.rs: .route(
 chat_app_server_rs/src/api/remote_connections.rs: .route(
@@ -94,7 +144,10 @@ chat_app_server_rs/src/api/sessions.rs: .route(
 chat_app_server_rs/src/api/sessions.rs: .route(
 chat_app_server_rs/src/api/sessions.rs: .route(
 chat_app_server_rs/src/api/sessions.rs: .route(
-chat_app_server_rs/src/api/sessions.rs: .route("/api/sessions", get(list_sessions).post(create_session))
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
 chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
 chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
 chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
@@ -105,70 +158,16 @@ chat_app_server_rs/src/api/system_contexts/mod.rs: .route("/api/system-context/a
 chat_app_server_rs/src/api/task_manager.rs: .route(
 chat_app_server_rs/src/api/task_manager.rs: .route(
 chat_app_server_rs/src/api/task_manager.rs: .route(
+chat_app_server_rs/src/api/task_manager.rs: .route("/api/task-manager/reviews/pending", get(list_pending_reviews))
 chat_app_server_rs/src/api/task_manager.rs: .route("/api/task-manager/tasks", get(list_tasks))
+chat_app_server_rs/src/api/terminals.rs: .route(
+chat_app_server_rs/src/api/terminals.rs: .route(
 chat_app_server_rs/src/api/terminals.rs: .route(
 chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals", get(list_terminals).post(create_terminal))
 chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/history", get(list_terminal_logs))
-chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/interrupt", post(interrupt_terminal_command))
 chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/ws", get(terminal_ws))
-chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/dispatch-command", post(dispatch_terminal_command))
 chat_app_server_rs/src/api/ui_prompts.rs: .route(
 chat_app_server_rs/src/api/ui_prompts.rs: .route("/api/ui-prompts/history", get(list_ui_prompt_history))
 chat_app_server_rs/src/api/ui_prompts.rs: .route("/api/ui-prompts/pending", get(list_pending_ui_prompts))
 chat_app_server_rs/src/api/user_settings.rs: Router::new().route(
-
-## memory_server/backend/src/api (.route lines)
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route(
-memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/auth/login", post(auth_api::login))
-memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/auth/me", get(auth_api::me))
-memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/jobs/runs", get(jobs_api::list_job_runs))
-memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/jobs/stats", get(jobs_api::job_stats))
-memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/projects", get(projects_api::list_projects))
-memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/skills", get(skills_api::list_skills))
-memory_server/backend/src/api/mod.rs: .route("/health", get(health))
 

@@ -110,6 +110,7 @@ export const useChatInterfaceController = ({
 }: UseChatInterfaceControllerParams) => {
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
+  const [showAgentManager, setShowAgentManager] = useState(false);
   const [showSystemContextEditor, setShowSystemContextEditor] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showNotepadPanel, setShowNotepadPanel] = useState(false);
@@ -168,6 +169,9 @@ export const useChatInterfaceController = ({
         return;
       }
       await loadMoreMessages(currentSession.id);
+      await refreshReviewRepairStatus(currentSession.id).catch((error) => {
+        console.error('Failed to refresh review repair status after completion:', error);
+      });
     },
   });
 
@@ -323,6 +327,8 @@ export const useChatInterfaceController = ({
     setShowMcpManager,
     showAiModelManager,
     setShowAiModelManager,
+    showAgentManager,
+    setShowAgentManager,
     showSystemContextEditor,
     setShowSystemContextEditor,
     showApplicationsPanel,

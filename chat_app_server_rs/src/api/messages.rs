@@ -13,7 +13,7 @@ use crate::core::messages::{
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 
 #[derive(Debug, Deserialize)]
 struct MessagesQuery {
@@ -61,7 +61,7 @@ async fn list_messages(
     }
     let limit = parse_positive_limit(query.limit);
     let offset = parse_non_negative_offset(query.offset);
-    let result = memory_server_client::list_messages(&conversation_id, limit, offset, true).await;
+    let result = chatos_sessions::list_messages(&conversation_id, limit, offset, true).await;
     match result {
         Ok(messages) => {
             let out: Vec<Value> = messages
@@ -125,7 +125,7 @@ async fn create_message(
 }
 
 async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    let result = memory_server_client::get_message_by_id(&id).await;
+    let result = chatos_sessions::get_message_by_id(&id).await;
 
     match result {
         Ok(Some(msg)) => {
@@ -149,7 +149,7 @@ async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Jso
 }
 
 async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    let load_result = memory_server_client::get_message_by_id(&id).await;
+    let load_result = chatos_sessions::get_message_by_id(&id).await;
 
     let message = match load_result {
         Ok(Some(msg)) => msg,
@@ -169,7 +169,7 @@ async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, 
     if let Err(err) = ensure_owned_session(&message.session_id, &auth).await {
         return map_session_access_error(err);
     }
-    let delete_result = match memory_server_client::delete_message(&id).await {
+    let delete_result = match chatos_sessions::delete_message(&id).await {
         Ok(true) => Ok(()),
         Ok(false) => Err("消息不存在".to_string()),
         Err(err) => Err(err),

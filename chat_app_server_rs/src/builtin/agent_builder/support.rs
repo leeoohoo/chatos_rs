@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::services::memory_server_client::MemoryAgentSkillDto;
+use crate::models::chatos_agent_types::ChatosAgentSkillDto;
 
 pub(super) fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
@@ -43,7 +43,7 @@ pub(super) fn optional_string_array(args: &Value, key: &str) -> Option<Vec<Strin
     }
 }
 
-pub(super) fn optional_skill_array(args: &Value, key: &str) -> Option<Vec<MemoryAgentSkillDto>> {
+pub(super) fn optional_skill_array(args: &Value, key: &str) -> Option<Vec<ChatosAgentSkillDto>> {
     let values = args.get(key)?.as_array()?;
     let mut out = Vec::new();
     for item in values {
@@ -71,7 +71,7 @@ pub(super) fn optional_skill_array(args: &Value, key: &str) -> Option<Vec<Memory
         let (Some(id), Some(name), Some(content)) = (id, name, content) else {
             continue;
         };
-        out.push(MemoryAgentSkillDto { id, name, content });
+        out.push(ChatosAgentSkillDto { id, name, content });
     }
     Some(out)
 }

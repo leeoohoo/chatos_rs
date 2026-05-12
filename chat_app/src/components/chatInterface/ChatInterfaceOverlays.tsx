@@ -4,6 +4,7 @@ import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
 import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
 
 const AiModelManager = lazy(() => import('../AiModelManager'));
+const AgentManager = lazy(() => import('../AgentManager'));
 const ApplicationsPanel = lazy(() => import('../ApplicationsPanel'));
 const McpManager = lazy(() => import('../McpManager'));
 const NotepadPanel = lazy(() => import('../NotepadPanel'));
@@ -18,6 +19,8 @@ interface ChatInterfaceOverlaysProps {
   setShowNotepadPanel: (value: boolean) => void;
   showAiModelManager: boolean;
   setShowAiModelManager: (value: boolean) => void;
+  showAgentManager: boolean;
+  setShowAgentManager: (value: boolean) => void;
   showUserSettings: boolean;
   setShowUserSettings: (value: boolean) => void;
   showApplicationsPanel: boolean;
@@ -35,6 +38,8 @@ export default function ChatInterfaceOverlays({
   setShowNotepadPanel,
   showAiModelManager,
   setShowAiModelManager,
+  showAgentManager,
+  setShowAgentManager,
   showUserSettings,
   setShowUserSettings,
   showApplicationsPanel,
@@ -63,6 +68,12 @@ export default function ChatInterfaceOverlays({
       {showAiModelManager && (
         <Suspense fallback={<OverlayFallback />}>
           <AiModelManager onClose={() => setShowAiModelManager(false)} />
+        </Suspense>
+      )}
+
+      {showAgentManager && (
+        <Suspense fallback={<OverlayFallback />}>
+          <AgentManager onClose={() => setShowAgentManager(false)} />
         </Suspense>
       )}
 

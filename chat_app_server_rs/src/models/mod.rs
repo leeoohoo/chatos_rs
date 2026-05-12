@@ -1,14 +1,20 @@
 #![allow(dead_code)]
 pub mod ai_model_config;
+pub mod agent;
 pub mod application;
+pub mod chatos_agent_types;
 pub mod mcp_config;
+pub mod memory_compat;
+pub mod memory_skill;
+pub mod memory_mapping;
+pub mod memory_mapping_types;
+pub mod memory_runtime_types;
 pub mod message;
 pub mod project;
 pub mod project_run;
 pub mod remote_connection;
 pub mod session;
 pub mod session_mcp_server;
-pub mod session_summary_job_config;
 pub mod session_summary_v2;
 pub mod system_context;
 pub mod terminal;

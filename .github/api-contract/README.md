@@ -5,14 +5,12 @@ This directory bootstraps an OpenAPI-based contract workflow.
 ## Scope
 
 - `chat_app_server_rs.openapi.yaml`: main backend API contract draft
-- `memory_server.openapi.yaml`: memory backend API contract draft
 - `fragments/`: domain-split OpenAPI source files for low-conflict collaboration
 - `ownership/`: manifest-driven owner mapping metadata
 
 ## Ownership
 
 - Main backend contract: `chat_app_server_rs` maintainers
-- Memory backend contract: `memory_server/backend` maintainers
 - CI wiring and baseline scripts: repository/platform maintainers
 - Path-level responsibility map: `OWNERSHIP_MAP.md`
 
@@ -34,10 +32,8 @@ This directory bootstraps an OpenAPI-based contract workflow.
 - Waiver lifecycle is bounded by policy (`OPENAPI_GATE_WAIVER_MAX_HOURS`, default `24h`).
 - Current required coverage floor:
   - main backend >= `60%`
-  - memory backend >= `60%`
 - Current required method-coverage floor:
   - main backend >= `95%`
-  - memory backend >= `95%`
 - Current required quality floor:
   - summary ratio >= `100%`
   - path-parameter completeness >= `100%`

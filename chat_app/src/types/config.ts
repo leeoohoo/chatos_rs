@@ -56,6 +56,7 @@ export interface AgentConfig {
   id: string;
   name: string;
   description?: string;
+  category?: string;
   ai_model_config_id: string;
   enabled: boolean;
   project_id?: string | null;

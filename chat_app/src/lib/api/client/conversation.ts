@@ -67,7 +67,6 @@ export const getAssistant = async (
           model_config: {
             model_name: defaultConfig.model_name,
             temperature: 0.7,
-            api_key: defaultConfig.api_key,
             base_url: defaultConfig.base_url,
           },
         },

@@ -29,7 +29,11 @@ pub(super) async fn generate_system_context_draft(
         constraints: req.constraints,
         forbidden: req.forbidden,
         candidate_count: req.candidate_count,
-        ai_model_config: req.ai_model_config,
+        model_config_id: req.model_config_id,
+        ai_model_config: req
+            .ai_model_config
+            .map(|value| value.into_runtime_overrides())
+            .filter(|value| !value.is_empty()),
     })
     .await
     {
@@ -50,7 +54,11 @@ pub(super) async fn optimize_system_context_draft(
         content: req.content,
         goal: req.goal,
         keep_intent: req.keep_intent,
-        ai_model_config: req.ai_model_config,
+        model_config_id: req.model_config_id,
+        ai_model_config: req
+            .ai_model_config
+            .map(|value| value.into_runtime_overrides())
+            .filter(|value| !value.is_empty()),
     })
     .await
     {
@@ -64,7 +72,11 @@ pub(super) async fn evaluate_system_context_draft(
 ) -> (StatusCode, Json<Value>) {
     match crate::services::system_context_ai::evaluate_draft(EvaluateDraftInput {
         content: req.content,
-        ai_model_config: req.ai_model_config,
+        model_config_id: req.model_config_id,
+        ai_model_config: req
+            .ai_model_config
+            .map(|value| value.into_runtime_overrides())
+            .filter(|value| !value.is_empty()),
     })
     .await
     {
