@@ -24,6 +24,7 @@ pub use self::chat_runtime_project::resolve_project_runtime;
 
 #[cfg(test)]
 mod tests {
+    use crate::core::internal_context_locale::InternalContextLocale;
     use super::ContactSkillPromptMode;
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
@@ -42,6 +43,7 @@ mod tests {
         let prompt = compose_contact_system_prompt(
             Some(&ChatosAgentRuntimeContextDto {
                 agent_id: "agent_1".to_string(),
+                user_id: "user_1".to_string(),
                 name: "小林".to_string(),
                 description: Some("负责前端排障".to_string()),
                 category: Some("frontend".to_string()),
@@ -83,6 +85,7 @@ mod tests {
             &ContactSkillPromptMode::Summary {
                 force_skill_first: true,
             },
+            InternalContextLocale::ZhCn,
         )
         .expect("prompt");
 
@@ -101,6 +104,7 @@ mod tests {
     fn parses_explicit_contact_command_invocation() {
         let runtime_context = ChatosAgentRuntimeContextDto {
             agent_id: "agent_1".to_string(),
+            user_id: "user_1".to_string(),
             name: "小林".to_string(),
             description: None,
             category: None,
@@ -132,9 +136,43 @@ mod tests {
         assert_eq!(command.command_ref, "CMD1");
         assert_eq!(command.name, "team-debug");
         assert_eq!(command.arguments.as_deref(), Some("button not render"));
-        let prompt = compose_contact_command_system_prompt(Some(&command)).expect("prompt");
+        let prompt = compose_contact_command_system_prompt(
+            Some(&command),
+            InternalContextLocale::ZhCn,
+        )
+        .expect("prompt");
         assert!(prompt.contains("command_ref=CMD1"));
         assert!(prompt.contains("用户附加参数=button not render"));
+    }
+
+    #[test]
+    fn builds_contact_prompt_in_english() {
+        let prompt = compose_contact_system_prompt(
+            Some(&ChatosAgentRuntimeContextDto {
+                agent_id: "agent_1".to_string(),
+                user_id: "user_1".to_string(),
+                name: "Alex".to_string(),
+                description: Some("Handles frontend debugging".to_string()),
+                category: Some("frontend".to_string()),
+                role_definition: "Focus on components and state bugs".to_string(),
+                plugin_sources: vec![],
+                runtime_plugins: vec![],
+                skills: Vec::new(),
+                skill_ids: vec![],
+                runtime_skills: vec![],
+                runtime_commands: vec![],
+                mcp_policy: None,
+                project_policy: None,
+                updated_at: "2026-03-24T00:00:00Z".to_string(),
+            }),
+            &ContactSkillPromptMode::Disabled,
+            InternalContextLocale::EnUs,
+        )
+        .expect("prompt");
+
+        assert!(prompt.contains("You are participating in this conversation as a contact agent."));
+        assert!(prompt.contains("Contact name: Alex"));
+        assert!(prompt.contains("Skill context:"));
     }
 
     #[test]

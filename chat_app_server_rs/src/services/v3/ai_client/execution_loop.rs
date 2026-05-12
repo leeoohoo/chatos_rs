@@ -110,7 +110,8 @@ impl AiClient {
                 turn_id.as_deref(),
                 force_text_content,
                 &callbacks,
-            );
+            )
+            .await;
             if !runtime_guidance_items.is_empty() {
                 effective_prefixed_input_items.extend(runtime_guidance_items.clone());
             }

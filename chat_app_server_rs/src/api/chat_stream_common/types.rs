@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::core::mcp_runtime::McpServerBundle;
 use crate::core::mcp_tools::ToolInfo;
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -31,7 +32,9 @@ pub(crate) struct ChatStreamRequest {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedChatStreamContext {
+    #[allow(dead_code)]
     pub effective_user_id: Option<String>,
+    pub internal_context_locale: InternalContextLocale,
     pub contact_agent_id: Option<String>,
     pub base_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,

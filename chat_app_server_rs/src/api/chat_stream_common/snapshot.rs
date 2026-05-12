@@ -61,11 +61,13 @@ pub(crate) async fn sync_chat_turn_snapshot(
         .lock()
         .map(|items| items.clone())
         .unwrap_or_default();
-    let task_board_prompt = build_task_board_prompt(session_id, Some(turn_id)).await;
+    let task_board_prompt =
+        build_task_board_prompt(session_id, Some(turn_id), context.internal_context_locale).await;
     let builtin_prompt_debug = inspect_builtin_mcp_prompt_for_runtime(
         context.mcp_server_bundle.2.as_slice(),
         tool_metadata,
         unavailable_builtin_tools,
+        context.internal_context_locale,
     );
     let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
         user_message_id,
@@ -98,14 +100,16 @@ pub(crate) fn inspect_builtin_mcp_prompt_for_runtime(
     builtin_servers: &[crate::services::mcp_loader::McpBuiltinServer],
     tool_metadata: &ToolMetadataMap,
     unavailable_builtin_tools: &[Value],
+    locale: crate::core::internal_context_locale::InternalContextLocale,
 ) -> BuiltinMcpPromptBuildResult {
     if tool_metadata.is_empty() && unavailable_builtin_tools.is_empty() {
-        inspect_builtin_mcp_system_prompt(builtin_servers)
+        inspect_builtin_mcp_system_prompt(builtin_servers, locale)
     } else {
         inspect_effective_builtin_mcp_system_prompt(
             builtin_servers,
             tool_metadata,
             unavailable_builtin_tools,
+            locale,
         )
     }
 }
@@ -115,16 +119,18 @@ pub(crate) fn build_builtin_mcp_debug_payload(
     tool_metadata: &ToolMetadataMap,
     unavailable_builtin_tools: &[Value],
     builtin_mcp_system_prompt: Option<&str>,
+    locale: crate::core::internal_context_locale::InternalContextLocale,
 ) -> Value {
     let inspected = inspect_builtin_mcp_prompt_for_runtime(
         builtin_servers,
         tool_metadata,
         unavailable_builtin_tools,
+        locale,
     );
 
     json!({
-        "prompt_source_path": builtin_mcp_prompt_source_path(),
-        "all_section_ids": builtin_mcp_prompt_section_ids(),
+        "prompt_source_path": builtin_mcp_prompt_source_path(locale),
+        "all_section_ids": builtin_mcp_prompt_section_ids(locale),
         "selected_section_ids": inspected.selected_section_ids,
         "omitted_section_ids": inspected.omitted_section_ids,
         "requested_builtin_server_names": inspected.requested_builtin_server_names,

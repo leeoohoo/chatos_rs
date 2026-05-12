@@ -24,16 +24,25 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-foreground truncate">{agent.name}</h3>
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${
-                  agent.enabled !== false
-                    ? 'bg-emerald-500/15 text-emerald-600'
-                    : 'bg-muted text-muted-foreground'
-                }`}>
-                  {agent.enabled !== false ? '启用' : '停用'}
-                </span>
+                {agent.ui_status === 'creating' ? (
+                  <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-600">
+                    创建中
+                  </span>
+                ) : (
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${
+                    agent.enabled !== false
+                      ? 'bg-emerald-500/15 text-emerald-600'
+                      : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {agent.enabled !== false ? '启用' : '未启用'}
+                  </span>
+                )}
               </div>
               {agent.category ? (
                 <div className="mt-1 text-xs text-muted-foreground">{agent.category}</div>
+              ) : null}
+              {agent.ui_status === 'creating' ? (
+                <div className="mt-2 text-sm text-muted-foreground">正在根据你的需求生成智能体配置...</div>
               ) : null}
               {agent.description ? (
                 <div className="mt-2 text-sm text-muted-foreground">{agent.description}</div>
@@ -48,13 +57,23 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                 onClick={() => {
                   void onInspectSessions(agent);
                 }}
-                className="px-2.5 py-1.5 text-xs rounded-md bg-muted hover:bg-accent transition-colors"
+                disabled={agent.ui_status === 'creating'}
+                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
+                  agent.ui_status === 'creating'
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
+                    : 'bg-muted hover:bg-accent'
+                }`}
               >
                 会话
               </button>
               <button
                 onClick={() => onEdit(agent)}
-                className="px-2.5 py-1.5 text-xs rounded-md bg-muted hover:bg-accent transition-colors"
+                disabled={agent.ui_status === 'creating'}
+                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
+                  agent.ui_status === 'creating'
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
+                    : 'bg-muted hover:bg-accent'
+                }`}
               >
                 编辑
               </button>
@@ -62,7 +81,12 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                 onClick={() => {
                   void onDelete(agent.id);
                 }}
-                className="px-2.5 py-1.5 text-xs rounded-md bg-red-500/10 text-red-600 hover:bg-red-500/15 transition-colors"
+                disabled={agent.ui_status === 'creating'}
+                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
+                  agent.ui_status === 'creating'
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
+                    : 'bg-red-500/10 text-red-600 hover:bg-red-500/15'
+                }`}
               >
                 删除
               </button>

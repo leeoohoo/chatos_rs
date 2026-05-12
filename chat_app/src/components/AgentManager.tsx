@@ -163,20 +163,30 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     if (!canSubmitAiCreateAgentForm(aiCreateForm)) {
       await alert({
         title: '信息不完整',
-        message: '请先填写智能体需求描述。',
+        message: '请先填写智能体名称和需求描述。',
         type: 'warning',
       });
       return;
     }
-    await aiCreateAgent({
+
+    const payload = {
       model_config_id: aiCreateForm.modelConfigId || undefined,
       requirement: aiCreateForm.requirement.trim(),
-      name: aiCreateForm.name.trim() || undefined,
+      name: aiCreateForm.name.trim(),
       category: aiCreateForm.category.trim() || undefined,
       enabled: aiCreateForm.enabled,
-    });
+    };
+
     setShowAiCreate(false);
     setAiCreateForm(getDefaultAgentAiCreateFormData());
+    const created = await aiCreateAgent(payload);
+    if (!created) {
+      await alert({
+        title: '创建失败',
+        message: 'AI 创建智能体失败，请稍后重试。',
+        type: 'danger',
+      });
+    }
   };
 
   const loadConversationMessages = async (sessionId: string) => {

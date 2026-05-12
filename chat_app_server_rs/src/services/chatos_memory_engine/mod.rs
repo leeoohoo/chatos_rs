@@ -51,12 +51,16 @@ pub struct ChatosReviewRepairRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReviewRepairSummaryRunResult {
+    pub accepted: bool,
+    pub running: bool,
+    pub job_run_id: Option<String>,
     pub processed_sessions: usize,
     pub summarized_sessions: usize,
     pub generated_summaries: usize,
     pub marked_messages: usize,
     pub failed_sessions: usize,
     pub pending_message_count: i64,
+    pub source_record_count: usize,
     pub project_id: String,
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
@@ -73,6 +77,17 @@ pub struct ReviewRepairStatusResult {
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
     pub job_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewRepairJobRunResult {
+    pub id: String,
+    pub status: String,
+    pub output_count: i64,
+    pub processed_count: i64,
+    pub success_count: i64,
+    pub error_count: i64,
+    pub error_message: Option<String>,
 }
 
 pub async fn compose_chatos_context(
@@ -105,6 +120,9 @@ pub async fn compose_chatos_context(
     let merged_summary = if resp.blocks.is_empty() {
         None
     } else {
+        // The platform owns the returned block text. We only join the blocks
+        // for prompt assembly and must not rewrite block.text during internal
+        // context locale switching.
         Some(
             resp.blocks
                 .iter()
@@ -442,12 +460,16 @@ pub async fn run_chatos_review_repair(
         .await?;
     if pending_message_count <= 0 {
         return Ok(ReviewRepairSummaryRunResult {
+            accepted: false,
+            running: false,
+            job_run_id: None,
             processed_sessions: 0,
             summarized_sessions: 0,
             generated_summaries: 0,
             marked_messages: 0,
             failed_sessions: 0,
             pending_message_count: 0,
+            source_record_count: 0,
             project_id: scope.project_id,
             contact_id: scope.contact_id,
             agent_id: scope.agent_id,
@@ -463,7 +485,12 @@ pub async fn run_chatos_review_repair(
         .await?;
 
     Ok(ReviewRepairSummaryRunResult {
-        processed_sessions: 1,
+        accepted: resp.accepted,
+        running: resp.running,
+        job_run_id: resp.job_run_id,
+        processed_sessions: usize::from(
+            resp.accepted || resp.running || resp.generated || resp.source_record_count > 0,
+        ),
         summarized_sessions: usize::from(resp.generated),
         generated_summaries: usize::from(resp.generated),
         marked_messages: if resp.generated {
@@ -473,11 +500,48 @@ pub async fn run_chatos_review_repair(
         },
         failed_sessions: 0,
         pending_message_count,
+        source_record_count: resp.source_record_count,
         project_id: scope.project_id,
         contact_id: scope.contact_id,
         agent_id: scope.agent_id,
         mode: "review_repair".to_string(),
     })
+}
+
+pub async fn get_chatos_review_repair_job_run(
+    req: &ChatosReviewRepairRequest,
+    job_run_id: &str,
+) -> Result<Option<ReviewRepairJobRunResult>, String> {
+    let normalized_job_run_id = job_run_id.trim();
+    if normalized_job_run_id.is_empty() {
+        return Ok(None);
+    }
+
+    let mapping = build_thread_mapping(&req.session)?;
+    let client = build_client()?;
+    let items = client
+        .list_job_runs(&ListJobRunsRequest {
+            job_type: Some("thread_repair".to_string()),
+            thread_id: Some(mapping.thread_id),
+            status: None,
+            tenant_id: Some(mapping.tenant_id),
+            source_id: Some(CHATOS_COMPAT_SOURCE_ID.to_string()),
+            limit: Some(100),
+        })
+        .await?;
+
+    Ok(items
+        .into_iter()
+        .find(|item| item.id == normalized_job_run_id)
+        .map(|item| ReviewRepairJobRunResult {
+            id: item.id,
+            status: item.status,
+            output_count: item.output_count,
+            processed_count: item.processed_count,
+            success_count: item.success_count,
+            error_count: item.error_count,
+            error_message: item.error_message,
+        }))
 }
 
 pub async fn get_chatos_review_repair_status(

@@ -17,6 +17,7 @@ pub(crate) use self::validation::validate_chat_stream_request;
 #[cfg(test)]
 mod tests {
     use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
+    use crate::core::internal_context_locale::InternalContextLocale;
     use crate::services::builtin_mcp::BuiltinMcpKind;
     use crate::services::mcp_loader::McpBuiltinServer;
     use crate::services::task_board_prompt::{
@@ -44,7 +45,7 @@ mod tests {
         let prompt = compose_builtin_mcp_system_prompt(&[
             build_builtin_server(BuiltinMcpKind::BrowserTools),
             build_builtin_server(BuiltinMcpKind::WebTools),
-        ])
+        ], InternalContextLocale::ZhCn)
         .expect("prompt");
 
         assert!(prompt.contains("`browser_tools_browser_inspect`"));
@@ -58,6 +59,7 @@ mod tests {
         let items = build_runtime_prefixed_messages(
             "session_test",
             Some("turn_test"),
+            InternalContextLocale::ZhCn,
             Some("contact prompt"),
             Some("routing prompt"),
             Some("command prompt"),
@@ -79,6 +81,7 @@ mod tests {
         let items = build_runtime_prefixed_input_items(
             "session_test",
             Some("turn_test"),
+            InternalContextLocale::ZhCn,
             Some("contact prompt"),
             Some("   "),
             Some("routing prompt"),

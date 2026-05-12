@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
 use crate::services::mcp_loader::McpBuiltinServer;
 
@@ -27,42 +28,53 @@ pub struct BuiltinMcpPromptBuildResult {
     pub runtime_limitations: Option<String>,
 }
 
-pub fn builtin_mcp_prompt_source_path() -> &'static str {
-    sections::BUILTIN_MCP_PROMPT_SOURCE_PATH
+pub fn builtin_mcp_prompt_source_path(locale: InternalContextLocale) -> &'static str {
+    sections::prompt_source_path(locale)
 }
 
-pub fn builtin_mcp_prompt_section_ids() -> Vec<String> {
-    sections::PROMPT_SECTION_REGISTRY.ordered_ids.clone()
+pub fn builtin_mcp_prompt_section_ids(locale: InternalContextLocale) -> Vec<String> {
+    sections::prompt_section_registry(locale).ordered_ids.clone()
 }
 
-pub fn compose_builtin_mcp_system_prompt(builtin_servers: &[McpBuiltinServer]) -> Option<String> {
-    inspect_builtin_mcp_system_prompt(builtin_servers).prompt
+pub fn compose_builtin_mcp_system_prompt(
+    builtin_servers: &[McpBuiltinServer],
+    locale: InternalContextLocale,
+) -> Option<String> {
+    inspect_builtin_mcp_system_prompt(builtin_servers, locale).prompt
 }
 
 pub fn inspect_builtin_mcp_system_prompt(
     builtin_servers: &[McpBuiltinServer],
+    locale: InternalContextLocale,
 ) -> BuiltinMcpPromptBuildResult {
-    compose::inspect_builtin_prompt(builtin_servers, &sections::PROMPT_SECTION_REGISTRY)
+    compose::inspect_builtin_prompt(builtin_servers, sections::prompt_section_registry(locale))
 }
 
 pub fn compose_effective_builtin_mcp_system_prompt(
     builtin_servers: &[McpBuiltinServer],
     tool_metadata: &HashMap<String, ToolInfo>,
     unavailable_tools: &[Value],
+    locale: InternalContextLocale,
 ) -> Option<String> {
-    inspect_effective_builtin_mcp_system_prompt(builtin_servers, tool_metadata, unavailable_tools)
-        .prompt
+    inspect_effective_builtin_mcp_system_prompt(
+        builtin_servers,
+        tool_metadata,
+        unavailable_tools,
+        locale,
+    )
+    .prompt
 }
 
 pub fn inspect_effective_builtin_mcp_system_prompt(
     builtin_servers: &[McpBuiltinServer],
     tool_metadata: &HashMap<String, ToolInfo>,
     unavailable_tools: &[Value],
+    locale: InternalContextLocale,
 ) -> BuiltinMcpPromptBuildResult {
     availability::inspect_effective_prompt(
         builtin_servers,
         tool_metadata,
         unavailable_tools,
-        &sections::PROMPT_SECTION_REGISTRY,
+        sections::prompt_section_registry(locale),
     )
 }

@@ -16,7 +16,7 @@ pub use hub::{
     publish_remote_connections_updated,
     publish_remote_sftp_transfer_updated, publish_task_board_updated,
     publish_terminal_list_invalidated, publish_terminal_state_changed, subscribe_user_events,
-    publish_ui_prompt_updated, user_has_realtime_listeners,
+    publish_ui_prompt_updated,
 };
 pub use session_scope::{
     resolve_conversation_scope, RealtimeAckMessage, RealtimeClientControlMessage,

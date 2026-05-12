@@ -4,6 +4,8 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
+use tokio::time::{sleep, Duration};
+use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
@@ -13,12 +15,15 @@ use crate::services::{chatos_memory_engine, chatos_sessions};
 use crate::services::realtime::{
     publish_conversation_summaries_updated,
     publish_review_repair_completed, publish_review_repair_failed,
-    publish_review_repair_started_pending, user_has_realtime_listeners,
+    publish_review_repair_started_pending,
 };
 
 use super::support::{
     contact_agent_id_from_metadata, contact_id_from_metadata, resolve_session_project_scope,
 };
+
+const REVIEW_REPAIR_POLL_INTERVAL_MS: u64 = 1500;
+const REVIEW_REPAIR_POLL_MAX_ATTEMPTS: usize = 210;
 
 pub(super) async fn run_session_review_repair(
     auth: AuthUser,
@@ -124,43 +129,41 @@ fn spawn_review_repair_run(
 ) {
     access_token_scope::spawn_with_current_access_token(async move {
         let compat_req = build_compat_review_req(&req.session);
-        if !user_has_realtime_listeners() {
-            match chatos_memory_engine::run_chatos_review_repair(&req).await {
-                Ok(result) => {
-                    finish_review_repair_success(
-                        user_id.as_str(),
-                        &conversation_id,
-                        &compat_req,
-                        &result,
-                        initial_pending_count,
-                        None,
-                    )
-                    .await;
-                }
-                Err(err) => {
-                    publish_review_repair_failed(
-                        user_id.as_str(),
-                        &conversation_id,
-                        &compat_req,
-                        initial_pending_count,
-                        err.as_str(),
-                    );
-                }
-            }
-            return;
-        }
-
         match chatos_memory_engine::run_chatos_review_repair(&req).await {
             Ok(result) => {
-                finish_review_repair_success(
-                    user_id.as_str(),
-                    &conversation_id,
-                    &compat_req,
-                    &result,
-                    initial_pending_count,
-                    None,
-                )
-                .await;
+                match wait_for_review_repair_completion(&req, &result).await {
+                    Ok(final_status) => {
+                        finish_review_repair_success(
+                            user_id.as_str(),
+                            &conversation_id,
+                            &compat_req,
+                            &result,
+                            initial_pending_count,
+                            Some(final_status),
+                        )
+                        .await;
+                    }
+                    Err(err) => {
+                        let fallback_pending_count = match chatos_memory_engine::get_chatos_review_repair_status(&req).await {
+                            Ok(status) => Some(status.pending_message_count),
+                            Err(status_err) => {
+                                warn!(
+                                    "review repair failed and fallback status refresh also failed for conversation {}: {}",
+                                    conversation_id,
+                                    status_err
+                                );
+                                initial_pending_count
+                            }
+                        };
+                        publish_review_repair_failed(
+                            user_id.as_str(),
+                            &conversation_id,
+                            &compat_req,
+                            fallback_pending_count,
+                            err.as_str(),
+                        );
+                    }
+                }
             }
             Err(err) => {
                 publish_review_repair_failed(
@@ -173,6 +176,68 @@ fn spawn_review_repair_run(
             }
         }
     });
+}
+
+async fn wait_for_review_repair_completion(
+    req: &chatos_memory_engine::ChatosReviewRepairRequest,
+    launch_result: &chatos_memory_engine::ReviewRepairSummaryRunResult,
+) -> Result<chatos_memory_engine::ReviewRepairStatusResult, String> {
+    let initial_status = chatos_memory_engine::get_chatos_review_repair_status(req).await?;
+    if !launch_result.accepted && !launch_result.running {
+        return Ok(initial_status);
+    }
+    if let Some(final_status) = try_finalize_review_repair_status(req, launch_result, initial_status).await? {
+        return Ok(final_status);
+    }
+
+    for _ in 0..REVIEW_REPAIR_POLL_MAX_ATTEMPTS {
+        sleep(Duration::from_millis(REVIEW_REPAIR_POLL_INTERVAL_MS)).await;
+        let status = chatos_memory_engine::get_chatos_review_repair_status(req).await?;
+        if let Some(final_status) = try_finalize_review_repair_status(req, launch_result, status).await? {
+            return Ok(final_status);
+        }
+    }
+
+    Err(format!(
+        "复盘任务等待超时，job_run_id={}",
+        launch_result.job_run_id.as_deref().unwrap_or("unknown")
+    ))
+}
+
+async fn try_finalize_review_repair_status(
+    req: &chatos_memory_engine::ChatosReviewRepairRequest,
+    launch_result: &chatos_memory_engine::ReviewRepairSummaryRunResult,
+    status: chatos_memory_engine::ReviewRepairStatusResult,
+) -> Result<Option<chatos_memory_engine::ReviewRepairStatusResult>, String> {
+    if status.running {
+        return Ok(None);
+    }
+
+    let Some(job_run_id) = launch_result.job_run_id.as_deref() else {
+        return Ok(Some(status));
+    };
+
+    let Some(job_run) = chatos_memory_engine::get_chatos_review_repair_job_run(req, job_run_id).await? else {
+        return Ok(Some(status));
+    };
+
+    match job_run.status.as_str() {
+        "done" => Ok(Some(status)),
+        "failed" => Err(
+            job_run
+                .error_message
+                .unwrap_or_else(|| format!("复盘任务执行失败，job_run_id={job_run_id}"))
+        ),
+        "running" => Ok(None),
+        other => {
+            warn!(
+                "review repair job {} reached unexpected status {}",
+                job_run_id,
+                other
+            );
+            Ok(Some(status))
+        }
+    }
 }
 
 async fn finish_review_repair_success(

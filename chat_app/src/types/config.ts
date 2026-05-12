@@ -85,6 +85,7 @@ export interface AgentConfig {
   }>;
   mcp_policy?: UnknownRecord | null;
   project_policy?: UnknownRecord | null;
+  ui_status?: 'creating';
   createdAt: Date;
   updatedAt: Date;
   app_ids?: string[];

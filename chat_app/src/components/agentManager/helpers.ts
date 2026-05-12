@@ -39,5 +39,5 @@ export const canSubmitAgentForm = (formData: AgentFormData): boolean => (
 );
 
 export const canSubmitAiCreateAgentForm = (formData: AgentAiCreateFormData): boolean => (
-  formData.requirement.trim().length > 0
+  formData.name.trim().length > 0 && formData.requirement.trim().length > 0
 );

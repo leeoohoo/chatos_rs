@@ -49,19 +49,12 @@ impl RealtimeHub {
         self.tx.subscribe()
     }
 
-    fn has_receivers(&self) -> bool {
-        self.tx.receiver_count() > 0
-    }
 }
 
 static REALTIME_HUB: Lazy<RealtimeHub> = Lazy::new(RealtimeHub::new);
 
 pub fn subscribe_user_events() -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
     REALTIME_HUB.subscribe()
-}
-
-pub fn user_has_realtime_listeners() -> bool {
-    REALTIME_HUB.has_receivers()
 }
 
 pub fn publish_review_repair_started_pending(

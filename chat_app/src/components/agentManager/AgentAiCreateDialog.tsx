@@ -39,6 +39,17 @@ const AgentAiCreateDialog = ({
 
           <div className="p-4 space-y-4">
             <label className="space-y-1 block">
+              <span className="text-xs text-muted-foreground">名称</span>
+              <input
+                value={formData.name}
+                onChange={(event) => onChange({ name: event.target.value })}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="请输入智能体名称"
+                required
+              />
+            </label>
+
+            <label className="space-y-1 block">
               <span className="text-xs text-muted-foreground">需求描述</span>
               <textarea
                 value={formData.requirement}
@@ -76,16 +87,6 @@ const AgentAiCreateDialog = ({
                 />
               </label>
             </div>
-
-            <label className="space-y-1 block">
-              <span className="text-xs text-muted-foreground">名称</span>
-              <input
-                value={formData.name}
-                onChange={(event) => onChange({ name: event.target.value })}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                placeholder="可选，留空则让系统生成"
-              />
-            </label>
 
             <label className="inline-flex items-center gap-2 text-sm text-foreground">
               <input

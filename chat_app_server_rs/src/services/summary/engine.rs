@@ -76,7 +76,10 @@ pub async fn maybe_summarize<C: SummaryLlmClient>(
     Ok(SummaryResult {
         summarized: true,
         summary_text: Some(summary_text.clone()),
-        system_prompt: Some(wrap_summary_as_system_prompt(&summary_text)),
+        system_prompt: Some(wrap_summary_as_system_prompt(
+            &summary_text,
+            options.internal_context_locale,
+        )),
         kept_messages: prepared.kept,
         summarized_messages: prepared.to_summarize,
         truncated: recursive.truncated,
@@ -179,7 +182,7 @@ async fn summarize_with_bisect<C: SummaryLlmClient>(
                     options.bisect_max_depth,
                     options.bisect_min_messages
                 );
-                return Ok(force_truncated_summary(messages, target_tokens, depth));
+                return Ok(force_truncated_summary(messages, target_tokens, depth, options));
             }
 
             let (left, right) = match split_for_summary(&messages, options.bisect_min_messages) {
@@ -190,7 +193,7 @@ async fn summarize_with_bisect<C: SummaryLlmClient>(
                         depth,
                         messages.len()
                     );
-                    return Ok(force_truncated_summary(messages, target_tokens, depth));
+                    return Ok(force_truncated_summary(messages, target_tokens, depth, options));
                 }
             };
 

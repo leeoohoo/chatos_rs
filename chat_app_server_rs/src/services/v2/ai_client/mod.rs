@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 use tracing::info;
 
 use crate::config::Config;
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::messages::{
     build_assistant_message_with_parts,
 };
@@ -13,7 +14,7 @@ use crate::services::ai_common::{
 };
 use crate::services::runtime_guidance_manager::support::{
     build_runtime_guidance_applied_event, drain_runtime_guidance_items,
-    format_runtime_guidance_instruction,
+    format_runtime_guidance_instruction, resolve_runtime_guidance_locale,
 };
 use crate::services::task_board_refresh_context::TaskBoardRefreshContextStore;
 use crate::services::runtime_guidance_manager::RuntimeGuidanceItem;
@@ -80,6 +81,7 @@ impl AiClient {
         &mut self,
         session_id: Option<String>,
         turn_id: Option<String>,
+        locale: InternalContextLocale,
         contact_system_prompt: Option<String>,
         builtin_mcp_system_prompt: Option<String>,
         command_system_prompt: Option<String>,
@@ -87,6 +89,7 @@ impl AiClient {
         self.task_board_refresh_context.set(
             session_id,
             turn_id,
+            locale,
             contact_system_prompt,
             builtin_mcp_system_prompt,
             command_system_prompt,
@@ -208,7 +211,8 @@ impl AiClient {
                 session_id.as_deref(),
                 turn_id.as_deref(),
                 &callbacks,
-            );
+            )
+            .await;
             if !runtime_guidance_messages.is_empty() {
                 api_messages.extend(runtime_guidance_messages);
             }
@@ -393,7 +397,7 @@ impl AiClient {
     }
 }
 
-fn drain_runtime_guidance_messages(
+async fn drain_runtime_guidance_messages(
     session_id: Option<&str>,
     turn_id: Option<&str>,
     callbacks: &AiClientCallbacks,
@@ -412,7 +416,11 @@ fn drain_runtime_guidance_messages(
 
     let mut messages = Vec::with_capacity(drained.len());
     for drained_item in drained {
-        messages.push(build_runtime_guidance_message(&drained_item.guidance_item));
+        let locale = resolve_runtime_guidance_locale(&drained_item.guidance_item).await;
+        messages.push(build_runtime_guidance_message(
+            &drained_item.guidance_item,
+            locale,
+        ));
         if let Some(applied_item) = drained_item.applied_item {
             if let Some(cb) = &callbacks.on_runtime_guidance_applied {
                 cb(build_runtime_guidance_applied_event(
@@ -427,10 +435,13 @@ fn drain_runtime_guidance_messages(
     messages
 }
 
-fn build_runtime_guidance_message(guidance_item: &RuntimeGuidanceItem) -> Value {
+fn build_runtime_guidance_message(
+    guidance_item: &RuntimeGuidanceItem,
+    locale: InternalContextLocale,
+) -> Value {
     json!({
         "role": "system",
-        "content": format_runtime_guidance_instruction(guidance_item),
+        "content": format_runtime_guidance_instruction(guidance_item, locale),
     })
 }
 

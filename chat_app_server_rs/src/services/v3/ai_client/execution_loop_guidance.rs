@@ -4,7 +4,7 @@ use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::ai_common::is_non_terminal_response_status;
 use crate::services::runtime_guidance_manager::support::{
     build_runtime_guidance_applied_event, drain_runtime_guidance_items,
-    format_runtime_guidance_instruction,
+    format_runtime_guidance_instruction, resolve_runtime_guidance_locale,
 };
 
 use super::input_transform::{build_current_input_items, to_message_item};
@@ -14,38 +14,47 @@ pub(super) fn load_runtime_guidance_input_items(
     turn_id: Option<&str>,
     force_text_content: bool,
     callbacks: &AiClientCallbacks,
-) -> Vec<Value> {
-    let drained = drain_runtime_guidance_items(session_id, turn_id);
-    if drained.is_empty() {
-        return Vec::new();
-    }
+) -> futures::future::BoxFuture<'static, Vec<Value>> {
+    let callbacks = callbacks.clone();
+    let session_id = session_id.map(|value| value.to_string());
+    let turn_id = turn_id.map(|value| value.to_string());
+    Box::pin(async move {
+        let drained = drain_runtime_guidance_items(session_id.as_deref(), turn_id.as_deref());
+        if drained.is_empty() {
+            return Vec::new();
+        }
 
-    let mut items = Vec::with_capacity(drained.len());
-    for drained_item in drained {
-        items.push(build_runtime_guidance_input_item(
-            &drained_item.guidance_item,
-            force_text_content,
-        ));
-        if let Some(applied_item) = drained_item.applied_item {
-            if let Some(cb) = &callbacks.on_runtime_guidance_applied {
-                cb(build_runtime_guidance_applied_event(
-                    &applied_item,
-                    drained_item.pending_count,
-                    true,
-                ));
+        let mut items = Vec::with_capacity(drained.len());
+        for drained_item in drained {
+            let locale = resolve_runtime_guidance_locale(&drained_item.guidance_item).await;
+            items.push(build_runtime_guidance_input_item(
+                &drained_item.guidance_item,
+                locale,
+                force_text_content,
+            ));
+            if let Some(applied_item) = drained_item.applied_item {
+                if let Some(cb) = &callbacks.on_runtime_guidance_applied {
+                    cb(build_runtime_guidance_applied_event(
+                        &applied_item,
+                        drained_item.pending_count,
+                        true,
+                    ));
+                }
             }
         }
-    }
-    items
+
+        items
+    })
 }
 
 fn build_runtime_guidance_input_item(
     guidance_item: &crate::services::runtime_guidance_manager::RuntimeGuidanceItem,
+    locale: crate::core::internal_context_locale::InternalContextLocale,
     force_text_content: bool,
 ) -> Value {
     to_message_item(
         "system",
-        &Value::String(format_runtime_guidance_instruction(guidance_item)),
+        &Value::String(format_runtime_guidance_instruction(guidance_item, locale)),
         force_text_content,
     )
 }

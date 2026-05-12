@@ -2,12 +2,12 @@
 
 ## 当前目标
 
-按照 `REALTIME_PUSH_REFACTOR_PLAN.md` 分阶段推进，把高频轮询和零散流式链路逐步收敛到统一 realtime 通道。
+按照 `docs/plans/REALTIME_PUSH_REFACTOR_PLAN.md` 分阶段推进，把高频轮询和零散流式链路逐步收敛到统一 realtime 通道。
 
 ## 剩余高价值缺口
 
 - 已补根目录执行计划：
-  - `REALTIME_REMAINING_GAPS_EXECUTION_PLAN.md`
+  - `docs/plans/REALTIME_REMAINING_GAPS_EXECUTION_PLAN.md`
 - 当前确认的高价值剩余项：
   - 聊天主链仍保留真实 SSE fallback，尚未完全收成“长链接主路径”
   - `project runner catalog` 仍以 invalidation 后 HTTP snapshot 为主，局部 patch 还有提升空间

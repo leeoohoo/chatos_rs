@@ -47,6 +47,25 @@ interface AgentsClientCacheState {
 const agentsClientCaches = new WeakMap<ApiClient, AgentsClientCacheState>();
 
 const normalizeUserId = (userId: string): string => String(userId || '').trim();
+const isCreatingAgent = (agent: AgentConfig | null | undefined): boolean => agent?.ui_status === 'creating';
+const getCreatingAgents = (agents: AgentConfig[] | null | undefined): AgentConfig[] => (
+  Array.isArray(agents) ? agents.filter(isCreatingAgent) : []
+);
+const mergeAgentsWithCreating = (
+  fetchedAgents: AgentConfig[] | null | undefined,
+  creatingAgents: AgentConfig[] | null | undefined,
+): AgentConfig[] => {
+  const merged: AgentConfig[] = [];
+  const seen = new Set<string>();
+  for (const agent of [...getCreatingAgents(creatingAgents), ...(Array.isArray(fetchedAgents) ? fetchedAgents : [])]) {
+    if (!agent?.id || seen.has(agent.id)) {
+      continue;
+    }
+    seen.add(agent.id);
+    merged.push(agent);
+  }
+  return merged;
+};
 
 const getOrCreateClientCacheState = (apiClient: ApiClient): AgentsClientCacheState => {
   const existing = agentsClientCaches.get(apiClient);
@@ -77,35 +96,41 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
         const cacheState = getOrCreateClientCacheState(client);
         const cached = cacheState.cache.get(cacheKey);
         if (!options?.force && cached && !cached.stale) {
+          const mergedCachedAgents = mergeAgentsWithCreating(
+            cached.agents,
+            get().agents,
+          );
+          syncLoadedAgents(userId, mergedCachedAgents);
           set((state: ChatStoreDraft) => {
-            state.agents = cached.agents || [];
+            state.agents = mergedCachedAgents;
           });
           return;
         }
 
         let inflight = cacheState.inflight.get(cacheKey);
         if (!inflight) {
-          inflight = client.getAgents(userId, { enabled: true })
+          inflight = client.getAgents(userId)
             .then((memoryAgents) => (memoryAgents || []).map(normalizeAgent))
-            .then((agents) => {
-              syncLoadedAgents(userId, agents);
-              return agents;
-            })
             .finally(() => {
               cacheState.inflight.delete(cacheKey);
             });
           cacheState.inflight.set(cacheKey, inflight);
         }
 
-        const agents = await inflight;
-        debugLog('🔍 [Memory] loadAgents 返回的数据:', agents);
+        const mergedAgents = mergeAgentsWithCreating(
+          await inflight,
+          get().agents,
+        );
+        debugLog('🔍 [Memory] loadAgents 返回的数据:', mergedAgents);
+        syncLoadedAgents(userId, mergedAgents);
         set((state: ChatStoreDraft) => {
-          state.agents = agents || [];
+          state.agents = mergedAgents;
         });
       } catch (error) {
         console.error('Failed to load agents:', error);
+        const creatingAgents = getCreatingAgents(get().agents);
         set((state: ChatStoreDraft) => {
-          state.agents = [];
+          state.agents = creatingAgents;
           state.error = error instanceof Error ? error.message : 'Failed to load agents';
         });
       }
@@ -204,8 +229,34 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
     },
 
     aiCreateAgent: async (payload: AiCreateAgentActionPayload) => {
+      const userId = getUserIdParam();
+      const tempId = `agent_ai_creating_${generateId()}`;
+      const tempAgent: AgentConfig = {
+        id: tempId,
+        name: String(payload.name || '').trim() || '未命名智能体',
+        description: '',
+        category: String(payload.category || '').trim(),
+        ai_model_config_id: payload.model_config_id || '',
+        enabled: payload.enabled !== false,
+        role_definition: payload.role_definition || '',
+        skills: [],
+        skill_ids: Array.isArray(payload.skill_ids) ? payload.skill_ids : [],
+        default_skill_ids: Array.isArray(payload.skill_ids) ? payload.skill_ids : [],
+        plugin_sources: [],
+        mcp_policy: null,
+        project_policy: null,
+        ui_status: 'creating',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        app_ids: [],
+      };
+
+      set((state: ChatStoreDraft) => {
+        state.agents = [tempAgent, ...state.agents.filter((item) => item.id !== tempId)];
+      });
+      syncLoadedAgents(userId, get().agents);
+
       try {
-        const userId = getUserIdParam();
         const created = await client.aiCreateAgent({
           user_id: userId,
           model_config_id: payload.model_config_id,
@@ -226,17 +277,20 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
           ...created.agent,
           id: created.agent?.id || generateId(),
         });
-        const next = [...get().agents.filter((item) => item.id !== normalized.id), normalized];
-        syncLoadedAgents(userId, next);
         set((state: ChatStoreDraft) => {
-          state.agents = next;
+          const nextAgents = state.agents
+            .filter((item) => item.id !== tempId && item.id !== normalized.id);
+          state.agents = [normalized, ...nextAgents];
         });
+        syncLoadedAgents(userId, get().agents);
         return normalized;
       } catch (error) {
         console.error('Failed to AI-create agent:', error);
         set((state: ChatStoreDraft) => {
+          state.agents = state.agents.filter((item) => item.id !== tempId);
           state.error = error instanceof Error ? error.message : 'Failed to AI-create agent';
         });
+        syncLoadedAgents(userId, get().agents);
         return null;
       }
     },

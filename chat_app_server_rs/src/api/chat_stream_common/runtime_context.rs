@@ -5,6 +5,7 @@ use tracing::warn;
 
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::{resolve_effective_user_id, resolve_system_prompt};
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::chat_runtime::{
     compose_contact_command_system_prompt, compose_contact_system_prompt, contact_plugin_ref,
     contact_skill_ref, normalize_id, parse_contact_command_invocation, resolve_project_runtime,
@@ -30,6 +31,7 @@ pub(crate) async fn resolve_chat_stream_context(
     req: &ChatStreamRequest,
     default_system_prompt: Option<String>,
     use_active_system_context: bool,
+    internal_context_locale: InternalContextLocale,
 ) -> ResolvedChatStreamContext {
     let memory_session = chatos_sessions::get_session_by_id(session_id)
         .await
@@ -112,10 +114,17 @@ pub(crate) async fn resolve_chat_stream_context(
     let should_attach_contact_reader_tools =
         matches!(skill_prompt_mode, ContactSkillPromptMode::Summary { .. });
     let contact_system_prompt =
-        compose_contact_system_prompt(contact_runtime_context.as_ref(), &skill_prompt_mode);
+        compose_contact_system_prompt(
+            contact_runtime_context.as_ref(),
+            &skill_prompt_mode,
+            internal_context_locale,
+        );
     let selected_command =
         parse_contact_command_invocation(content, contact_runtime_context.as_ref());
-    let command_system_prompt = compose_contact_command_system_prompt(selected_command.as_ref());
+    let command_system_prompt = compose_contact_command_system_prompt(
+        selected_command.as_ref(),
+        internal_context_locale,
+    );
     let selected_commands_for_snapshot = Arc::new(Mutex::new(seed_selected_commands(
         selected_command.as_ref(),
     )));
@@ -195,7 +204,8 @@ pub(crate) async fn resolve_chat_stream_context(
         server.remote_connection_id = default_remote_connection_id.clone();
     }
 
-    let builtin_mcp_system_prompt = compose_builtin_mcp_system_prompt(builtin_servers.as_slice());
+    let builtin_mcp_system_prompt =
+        compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
     let memory_summary_prompt = match memory_session.as_ref() {
         Some(session) => chatos_memory_engine::compose_chatos_context(session, 2, true)
@@ -208,6 +218,7 @@ pub(crate) async fn resolve_chat_stream_context(
 
     ResolvedChatStreamContext {
         effective_user_id,
+        internal_context_locale,
         contact_agent_id,
         base_system_prompt,
         contact_system_prompt,

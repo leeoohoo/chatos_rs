@@ -11,6 +11,7 @@ interface UserSettingsForm {
   MAX_ITERATIONS?: number | string;
   LOG_LEVEL?: string;
   CHAT_MAX_TOKENS?: number | string | null;
+  INTERNAL_CONTEXT_LOCALE?: string;
   [key: string]: string | number | boolean | null | undefined;
 }
 
@@ -18,6 +19,7 @@ interface UserSettingsPayload {
   MAX_ITERATIONS: number;
   LOG_LEVEL: string;
   CHAT_MAX_TOKENS: number | null;
+  INTERNAL_CONTEXT_LOCALE: string;
   [key: string]: string | number | null;
 }
 
@@ -103,7 +105,8 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
         LOG_LEVEL: String(settings.LOG_LEVEL || 'info'),
         CHAT_MAX_TOKENS: settings.CHAT_MAX_TOKENS === '' || settings.CHAT_MAX_TOKENS === null || settings.CHAT_MAX_TOKENS === undefined
           ? null
-          : Number(settings.CHAT_MAX_TOKENS)
+          : Number(settings.CHAT_MAX_TOKENS),
+        INTERNAL_CONTEXT_LOCALE: String(settings.INTERNAL_CONTEXT_LOCALE || 'zh-CN'),
       };
 
       const savedSettings = await client.updateUserSettings(userId, userSettingsPayload);
@@ -164,6 +167,21 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                     <label className="text-xs text-muted-foreground">日志级别</label>
                     <input type="text" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('LOG_LEVEL')} placeholder="info|warn|error|debug" />
                     <p className="text-[11px] text-muted-foreground mt-1">仅作为本用户偏好保存，不修改服务器全局日志。</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">内部上下文语言</label>
+                    <select
+                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={typeof settings.INTERNAL_CONTEXT_LOCALE === 'string' ? settings.INTERNAL_CONTEXT_LOCALE : 'zh-CN'}
+                      onChange={(e) => {
+                        const next = e.target.value === 'en-US' ? 'en-US' : 'zh-CN';
+                        setSettings((s) => ({ ...s, INTERNAL_CONTEXT_LOCALE: next }));
+                      }}
+                    >
+                      <option value="zh-CN">中文</option>
+                      <option value="en-US">English</option>
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-1">仅影响 Chatos 系统内部生成的上下文语言；用户输入、工具输出、外部内容，以及 memory engine 返回的压缩记忆原文都保持原样。</p>
                   </div>
                 </div>
               </div>

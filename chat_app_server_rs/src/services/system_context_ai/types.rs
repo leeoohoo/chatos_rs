@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::core::internal_context_locale::InternalContextLocale;
+
 #[derive(Debug, Clone, Default)]
 pub struct PromptRuntimeOverrides {
     pub temperature: Option<f64>,
@@ -7,6 +9,7 @@ pub struct PromptRuntimeOverrides {
 
 pub struct GenerateDraftInput {
     pub user_id: Option<String>,
+    pub internal_context_locale: InternalContextLocale,
     pub scene: Option<String>,
     pub style: Option<String>,
     pub language: Option<String>,
@@ -20,6 +23,7 @@ pub struct GenerateDraftInput {
 
 pub struct OptimizeDraftInput {
     pub user_id: Option<String>,
+    pub internal_context_locale: InternalContextLocale,
     pub content: Option<String>,
     pub goal: Option<String>,
     pub keep_intent: Option<bool>,
@@ -28,6 +32,7 @@ pub struct OptimizeDraftInput {
 }
 
 pub struct EvaluateDraftInput {
+    pub internal_context_locale: InternalContextLocale,
     pub content: Option<String>,
     pub model_config_id: Option<String>,
     pub ai_model_config: Option<PromptRuntimeOverrides>,

@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::core::internal_context_locale::InternalContextLocale;
+
 #[derive(Debug, Clone)]
 pub struct SummaryOptions {
     pub message_limit: i64,
@@ -17,6 +19,7 @@ pub struct SummaryOptions {
     pub bisect_max_depth: usize,
     pub bisect_min_messages: usize,
     pub retry_on_context_overflow: bool,
+    pub internal_context_locale: InternalContextLocale,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,20 +122,44 @@ pub struct PersistSummaryOutcome {
     pub summary_id: Option<String>,
 }
 
-pub fn build_summarizer_system_prompt(target_tokens: i64) -> String {
-    format!(
-        "你是一名对话压缩专家。请将之前的对话（包含多次工具调用的结果）压缩为清晰、可追踪的上下文摘要。\n- 用中文输出\n- 严格保留重要事实、参数、路径、表名/字段名、ID 等关键细节\n- 去重冗余内容；保留结论与未解决的问题\n- 最终长度控制在约 {} tokens\n- 输出为自然文本，分点列出要点即可",
-        target_tokens
-    )
+pub fn build_summarizer_system_prompt(
+    target_tokens: i64,
+    locale: InternalContextLocale,
+) -> String {
+    if locale.is_english() {
+        format!(
+            "You are a conversation compression specialist. Compress the earlier conversation, including tool-call results, into a clear and traceable context summary.\n- Write the output in English\n- Preserve critical facts, parameters, paths, table or field names, IDs, and other key details exactly\n- Remove redundancy while preserving conclusions and unresolved issues\n- Keep the final length around {} tokens\n- Output natural prose; concise bullet-style points are fine",
+            target_tokens
+        )
+    } else {
+        format!(
+            "你是一名对话压缩专家。请将之前的对话（包含多次工具调用的结果）压缩为清晰、可追踪的上下文摘要。\n- 用中文输出\n- 严格保留重要事实、参数、路径、表名/字段名、ID 等关键细节\n- 去重冗余内容；保留结论与未解决的问题\n- 最终长度控制在约 {} tokens\n- 输出为自然文本，分点列出要点即可",
+            target_tokens
+        )
+    }
 }
 
-pub fn build_summary_user_prompt() -> &'static str {
-    "请基于以上对话与工具调用结果，生成用于继续对话的上下文摘要。"
+pub fn build_summary_user_prompt(locale: InternalContextLocale) -> &'static str {
+    if locale.is_english() {
+        "Based on the conversation and tool-call results above, generate a context summary for continuing the conversation."
+    } else {
+        "请基于以上对话与工具调用结果，生成用于继续对话的上下文摘要。"
+    }
 }
 
-pub fn wrap_summary_as_system_prompt(summary: &str) -> String {
-    format!(
-        "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
-        summary
-    )
+pub fn wrap_summary_as_system_prompt(
+    summary: &str,
+    locale: InternalContextLocale,
+) -> String {
+    if locale.is_english() {
+        format!(
+            "Below is a summary of the earlier conversation and tool-call results (treat it as compressed memory):\n\n{}",
+            summary
+        )
+    } else {
+        format!(
+            "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
+            summary
+        )
+    }
 }

@@ -105,6 +105,7 @@ pub(super) fn force_truncated_summary(
     messages: Vec<Value>,
     target_tokens: i64,
     depth: usize,
+    options: &SummaryOptions,
 ) -> RecursiveSummary {
     let lines: Vec<String> = messages
         .iter()
@@ -127,10 +128,17 @@ pub(super) fn force_truncated_summary(
         lines.join("\n")
     };
     let limited = truncate_text_by_tokens(&raw, target_tokens.max(128));
-    let text = format!(
-        "[提示] 总结触发强制截断（depth={}）。以下为截断后的关键信息：\n{}",
-        depth, limited
-    );
+    let text = if options.internal_context_locale.is_english() {
+        format!(
+            "[Notice] Summary fallback forced truncation (depth={}). Key retained information:\n{}",
+            depth, limited
+        )
+    } else {
+        format!(
+            "[提示] 总结触发强制截断（depth={}）。以下为截断后的关键信息：\n{}",
+            depth, limited
+        )
+    };
     let output_tokens = estimate_tokens_value(&Value::String(text.clone()));
 
     RecursiveSummary {
@@ -149,17 +157,20 @@ fn message_content_to_text(content: &Value) -> String {
 #[allow(dead_code)]
 pub fn build_summary_messages_for_llm(
     context_messages: Vec<Value>,
-    target_tokens: i64,
+    options: &SummaryOptions,
 ) -> Vec<Value> {
     let mut messages = Vec::new();
     messages.push(json!({
         "role": "system",
-        "content": build_summarizer_system_prompt(target_tokens)
+        "content": build_summarizer_system_prompt(
+            options.target_summary_tokens,
+            options.internal_context_locale
+        )
     }));
     messages.extend(context_messages);
     messages.push(json!({
         "role": "user",
-        "content": super::types::build_summary_user_prompt()
+        "content": super::types::build_summary_user_prompt(options.internal_context_locale)
     }));
     messages
 }

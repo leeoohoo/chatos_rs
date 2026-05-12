@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::auth::AuthUser;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
+use crate::core::internal_context_locale::internal_context_locale_from_settings;
 use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
     build_v2_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result, send_error_event, send_start_event,
@@ -114,6 +115,10 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
+    let effective_settings = get_effective_user_settings(Some(user_id.clone()))
+        .await
+        .unwrap_or_else(|_| json!({}));
+    let locale = internal_context_locale_from_settings(&effective_settings);
     let (http_servers, stdio_servers, builtin_servers): McpServerBundle =
         load_mcp_servers_by_selection(Some(user_id), false, Vec::new(), None, None).await;
     let mut exec = McpToolExecute::new(
@@ -138,10 +143,12 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
                 builtin_servers.as_slice(),
                 exec.tool_metadata(),
                 unavailable_tools.as_slice(),
+                locale,
             )
             .unwrap_or_default()
             .as_str(),
         ),
+        locale,
     );
     (
         StatusCode::OK,
@@ -168,6 +175,10 @@ async fn agent_status(auth: AuthUser, Query(query): Query<UserQuery>) -> Json<Va
         }
     };
     let user_id = resolve_user_id(query.user_id, &auth).ok();
+    let effective_settings = get_effective_user_settings(user_id.clone())
+        .await
+        .unwrap_or_else(|_| json!({}));
+    let locale = internal_context_locale_from_settings(&effective_settings);
     let (http_servers, stdio_servers, builtin_servers): McpServerBundle =
         load_mcp_servers_by_selection(user_id, false, Vec::new(), None, None).await;
     let builtin_prompt_debug = build_builtin_mcp_debug_payload(
@@ -175,6 +186,7 @@ async fn agent_status(auth: AuthUser, Query(query): Query<UserQuery>) -> Json<Va
         &std::collections::HashMap::<String, ToolInfo>::new(),
         &[],
         None,
+        locale,
     );
     Json(json!({
         "status": "ok",
@@ -290,12 +302,18 @@ async fn stream_chat_v2(
             return;
         }
     };
+    let effective_settings = get_effective_user_settings(req.user_id.clone())
+        .await
+        .unwrap_or_else(|_| json!({}));
+    let internal_context_locale = internal_context_locale_from_settings(&effective_settings);
+
     let mut runtime_context = resolve_chat_stream_context(
         &session_id,
         &content,
         &req,
         model_runtime.system_prompt.clone(),
         model_runtime.use_active_system_context,
+        internal_context_locale,
     )
     .await;
     if runtime_context.base_system_prompt.is_some() {
@@ -321,10 +339,12 @@ async fn stream_chat_v2(
         builtin_servers.as_slice(),
         mcp_exec.tool_metadata(),
         unavailable_tools.as_slice(),
+        runtime_context.internal_context_locale,
     );
     let prefixed_messages = build_runtime_prefixed_messages(
         &session_id,
         Some(resolved_turn_id.as_str()),
+        runtime_context.internal_context_locale,
         runtime_context.contact_system_prompt.as_deref(),
         runtime_context.builtin_mcp_system_prompt.as_deref(),
         runtime_context.command_system_prompt.as_deref(),
@@ -346,14 +366,12 @@ async fn stream_chat_v2(
     ai_server.ai_client.set_task_board_refresh_context(
         Some(session_id.clone()),
         Some(resolved_turn_id.clone()),
+        runtime_context.internal_context_locale,
         runtime_context.contact_system_prompt.clone(),
         runtime_context.builtin_mcp_system_prompt.clone(),
         runtime_context.command_system_prompt.clone(),
     );
 
-    let effective_settings = get_effective_user_settings(runtime_context.effective_user_id.clone())
-        .await
-        .unwrap_or_else(|_| json!({}));
     apply_settings_to_ai_client(&mut ai_server.ai_client, &effective_settings);
     let max_tokens = chat_max_tokens_from_settings(&effective_settings);
 

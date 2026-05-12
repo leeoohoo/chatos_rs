@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotBuiltinMcpPromptDto,
@@ -249,10 +250,15 @@ fn normalize_builtin_mcp_prompt(
 
     Some(TurnRuntimeSnapshotBuiltinMcpPromptDto {
         prompt_source_path: normalize_optional_text(Some(
-            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(),
+            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(
+                InternalContextLocale::ZhCn,
+            ),
         )),
         all_section_ids: normalize_string_list(
-            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_section_ids().as_slice(),
+            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_section_ids(
+                InternalContextLocale::ZhCn,
+            )
+            .as_slice(),
         ),
         selected_section_ids: normalize_string_list(prompt.selected_section_ids.as_slice()),
         omitted_section_ids: normalize_string_list(prompt.omitted_section_ids.as_slice()),
@@ -275,6 +281,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
+    use crate::core::internal_context_locale::InternalContextLocale;
     use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
 
     #[test]
@@ -394,7 +401,9 @@ mod tests {
         let builtin = runtime.builtin_mcp_prompt.expect("builtin prompt debug");
         assert_eq!(
             builtin.prompt_source_path.as_deref(),
-            Some("BUILTIN_MCP_PROMPT.md")
+            Some(crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(
+                InternalContextLocale::ZhCn
+            ))
         );
         assert!(builtin.all_section_ids.iter().any(|item| item == "global"));
         assert_eq!(

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+use crate::core::internal_context_locale::InternalContextLocale;
 pub use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::task_board_refresh_context::TaskBoardRefreshContextStore;
 use crate::services::user_settings::AiClientSettings;
@@ -95,6 +96,7 @@ impl AiClient {
         &mut self,
         session_id: Option<String>,
         turn_id: Option<String>,
+        locale: InternalContextLocale,
         contact_system_prompt: Option<String>,
         builtin_mcp_system_prompt: Option<String>,
         command_system_prompt: Option<String>,
@@ -102,6 +104,7 @@ impl AiClient {
         self.task_board_refresh_context.set(
             session_id,
             turn_id,
+            locale,
             contact_system_prompt,
             builtin_mcp_system_prompt,
             command_system_prompt,

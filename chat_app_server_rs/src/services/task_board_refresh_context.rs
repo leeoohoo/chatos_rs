@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::services::task_board_prompt::{
     build_runtime_prefixed_input_items, build_runtime_prefixed_messages,
 };
@@ -10,6 +11,7 @@ use std::sync::{Arc, Mutex};
 pub(crate) struct TaskBoardRefreshContext {
     pub(crate) session_id: String,
     pub(crate) turn_id: Option<String>,
+    pub(crate) locale: InternalContextLocale,
     pub(crate) contact_system_prompt: Option<String>,
     pub(crate) builtin_mcp_system_prompt: Option<String>,
     pub(crate) command_system_prompt: Option<String>,
@@ -29,6 +31,7 @@ impl TaskBoardRefreshContextStore {
         &self,
         session_id: Option<String>,
         turn_id: Option<String>,
+        locale: InternalContextLocale,
         contact_system_prompt: Option<String>,
         builtin_mcp_system_prompt: Option<String>,
         command_system_prompt: Option<String>,
@@ -42,6 +45,7 @@ impl TaskBoardRefreshContextStore {
                     turn_id: turn_id
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty()),
+                    locale,
                     contact_system_prompt,
                     builtin_mcp_system_prompt,
                     command_system_prompt,
@@ -58,6 +62,7 @@ impl TaskBoardRefreshContextStore {
         build_runtime_prefixed_messages(
             &context.session_id,
             context.turn_id.as_deref(),
+            context.locale,
             context.contact_system_prompt.as_deref(),
             context.builtin_mcp_system_prompt.as_deref(),
             context.command_system_prompt.as_deref(),
@@ -70,6 +75,7 @@ impl TaskBoardRefreshContextStore {
         build_runtime_prefixed_input_items(
             &context.session_id,
             context.turn_id.as_deref(),
+            context.locale,
             context.contact_system_prompt.as_deref(),
             context.builtin_mcp_system_prompt.as_deref(),
             context.command_system_prompt.as_deref(),
@@ -80,6 +86,7 @@ impl TaskBoardRefreshContextStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::internal_context_locale::InternalContextLocale;
     use super::TaskBoardRefreshContextStore;
 
     #[test]
@@ -88,6 +95,7 @@ mod tests {
         store.set(
             Some("   ".to_string()),
             Some("turn".to_string()),
+            InternalContextLocale::ZhCn,
             Some("contact".to_string()),
             None,
             None,
@@ -102,6 +110,7 @@ mod tests {
         store.set(
             Some("  session-1  ".to_string()),
             Some("  turn-1  ".to_string()),
+            InternalContextLocale::EnUs,
             Some("contact".to_string()),
             Some("builtin".to_string()),
             Some("command".to_string()),
@@ -110,6 +119,7 @@ mod tests {
         let snapshot = store.snapshot().expect("context should be present");
         assert_eq!(snapshot.session_id, "session-1");
         assert_eq!(snapshot.turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(snapshot.locale, InternalContextLocale::EnUs);
         assert_eq!(snapshot.contact_system_prompt.as_deref(), Some("contact"));
         assert_eq!(
             snapshot.builtin_mcp_system_prompt.as_deref(),
@@ -124,6 +134,7 @@ mod tests {
         store.set(
             Some("session-1".to_string()),
             Some("   ".to_string()),
+            InternalContextLocale::ZhCn,
             None,
             None,
             None,

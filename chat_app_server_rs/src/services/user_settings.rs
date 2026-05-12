@@ -9,6 +9,7 @@ pub const USER_SETTING_KEYS: &[&str] = &[
     "LOG_LEVEL",
     "HISTORY_LIMIT",
     "CHAT_MAX_TOKENS",
+    "INTERNAL_CONTEXT_LOCALE",
 ];
 
 fn coerce(value: &Value, key: &str) -> Value {
@@ -20,6 +21,14 @@ fn coerce(value: &Value, key: &str) -> Value {
             .map(|n| Value::Number(serde_json::Number::from(n)))
             .unwrap_or(Value::Null),
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
+        "INTERNAL_CONTEXT_LOCALE" => Value::String(
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|item| matches!(*item, "zh-CN" | "en-US"))
+                .unwrap_or("zh-CN")
+                .to_string(),
+        ),
         _ => value.clone(),
     }
 }
@@ -46,6 +55,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,
         "CHAT_MAX_TOKENS": chat_max_tokens,
+        "INTERNAL_CONTEXT_LOCALE": "zh-CN",
     }))
 }
 

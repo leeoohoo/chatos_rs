@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::chat_runtime::{
     compose_contact_system_prompt, ChatRuntimeMetadata, ContactSkillPromptMode,
 };
@@ -343,6 +344,7 @@ async fn populate_contact_prompt(
                 compose_contact_system_prompt(
                     Some(&runtime),
                     &ContactSkillPromptMode::Disabled,
+                    InternalContextLocale::ZhCn,
                 )
                 .as_deref(),
             );

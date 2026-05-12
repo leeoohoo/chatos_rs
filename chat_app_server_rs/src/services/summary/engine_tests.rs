@@ -5,6 +5,7 @@ use serde_json::json;
 use super::engine::{maybe_summarize, retry_after_context_overflow};
 use super::traits::{SummaryBoxFuture, SummaryLlmClient};
 use super::types::{SummaryLlmRequest, SummaryOptions, SummaryTrigger};
+use crate::core::internal_context_locale::InternalContextLocale;
 
 #[derive(Clone)]
 struct MockClient {
@@ -56,6 +57,7 @@ fn options() -> SummaryOptions {
         bisect_max_depth: 6,
         bisect_min_messages: 2,
         retry_on_context_overflow: true,
+        internal_context_locale: InternalContextLocale::ZhCn,
     }
 }
 
@@ -107,6 +109,33 @@ async fn max_depth_guard_falls_back_to_truncated_summary() {
 
     assert!(result.summarized);
     assert!(result.truncated);
+}
+
+#[tokio::test]
+async fn summary_system_prompt_wraps_in_english_when_locale_is_english() {
+    let client = MockClient::new(8);
+    let mut opts = options();
+    opts.internal_context_locale = InternalContextLocale::EnUs;
+    let messages: Vec<_> = (0..4)
+        .map(|i| json!({"role": "user", "content": format!("msg-{i}")}))
+        .collect();
+
+    let result = maybe_summarize(
+        &client,
+        &messages,
+        &opts,
+        None,
+        None,
+        SummaryTrigger::Proactive,
+    )
+    .await
+    .expect("summary should succeed");
+
+    assert!(result
+        .system_prompt
+        .as_deref()
+        .unwrap_or_default()
+        .contains("compressed memory"));
 }
 
 #[tokio::test]

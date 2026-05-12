@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use once_cell::sync::Lazy;
 
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::services::builtin_mcp::BuiltinMcpKind;
 
 pub(super) const SECTION_GLOBAL: &str = "global";
@@ -33,8 +34,12 @@ pub(super) const SECTION_ORDER: &[&str] = &[
     SECTION_CONDITIONAL_CONTACT_MEMORY_READERS,
 ];
 
-pub(super) const BUILTIN_MCP_PROMPT_SOURCE_PATH: &str = "BUILTIN_MCP_PROMPT.md";
-pub(super) const BUILTIN_MCP_PROMPT_SOURCE: &str = include_str!("../../../../BUILTIN_MCP_PROMPT.md");
+pub(super) const BUILTIN_MCP_PROMPT_ZH_SOURCE_PATH: &str = "BUILTIN_MCP_PROMPT.zh-CN.md";
+pub(super) const BUILTIN_MCP_PROMPT_EN_SOURCE_PATH: &str = "BUILTIN_MCP_PROMPT.en-US.md";
+pub(super) const BUILTIN_MCP_PROMPT_ZH_SOURCE: &str =
+    include_str!("../../../../BUILTIN_MCP_PROMPT.zh-CN.md");
+pub(super) const BUILTIN_MCP_PROMPT_EN_SOURCE: &str =
+    include_str!("../../../../BUILTIN_MCP_PROMPT.en-US.md");
 
 #[derive(Debug, Clone)]
 pub(super) struct PromptSectionRegistry {
@@ -42,8 +47,27 @@ pub(super) struct PromptSectionRegistry {
     pub(super) sections: HashMap<String, String>,
 }
 
-pub(super) static PROMPT_SECTION_REGISTRY: Lazy<PromptSectionRegistry> =
-    Lazy::new(|| parse_prompt_sections(BUILTIN_MCP_PROMPT_SOURCE));
+pub(super) static PROMPT_SECTION_REGISTRY_ZH: Lazy<PromptSectionRegistry> =
+    Lazy::new(|| parse_prompt_sections(BUILTIN_MCP_PROMPT_ZH_SOURCE));
+
+pub(super) static PROMPT_SECTION_REGISTRY_EN: Lazy<PromptSectionRegistry> =
+    Lazy::new(|| parse_prompt_sections(BUILTIN_MCP_PROMPT_EN_SOURCE));
+
+pub(super) fn prompt_source_path(locale: InternalContextLocale) -> &'static str {
+    if locale.is_english() {
+        BUILTIN_MCP_PROMPT_EN_SOURCE_PATH
+    } else {
+        BUILTIN_MCP_PROMPT_ZH_SOURCE_PATH
+    }
+}
+
+pub(super) fn prompt_section_registry(locale: InternalContextLocale) -> &'static PromptSectionRegistry {
+    if locale.is_english() {
+        &PROMPT_SECTION_REGISTRY_EN
+    } else {
+        &PROMPT_SECTION_REGISTRY_ZH
+    }
+}
 
 pub(super) fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
     match kind {
