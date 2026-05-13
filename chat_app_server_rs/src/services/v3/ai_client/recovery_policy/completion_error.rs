@@ -24,6 +24,7 @@ impl AiClient {
         use_prev_id: &mut bool,
         can_use_prev_id: &mut bool,
         previous_response_id: &mut Option<String>,
+        remote_active_summary_attempted: &mut bool,
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
     ) -> bool {
@@ -66,6 +67,27 @@ impl AiClient {
         }
 
         let request_too_large = is_request_body_too_large_error(err_msg);
+        if is_context_length_exceeded_error(err_msg)
+            && self
+                .try_remote_active_summary_recovery(
+                    session_id,
+                    raw_input,
+                    force_text_content,
+                    *adaptive_history_limit,
+                    stable_prefix_mode,
+                    include_tool_items,
+                    prefixed_input_items,
+                    remote_active_summary_attempted,
+                    stateless_context_items,
+                    input,
+                )
+                .await
+        {
+            *use_prev_id = false;
+            *can_use_prev_id = false;
+            *previous_response_id = None;
+            return true;
+        }
         if request_too_large {
             if let Some(trimmed_input) = truncate_function_call_outputs_in_input(input) {
                 warn!(

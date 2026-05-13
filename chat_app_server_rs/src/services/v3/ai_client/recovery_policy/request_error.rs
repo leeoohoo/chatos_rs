@@ -2,8 +2,9 @@ use serde_json::Value;
 use tracing::warn;
 
 use super::super::prev_context::{
-    is_invalid_input_text_error, is_missing_tool_call_error, is_request_body_too_large_error,
-    is_system_messages_not_allowed_error, is_unsupported_previous_response_id_error,
+    is_context_length_exceeded_error, is_invalid_input_text_error, is_missing_tool_call_error,
+    is_request_body_too_large_error, is_system_messages_not_allowed_error,
+    is_unsupported_previous_response_id_error,
 };
 use super::super::{
     normalize_input_to_text_value, truncate_function_call_outputs_in_input, AiClient,
@@ -27,6 +28,7 @@ impl AiClient {
         adaptive_history_limit: &mut i64,
         previous_response_id: &mut Option<String>,
         no_system_messages: &mut bool,
+        remote_active_summary_attempted: &mut bool,
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
     ) -> bool {
@@ -43,6 +45,28 @@ impl AiClient {
 
         let request_replay =
             replay_request_error_policy(err_msg, *use_prev_id, *adaptive_history_limit);
+
+        if is_context_length_exceeded_error(err_msg)
+            && self
+                .try_remote_active_summary_recovery(
+                    session_id,
+                    raw_input,
+                    *force_text_content,
+                    *adaptive_history_limit,
+                    stable_prefix_mode,
+                    include_tool_items,
+                    prefixed_input_items,
+                    remote_active_summary_attempted,
+                    stateless_context_items,
+                    input,
+                )
+                .await
+        {
+            *use_prev_id = false;
+            *can_use_prev_id = false;
+            *previous_response_id = None;
+            return true;
+        }
 
         if request_replay.disable_prev_id && is_unsupported_previous_response_id_error(err_msg) {
             if let Some(sid) = session_id {

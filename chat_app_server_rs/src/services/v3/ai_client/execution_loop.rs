@@ -85,6 +85,7 @@ impl AiClient {
         } else {
             None
         };
+        let mut remote_active_summary_attempted = false;
         let mut non_terminal_empty_retry_count = 0usize;
         let max_non_terminal_empty_retries = 3usize;
 
@@ -218,6 +219,7 @@ impl AiClient {
                                 &mut adaptive_history_limit,
                                 &mut previous_response_id,
                                 &mut no_system_messages,
+                                &mut remote_active_summary_attempted,
                                 &mut stateless_context_items,
                                 &mut input,
                             )
@@ -271,6 +273,7 @@ impl AiClient {
                         &mut use_prev_id,
                         &mut can_use_prev_id,
                         &mut previous_response_id,
+                        &mut remote_active_summary_attempted,
                         &mut stateless_context_items,
                         &mut input,
                     )

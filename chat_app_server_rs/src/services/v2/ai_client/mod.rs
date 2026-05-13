@@ -12,10 +12,12 @@ use crate::services::ai_common::{
     build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
     handle_transient_retry,
 };
+use crate::services::chatos_memory_engine;
 use crate::services::runtime_guidance_manager::support::{
     build_runtime_guidance_applied_event, drain_runtime_guidance_items,
     format_runtime_guidance_instruction, resolve_runtime_guidance_locale,
 };
+use crate::models::session::Session;
 use crate::services::task_board_refresh_context::TaskBoardRefreshContextStore;
 use crate::services::runtime_guidance_manager::RuntimeGuidanceItem;
 use crate::services::user_settings::AiClientSettings;
@@ -35,9 +37,7 @@ use self::history_tools::{
 use self::runtime_support::{
     cap_tool_content_for_input,
 };
-use self::token_compaction::{
-    is_token_limit_error, token_limit_budget_from_error, truncate_messages_by_tokens,
-};
+use self::token_compaction::is_token_limit_error;
 
 pub struct AiClient {
     ai_request_handler: AiRequestHandler,
@@ -46,7 +46,6 @@ pub struct AiClient {
     max_iterations: i64,
     history_limit: i64,
     system_prompt: Option<String>,
-    max_context_tokens: i64,
     task_board_refresh_context: TaskBoardRefreshContextStore,
 }
 
@@ -56,7 +55,7 @@ impl AiClient {
         mcp_tool_execute: McpToolExecute,
         message_manager: MessageManager,
     ) -> Result<Self, String> {
-        let cfg = Config::try_get()?;
+        let _cfg = Config::try_get()?;
         Ok(Self {
             ai_request_handler,
             mcp_tool_execute,
@@ -64,7 +63,6 @@ impl AiClient {
             max_iterations: 25,
             history_limit: 2,
             system_prompt: None,
-            max_context_tokens: cfg.summary_max_context_tokens,
             task_board_refresh_context: TaskBoardRefreshContextStore::new(),
         })
     }
@@ -220,7 +218,7 @@ impl AiClient {
 
             let mut resp = None;
             let mut last_err: Option<String> = None;
-            let mut token_limit_compacted = false;
+            let mut remote_active_summary_attempted = false;
             let max_transient_retries = 5usize;
             let mut transient_retry_count = 0usize;
             loop {
@@ -254,13 +252,23 @@ impl AiClient {
                     }
                     Err(err) => {
                         last_err = Some(err.clone());
-                        if !token_limit_compacted && is_token_limit_error(&err) {
-                            token_limit_compacted = true;
-                            if let Some(compacted) =
-                                self.try_compact_for_token_limit(&api_messages, &err).await
+                        if is_token_limit_error(&err) {
+                            if !remote_active_summary_attempted
+                                && resolved_purpose_allows_active_summary(purpose.as_str())
                             {
-                                api_messages = compacted;
-                                continue;
+                                remote_active_summary_attempted = true;
+                                if self
+                                    .wait_for_remote_active_summary_and_refresh(
+                                        session_id.as_deref(),
+                                        reasoning_enabled,
+                                        &callbacks,
+                                        &mut messages,
+                                    )
+                                    .await
+                                {
+                                    api_messages = sanitize_messages_for_request(messages.clone());
+                                    continue;
+                                }
                             }
                         }
                         match handle_transient_retry(
@@ -374,26 +382,123 @@ impl AiClient {
         }
     }
 
-    async fn try_compact_for_token_limit(
+    async fn wait_for_remote_active_summary_and_refresh(
         &self,
-        messages: &Vec<Value>,
-        err: &str,
-    ) -> Option<Vec<Value>> {
-        let summary_input_budget = if self.max_context_tokens > 0 {
-            self.max_context_tokens
-        } else {
-            6000
+        session_id: Option<&str>,
+        include_reasoning: bool,
+        callbacks: &AiClientCallbacks,
+        messages: &mut Vec<Value>,
+    ) -> bool {
+        let Some(session_id) = session_id.map(str::trim).filter(|value| !value.is_empty()) else {
+            return false;
+        };
+        let Ok(Some(session)) = crate::services::chatos_sessions::get_session_by_id(session_id).await else {
+            return false;
+        };
+        let Some(status) = chatos_memory_engine::try_start_chatos_active_summary(
+            &session,
+            "context_overflow",
+        )
+        .await else {
+            info!(
+                "[AI_V2] active summary trigger unavailable: session_id={}",
+                session_id
+            );
+            return false;
         };
 
-        let budget = token_limit_budget_from_error(err)
-            .unwrap_or(summary_input_budget)
-            .max(1000);
-        let (mut truncated, changed) = truncate_messages_by_tokens(messages, budget);
-        if changed {
-            truncated = ensure_tool_responses(truncated);
-            return Some(truncated);
+        if status.failed || (!status.running && !status.generated && !status.compacted) {
+            info!(
+                "[AI_V2] active summary trigger did not enter running state: session_id={} failed={} running={} generated={} compacted={}",
+                session_id,
+                status.failed,
+                status.running,
+                status.generated,
+                status.compacted
+            );
+            return false;
         }
-        None
+
+        info!(
+            "[AI_V2] active summary started: session_id={} job_run_id={} pending_before_count={}",
+            session_id,
+            status.job_run_id.as_deref().unwrap_or("-"),
+            status.pending_before_count.unwrap_or(0)
+        );
+        notify_active_summary_progress(
+            callbacks,
+            "正在自动压缩上下文，压缩完成后将继续当前请求。",
+            &session,
+            &status,
+        );
+
+        let completed = match chatos_memory_engine::wait_for_existing_chatos_active_summary_completion(
+            &session,
+            status,
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(err) => {
+                info!(
+                    "[AI_V2] active summary wait failed: session_id={} error={}",
+                    session_id, err
+                );
+                return false;
+            }
+        };
+
+        if completed.failed || (!completed.generated && !completed.compacted) {
+            info!(
+                "[AI_V2] active summary completed without compaction: session_id={} failed={} generated={} compacted={}",
+                session_id,
+                completed.failed,
+                completed.generated,
+                completed.compacted
+            );
+            return false;
+        }
+
+        notify_active_summary_progress(
+            callbacks,
+            "上下文压缩完成，正在继续当前请求。",
+            &session,
+            &completed,
+        );
+
+        self.refresh_context_from_memory(Some(session_id), include_reasoning, messages)
+            .await;
+        true
+    }
+}
+
+fn resolved_purpose_allows_active_summary(purpose: &str) -> bool {
+    purpose == "chat"
+}
+
+fn notify_active_summary_progress(
+    callbacks: &AiClientCallbacks,
+    message: &str,
+    session: &Session,
+    status: &memory_engine_sdk::RunThreadActiveSummaryResponse,
+) {
+    if let Some(cb) = &callbacks.on_thinking {
+        cb(message.to_string());
+    }
+    if let Some(cb) = &callbacks.on_context_summarized_start {
+        cb(json!({
+            "kind": "active_summary_progress",
+            "message": message,
+            "session_id": session.id,
+            "job_run_id": status.job_run_id,
+            "pending_before_count": status.pending_before_count,
+            "pending_after_count": status.pending_after_count,
+            "running": status.running,
+            "completed": status.completed,
+            "failed": status.failed,
+            "generated": status.generated,
+            "compacted": status.compacted
+        }));
     }
 }
 
@@ -452,12 +557,6 @@ impl AiClientSettings for AiClient {
         }
         if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) {
             self.history_limit = v.max(0);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_MAX_CONTEXT_TOKENS")
-            .and_then(|v| v.as_i64())
-        {
-            self.max_context_tokens = v;
         }
     }
 }

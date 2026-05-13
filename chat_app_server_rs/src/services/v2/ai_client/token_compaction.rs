@@ -114,4 +114,11 @@ mod tests {
         ));
         assert!(!is_token_limit_error("rate_limit_exceeded"));
     }
+
+    #[test]
+    fn token_limit_error_detects_model_limit_exceeded_message() {
+        assert!(is_token_limit_error(
+            r#"status 400 Bad Request: {"error":{"message":"Invalid request: Your request exceeded model token limit: 262144 (requested: 276569)"}}"#
+        ));
+    }
 }

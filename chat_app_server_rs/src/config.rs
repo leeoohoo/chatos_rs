@@ -29,6 +29,9 @@ pub struct Config {
     pub auth_access_token_ttl_seconds: i64,
     pub memory_engine_base_url: String,
     pub memory_engine_request_timeout_ms: i64,
+    pub memory_engine_active_summary_trigger_timeout_ms: i64,
+    pub memory_engine_active_summary_poll_interval_ms: i64,
+    pub memory_engine_active_summary_poll_timeout_ms: i64,
 }
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -133,6 +136,12 @@ impl Config {
             .unwrap_or_else(|_| "http://127.0.0.1:7081/api/memory-engine/v1".to_string());
         let memory_engine_request_timeout_ms =
             read_int("MEMORY_ENGINE_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let memory_engine_active_summary_trigger_timeout_ms =
+            read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS", 5000).max(300);
+        let memory_engine_active_summary_poll_interval_ms =
+            read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS", 10_000).max(1_000);
+        let memory_engine_active_summary_poll_timeout_ms =
+            read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS", 120_000).max(10_000);
         Ok(Config {
             openai_api_key,
             openai_base_url,
@@ -160,6 +169,9 @@ impl Config {
             auth_access_token_ttl_seconds,
             memory_engine_base_url,
             memory_engine_request_timeout_ms,
+            memory_engine_active_summary_trigger_timeout_ms,
+            memory_engine_active_summary_poll_interval_ms,
+            memory_engine_active_summary_poll_timeout_ms,
         })
     }
 
@@ -243,6 +255,18 @@ impl Config {
         println!(
             "    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}",
             self.memory_engine_request_timeout_ms
+        );
+        println!(
+            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}",
+            self.memory_engine_active_summary_trigger_timeout_ms
+        );
+        println!(
+            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}",
+            self.memory_engine_active_summary_poll_interval_ms
+        );
+        println!(
+            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+            self.memory_engine_active_summary_poll_timeout_ms
         );
     }
 }

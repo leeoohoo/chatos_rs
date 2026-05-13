@@ -255,6 +255,9 @@ mod tests {
         assert!(is_context_overflow_error(
             r#"{"error":{"message":"Token limit exceeded"}}"#
         ));
+        assert!(is_context_overflow_error(
+            r#"{"error":{"message":"Invalid request: Your request exceeded model token limit: 262144 (requested: 276569)"}}"#
+        ));
         assert!(!is_context_overflow_error("rate_limit_exceeded"));
     }
 
