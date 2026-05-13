@@ -11,7 +11,6 @@ mod types;
 pub use self::mapping::CHATOS_COMPAT_SOURCE_ID;
 pub use self::active_summary::{
     try_start_chatos_active_summary,
-    try_wait_for_chatos_active_summary_completion,
     wait_for_existing_chatos_active_summary_completion,
 };
 pub use self::memories::{

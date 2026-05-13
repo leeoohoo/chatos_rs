@@ -222,6 +222,7 @@ impl AiClient {
                                 &mut remote_active_summary_attempted,
                                 &mut stateless_context_items,
                                 &mut input,
+                                &callbacks,
                             )
                             .await
                         {
@@ -276,6 +277,7 @@ impl AiClient {
                         &mut remote_active_summary_attempted,
                         &mut stateless_context_items,
                         &mut input,
+                        &callbacks,
                     )
                     .await
                 {

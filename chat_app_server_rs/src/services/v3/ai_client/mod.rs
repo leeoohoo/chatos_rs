@@ -24,7 +24,6 @@ mod stateless_context;
 mod test_support;
 mod tool_plan;
 
-use self::compat::truncate_function_call_outputs_in_input;
 use self::input_transform::{
     build_current_input_items, normalize_input_to_text_value, to_message_item,
 };

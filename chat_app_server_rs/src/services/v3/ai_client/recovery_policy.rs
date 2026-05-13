@@ -2,12 +2,13 @@ mod completion_error;
 mod request_error;
 mod support;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use tracing::warn;
 
 use super::{build_current_input_items, AiClient};
 use crate::services::chatos_memory_engine;
 use crate::services::chatos_sessions;
+use crate::services::ai_client_common::AiClientCallbacks;
 
 impl AiClient {
     pub(in crate::services::v3::ai_client) async fn build_stateless_from_raw_input(
@@ -45,6 +46,7 @@ impl AiClient {
         remote_active_summary_attempted: &mut bool,
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
+        callbacks: &AiClientCallbacks,
     ) -> bool {
         let Some(session_id) = session_id
             .map(|value| value.trim().to_string())
@@ -60,12 +62,33 @@ impl AiClient {
         let Ok(Some(session)) = chatos_sessions::get_session_by_id(session_id.as_str()).await else {
             return false;
         };
-        let Some(status) = chatos_memory_engine::try_wait_for_chatos_active_summary_completion(
+        let Some(initial_status) = chatos_memory_engine::try_start_chatos_active_summary(
             &session,
             "context_overflow",
         )
         .await else {
             return false;
+        };
+        notify_active_summary_progress(
+            callbacks,
+            "正在自动压缩上下文，压缩完成后将继续当前请求。",
+            &session,
+            &initial_status,
+        );
+        let status = match chatos_memory_engine::wait_for_existing_chatos_active_summary_completion(
+            &session,
+            initial_status,
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(err) => {
+                warn!(
+                    "[AI_V3] remote active summary wait failed: session_id={}, error={}",
+                    session_id, err
+                );
+                return false;
+            }
         };
         if status.failed || (!status.generated && !status.compacted) {
             warn!(
@@ -77,6 +100,12 @@ impl AiClient {
             );
             return false;
         }
+        notify_active_summary_progress(
+            callbacks,
+            "上下文压缩完成，正在继续当前请求。",
+            &session,
+            &status,
+        );
 
         let stateless = self
             .build_stateless_from_raw_input(
@@ -95,5 +124,31 @@ impl AiClient {
         *stateless_context_items = Some(stateless.clone());
         *input = Value::Array(stateless);
         true
+    }
+}
+
+fn notify_active_summary_progress(
+    callbacks: &AiClientCallbacks,
+    message: &str,
+    session: &crate::models::session::Session,
+    status: &memory_engine_sdk::RunThreadActiveSummaryResponse,
+) {
+    if let Some(cb) = &callbacks.on_thinking {
+        cb(message.to_string());
+    }
+    if let Some(cb) = &callbacks.on_context_summarized_start {
+        cb(json!({
+            "kind": "active_summary_progress",
+            "message": message,
+            "session_id": session.id,
+            "job_run_id": status.job_run_id,
+            "pending_before_count": status.pending_before_count,
+            "pending_after_count": status.pending_after_count,
+            "running": status.running,
+            "completed": status.completed,
+            "failed": status.failed,
+            "generated": status.generated,
+            "compacted": status.compacted
+        }));
     }
 }

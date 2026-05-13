@@ -2,11 +2,11 @@ use serde_json::Value;
 use tracing::warn;
 
 use super::super::prev_context::{
-    is_context_length_exceeded_error, is_missing_tool_call_error, is_request_body_too_large_error,
-    reduce_history_limit,
+    is_context_length_exceeded_error, is_missing_tool_call_error,
 };
-use super::super::{truncate_function_call_outputs_in_input, AiClient};
+use super::super::AiClient;
 use super::support::merge_pending_tool_items_into_stateless;
+use crate::services::ai_client_common::AiClientCallbacks;
 
 impl AiClient {
     pub(in crate::services::v3::ai_client) async fn try_recover_from_completion_error(
@@ -27,6 +27,7 @@ impl AiClient {
         remote_active_summary_attempted: &mut bool,
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
+        callbacks: &AiClientCallbacks,
     ) -> bool {
         if *use_prev_id && is_missing_tool_call_error(err_msg) {
             if let Some(sid) = session_id {
@@ -66,7 +67,6 @@ impl AiClient {
             }
         }
 
-        let request_too_large = is_request_body_too_large_error(err_msg);
         if is_context_length_exceeded_error(err_msg)
             && self
                 .try_remote_active_summary_recovery(
@@ -80,6 +80,7 @@ impl AiClient {
                     remote_active_summary_attempted,
                     stateless_context_items,
                     input,
+                    callbacks,
                 )
                 .await
         {
@@ -87,46 +88,6 @@ impl AiClient {
             *can_use_prev_id = false;
             *previous_response_id = None;
             return true;
-        }
-        if request_too_large {
-            if let Some(trimmed_input) = truncate_function_call_outputs_in_input(input) {
-                warn!(
-                    "[AI_V3] failed response due to payload size; retry with truncated function_call_output items"
-                );
-                *use_prev_id = false;
-                *previous_response_id = None;
-                *stateless_context_items = trimmed_input.as_array().cloned();
-                *input = trimmed_input;
-                return true;
-            }
-        }
-        if is_context_length_exceeded_error(err_msg) || request_too_large {
-            if let Some(next_limit) = reduce_history_limit(*adaptive_history_limit) {
-                warn!(
-                    "[AI_V3] failed response due to context/payload overflow; reduce history_limit {} -> {}",
-                    *adaptive_history_limit, next_limit
-                );
-                *adaptive_history_limit = next_limit;
-                *can_use_prev_id = false;
-                *use_prev_id = false;
-                *previous_response_id = None;
-                let stateless = self
-                    .build_stateless_from_raw_input(
-                        session_id,
-                        raw_input,
-                        force_text_content,
-                        *adaptive_history_limit,
-                        stable_prefix_mode,
-                        include_tool_items,
-                        prefixed_input_items,
-                    )
-                    .await;
-                if !stateless.is_empty() {
-                    *stateless_context_items = Some(stateless.clone());
-                    *input = Value::Array(stateless);
-                    return true;
-                }
-            }
         }
 
         false

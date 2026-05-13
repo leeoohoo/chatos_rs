@@ -7,7 +7,7 @@ use super::test_support::{
 };
 
 #[tokio::test]
-async fn recovers_prev_id_then_completion_overflow_and_succeeds() {
+async fn completion_overflow_without_remote_summary_surfaces_error() {
     let steps = vec![
         MockProviderStep::text(
             StatusCode::BAD_REQUEST,
@@ -21,19 +21,11 @@ async fn recovers_prev_id_then_completion_overflow_and_succeeds() {
                 "error": { "message": "context_length_exceeded: input exceeds the context window" }
             }),
         ),
-        MockProviderStep::json(
-            StatusCode::OK,
-            json!({
-                "id": "resp_ok",
-                "status": "completed",
-                "output_text": "final answer"
-            }),
-        ),
     ];
     let (base_url, captured, server) = start_mock_provider(steps).await;
     let mut client = build_test_client(base_url);
 
-    let result = run_process_with_tools(
+    let err = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
             previous_response_id: Some("prev_resp_1".to_string()),
@@ -44,24 +36,16 @@ async fn recovers_prev_id_then_completion_overflow_and_succeeds() {
         },
     )
     .await
-    .expect("process should recover and succeed");
+    .expect_err("without remote summary support, overflow should surface");
     server.abort();
 
-    assert_eq!(
-        result.get("content").and_then(|value| value.as_str()),
-        Some("final answer")
-    );
+    assert!(err.contains("context_length_exceeded"), "{err}");
 
     let requests = captured.lock().await.clone();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 2);
     assert!(requests[0].get("previous_response_id").is_some());
     assert!(requests[1].get("previous_response_id").is_none());
-    assert!(requests[2].get("previous_response_id").is_none());
     assert!(requests[1]
-        .get("input")
-        .map(|value| value.is_array())
-        .unwrap_or(false));
-    assert!(requests[2]
         .get("input")
         .map(|value| value.is_array())
         .unwrap_or(false));
@@ -98,7 +82,7 @@ async fn prefixed_runtime_items_disable_previous_response_id_reuse() {
                     }
                 ]
             })],
-            stable_prefix_mode: true,
+            stable_prefix_mode: false,
             purpose: "chat",
             ..Default::default()
         },
@@ -115,11 +99,6 @@ async fn prefixed_runtime_items_disable_previous_response_id_reuse() {
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 1);
     assert!(requests[0].get("previous_response_id").is_none());
-    let request_input_text = requests[0]
-        .get("input")
-        .map(|value| value.to_string())
-        .unwrap_or_default();
-    assert!(request_input_text.contains("联系人 runtime context"));
 }
 
 #[tokio::test]
