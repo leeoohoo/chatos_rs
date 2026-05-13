@@ -9,6 +9,10 @@ use crate::models::chatos_agent_types::{
 };
 use crate::repositories::agents as agents_repo;
 use crate::services::{chatos_memory_engine, chatos_skills};
+use crate::services::text_normalization::{
+    normalize_optional_text_ref, normalize_required_text_owned, normalize_string_vec,
+    resolve_visible_user_ids,
+};
 
 pub async fn list_agents(
     user_id: &str,
@@ -471,38 +475,15 @@ fn normalize_inline_skills(skills: &[ChatosAgentSkillDto]) -> Vec<ChatosAgentSki
 }
 
 fn normalize_string_list(items: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for item in items {
-        let value = item.trim();
-        if value.is_empty() {
-            continue;
-        }
-        if seen.insert(value.to_string()) {
-            out.push(value.to_string());
-        }
-    }
-    out
+    normalize_string_vec(items.to_vec())
 }
 
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(ToOwned::to_owned)
+    normalize_optional_text_ref(value)
 }
 
 fn normalize_required_text(value: Option<String>, field: &str) -> Result<String, String> {
-    normalize_optional_text(value.as_deref()).ok_or_else(|| format!("{field} is required"))
-}
-
-fn resolve_visible_user_ids(scope_user_id: &str) -> Vec<String> {
-    let normalized = scope_user_id.trim();
-    if normalized.is_empty() {
-        Vec::new()
-    } else {
-        vec![normalized.to_string()]
-    }
+    normalize_required_text_owned(value, field)
 }
 
 fn first_non_empty_line(value: &str) -> Option<String> {

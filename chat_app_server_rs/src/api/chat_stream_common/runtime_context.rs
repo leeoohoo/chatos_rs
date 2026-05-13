@@ -208,7 +208,7 @@ pub(crate) async fn resolve_chat_stream_context(
         compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
     let memory_summary_prompt = match memory_session.as_ref() {
-        Some(session) => chatos_memory_engine::compose_chatos_context(session, 2, true)
+        Some(session) => chatos_memory_engine::compose_chatos_context(session, true)
             .await
             .ok()
             .and_then(|payload| payload.merged_summary)

@@ -9,6 +9,9 @@ use crate::models::chatos_agent_types::{
 };
 use crate::services::llm_prompt_runner::{run_text_prompt_with_runtime, PromptRunnerRuntime};
 use crate::services::{chatos_agents, chatos_skills};
+use crate::services::text_normalization::{
+    normalize_optional_text_owned, normalize_required_text_owned, normalize_string_vec,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AiCreateAgentRequest {
@@ -457,23 +460,15 @@ fn extract_json_code_block(raw: &str) -> Option<String> {
 }
 
 fn normalize_required_text(value: Option<String>, field: &str) -> Result<String, String> {
-    normalize_optional_text(value).ok_or_else(|| format!("{field} is required"))
+    normalize_required_text_owned(value, field)
 }
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
-    value
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
+    normalize_optional_text_owned(value)
 }
 
 fn normalize_optional_string_array(value: Option<Vec<String>>) -> Option<Vec<String>> {
-    let mut items = value
-        .unwrap_or_default()
-        .into_iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect::<Vec<_>>();
-    dedupe_strings(&mut items);
+    let items = normalize_string_vec(value.unwrap_or_default());
     if items.is_empty() {
         None
     } else {

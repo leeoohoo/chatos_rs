@@ -1,5 +1,10 @@
 import React from 'react';
 
+import {
+  DirectoryPickerActionButton,
+  DirectoryPickerEntryList,
+  DirectoryPickerPathDisplay,
+} from '../ui/DirectoryPickerShared';
 import type { FsEntry } from '../../types';
 import type { DirPickerTarget } from './helpers';
 
@@ -51,25 +56,24 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
             </svg>
           </button>
         </div>
-        <div className="text-xs text-muted-foreground break-all">
-          当前路径：<span className="text-foreground">{currentPath || '请选择磁盘/目录'}</span>
-        </div>
+        <DirectoryPickerPathDisplay
+          currentPath={currentPath}
+          emptyText="请选择磁盘/目录"
+        />
         <div className="mt-3 flex items-center gap-2">
-          <button
-            type="button"
+          <DirectoryPickerActionButton
             onClick={onBack}
             disabled={!parentPath}
-            className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-muted"
           >
             返回上级
-          </button>
-          <button
-            type="button"
+          </DirectoryPickerActionButton>
+          <DirectoryPickerActionButton
             onClick={onRefresh}
-            className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
+            className="bg-muted"
           >
             刷新
-          </button>
+          </DirectoryPickerActionButton>
         </div>
         <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">
           {loading && <div className="p-4 text-sm text-muted-foreground">加载中...</div>}
@@ -118,6 +122,7 @@ interface DirPickerDialogProps {
   target: DirPickerTarget;
   currentPath: string | null;
   parentPath: string | null;
+  writable: boolean;
   loading: boolean;
   items: FsEntry[];
   error: string | null;
@@ -141,6 +146,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
   target,
   currentPath,
   parentPath,
+  writable,
   loading,
   items,
   error,
@@ -163,6 +169,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
   }
 
   const canCreate = target === 'project';
+  const canCreateHere = canCreate && writable;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -178,18 +185,21 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
             </svg>
           </button>
         </div>
-        <div className="text-xs text-muted-foreground break-all">
-          当前路径：<span className="text-foreground">{currentPath || '请选择盘符/目录'}</span>
-        </div>
+        <DirectoryPickerPathDisplay
+          currentPath={currentPath}
+          emptyText="请选择盘符/目录"
+        />
+        {canCreate && currentPath && !writable && (
+          <div className="mt-2 text-xs text-amber-600">当前目录只读，不能在这里新建目录</div>
+        )}
         <div className="mt-3 flex items-center gap-2">
-          <button
-            type="button"
+          <DirectoryPickerActionButton
             onClick={onBack}
             disabled={!parentPath}
-            className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-muted"
           >
             返回上级
-          </button>
+          </DirectoryPickerActionButton>
           <button
             type="button"
             onClick={onChooseCurrent}
@@ -202,7 +212,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
             <button
               type="button"
               onClick={onOpenCreateModal}
-              disabled={!currentPath || creatingFolder}
+              disabled={!currentPath || !canCreateHere || creatingFolder}
               className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {creatingFolder ? '新建中...' : '新建目录'}
@@ -218,26 +228,15 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
             </button>
           )}
         </div>
-        <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">
-          {loading && <div className="p-4 text-sm text-muted-foreground">加载中...</div>}
-          {!loading && items.length === 0 && (
-            <div className="p-4 text-sm text-muted-foreground">没有可用目录</div>
-          )}
-          {!loading && items.length > 0 && (
-            <div className="divide-y divide-border">
-              {items.map((entry) => (
-                <button
-                  key={entry.path}
-                  type="button"
-                  onClick={() => onOpenEntry(entry.path)}
-                  className="w-full text-left px-4 py-2 hover:bg-accent flex items-center gap-2"
-                >
-                  <span className="text-foreground">{entry.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <DirectoryPickerEntryList
+          loading={loading}
+          items={items}
+          emptyText="没有可用目录"
+          onOpenEntry={onOpenEntry}
+          className="mt-3 flex-1 overflow-y-auto rounded border border-border"
+          listClassName="divide-y divide-border"
+          itemClassName="px-4 py-2"
+        />
         {error && !createModalOpen && (
           <div className="mt-2 text-xs text-red-500">{error}</div>
         )}
@@ -268,14 +267,13 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
               />
               {error && <div className="mt-2 text-xs text-red-500">{error}</div>}
               <div className="mt-4 flex justify-end gap-2">
-                <button
-                  type="button"
+                <DirectoryPickerActionButton
                   onClick={onCreateModalClose}
                   disabled={creatingFolder}
-                  className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="bg-muted"
                 >
                   取消
-                </button>
+                </DirectoryPickerActionButton>
                 <button
                   type="button"
                   onClick={onCreateDir}

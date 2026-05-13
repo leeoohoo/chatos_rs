@@ -51,6 +51,7 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   navLoading: boolean;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbols: React.ComponentProps<typeof ProjectPreviewPane>['documentSymbols'];
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
@@ -58,6 +59,7 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   clearTokenSelection: () => void;
   requestDefinition: () => Promise<void>;
   requestReferences: () => Promise<void>;
+  goBackFromNav: () => Promise<void>;
   handleSearchInProject: (query: string) => void;
   handleOpenPreviousSearchHit: () => Promise<void>;
   handleOpenNextSearchHit: () => Promise<void>;

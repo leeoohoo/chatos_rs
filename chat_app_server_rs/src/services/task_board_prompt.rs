@@ -10,6 +10,7 @@ use crate::models::memory_runtime_types::{
 use crate::services::chatos_sessions;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
+use crate::services::text_normalization::normalize_optional_text_ref;
 use crate::services::user_settings::get_effective_user_settings;
 use crate::utils::events::Events;
 
@@ -519,10 +520,7 @@ pub fn build_task_board_updated_event_payload(
 }
 
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    normalize_optional_text_ref(value)
 }
 
 fn task_board_current_label(locale: InternalContextLocale) -> &'static str {

@@ -9,6 +9,7 @@ import {
   normalizeCodeNavLocationsResult,
 } from '../../../lib/domain/codeNav';
 import type {
+  CodeNavHistoryEntry,
   NavRequestKind,
   ProjectExplorerCodeNavApiClient,
 } from './codeNavTypes';
@@ -20,7 +21,15 @@ interface UseCodeNavRequestsOptions {
   selectedToken: string | null;
   selectedTokenLine: number | null;
   selectedTokenColumn: number | null;
-  openLocation: (location: CodeNavLocation) => Promise<void>;
+  openLocation: (
+    location: CodeNavLocation,
+    options?: {
+      preserveHistory?: boolean;
+      targetLine?: number | null;
+    },
+  ) => Promise<void>;
+  buildHistoryEntry: () => CodeNavHistoryEntry | null;
+  pushHistoryEntry: (entry: CodeNavHistoryEntry) => void;
 }
 
 export const useCodeNavRequests = ({
@@ -31,6 +40,8 @@ export const useCodeNavRequests = ({
   selectedTokenLine,
   selectedTokenColumn,
   openLocation,
+  buildHistoryEntry,
+  pushHistoryEntry,
 }: UseCodeNavRequestsOptions) => {
   const [navResult, setNavResult] = useState<CodeNavLocationsResult | null>(null);
   const [navRequestKind, setNavRequestKind] = useState<NavRequestKind | null>(null);
@@ -98,9 +109,13 @@ export const useCodeNavRequests = ({
   }, [runNavRequest]);
 
   const handleOpenNavLocation = useCallback(async (location: CodeNavLocation) => {
-    await openLocation(location);
+    const historyEntry = buildHistoryEntry();
+    if (historyEntry) {
+      pushHistoryEntry(historyEntry);
+    }
+    await openLocation(location, { preserveHistory: true });
     setActiveNavLocationId(buildCodeNavLocationId(location));
-  }, [openLocation]);
+  }, [buildHistoryEntry, openLocation, pushHistoryEntry]);
 
   return {
     navResult,

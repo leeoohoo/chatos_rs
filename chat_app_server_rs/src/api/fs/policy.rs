@@ -28,6 +28,8 @@ pub(super) enum FsAllowedRootKind {
     CurrentDir,
     Workspace,
     Project,
+    ProjectParent,
+    RepoParent,
     Ssh,
     Home,
     Configured,
@@ -39,9 +41,11 @@ impl FsAllowedRootKind {
             Self::CurrentDir => 0,
             Self::Workspace => 1,
             Self::Project => 2,
-            Self::Ssh => 3,
-            Self::Home => 4,
-            Self::Configured => 5,
+            Self::ProjectParent => 3,
+            Self::RepoParent => 4,
+            Self::Ssh => 5,
+            Self::Home => 6,
+            Self::Configured => 7,
         }
     }
 
@@ -50,6 +54,8 @@ impl FsAllowedRootKind {
             Self::CurrentDir => "current_dir",
             Self::Workspace => "workspace",
             Self::Project => "project",
+            Self::ProjectParent => "project_parent",
+            Self::RepoParent => "repo_parent",
             Self::Ssh => "ssh",
             Self::Home => "home",
             Self::Configured => "configured",
@@ -59,7 +65,12 @@ impl FsAllowedRootKind {
     fn can_write(self) -> bool {
         matches!(
             self,
-            Self::CurrentDir | Self::Workspace | Self::Project | Self::Configured
+            Self::CurrentDir
+                | Self::Workspace
+                | Self::Project
+                | Self::ProjectParent
+                | Self::RepoParent
+                | Self::Configured
         )
     }
 }
@@ -73,7 +84,7 @@ pub(super) struct FsPathPolicy {
 pub(super) struct AuthorizedPath {
     pub(super) path: PathBuf,
     pub(super) navigation_root: PathBuf,
-    can_write: bool,
+    pub(super) can_write: bool,
 }
 
 #[derive(Debug, Clone)]

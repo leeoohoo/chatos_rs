@@ -2,7 +2,7 @@ import { useMemo, type ComponentProps } from 'react';
 
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
 import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
-import { formatSummaryCreatedAt } from './helpers';
+import { formatSummaryCreatedAt } from './viewHelpers';
 import type {
   ChatInterfaceOverlayActions,
   ChatInterfaceOverlayState,

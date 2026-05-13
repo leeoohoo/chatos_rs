@@ -89,6 +89,7 @@ export interface FsEntry {
   name: string;
   path: string;
   isDir: boolean;
+  writable?: boolean | null;
   size?: number | null;
   modifiedAt?: string | null;
 }

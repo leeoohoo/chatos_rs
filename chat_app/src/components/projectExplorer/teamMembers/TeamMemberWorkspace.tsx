@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 
-import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/helpers';
+import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/viewHelpers';
 import { TeamMemberWorkspaceComposer } from './TeamMemberWorkspaceComposer';
 import { TeamMemberWorkspaceContent } from './TeamMemberWorkspaceContent';
 import type { TeamMemberWorkspaceProps } from './TeamMemberWorkspaceTypes';

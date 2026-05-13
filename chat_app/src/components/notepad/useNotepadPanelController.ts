@@ -10,6 +10,7 @@ import { useNotepadPanelEffects } from './useNotepadPanelEffects';
 import {
   buildFolderTree,
   normalizeFolderPath,
+  renameFolderAndDescendants,
   type NoteMeta,
 } from './utils';
 import { useDialogService } from '../ui/DialogProvider';
@@ -217,24 +218,6 @@ export const useNotepadPanelController = ({
     void openNote(noteId);
   }, [openNote]);
 
-  const renameFolderPath = useCallback((folderPath: string, fromPath: string, toPath: string) => {
-    const normalizedFolder = normalizeFolderPath(folderPath);
-    const normalizedFrom = normalizeFolderPath(fromPath);
-    const normalizedTo = normalizeFolderPath(toPath);
-    if (!normalizedFrom || !normalizedTo) {
-      return normalizedFolder;
-    }
-    if (normalizedFolder === normalizedFrom) {
-      return normalizedTo;
-    }
-    const prefix = `${normalizedFrom}/`;
-    if (normalizedFolder.startsWith(prefix)) {
-      const suffix = normalizedFolder.slice(prefix.length);
-      return suffix ? `${normalizedTo}/${suffix}` : normalizedTo;
-    }
-    return normalizedFolder;
-  }, []);
-
   useNotepadRealtime({
     enabled: true,
     onInvalidate: async (payload) => {
@@ -275,7 +258,11 @@ export const useNotepadPanelController = ({
           normalizedSelectedFolder
           && (normalizedSelectedFolder === payloadFrom || normalizedSelectedFolder.startsWith(`${payloadFrom}/`))
         ) {
-          const nextSelectedFolder = renameFolderPath(normalizedSelectedFolder, payloadFrom, payloadTo);
+          const nextSelectedFolder = renameFolderAndDescendants(
+            normalizedSelectedFolder,
+            payloadFrom,
+            payloadTo,
+          );
           setSelectedFolder(nextSelectedFolder);
           ensureFolderExpanded(nextSelectedFolder);
         }

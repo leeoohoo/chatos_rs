@@ -15,7 +15,7 @@ import { resolveCurrentAgent } from './currentAgent';
 import {
   buildSupportedFileTypes,
   resolveModelSupportFlags,
-} from './helpers';
+} from './viewHelpers';
 import { useSessionHeaderMeta } from './useSessionHeaderMeta';
 
 interface UseChatInterfaceDerivedStateParams {

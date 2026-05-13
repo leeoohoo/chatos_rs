@@ -133,11 +133,10 @@ impl MessageManager {
     pub async fn get_memory_chat_history_context(
         &self,
         session_id: &str,
-        memory_summary_limit: usize,
     ) -> (Option<String>, usize, Vec<Message>) {
         let context = self
             .core
-            .get_memory_chat_history_context(session_id, memory_summary_limit)
+            .get_memory_chat_history_context(session_id)
             .await;
         (
             context.merged_summary,

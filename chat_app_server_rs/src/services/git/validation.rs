@@ -24,7 +24,7 @@ pub(super) fn parse_root(root: &str) -> Result<PathBuf, String> {
     std::fs::canonicalize(path).map_err(|err| format!("解析 root 路径失败: {}", err))
 }
 
-pub(super) async fn discover_repo_root(root: &Path) -> Result<Option<PathBuf>, String> {
+pub async fn discover_repo_root(root: &Path) -> Result<Option<PathBuf>, String> {
     match git_output(root, ["rev-parse", "--show-toplevel"], DEFAULT_GIT_TIMEOUT).await {
         Ok(output) => {
             let text = output.stdout.trim();

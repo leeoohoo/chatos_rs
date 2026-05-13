@@ -25,7 +25,7 @@ impl AiClient {
         let mut mapped = Vec::new();
         let (merged_summary, _summary_count, history) = if let Some(sid) = session_id {
             self.message_manager
-                .get_memory_chat_history_context(sid, 2)
+                .get_memory_chat_history_context(sid)
                 .await
         } else {
             (None, 0, Vec::new())
@@ -108,6 +108,7 @@ impl AiClient {
             .load_memory_context_messages_for_scope(session_id, include_reasoning)
             .await;
         refreshed.extend(ensure_tool_responses(mapped));
+        append_missing_tail_messages(&mut refreshed, messages.as_slice());
         if refreshed != *messages {
             info!(
                 "[AI_V2] context refreshed from memory_context: old_messages={}, new_messages={}",
@@ -116,5 +117,24 @@ impl AiClient {
             );
             *messages = refreshed;
         }
+    }
+}
+
+fn append_missing_tail_messages(refreshed: &mut Vec<Value>, current: &[Value]) {
+    if refreshed.is_empty() || current.is_empty() {
+        return;
+    }
+
+    let mut matched_suffix_len = 0usize;
+    let max_overlap = refreshed.len().min(current.len());
+    for overlap in (1..=max_overlap).rev() {
+        if refreshed[refreshed.len() - overlap..] == current[..overlap] {
+            matched_suffix_len = overlap;
+            break;
+        }
+    }
+
+    if matched_suffix_len < current.len() {
+        refreshed.extend_from_slice(&current[matched_suffix_len..]);
     }
 }

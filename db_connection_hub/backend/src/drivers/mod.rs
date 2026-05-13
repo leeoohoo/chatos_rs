@@ -1,3 +1,4 @@
+pub mod metadata_common;
 pub mod mock;
 pub mod mongodb;
 pub mod mysql;

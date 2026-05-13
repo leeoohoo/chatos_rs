@@ -93,6 +93,7 @@ export const useProjectExplorerViewModel = ({
     client,
     projectRootPath: project?.rootPath,
     selectedFilePath: state.selectedFile?.path || null,
+    targetLine: search.previewTargetLine,
     openLocation: selection.openCodeNavLocation,
   });
 

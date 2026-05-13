@@ -44,6 +44,62 @@ export const normalizeFolderPath = (raw: string | undefined | null): string => {
   return input.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 };
 
+export const normalizeFolders = (folders: string[]): string[] => {
+  const normalized = folders
+    .map((item) => String(item || '').trim())
+    .filter((item) => item.length > 0);
+  return ['', ...normalized];
+};
+
+export const collectFolderAncestors = (folderPath: string): string[] => {
+  const normalized = normalizeFolderPath(folderPath);
+  if (!normalized) {
+    return [];
+  }
+  const segments = normalized.split('/').filter((item) => item.trim().length > 0);
+  const folders: string[] = [];
+  let current = '';
+  for (const segment of segments) {
+    current = current ? `${current}/${segment}` : segment;
+    folders.push(current);
+  }
+  return folders;
+};
+
+export const removeFolderAndDescendants = (
+  folders: string[],
+  folderPath: string,
+): string[] => {
+  const normalizedTarget = normalizeFolderPath(folderPath);
+  if (!normalizedTarget) {
+    return folders;
+  }
+  const prefix = `${normalizedTarget}/`;
+  return folders.filter((folder) => folder !== normalizedTarget && !folder.startsWith(prefix));
+};
+
+export const renameFolderAndDescendants = (
+  folderPath: string,
+  fromPath: string,
+  toPath: string,
+): string => {
+  const normalizedFolder = normalizeFolderPath(folderPath);
+  const normalizedFrom = normalizeFolderPath(fromPath);
+  const normalizedTo = normalizeFolderPath(toPath);
+  if (!normalizedFrom || !normalizedTo) {
+    return normalizedFolder;
+  }
+  if (normalizedFolder === normalizedFrom) {
+    return normalizedTo;
+  }
+  const prefix = `${normalizedFrom}/`;
+  if (normalizedFolder.startsWith(prefix)) {
+    const suffix = normalizedFolder.slice(prefix.length);
+    return suffix ? `${normalizedTo}/${suffix}` : normalizedTo;
+  }
+  return normalizedFolder;
+};
+
 export const sanitizeFileName = (raw: string): string => {
   const cleaned = String(raw || '')
     .replace(/[\\/:*?"<>|]+/g, '_')

@@ -113,6 +113,7 @@ interface SessionListDialogsProps {
   dirPickerTarget: DirPickerTarget;
   dirPickerPath: string | null;
   dirPickerParent: string | null;
+  dirPickerWritable: boolean;
   dirPickerLoading: boolean;
   dirPickerItems: FsEntry[];
   dirPickerError: string | null;
@@ -224,6 +225,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   dirPickerTarget,
   dirPickerPath,
   dirPickerParent,
+  dirPickerWritable,
   dirPickerLoading,
   dirPickerItems,
   dirPickerError,
@@ -367,6 +369,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       target={dirPickerTarget}
       currentPath={dirPickerPath || ''}
       parentPath={dirPickerParent}
+      writable={dirPickerWritable}
       loading={dirPickerLoading}
       items={dirPickerItems}
       error={dirPickerError}

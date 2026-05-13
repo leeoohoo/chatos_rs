@@ -1,6 +1,8 @@
 import type { FsEntry, RemoteConnection, Session } from '../../types';
 import type { FsEntryResponse } from '../../lib/api/client/types';
-import { normalizeFsEntry as normalizeDomainFsEntry } from '../../lib/domain/filesystem';
+import {
+  normalizeFsEntry as normalizeDomainFsEntry,
+} from '../../lib/domain/filesystem';
 
 export type RemoteAuthType = 'private_key' | 'private_key_cert' | 'password';
 export type HostKeyPolicy = 'strict' | 'accept_new';
@@ -99,23 +101,6 @@ export const deriveNameFromPath = (path: string, fallback: string): string => {
   if (!trimmed) return fallback;
   const parts = trimmed.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || fallback;
-};
-
-export const deriveParentPath = (path: string): string | null => {
-  const trimmed = path.trim();
-  if (/^[A-Za-z]:[\\/]?$/.test(trimmed)) {
-    return `${trimmed.slice(0, 2)}\\`;
-  }
-  const normalized = path.trim().replace(/[\\/]+$/, '');
-  if (!normalized) return null;
-  const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
-  if (idx < 0) return null;
-  if (idx === 0) return normalized[0];
-  const parent = normalized.slice(0, idx);
-  if (/^[A-Za-z]:$/.test(parent)) {
-    return `${parent}\\`;
-  }
-  return parent;
 };
 
 export const normalizeFsEntry = (raw: FsEntryResponse | unknown, fallbackIsDir: boolean): FsEntry => {

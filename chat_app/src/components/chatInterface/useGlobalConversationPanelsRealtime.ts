@@ -12,7 +12,7 @@ import type { TaskReviewPanelState, UiPromptPanelState } from '../../lib/store/t
 import {
   toTaskReviewPanelFromRealtimePayload,
   toUiPromptPanelFromRealtimePayload,
-} from './helpers';
+} from './panelTransforms';
 import {
   removePendingTaskReviewCachePanel,
   upsertPendingTaskReviewCachePanel,

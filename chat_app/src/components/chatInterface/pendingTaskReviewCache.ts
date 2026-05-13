@@ -1,14 +1,18 @@
 import type { TaskReviewPanelState } from '../../lib/store/types';
-import { toTaskReviewPanelFromRecord } from './helpers';
+import { toTaskReviewPanelFromRecord } from './panelTransforms';
+import {
+  getSessionScopedInflight,
+  markSessionScopedCacheStale,
+  normalizeSessionScopedId,
+  peekSessionScopedCacheEntry,
+  setSessionScopedCacheEntry,
+  setSessionScopedInflight,
+  type SessionScopedCacheState,
+} from './sessionScopedCache';
 
 interface PendingTaskReviewCacheEntry {
   panels: TaskReviewPanelState[];
   stale: boolean;
-}
-
-interface PendingTaskReviewCacheState {
-  cache: Map<string, PendingTaskReviewCacheEntry>;
-  inflight: Map<string, Promise<TaskReviewPanelState[]>>;
 }
 
 interface PendingTaskReviewApiClientLike {
@@ -20,19 +24,17 @@ interface PendingTaskReviewApiClientLike {
 
 const pendingTaskReviewCaches = new WeakMap<
   PendingTaskReviewApiClientLike,
-  PendingTaskReviewCacheState
+  SessionScopedCacheState<TaskReviewPanelState[]>
 >();
-
-const normalizeSessionId = (sessionId: string): string => String(sessionId || '').trim();
 
 const getOrCreatePendingTaskReviewCacheState = (
   apiClient: PendingTaskReviewApiClientLike,
-): PendingTaskReviewCacheState => {
+): SessionScopedCacheState<TaskReviewPanelState[]> => {
   const existing = pendingTaskReviewCaches.get(apiClient);
   if (existing) {
     return existing;
   }
-  const next: PendingTaskReviewCacheState = {
+  const next: SessionScopedCacheState<TaskReviewPanelState[]> = {
     cache: new Map(),
     inflight: new Map(),
   };
@@ -44,11 +46,16 @@ export const peekPendingTaskReviewCacheEntry = (
   apiClient: PendingTaskReviewApiClientLike,
   sessionId: string,
 ): PendingTaskReviewCacheEntry | null => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return null;
-  }
-  return getOrCreatePendingTaskReviewCacheState(apiClient).cache.get(normalizedSessionId) || null;
+  const cached = peekSessionScopedCacheEntry(
+    getOrCreatePendingTaskReviewCacheState(apiClient).cache,
+    sessionId,
+  );
+  return cached
+    ? {
+      panels: cached.value,
+      stale: cached.stale,
+    }
+    : null;
 };
 
 export const setPendingTaskReviewCacheEntry = (
@@ -56,37 +63,31 @@ export const setPendingTaskReviewCacheEntry = (
   sessionId: string,
   panels: TaskReviewPanelState[],
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  getOrCreatePendingTaskReviewCacheState(apiClient).cache.set(normalizedSessionId, {
-    panels: [...panels],
-    stale: false,
-  });
+  setSessionScopedCacheEntry(
+    getOrCreatePendingTaskReviewCacheState(apiClient).cache,
+    sessionId,
+    [...panels],
+  );
 };
 
 export const upsertPendingTaskReviewCachePanel = (
   apiClient: PendingTaskReviewApiClientLike,
   panel: TaskReviewPanelState,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(panel.sessionId);
+  const normalizedSessionId = normalizeSessionScopedId(panel.sessionId);
   if (!normalizedSessionId || !panel.reviewId) {
     return;
   }
   const cacheState = getOrCreatePendingTaskReviewCacheState(apiClient);
-  const cached = cacheState.cache.get(normalizedSessionId);
-  const nextPanels = cached ? [...cached.panels] : [];
+  const cached = peekSessionScopedCacheEntry(cacheState.cache, normalizedSessionId);
+  const nextPanels = cached ? [...cached.value] : [];
   const index = nextPanels.findIndex((item) => item.reviewId === panel.reviewId);
   if (index >= 0) {
     nextPanels[index] = panel;
   } else {
     nextPanels.push(panel);
   }
-  cacheState.cache.set(normalizedSessionId, {
-    panels: nextPanels,
-    stale: false,
-  });
+  setSessionScopedCacheEntry(cacheState.cache, normalizedSessionId, nextPanels);
 };
 
 export const removePendingTaskReviewCachePanel = (
@@ -100,24 +101,21 @@ export const removePendingTaskReviewCachePanel = (
   }
   const cacheState = getOrCreatePendingTaskReviewCacheState(apiClient);
   const candidateSessionIds = sessionId
-    ? [normalizeSessionId(sessionId)]
+    ? [normalizeSessionScopedId(sessionId)]
     : Array.from(cacheState.cache.keys());
   for (const normalizedSessionId of candidateSessionIds) {
     if (!normalizedSessionId) {
       continue;
     }
-    const cached = cacheState.cache.get(normalizedSessionId);
+    const cached = peekSessionScopedCacheEntry(cacheState.cache, normalizedSessionId);
     if (!cached) {
       continue;
     }
-    const nextPanels = cached.panels.filter((panel) => panel.reviewId !== normalizedReviewId);
-    if (nextPanels.length === cached.panels.length) {
+    const nextPanels = cached.value.filter((panel) => panel.reviewId !== normalizedReviewId);
+    if (nextPanels.length === cached.value.length) {
       continue;
     }
-    cacheState.cache.set(normalizedSessionId, {
-      panels: nextPanels,
-      stale: false,
-    });
+    setSessionScopedCacheEntry(cacheState.cache, normalizedSessionId, nextPanels);
     break;
   }
 };
@@ -126,30 +124,20 @@ export const markPendingTaskReviewCacheStale = (
   apiClient: PendingTaskReviewApiClientLike,
   sessionId: string,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  const cacheState = getOrCreatePendingTaskReviewCacheState(apiClient);
-  const cached = cacheState.cache.get(normalizedSessionId);
-  if (!cached) {
-    return;
-  }
-  cacheState.cache.set(normalizedSessionId, {
-    ...cached,
-    stale: true,
-  });
+  markSessionScopedCacheStale(
+    getOrCreatePendingTaskReviewCacheState(apiClient).cache,
+    sessionId,
+  );
 };
 
 export const getPendingTaskReviewInflight = (
   apiClient: PendingTaskReviewApiClientLike,
   sessionId: string,
 ): Promise<TaskReviewPanelState[]> | null => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return null;
-  }
-  return getOrCreatePendingTaskReviewCacheState(apiClient).inflight.get(normalizedSessionId) || null;
+  return getSessionScopedInflight(
+    getOrCreatePendingTaskReviewCacheState(apiClient).inflight,
+    sessionId,
+  );
 };
 
 export const setPendingTaskReviewInflight = (
@@ -157,16 +145,11 @@ export const setPendingTaskReviewInflight = (
   sessionId: string,
   inflight: Promise<TaskReviewPanelState[]> | null,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  const cacheState = getOrCreatePendingTaskReviewCacheState(apiClient);
-  if (inflight) {
-    cacheState.inflight.set(normalizedSessionId, inflight);
-    return;
-  }
-  cacheState.inflight.delete(normalizedSessionId);
+  setSessionScopedInflight(
+    getOrCreatePendingTaskReviewCacheState(apiClient).inflight,
+    sessionId,
+    inflight,
+  );
 };
 
 export const loadPendingTaskReviewPanels = (
@@ -174,18 +157,18 @@ export const loadPendingTaskReviewPanels = (
   sessionId: string,
   options?: { limit?: number; force?: boolean },
 ): Promise<TaskReviewPanelState[]> => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+  const normalizedSessionId = normalizeSessionScopedId(sessionId);
   if (!normalizedSessionId) {
     return Promise.resolve([]);
   }
 
   const cacheState = getOrCreatePendingTaskReviewCacheState(apiClient);
-  const cached = cacheState.cache.get(normalizedSessionId);
+  const cached = peekSessionScopedCacheEntry(cacheState.cache, normalizedSessionId);
   if (!options?.force && cached && !cached.stale) {
-    return Promise.resolve([...cached.panels]);
+    return Promise.resolve([...cached.value]);
   }
 
-  const existingInflight = cacheState.inflight.get(normalizedSessionId);
+  const existingInflight = getSessionScopedInflight(cacheState.inflight, normalizedSessionId);
   if (existingInflight) {
     return existingInflight;
   }

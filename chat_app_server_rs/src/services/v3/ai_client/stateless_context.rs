@@ -83,13 +83,12 @@ impl AiClient {
         let mut tool_output_ids: HashSet<String> = HashSet::new();
         let context_data = if let Some(sid) = session_id.as_ref() {
             self.message_manager
-                .get_memory_chat_history_context(sid, 2)
+                .get_memory_chat_history_context(sid)
                 .await
         } else {
             (None, 0, Vec::new())
         };
 
-        let use_full_pending_history = stable_prefix_mode && history_limit >= self.history_limit;
         let (merged_summary, merged_summary_count, mut pending_history) = context_data;
         memory_summary_count = merged_summary_count;
         if !prefixed_input_items.is_empty() {
@@ -102,13 +101,6 @@ impl AiClient {
                 &Value::String(summary_text),
                 force_text,
             ));
-        }
-        if !use_full_pending_history
-            && history_limit > 0
-            && pending_history.len() > history_limit as usize
-        {
-            let keep_from = pending_history.len() - history_limit as usize;
-            pending_history = pending_history.split_off(keep_from);
         }
         let history = pending_history;
 
@@ -183,8 +175,7 @@ impl AiClient {
 
         splice_current_input_items(&mut items, current_input_items);
         info!(
-            "[AI_V3] stateless items built: stable_prefix_mode={}, memory_summary_used={}, summaries={}, history_messages={}, total_items={}",
-            stable_prefix_mode,
+            "[AI_V3] stateless items built: memory_summary_used={}, summaries={}, history_messages={}, total_items={}",
             memory_summary_used,
             memory_summary_count,
             history_count,

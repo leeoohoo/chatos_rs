@@ -6,6 +6,11 @@ import type {
 } from '../../../types';
 import type { ProjectGitApiClient } from './projectGitTypes';
 
+type GitDetailsResult = {
+  branches: GitBranchesResult;
+  status: GitStatusResult;
+};
+
 interface GitClientInfoCacheEntry {
   clientInfo: GitClientInfo;
 }
@@ -27,12 +32,15 @@ interface ProjectGitClientCacheState {
   summaryCache: Map<string, GitSummaryCacheEntry>;
   summaryInflight: Map<string, Promise<GitSummary>>;
   detailsCache: Map<string, GitDetailsCacheEntry>;
-  detailsInflight: Map<string, Promise<{ branches: GitBranchesResult; status: GitStatusResult }>>;
+  detailsInflight: Map<string, Promise<GitDetailsResult>>;
 }
 
 const projectGitCaches = new WeakMap<ProjectGitApiClient, ProjectGitClientCacheState>();
 
-const normalizeProjectRoot = (projectRoot: string): string => String(projectRoot || '').trim();
+const normalizeProjectRootKey = (projectRoot: string): string | null => {
+  const normalized = String(projectRoot || '').trim();
+  return normalized || null;
+};
 
 const getOrCreateProjectGitCacheState = (
   client: ProjectGitApiClient,
@@ -51,6 +59,72 @@ const getOrCreateProjectGitCacheState = (
   };
   projectGitCaches.set(client, next);
   return next;
+};
+
+const peekProjectRootCacheEntry = <T>(
+  cache: Map<string, T>,
+  projectRoot: string,
+): T | null => {
+  const normalizedProjectRoot = normalizeProjectRootKey(projectRoot);
+  if (!normalizedProjectRoot) {
+    return null;
+  }
+  return cache.get(normalizedProjectRoot) || null;
+};
+
+const setProjectRootCacheEntry = <T>(
+  cache: Map<string, T>,
+  projectRoot: string,
+  value: T,
+): void => {
+  const normalizedProjectRoot = normalizeProjectRootKey(projectRoot);
+  if (!normalizedProjectRoot) {
+    return;
+  }
+  cache.set(normalizedProjectRoot, value);
+};
+
+const updateProjectRootCacheEntry = <T>(
+  cache: Map<string, T>,
+  projectRoot: string,
+  updater: (cached: T) => T,
+): void => {
+  const normalizedProjectRoot = normalizeProjectRootKey(projectRoot);
+  if (!normalizedProjectRoot) {
+    return;
+  }
+  const cached = cache.get(normalizedProjectRoot);
+  if (!cached) {
+    return;
+  }
+  cache.set(normalizedProjectRoot, updater(cached));
+};
+
+const getProjectRootInflight = <T>(
+  inflightByRoot: Map<string, Promise<T>>,
+  projectRoot: string,
+): Promise<T> | null => {
+  const normalizedProjectRoot = normalizeProjectRootKey(projectRoot);
+  if (!normalizedProjectRoot) {
+    return null;
+  }
+  return inflightByRoot.get(normalizedProjectRoot) || null;
+};
+
+const setProjectRootInflight = <T>(
+  inflightByRoot: Map<string, Promise<T>>,
+  projectRoot: string,
+  inflight: Promise<T> | null,
+): void => {
+  const normalizedProjectRoot = normalizeProjectRootKey(projectRoot);
+  if (!normalizedProjectRoot) {
+    return;
+  }
+  if (inflight) {
+    inflightByRoot.set(normalizedProjectRoot, inflight);
+    return;
+  }
+  inflightByRoot.delete(normalizedProjectRoot);
 };
 
 export const peekGitClientInfoCacheEntry = (
@@ -83,11 +157,10 @@ export const peekGitSummaryCacheEntry = (
   client: ProjectGitApiClient,
   projectRoot: string,
 ): GitSummaryCacheEntry | null => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return null;
-  }
-  return getOrCreateProjectGitCacheState(client).summaryCache.get(normalizedProjectRoot) || null;
+  return peekProjectRootCacheEntry(
+    getOrCreateProjectGitCacheState(client).summaryCache,
+    projectRoot,
+  );
 };
 
 export const setGitSummaryCacheEntry = (
@@ -95,11 +168,7 @@ export const setGitSummaryCacheEntry = (
   projectRoot: string,
   summary: GitSummary,
 ): void => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return;
-  }
-  getOrCreateProjectGitCacheState(client).summaryCache.set(normalizedProjectRoot, {
+  setProjectRootCacheEntry(getOrCreateProjectGitCacheState(client).summaryCache, projectRoot, {
     summary,
     stale: false,
   });
@@ -109,30 +178,24 @@ export const markGitSummaryCacheStale = (
   client: ProjectGitApiClient,
   projectRoot: string,
 ): void => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return;
-  }
-  const cacheState = getOrCreateProjectGitCacheState(client);
-  const cached = cacheState.summaryCache.get(normalizedProjectRoot);
-  if (!cached) {
-    return;
-  }
-  cacheState.summaryCache.set(normalizedProjectRoot, {
+  updateProjectRootCacheEntry(
+    getOrCreateProjectGitCacheState(client).summaryCache,
+    projectRoot,
+    (cached) => ({
     ...cached,
     stale: true,
-  });
+    }),
+  );
 };
 
 export const getGitSummaryInflight = (
   client: ProjectGitApiClient,
   projectRoot: string,
 ): Promise<GitSummary> | null => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return null;
-  }
-  return getOrCreateProjectGitCacheState(client).summaryInflight.get(normalizedProjectRoot) || null;
+  return getProjectRootInflight(
+    getOrCreateProjectGitCacheState(client).summaryInflight,
+    projectRoot,
+  );
 };
 
 export const setGitSummaryInflight = (
@@ -140,39 +203,29 @@ export const setGitSummaryInflight = (
   projectRoot: string,
   inflight: Promise<GitSummary> | null,
 ): void => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return;
-  }
-  const cacheState = getOrCreateProjectGitCacheState(client);
-  if (inflight) {
-    cacheState.summaryInflight.set(normalizedProjectRoot, inflight);
-    return;
-  }
-  cacheState.summaryInflight.delete(normalizedProjectRoot);
+  setProjectRootInflight(
+    getOrCreateProjectGitCacheState(client).summaryInflight,
+    projectRoot,
+    inflight,
+  );
 };
 
 export const peekGitDetailsCacheEntry = (
   client: ProjectGitApiClient,
   projectRoot: string,
 ): GitDetailsCacheEntry | null => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return null;
-  }
-  return getOrCreateProjectGitCacheState(client).detailsCache.get(normalizedProjectRoot) || null;
+  return peekProjectRootCacheEntry(
+    getOrCreateProjectGitCacheState(client).detailsCache,
+    projectRoot,
+  );
 };
 
 export const setGitDetailsCacheEntry = (
   client: ProjectGitApiClient,
   projectRoot: string,
-  details: { branches: GitBranchesResult; status: GitStatusResult },
+  details: GitDetailsResult,
 ): void => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return;
-  }
-  getOrCreateProjectGitCacheState(client).detailsCache.set(normalizedProjectRoot, {
+  setProjectRootCacheEntry(getOrCreateProjectGitCacheState(client).detailsCache, projectRoot, {
     ...details,
     stale: false,
   });
@@ -182,45 +235,34 @@ export const markGitDetailsCacheStale = (
   client: ProjectGitApiClient,
   projectRoot: string,
 ): void => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return;
-  }
-  const cacheState = getOrCreateProjectGitCacheState(client);
-  const cached = cacheState.detailsCache.get(normalizedProjectRoot);
-  if (!cached) {
-    return;
-  }
-  cacheState.detailsCache.set(normalizedProjectRoot, {
+  updateProjectRootCacheEntry(
+    getOrCreateProjectGitCacheState(client).detailsCache,
+    projectRoot,
+    (cached) => ({
     ...cached,
     stale: true,
-  });
+    }),
+  );
 };
 
 export const getGitDetailsInflight = (
   client: ProjectGitApiClient,
   projectRoot: string,
-): Promise<{ branches: GitBranchesResult; status: GitStatusResult }> | null => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return null;
-  }
-  return getOrCreateProjectGitCacheState(client).detailsInflight.get(normalizedProjectRoot) || null;
+): Promise<GitDetailsResult> | null => {
+  return getProjectRootInflight(
+    getOrCreateProjectGitCacheState(client).detailsInflight,
+    projectRoot,
+  );
 };
 
 export const setGitDetailsInflight = (
   client: ProjectGitApiClient,
   projectRoot: string,
-  inflight: Promise<{ branches: GitBranchesResult; status: GitStatusResult }> | null,
+  inflight: Promise<GitDetailsResult> | null,
 ): void => {
-  const normalizedProjectRoot = normalizeProjectRoot(projectRoot);
-  if (!normalizedProjectRoot) {
-    return;
-  }
-  const cacheState = getOrCreateProjectGitCacheState(client);
-  if (inflight) {
-    cacheState.detailsInflight.set(normalizedProjectRoot, inflight);
-    return;
-  }
-  cacheState.detailsInflight.delete(normalizedProjectRoot);
+  setProjectRootInflight(
+    getOrCreateProjectGitCacheState(client).detailsInflight,
+    projectRoot,
+    inflight,
+  );
 };

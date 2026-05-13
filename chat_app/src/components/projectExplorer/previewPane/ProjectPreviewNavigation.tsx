@@ -24,6 +24,7 @@ interface ProjectPreviewNavigationProps {
   navCapabilitiesError: string | null;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbolsExpanded: boolean;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
@@ -35,6 +36,7 @@ interface ProjectPreviewNavigationProps {
   onOpenNextSearchHit: () => void;
   onRequestDefinition: () => void;
   onRequestReferences: () => void;
+  onGoBackFromNav: () => void;
   onSearchInProject: (query: string) => void;
   onClearTokenSelection: () => void;
   onOpenNavLocation: (location: CodeNavLocation) => void;
@@ -58,6 +60,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
   navCapabilitiesError,
   navError,
   activeNavLocationId,
+  canGoBackFromNav,
   documentSymbolsExpanded,
   documentSymbolsLoading,
   documentSymbolsError,
@@ -69,6 +72,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
   onOpenNextSearchHit,
   onRequestDefinition,
   onRequestReferences,
+  onGoBackFromNav,
   onSearchInProject,
   onClearTokenSelection,
   onOpenNavLocation,
@@ -131,6 +135,14 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
             {navLoading && navRequestKind === 'references' ? '查询中...' : '查找引用'}
           </button>
         )}
+        <button
+          type="button"
+          onClick={onGoBackFromNav}
+          disabled={!canGoBackFromNav || navLoading}
+          className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          返回上一处
+        </button>
         <button
           type="button"
           onClick={() => {

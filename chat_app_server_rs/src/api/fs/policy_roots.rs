@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::core::auth::AuthUser;
 use crate::models::project::ProjectService;
+use crate::services::git::discover_repo_root;
 use crate::utils::workspace::resolve_workspace_dir;
 
 use super::policy_paths::{canonicalize_existing_dir, normalize_path_for_compare};
@@ -14,6 +15,21 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
 
     if let Ok(current_dir) = env::current_dir() {
         push_root(&mut roots, current_dir, FsAllowedRootKind::CurrentDir);
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        match discover_repo_root(current_dir.as_path()).await {
+            Ok(Some(repo_root)) => {
+                if let Some(parent) = repo_root.parent() {
+                    push_root(&mut roots, parent.to_path_buf(), FsAllowedRootKind::RepoParent);
+                }
+            }
+            _ => {
+                if let Some(parent) = current_dir.parent() {
+                    push_root(&mut roots, parent.to_path_buf(), FsAllowedRootKind::RepoParent);
+                }
+            }
+        }
     }
 
     push_root(
@@ -47,7 +63,15 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
             if root.is_empty() {
                 continue;
             }
-            push_root(&mut roots, PathBuf::from(root), FsAllowedRootKind::Project);
+            let root_path = PathBuf::from(root);
+            if let Some(parent) = root_path.parent() {
+                push_root(
+                    &mut roots,
+                    parent.to_path_buf(),
+                    FsAllowedRootKind::ProjectParent,
+                );
+            }
+            push_root(&mut roots, root_path, FsAllowedRootKind::Project);
         }
     }
 

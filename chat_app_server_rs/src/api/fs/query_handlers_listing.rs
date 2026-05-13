@@ -70,6 +70,7 @@ async fn list_entries_impl(
         Json(json!({
             "path": path.path.to_string_lossy(),
             "parent": parent,
+            "writable": path.can_write,
             "entries": entries,
             "roots": Vec::<Value>::new()
         })),

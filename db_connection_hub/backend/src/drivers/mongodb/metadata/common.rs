@@ -1,58 +1,24 @@
 use crate::domain::metadata::{MetadataNode, MetadataNodeType, MetadataNodesResponse};
+use crate::drivers::metadata_common;
 
 pub fn paginate_nodes(
     items: Vec<MetadataNode>,
     page: u32,
     page_size: u32,
 ) -> MetadataNodesResponse {
-    let safe_page = page.max(1);
-    let safe_size = page_size.clamp(1, 500);
-    let total = items.len() as u64;
-    let start = ((safe_page - 1) * safe_size) as usize;
-
-    let paged = if start >= items.len() {
-        Vec::new()
-    } else {
-        let end = (start + safe_size as usize).min(items.len());
-        items[start..end].to_vec()
-    };
-
-    MetadataNodesResponse {
-        items: paged,
-        page: safe_page,
-        page_size: safe_size,
-        total,
-    }
+    metadata_common::paginate_nodes(items, page, page_size)
 }
 
 pub fn make_db_node(database: &str) -> MetadataNode {
-    MetadataNode {
-        id: format!("db:{database}"),
-        parent_id: "root".to_string(),
-        node_type: MetadataNodeType::Database,
-        display_name: database.to_string(),
-        path: database.to_string(),
-        has_children: true,
-    }
+    metadata_common::make_db_node(database)
 }
 
 pub fn parse_database_node(node_id: &str) -> Option<String> {
-    node_id
-        .strip_prefix("db:")
-        .map(std::string::ToString::to_string)
+    metadata_common::parse_database_node(node_id)
 }
 
 pub fn parse_collection_node(node_id: &str) -> Option<(String, String)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?;
-    let collection = parts.next()?;
-
-    if prefix != "collection" {
-        return None;
-    }
-
-    Some((database.to_string(), collection.to_string()))
+    metadata_common::parse_prefixed_2(node_id, "collection")
 }
 
 pub fn parse_detail_node(node_id: &str) -> Option<(MetadataNodeType, String, String)> {
@@ -71,18 +37,5 @@ pub fn parse_detail_node(node_id: &str) -> Option<(MetadataNodeType, String, Str
 }
 
 pub fn parse_index_node(node_id: &str) -> Option<(String, String, String)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?;
-    let collection = parts.next()?;
-    let index_name = parts.next()?;
-    if prefix != "index" {
-        return None;
-    }
-
-    Some((
-        database.to_string(),
-        collection.to_string(),
-        index_name.to_string(),
-    ))
+    metadata_common::parse_prefixed_3(node_id, "index")
 }

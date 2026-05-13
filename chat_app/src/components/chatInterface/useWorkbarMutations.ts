@@ -2,8 +2,15 @@ import { useCallback, useState } from 'react';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
 import { useDialogService } from '../ui/DialogProvider';
-import { normalizeWorkbarTask } from './helpers';
 import type { TaskManagerTaskResponse } from '../../lib/api/client/types/runtime';
+import {
+  applyLocalTaskMutationResult,
+  buildRealtimeMutationHandledPayload,
+  buildTaskUpdatePayload,
+  type TaskModalMode,
+  validateTaskModalDraft,
+  type WorkbarMutationResult,
+} from './workbarMutationHelpers';
 
 interface WorkbarMutationApiClient {
   completeTaskManagerTask: (
@@ -64,17 +71,6 @@ interface UseWorkbarMutationsArgs {
   setWorkbarError: (value: string | null) => void;
 }
 
-type TaskModalMode = 'complete' | 'edit';
-type WorkbarMutationResult = {
-  patchTask?: TaskManagerTaskResponse | null;
-  removeTaskId?: string | null;
-};
-
-const normalizeNeeds = (raw: string): string[] => raw
-  .split(/\r?\n|[;；]/)
-  .map((item) => item.trim())
-  .filter((item) => item.length > 0);
-
 export function useWorkbarMutations({
   apiClient,
   currentSessionId,
@@ -98,70 +94,6 @@ export function useWorkbarMutations({
   const [taskModalTask, setTaskModalTask] = useState<TaskWorkbarItem | null>(null);
   const [taskModalError, setTaskModalError] = useState<string | null>(null);
 
-  const applyLocalTaskMutationResult = useCallback(async (
-    sessionId: string,
-    result: WorkbarMutationResult | void,
-  ): Promise<void> => {
-    const patchedTask = result?.patchTask
-      ? normalizeWorkbarTask(result.patchTask)
-      : null;
-    const removedTaskId = typeof result?.removeTaskId === 'string'
-      ? result.removeTaskId.trim()
-      : '';
-
-    if (patchedTask) {
-      const currentTurnPatched = patchCurrentTurnWorkbarTask(sessionId, patchedTask);
-      if (!currentTurnPatched && !preferRealtimeSync) {
-        await loadCurrentTurnWorkbarTasks(sessionId, currentConversationTurnId, true);
-      }
-      if (taskHistoryOpen) {
-        const historyPatched = patchHistoryWorkbarTask(sessionId, patchedTask);
-        if (!historyPatched && !preferRealtimeSync) {
-          await loadHistoryWorkbarTasks(sessionId, true);
-        }
-      } else {
-        markHistoryWorkbarTasksStale(sessionId);
-      }
-      return;
-    }
-
-    if (removedTaskId) {
-      const currentTurnPatched = removeCurrentTurnWorkbarTask(sessionId, removedTaskId);
-      if (!currentTurnPatched && !preferRealtimeSync) {
-        await loadCurrentTurnWorkbarTasks(sessionId, currentConversationTurnId, true);
-      }
-      if (taskHistoryOpen) {
-        const historyPatched = removeHistoryWorkbarTask(sessionId, removedTaskId);
-        if (!historyPatched && !preferRealtimeSync) {
-          await loadHistoryWorkbarTasks(sessionId, true);
-        }
-      } else {
-        markHistoryWorkbarTasksStale(sessionId);
-      }
-      return;
-    }
-
-    if (!preferRealtimeSync) {
-      await loadCurrentTurnWorkbarTasks(sessionId, currentConversationTurnId, true);
-      if (taskHistoryOpen) {
-        await loadHistoryWorkbarTasks(sessionId, true);
-      } else {
-        markHistoryWorkbarTasksStale(sessionId);
-      }
-    }
-  }, [
-    currentConversationTurnId,
-    loadCurrentTurnWorkbarTasks,
-    loadHistoryWorkbarTasks,
-    markHistoryWorkbarTasksStale,
-    patchCurrentTurnWorkbarTask,
-    patchHistoryWorkbarTask,
-    preferRealtimeSync,
-    removeCurrentTurnWorkbarTask,
-    removeHistoryWorkbarTask,
-    taskHistoryOpen,
-  ]);
-
   const withWorkbarTaskMutation = useCallback(async (
     taskId: string,
     action: () => Promise<WorkbarMutationResult | void>,
@@ -172,24 +104,28 @@ export function useWorkbarMutations({
     try {
       const result = await action();
       if (currentSessionId) {
-        await applyLocalTaskMutationResult(currentSessionId, result);
+        await applyLocalTaskMutationResult({
+          currentConversationTurnId,
+          loadCurrentTurnWorkbarTasks,
+          loadHistoryWorkbarTasks,
+          markHistoryWorkbarTasksStale,
+          patchCurrentTurnWorkbarTask,
+          patchHistoryWorkbarTask,
+          preferRealtimeSync,
+          removeCurrentTurnWorkbarTask,
+          removeHistoryWorkbarTask,
+          result,
+          sessionId: currentSessionId,
+          taskHistoryOpen,
+        });
       }
       if (preferRealtimeSync && currentSessionId) {
-        const taskIdForGuard = typeof result?.removeTaskId === 'string'
-          ? result.removeTaskId.trim()
-          : String(result?.patchTask?.id || '').trim();
-        const turnIdForGuard = String(
-          result?.patchTask?.conversation_turn_id || currentConversationTurnId || '',
-        ).trim();
-        const actionForGuard = result?.removeTaskId
-          ? 'task_deleted'
-          : (result?.patchTask ? 'task_updated' : '');
-        if (actionForGuard && taskIdForGuard) {
-          markTaskRealtimeMutationHandled?.({
-            action: actionForGuard,
-            taskId: taskIdForGuard,
-            turnId: turnIdForGuard,
-          });
+        const handledPayload = buildRealtimeMutationHandledPayload({
+          currentConversationTurnId,
+          result,
+        });
+        if (handledPayload) {
+          markTaskRealtimeMutationHandled?.(handledPayload);
         }
       }
       setTaskModalOpen(false);
@@ -268,41 +204,25 @@ export function useWorkbarMutations({
       return;
     }
 
-    const nextTitle = draft.title.trim();
-    const nextDetails = draft.details.trim();
-    const nextDueAt = draft.dueAt.trim();
-    const nextOutcomeSummary = draft.outcomeSummary.trim();
-    const nextResumeHint = draft.resumeHint.trim();
-    const nextBlockerReason = draft.blockerReason.trim();
-    const nextBlockerNeeds = normalizeNeeds(draft.blockerNeedsText);
-    const nextBlockerKind = (draft.blockerKind || 'unknown').trim() || 'unknown';
-
-    if (taskModalMode === 'complete' && !nextOutcomeSummary) {
-      const message = '完成任务时必须填写成果摘要';
-      setTaskModalError(message);
-      setWorkbarError(message);
+    const validationMessage = validateTaskModalDraft({
+      draft,
+      mode: taskModalMode,
+    });
+    if (validationMessage) {
+      setTaskModalError(validationMessage);
+      setWorkbarError(validationMessage);
       return;
-    }
-    if (draft.status === 'blocked') {
-      if (!nextOutcomeSummary) {
-        const message = '阻塞任务必须填写已完成尝试或成果摘要';
-        setTaskModalError(message);
-        setWorkbarError(message);
-        return;
-      }
-      if (!nextBlockerReason) {
-        const message = '阻塞任务必须填写阻塞原因';
-        setTaskModalError(message);
-        setWorkbarError(message);
-        return;
-      }
     }
 
     if (taskModalMode === 'complete') {
+      const payload = buildTaskUpdatePayload({
+        draft,
+        task: taskModalTask,
+      });
       await withWorkbarTaskMutation(taskModalTask.id, async () => {
         const completedTask = await apiClient.completeTaskManagerTask(currentSessionId, taskModalTask.id, {
-          outcome_summary: nextOutcomeSummary,
-          resume_hint: nextResumeHint,
+          outcome_summary: payload.outcome_summary,
+          resume_hint: payload.resume_hint,
         });
         return {
           patchTask: completedTask,
@@ -311,56 +231,10 @@ export function useWorkbarMutations({
       return;
     }
 
-    const payload: {
-      title?: string;
-      details?: string;
-      priority?: TaskWorkbarItem['priority'];
-      status?: TaskWorkbarItem['status'];
-      due_at?: string | null;
-      outcome_summary?: string;
-      resume_hint?: string;
-      blocker_reason?: string;
-      blocker_needs?: string[];
-      blocker_kind?: string;
-    } = {};
-
-    if (nextTitle && nextTitle !== taskModalTask.title) {
-      payload.title = nextTitle;
-    }
-    if (nextDetails !== taskModalTask.details) {
-      payload.details = nextDetails;
-    }
-    if (draft.priority !== taskModalTask.priority) {
-      payload.priority = draft.priority;
-    }
-    if (draft.status !== taskModalTask.status) {
-      payload.status = draft.status;
-    }
-    if (nextDueAt !== (taskModalTask.dueAt || '').trim()) {
-      payload.due_at = nextDueAt || null;
-    }
-    if (nextOutcomeSummary !== taskModalTask.outcomeSummary.trim()) {
-      payload.outcome_summary = nextOutcomeSummary;
-    }
-    if (nextResumeHint !== taskModalTask.resumeHint.trim()) {
-      payload.resume_hint = nextResumeHint;
-    }
-
-    if (draft.status === 'blocked') {
-      if (nextBlockerReason !== taskModalTask.blockerReason.trim()) {
-        payload.blocker_reason = nextBlockerReason;
-      }
-      if (JSON.stringify(nextBlockerNeeds) !== JSON.stringify(taskModalTask.blockerNeeds)) {
-        payload.blocker_needs = nextBlockerNeeds;
-      }
-      if (nextBlockerKind !== (taskModalTask.blockerKind || '')) {
-        payload.blocker_kind = nextBlockerKind;
-      }
-    } else if (taskModalTask.blockerReason || taskModalTask.blockerNeeds.length > 0 || taskModalTask.blockerKind) {
-      payload.blocker_reason = '';
-      payload.blocker_needs = [];
-      payload.blocker_kind = '';
-    }
+    const payload = buildTaskUpdatePayload({
+      draft,
+      task: taskModalTask,
+    });
 
     if (Object.keys(payload).length === 0) {
       closeTaskModal();

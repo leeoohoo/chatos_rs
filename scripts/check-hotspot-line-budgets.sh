@@ -9,14 +9,21 @@ BUDGETS=(
   "chat_app/src/components/ChatInterface.tsx:180"
   "chat_app/src/components/ProjectExplorer.tsx:180"
   "chat_app/src/components/projectExplorer/TreePane.tsx:260"
+  "chat_app/src/components/chatInterface/useSessionWorkbarPanels.ts:420"
   "chat_app/src/components/projectExplorer/useProjectExplorerWorkspaceView.ts:220"
   "chat_app/src/lib/api/client/types.ts:40"
   "chat_app_server_rs/src/builtin/browser_tools/actions.rs:220"
   "chat_app_server_rs/src/builtin/web_tools/provider.rs:260"
   "chat_app_server_rs/src/services/git/mod.rs:40"
+  "chat_app_server_rs/src/services/chatos_skills.rs:1200"
+  "chat_app_server_rs/src/services/chatos_memory_engine/mod.rs:900"
+  "chat_app_server_rs/src/services/code_nav/languages/java/mod.rs:1100"
+  "chat_app_server_rs/src/services/code_nav/languages/go/mod.rs:900"
+  "chat_app_server_rs/src/services/code_nav/languages/python/mod.rs:900"
   "chat_app_server_rs/src/services/v2/mcp_tool_execute.rs:160"
   "chat_app_server_rs/src/services/v3/mcp_tool_execute.rs:240"
   "chat_app_server_rs/src/core/chat_runtime.rs:260"
+  "openai-codex-gateway/server.py:80"
 )
 
 failures=0

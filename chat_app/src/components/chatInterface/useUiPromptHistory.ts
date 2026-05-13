@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { normalizeUiPromptHistoryItem } from './helpers';
+import { normalizeUiPromptHistoryItem } from './panelTransforms';
+import {
+  beginSessionLoadRequest,
+  isSessionLoadCurrent,
+  isSessionLoadRequestCurrent,
+  runGuardedSessionLoad,
+} from './sessionLoadGuard';
 import type { UiPromptHistoryItem } from './types';
 import {
   getUiPromptHistoryInflight,
@@ -109,83 +115,63 @@ export const useUiPromptHistory = ({
       : null;
     if (existingInflight) {
       const shouldShowLoading = force || !cached;
-      if (shouldShowLoading) {
-        setUiPromptHistoryLoading(true);
-      }
-      setUiPromptHistoryError(null);
-      try {
-        const normalized = await existingInflight;
-        if (
-          currentSessionIdRef.current !== sessionId
-        ) {
-          return;
-        }
-        uiPromptHistoryStaleSessionsRef.current.delete(sessionId);
-        setUiPromptHistoryItems(normalized);
-        setUiPromptHistoryLoadedSessionId(sessionId);
-      } catch (error) {
-        if (currentSessionIdRef.current !== sessionId) {
-          return;
-        }
-        setUiPromptHistoryError(error instanceof Error ? error.message : '交互确认记录加载失败');
-      } finally {
-        if (currentSessionIdRef.current === sessionId) {
-          setUiPromptHistoryLoading(false);
-        }
-      }
+      await runGuardedSessionLoad({
+        applyResult: (normalized) => {
+          uiPromptHistoryStaleSessionsRef.current.delete(sessionId);
+          setUiPromptHistoryItems(normalized);
+          setUiPromptHistoryLoadedSessionId(sessionId);
+        },
+        errorMessage: '交互确认记录加载失败',
+        load: () => existingInflight,
+        setError: setUiPromptHistoryError,
+        setLoading: setUiPromptHistoryLoading,
+        shouldApply: () => isSessionLoadCurrent({
+          currentSessionRef: currentSessionIdRef,
+          sessionId,
+        }),
+        showLoading: shouldShowLoading,
+      });
       return;
     }
 
-    const requestSeq = uiPromptHistoryLoadSeqRef.current + 1;
-    uiPromptHistoryLoadSeqRef.current = requestSeq;
+    const requestSeq = beginSessionLoadRequest(uiPromptHistoryLoadSeqRef);
     const shouldShowLoading = force || !cached;
-    if (shouldShowLoading) {
-      setUiPromptHistoryLoading(true);
-    }
-    setUiPromptHistoryError(null);
-    try {
-      const inflight = apiClient.getUiPromptHistory(sessionId, { limit: 200 })
-        .then((records) => (
-          Array.isArray(records)
-            ? records
-                .map((item) => normalizeUiPromptHistoryItem(item))
-                .filter((item): item is UiPromptHistoryItem => item !== null)
-            : []
-        ))
-        .then((normalized) => {
-          setUiPromptHistoryCacheEntry(apiClient, sessionId, normalized);
-          return normalized;
-        })
-        .finally(() => {
-          setUiPromptHistoryInflight(apiClient, sessionId, null);
-        });
-      setUiPromptHistoryInflight(apiClient, sessionId, inflight);
-      const normalized = await inflight;
-      if (
-        uiPromptHistoryLoadSeqRef.current !== requestSeq
-        || currentSessionIdRef.current !== sessionId
-      ) {
-        return;
-      }
-      uiPromptHistoryStaleSessionsRef.current.delete(sessionId);
-      setUiPromptHistoryItems(normalized);
-      setUiPromptHistoryLoadedSessionId(sessionId);
-    } catch (error) {
-      if (
-        uiPromptHistoryLoadSeqRef.current !== requestSeq
-        || currentSessionIdRef.current !== sessionId
-      ) {
-        return;
-      }
-      setUiPromptHistoryError(error instanceof Error ? error.message : '交互确认记录加载失败');
-    } finally {
-      if (
-        uiPromptHistoryLoadSeqRef.current === requestSeq
-        && currentSessionIdRef.current === sessionId
-      ) {
-        setUiPromptHistoryLoading(false);
-      }
-    }
+    await runGuardedSessionLoad({
+      applyResult: (normalized) => {
+        uiPromptHistoryStaleSessionsRef.current.delete(sessionId);
+        setUiPromptHistoryItems(normalized);
+        setUiPromptHistoryLoadedSessionId(sessionId);
+      },
+      errorMessage: '交互确认记录加载失败',
+      load: () => {
+        const inflight = apiClient.getUiPromptHistory(sessionId, { limit: 200 })
+          .then((records) => (
+            Array.isArray(records)
+              ? records
+                  .map((item) => normalizeUiPromptHistoryItem(item))
+                  .filter((item): item is UiPromptHistoryItem => item !== null)
+              : []
+          ))
+          .then((normalized) => {
+            setUiPromptHistoryCacheEntry(apiClient, sessionId, normalized);
+            return normalized;
+          })
+          .finally(() => {
+            setUiPromptHistoryInflight(apiClient, sessionId, null);
+          });
+        setUiPromptHistoryInflight(apiClient, sessionId, inflight);
+        return inflight;
+      },
+      setError: setUiPromptHistoryError,
+      setLoading: setUiPromptHistoryLoading,
+      shouldApply: () => isSessionLoadRequestCurrent({
+        currentSessionRef: currentSessionIdRef,
+        requestSeq,
+        requestSeqRef: uiPromptHistoryLoadSeqRef,
+        sessionId,
+      }),
+      showLoading: shouldShowLoading,
+    });
   }, [apiClient, resetUiPromptHistoryState, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
 
   return {

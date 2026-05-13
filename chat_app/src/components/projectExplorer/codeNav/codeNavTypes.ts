@@ -31,7 +31,14 @@ export interface UseProjectExplorerCodeNavOptions {
   client: ProjectExplorerCodeNavApiClient;
   projectRootPath?: string | null;
   selectedFilePath?: string | null;
-  openLocation: (location: CodeNavLocation) => Promise<void>;
+  targetLine: number | null;
+  openLocation: (
+    location: CodeNavLocation,
+    options?: {
+      preserveHistory?: boolean;
+      targetLine?: number | null;
+    },
+  ) => Promise<void>;
 }
 
 export interface TokenSelection {
@@ -41,6 +48,11 @@ export interface TokenSelection {
 }
 
 export type NavRequestKind = 'definition' | 'references';
+
+export interface CodeNavHistoryEntry {
+  path: string;
+  targetLine: number | null;
+}
 
 export interface UseProjectExplorerCodeNavResult {
   navCapabilities: CodeNavCapabilities | null;
@@ -54,6 +66,7 @@ export interface UseProjectExplorerCodeNavResult {
   navLoading: boolean;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
@@ -62,4 +75,5 @@ export interface UseProjectExplorerCodeNavResult {
   requestDefinition: () => Promise<void>;
   requestReferences: () => Promise<void>;
   handleOpenNavLocation: (location: CodeNavLocation) => Promise<void>;
+  goBackFromNav: () => Promise<void>;
 }

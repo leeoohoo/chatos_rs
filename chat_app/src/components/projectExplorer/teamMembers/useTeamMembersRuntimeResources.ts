@@ -13,7 +13,7 @@ import { useConversationSummariesRealtime } from '../../../lib/realtime/useConve
 import {
   syncTaskReviewPanelsSnapshot,
   syncUiPromptPanelsSnapshot,
-} from '../../chatInterface/helpers';
+} from '../../chatInterface/panelStateSync';
 import {
   loadPendingTaskReviewPanels,
   peekPendingTaskReviewCacheEntry,
@@ -22,6 +22,7 @@ import {
   loadPendingUiPromptPanels,
   peekPendingUiPromptCacheEntry,
 } from '../../chatInterface/pendingUiPromptCache';
+import { syncPendingPanelsFromCacheOrLoad } from '../../chatInterface/pendingPanelSync';
 
 interface UseTeamMembersRuntimeResourcesOptions {
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
@@ -119,62 +120,44 @@ export const useTeamMembersRuntimeResources = ({
     }
 
     let cancelled = false;
+    const cleanupFns: Array<(() => void) | undefined> = [];
     sessionIds.forEach((sessionId) => {
-      const cachedTaskReviewPanels = peekPendingTaskReviewCacheEntry(apiClient, sessionId);
-      if (cachedTaskReviewPanels && !cachedTaskReviewPanels.stale) {
-        syncTaskReviewPanelsSnapshot({
-          sessionId,
-          panels: cachedTaskReviewPanels.panels,
-          existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
-          upsertTaskReviewPanel,
-          removeTaskReviewPanel,
-        });
-      } else {
-        void loadPendingTaskReviewPanels(apiClient, sessionId, { limit: 50 })
-          .then((panels) => {
-            if (cancelled) {
-              return;
-            }
-            syncTaskReviewPanelsSnapshot({
-              sessionId,
-              panels,
-              existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
-              upsertTaskReviewPanel,
-              removeTaskReviewPanel,
-            });
-          })
-          .catch(() => {});
-      }
+      cleanupFns.push(syncPendingPanelsFromCacheOrLoad({
+        cachedEntry: peekPendingTaskReviewCacheEntry(apiClient, sessionId),
+        loadPanels: () => loadPendingTaskReviewPanels(apiClient, sessionId, { limit: 50 }),
+        applyPanels: (panels) => {
+          syncTaskReviewPanelsSnapshot({
+            sessionId,
+            panels,
+            existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
+            upsertTaskReviewPanel,
+            removeTaskReviewPanel,
+          });
+        },
+        shouldApply: () => !cancelled,
+      }));
 
-      const cachedUiPromptPanels = peekPendingUiPromptCacheEntry(apiClient, sessionId);
-      if (cachedUiPromptPanels && !cachedUiPromptPanels.stale) {
-        syncUiPromptPanelsSnapshot({
-          sessionId,
-          panels: cachedUiPromptPanels.panels,
-          existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
-          upsertUiPromptPanel,
-          removeUiPromptPanel,
-        });
-      } else {
-        void loadPendingUiPromptPanels(apiClient, sessionId, { limit: 50 })
-          .then((panels) => {
-            if (cancelled) {
-              return;
-            }
-            syncUiPromptPanelsSnapshot({
-              sessionId,
-              panels,
-              existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
-              upsertUiPromptPanel,
-              removeUiPromptPanel,
-            });
-          })
-          .catch(() => {});
-      }
+      cleanupFns.push(syncPendingPanelsFromCacheOrLoad({
+        cachedEntry: peekPendingUiPromptCacheEntry(apiClient, sessionId),
+        loadPanels: () => loadPendingUiPromptPanels(apiClient, sessionId, { limit: 50 }),
+        applyPanels: (panels) => {
+          syncUiPromptPanelsSnapshot({
+            sessionId,
+            panels,
+            existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
+            upsertUiPromptPanel,
+            removeUiPromptPanel,
+          });
+        },
+        shouldApply: () => !cancelled,
+      }));
     });
 
     return () => {
       cancelled = true;
+      cleanupFns.forEach((cleanup) => {
+        cleanup?.();
+      });
     };
   }, [
     apiClient,

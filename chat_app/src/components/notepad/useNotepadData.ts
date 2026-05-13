@@ -4,7 +4,11 @@ import type ApiClient from '../../lib/api/client';
 import { normalizeNoteDetail, normalizeNoteMeta } from './controllerHelpers';
 import {
   buildFolderTree,
+  collectFolderAncestors,
   normalizeFolderPath,
+  normalizeFolders,
+  removeFolderAndDescendants,
+  renameFolderAndDescendants,
   type NoteDetail,
   type NoteMeta,
 } from './utils';
@@ -45,13 +49,6 @@ const EMPTY_FOLDERS = [''];
 
 const notepadClientCaches = new WeakMap<ApiClient, NotepadClientCacheState>();
 
-const normalizeFolders = (folders: string[]): string[] => {
-  const normalized = folders
-    .map((item) => String(item || '').trim())
-    .filter((item) => item.length > 0);
-  return ['', ...normalized];
-};
-
 const buildNotesCacheKey = (searchQuery: string): string => searchQuery.trim();
 
 const sortNotesByUpdatedAtDesc = (notes: NoteMeta[]): NoteMeta[] => {
@@ -75,48 +72,6 @@ const matchesNotesQuery = (note: NoteMeta, searchQuery: string): boolean => {
   }
   return note.title.toLowerCase().includes(normalizedQuery)
     || note.folder.toLowerCase().includes(normalizedQuery);
-};
-
-const collectFolderAncestors = (folderPath: string): string[] => {
-  const normalized = normalizeFolderPath(folderPath);
-  if (!normalized) {
-    return [];
-  }
-  const segments = normalized.split('/').filter((item) => item.trim().length > 0);
-  const folders: string[] = [];
-  let current = '';
-  for (const segment of segments) {
-    current = current ? `${current}/${segment}` : segment;
-    folders.push(current);
-  }
-  return folders;
-};
-
-const removeFolderAndDescendants = (folders: string[], folderPath: string): string[] => {
-  const normalizedTarget = normalizeFolderPath(folderPath);
-  if (!normalizedTarget) {
-    return folders;
-  }
-  const prefix = `${normalizedTarget}/`;
-  return folders.filter((folder) => folder !== normalizedTarget && !folder.startsWith(prefix));
-};
-
-const renameFolderAndDescendants = (folderPath: string, fromPath: string, toPath: string): string => {
-  const normalizedFolder = normalizeFolderPath(folderPath);
-  const normalizedFrom = normalizeFolderPath(fromPath);
-  const normalizedTo = normalizeFolderPath(toPath);
-  if (!normalizedFrom || !normalizedTo) {
-    return normalizedFolder;
-  }
-  if (normalizedFolder === normalizedFrom) {
-    return normalizedTo;
-  }
-  const prefix = `${normalizedFrom}/`;
-  if (normalizedFolder.startsWith(prefix)) {
-    const suffix = normalizedFolder.slice(prefix.length);
-    return suffix ? `${normalizedTo}/${suffix}` : normalizedTo;
-  }
-  return normalizedFolder;
 };
 
 const getOrCreateClientCacheState = (apiClient: ApiClient): NotepadClientCacheState => {

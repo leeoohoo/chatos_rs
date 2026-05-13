@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { deriveParentPath } from '../../lib/domain/filesystem';
 import type { FsEntry } from '../../types';
 import { normalizeFsEntry } from './fileUtils';
 
@@ -37,6 +38,10 @@ interface UseWorkspaceDirectoryPickerResult {
   handleSelectWorkspaceRoot: (path: string | null) => void;
 }
 
+const isVisibleWorkspaceDirectory = (entry: FsEntry): boolean => (
+  entry.isDir && !entry.name.startsWith('.')
+);
+
 export const useWorkspaceDirectoryPicker = ({
   client,
   showWorkspaceRootPicker,
@@ -60,19 +65,19 @@ export const useWorkspaceDirectoryPicker = ({
     try {
       const data = await client.listFsDirectories(nextPath || undefined) as WorkspaceDirectoryResponse;
       const path = typeof data?.path === 'string' ? data.path : null;
-      const parent = typeof data?.parent === 'string' ? data.parent : null;
+      const parentFromApi = typeof data?.parent === 'string' ? data.parent : null;
       const entries = Array.isArray(data?.entries)
         ? data.entries
           .map((entry) => normalizeFsEntry(entry as Record<string, unknown>))
-          .filter((entry: FsEntry) => entry.isDir)
+          .filter(isVisibleWorkspaceDirectory)
         : [];
       const roots = Array.isArray(data?.roots)
         ? data.roots
           .map((entry) => normalizeFsEntry(entry as Record<string, unknown>))
-          .filter((entry: FsEntry) => entry.isDir)
+          .filter(isVisibleWorkspaceDirectory)
         : [];
       setWorkspacePath(path);
-      setWorkspaceParent(parent);
+      setWorkspaceParent(parentFromApi || (path ? deriveParentPath(path) : null));
       setWorkspaceEntries(entries);
       setWorkspaceRoots(roots);
     } catch (error) {

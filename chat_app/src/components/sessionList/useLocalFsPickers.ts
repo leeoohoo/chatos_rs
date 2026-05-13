@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { deriveParentPath } from '../../lib/domain/filesystem';
 import type {
   FsEntriesResponse,
   FsMutationResponse,
 } from '../../lib/api/client/types';
 import type { FsEntry } from '../../types';
 import {
-  deriveParentPath,
   getKeyFilePickerTitle,
   normalizeFsEntry,
   type DirPickerTarget,
@@ -46,6 +46,7 @@ interface UseLocalFsPickersResult {
   dirPickerTarget: DirPickerTarget;
   dirPickerPath: string | null;
   dirPickerParent: string | null;
+  dirPickerWritable: boolean;
   dirPickerLoading: boolean;
   dirPickerItems: FsEntry[];
   dirPickerError: string | null;
@@ -101,6 +102,7 @@ export const useLocalFsPickers = ({
   const [dirPickerTarget, setDirPickerTarget] = useState<DirPickerTarget>('project');
   const [dirPickerPath, setDirPickerPath] = useState<string | null>(null);
   const [dirPickerParent, setDirPickerParent] = useState<string | null>(null);
+  const [dirPickerWritable, setDirPickerWritable] = useState(false);
   const [dirPickerEntries, setDirPickerEntries] = useState<FsEntry[]>([]);
   const [dirPickerRoots, setDirPickerRoots] = useState<FsEntry[]>([]);
   const [dirPickerLoading, setDirPickerLoading] = useState(false);
@@ -115,8 +117,11 @@ export const useLocalFsPickers = ({
     setDirPickerError(null);
     try {
       const data = await apiClient.listFsDirectories(path || undefined);
-      setDirPickerPath(data?.path ?? null);
-      setDirPickerParent(data?.parent ?? null);
+      const nextPath = data?.path ?? null;
+      const parentFromApi = data?.parent ?? null;
+      setDirPickerPath(nextPath);
+      setDirPickerParent(parentFromApi || (nextPath ? deriveParentPath(nextPath) : null));
+      setDirPickerWritable(Boolean(data?.writable));
       setDirPickerEntries(
         Array.isArray(data?.entries)
           ? data.entries.map((entry) => normalizeFsEntry(entry, true))
@@ -156,15 +161,23 @@ export const useLocalFsPickers = ({
       setDirPickerError('请先进入一个父目录后再新建目录');
       return;
     }
+    if (!dirPickerWritable) {
+      setDirPickerError('当前目录不允许写入');
+      return;
+    }
     setDirPickerError(null);
     setDirPickerNewFolderName('');
     setDirPickerCreateModalOpen(true);
-  }, [dirPickerPath]);
+  }, [dirPickerPath, dirPickerWritable]);
 
   const createDirInPicker = useCallback(async () => {
     const basePath = dirPickerPath;
     if (!basePath) {
       setDirPickerError('请先进入一个父目录后再新建目录');
+      return;
+    }
+    if (!dirPickerWritable) {
+      setDirPickerError('当前目录不允许写入');
       return;
     }
     const name = dirPickerNewFolderName.trim();
@@ -203,6 +216,7 @@ export const useLocalFsPickers = ({
     dirPickerNewFolderName,
     dirPickerPath,
     dirPickerTarget,
+    dirPickerWritable,
     loadDirEntries,
     onProjectRootChange,
     onTerminalRootChange,
@@ -316,6 +330,7 @@ export const useLocalFsPickers = ({
     dirPickerTarget,
     dirPickerPath,
     dirPickerParent,
+    dirPickerWritable,
     dirPickerLoading,
     dirPickerItems,
     dirPickerError,

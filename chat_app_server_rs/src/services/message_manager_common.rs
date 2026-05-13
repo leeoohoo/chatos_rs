@@ -270,13 +270,8 @@ impl MessageManagerCore {
     pub(crate) async fn get_memory_chat_history_context(
         &self,
         session_id: &str,
-        memory_summary_limit: usize,
     ) -> ChatHistoryContext {
-        match try_get_memory_chat_history_context_from_memory_engine(
-            session_id,
-            memory_summary_limit,
-        )
-        .await
+        match try_get_memory_chat_history_context_from_memory_engine(session_id).await
         {
             Ok(context) => context,
             Err(err) => {
@@ -284,11 +279,10 @@ impl MessageManagerCore {
                     "get_memory_chat_history_context memory_engine failed: session_id={} error={}",
                     session_id, err
                 );
-                ChatHistoryContext {
-                    merged_summary: None,
-                    summary_count: 0,
-                    messages: self.get_session_messages(session_id, None).await,
-                }
+                panic!(
+                    "memory engine context unavailable for session {}: {}",
+                    session_id, err
+                );
             }
         }
     }
@@ -368,21 +362,18 @@ impl MessageManagerCore {
 
 async fn try_get_memory_chat_history_context_from_memory_engine(
     session_id: &str,
-    memory_summary_limit: usize,
 ) -> Result<ChatHistoryContext, String> {
     let session = chatos_sessions::get_session_by_id(session_id)
         .await?
         .ok_or_else(|| format!("session not found: {session_id}"))?;
-    try_get_memory_chat_history_context_via_sdk(&session, memory_summary_limit).await
+    try_get_memory_chat_history_context_via_sdk(&session).await
 }
 
 async fn try_get_memory_chat_history_context_via_sdk(
     session: &Session,
-    memory_summary_limit: usize,
 ) -> Result<ChatHistoryContext, String> {
     let payload = chatos_memory_engine::compose_chatos_context(
         session,
-        memory_summary_limit,
         true,
     )
     .await?;

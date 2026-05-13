@@ -1,4 +1,4 @@
-import { Suspense, lazy, type ComponentProps } from 'react';
+import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
 import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
@@ -29,6 +29,22 @@ interface ChatInterfaceOverlaysProps {
 
 const OverlayFallback = () => null;
 
+interface LazyOverlayProps {
+  children: ReactNode;
+  open: boolean;
+}
+
+const LazyOverlay = ({ children, open }: LazyOverlayProps) => {
+  if (!open) {
+    return null;
+  }
+  return (
+    <Suspense fallback={<OverlayFallback />}>
+      {children}
+    </Suspense>
+  );
+};
+
 export default function ChatInterfaceOverlays({
   uiPromptHistoryProps,
   runtimeContextProps,
@@ -50,49 +66,37 @@ export default function ChatInterfaceOverlays({
       <UiPromptHistoryDrawer {...uiPromptHistoryProps} />
       <TurnRuntimeContextDrawer {...runtimeContextProps} />
 
-      {showMcpManager && (
-        <Suspense fallback={<OverlayFallback />}>
-          <McpManager onClose={() => setShowMcpManager(false)} />
-        </Suspense>
-      )}
+      <LazyOverlay open={showMcpManager}>
+        <McpManager onClose={() => setShowMcpManager(false)} />
+      </LazyOverlay>
 
-      {showNotepadPanel && (
-        <Suspense fallback={<OverlayFallback />}>
-          <NotepadPanel
-            isOpen={showNotepadPanel}
-            onClose={() => setShowNotepadPanel(false)}
-          />
-        </Suspense>
-      )}
+      <LazyOverlay open={showNotepadPanel}>
+        <NotepadPanel
+          isOpen={showNotepadPanel}
+          onClose={() => setShowNotepadPanel(false)}
+        />
+      </LazyOverlay>
 
-      {showAiModelManager && (
-        <Suspense fallback={<OverlayFallback />}>
-          <AiModelManager onClose={() => setShowAiModelManager(false)} />
-        </Suspense>
-      )}
+      <LazyOverlay open={showAiModelManager}>
+        <AiModelManager onClose={() => setShowAiModelManager(false)} />
+      </LazyOverlay>
 
-      {showAgentManager && (
-        <Suspense fallback={<OverlayFallback />}>
-          <AgentManager onClose={() => setShowAgentManager(false)} />
-        </Suspense>
-      )}
+      <LazyOverlay open={showAgentManager}>
+        <AgentManager onClose={() => setShowAgentManager(false)} />
+      </LazyOverlay>
 
-      {showUserSettings && (
-        <Suspense fallback={<OverlayFallback />}>
-          <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
-        </Suspense>
-      )}
+      <LazyOverlay open={showUserSettings}>
+        <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
+      </LazyOverlay>
 
-      {showApplicationsPanel && (
-        <Suspense fallback={<OverlayFallback />}>
-          <ApplicationsPanel
-            isOpen={showApplicationsPanel}
-            onClose={() => setShowApplicationsPanel(false)}
-            title="应用列表"
-            layout="modal"
-          />
-        </Suspense>
-      )}
+      <LazyOverlay open={showApplicationsPanel}>
+        <ApplicationsPanel
+          isOpen={showApplicationsPanel}
+          onClose={() => setShowApplicationsPanel(false)}
+          title="应用列表"
+          layout="modal"
+        />
+      </LazyOverlay>
     </>
   );
 }

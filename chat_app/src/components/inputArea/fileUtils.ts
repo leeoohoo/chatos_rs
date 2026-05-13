@@ -1,5 +1,7 @@
 import type { FsEntry } from '../../types';
-import { normalizeFsEntry as normalizeDomainFsEntry } from '../../lib/domain/filesystem';
+import {
+  normalizeFsEntry as normalizeDomainFsEntry,
+} from '../../lib/domain/filesystem';
 
 export const MAX_ATTACHMENTS = 20; // 个
 export const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB

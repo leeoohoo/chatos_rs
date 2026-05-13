@@ -5,6 +5,7 @@ use crate::core::chat_runtime::{
 };
 use crate::models::message::Message;
 use crate::models::session::Session;
+use crate::services::text_normalization::normalize_optional_text_ref;
 
 pub const CHATOS_COMPAT_SOURCE_ID: &str = "chatos";
 
@@ -28,10 +29,7 @@ pub struct ChatosReviewRepairScope {
 }
 
 pub(crate) fn normalize_optional_text(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(ToOwned::to_owned)
+    normalize_optional_text_ref(value)
 }
 
 pub(crate) fn resolve_session_project_scope(

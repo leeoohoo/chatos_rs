@@ -111,7 +111,13 @@ export const useProjectExplorerSelection = ({
     setSelectedPath,
   ]);
 
-  const openCodeNavLocation = useCallback(async (location: CodeNavLocation) => {
+  const openCodeNavLocation = useCallback(async (
+    location: CodeNavLocation,
+    options?: {
+      preserveHistory?: boolean;
+      targetLine?: number | null;
+    },
+  ) => {
     await openFile({
       name: location.relativePath.split('/').filter(Boolean).pop() || location.path.split(/[\\/]/).pop() || location.path,
       path: location.path,
@@ -119,7 +125,7 @@ export const useProjectExplorerSelection = ({
       size: null,
       modifiedAt: null,
     });
-    setPreviewTargetLine(location.line);
+    setPreviewTargetLine(options?.targetLine ?? location.line);
   }, [openFile, setPreviewTargetLine]);
 
   const selectProjectRoot = useCallback(async () => {

@@ -79,6 +79,7 @@ export interface ProjectExplorerWorkspaceCodeNavState {
   navLoading: boolean;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
@@ -151,6 +152,7 @@ export interface ProjectExplorerWorkspaceInteractions {
   requestDefinition: () => Promise<void>;
   requestReferences: () => Promise<void>;
   handleOpenNavLocation: (location: CodeNavLocation) => Promise<void>;
+  goBackFromNav: () => Promise<void>;
   handleOpenDocumentSymbol: (line: number) => void;
   handleMoveEntryByDrop: (sourcePath: string, targetDirPath: string) => Promise<void>;
   handleDownloadSelected: (entry: FsEntry) => Promise<void>;

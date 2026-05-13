@@ -1,13 +1,16 @@
 import type { UiPromptHistoryItem } from './types';
+import {
+  getSessionScopedInflight,
+  markSessionScopedCacheStale,
+  peekSessionScopedCacheEntry,
+  setSessionScopedCacheEntry,
+  setSessionScopedInflight,
+  type SessionScopedCacheState,
+} from './sessionScopedCache';
 
 interface UiPromptHistoryCacheEntry {
   items: UiPromptHistoryItem[];
   stale: boolean;
-}
-
-interface UiPromptHistoryCacheState {
-  cache: Map<string, UiPromptHistoryCacheEntry>;
-  inflight: Map<string, Promise<UiPromptHistoryItem[]>>;
 }
 
 interface UiPromptHistoryApiClientLike {
@@ -17,18 +20,19 @@ interface UiPromptHistoryApiClientLike {
   ) => Promise<unknown[]>;
 }
 
-const uiPromptHistoryCaches = new WeakMap<UiPromptHistoryApiClientLike, UiPromptHistoryCacheState>();
-
-const normalizeSessionId = (sessionId: string): string => String(sessionId || '').trim();
+const uiPromptHistoryCaches = new WeakMap<
+  UiPromptHistoryApiClientLike,
+  SessionScopedCacheState<UiPromptHistoryItem[]>
+>();
 
 const getOrCreateUiPromptHistoryCacheState = (
   apiClient: UiPromptHistoryApiClientLike,
-): UiPromptHistoryCacheState => {
+): SessionScopedCacheState<UiPromptHistoryItem[]> => {
   const existing = uiPromptHistoryCaches.get(apiClient);
   if (existing) {
     return existing;
   }
-  const next: UiPromptHistoryCacheState = {
+  const next: SessionScopedCacheState<UiPromptHistoryItem[]> = {
     cache: new Map(),
     inflight: new Map(),
   };
@@ -40,11 +44,16 @@ export const peekUiPromptHistoryCacheEntry = (
   apiClient: UiPromptHistoryApiClientLike,
   sessionId: string,
 ): UiPromptHistoryCacheEntry | null => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return null;
-  }
-  return getOrCreateUiPromptHistoryCacheState(apiClient).cache.get(normalizedSessionId) || null;
+  const cached = peekSessionScopedCacheEntry(
+    getOrCreateUiPromptHistoryCacheState(apiClient).cache,
+    sessionId,
+  );
+  return cached
+    ? {
+      items: cached.value,
+      stale: cached.stale,
+    }
+    : null;
 };
 
 export const setUiPromptHistoryCacheEntry = (
@@ -52,44 +61,31 @@ export const setUiPromptHistoryCacheEntry = (
   sessionId: string,
   items: UiPromptHistoryItem[],
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  getOrCreateUiPromptHistoryCacheState(apiClient).cache.set(normalizedSessionId, {
+  setSessionScopedCacheEntry(
+    getOrCreateUiPromptHistoryCacheState(apiClient).cache,
+    sessionId,
     items,
-    stale: false,
-  });
+  );
 };
 
 export const markUiPromptHistoryCacheStale = (
   apiClient: UiPromptHistoryApiClientLike,
   sessionId: string,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  const cacheState = getOrCreateUiPromptHistoryCacheState(apiClient);
-  const cached = cacheState.cache.get(normalizedSessionId);
-  if (!cached) {
-    return;
-  }
-  cacheState.cache.set(normalizedSessionId, {
-    ...cached,
-    stale: true,
-  });
+  markSessionScopedCacheStale(
+    getOrCreateUiPromptHistoryCacheState(apiClient).cache,
+    sessionId,
+  );
 };
 
 export const getUiPromptHistoryInflight = (
   apiClient: UiPromptHistoryApiClientLike,
   sessionId: string,
 ): Promise<UiPromptHistoryItem[]> | null => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return null;
-  }
-  return getOrCreateUiPromptHistoryCacheState(apiClient).inflight.get(normalizedSessionId) || null;
+  return getSessionScopedInflight(
+    getOrCreateUiPromptHistoryCacheState(apiClient).inflight,
+    sessionId,
+  );
 };
 
 export const setUiPromptHistoryInflight = (
@@ -97,14 +93,9 @@ export const setUiPromptHistoryInflight = (
   sessionId: string,
   inflight: Promise<UiPromptHistoryItem[]> | null,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  const cacheState = getOrCreateUiPromptHistoryCacheState(apiClient);
-  if (inflight) {
-    cacheState.inflight.set(normalizedSessionId, inflight);
-    return;
-  }
-  cacheState.inflight.delete(normalizedSessionId);
+  setSessionScopedInflight(
+    getOrCreateUiPromptHistoryCacheState(apiClient).inflight,
+    sessionId,
+    inflight,
+  );
 };

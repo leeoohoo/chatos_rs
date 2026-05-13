@@ -32,6 +32,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   navLoading,
   navError,
   activeNavLocationId,
+  canGoBackFromNav,
   documentSymbols,
   documentSymbolsLoading,
   documentSymbolsError,
@@ -55,6 +56,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   onClearTokenSelection,
   onRequestDefinition,
   onRequestReferences,
+  onGoBackFromNav,
   onSearchInProject,
   onOpenPreviousSearchHit,
   onOpenNextSearchHit,
@@ -192,6 +194,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
             navCapabilitiesError={navCapabilitiesError}
             navError={navError}
             activeNavLocationId={activeNavLocationId}
+            canGoBackFromNav={canGoBackFromNav}
             documentSymbolsExpanded={documentSymbolsExpanded}
             documentSymbolsLoading={documentSymbolsLoading}
             documentSymbolsError={documentSymbolsError}
@@ -205,6 +208,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
             onOpenNextSearchHit={onOpenNextSearchHit}
             onRequestDefinition={onRequestDefinition}
             onRequestReferences={onRequestReferences}
+            onGoBackFromNav={onGoBackFromNav}
             onSearchInProject={onSearchInProject}
             onClearTokenSelection={onClearTokenSelection}
             onOpenNavLocation={onOpenNavLocation}

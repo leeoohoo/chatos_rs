@@ -4,6 +4,10 @@ import {
   resolveSessionProjectScopeId,
 } from '../../features/contactSession/sessionResolver';
 import type { Project, Session } from '../../types';
+import {
+  beginSessionLoadRequest,
+  isLoadRequestCurrent,
+} from './sessionLoadGuard';
 
 interface ContactProjectScopeApiClient {
   getContactProjects: (
@@ -92,10 +96,10 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
       return;
     }
 
-    const loadSeq = ++contactProjectsLoadSeqRef.current;
+    const loadSeq = beginSessionLoadRequest(contactProjectsLoadSeqRef);
     void apiClient.getContactProjects(contactId, { limit: 1000, offset: 0 })
       .then((rows) => {
-        if (loadSeq !== contactProjectsLoadSeqRef.current) {
+        if (!isLoadRequestCurrent(contactProjectsLoadSeqRef, loadSeq)) {
           return;
         }
         const ids = Array.from(new Set(
@@ -109,7 +113,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
         setContactScopedProjectIds(ids);
       })
       .catch((error) => {
-        if (loadSeq !== contactProjectsLoadSeqRef.current) {
+        if (!isLoadRequestCurrent(contactProjectsLoadSeqRef, loadSeq)) {
           return;
         }
         console.error('Failed to load contact projects:', error);

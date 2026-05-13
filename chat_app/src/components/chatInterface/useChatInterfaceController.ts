@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 
 import type ApiClient from '../../lib/api/client';
 import { countPendingReviewRepairMessages } from '../../lib/domain/reviewRepair';
@@ -10,6 +10,7 @@ import type {
 } from '../../types';
 import { useChatSessionEffects } from './useChatSessionEffects';
 import { useRuntimeContextState } from './useRuntimeContextState';
+import { useChatInterfaceOverlayState } from './useChatInterfaceOverlayState';
 import { useReviewRepairRealtime } from '../../lib/realtime/useReviewRepairRealtime';
 import { useConversationSummariesRealtime } from '../../lib/realtime/useConversationSummariesRealtime';
 import type { RealtimeConversationSummariesUpdatedPayloadWrapper } from '../../lib/realtime/types';
@@ -108,13 +109,7 @@ export const useChatInterfaceController = ({
   resetHistoryWorkbarState,
   handleOpenWorkbarHistory,
 }: UseChatInterfaceControllerParams) => {
-  const [showMcpManager, setShowMcpManager] = useState(false);
-  const [showAiModelManager, setShowAiModelManager] = useState(false);
-  const [showAgentManager, setShowAgentManager] = useState(false);
-  const [showSystemContextEditor, setShowSystemContextEditor] = useState(false);
-  const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
-  const [showNotepadPanel, setShowNotepadPanel] = useState(false);
-  const [showUserSettings, setShowUserSettings] = useState(false);
+  const overlayState = useChatInterfaceOverlayState();
 
   const { sessionSummaryPaneVisible } = useChatSessionEffects({
     activePanel,
@@ -323,20 +318,7 @@ export const useChatInterfaceController = ({
   }, [loadUiPromptHistory]);
 
   return {
-    showMcpManager,
-    setShowMcpManager,
-    showAiModelManager,
-    setShowAiModelManager,
-    showAgentManager,
-    setShowAgentManager,
-    showSystemContextEditor,
-    setShowSystemContextEditor,
-    showApplicationsPanel,
-    setShowApplicationsPanel,
-    showNotepadPanel,
-    setShowNotepadPanel,
-    showUserSettings,
-    setShowUserSettings,
+    ...overlayState,
     summaryPaneSessionId,
     setSummaryPaneSessionId,
     sessionSummaryPaneVisible,

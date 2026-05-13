@@ -41,6 +41,7 @@ export interface ProjectPreviewPaneProps {
   navLoading: boolean;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
@@ -64,6 +65,7 @@ export interface ProjectPreviewPaneProps {
   onClearTokenSelection: () => void;
   onRequestDefinition: () => void;
   onRequestReferences: () => void;
+  onGoBackFromNav: () => void;
   onSearchInProject: (query: string) => void;
   onOpenPreviousSearchHit: () => void;
   onOpenNextSearchHit: () => void;

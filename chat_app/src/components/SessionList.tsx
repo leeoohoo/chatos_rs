@@ -270,6 +270,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         dirPickerTarget={controller.localFsPickers.dirPickerTarget}
         dirPickerPath={controller.localFsPickers.dirPickerPath}
         dirPickerParent={controller.localFsPickers.dirPickerParent}
+        dirPickerWritable={controller.localFsPickers.dirPickerWritable}
         dirPickerLoading={controller.localFsPickers.dirPickerLoading}
         dirPickerItems={controller.localFsPickers.dirPickerItems}
         dirPickerError={controller.localFsPickers.dirPickerError}

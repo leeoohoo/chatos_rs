@@ -3,6 +3,7 @@ export interface FsEntryResponse {
   path?: string;
   is_dir?: boolean;
   isDir?: boolean;
+  writable?: boolean;
   size?: number | null;
   modified_at?: string | null;
   modifiedAt?: string | null;
@@ -11,6 +12,7 @@ export interface FsEntryResponse {
 export interface FsEntriesResponse {
   path?: string | null;
   parent?: string | null;
+  writable?: boolean;
   entries?: FsEntryResponse[];
   roots?: FsEntryResponse[];
   truncated?: boolean;

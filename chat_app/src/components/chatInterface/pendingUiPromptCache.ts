@@ -1,14 +1,18 @@
 import type { UiPromptPanelState } from '../../lib/store/types';
-import { toUiPromptPanelFromRecord } from './helpers';
+import { toUiPromptPanelFromRecord } from './panelTransforms';
+import {
+  getSessionScopedInflight,
+  markSessionScopedCacheStale,
+  normalizeSessionScopedId,
+  peekSessionScopedCacheEntry,
+  setSessionScopedCacheEntry,
+  setSessionScopedInflight,
+  type SessionScopedCacheState,
+} from './sessionScopedCache';
 
 interface PendingUiPromptCacheEntry {
   panels: UiPromptPanelState[];
   stale: boolean;
-}
-
-interface PendingUiPromptCacheState {
-  cache: Map<string, PendingUiPromptCacheEntry>;
-  inflight: Map<string, Promise<UiPromptPanelState[]>>;
 }
 
 interface PendingUiPromptApiClientLike {
@@ -18,18 +22,19 @@ interface PendingUiPromptApiClientLike {
   ) => Promise<unknown[]>;
 }
 
-const pendingUiPromptCaches = new WeakMap<PendingUiPromptApiClientLike, PendingUiPromptCacheState>();
-
-const normalizeSessionId = (sessionId: string): string => String(sessionId || '').trim();
+const pendingUiPromptCaches = new WeakMap<
+  PendingUiPromptApiClientLike,
+  SessionScopedCacheState<UiPromptPanelState[]>
+>();
 
 const getOrCreatePendingUiPromptCacheState = (
   apiClient: PendingUiPromptApiClientLike,
-): PendingUiPromptCacheState => {
+): SessionScopedCacheState<UiPromptPanelState[]> => {
   const existing = pendingUiPromptCaches.get(apiClient);
   if (existing) {
     return existing;
   }
-  const next: PendingUiPromptCacheState = {
+  const next: SessionScopedCacheState<UiPromptPanelState[]> = {
     cache: new Map(),
     inflight: new Map(),
   };
@@ -41,11 +46,16 @@ export const peekPendingUiPromptCacheEntry = (
   apiClient: PendingUiPromptApiClientLike,
   sessionId: string,
 ): PendingUiPromptCacheEntry | null => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return null;
-  }
-  return getOrCreatePendingUiPromptCacheState(apiClient).cache.get(normalizedSessionId) || null;
+  const cached = peekSessionScopedCacheEntry(
+    getOrCreatePendingUiPromptCacheState(apiClient).cache,
+    sessionId,
+  );
+  return cached
+    ? {
+      panels: cached.value,
+      stale: cached.stale,
+    }
+    : null;
 };
 
 export const setPendingUiPromptCacheEntry = (
@@ -53,37 +63,31 @@ export const setPendingUiPromptCacheEntry = (
   sessionId: string,
   panels: UiPromptPanelState[],
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  getOrCreatePendingUiPromptCacheState(apiClient).cache.set(normalizedSessionId, {
-    panels: [...panels],
-    stale: false,
-  });
+  setSessionScopedCacheEntry(
+    getOrCreatePendingUiPromptCacheState(apiClient).cache,
+    sessionId,
+    [...panels],
+  );
 };
 
 export const upsertPendingUiPromptCachePanel = (
   apiClient: PendingUiPromptApiClientLike,
   panel: UiPromptPanelState,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(panel.sessionId);
+  const normalizedSessionId = normalizeSessionScopedId(panel.sessionId);
   if (!normalizedSessionId || !panel.promptId) {
     return;
   }
   const cacheState = getOrCreatePendingUiPromptCacheState(apiClient);
-  const cached = cacheState.cache.get(normalizedSessionId);
-  const nextPanels = cached ? [...cached.panels] : [];
+  const cached = peekSessionScopedCacheEntry(cacheState.cache, normalizedSessionId);
+  const nextPanels = cached ? [...cached.value] : [];
   const index = nextPanels.findIndex((item) => item.promptId === panel.promptId);
   if (index >= 0) {
     nextPanels[index] = panel;
   } else {
     nextPanels.push(panel);
   }
-  cacheState.cache.set(normalizedSessionId, {
-    panels: nextPanels,
-    stale: false,
-  });
+  setSessionScopedCacheEntry(cacheState.cache, normalizedSessionId, nextPanels);
 };
 
 export const removePendingUiPromptCachePanel = (
@@ -97,24 +101,21 @@ export const removePendingUiPromptCachePanel = (
   }
   const cacheState = getOrCreatePendingUiPromptCacheState(apiClient);
   const candidateSessionIds = sessionId
-    ? [normalizeSessionId(sessionId)]
+    ? [normalizeSessionScopedId(sessionId)]
     : Array.from(cacheState.cache.keys());
   for (const normalizedSessionId of candidateSessionIds) {
     if (!normalizedSessionId) {
       continue;
     }
-    const cached = cacheState.cache.get(normalizedSessionId);
+    const cached = peekSessionScopedCacheEntry(cacheState.cache, normalizedSessionId);
     if (!cached) {
       continue;
     }
-    const nextPanels = cached.panels.filter((panel) => panel.promptId !== normalizedPromptId);
-    if (nextPanels.length === cached.panels.length) {
+    const nextPanels = cached.value.filter((panel) => panel.promptId !== normalizedPromptId);
+    if (nextPanels.length === cached.value.length) {
       continue;
     }
-    cacheState.cache.set(normalizedSessionId, {
-      panels: nextPanels,
-      stale: false,
-    });
+    setSessionScopedCacheEntry(cacheState.cache, normalizedSessionId, nextPanels);
     break;
   }
 };
@@ -123,30 +124,20 @@ export const markPendingUiPromptCacheStale = (
   apiClient: PendingUiPromptApiClientLike,
   sessionId: string,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  const cacheState = getOrCreatePendingUiPromptCacheState(apiClient);
-  const cached = cacheState.cache.get(normalizedSessionId);
-  if (!cached) {
-    return;
-  }
-  cacheState.cache.set(normalizedSessionId, {
-    ...cached,
-    stale: true,
-  });
+  markSessionScopedCacheStale(
+    getOrCreatePendingUiPromptCacheState(apiClient).cache,
+    sessionId,
+  );
 };
 
 export const getPendingUiPromptInflight = (
   apiClient: PendingUiPromptApiClientLike,
   sessionId: string,
 ): Promise<UiPromptPanelState[]> | null => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return null;
-  }
-  return getOrCreatePendingUiPromptCacheState(apiClient).inflight.get(normalizedSessionId) || null;
+  return getSessionScopedInflight(
+    getOrCreatePendingUiPromptCacheState(apiClient).inflight,
+    sessionId,
+  );
 };
 
 export const setPendingUiPromptInflight = (
@@ -154,16 +145,11 @@ export const setPendingUiPromptInflight = (
   sessionId: string,
   inflight: Promise<UiPromptPanelState[]> | null,
 ): void => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) {
-    return;
-  }
-  const cacheState = getOrCreatePendingUiPromptCacheState(apiClient);
-  if (inflight) {
-    cacheState.inflight.set(normalizedSessionId, inflight);
-    return;
-  }
-  cacheState.inflight.delete(normalizedSessionId);
+  setSessionScopedInflight(
+    getOrCreatePendingUiPromptCacheState(apiClient).inflight,
+    sessionId,
+    inflight,
+  );
 };
 
 export const loadPendingUiPromptPanels = (
@@ -171,18 +157,18 @@ export const loadPendingUiPromptPanels = (
   sessionId: string,
   options?: { limit?: number; force?: boolean },
 ): Promise<UiPromptPanelState[]> => {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+  const normalizedSessionId = normalizeSessionScopedId(sessionId);
   if (!normalizedSessionId) {
     return Promise.resolve([]);
   }
 
   const cacheState = getOrCreatePendingUiPromptCacheState(apiClient);
-  const cached = cacheState.cache.get(normalizedSessionId);
+  const cached = peekSessionScopedCacheEntry(cacheState.cache, normalizedSessionId);
   if (!options?.force && cached && !cached.stale) {
-    return Promise.resolve([...cached.panels]);
+    return Promise.resolve([...cached.value]);
   }
 
-  const existingInflight = cacheState.inflight.get(normalizedSessionId);
+  const existingInflight = getSessionScopedInflight(cacheState.inflight, normalizedSessionId);
   if (existingInflight) {
     return existingInflight;
   }

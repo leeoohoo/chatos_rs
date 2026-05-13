@@ -43,8 +43,6 @@ struct CompatListSummariesQuery {
 struct CompatComposeContextRequest {
     session_id: String,
     mode: Option<String>,
-    summary_limit: Option<usize>,
-    pending_limit: Option<usize>,
     include_raw_messages: Option<bool>,
 }
 
@@ -591,7 +589,6 @@ async fn compose_context(
     };
     let payload = match chatos_memory_engine::compose_chatos_context(
         &session,
-        req.summary_limit.or(req.pending_limit).unwrap_or(20).max(1),
         req.include_raw_messages.unwrap_or(true),
     )
     .await
