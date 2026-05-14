@@ -1,4 +1,6 @@
-use memory_engine_sdk::{EngineSubjectMemory, QuerySubjectMemoriesRequest, UpsertSubjectMemoryScopeRequest};
+use memory_engine_sdk::{
+    EngineSubjectMemory, QuerySubjectMemoriesRequest, UpsertSubjectMemoryScopeRequest,
+};
 use serde_json::json;
 
 use crate::core::chat_runtime::{contact_agent_id_from_metadata, contact_id_from_metadata};
@@ -6,10 +8,10 @@ use crate::models::memory_mapping_types::{MemoryAgentRecallDto, MemoryProjectMem
 use crate::models::session::Session;
 
 use super::client::build_client;
-use super::mapping::{resolve_session_project_scope, CHATOS_COMPAT_SOURCE_ID};
 use super::mappers::{
     engine_subject_memory_to_agent_recall, engine_subject_memory_to_project_memory,
 };
+use super::mapping::{resolve_session_project_scope, CHATOS_COMPAT_SOURCE_ID};
 use super::normalize_non_empty;
 
 pub async fn list_contact_project_memories(
@@ -25,7 +27,9 @@ pub async fn list_contact_project_memories(
     let items = query_project_memories(
         user_id,
         subject_id.as_str(),
-        Some(format!("project_memory:contact:{contact_id}:{normalized_project_id}")),
+        Some(format!(
+            "project_memory:contact:{contact_id}:{normalized_project_id}"
+        )),
         limit,
         offset,
     )
@@ -45,14 +49,9 @@ pub async fn list_contact_project_memories_by_contact(
 ) -> Result<Vec<MemoryProjectMemoryDto>, String> {
     let mut items = Vec::new();
     for project_id in project_ids {
-        let mut rows = list_contact_project_memories(
-            user_id,
-            contact_id,
-            project_id.as_str(),
-            limit,
-            0,
-        )
-        .await?;
+        let mut rows =
+            list_contact_project_memories(user_id, contact_id, project_id.as_str(), limit, 0)
+                .await?;
         items.append(&mut rows);
     }
     items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));

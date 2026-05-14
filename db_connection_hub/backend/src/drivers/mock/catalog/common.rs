@@ -1,3 +1,4 @@
+use crate::drivers::metadata_common;
 use crate::domain::{
     datasource::DatabaseInfo,
     metadata::{MetadataNode, MetadataNodeType},
@@ -8,7 +9,7 @@ pub fn database_nodes(databases: &[DatabaseInfo]) -> Vec<MetadataNode> {
         .iter()
         .map(|db| {
             node(
-                &format!("db:{}", db.name),
+                &metadata_common::make_node_id("db", &[&db.name]),
                 "root",
                 MetadataNodeType::Database,
                 &db.name,

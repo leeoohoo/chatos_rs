@@ -20,8 +20,8 @@ pub use self::choice::{
 pub use self::fields::{normalize_kv_fields, KvField};
 pub use self::redaction::{redact_prompt_payload, redact_response_for_store};
 pub use self::submission::parse_response_submission;
-pub use self::values::normalize_kv_values;
 pub(super) use self::support::trimmed_non_empty;
+pub use self::values::normalize_kv_values;
 
 #[cfg(test)]
 mod tests {

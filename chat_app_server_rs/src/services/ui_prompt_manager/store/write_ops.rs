@@ -224,10 +224,22 @@ async fn publish_ui_prompt_created(record: &UiPromptRecord) {
         Some(record.status.as_str()),
         record.tool_call_id.as_deref(),
         Some(record.kind.as_str()),
-        record.prompt.get("title").and_then(serde_json::Value::as_str),
-        record.prompt.get("message").and_then(serde_json::Value::as_str),
-        record.prompt.get("allow_cancel").and_then(serde_json::Value::as_bool),
-        record.prompt.get("timeout_ms").and_then(serde_json::Value::as_u64),
+        record
+            .prompt
+            .get("title")
+            .and_then(serde_json::Value::as_str),
+        record
+            .prompt
+            .get("message")
+            .and_then(serde_json::Value::as_str),
+        record
+            .prompt
+            .get("allow_cancel")
+            .and_then(serde_json::Value::as_bool),
+        record
+            .prompt
+            .get("timeout_ms")
+            .and_then(serde_json::Value::as_u64),
         record.prompt.get("payload").cloned(),
     );
 }

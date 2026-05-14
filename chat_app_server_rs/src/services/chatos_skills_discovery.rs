@@ -8,8 +8,8 @@ use super::chatos_skills_helpers::{
     resolve_skill_state_root, sort_plugins_desc, sort_skills_desc, unique_strings,
 };
 use super::chatos_skills_manifest::{
-    build_skills_from_plugin, discover_plugin_roots, discover_skill_entries, extract_plugin_content,
-    read_plugin_description, read_plugin_name, read_plugin_version,
+    build_skills_from_plugin, discover_plugin_roots, discover_skill_entries,
+    extract_plugin_content, read_plugin_description, read_plugin_name, read_plugin_version,
 };
 
 pub fn discover_cached_plugins(user_ids: &[String]) -> Result<Vec<MemorySkillPlugin>, String> {
@@ -55,7 +55,11 @@ pub fn discover_cached_skills(
             if let Some(q) = normalized_query.as_deref() {
                 let haystacks = [
                     skill.name.to_ascii_lowercase(),
-                    skill.description.clone().unwrap_or_default().to_ascii_lowercase(),
+                    skill
+                        .description
+                        .clone()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
                     skill.source_path.to_ascii_lowercase(),
                 ];
                 if !haystacks.iter().any(|item| item.contains(q)) {
@@ -107,11 +111,13 @@ pub async fn hydrate_plugin_from_cache(
         return Ok(None);
     };
 
-    let extracted = tokio::task::spawn_blocking(move || extract_plugin_content(plugin_root.as_path()))
-        .await
-        .map_err(|err| format!("blocking task join failed: {}", err))?;
+    let extracted =
+        tokio::task::spawn_blocking(move || extract_plugin_content(plugin_root.as_path()))
+            .await
+            .map_err(|err| format!("blocking task join failed: {}", err))?;
 
-    let Some(refreshed) = merge_extracted_plugin_content(plugin, extracted.content, extracted.commands)
+    let Some(refreshed) =
+        merge_extracted_plugin_content(plugin, extracted.content, extracted.commands)
     else {
         return Ok(None);
     };

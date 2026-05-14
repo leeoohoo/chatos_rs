@@ -9,9 +9,7 @@ use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
-use crate::services::ai_common::{
-    build_assistant_message_metadata, build_tool_result_metadata,
-};
+use crate::services::ai_common::{build_assistant_message_metadata, build_tool_result_metadata};
 use crate::services::{chatos_memory_engine, chatos_sessions};
 
 #[derive(Debug, Default, Clone)]
@@ -235,14 +233,13 @@ impl MessageManagerCore {
             return (Vec::new(), messages);
         }
 
-        let mut messages =
-            match chatos_sessions::list_messages(session_id, None, 0, true).await {
-                Ok(items) => items,
-                Err(err) => {
-                    error!("get_session_memory_history list_messages failed: {}", err);
-                    Vec::new()
-                }
-            };
+        let mut messages = match chatos_sessions::list_messages(session_id, None, 0, true).await {
+            Ok(items) => items,
+            Err(err) => {
+                error!("get_session_memory_history list_messages failed: {}", err);
+                Vec::new()
+            }
+        };
 
         if let Some(last_message_id) = summaries
             .last()
@@ -271,8 +268,7 @@ impl MessageManagerCore {
         &self,
         session_id: &str,
     ) -> ChatHistoryContext {
-        match try_get_memory_chat_history_context_from_memory_engine(session_id).await
-        {
+        match try_get_memory_chat_history_context_from_memory_engine(session_id).await {
             Ok(context) => context,
             Err(err) => {
                 error!(
@@ -372,11 +368,7 @@ async fn try_get_memory_chat_history_context_from_memory_engine(
 async fn try_get_memory_chat_history_context_via_sdk(
     session: &Session,
 ) -> Result<ChatHistoryContext, String> {
-    let payload = chatos_memory_engine::compose_chatos_context(
-        session,
-        true,
-    )
-    .await?;
+    let payload = chatos_memory_engine::compose_chatos_context(session, true).await?;
     Ok(ChatHistoryContext {
         merged_summary: payload.merged_summary,
         summary_count: payload.summary_count,

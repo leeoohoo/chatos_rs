@@ -47,10 +47,7 @@ pub async fn run_chatos_review_repair(
     }
 
     let resp = client
-        .run_thread_repair_summary(
-            mapping.thread_id.as_str(),
-            mapping.tenant_id.as_str(),
-        )
+        .run_thread_repair_summary(mapping.thread_id.as_str(), mapping.tenant_id.as_str())
         .await?;
 
     Ok(ReviewRepairSummaryRunResult {

@@ -76,8 +76,11 @@ pub async fn list_ai_model_configs(user_id: Option<&str>) -> Result<Vec<AiModelC
         |pool| {
             let user_id = user_id.map(|item| item.to_string());
             Box::pin(async move {
-                let query =
-                    build_select_all_with_optional_user_id("ai_model_configs", user_id.is_some(), true);
+                let query = build_select_all_with_optional_user_id(
+                    "ai_model_configs",
+                    user_id.is_some(),
+                    true,
+                );
                 let mut sql = sqlx::query_as::<_, AiModelConfigRow>(&query);
                 if let Some(user_id) = user_id {
                     sql = sql.bind(user_id);

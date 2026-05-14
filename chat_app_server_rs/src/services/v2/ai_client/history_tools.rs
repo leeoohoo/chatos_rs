@@ -45,8 +45,10 @@ pub(super) fn drop_duplicate_tail(history: Vec<Value>, current: &[Value]) -> Vec
             break;
         }
 
-        let history_content = normalize_content(history_item.get("content").unwrap_or(&Value::Null));
-        let current_content = normalize_content(current_item.get("content").unwrap_or(&Value::Null));
+        let history_content =
+            normalize_content(history_item.get("content").unwrap_or(&Value::Null));
+        let current_content =
+            normalize_content(current_item.get("content").unwrap_or(&Value::Null));
         if history_content != current_content {
             break;
         }

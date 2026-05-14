@@ -26,6 +26,7 @@ pub struct Config {
     pub summary_bisect_min_messages: i64,
     pub summary_retry_on_context_overflow: bool,
     pub auth_jwt_secret: String,
+    pub auth_compat_secret: Option<String>,
     pub auth_access_token_ttl_seconds: i64,
     pub memory_engine_base_url: String,
     pub memory_engine_request_timeout_ms: i64,
@@ -56,6 +57,9 @@ impl Config {
     }
 
     fn from_env() -> Result<Config, String> {
+        let node_env = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string());
+        let normalized_env = normalize_env(node_env.as_str());
+
         let read_int = |key: &str, def: i64| -> i64 {
             match std::env::var(key) {
                 Ok(v) => v.parse::<i64>().unwrap_or(def),
@@ -77,7 +81,6 @@ impl Config {
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(3997);
-        let node_env = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string());
         let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
 
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
@@ -123,13 +126,10 @@ impl Config {
             .ok()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
-            .or_else(|| {
-                std::env::var("AUTH_COMPAT_SECRET")
-                    .ok()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-            })
-            .unwrap_or_else(|| "dev-only-change-me-please".to_string());
+            .or_else(|| read_optional_env("AUTH_COMPAT_SECRET"));
+        let auth_jwt_secret =
+            require_secret_for_env(auth_jwt_secret, "AUTH_JWT_SECRET", normalized_env)?;
+        let auth_compat_secret = read_optional_env("AUTH_COMPAT_SECRET");
         let auth_access_token_ttl_seconds =
             read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
@@ -142,6 +142,12 @@ impl Config {
             read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS", 10_000).max(1_000);
         let memory_engine_active_summary_poll_timeout_ms =
             read_int("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS", 120_000).max(10_000);
+        validate_config(
+            normalized_env,
+            port,
+            host.as_str(),
+            memory_engine_base_url.as_str(),
+        )?;
         Ok(Config {
             openai_api_key,
             openai_base_url,
@@ -166,6 +172,7 @@ impl Config {
             summary_bisect_min_messages,
             summary_retry_on_context_overflow,
             auth_jwt_secret,
+            auth_compat_secret,
             auth_access_token_ttl_seconds,
             memory_engine_base_url,
             memory_engine_request_timeout_ms,
@@ -247,6 +254,14 @@ impl Config {
             "    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}",
             self.auth_access_token_ttl_seconds
         );
+        println!(
+            "    • AUTH_COMPAT_SECRET: {}",
+            if self.auth_compat_secret.is_some() {
+                "已设置"
+            } else {
+                "未设置"
+            }
+        );
         println!("  - Memory Engine 配置:");
         println!(
             "    • MEMORY_ENGINE_BASE_URL: {}",
@@ -268,5 +283,120 @@ impl Config {
             "    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
             self.memory_engine_active_summary_poll_timeout_ms
         );
+    }
+}
+
+fn read_optional_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn normalize_env(value: &str) -> &str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "prod" => "production",
+        "development" => "development",
+        "staging" => "staging",
+        "test" => "test",
+        "production" => "production",
+        _ => "development",
+    }
+}
+
+fn require_secret_for_env(
+    value: Option<String>,
+    env_key: &str,
+    normalized_env: &str,
+) -> Result<String, String> {
+    match value {
+        Some(secret) => Ok(secret),
+        None if normalized_env == "production" => {
+            Err(format!("{env_key} must be set when NODE_ENV=production"))
+        }
+        None => Ok("dev-only-change-me-please".to_string()),
+    }
+}
+
+fn validate_config(
+    normalized_env: &str,
+    port: u16,
+    host: &str,
+    memory_engine_base_url: &str,
+) -> Result<(), String> {
+    if port == 0 {
+        return Err("BACKEND_PORT must be a valid non-zero port".to_string());
+    }
+    if host.trim().is_empty() {
+        return Err("HOST must not be empty".to_string());
+    }
+    if memory_engine_base_url.trim().is_empty() {
+        return Err("MEMORY_ENGINE_BASE_URL must not be empty".to_string());
+    }
+    if normalized_env == "production"
+        && !memory_engine_base_url.starts_with("http://")
+        && !memory_engine_base_url.starts_with("https://")
+    {
+        return Err(
+            "MEMORY_ENGINE_BASE_URL must start with http:// or https:// in production".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_env, require_secret_for_env, validate_config};
+
+    #[test]
+    fn normalize_env_maps_prod_alias() {
+        assert_eq!(normalize_env("prod"), "production");
+        assert_eq!(normalize_env("production"), "production");
+        assert_eq!(normalize_env("staging"), "staging");
+        assert_eq!(normalize_env("weird"), "development");
+    }
+
+    #[test]
+    fn require_secret_allows_dev_fallback() {
+        let secret = require_secret_for_env(None, "AUTH_JWT_SECRET", "development")
+            .expect("development fallback");
+        assert_eq!(secret, "dev-only-change-me-please");
+    }
+
+    #[test]
+    fn require_secret_rejects_missing_prod_secret() {
+        let err = require_secret_for_env(None, "AUTH_JWT_SECRET", "production")
+            .expect_err("production must reject missing secret");
+        assert!(err.contains("AUTH_JWT_SECRET"));
+    }
+
+    #[test]
+    fn validate_config_rejects_zero_port() {
+        let err = validate_config(
+            "development",
+            0,
+            "0.0.0.0",
+            "http://127.0.0.1:7081/api/memory-engine/v1",
+        )
+        .expect_err("zero port must fail");
+        assert!(err.contains("BACKEND_PORT"));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_prod_memory_engine_url() {
+        let err = validate_config("production", 3997, "0.0.0.0", "memory-engine.internal")
+            .expect_err("invalid production url must fail");
+        assert!(err.contains("MEMORY_ENGINE_BASE_URL"));
+    }
+
+    #[test]
+    fn validate_config_accepts_valid_production_config() {
+        validate_config(
+            "production",
+            3997,
+            "0.0.0.0",
+            "https://memory.example.com/api/memory-engine/v1",
+        )
+        .expect("valid production config");
     }
 }

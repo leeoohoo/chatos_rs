@@ -2,10 +2,7 @@ use serde_json::json;
 
 use crate::config::Config;
 
-use super::{
-    chatos_memory_engine::CHATOS_COMPAT_SOURCE_ID,
-    memory_engine_client,
-};
+use super::{chatos_memory_engine::CHATOS_COMPAT_SOURCE_ID, memory_engine_client};
 
 const CHATOS_SOURCE_TYPE: &str = "chat_app";
 const CHATOS_SOURCE_NAME: &str = "Chatos";

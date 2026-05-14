@@ -3,6 +3,7 @@ use crate::{
         datasource::DataSource,
         metadata::{MetadataNode, MetadataNodeType, MetadataNodesResponse},
     },
+    drivers::metadata_common,
     error::{AppError, AppResult},
 };
 use sqlx::Row;
@@ -48,11 +49,11 @@ async fn list_database_nodes(datasource: &DataSource) -> AppResult<Vec<MetadataN
 
 fn list_schema_nodes(database: &str) -> Vec<MetadataNode> {
     vec![MetadataNode {
-        id: format!("schema:{database}:main"),
-        parent_id: format!("db:{database}"),
+        id: metadata_common::make_node_id("schema", &[database, "main"]),
+        parent_id: metadata_common::make_node_id("db", &[database]),
         node_type: MetadataNodeType::Schema,
         display_name: "main".to_string(),
-        path: format!("{database}.main"),
+        path: metadata_common::make_qualified_path(&[database, "main"]),
         has_children: true,
     }]
 }
@@ -88,22 +89,22 @@ async fn list_schema_children(
                 (
                     MetadataNodeType::View,
                     false,
-                    format!("view:{database}:{schema}:{name}"),
+                    metadata_common::make_node_id("view", &[database, schema, &name]),
                 )
             } else {
                 (
                     MetadataNodeType::Table,
                     true,
-                    format!("table:{database}:{schema}:{name}"),
+                    metadata_common::make_node_id("table", &[database, schema, &name]),
                 )
             };
 
             MetadataNode {
                 id,
-                parent_id: format!("schema:{database}:{schema}"),
+                parent_id: metadata_common::make_node_id("schema", &[database, schema]),
                 node_type,
                 display_name: name.clone(),
-                path: format!("{database}.{schema}.{name}"),
+                path: metadata_common::make_qualified_path(&[database, schema, &name]),
                 has_children,
             }
         })
@@ -148,11 +149,11 @@ async fn list_table_children(
             };
 
             MetadataNode {
-                id: format!("{object_type}:{database}:{schema}:{table}:{name}"),
-                parent_id: format!("table:{database}:{schema}:{table}"),
+                id: metadata_common::make_node_id(&object_type, &[database, schema, table, &name]),
+                parent_id: metadata_common::make_node_id("table", &[database, schema, table]),
                 node_type,
                 display_name: name.clone(),
-                path: format!("{database}.{schema}.{table}.{name}"),
+                path: metadata_common::make_qualified_path(&[database, schema, table, &name]),
                 has_children: false,
             }
         })

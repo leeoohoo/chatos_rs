@@ -4,8 +4,8 @@ use std::path::Path;
 use regex::RegexBuilder;
 use walkdir::{DirEntry, WalkDir};
 
-pub(super) use crate::services::code_nav::languages::shared_nav::push_unique_location;
 use crate::services::code_nav::languages::shared_nav::nav_location_from_coordinates;
+pub(super) use crate::services::code_nav::languages::shared_nav::push_unique_location;
 use crate::services::code_nav::symbol_index::IndexedSymbol;
 use crate::services::code_nav::types::NavLocation;
 

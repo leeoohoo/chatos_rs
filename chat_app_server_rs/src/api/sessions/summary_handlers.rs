@@ -9,7 +9,7 @@ use crate::api::conversation_semantics::rewrite_session_keys_to_conversation;
 use crate::core::auth::AuthUser;
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
-use crate::services::chatos_sessions;
+use crate::modules::conversation_runtime::summaries as conversation_summaries;
 
 use super::contracts::PageQuery;
 
@@ -25,7 +25,7 @@ pub(super) async fn list_session_memory_summaries(
     let offset = parse_non_negative_offset(query.offset);
 
     let memory_summaries =
-        match chatos_sessions::list_summaries(&conversation_id, limit, offset).await {
+        match conversation_summaries::list_summaries(&conversation_id, limit, offset).await {
             Ok(list) => list,
             Err(err) => {
                 return (
@@ -57,7 +57,7 @@ pub(super) async fn delete_session_memory_summary(
         return map_session_access_error(err);
     }
 
-    match chatos_sessions::delete_summary(&conversation_id, &summary_id).await {
+    match conversation_summaries::delete_summary(&conversation_id, &summary_id).await {
         Ok(result) if result.success => (
             StatusCode::OK,
             Json(serde_json::json!({
@@ -88,7 +88,7 @@ pub(super) async fn clear_session_memory_summaries(
         return map_session_access_error(err);
     }
 
-    let deleted_count = match chatos_sessions::clear_summaries(&conversation_id).await {
+    let deleted_count = match conversation_summaries::clear_summaries(&conversation_id).await {
         Ok(value) => value,
         Err(err) => {
             return (

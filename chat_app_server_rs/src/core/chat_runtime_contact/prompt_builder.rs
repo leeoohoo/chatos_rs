@@ -98,7 +98,11 @@ pub fn compose_contact_system_prompt(
             "你正在以联系人智能体身份参与对话。",
             "You are participating in this conversation as a contact agent.",
         ),
-        format!("{}{}", text(locale, "联系人名称：", "Contact name: "), agent_name),
+        format!(
+            "{}{}",
+            text(locale, "联系人名称：", "Contact name: "),
+            agent_name
+        ),
     ];
 
     if let Some(description) = agent.description.as_deref().map(str::trim) {
@@ -185,10 +189,11 @@ pub fn compose_contact_system_prompt(
                     parts.push(format!(
                         "{}={}",
                         field(locale, "简介", "description"),
-                        entry
-                            .description
-                            .as_deref()
-                            .unwrap_or(text_ref(locale, "未提供", "not provided"))
+                        entry.description.as_deref().unwrap_or(text_ref(
+                            locale,
+                            "未提供",
+                            "not provided"
+                        ))
                     ));
                     parts.push(format!(
                         "{}={}",
@@ -215,7 +220,11 @@ pub fn compose_contact_system_prompt(
                         text(locale, "未提供", "not provided"),
                         field(locale, "来源类型", "source_type"),
                         entry.source_type,
-                        text(locale, "详情可通过工具查询", "details can be queried with tools")
+                        text(
+                            locale,
+                            "详情可通过工具查询",
+                            "details can be queried with tools"
+                        )
                     ));
                     skill_entries.push(entry);
                 }
@@ -239,7 +248,11 @@ pub fn compose_contact_system_prompt(
                     ];
                     if let Some(category) = plugin.category.as_deref().map(str::trim) {
                         if !category.is_empty() {
-                            parts.push(format!("{}={}", field(locale, "分类", "category"), category));
+                            parts.push(format!(
+                                "{}={}",
+                                field(locale, "分类", "category"),
+                                category
+                            ));
                         }
                     }
                     let description = plugin
@@ -272,10 +285,11 @@ pub fn compose_contact_system_prompt(
                                 .unwrap_or(false)
                         })
                         .map(|entry| {
-                            let skill_name = entry
-                                .name
-                                .as_deref()
-                                .unwrap_or(text_ref(locale, "未命名技能", "unnamed skill"));
+                            let skill_name = entry.name.as_deref().unwrap_or(text_ref(
+                                locale,
+                                "未命名技能",
+                                "unnamed skill",
+                            ));
                             format!("{}({})", entry.skill_ref, skill_name)
                         })
                         .collect::<Vec<_>>();
@@ -307,10 +321,11 @@ pub fn compose_contact_system_prompt(
                                 .unwrap_or(false)
                         })
                         .map(|entry| {
-                            let skill_name = entry
-                                .name
-                                .as_deref()
-                                .unwrap_or(text_ref(locale, "未命名技能", "unnamed skill"));
+                            let skill_name = entry.name.as_deref().unwrap_or(text_ref(
+                                locale,
+                                "未命名技能",
+                                "unnamed skill",
+                            ));
                             format!("{}({})", entry.skill_ref, skill_name)
                         })
                         .collect::<Vec<_>>();
@@ -351,7 +366,11 @@ pub fn compose_contact_system_prompt(
             ));
 
             lines.push(String::new());
-            lines.push(text(locale, "已选择技能全文：", "Full text of selected skills:"));
+            lines.push(text(
+                locale,
+                "已选择技能全文：",
+                "Full text of selected skills:",
+            ));
             if skills.is_empty() {
                 lines.push(text(
                     locale,
@@ -422,7 +441,11 @@ pub fn compose_contact_system_prompt(
                         format!("{}={}", field(locale, "名称", "name"), plugin.name),
                     ];
                     if let Some(category) = plugin.category.as_deref() {
-                        parts.push(format!("{}={}", field(locale, "分类", "category"), category));
+                        parts.push(format!(
+                            "{}={}",
+                            field(locale, "分类", "category"),
+                            category
+                        ));
                     }
                     if let Some(description) = plugin.description.as_deref() {
                         parts.push(format!(
@@ -455,7 +478,11 @@ pub fn compose_contact_system_prompt(
                         lines.push(text(locale, "插件命令：", "Plugin commands:"));
                         for command in &plugin.commands {
                             let mut command_parts = vec![
-                                format!("{}={}", field(locale, "名称", "name"), command.name.trim()),
+                                format!(
+                                    "{}={}",
+                                    field(locale, "名称", "name"),
+                                    command.name.trim()
+                                ),
                                 format!("source_path={}", command.source_path.trim()),
                             ];
                             if let Some(description) = command.description.as_deref().map(str::trim)

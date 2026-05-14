@@ -6,8 +6,8 @@ use crate::models::project::ProjectService;
 use crate::services::git::discover_repo_root;
 use crate::utils::workspace::resolve_workspace_dir;
 
-use super::policy_paths::{canonicalize_existing_dir, normalize_path_for_compare};
 use super::super::roots::home_dir;
+use super::policy_paths::{canonicalize_existing_dir, normalize_path_for_compare};
 use super::{FsAllowedRoot, FsAllowedRootKind};
 
 pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
@@ -21,12 +21,20 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
         match discover_repo_root(current_dir.as_path()).await {
             Ok(Some(repo_root)) => {
                 if let Some(parent) = repo_root.parent() {
-                    push_root(&mut roots, parent.to_path_buf(), FsAllowedRootKind::RepoParent);
+                    push_root(
+                        &mut roots,
+                        parent.to_path_buf(),
+                        FsAllowedRootKind::RepoParent,
+                    );
                 }
             }
             _ => {
                 if let Some(parent) = current_dir.parent() {
-                    push_root(&mut roots, parent.to_path_buf(), FsAllowedRootKind::RepoParent);
+                    push_root(
+                        &mut roots,
+                        parent.to_path_buf(),
+                        FsAllowedRootKind::RepoParent,
+                    );
                 }
             }
         }

@@ -1,13 +1,13 @@
 use serde_json::Value;
 
 use crate::builtin::research_output::{
-    build_extract_results_brief as build_shared_extract_results_brief,
-    build_extract_summary_line, build_search_results_brief as build_shared_search_results_brief,
-    build_search_summary_line, ExtractResultsBriefOptions, ExtractStatusStyle,
-    ExtractSummaryLineOptions, SearchResultsBriefOptions, SearchSummaryLineOptions,
+    build_extract_results_brief as build_shared_extract_results_brief, build_extract_summary_line,
+    build_search_results_brief as build_shared_search_results_brief, build_search_summary_line,
+    ExtractResultsBriefOptions, ExtractStatusStyle, ExtractSummaryLineOptions,
+    SearchResultsBriefOptions, SearchSummaryLineOptions,
 };
-use crate::builtin::web_tools::provider::{ExtractedPage, SearchHit};
 use crate::builtin::web_tools::provider::normalize_public_web_url;
+use crate::builtin::web_tools::provider::{ExtractedPage, SearchHit};
 
 pub(super) use crate::builtin::research_output::normalize_inline_text;
 

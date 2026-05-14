@@ -18,9 +18,9 @@ use tracing::{info, info_span};
 
 use crate::config::Config;
 use crate::core::auth::{
-    access_token_from_headers, access_token_from_raw, resolve_auth_user_from_token,
-    AuthHeaderError,
+    access_token_from_headers, access_token_from_raw, resolve_auth_user_from_token, AuthHeaderError,
 };
+use crate::modules;
 use crate::services::access_token_scope;
 
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
@@ -29,7 +29,7 @@ static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 pub mod agents;
 pub mod applications;
 pub mod auth;
-mod chat_stream_common;
+pub(crate) mod chat_stream_common;
 pub mod chat_v2;
 pub mod chat_v3;
 pub mod code_nav;
@@ -38,9 +38,9 @@ pub mod contacts;
 mod conversation_semantics;
 pub mod fs;
 pub mod git;
-pub mod messages;
 pub mod memory_compat;
 pub mod memory_mappings;
+pub mod messages;
 pub mod notepad;
 pub mod projects;
 pub mod realtime;
@@ -120,33 +120,11 @@ pub fn router() -> Result<Router, String> {
             tracing::error!(error = %err, latency_ms = %latency.as_millis(), "request.failure");
         });
 
-    let protected_api = Router::new()
-        .merge(contacts::router())
-        .merge(sessions::router())
-        .merge(messages::router())
-        .merge(memory_compat::router())
-        .merge(memory_mappings::router())
-        .merge(agents::router())
-        .merge(chat_v2::router())
-        .merge(chat_v3::router())
-        .merge(code_nav::router())
-        .nest("/api/applications", applications::router())
-        .merge(projects::router())
-        .merge(realtime::router())
-        .merge(remote_connections::router())
-        .merge(task_manager::router())
-        .merge(ui_prompts::router())
-        .merge(terminals::router())
-        .merge(configs::router())
-        .merge(system_contexts::router())
-        .merge(fs::router())
-        .merge(git::router())
-        .merge(notepad::router())
-        .merge(user_settings::router())
-        .route_layer(middleware::from_fn(require_auth));
+    let protected_api =
+        modules::app_api::protected_routes().route_layer(middleware::from_fn(require_auth));
 
     Ok(Router::new()
-        .merge(auth::router())
+        .merge(modules::app_api::public_routes())
         .merge(protected_api)
         .route("/health", axum::routing::get(health))
         .route("/", axum::routing::get(root))
@@ -171,13 +149,18 @@ async fn health() -> axum::Json<serde_json::Value> {
 
 async fn root() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
-        "name": "Chat App Node Server",
+        "name": "Chatos RS Backend",
         "version": "1.0.0",
-        "description": "Node.js 聊天应用服务器 - 完全复刻自 Python FastAPI 版本",
+        "description": "Rust orchestration backend for Chatos RS engineering workflows",
         "endpoints": {
             "health": "/health",
-            "conversations": "/api/conversations",
-            "messages": "/api/messages"
+            "auth_login": "/api/auth/login",
+            "sessions": "/api/sessions",
+            "messages": "/api/messages",
+            "chat_v3_stream": "/api/agent_v3/chat/stream",
+            "realtime_ws": "/api/realtime/ws",
+            "fs_list": "/api/fs/list",
+            "git_status": "/api/git/status"
         }
     }))
 }
@@ -217,12 +200,12 @@ async fn require_auth(
         }
         Err(err) => return Err(err.into_response()),
     };
-    let auth_user = resolve_auth_user_from_token(access_token.as_str())
-        .map_err(|err| err.into_response())?;
+    let auth_user =
+        resolve_auth_user_from_token(access_token.as_str()).map_err(|err| err.into_response())?;
 
     req.extensions_mut().insert(auth_user);
-    let response = access_token_scope::with_access_token_scope(Some(access_token), next.run(req))
-        .await;
+    let response =
+        access_token_scope::with_access_token_scope(Some(access_token), next.run(req)).await;
     Ok(response)
 }
 

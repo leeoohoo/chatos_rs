@@ -158,7 +158,10 @@ fn register_list_dir_tool(
             "additionalProperties": false
         }),
         Arc::new(move |args, _ctx| {
-            let path = args.get("path").and_then(|value| value.as_str()).unwrap_or(".");
+            let path = args
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or(".");
             let max_entries = args
                 .get("max_entries")
                 .and_then(|value| value.as_u64())
@@ -193,7 +196,10 @@ fn register_search_text_tool(
                 .get("pattern")
                 .and_then(|value| value.as_str())
                 .ok_or("pattern is required".to_string())?;
-            let path = args.get("path").and_then(|value| value.as_str()).unwrap_or(".");
+            let path = args
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or(".");
             let max_results = args
                 .get("max_results")
                 .and_then(|value| value.as_u64())

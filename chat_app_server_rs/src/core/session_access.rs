@@ -66,3 +66,22 @@ pub fn map_session_access_error_with_success(err: SessionAccessError) -> (Status
         ),
     }
 }
+
+pub fn map_session_access_error_compat(err: SessionAccessError) -> (StatusCode, Json<Value>) {
+    match err {
+        SessionAccessError::NotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "session not found"})),
+        ),
+        SessionAccessError::Forbidden => {
+            (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})))
+        }
+        SessionAccessError::Internal(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "load session failed",
+                "detail": err,
+            })),
+        ),
+    }
+}

@@ -2,9 +2,8 @@ use serde_json::{json, Value};
 
 use super::actions_shared::{
     apply_snapshot_payload, browser_result_data, build_browser_action_summary,
-    enrich_response_with_page_metadata, fail_json, finalize_browser_action_response,
-    is_success, normalize_ref, parse_browser_eval_payload, run_basic_browser_action,
-    run_browser_command,
+    enrich_response_with_page_metadata, fail_json, finalize_browser_action_response, is_success,
+    normalize_ref, parse_browser_eval_payload, run_basic_browser_action, run_browser_command,
 };
 use super::BoundContext;
 
@@ -174,8 +173,14 @@ pub(super) async fn browser_back_with_context(
     conversation_id: Option<&str>,
 ) -> Result<Value, String> {
     let session = super::super::context::conversation_key(conversation_id);
-    let result = run_browser_command(&ctx, session.as_str(), "back", vec![], ctx.command_timeout_seconds)
-        .await?;
+    let result = run_browser_command(
+        &ctx,
+        session.as_str(),
+        "back",
+        vec![],
+        ctx.command_timeout_seconds,
+    )
+    .await?;
     if !is_success(&result) {
         return Ok(fail_json(&result, "Failed to go back"));
     }

@@ -182,7 +182,12 @@ async fn summarize_with_bisect<C: SummaryLlmClient>(
                     options.bisect_max_depth,
                     options.bisect_min_messages
                 );
-                return Ok(force_truncated_summary(messages, target_tokens, depth, options));
+                return Ok(force_truncated_summary(
+                    messages,
+                    target_tokens,
+                    depth,
+                    options,
+                ));
             }
 
             let (left, right) = match split_for_summary(&messages, options.bisect_min_messages) {
@@ -193,7 +198,12 @@ async fn summarize_with_bisect<C: SummaryLlmClient>(
                         depth,
                         messages.len()
                     );
-                    return Ok(force_truncated_summary(messages, target_tokens, depth, options));
+                    return Ok(force_truncated_summary(
+                        messages,
+                        target_tokens,
+                        depth,
+                        options,
+                    ));
                 }
             };
 

@@ -111,7 +111,9 @@ impl AiClient {
     }
 
     pub async fn load_runtime_prefixed_input_items(&self) -> Option<Vec<Value>> {
-        self.task_board_refresh_context.load_prefixed_input_items().await
+        self.task_board_refresh_context
+            .load_prefixed_input_items()
+            .await
     }
 }
 

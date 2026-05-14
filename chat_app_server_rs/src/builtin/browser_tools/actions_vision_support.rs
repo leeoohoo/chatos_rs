@@ -6,10 +6,10 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
-use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::chat_runtime::{
     compose_contact_system_prompt, ChatRuntimeMetadata, ContactSkillPromptMode,
 };
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::models::{ai_model_config::AiModelConfig, session::Session};
 use crate::repositories::ai_model_configs;
 use crate::services::{chatos_agents, chatos_sessions};
@@ -151,10 +151,7 @@ pub(super) fn push_browser_vision_candidate(
     }
 }
 
-pub(super) fn model_cfg_supports_browser_vision(
-    model_cfg: &Value,
-    resolved_model: &str,
-) -> bool {
+pub(super) fn model_cfg_supports_browser_vision(model_cfg: &Value, resolved_model: &str) -> bool {
     model_cfg
         .get("supports_images")
         .and_then(|value| value.as_bool())
@@ -226,8 +223,8 @@ pub(super) async fn prepare_browser_vision_context(
         return context;
     };
 
-    let Some(session) = load_browser_vision_session(conversation_id.as_str(), &mut context.warnings)
-        .await
+    let Some(session) =
+        load_browser_vision_session(conversation_id.as_str(), &mut context.warnings).await
     else {
         return context;
     };
@@ -300,10 +297,7 @@ async fn load_browser_vision_session(
     }
 }
 
-async fn populate_session_model_cfg(
-    session: &Session,
-    context: &mut BrowserVisionPreparedContext,
-) {
+async fn populate_session_model_cfg(session: &Session, context: &mut BrowserVisionPreparedContext) {
     if context.selected_model_id.is_none() {
         return;
     }
@@ -322,10 +316,7 @@ async fn populate_session_model_cfg(
     }
 }
 
-async fn populate_contact_prompt(
-    session: &Session,
-    context: &mut BrowserVisionPreparedContext,
-) {
+async fn populate_contact_prompt(session: &Session, context: &mut BrowserVisionPreparedContext) {
     let metadata_runtime = ChatRuntimeMetadata::from_metadata(session.metadata.as_ref());
     context.contact_agent_id = normalize_non_empty(session.selected_agent_id.as_deref())
         .or_else(|| metadata_runtime.contact_agent_id.clone());

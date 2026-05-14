@@ -99,10 +99,7 @@ async fn list_memory_project_contacts(
         Err(err) => return err,
     };
     if owner_user_id != auth.user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "forbidden"})),
-        );
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
     }
 
     match chatos_memory_mappings::list_project_contacts(

@@ -1,20 +1,9 @@
 use serde_json::{json, Value};
 
-use crate::core::chat_context::resolve_effective_user_id;
-use crate::core::internal_context_locale::{
-    internal_context_locale_from_settings, InternalContextLocale,
-};
-use crate::models::memory_runtime_types::{
-    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotSystemMessageDto,
-};
-use crate::services::chatos_sessions;
-use crate::services::runtime_guidance_manager::runtime_guidance_manager;
-use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
+use crate::core::internal_context_locale::InternalContextLocale;
+use crate::services::task_manager::TaskRecord;
 use crate::services::text_normalization::normalize_optional_text_ref;
-use crate::services::user_settings::get_effective_user_settings;
-use crate::utils::events::Events;
 
-const TASK_BOARD_LIMIT: usize = 12;
 const STATUS_TODO: &str = "todo";
 const STATUS_DOING: &str = "doing";
 const STATUS_BLOCKED: &str = "blocked";
@@ -22,63 +11,35 @@ const STATUS_DONE: &str = "done";
 const BLOCKED_TASK_LIMIT: usize = 3;
 const COMPLETED_TASK_LIMIT: usize = 5;
 
-pub async fn build_task_board_prompt(
-    conversation_id: &str,
-    conversation_turn_id: Option<&str>,
-    locale: InternalContextLocale,
-) -> Option<String> {
-    let conversation_id = conversation_id.trim();
-    if conversation_id.is_empty() {
-        return None;
-    }
-
-    let tasks = list_tasks_for_context(
-        conversation_id,
-        conversation_turn_id,
-        true,
-        TASK_BOARD_LIMIT,
-    )
-    .await
-    .unwrap_or_default();
-    Some(format_task_board_prompt(tasks.as_slice(), locale))
-        .filter(|content| !content.trim().is_empty())
-}
-
-pub async fn build_runtime_prefixed_messages(
-    session_id: &str,
-    turn_id: Option<&str>,
-    locale: InternalContextLocale,
+pub fn build_runtime_prefixed_messages(
+    task_board_prompt: Option<&str>,
     contact_system_prompt: Option<&str>,
     builtin_mcp_system_prompt: Option<&str>,
     command_system_prompt: Option<&str>,
 ) -> Option<Vec<Value>> {
-    let task_board_prompt = build_task_board_prompt(session_id, turn_id, locale).await;
     build_prefixed_messages(&[
         contact_system_prompt,
-        task_board_prompt.as_deref(),
+        task_board_prompt,
         builtin_mcp_system_prompt,
         command_system_prompt,
     ])
 }
 
-pub async fn build_runtime_prefixed_input_items(
-    session_id: &str,
-    turn_id: Option<&str>,
-    locale: InternalContextLocale,
+pub fn build_runtime_prefixed_input_items(
+    task_board_prompt: Option<&str>,
     contact_system_prompt: Option<&str>,
     builtin_mcp_system_prompt: Option<&str>,
     command_system_prompt: Option<&str>,
 ) -> Option<Vec<Value>> {
-    let task_board_prompt = build_task_board_prompt(session_id, turn_id, locale).await;
     build_prefixed_input_items(&[
         contact_system_prompt,
-        task_board_prompt.as_deref(),
+        task_board_prompt,
         builtin_mcp_system_prompt,
         command_system_prompt,
     ])
 }
 
-fn format_task_board_prompt(tasks: &[TaskRecord], locale: InternalContextLocale) -> String {
+pub fn format_task_board_prompt(tasks: &[TaskRecord], locale: InternalContextLocale) -> String {
     let mut lines = if locale.is_english() {
         vec![
             "[Task Board]".to_string(),
@@ -206,7 +167,11 @@ fn append_task_line(
     if !task.details.trim().is_empty() {
         lines.push(format!(
             "  {}: {}",
-            if locale.is_english() { "details" } else { "details" },
+            if locale.is_english() {
+                "details"
+            } else {
+                "details"
+            },
             compact_text(task.details.as_str(), 140)
         ));
     }
@@ -228,17 +193,29 @@ fn append_blocked_task_line(
     append_task_line(lines, task, false, locale);
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() { "outcome" } else { "outcome" },
+        if locale.is_english() {
+            "outcome"
+        } else {
+            "outcome"
+        },
         display_outcome_summary(task, locale)
     ));
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() { "blocker" } else { "blocker" },
+        if locale.is_english() {
+            "blocker"
+        } else {
+            "blocker"
+        },
         display_blocker_reason(task, locale)
     ));
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() { "needs" } else { "needs" },
+        if locale.is_english() {
+            "needs"
+        } else {
+            "needs"
+        },
         display_blocker_needs(task, locale)
     ));
 }
@@ -251,7 +228,11 @@ fn append_completed_task_line(
     append_task_line(lines, task, false, locale);
     lines.push(format!(
         "  {}: {}",
-        if locale.is_english() { "outcome" } else { "outcome" },
+        if locale.is_english() {
+            "outcome"
+        } else {
+            "outcome"
+        },
         display_outcome_summary(task, locale)
     ));
     if !task.resume_hint.trim().is_empty() {
@@ -385,140 +366,6 @@ fn build_prefixed_input_items(system_prompts: &[Option<&str>]) -> Option<Vec<Val
     }
 }
 
-pub fn build_task_board_runtime_guidance(
-    task_board_prompt: &str,
-    locale: InternalContextLocale,
-) -> Option<String> {
-    let task_board_prompt = task_board_prompt.trim();
-    if task_board_prompt.is_empty() {
-        return None;
-    }
-
-    Some(if locale.is_english() {
-        format!(
-            "[Task Board Updated]\n- source: system task board refresh after task mutation\n- rule: replace any stale task assumptions with the latest board below\n- instruction: continue strictly based on this refreshed board\n\n{}",
-            task_board_prompt
-        )
-    } else {
-        format!(
-            "[Task Board Updated]\n- source: 系统在任务变更后刷新了任务看板\n- rule: 用下方最新看板替换任何过时的任务判断\n- instruction: 严格基于这份刷新后的看板继续执行\n\n{}",
-            task_board_prompt
-        )
-    })
-}
-
-pub async fn enqueue_task_board_refresh(session_id: &str, turn_id: &str) -> Option<String> {
-    let session_id = session_id.trim();
-    let turn_id = turn_id.trim();
-    if session_id.is_empty() || turn_id.is_empty() {
-        return None;
-    }
-
-    let effective_user_id = resolve_effective_user_id(None, session_id).await;
-    let effective_settings = get_effective_user_settings(effective_user_id)
-        .await
-        .unwrap_or_else(|_| json!({}));
-    let locale = internal_context_locale_from_settings(&effective_settings);
-
-    let prompt = build_task_board_prompt(session_id, Some(turn_id), locale).await?;
-    if let Some(guidance) = build_task_board_runtime_guidance(prompt.as_str(), locale) {
-        let _ = runtime_guidance_manager().enqueue_guidance(session_id, turn_id, guidance.as_str());
-    }
-    let _ = sync_task_board_turn_snapshot(session_id, turn_id, prompt.as_str()).await;
-    Some(prompt)
-}
-
-async fn sync_task_board_turn_snapshot(
-    session_id: &str,
-    turn_id: &str,
-    task_board_prompt: &str,
-) -> Result<(), String> {
-    let lookup = chatos_sessions::get_turn_runtime_snapshot_by_turn(session_id, turn_id).await?;
-    let payload = if let Some(snapshot) = lookup.snapshot {
-        SyncTurnRuntimeSnapshotRequestDto {
-            user_message_id: snapshot.user_message_id,
-            status: Some(snapshot.status),
-            snapshot_source: Some(snapshot.snapshot_source),
-            snapshot_version: Some(snapshot.snapshot_version.max(1)),
-            captured_at: Some(snapshot.captured_at),
-            system_messages: Some(upsert_task_board_system_messages(
-                snapshot.system_messages.as_slice(),
-                task_board_prompt,
-            )),
-            tools: Some(snapshot.tools),
-            runtime: snapshot.runtime,
-        }
-    } else {
-        SyncTurnRuntimeSnapshotRequestDto {
-            user_message_id: None,
-            status: Some(match lookup.status.trim() {
-                "completed" => "completed".to_string(),
-                "failed" => "failed".to_string(),
-                _ => "running".to_string(),
-            }),
-            snapshot_source: Some("captured".to_string()),
-            snapshot_version: Some(1),
-            captured_at: None,
-            system_messages: Some(upsert_task_board_system_messages(&[], task_board_prompt)),
-            tools: None,
-            runtime: None,
-        }
-    };
-    chatos_sessions::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
-        .await
-        .map(|_| ())
-}
-
-fn upsert_task_board_system_messages(
-    messages: &[TurnRuntimeSnapshotSystemMessageDto],
-    task_board_prompt: &str,
-) -> Vec<TurnRuntimeSnapshotSystemMessageDto> {
-    let Some(content) = normalize_optional_text(Some(task_board_prompt)) else {
-        return messages
-            .iter()
-            .filter(|item| item.id.trim() != "task_board")
-            .cloned()
-            .collect();
-    };
-
-    let mut next_messages = messages
-        .iter()
-        .filter(|item| item.id.trim() != "task_board")
-        .cloned()
-        .collect::<Vec<_>>();
-    let insert_at = next_messages
-        .iter()
-        .position(|item| {
-            let id = item.id.trim();
-            id != "base_system" && id != "contact_system"
-        })
-        .unwrap_or(next_messages.len());
-    next_messages.insert(
-        insert_at,
-        TurnRuntimeSnapshotSystemMessageDto {
-            id: "task_board".to_string(),
-            source: "task_runtime_board".to_string(),
-            content,
-        },
-    );
-    next_messages
-}
-
-pub fn build_task_board_updated_event_payload(
-    conversation_id: &str,
-    conversation_turn_id: &str,
-    task_board_prompt: &str,
-) -> Value {
-    json!({
-        "event": Events::TASK_BOARD_UPDATED,
-        "data": {
-            "conversation_id": conversation_id,
-            "conversation_turn_id": conversation_turn_id,
-            "task_board": task_board_prompt,
-        }
-    })
-}
-
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {
     normalize_optional_text_ref(value)
 }
@@ -565,9 +412,8 @@ fn task_board_none(locale: InternalContextLocale) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_task_board_prompt, upsert_task_board_system_messages};
+    use super::format_task_board_prompt;
     use crate::core::internal_context_locale::InternalContextLocale;
-    use crate::models::memory_runtime_types::TurnRuntimeSnapshotSystemMessageDto;
     use crate::services::task_manager::TaskRecord;
 
     fn build_task(id: &str, title: &str, status: &str) -> TaskRecord {
@@ -596,11 +442,14 @@ mod tests {
 
     #[test]
     fn marks_first_doing_task_as_current() {
-        let prompt = format_task_board_prompt(&[
-            build_task("task_done", "done task", "done"),
-            build_task("task_doing", "doing task", "doing"),
-            build_task("task_todo", "todo task", "todo"),
-        ], InternalContextLocale::ZhCn);
+        let prompt = format_task_board_prompt(
+            &[
+                build_task("task_done", "done task", "done"),
+                build_task("task_doing", "doing task", "doing"),
+                build_task("task_todo", "todo task", "todo"),
+            ],
+            InternalContextLocale::ZhCn,
+        );
 
         assert!(prompt.contains("当前任务看板由系统维护"));
         assert!(prompt.contains("`task_manager_complete_task`"));
@@ -613,11 +462,14 @@ mod tests {
 
     #[test]
     fn prefers_earliest_todo_over_newer_todo() {
-        let prompt = format_task_board_prompt(&[
-            build_task("task_a", "todo task a", "todo"),
-            build_task("task_b", "todo task b", "todo"),
-            build_task("task_c", "done task c", "done"),
-        ], InternalContextLocale::ZhCn);
+        let prompt = format_task_board_prompt(
+            &[
+                build_task("task_a", "todo task a", "todo"),
+                build_task("task_b", "todo task b", "todo"),
+                build_task("task_c", "done task c", "done"),
+            ],
+            InternalContextLocale::ZhCn,
+        );
 
         assert!(prompt.contains("id=task_a <- 当前优先执行"));
         assert!(!prompt.contains("id=task_b <- 当前优先执行"));
@@ -633,10 +485,13 @@ mod tests {
 
     #[test]
     fn done_tasks_do_not_appear_as_current_task() {
-        let prompt = format_task_board_prompt(&[
-            build_task("task_done_a", "done task a", "done"),
-            build_task("task_done_b", "done task b", "done"),
-        ], InternalContextLocale::ZhCn);
+        let prompt = format_task_board_prompt(
+            &[
+                build_task("task_done_a", "done task a", "done"),
+                build_task("task_done_b", "done task b", "done"),
+            ],
+            InternalContextLocale::ZhCn,
+        );
 
         let current_section = prompt
             .split("已完成任务历史：")
@@ -675,63 +530,5 @@ mod tests {
         assert!(prompt.contains("Blocked tasks and blocker details:"));
         assert!(prompt.contains("Completed task history:"));
         assert!(prompt.contains("id=task_doing <- current priority"));
-    }
-
-    #[test]
-    fn upsert_task_board_system_messages_inserts_after_contact_prompts() {
-        let messages = vec![
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "base_system".to_string(),
-                source: "active_system_context".to_string(),
-                content: "base".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "contact_system".to_string(),
-                source: "contact_runtime_context".to_string(),
-                content: "contact".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "builtin_mcp".to_string(),
-                source: "builtin_mcp_policy".to_string(),
-                content: "builtin".to_string(),
-            },
-        ];
-
-        let updated =
-            upsert_task_board_system_messages(messages.as_slice(), "[Task Board]\nlatest");
-
-        assert_eq!(updated.len(), 4);
-        assert_eq!(updated[2].id, "task_board");
-        assert_eq!(updated[2].source, "task_runtime_board");
-        assert_eq!(updated[2].content, "[Task Board]\nlatest");
-        assert_eq!(updated[3].id, "builtin_mcp");
-    }
-
-    #[test]
-    fn upsert_task_board_system_messages_replaces_existing_entry() {
-        let messages = vec![
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "contact_system".to_string(),
-                source: "contact_runtime_context".to_string(),
-                content: "contact".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "task_board".to_string(),
-                source: "task_runtime_board".to_string(),
-                content: "stale".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "memory_summary".to_string(),
-                source: "memory_context_summary".to_string(),
-                content: "summary".to_string(),
-            },
-        ];
-
-        let updated = upsert_task_board_system_messages(messages.as_slice(), "fresh");
-
-        assert_eq!(updated.len(), 3);
-        assert_eq!(updated[1].id, "task_board");
-        assert_eq!(updated[1].content, "fresh");
-        assert_eq!(updated[2].id, "memory_summary");
     }
 }

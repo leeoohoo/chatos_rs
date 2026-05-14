@@ -1,10 +1,10 @@
 #![allow(dead_code)]
-pub mod ai_model_configs;
-pub mod auth_users;
 pub mod agents;
+pub mod ai_model_configs;
 pub mod applications;
-pub mod chatos_memory_mappings;
+pub mod auth_users;
 pub mod change_logs;
+pub mod chatos_memory_mappings;
 pub mod db;
 pub mod mcp_configs;
 pub mod memory_skills;

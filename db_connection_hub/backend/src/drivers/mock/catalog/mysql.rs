@@ -7,10 +7,20 @@ use crate::domain::{
         ObjectStatsResponse,
     },
 };
+use crate::drivers::metadata_common;
 
 use super::{common::*, MockCatalog};
 
 pub fn build() -> MockCatalog {
+    let crm_db_id = metadata_common::make_node_id("db", &["crm"]);
+    let customers_table_id = metadata_common::make_node_id("table", &["crm", "customers"]);
+    let customer_summary_view_id =
+        metadata_common::make_node_id("view", &["crm", "customer_summary"]);
+    let sync_customer_tags_procedure_id =
+        metadata_common::make_node_id("procedure", &["crm", "sync_customer_tags"]);
+    let customers_phone_index_id =
+        metadata_common::make_node_id("index", &["crm", "customers", "idx_customers_phone"]);
+
     let databases = vec![
         DatabaseInfo {
             name: "crm".to_string(),
@@ -48,27 +58,27 @@ pub fn build() -> MockCatalog {
     let mut children = HashMap::new();
     children.insert("root".to_string(), database_nodes(&databases));
     children.insert(
-        "db:crm".to_string(),
+        crm_db_id.clone(),
         vec![
             node(
-                "table:crm:customers",
-                "db:crm",
+                &customers_table_id,
+                &crm_db_id,
                 MetadataNodeType::Table,
                 "customers",
                 "crm.customers",
                 true,
             ),
             node(
-                "view:crm:customer_summary",
-                "db:crm",
+                &customer_summary_view_id,
+                &crm_db_id,
                 MetadataNodeType::View,
                 "customer_summary",
                 "crm.customer_summary",
                 false,
             ),
             node(
-                "procedure:crm:sync_customer_tags",
-                "db:crm",
+                &sync_customer_tags_procedure_id,
+                &crm_db_id,
                 MetadataNodeType::Procedure,
                 "sync_customer_tags",
                 "crm.sync_customer_tags",
@@ -77,10 +87,10 @@ pub fn build() -> MockCatalog {
         ],
     );
     children.insert(
-        "table:crm:customers".to_string(),
+        customers_table_id.clone(),
         vec![node(
-            "index:crm:idx_customers_phone",
-            "table:crm:customers",
+            &customers_phone_index_id,
+            &customers_table_id,
             MetadataNodeType::Index,
             "idx_customers_phone",
             "crm.customers.idx_customers_phone",
@@ -90,9 +100,9 @@ pub fn build() -> MockCatalog {
 
     let mut details = HashMap::new();
     details.insert(
-        "table:crm:customers".to_string(),
+        customers_table_id.clone(),
         ObjectDetailResponse {
-            node_id: "table:crm:customers".to_string(),
+            node_id: customers_table_id,
             node_type: MetadataNodeType::Table,
             name: "customers".to_string(),
             columns: vec![

@@ -12,8 +12,8 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::services::task_manager::{
     complete_task_by_id, delete_task_by_id, get_task_review_payload,
     list_task_review_payloads_for_conversation, list_tasks_for_context,
-    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem,
-    TaskReviewAction, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
+    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem, TaskReviewAction,
+    TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
 };
 
 #[derive(Debug, Deserialize)]
@@ -85,7 +85,10 @@ struct CompleteTaskRequest {
 
 pub fn router() -> Router {
     Router::new()
-        .route("/api/task-manager/reviews/pending", get(list_pending_reviews))
+        .route(
+            "/api/task-manager/reviews/pending",
+            get(list_pending_reviews),
+        )
         .route(
             "/api/task-manager/reviews/:review_id/decision",
             post(submit_review_decision),

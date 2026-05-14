@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::ai_model_config::{resolve_chat_model_config, ResolvedChatModelConfig};
-use crate::repositories::ai_model_configs;
 use crate::models::session::Session;
+use crate::repositories::ai_model_configs;
 
 use super::chatos_sessions;
 
@@ -80,7 +80,8 @@ pub async fn resolve_model_runtime_for_request(
 
     let explicit_model_id = normalize_optional_id(requested_model_config_id);
     let session = if explicit_model_id.is_none() {
-        match session_id.and_then(|item| normalize_optional_id(Some(item)).filter(|v| !v.is_empty()))
+        match session_id
+            .and_then(|item| normalize_optional_id(Some(item)).filter(|v| !v.is_empty()))
         {
             Some(valid_session_id) => chatos_sessions::get_session_by_id(valid_session_id.as_str())
                 .await
@@ -90,7 +91,8 @@ pub async fn resolve_model_runtime_for_request(
     } else {
         None
     };
-    let resolved_model_id = explicit_model_id.or_else(|| session.as_ref().and_then(session_selected_model_id));
+    let resolved_model_id =
+        explicit_model_id.or_else(|| session.as_ref().and_then(session_selected_model_id));
 
     let profile = if let Some(model_id) = resolved_model_id {
         let profile = ai_model_configs::get_ai_model_config_by_id(model_id.as_str())

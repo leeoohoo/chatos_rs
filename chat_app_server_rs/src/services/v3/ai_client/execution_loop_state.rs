@@ -13,6 +13,101 @@ use super::prev_context::should_use_prev_id_for_next_turn;
 use super::AiClient;
 
 impl AiClient {
+    pub(in crate::services::v3::ai_client) async fn try_recover_from_terminal_empty_response(
+        &mut self,
+        ai_response: &AiResponse,
+        session_id: Option<&String>,
+        turn_id: Option<&String>,
+        raw_input: &Value,
+        stable_prefix_mode: bool,
+        include_tool_items: bool,
+        prefixed_input_items: &[Value],
+        force_text_content: bool,
+        adaptive_history_limit: i64,
+        terminal_empty_retry_count: &mut usize,
+        max_terminal_empty_retries: usize,
+        pending_tool_calls: Option<&Vec<Value>>,
+        pending_tool_outputs: Option<&Vec<Value>>,
+        use_prev_id: &mut bool,
+        can_use_prev_id: &mut bool,
+        previous_response_id: &mut Option<String>,
+        stateless_context_items: &mut Option<Vec<Value>>,
+        input: &mut Value,
+        iteration: &mut i64,
+    ) -> Result<bool, String> {
+        let finish_reason = ai_response.finish_reason.as_deref();
+        let has_content = text_has_content(ai_response.content.as_str());
+        let has_reasoning = optional_text_has_content(ai_response.reasoning.as_deref());
+        let has_tool_calls = ai_response
+            .tool_calls
+            .as_ref()
+            .map(|tool_calls| crate::core::tool_call::tool_calls_value_has_items(Some(tool_calls)))
+            .unwrap_or(false);
+
+        if is_non_terminal_finish_reason(finish_reason)
+            || has_content
+            || has_reasoning
+            || has_tool_calls
+        {
+            return Ok(false);
+        }
+
+        *terminal_empty_retry_count += 1;
+        let response_id_for_log = ai_response
+            .response_id
+            .as_deref()
+            .unwrap_or("none")
+            .to_string();
+        warn!(
+            "[AI_V3] terminal empty response detected: session_id={}, turn_id={}, finish_reason={}, response_id={}, iteration={}, retry={}/{}",
+            session_id.map(|value| value.as_str()).unwrap_or("n/a"),
+            turn_id.map(|value| value.as_str()).unwrap_or("n/a"),
+            finish_reason.unwrap_or("none"),
+            response_id_for_log,
+            *iteration,
+            *terminal_empty_retry_count,
+            max_terminal_empty_retries,
+        );
+
+        if *terminal_empty_retry_count > max_terminal_empty_retries {
+            return Ok(false);
+        }
+
+        if let Some(sid) = session_id {
+            self.prev_response_id_disabled_sessions.insert(sid.clone());
+        }
+        *can_use_prev_id = false;
+        *use_prev_id = false;
+        *previous_response_id = None;
+
+        let mut stateless = self
+            .build_stateless_from_raw_input(
+                session_id,
+                raw_input,
+                force_text_content,
+                adaptive_history_limit,
+                stable_prefix_mode,
+                include_tool_items,
+                prefixed_input_items,
+            )
+            .await;
+        merge_missing_tool_turn_items_from_pending(
+            &mut stateless,
+            include_tool_items,
+            pending_tool_calls,
+            pending_tool_outputs,
+        );
+        if !stateless.is_empty() {
+            *stateless_context_items = Some(stateless.clone());
+            *input = Value::Array(stateless);
+        }
+
+        let backoff_ms = 250_u64 * *terminal_empty_retry_count as u64;
+        sleep(Duration::from_millis(backoff_ms)).await;
+        *iteration += 1;
+        Ok(true)
+    }
+
     pub(in crate::services::v3::ai_client) async fn try_recover_from_non_terminal_empty_response(
         &mut self,
         ai_response: &AiResponse,
@@ -195,6 +290,25 @@ impl AiClient {
 
         (Value::Array(stateless), None, false)
     }
+}
+
+fn merge_missing_tool_turn_items_from_pending(
+    items: &mut Vec<Value>,
+    include_tool_items: bool,
+    pending_tool_calls: Option<&Vec<Value>>,
+    pending_tool_outputs: Option<&Vec<Value>>,
+) {
+    if !include_tool_items {
+        return;
+    }
+
+    let tool_call_items = pending_tool_calls
+        .map(|items| items.as_slice())
+        .unwrap_or(&[]);
+    let tool_outputs = pending_tool_outputs
+        .map(|items| items.as_slice())
+        .unwrap_or(&[]);
+    merge_missing_tool_turn_items(items, include_tool_items, tool_call_items, tool_outputs);
 }
 
 fn merge_missing_tool_turn_items(

@@ -160,9 +160,7 @@ pub(super) fn apply_stream_event(
 }
 
 fn extract_message_text(message: &Value) -> Option<String> {
-    message
-        .get("content")
-        .and_then(extract_text_from_value)
+    message.get("content").and_then(extract_text_from_value)
 }
 
 fn extract_text_from_value(value: &Value) -> Option<String> {

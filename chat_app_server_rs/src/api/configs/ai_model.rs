@@ -3,10 +3,10 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::core::auth::AuthUser;
 use crate::core::ai_model_config_access::{
     ensure_owned_ai_model_config, map_ai_model_config_access_error,
 };
+use crate::core::auth::AuthUser;
 use crate::models::ai_model_config::AiModelConfig;
 use crate::repositories::ai_model_configs;
 use crate::utils::model_config::normalize_provider;
@@ -71,7 +71,11 @@ fn build_model_config(
     id: String,
     req: AiModelConfigRequest,
 ) -> Result<AiModelConfig, String> {
-    let Some(name) = req.name.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) else {
+    let Some(name) = req
+        .name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
         return Err("name 为必填项".to_string());
     };
     let Some(model) = req
@@ -113,7 +117,11 @@ pub(super) async fn list_ai_model_configs(
     auth: AuthUser,
     Query(query): Query<UserQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if query.user_id.as_deref().is_some_and(|value| value != auth.user_id.as_str()) {
+    if query
+        .user_id
+        .as_deref()
+        .is_some_and(|value| value != auth.user_id.as_str())
+    {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({"error": "user_id 与登录用户不一致"})),
@@ -151,10 +159,7 @@ pub(super) async fn create_ai_model_config(
     };
 
     match ai_model_configs::create_ai_model_config(&config).await {
-        Ok(item) => (
-            StatusCode::CREATED,
-            Json(to_response_value(&item, true)),
-        ),
+        Ok(item) => (StatusCode::CREATED, Json(to_response_value(&item, true))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "创建 AI 模型配置失败", "detail": err})),
@@ -181,10 +186,7 @@ pub(super) async fn update_ai_model_config(
     };
 
     match ai_model_configs::update_ai_model_config(config_id.as_str(), &config).await {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(to_response_value(&config, true)),
-        ),
+        Ok(()) => (StatusCode::OK, Json(to_response_value(&config, true))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "更新 AI 模型配置失败", "detail": err})),

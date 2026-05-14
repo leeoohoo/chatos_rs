@@ -1,7 +1,9 @@
 use serde_json::Value;
 
 use super::super::provider_types::{ExtractedPage, ResponseContentKind};
-use super::super::provider_utils::{build_extract_summary, guess_title_from_url, normalize_multiline_text};
+use super::super::provider_utils::{
+    build_extract_summary, guess_title_from_url, normalize_multiline_text,
+};
 
 pub(super) fn detect_response_content_kind(
     content_type: Option<&str>,

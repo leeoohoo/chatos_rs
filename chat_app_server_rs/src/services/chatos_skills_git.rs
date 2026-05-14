@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::chatos_skills_helpers::{
-    ensure_dir, has_parent_path_component, normalize_plugin_source,
-    sanitize_repo_name,
+    ensure_dir, has_parent_path_component, normalize_plugin_source, sanitize_repo_name,
 };
 
 pub fn ensure_git_repo(

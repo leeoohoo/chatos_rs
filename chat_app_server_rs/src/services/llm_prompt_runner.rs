@@ -86,14 +86,13 @@ pub async fn run_text_prompt_with_model_config(
     purpose: &str,
 ) -> Result<String, String> {
     let model_cfg = model_cfg.unwrap_or_else(|| json!({}));
-    let runtime =
-        PromptRunnerRuntime::from_ai_model_config(
-            model_config_id,
-            user_id,
-            &model_cfg,
-            default_model,
-        )
-            .await?;
+    let runtime = PromptRunnerRuntime::from_ai_model_config(
+        model_config_id,
+        user_id,
+        &model_cfg,
+        default_model,
+    )
+    .await?;
     run_text_prompt_with_runtime(&runtime, system_prompt, user_prompt, max_tokens, purpose).await
 }
 

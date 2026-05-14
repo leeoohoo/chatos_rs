@@ -13,10 +13,7 @@ pub fn normalize_optional_text_owned(value: Option<String>) -> Option<String> {
         .filter(|item| !item.is_empty())
 }
 
-pub fn normalize_required_text_owned(
-    value: Option<String>,
-    field: &str,
-) -> Result<String, String> {
+pub fn normalize_required_text_owned(value: Option<String>, field: &str) -> Result<String, String> {
     normalize_optional_text_owned(value).ok_or_else(|| format!("{field} is required"))
 }
 

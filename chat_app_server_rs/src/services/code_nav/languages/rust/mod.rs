@@ -7,10 +7,10 @@ use regex::{Regex, RegexBuilder};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::services::code_nav::fallback::extract_token_at_position;
+use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::languages::shared_nav::{
     count_char, declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
-    find_column, is_type_like, nav_location_from_coordinates, normalize_path,
-    push_unique_location,
+    find_column, is_type_like, nav_location_from_coordinates, normalize_path, push_unique_location,
 };
 use crate::services::code_nav::symbol_index::{
     nav_location_from_indexed_symbol, project_symbol_index, score_indexed_definition_candidate,
@@ -20,7 +20,6 @@ use crate::services::code_nav::types::{
     DocumentSymbolItem, DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities,
     NavLocation, NavPositionRequest, ProjectContext,
 };
-use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::CodeNavProvider;
 
 const RUST_IGNORED_DIRS: &[&str] = &[
@@ -38,15 +37,18 @@ const MAX_DEFINITION_RESULTS: usize = 20;
 const MAX_REFERENCE_RESULTS: usize = 100;
 const MAX_SYMBOL_RESULTS: usize = 200;
 
-static TYPE_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r"\b(struct|enum|trait|type|mod)\s+([A-Za-z_][A-Za-z0-9_]*)"));
+static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
+    compile_static_regex(r"\b(struct|enum|trait|type|mod)\s+([A-Za-z_][A-Za-z0-9_]*)")
+});
 static FN_RE: Lazy<Regex> = Lazy::new(|| {
     compile_static_regex(
         r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
     )
 });
 static CONST_RE: Lazy<Regex> = Lazy::new(|| {
-    compile_static_regex(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const|static)\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+    compile_static_regex(
+        r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const|static)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+    )
 });
 static LET_RE: Lazy<Regex> =
     Lazy::new(|| compile_static_regex(r"^\s*let(?:\s+mut)?\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
@@ -752,7 +754,6 @@ fn should_visit_rust_path(entry: &DirEntry) -> bool {
     };
     !RUST_IGNORED_DIRS.contains(&name)
 }
-
 
 #[cfg(test)]
 mod tests {

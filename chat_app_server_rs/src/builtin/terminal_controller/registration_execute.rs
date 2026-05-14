@@ -7,11 +7,7 @@ use super::context::required_trimmed_string;
 use super::{BoundContext, TerminalControllerService};
 
 impl TerminalControllerService {
-    pub(super) fn register_execute_command(
-        &mut self,
-        bound: BoundContext,
-        root_for_desc: &str,
-    ) {
+    pub(super) fn register_execute_command(&mut self, bound: BoundContext, root_for_desc: &str) {
         self.register_tool(
             "execute_command",
             &format!(

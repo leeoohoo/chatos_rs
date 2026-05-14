@@ -6,8 +6,8 @@ use std::path::Path;
 use crate::services::code_nav::fallback::extract_token_at_position;
 use crate::services::code_nav::languages::java::analysis::{
     analyze_java_file, is_java_declaration_location, nav_location_from_symbol,
-    resolve_imported_type_paths, resolve_java_declaration_kind,
-    score_java_definition_candidate, search_java_occurrences, JAVA_EXTENSIONS, JAVA_IGNORED_DIRS,
+    resolve_imported_type_paths, resolve_java_declaration_kind, score_java_definition_candidate,
+    search_java_occurrences, JAVA_EXTENSIONS, JAVA_IGNORED_DIRS,
 };
 use crate::services::code_nav::languages::shared_nav::{is_type_like, push_unique_location};
 use crate::services::code_nav::symbol_index::{
@@ -332,10 +332,10 @@ fn java_references(
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze_java_file, java_definition, java_references};
     use super::analysis::{
         classify_java_declaration, extract_field_name, extract_method_signature,
     };
+    use super::{analyze_java_file, java_definition, java_references};
     use crate::services::code_nav::fallback::extract_token_at_position;
     use crate::services::code_nav::types::{NavPositionRequest, ProjectContext};
     use std::fs;

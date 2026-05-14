@@ -3,12 +3,12 @@ use serde_json::Value;
 use crate::core::tool_call::join_stream_text;
 
 use super::extractors::{
-    extract_output_text, extract_reasoning_event_text, extract_text_delta, extract_text_from_fields,
-    looks_like_response_id,
+    extract_output_text, extract_reasoning_event_text, extract_text_delta,
+    extract_text_from_fields, looks_like_response_id,
 };
 use super::tool_calls::{
-    ingest_tool_call_item, ingest_tool_calls_from_response_output, merge_function_call_arguments_delta,
-    merge_function_call_done,
+    ingest_tool_call_item, ingest_tool_calls_from_response_output,
+    merge_function_call_arguments_delta, merge_function_call_done,
 };
 use super::{StreamCallbacksPayload, StreamState};
 

@@ -59,8 +59,7 @@ pub async fn list_contacts(
             let user_id = user_id.to_string();
             let status = normalize_optional_text(status);
             Box::pin(async move {
-                let mut sql =
-                    "SELECT * FROM chatos_contacts WHERE user_id = ?".to_string();
+                let mut sql = "SELECT * FROM chatos_contacts WHERE user_id = ?".to_string();
                 if status.is_some() {
                     sql.push_str(" AND status = ?");
                 }
@@ -185,9 +184,8 @@ pub async fn list_contacts_by_ids(
             let status = normalize_optional_text(status);
             let ids = ids.clone();
             Box::pin(async move {
-                let mut qb = QueryBuilder::<Sqlite>::new(
-                    "SELECT * FROM chatos_contacts WHERE user_id = ",
-                );
+                let mut qb =
+                    QueryBuilder::<Sqlite>::new("SELECT * FROM chatos_contacts WHERE user_id = ");
                 qb.push_bind(&user_id);
                 qb.push(" AND id IN (");
                 {
@@ -427,7 +425,10 @@ pub async fn get_project_by_user_and_project_id(
             let project_id = project_id.to_string();
             Box::pin(async move {
                 db.collection::<ChatosMemoryProject>("chatos_memory_projects")
-                    .find_one(doc! { "user_id": &user_id, "project_id": &project_id }, None)
+                    .find_one(
+                        doc! { "user_id": &user_id, "project_id": &project_id },
+                        None,
+                    )
                     .await
                     .map_err(|e| e.to_string())
             })
@@ -455,10 +456,10 @@ pub async fn upsert_memory_project(
     input: UpsertMemoryProjectInput,
 ) -> Result<Option<ChatosMemoryProject>, String> {
     let now = crate::core::time::now_rfc3339();
-    let project_id = normalize_optional_text(Some(input.project_id.as_str()))
-        .unwrap_or_else(|| "0".to_string());
-    let status = normalize_optional_text(input.status.as_deref())
-        .unwrap_or_else(|| "active".to_string());
+    let project_id =
+        normalize_optional_text(Some(input.project_id.as_str())).unwrap_or_else(|| "0".to_string());
+    let status =
+        normalize_optional_text(input.status.as_deref()).unwrap_or_else(|| "active".to_string());
     let archived_at = if status == "archived" || status == "deleted" {
         Some(now.clone())
     } else {
@@ -643,7 +644,10 @@ pub async fn list_projects_by_ids(
                     .fetch_all(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(ChatosMemoryProjectRow::to_project).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(ChatosMemoryProjectRow::to_project)
+                    .collect())
             })
         },
     )
@@ -689,8 +693,7 @@ pub async fn list_memory_projects(
             let user_id = user_id.to_string();
             let status = normalize_optional_text(status);
             Box::pin(async move {
-                let mut sql =
-                    "SELECT * FROM chatos_memory_projects WHERE user_id = ?".to_string();
+                let mut sql = "SELECT * FROM chatos_memory_projects WHERE user_id = ?".to_string();
                 if status.is_some() {
                     sql.push_str(" AND status = ?");
                 }
@@ -729,10 +732,10 @@ pub async fn upsert_project_agent_link(
     input: UpsertProjectAgentLinkInput,
 ) -> Result<Option<ChatosProjectAgentLink>, String> {
     let now = crate::core::time::now_rfc3339();
-    let project_id = normalize_optional_text(Some(input.project_id.as_str()))
-        .unwrap_or_else(|| "0".to_string());
-    let status = normalize_optional_text(input.status.as_deref())
-        .unwrap_or_else(|| "active".to_string());
+    let project_id =
+        normalize_optional_text(Some(input.project_id.as_str())).unwrap_or_else(|| "0".to_string());
+    let status =
+        normalize_optional_text(input.status.as_deref()).unwrap_or_else(|| "active".to_string());
 
     with_db(
         |db| {
@@ -899,7 +902,9 @@ pub async fn list_project_agent_links_by_contact(
             let contact_id = contact_id.to_string();
             let status = normalize_optional_text(status);
             Box::pin(async move {
-                let mut sql = "SELECT * FROM chatos_project_agent_links WHERE user_id = ? AND contact_id = ?".to_string();
+                let mut sql =
+                    "SELECT * FROM chatos_project_agent_links WHERE user_id = ? AND contact_id = ?"
+                        .to_string();
                 if status.is_some() {
                     sql.push_str(" AND status = ?");
                 }
@@ -963,7 +968,9 @@ pub async fn list_project_agent_links_by_project(
             let project_id = project_id.to_string();
             let status = normalize_optional_text(status);
             Box::pin(async move {
-                let mut sql = "SELECT * FROM chatos_project_agent_links WHERE user_id = ? AND project_id = ?".to_string();
+                let mut sql =
+                    "SELECT * FROM chatos_project_agent_links WHERE user_id = ? AND project_id = ?"
+                        .to_string();
                 if status.is_some() {
                     sql.push_str(" AND status = ?");
                 }

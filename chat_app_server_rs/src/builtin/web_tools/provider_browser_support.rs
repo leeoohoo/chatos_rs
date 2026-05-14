@@ -70,14 +70,7 @@ pub(super) async fn close_browser_page(
     session: &BrowserRuntimeSession,
     options: &BrowserRenderOptions,
 ) {
-    let _ = run_browser_command(
-        &options.workspace_dir,
-        session,
-        "close",
-        Vec::new(),
-        10,
-    )
-    .await;
+    let _ = run_browser_command(&options.workspace_dir, session, "close", Vec::new(), 10).await;
 }
 
 pub(super) fn parse_browser_eval_result(raw: Value) -> Value {

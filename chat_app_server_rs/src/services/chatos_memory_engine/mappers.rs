@@ -43,7 +43,9 @@ pub(super) fn engine_record_to_message(record: memory_engine_sdk::EngineRecord) 
     }
 }
 
-pub(super) fn engine_summary_to_session_summary(item: memory_engine_sdk::EngineSummary) -> SessionSummaryV2 {
+pub(super) fn engine_summary_to_session_summary(
+    item: memory_engine_sdk::EngineSummary,
+) -> SessionSummaryV2 {
     SessionSummaryV2 {
         id: item.id,
         session_id: item.thread_id,
@@ -68,12 +70,10 @@ pub(super) fn engine_summary_to_session_summary(item: memory_engine_sdk::EngineS
 }
 
 pub(super) fn engine_thread_to_session(item: memory_engine_sdk::EngineThread) -> Session {
-    let title = item
-        .title
-        .clone()
-        .unwrap_or_else(|| "Untitled".to_string());
+    let title = item.title.clone().unwrap_or_else(|| "Untitled".to_string());
     let metadata = item.metadata.clone();
-    let (selected_model_id, selected_agent_id) = extract_selection_from_engine_metadata(metadata.as_ref());
+    let (selected_model_id, selected_agent_id) =
+        extract_selection_from_engine_metadata(metadata.as_ref());
     let project_id = item
         .metadata
         .as_ref()
@@ -107,7 +107,9 @@ pub(super) fn engine_thread_to_session(item: memory_engine_sdk::EngineThread) ->
     }
 }
 
-pub(super) fn engine_subject_memory_to_project_memory(item: EngineSubjectMemory) -> MemoryProjectMemoryDto {
+pub(super) fn engine_subject_memory_to_project_memory(
+    item: EngineSubjectMemory,
+) -> MemoryProjectMemoryDto {
     let mapping = item
         .metadata
         .as_ref()

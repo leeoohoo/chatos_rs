@@ -4,7 +4,11 @@ use crate::models::message::Message;
 
 use super::history_process::build_compact_history_messages;
 
-fn apply_recent_offset_limit(messages: Vec<Message>, limit: Option<i64>, offset: i64) -> Vec<Message> {
+fn apply_recent_offset_limit(
+    messages: Vec<Message>,
+    limit: Option<i64>,
+    offset: i64,
+) -> Vec<Message> {
     let Some(limit) = limit else {
         return messages;
     };

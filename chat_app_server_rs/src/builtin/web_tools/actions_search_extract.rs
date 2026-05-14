@@ -1,17 +1,17 @@
 use serde_json::Value;
 
-use crate::builtin::research_payloads::{
-    build_empty_extract_payload, build_empty_search_payload, build_extract_payload_from_outcome,
-    build_search_payload_from_outcome,
-};
 use super::actions_shared::{
     build_extract_results_brief, build_extract_summary, build_search_results_brief,
     build_search_summary, normalize_extract_urls, normalize_inline_text,
 };
+use super::BoundContext;
+use crate::builtin::research_payloads::{
+    build_empty_extract_payload, build_empty_search_payload, build_extract_payload_from_outcome,
+    build_search_payload_from_outcome,
+};
 use crate::builtin::web_tools::provider::{
     extract_with_fallback, search_with_fallback, BrowserRenderOptions,
 };
-use super::BoundContext;
 
 pub(super) async fn web_search_with_context(
     ctx: BoundContext,

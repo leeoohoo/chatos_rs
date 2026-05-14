@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use crate::core::tool_call::build_function_call_output_item;
 use crate::core::mcp_tools::ToolResult;
+use crate::core::tool_call::build_function_call_output_item;
 
 use super::compat::cap_tool_output_for_input;
 

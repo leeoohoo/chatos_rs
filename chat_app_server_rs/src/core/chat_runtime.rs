@@ -11,9 +11,8 @@ pub use self::chat_runtime_contact::{
     contact_skill_ref, parse_contact_command_invocation,
     parse_implicit_command_selections_from_tools_end, ContactSelectedPluginPrompt,
     ContactSelectedSkillPrompt, ContactSkillPromptMode, ParsedContactCommandInvocation,
-    ParsedImplicitCommandSelection,
-    CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
-    CONTACT_SKILL_READER_TOOL_NAME,
+    ParsedImplicitCommandSelection, CONTACT_COMMAND_READER_TOOL_NAME,
+    CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
 };
 #[allow(unused_imports)]
 pub use self::chat_runtime_metadata::{
@@ -24,7 +23,6 @@ pub use self::chat_runtime_project::resolve_project_runtime;
 
 #[cfg(test)]
 mod tests {
-    use crate::core::internal_context_locale::InternalContextLocale;
     use super::ContactSkillPromptMode;
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
@@ -32,6 +30,7 @@ mod tests {
         ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
         CONTACT_SKILL_READER_TOOL_NAME,
     };
+    use crate::core::internal_context_locale::InternalContextLocale;
     use crate::models::chatos_agent_types::{
         ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,
         ChatosAgentRuntimePluginSummaryDto, ChatosAgentRuntimeSkillSummaryDto,
@@ -136,11 +135,9 @@ mod tests {
         assert_eq!(command.command_ref, "CMD1");
         assert_eq!(command.name, "team-debug");
         assert_eq!(command.arguments.as_deref(), Some("button not render"));
-        let prompt = compose_contact_command_system_prompt(
-            Some(&command),
-            InternalContextLocale::ZhCn,
-        )
-        .expect("prompt");
+        let prompt =
+            compose_contact_command_system_prompt(Some(&command), InternalContextLocale::ZhCn)
+                .expect("prompt");
         assert!(prompt.contains("command_ref=CMD1"));
         assert!(prompt.contains("用户附加参数=button not render"));
     }

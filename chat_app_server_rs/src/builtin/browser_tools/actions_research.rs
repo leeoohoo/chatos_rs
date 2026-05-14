@@ -2,8 +2,7 @@ use serde_json::{json, Value};
 
 use crate::builtin::research_payloads::build_empty_search_payload;
 use crate::builtin::research_summary::{
-    apply_research_execution_summary, build_empty_research_summary,
-    set_research_summary_warning,
+    apply_research_execution_summary, build_empty_research_summary, set_research_summary_warning,
 };
 use crate::builtin::web_tools::provider::{
     build_web_client, run_research_with_fallback, BrowserRenderOptions,
@@ -16,14 +15,11 @@ use super::actions_research_payloads::{
 use super::actions_research_text::{
     build_browser_research_findings, build_browser_research_summary,
 };
-use super::actions_shared::{
-    summarize_browser_failure,
-};
+use super::actions_shared::summarize_browser_failure;
 use super::{
     browser_inspect_with_context, BoundContext, DEFAULT_BROWSER_RESEARCH_LIMIT,
-    DEFAULT_BROWSER_RESEARCH_MAX_EXTRACT_CHARS,
-    DEFAULT_BROWSER_RESEARCH_REQUEST_TIMEOUT_SECONDS, MAX_BROWSER_RESEARCH_EXTRACT_URLS,
-    MAX_BROWSER_RESEARCH_LIMIT,
+    DEFAULT_BROWSER_RESEARCH_MAX_EXTRACT_CHARS, DEFAULT_BROWSER_RESEARCH_REQUEST_TIMEOUT_SECONDS,
+    MAX_BROWSER_RESEARCH_EXTRACT_URLS, MAX_BROWSER_RESEARCH_LIMIT,
 };
 
 pub(super) async fn browser_research_with_context(
@@ -82,9 +78,7 @@ pub(super) async fn browser_research_with_context(
         response["web_query"] = Value::String(query.clone());
 
         match build_web_client(
-            std::time::Duration::from_secs(
-                DEFAULT_BROWSER_RESEARCH_REQUEST_TIMEOUT_SECONDS,
-            ),
+            std::time::Duration::from_secs(DEFAULT_BROWSER_RESEARCH_REQUEST_TIMEOUT_SECONDS),
             "chatos-rs-browser-research/0.1",
         ) {
             Ok(client) => match run_research_with_fallback(
@@ -146,8 +140,8 @@ pub(super) async fn browser_research_with_context(
     set_research_summary_warning(
         &mut research_summary,
         response
-        .get("research_warning")
-        .and_then(|value| value.as_str()),
+            .get("research_warning")
+            .and_then(|value| value.as_str()),
     );
     response["research_summary"] = research_summary;
     response["research_findings"] = build_browser_research_findings(&response);

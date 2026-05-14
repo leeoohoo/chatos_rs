@@ -160,9 +160,7 @@ async fn scan_projects(full_scan: bool, dirty_paths: Vec<String>) -> Result<(), 
         if let Err(err) = scan_project(&project).await {
             warn!(
                 "workspace realtime watcher project scan failed: project_id={} root={} err={}",
-                project.id,
-                project.root_path,
-                err,
+                project.id, project.root_path, err,
             );
         }
     }
@@ -232,7 +230,10 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                         project.id.as_str(),
                         "project_root_available",
                         Some(project.root_path.as_str()),
-                        Some(snapshot_has_runner_script(project.root_path.as_str(), &current_files)),
+                        Some(snapshot_has_runner_script(
+                            project.root_path.as_str(),
+                            &current_files,
+                        )),
                         Some(false),
                     );
                 }
@@ -248,10 +249,8 @@ async fn scan_project(project: &Project) -> Result<(), String> {
             let changes = diff_workspace_files(&previous_files, &current_files);
             state.files = current_files;
             state.initialized = true;
-            let runner_script_exists = snapshot_has_runner_script(
-                project.root_path.as_str(),
-                &state.files,
-            );
+            let runner_script_exists =
+                snapshot_has_runner_script(project.root_path.as_str(), &state.files);
             drop(state_guard);
 
             if changes.is_empty() {
@@ -349,9 +348,10 @@ fn diff_workspace_files(
 }
 
 fn prune_expired_suppressions() {
-    WATCHER_STATE.suppressed_paths.lock().retain(|_, entry| {
-        entry.added_at.elapsed() < WORKSPACE_WATCHER_SUPPRESSION_TTL
-    });
+    WATCHER_STATE
+        .suppressed_paths
+        .lock()
+        .retain(|_, entry| entry.added_at.elapsed() < WORKSPACE_WATCHER_SUPPRESSION_TTL);
 }
 
 fn is_suppressed_path(path: &str, current: Option<&FileFingerprint>) -> bool {
@@ -371,7 +371,10 @@ fn is_suppressed_path(path: &str, current: Option<&FileFingerprint>) -> bool {
     };
 
     if matches {
-        debug!("workspace watcher suppressed duplicate path change: {}", path);
+        debug!(
+            "workspace watcher suppressed duplicate path change: {}",
+            path
+        );
         guard.remove(path);
         return true;
     }
@@ -566,7 +569,10 @@ fn normalize_path_string(path: &str) -> String {
 
 impl FileFingerprint {
     fn signature(&self) -> String {
-        format!("workspace-scan:{}:{}", self.modified_millis, self.size_bytes)
+        format!(
+            "workspace-scan:{}:{}",
+            self.modified_millis, self.size_bytes
+        )
     }
 }
 

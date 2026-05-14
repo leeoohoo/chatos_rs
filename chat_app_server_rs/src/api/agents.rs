@@ -130,7 +130,10 @@ pub fn router() -> Router {
         .route("/api/skills/plugins", get(list_skill_plugins))
         .route("/api/skills/:skill_id", get(get_skill))
         .route("/api/skills/plugins/detail", get(get_skill_plugin))
-        .route("/api/skills/import-git", axum::routing::post(import_skills_from_git))
+        .route(
+            "/api/skills/import-git",
+            axum::routing::post(import_skills_from_git),
+        )
         .route(
             "/api/skills/plugins/install",
             axum::routing::post(install_skill_plugins),
@@ -150,7 +153,10 @@ pub fn router() -> Router {
             "/api/memory-agents/:agent_id/sessions",
             get(list_agent_sessions),
         )
-        .route("/api/agent-builder/ai-create", axum::routing::post(ai_create))
+        .route(
+            "/api/agent-builder/ai-create",
+            axum::routing::post(ai_create),
+        )
 }
 
 async fn list_agents(
@@ -168,7 +174,8 @@ async fn list_agents(
         query.limit,
         query.offset.unwrap_or(0),
     )
-    .await {
+    .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!(items))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -327,7 +334,8 @@ async fn list_agent_sessions(
         query.limit,
         query.offset.unwrap_or(0),
     )
-    .await {
+    .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!(items))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -496,7 +504,8 @@ async fn list_skills(
         query.limit,
         query.offset.unwrap_or(0),
     )
-    .await {
+    .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!(items))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -514,7 +523,13 @@ async fn list_skill_plugins(
         Err(err) => return err,
     };
 
-    match chatos_skills::list_skill_plugins(user_id.as_str(), query.limit, query.offset.unwrap_or(0)).await {
+    match chatos_skills::list_skill_plugins(
+        user_id.as_str(),
+        query.limit,
+        query.offset.unwrap_or(0),
+    )
+    .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!(items))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -601,7 +616,12 @@ async fn import_skills_from_git(
 
     let auto_install = req.auto_install.unwrap_or(false);
     let install_result = if auto_install {
-        match chatos_skills::install_skill_plugins(user_id.as_str(), outcome.imported_sources.as_slice()).await {
+        match chatos_skills::install_skill_plugins(
+            user_id.as_str(),
+            outcome.imported_sources.as_slice(),
+        )
+        .await
+        {
             Ok(value) => Some(value),
             Err(err) => Some(json!({"ok": false, "error": err})),
         }

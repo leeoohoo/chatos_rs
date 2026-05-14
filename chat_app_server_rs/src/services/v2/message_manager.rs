@@ -134,10 +134,7 @@ impl MessageManager {
         &self,
         session_id: &str,
     ) -> (Option<String>, usize, Vec<Message>) {
-        let context = self
-            .core
-            .get_memory_chat_history_context(session_id)
-            .await;
+        let context = self.core.get_memory_chat_history_context(session_id).await;
         (
             context.merged_summary,
             context.summary_count,

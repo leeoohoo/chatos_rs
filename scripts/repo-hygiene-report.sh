@@ -48,9 +48,7 @@ done < <(
 ) | sort -hr
 
 print_header "Large Files Over 20MB"
-find "$ROOT_DIR" \
-  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
-  -o \( -type f -size +20M -print \) | sed "s#^$ROOT_DIR/##" | sort | head -n "$TOP_N"
+bash "$ROOT_DIR/scripts/check-large-files.sh" --threshold 20 | tail -n +2 | head -n "$TOP_N"
 
 print_header "Tracked Runtime Artifacts"
 git -C "$ROOT_DIR" ls-files | rg '(^|/)(__pycache__/|.*\.pyc$|.*\.pyo$|.*\.sqlite3$|.*\.sqlite3-shm$|.*\.sqlite3-wal$|.*\.db$|.*\.db-shm$|.*\.db-wal$|.*\.DS_Store$)' || true

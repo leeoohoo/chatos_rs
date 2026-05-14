@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::core::time::now_rfc3339;
 use crate::models::memory_skill::{MemorySkill, MemorySkillPluginCommand};
 
-use super::chatos_skills_helpers::{
-    hash_id, normalize_repo_relative_path, path_to_unix_relative,
-};
+use super::chatos_skills_helpers::{hash_id, normalize_repo_relative_path, path_to_unix_relative};
 
 #[derive(Default)]
 pub struct ExtractedPluginContent {
@@ -34,7 +32,10 @@ pub fn discover_plugin_roots(plugins_root: &Path) -> Result<Vec<PathBuf>, String
             if !file_type.is_dir() {
                 continue;
             }
-            let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default();
             if name.eq_ignore_ascii_case(".claude-plugin")
                 || name.eq_ignore_ascii_case("skills")
                 || name.eq_ignore_ascii_case("agents")

@@ -1,17 +1,16 @@
 use serde_json::json;
 
 use crate::models::memory_runtime_types::{
-    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotDto,
-    TurnRuntimeSnapshotLookupResponseDto,
+    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotDto, TurnRuntimeSnapshotLookupResponseDto,
 };
 use crate::models::session::Session;
 
 use super::client::build_client;
-use super::mapping::build_thread_mapping;
 use super::mappers::{
     build_chatos_turn_snapshot_payload_value, engine_lookup_to_turn_snapshot_lookup,
     engine_snapshot_to_turn_snapshot,
 };
+use super::mapping::build_thread_mapping;
 use super::CHATOS_TURN_RUNTIME_SNAPSHOT_TYPE;
 use memory_engine_sdk::SdkUpsertThreadSnapshotRequest;
 

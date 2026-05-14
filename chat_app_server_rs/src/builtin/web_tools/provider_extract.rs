@@ -12,10 +12,10 @@ use crate::builtin::browser_runtime::browser_backend_available;
 use super::provider_types::{BrowserRenderOptions, ExtractedPage, ResponseContentKind};
 
 use self::provider_extract_browser::extract_html_with_optional_browser_render;
+use self::provider_extract_content::error_page;
 use self::provider_extract_content::{
     detect_response_content_kind, extract_json_page, extract_pdf_page, extract_text_page,
 };
-use self::provider_extract_content::error_page;
 use self::provider_extract_support::fetch_extract_response;
 
 #[cfg(test)]
@@ -43,7 +43,13 @@ pub(crate) async fn native_extract(
         browser_options.is_some_and(|_| browser_backend_available().is_ok());
 
     for raw_source_url in urls {
-        let fetched = match fetch_extract_response(client, raw_source_url.as_str(), max_extract_chars).await {
+        let fetched = match fetch_extract_response(
+            client,
+            raw_source_url.as_str(),
+            max_extract_chars,
+        )
+        .await
+        {
             Ok(fetched) => fetched,
             Err(page) => {
                 pages.push(page);
@@ -96,11 +102,9 @@ pub(crate) async fn native_extract(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        content_quality_score, extract_main_content_text, html_to_text,
-    };
     use super::provider_extract_browser::should_try_browser_render;
     use super::provider_extract_html::extract_html_page;
+    use super::{content_quality_score, extract_main_content_text, html_to_text};
     use scraper::Html;
 
     #[test]

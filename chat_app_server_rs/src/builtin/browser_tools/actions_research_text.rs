@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use super::actions_shared::normalize_inline_text;
 use crate::builtin::browser_page_insights::{
     inspection_warning_line, latest_console_text_line, latest_js_error_line,
     page_label_from_response, page_state_warning_line,
@@ -12,7 +13,6 @@ use crate::builtin::research_findings::{
     top_extract_source_titles, top_search_hit_titles,
 };
 use crate::builtin::research_summary_view::research_summary_view;
-use super::actions_shared::normalize_inline_text;
 
 pub(super) fn build_browser_research_summary(response: &Value) -> String {
     let mut parts = Vec::new();

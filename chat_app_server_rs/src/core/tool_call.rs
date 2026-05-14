@@ -3,17 +3,11 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 
 pub fn extract_tool_call_id(tool_call: &Value) -> Option<&str> {
-    [
-        "id",
-        "call_id",
-        "tool_call_id",
-        "toolCallId",
-        "toolCallID",
-    ]
-    .iter()
-    .find_map(|key| tool_call.get(*key).and_then(Value::as_str))
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
+    ["id", "call_id", "tool_call_id", "toolCallId", "toolCallID"]
+        .iter()
+        .find_map(|key| tool_call.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 pub fn extract_tool_call_name(tool_call: &Value) -> Option<&str> {
@@ -87,9 +81,9 @@ pub fn merge_indexed_tool_call_parts(
     name_piece: Option<&str>,
     arguments_piece: Option<&str>,
 ) {
-    let entry = tool_calls_map.entry(index).or_insert_with(|| {
-        json!({"id":"","type":"function","function":{"name":"","arguments":""}})
-    });
+    let entry = tool_calls_map.entry(index).or_insert_with(
+        || json!({"id":"","type":"function","function":{"name":"","arguments":""}}),
+    );
 
     let preferred_call_id = call_id.map(str::trim).filter(|value| !value.is_empty());
     let fallback_item_id = id.map(str::trim).filter(|value| !value.is_empty());
@@ -386,7 +380,8 @@ mod tests {
 
     #[test]
     fn parses_tool_calls_from_string_or_metadata_fallback() {
-        let raw = json!("[{\"id\":\"call_1\",\"function\":{\"name\":\"demo\",\"arguments\":\"{}\"}}]");
+        let raw =
+            json!("[{\"id\":\"call_1\",\"function\":{\"name\":\"demo\",\"arguments\":\"{}\"}}]");
         let parsed = parse_tool_calls_value(&raw);
         assert_eq!(parsed.len(), 1);
         assert_eq!(extract_tool_call_id(&parsed[0]), Some("call_1"));
@@ -425,10 +420,7 @@ mod tests {
         let mut entry = build_function_tool_call("call_1", "search", "{\"q\":");
         merge_tool_call_name_piece(&mut entry, "_docs");
         merge_tool_call_arguments_piece(&mut entry, "\"rust\"}");
-        assert_eq!(
-            entry["function"]["name"].as_str(),
-            Some("search_docs")
-        );
+        assert_eq!(entry["function"]["name"].as_str(), Some("search_docs"));
         assert_eq!(
             entry["function"]["arguments"].as_str(),
             Some("{\"q\":\"rust\"}")
@@ -464,10 +456,7 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(ordered.len(), 1);
         assert_eq!(extract_tool_call_id(&ordered[0]), Some("call_1"));
-        assert_eq!(
-            ordered[0]["function"]["name"].as_str(),
-            Some("search_docs")
-        );
+        assert_eq!(ordered[0]["function"]["name"].as_str(), Some("search_docs"));
         assert_eq!(
             ordered[0]["function"]["arguments"].as_str(),
             Some("{\"q\":\"rust\"}")
@@ -480,27 +469,15 @@ mod tests {
         remember_tool_call_index(&mut index_map, 7, Some("item_7"), Some("call_7"));
 
         assert_eq!(
-            resolve_tool_call_index(
-                &json!({"item_id": "item_7"}),
-                None,
-                &index_map
-            ),
+            resolve_tool_call_index(&json!({"item_id": "item_7"}), None, &index_map),
             Some(7)
         );
         assert_eq!(
-            resolve_tool_call_index(
-                &json!({"call_id": "call_7"}),
-                None,
-                &index_map
-            ),
+            resolve_tool_call_index(&json!({"call_id": "call_7"}), None, &index_map),
             Some(7)
         );
         assert_eq!(
-            resolve_tool_call_index(
-                &json!({}),
-                Some(&json!({"call_id": "call_7"})),
-                &index_map
-            ),
+            resolve_tool_call_index(&json!({}), Some(&json!({"call_id": "call_7"})), &index_map),
             Some(7)
         );
     }

@@ -73,7 +73,9 @@ pub fn metadata_string_list(metadata: Option<&Value>, path: &[&str]) -> Vec<Stri
 }
 
 fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
-    paths.iter().find_map(|path| metadata_string(metadata, path))
+    paths
+        .iter()
+        .find_map(|path| metadata_string(metadata, path))
 }
 
 fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<bool> {

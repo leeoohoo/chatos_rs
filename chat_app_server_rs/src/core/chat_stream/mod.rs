@@ -12,8 +12,8 @@ use crate::services::v3::ai_client::AiClientCallbacks as V3AiClientCallbacks;
 
 pub use self::callbacks::{build_v2_callbacks, build_v3_callbacks};
 pub use self::events::{
-    enrich_chat_result_with_persisted_messages, handle_chat_result, send_error_event, send_start_event, send_tools_unavailable_event,
-    ChatEventSink, ChatRealtimeStreamContext,
+    enrich_chat_result_with_persisted_messages, handle_chat_result, send_error_event,
+    send_start_event, send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 
 pub struct StreamCallbacksV2 {

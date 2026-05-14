@@ -23,6 +23,28 @@ Run from repository root:
 ./restart_services.sh restart
 ```
 
+Unified root tasks:
+
+```bash
+make help
+make build
+make test
+make smoke
+```
+
+`make smoke` runs repo governance checks plus lightweight cross-subproject probes.
+It also validates root startup script syntax and the Git-relevant large-file policy.
+
+System build matrix:
+
+- [SYSTEM_BUILD_MATRIX.md](./SYSTEM_BUILD_MATRIX.md)
+
+Shared local configuration entrypoint:
+
+- repository root [`.env.example`](./.env.example)
+- `./restart_services.sh` loads root `.env` before applying defaults
+- if `chat_app_server_rs/.env` exists, backend-specific keys there still override the shared root defaults
+
 Useful commands:
 
 ```bash
@@ -31,8 +53,8 @@ Useful commands:
 ```
 
 Default logs:
-- `/tmp/chatos_rs_dev/backend.log`
-- `/tmp/chatos_rs_dev/frontend.log`
+- `/tmp/chatos_rs_dev_<repo-hash>/backend.log`
+- `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
 
 ## Language Docs
 - [中文](./README.zh-CN.md)
@@ -45,6 +67,8 @@ Default logs:
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
 - [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
 - [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
+- [db_connection_hub backend](./db_connection_hub/backend/README.md)
+- [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
 
 ## Note
 Development plan documents are kept under local `docs/plans/` and are intentionally not tracked in git.

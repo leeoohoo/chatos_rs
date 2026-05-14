@@ -60,7 +60,8 @@ pub(crate) fn build_search_summary_line(
         options.title_max_chars,
     );
     let url = normalize_inline_text(hit.url.as_str(), options.url_max_chars);
-    let description = normalize_inline_text(hit.description.as_str(), options.description_max_chars);
+    let description =
+        normalize_inline_text(hit.description.as_str(), options.description_max_chars);
     let mut line = format!(
         "{}{} [{}]",
         summary_index_prefix(options.label_prefix, index),
@@ -87,11 +88,7 @@ pub(crate) fn build_extract_summary_line(
         options.title_max_chars,
     );
     let url = normalize_inline_text(page.url.as_str(), options.url_max_chars);
-    let status = extract_status_label(
-        page,
-        options.status_style,
-        options.status_error_max_chars,
-    );
+    let status = extract_status_label(page, options.status_style, options.status_error_max_chars);
     let preview = extract_preview_text(
         page,
         options.ok_preview_max_chars,

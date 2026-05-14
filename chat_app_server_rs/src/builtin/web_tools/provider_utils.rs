@@ -12,11 +12,10 @@ pub(crate) use super::provider_url_policy::{
     normalize_public_web_url, resolve_public_web_url, DEFAULT_USER_AGENT,
 };
 
-static REQWEST_URL_SUFFIX_RE: Lazy<Regex> =
-    Lazy::new(|| {
-        compile_regex(r#"(?i)\s+for url \([^)]+\)"#, "reqwest url suffix regex")
-            .unwrap_or_else(|| Regex::new("$^").unwrap_or_else(|_| unreachable!()))
-    });
+static REQWEST_URL_SUFFIX_RE: Lazy<Regex> = Lazy::new(|| {
+    compile_regex(r#"(?i)\s+for url \([^)]+\)"#, "reqwest url suffix regex")
+        .unwrap_or_else(|| Regex::new("$^").unwrap_or_else(|_| unreachable!()))
+});
 
 pub(crate) fn compile_regex(pattern: &str, label: &str) -> Option<Regex> {
     match Regex::new(pattern) {

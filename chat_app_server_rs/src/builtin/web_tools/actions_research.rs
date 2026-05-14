@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
-use crate::builtin::research_payloads::{
-    build_empty_extract_payload, build_empty_search_payload, build_extract_payload_from_research,
-    build_search_payload_from_outcome,
+use super::actions_shared::{
+    build_extract_results_brief, build_search_results_brief, normalize_inline_text,
 };
+use super::BoundContext;
 use crate::builtin::research_findings::{
     push_unique_text, response_research_warning, response_source_highlights,
     top_extract_source_titles, top_search_hit_titles,
@@ -12,18 +12,17 @@ use crate::builtin::research_output::{
     build_extract_summary_line, build_search_summary_line, ExtractStatusStyle,
     ExtractSummaryLineOptions, SearchSummaryLineOptions,
 };
+use crate::builtin::research_payloads::{
+    build_empty_extract_payload, build_empty_search_payload, build_extract_payload_from_research,
+    build_search_payload_from_outcome,
+};
 use crate::builtin::research_summary::{
-    apply_research_execution_summary, build_empty_research_summary,
-    set_research_summary_warning,
+    apply_research_execution_summary, build_empty_research_summary, set_research_summary_warning,
 };
 use crate::builtin::research_summary_view::research_summary_view;
-use super::actions_shared::{
-    build_extract_results_brief, build_search_results_brief, normalize_inline_text,
-};
 use crate::builtin::web_tools::provider::{
     run_research_with_fallback, BrowserRenderOptions, ExtractedPage, SearchHit,
 };
-use super::BoundContext;
 
 pub(super) async fn web_research_with_context(
     ctx: BoundContext,
@@ -85,10 +84,7 @@ pub(super) async fn web_research_with_context(
         research.selected_urls.len(),
         &research.extract,
     );
-    set_research_summary_warning(
-        &mut research_summary,
-        research.extract.warning.as_deref(),
-    );
+    set_research_summary_warning(&mut research_summary, research.extract.warning.as_deref());
     let summary_text = build_research_summary(
         query.as_str(),
         research.search.hits.as_slice(),
@@ -221,7 +217,7 @@ pub(super) fn build_web_research_findings(response: &Value) -> Value {
             format!("Top search hits: {}.", search_titles.join(" | ")),
         );
     }
-        push_unique_text(
+    push_unique_text(
             &mut web_findings,
             format!(
                 "Extraction reviewed {} selected URL(s) and returned {} page(s); truncated pages: {}, omitted chars: {}.",

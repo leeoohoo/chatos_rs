@@ -122,14 +122,13 @@ impl AgentBuilderService {
                     let Some(scope_user_id) = user_id else {
                         return Err("user_id is required".to_string());
                     };
-                    let agents =
-                        chatos_agents::list_agents(
-                            scope_user_id.as_str(),
-                            Some(true),
-                            Some(300),
-                            0,
-                        )
-                            .await?;
+                    let agents = chatos_agents::list_agents(
+                        scope_user_id.as_str(),
+                        Some(true),
+                        Some(300),
+                        0,
+                    )
+                    .await?;
                     let mut skill_map: HashMap<String, Value> = HashMap::new();
                     for agent in agents {
                         for skill in agent.skills {
@@ -292,10 +291,8 @@ impl AgentBuilderService {
                     enabled: args.get("enabled").and_then(Value::as_bool),
                 };
 
-                let updated = block_on_result(chatos_agents::update_agent(
-                    agent_id.as_str(),
-                    &payload,
-                ))?;
+                let updated =
+                    block_on_result(chatos_agents::update_agent(agent_id.as_str(), &payload))?;
                 match updated {
                     Some(agent) => Ok(text_result(json!({
                         "updated": true,

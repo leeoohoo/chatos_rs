@@ -1,11 +1,11 @@
 use serde_json::Value;
 
+use crate::modules::conversation_runtime::guidance::{
+    build_runtime_guidance_applied_event, drain_runtime_guidance_items,
+    format_runtime_guidance_instruction, resolve_runtime_guidance_locale, RuntimeGuidanceItem,
+};
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::ai_common::is_non_terminal_response_status;
-use crate::services::runtime_guidance_manager::support::{
-    build_runtime_guidance_applied_event, drain_runtime_guidance_items,
-    format_runtime_guidance_instruction, resolve_runtime_guidance_locale,
-};
 
 use super::input_transform::{build_current_input_items, to_message_item};
 
@@ -48,7 +48,7 @@ pub(super) fn load_runtime_guidance_input_items(
 }
 
 fn build_runtime_guidance_input_item(
-    guidance_item: &crate::services::runtime_guidance_manager::RuntimeGuidanceItem,
+    guidance_item: &RuntimeGuidanceItem,
     locale: crate::core::internal_context_locale::InternalContextLocale,
     force_text_content: bool,
 ) -> Value {

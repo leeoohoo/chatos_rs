@@ -9,9 +9,7 @@ use crate::services::code_nav::languages::go::analysis::{
     resolve_go_declaration_kind, resolve_imported_symbol_files, score_go_definition_candidate,
     search_go_occurrences, GO_EXTENSIONS, GO_IGNORED_DIRS,
 };
-use crate::services::code_nav::languages::shared_nav::{
-    is_type_like, push_unique_location,
-};
+use crate::services::code_nav::languages::shared_nav::{is_type_like, push_unique_location};
 use crate::services::code_nav::symbol_index::{
     nav_location_from_indexed_symbol, project_symbol_index, score_indexed_definition_candidate,
     IndexedSymbol,
@@ -162,7 +160,9 @@ fn go_definition(
     for path in resolved_import_files {
         let analysis = analyze_go_file(&path)?;
         for symbol in analysis.symbols.iter().filter(|item| item.name == token) {
-            let score = if is_type_like(&token) && matches!(symbol.kind.as_str(), "struct" | "interface" | "type") {
+            let score = if is_type_like(&token)
+                && matches!(symbol.kind.as_str(), "struct" | "interface" | "type")
+            {
                 16.0
             } else {
                 12.0

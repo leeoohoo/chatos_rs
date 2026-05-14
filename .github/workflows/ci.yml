@@ -53,6 +53,14 @@ jobs:
       - name: OpenAPI contract advisory
         run: bash scripts/check_openapi_contract_advisory.sh
 
+      - name: Root startup scripts syntax
+        run: |
+          bash -n restart_services.sh
+          bash -n db_connection_hub/restart_services.sh
+
+      - name: Large file policy
+        run: bash scripts/check-large-files.sh --fail
+
       - name: OpenAPI contract gate
         run: bash scripts/check_openapi_contract_gate.sh
 
@@ -250,3 +258,53 @@ jobs:
 
       - name: CLI smoke check
         run: python server.py --help
+
+  db-connection-hub-backend:
+    name: db_connection_hub backend (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: db_connection_hub/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: db_connection_hub/backend -> target
+
+      - name: cargo build
+        run: cargo build
+
+      - name: cargo test
+        run: cargo test -q
+
+  db-connection-hub-frontend:
+    name: db_connection_hub frontend (TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: db_connection_hub/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: db_connection_hub/frontend/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: type-check
+        run: npm run type-check
+
+      - name: build
+        run: npm run build

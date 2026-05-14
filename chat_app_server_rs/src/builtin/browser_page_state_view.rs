@@ -14,7 +14,9 @@ pub(crate) struct BrowserConsoleStateView {
     pub(crate) has_message_count_by_type: bool,
 }
 
-pub(crate) fn browser_inspection_steps_view(response: &Value) -> Option<BrowserInspectionStepsView> {
+pub(crate) fn browser_inspection_steps_view(
+    response: &Value,
+) -> Option<BrowserInspectionStepsView> {
     let steps = response.get("inspection_steps")?.as_object()?;
     Some(BrowserInspectionStepsView {
         snapshot: steps

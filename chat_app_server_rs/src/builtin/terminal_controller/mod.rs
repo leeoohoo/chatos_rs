@@ -12,8 +12,8 @@ mod tests;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde_json::Value;
 use crate::core::tool_registry::ToolRegistry;
+use serde_json::Value;
 
 use self::context::canonicalize_path;
 #[cfg(test)]

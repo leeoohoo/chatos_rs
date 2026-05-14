@@ -1,17 +1,17 @@
 use serde_json::{json, Value};
 use tokio::time::{Duration, Instant};
 
-use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::models::terminal::TerminalService;
+use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::terminal_manager::{get_terminal_manager, TerminalEvent};
 
-use super::actions_query::{get_terminal_for_context, normalize_process_status};
-use super::{PROCESS_POLL_OFFSET_LIMIT_MAX, PROCESS_SNAPSHOT_TAIL_LINES, PROCESS_WRITE_MAX_CHARS};
 use super::super::capture::compact_recent_logs;
 use super::super::{
     BoundContext, PROCESS_WAIT_MAX_TIMEOUT_MS, RECENT_LOGS_PER_ENTRY_MAX_CHARS,
     RECENT_LOGS_TOTAL_MAX_CHARS_PER_TERMINAL,
 };
+use super::actions_query::{get_terminal_for_context, normalize_process_status};
+use super::{PROCESS_POLL_OFFSET_LIMIT_MAX, PROCESS_SNAPSHOT_TAIL_LINES, PROCESS_WRITE_MAX_CHARS};
 
 pub(in crate::builtin::terminal_controller) async fn poll_process_with_context(
     ctx: BoundContext,

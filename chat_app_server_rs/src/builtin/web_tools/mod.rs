@@ -61,10 +61,7 @@ impl WebToolsService {
             .workspace_dir
             .canonicalize()
             .unwrap_or_else(|_| opts.workspace_dir.clone());
-        let client = build_web_client(
-            Duration::from_secs(timeout),
-            "chatos-rs-web-tools/0.1",
-        )?;
+        let client = build_web_client(Duration::from_secs(timeout), "chatos-rs-web-tools/0.1")?;
 
         let mut service = Self {
             registry: ToolRegistry::new(),

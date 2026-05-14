@@ -3,16 +3,16 @@ use std::future::Future;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use tokio::task::JoinSet;
-use tracing::warn;
+use tokio::task::{Id, JoinSet};
+use tracing::{error, warn};
 
-use crate::core::tool_call::{
-    clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name,
-};
 use crate::core::mcp_tools::{
     execute_tools_stream as execute_tools_stream_common, inject_agent_builder_args,
     jsonrpc_http_call, jsonrpc_stdio_call, to_text_and_structured_result, BuiltinToolService,
     ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+};
+use crate::core::tool_call::{
+    clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name,
 };
 use crate::utils::abort_registry;
 
@@ -207,6 +207,7 @@ where
 
     let mut results: Vec<Option<ToolResult>> = vec![None; tool_calls.len()];
     let mut join_set: JoinSet<(usize, ToolResult)> = JoinSet::new();
+    let mut pending_contexts: HashMap<Id, PendingToolContext> = HashMap::new();
 
     for (index, tool_call) in tool_calls.iter().enumerate() {
         if is_aborted(session_id) {
@@ -279,7 +280,10 @@ where
         let session_id_owned = session_id.map(|value| value.to_string());
         let turn_id_owned = conversation_turn_id.map(|value| value.to_string());
         let caller_model_owned = caller_model.map(|value| value.to_string());
-        join_set.spawn(async move {
+        let pending_call_id = call_id.clone();
+        let pending_tool_name = tool_name.clone();
+        let pending_turn_id = stream_turn_id_for_result.clone();
+        let task = join_set.spawn(async move {
             let outcome = execute_one(
                 tool_name.clone(),
                 args,
@@ -315,12 +319,46 @@ where
 
             (index, result)
         });
+        pending_contexts.insert(
+            task.id(),
+            PendingToolContext {
+                index,
+                call_id: pending_call_id,
+                tool_name: pending_tool_name,
+                conversation_turn_id: pending_turn_id,
+            },
+        );
     }
 
-    while let Some(joined) = join_set.join_next().await {
+    while let Some(joined) = join_set.join_next_with_id().await {
         match joined {
-            Ok((index, result)) => results[index] = Some(result),
-            Err(err) => warn!("parallel tool join error: {}", err),
+            Ok((task_id, (index, result))) => {
+                pending_contexts.remove(&task_id);
+                results[index] = Some(result);
+            }
+            Err(err) => {
+                let task_id = err.id();
+                if let Some(context) = pending_contexts.remove(&task_id) {
+                    error!(
+                        tool_name = %context.tool_name,
+                        tool_call_id = %context.call_id,
+                        "parallel tool task panicked or was cancelled: {}",
+                        err
+                    );
+                    results[context.index] = Some(build_tool_result(
+                        context.call_id,
+                        context.tool_name,
+                        false,
+                        true,
+                        false,
+                        context.conversation_turn_id,
+                        build_join_error_message(&err),
+                        None,
+                    ));
+                } else {
+                    warn!("parallel tool join error without context: {}", err);
+                }
+            }
         }
 
         if is_aborted(session_id) {
@@ -381,4 +419,21 @@ fn build_tool_result(
 
 fn is_active(session_id: Option<&str>) -> bool {
     !is_aborted(session_id)
+}
+
+fn build_join_error_message(err: &tokio::task::JoinError) -> String {
+    if err.is_cancelled() {
+        "工具执行失败: parallel task cancelled before completion".to_string()
+    } else if err.is_panic() {
+        "工具执行失败: internal panic in parallel tool execution".to_string()
+    } else {
+        format!("工具执行失败: parallel tool task join error: {}", err)
+    }
+}
+
+struct PendingToolContext {
+    index: usize,
+    call_id: String,
+    tool_name: String,
+    conversation_turn_id: Option<String>,
 }

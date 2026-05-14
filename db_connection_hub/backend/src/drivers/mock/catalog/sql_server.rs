@@ -4,10 +4,16 @@ use crate::domain::{
     datasource::DatabaseInfo,
     metadata::{MetadataNodeType, ObjectColumn, ObjectDetailResponse, ObjectStatsResponse},
 };
+use crate::drivers::metadata_common;
 
 use super::{common::*, MockCatalog};
 
 pub fn build() -> MockCatalog {
+    let billing_db_id = metadata_common::make_node_id("db", &["billing"]);
+    let dbo_schema_id = metadata_common::make_node_id("schema", &["billing", "dbo"]);
+    let invoices_table_id =
+        metadata_common::make_node_id("table", &["billing", "dbo", "invoices"]);
+
     let databases = vec![DatabaseInfo {
         name: "billing".to_string(),
         owner: Some("sa".to_string()),
@@ -38,10 +44,10 @@ pub fn build() -> MockCatalog {
     let mut children = HashMap::new();
     children.insert("root".to_string(), database_nodes(&databases));
     children.insert(
-        "db:billing".to_string(),
+        billing_db_id.clone(),
         vec![node(
-            "schema:billing:dbo",
-            "db:billing",
+            &dbo_schema_id,
+            &billing_db_id,
             MetadataNodeType::Schema,
             "dbo",
             "billing.dbo",
@@ -49,10 +55,10 @@ pub fn build() -> MockCatalog {
         )],
     );
     children.insert(
-        "schema:billing:dbo".to_string(),
+        dbo_schema_id.clone(),
         vec![node(
-            "table:billing:dbo:invoices",
-            "schema:billing:dbo",
+            &invoices_table_id,
+            &dbo_schema_id,
             MetadataNodeType::Table,
             "invoices",
             "billing.dbo.invoices",
@@ -62,9 +68,9 @@ pub fn build() -> MockCatalog {
 
     let mut details = HashMap::new();
     details.insert(
-        "table:billing:dbo:invoices".to_string(),
+        invoices_table_id.clone(),
         ObjectDetailResponse {
-            node_id: "table:billing:dbo:invoices".to_string(),
+            node_id: invoices_table_id,
             node_type: MetadataNodeType::Table,
             name: "invoices".to_string(),
             columns: vec![

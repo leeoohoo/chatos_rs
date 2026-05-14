@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::contracts::{
-    GitChangeCounts, GitCompareCommit, GitDiffFile, GitStatusFile, GitSummary,
-};
+use super::contracts::{GitChangeCounts, GitCompareCommit, GitDiffFile, GitStatusFile, GitSummary};
 
 pub(super) fn summary_from_status(repo_root: PathBuf, status: &str) -> GitSummary {
     let mut head = None;

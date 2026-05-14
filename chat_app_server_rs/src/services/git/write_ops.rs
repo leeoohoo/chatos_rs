@@ -1,14 +1,11 @@
 use super::contracts::*;
-use super::process::{
-    git_output, git_output_with_status, DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT,
-};
+use super::process::{git_output, git_output_with_status, DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT};
 use super::shared::{
     action_result, action_result_with_status, read_repo_summary, require_current_branch,
     stage_paths, unstage_paths,
 };
 use super::validation::{
-    ensure_safe_ref, merge_args, require_repo_root, validate_branch_name,
-    validate_relative_paths,
+    ensure_safe_ref, merge_args, require_repo_root, validate_branch_name, validate_relative_paths,
 };
 
 pub async fn fetch(request: GitFetchRequest) -> Result<GitActionResult, String> {

@@ -1,12 +1,12 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::models::terminal::Terminal;
-use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 #[derive(Debug, Clone, Serialize)]

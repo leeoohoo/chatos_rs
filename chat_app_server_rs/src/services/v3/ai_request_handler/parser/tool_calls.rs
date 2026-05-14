@@ -10,7 +10,9 @@ use crate::core::tool_call::{
 
 use super::StreamState;
 
-pub(in crate::services::v3::ai_request_handler) fn extract_tool_calls(response: &Value) -> Option<Value> {
+pub(in crate::services::v3::ai_request_handler) fn extract_tool_calls(
+    response: &Value,
+) -> Option<Value> {
     let mut tool_calls: Vec<Value> = Vec::new();
 
     if let Some(items) = response.get("output").and_then(|value| value.as_array()) {
@@ -50,7 +52,9 @@ pub(in crate::services::v3::ai_request_handler) fn extract_tool_calls(response: 
     }
 }
 
-pub(in crate::services::v3::ai_request_handler) fn collect_stream_tool_calls(tool_calls_map: &BTreeMap<usize, Value>) -> Option<Value> {
+pub(in crate::services::v3::ai_request_handler) fn collect_stream_tool_calls(
+    tool_calls_map: &BTreeMap<usize, Value>,
+) -> Option<Value> {
     collect_ordered_tool_calls(tool_calls_map)
 }
 
@@ -93,9 +97,7 @@ pub(super) fn ingest_tool_call_item(
         item_id,
         call_id,
         item.get("name").and_then(|value| value.as_str()),
-        item_arguments_piece
-            .as_deref()
-            .or(extra_arguments_piece),
+        item_arguments_piece.as_deref().or(extra_arguments_piece),
     );
     if item_arguments_piece.is_some() && extra_arguments_piece.is_some() {
         merge_indexed_tool_call_parts(

@@ -31,12 +31,7 @@ impl ChatEventSink {
         Self { sse, realtime }
     }
 
-    pub fn send_json_event(
-        &self,
-        event_name: &'static str,
-        stream_type: &str,
-        payload: Value,
-    ) {
+    pub fn send_json_event(&self, event_name: &'static str, stream_type: &str, payload: Value) {
         if let Some(sender) = &self.sse {
             sender.send_json(&payload);
         }
@@ -170,12 +165,10 @@ pub async fn enrich_chat_result_with_persisted_messages(
     user_message_id: Option<&str>,
     result: Value,
 ) -> Value {
-    let Some((user_message, assistant_message)) = resolve_persisted_turn_messages(
-        conversation_id,
-        conversation_turn_id,
-        user_message_id,
-    )
-    .await else {
+    let Some((user_message, assistant_message)) =
+        resolve_persisted_turn_messages(conversation_id, conversation_turn_id, user_message_id)
+            .await
+    else {
         return result;
     };
 
@@ -265,11 +258,7 @@ pub fn send_error_event(sink: &ChatEventSink, error: &str, result: Option<&Value
     if let Some(result) = result {
         payload.insert("result".to_string(), result.clone());
     }
-    sink.send_json_event(
-        "chat.turn.failed",
-        Events::ERROR,
-        Value::Object(payload),
-    );
+    sink.send_json_event("chat.turn.failed", Events::ERROR, Value::Object(payload));
 }
 
 pub async fn handle_chat_result(

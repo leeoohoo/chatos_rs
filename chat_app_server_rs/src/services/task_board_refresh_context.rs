@@ -1,25 +1,15 @@
 use serde_json::Value;
 
-use crate::core::internal_context_locale::InternalContextLocale;
-use crate::services::task_board_prompt::{
-    build_runtime_prefixed_input_items, build_runtime_prefixed_messages,
+use crate::modules::conversation_runtime::task_board::{
+    build_runtime_context, load_prefixed_input_items, load_prefixed_messages,
+    TaskBoardRuntimeContext,
 };
 
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug)]
-pub(crate) struct TaskBoardRefreshContext {
-    pub(crate) session_id: String,
-    pub(crate) turn_id: Option<String>,
-    pub(crate) locale: InternalContextLocale,
-    pub(crate) contact_system_prompt: Option<String>,
-    pub(crate) builtin_mcp_system_prompt: Option<String>,
-    pub(crate) command_system_prompt: Option<String>,
-}
-
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TaskBoardRefreshContextStore {
-    inner: Arc<Mutex<Option<TaskBoardRefreshContext>>>,
+    inner: Arc<Mutex<Option<TaskBoardRuntimeContext>>>,
 }
 
 impl TaskBoardRefreshContextStore {
@@ -31,63 +21,42 @@ impl TaskBoardRefreshContextStore {
         &self,
         session_id: Option<String>,
         turn_id: Option<String>,
-        locale: InternalContextLocale,
+        locale: crate::core::internal_context_locale::InternalContextLocale,
         contact_system_prompt: Option<String>,
         builtin_mcp_system_prompt: Option<String>,
         command_system_prompt: Option<String>,
     ) {
         if let Ok(mut slot) = self.inner.lock() {
-            *slot = session_id
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .map(|value| TaskBoardRefreshContext {
-                    session_id: value,
-                    turn_id: turn_id
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty()),
-                    locale,
-                    contact_system_prompt,
-                    builtin_mcp_system_prompt,
-                    command_system_prompt,
-                });
+            *slot = build_runtime_context(
+                session_id,
+                turn_id,
+                locale,
+                contact_system_prompt,
+                builtin_mcp_system_prompt,
+                command_system_prompt,
+            );
         }
     }
 
-    pub(crate) fn snapshot(&self) -> Option<TaskBoardRefreshContext> {
+    pub(crate) fn snapshot(&self) -> Option<TaskBoardRuntimeContext> {
         self.inner.lock().ok().and_then(|slot| slot.clone())
     }
 
     pub(crate) async fn load_prefixed_messages(&self) -> Option<Vec<Value>> {
         let context = self.snapshot()?;
-        build_runtime_prefixed_messages(
-            &context.session_id,
-            context.turn_id.as_deref(),
-            context.locale,
-            context.contact_system_prompt.as_deref(),
-            context.builtin_mcp_system_prompt.as_deref(),
-            context.command_system_prompt.as_deref(),
-        )
-        .await
+        load_prefixed_messages(&context).await
     }
 
     pub(crate) async fn load_prefixed_input_items(&self) -> Option<Vec<Value>> {
         let context = self.snapshot()?;
-        build_runtime_prefixed_input_items(
-            &context.session_id,
-            context.turn_id.as_deref(),
-            context.locale,
-            context.contact_system_prompt.as_deref(),
-            context.builtin_mcp_system_prompt.as_deref(),
-            context.command_system_prompt.as_deref(),
-        )
-        .await
+        load_prefixed_input_items(&context).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::core::internal_context_locale::InternalContextLocale;
     use super::TaskBoardRefreshContextStore;
+    use crate::core::internal_context_locale::InternalContextLocale;
 
     #[test]
     fn ignores_empty_session_ids() {

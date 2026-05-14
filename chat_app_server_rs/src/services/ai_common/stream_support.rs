@@ -6,9 +6,9 @@ use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::core::mcp_tools::{ToolResult, ToolResultCallback};
 use crate::core::messages::text_has_content;
 use crate::core::tool_call::{extract_tool_call_id, extract_tool_call_name};
-use crate::core::mcp_tools::{ToolResult, ToolResultCallback};
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
 
@@ -207,7 +207,9 @@ pub(crate) fn build_aborted_tool_results(
             continue;
         }
 
-        let name = extract_tool_call_name(tool_call).unwrap_or("tool").to_string();
+        let name = extract_tool_call_name(tool_call)
+            .unwrap_or("tool")
+            .to_string();
 
         present.insert(id.clone());
         results.push(ToolResult {
@@ -307,8 +309,10 @@ where
         return Err("aborted".to_string());
     }
 
-    let on_tools_stream_cb =
-        build_tool_stream_callback(callbacks.on_tools_stream.clone(), session_id.map(str::to_string));
+    let on_tools_stream_cb = build_tool_stream_callback(
+        callbacks.on_tools_stream.clone(),
+        session_id.map(str::to_string),
+    );
     let tool_results = execute(on_tools_stream_cb).await;
     let persisted_results = finalize_results(tool_results.as_slice());
 

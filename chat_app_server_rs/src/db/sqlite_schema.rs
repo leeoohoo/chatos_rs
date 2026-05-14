@@ -326,7 +326,9 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             .map_err(|e| format!("create table failed: {e}"))?;
     }
 
-    ensure_legacy_ai_model_config_columns_sqlite(pool).await.ok();
+    ensure_legacy_ai_model_config_columns_sqlite(pool)
+        .await
+        .ok();
     ensure_column(pool, "sessions", "status", "TEXT NOT NULL DEFAULT 'active'")
         .await
         .ok();

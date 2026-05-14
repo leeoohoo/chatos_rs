@@ -22,24 +22,16 @@ pub fn parse_table_node(node_id: &str) -> Option<(String, String, String)> {
 }
 
 pub fn parse_detail_node(node_id: &str) -> Option<(MetadataNodeType, String, String, String)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?;
-    let schema = parts.next()?;
-    let object_name = parts.next()?;
+    for prefix in ["table", "view"] {
+        if let Some([database, schema, object_name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
+        {
+            let node_type = metadata_common::node_type_from_prefix(prefix)?;
+            return Some((node_type, database, schema, object_name));
+        }
+    }
 
-    let node_type = match prefix {
-        "table" => MetadataNodeType::Table,
-        "view" => MetadataNodeType::View,
-        _ => return None,
-    };
-
-    Some((
-        node_type,
-        database.to_string(),
-        schema.to_string(),
-        object_name.to_string(),
-    ))
+    None
 }
 
 pub fn parse_index_node(node_id: &str) -> Option<(String, String, String, String)> {

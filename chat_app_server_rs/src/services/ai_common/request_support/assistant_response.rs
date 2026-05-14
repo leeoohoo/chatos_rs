@@ -80,11 +80,48 @@ pub(crate) fn completion_failed_error(
     Some(format!("ai response failed: {}", segments.join("; ")))
 }
 
+pub(crate) fn terminal_empty_response_error(
+    finish_reason: Option<&str>,
+    content: &str,
+    reasoning: Option<&str>,
+    tool_calls: Option<&Value>,
+    provider_error: Option<&Value>,
+) -> Option<String> {
+    if is_non_terminal_response_status(finish_reason) {
+        return None;
+    }
+
+    if text_has_content(content)
+        || optional_text_has_content(reasoning)
+        || tool_calls_value_has_items(tool_calls)
+    {
+        return None;
+    }
+
+    let reason = finish_reason
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let mut segments = vec![format!("finish_reason={}", reason)];
+
+    if let Some(error_preview) = provider_error
+        .and_then(build_provider_error_preview)
+        .filter(|value| !value.trim().is_empty())
+    {
+        segments.push(format!("provider_error={}", error_preview));
+    }
+
+    Some(format!(
+        "ai response invalid: terminal empty response; {}",
+        segments.join("; ")
+    ))
+}
+
 pub(crate) fn should_persist_assistant_message(
     content: &str,
     reasoning: Option<&str>,
     tool_calls: Option<&Value>,
-    response_status: Option<&str>,
+    _response_status: Option<&str>,
 ) -> bool {
     let has_content = text_has_content(content);
     let has_reasoning = optional_text_has_content(reasoning);
@@ -92,7 +129,7 @@ pub(crate) fn should_persist_assistant_message(
     if has_content || has_reasoning || has_tool_calls {
         return true;
     }
-    !is_non_terminal_response_status(response_status)
+    false
 }
 
 pub(crate) fn build_assistant_message_metadata(

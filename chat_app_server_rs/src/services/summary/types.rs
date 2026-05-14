@@ -122,10 +122,7 @@ pub struct PersistSummaryOutcome {
     pub summary_id: Option<String>,
 }
 
-pub fn build_summarizer_system_prompt(
-    target_tokens: i64,
-    locale: InternalContextLocale,
-) -> String {
+pub fn build_summarizer_system_prompt(target_tokens: i64, locale: InternalContextLocale) -> String {
     if locale.is_english() {
         format!(
             "You are a conversation compression specialist. Compress the earlier conversation, including tool-call results, into a clear and traceable context summary.\n- Write the output in English\n- Preserve critical facts, parameters, paths, table or field names, IDs, and other key details exactly\n- Remove redundancy while preserving conclusions and unresolved issues\n- Keep the final length around {} tokens\n- Output natural prose; concise bullet-style points are fine",
@@ -147,10 +144,7 @@ pub fn build_summary_user_prompt(locale: InternalContextLocale) -> &'static str 
     }
 }
 
-pub fn wrap_summary_as_system_prompt(
-    summary: &str,
-    locale: InternalContextLocale,
-) -> String {
+pub fn wrap_summary_as_system_prompt(summary: &str, locale: InternalContextLocale) -> String {
     if locale.is_english() {
         format!(
             "Below is a summary of the earlier conversation and tool-call results (treat it as compressed memory):\n\n{}",

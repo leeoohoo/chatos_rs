@@ -4,9 +4,8 @@ use tracing::{error, info};
 
 use crate::core::messages::owned_non_empty_text;
 use crate::services::ai_common::{
-    consume_sse_stream, emit_stream_callbacks, read_error_response_text,
-    parsed_stream_response_is_empty, send_bearer_json_request,
-    EMPTY_STREAM_RESPONSE_PARSE_ERROR,
+    consume_sse_stream, emit_stream_callbacks, parsed_stream_response_is_empty,
+    read_error_response_text, send_bearer_json_request, EMPTY_STREAM_RESPONSE_PARSE_ERROR,
 };
 
 use super::parser::{

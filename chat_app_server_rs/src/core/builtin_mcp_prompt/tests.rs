@@ -59,11 +59,14 @@ fn returns_none_when_no_supported_builtin_sections_are_selected() {
 
 #[test]
 fn inspect_builtin_prompt_marks_unsupported_servers_as_omitted() {
-    let info = inspect_builtin_mcp_system_prompt(&[McpBuiltinServer {
-        name: "agent_builder".to_string(),
-        kind: BuiltinMcpKind::AgentBuilder,
-        ..build_builtin_server(BuiltinMcpKind::AgentBuilder)
-    }], InternalContextLocale::ZhCn);
+    let info = inspect_builtin_mcp_system_prompt(
+        &[McpBuiltinServer {
+            name: "agent_builder".to_string(),
+            kind: BuiltinMcpKind::AgentBuilder,
+            ..build_builtin_server(BuiltinMcpKind::AgentBuilder)
+        }],
+        InternalContextLocale::ZhCn,
+    );
 
     assert!(info.prompt.is_none());
     assert_eq!(info.requested_builtin_server_names, vec!["agent_builder"]);
@@ -73,10 +76,13 @@ fn inspect_builtin_prompt_marks_unsupported_servers_as_omitted() {
 
 #[test]
 fn includes_global_and_selected_sections_only() {
-    let prompt = compose_builtin_mcp_system_prompt(&[
-        build_builtin_server(BuiltinMcpKind::TaskManager),
-        build_builtin_server(BuiltinMcpKind::UiPrompter),
-    ], InternalContextLocale::ZhCn)
+    let prompt = compose_builtin_mcp_system_prompt(
+        &[
+            build_builtin_server(BuiltinMcpKind::TaskManager),
+            build_builtin_server(BuiltinMcpKind::UiPrompter),
+        ],
+        InternalContextLocale::ZhCn,
+    )
     .expect("prompt");
 
     assert!(prompt.contains("你是 Chatos 中一个“内置 MCP 优先”的助手。"));
@@ -87,11 +93,14 @@ fn includes_global_and_selected_sections_only() {
 
 #[test]
 fn keeps_browser_and_web_sections_together_in_stable_order() {
-    let prompt = compose_builtin_mcp_system_prompt(&[
-        build_builtin_server(BuiltinMcpKind::WebTools),
-        build_builtin_server(BuiltinMcpKind::BrowserTools),
-        build_builtin_server(BuiltinMcpKind::BrowserTools),
-    ], InternalContextLocale::ZhCn)
+    let prompt = compose_builtin_mcp_system_prompt(
+        &[
+            build_builtin_server(BuiltinMcpKind::WebTools),
+            build_builtin_server(BuiltinMcpKind::BrowserTools),
+            build_builtin_server(BuiltinMcpKind::BrowserTools),
+        ],
+        InternalContextLocale::ZhCn,
+    )
     .expect("prompt");
 
     let browser_idx = prompt
@@ -106,10 +115,13 @@ fn keeps_browser_and_web_sections_together_in_stable_order() {
 
 #[test]
 fn includes_memory_reader_section_when_contact_reader_tools_are_present() {
-    let prompt = compose_builtin_mcp_system_prompt(&[
-        build_builtin_server(BuiltinMcpKind::MemorySkillReader),
-        build_builtin_server(BuiltinMcpKind::MemoryCommandReader),
-    ], InternalContextLocale::ZhCn)
+    let prompt = compose_builtin_mcp_system_prompt(
+        &[
+            build_builtin_server(BuiltinMcpKind::MemorySkillReader),
+            build_builtin_server(BuiltinMcpKind::MemoryCommandReader),
+        ],
+        InternalContextLocale::ZhCn,
+    )
     .expect("prompt");
 
     assert!(prompt.contains("`memory_skill_reader_get_skill_detail`"));
@@ -174,9 +186,8 @@ fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
     .expect("prompt");
 
     assert!(prompt.contains("`memory_skill_reader_get_skill_detail`"));
-    assert!(prompt.contains(
-        "这一 section 由系统根据当前实际成功注册与失败不可用的内置 MCP 工具动态补全。"
-    ));
+    assert!(prompt
+        .contains("这一 section 由系统根据当前实际成功注册与失败不可用的内置 MCP 工具动态补全。"));
     assert!(prompt.contains("`memory_plugin_reader_get_plugin_detail`"));
     assert!(prompt.contains("plugin source unavailable"));
 }
@@ -189,6 +200,8 @@ fn english_prompt_uses_english_global_section() {
     )
     .expect("prompt");
 
-    assert!(prompt.contains("You are a Chatos assistant that should prefer builtin MCP tools first."));
+    assert!(
+        prompt.contains("You are a Chatos assistant that should prefer builtin MCP tools first.")
+    );
     assert!(prompt.contains("`task_manager_add_task`"));
 }

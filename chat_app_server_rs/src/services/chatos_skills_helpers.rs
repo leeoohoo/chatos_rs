@@ -1,12 +1,10 @@
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{fs};
 
 use sha2::{Digest, Sha256};
 
 use crate::models::memory_skill::{MemorySkill, MemorySkillPlugin};
-use crate::services::text_normalization::{
-    normalize_optional_text_ref, normalize_string_vec,
-};
+use crate::services::text_normalization::{normalize_optional_text_ref, normalize_string_vec};
 
 pub use crate::services::text_normalization::resolve_visible_user_ids;
 
@@ -81,7 +79,10 @@ pub fn unique_strings(values: Vec<String>) -> Vec<String> {
 }
 
 pub fn merge_skills(target: &mut Vec<MemorySkill>, items: Vec<MemorySkill>) {
-    let mut seen_ids = target.iter().map(|item| item.id.clone()).collect::<std::collections::HashSet<_>>();
+    let mut seen_ids = target
+        .iter()
+        .map(|item| item.id.clone())
+        .collect::<std::collections::HashSet<_>>();
     for item in items {
         if seen_ids.insert(item.id.clone()) {
             target.push(item);

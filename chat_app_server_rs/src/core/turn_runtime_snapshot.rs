@@ -281,8 +281,8 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
-    use crate::core::internal_context_locale::InternalContextLocale;
     use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
+    use crate::core::internal_context_locale::InternalContextLocale;
 
     #[test]
     fn snapshot_payload_includes_builtin_mcp_system_prompt() {
@@ -401,9 +401,11 @@ mod tests {
         let builtin = runtime.builtin_mcp_prompt.expect("builtin prompt debug");
         assert_eq!(
             builtin.prompt_source_path.as_deref(),
-            Some(crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(
-                InternalContextLocale::ZhCn
-            ))
+            Some(
+                crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(
+                    InternalContextLocale::ZhCn
+                )
+            )
         );
         assert!(builtin.all_section_ids.iter().any(|item| item == "global"));
         assert_eq!(

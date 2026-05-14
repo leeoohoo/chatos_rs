@@ -1,19 +1,18 @@
 use serde_json::{json, Value};
 
-use crate::builtin::browser_page_insights::{
-    latest_console_text_line, latest_js_error_line, page_label_from_response,
-    page_state_warning_line,
-};
 use super::actions_console_support::{
     build_console_message_counts, build_console_messages_brief, build_js_errors_brief,
     result_type_name, summarize_json_value_inline,
 };
 use super::actions_shared::{
     browser_error_message, build_browser_action_summary, enrich_response_with_page_metadata,
-    fail_json, is_success, normalize_inline_text, parse_browser_eval_payload,
-    run_browser_command,
+    fail_json, is_success, normalize_inline_text, parse_browser_eval_payload, run_browser_command,
 };
 use super::BoundContext;
+use crate::builtin::browser_page_insights::{
+    latest_console_text_line, latest_js_error_line, page_label_from_response,
+    page_state_warning_line,
+};
 
 pub(super) async fn browser_console_with_context(
     ctx: BoundContext,

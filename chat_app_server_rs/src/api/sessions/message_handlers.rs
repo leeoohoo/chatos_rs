@@ -12,13 +12,12 @@ use crate::core::messages::{
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
-use crate::services::chatos_sessions;
+use crate::modules::conversation_runtime::messages as conversation_messages;
 
 use super::contracts::{CreateMessageRequest, PageQuery};
 use super::history::{
     build_turn_display_messages, build_turn_process_messages, compact_messages_for_display,
-    find_user_index_by_turn_id,
-    parse_bool_query_flag,
+    find_user_index_by_turn_id, parse_bool_query_flag,
 };
 use super::support::list_all_session_messages;
 
@@ -44,46 +43,31 @@ pub(super) async fn get_session_messages(
     let result = if compact {
         if compact_recent_strategy {
             let window = limit.unwrap_or(400).max(1).saturating_mul(8).min(5000);
-            match chatos_sessions::list_messages(
-                &conversation_id,
-                Some(window),
-                0,
-                false,
-            )
-            .await
+            match conversation_messages::list_messages(&conversation_id, Some(window), 0, false)
+                .await
             {
                 Ok(mut messages) => {
                     messages.reverse();
                     Ok(compact_messages_for_display(messages, limit, offset))
                 }
-                Err(_) => chatos_sessions::list_messages(
-                    &conversation_id,
-                    None,
-                    0,
-                    true,
-                )
-                .await
-                .map(|messages| compact_messages_for_display(messages, limit, offset)),
+                Err(_) => conversation_messages::list_messages(&conversation_id, None, 0, true)
+                    .await
+                    .map(|messages| compact_messages_for_display(messages, limit, offset)),
             }
         } else {
-            chatos_sessions::list_messages(&conversation_id, None, 0, true)
+            conversation_messages::list_messages(&conversation_id, None, 0, true)
                 .await
                 .map(|messages| compact_messages_for_display(messages, limit, offset))
         }
     } else if let Some(v) = limit {
-        chatos_sessions::list_messages(
-            &conversation_id,
-            Some(v),
-            offset,
-            false,
-        )
-        .await
-        .map(|mut messages| {
-            messages.reverse();
-            messages
-        })
+        conversation_messages::list_messages(&conversation_id, Some(v), offset, false)
+            .await
+            .map(|mut messages| {
+                messages.reverse();
+                messages
+            })
     } else {
-        chatos_sessions::list_messages(&conversation_id, None, 0, true).await
+        conversation_messages::list_messages(&conversation_id, None, 0, true).await
     };
 
     match result {
@@ -254,9 +238,7 @@ pub(super) async fn get_session_turn_runtime_context_latest(
         return map_session_access_error(err);
     }
 
-    match chatos_sessions::get_latest_turn_runtime_snapshot(&conversation_id)
-        .await
-    {
+    match conversation_messages::get_latest_turn_runtime_snapshot(&conversation_id).await {
         Ok(payload) => (
             StatusCode::OK,
             Json(rewrite_session_keys_to_conversation(
@@ -281,11 +263,7 @@ pub(super) async fn get_session_turn_runtime_context_by_turn(
         return map_session_access_error(err);
     }
 
-    match chatos_sessions::get_turn_runtime_snapshot_by_turn(
-        &conversation_id,
-        &turn_id,
-    )
-    .await
+    match conversation_messages::get_turn_runtime_snapshot_by_turn(&conversation_id, &turn_id).await
     {
         Ok(payload) => (
             StatusCode::OK,

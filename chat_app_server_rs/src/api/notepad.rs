@@ -8,10 +8,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
-use crate::services::realtime::publish_notepad_updated;
 use crate::services::notepad::{
     CreateNoteParams, ListNotesParams, NotepadService, SearchNotesParams, UpdateNoteParams,
 };
+use crate::services::realtime::publish_notepad_updated;
 
 #[derive(Debug, Deserialize)]
 struct DeleteFolderQuery {
@@ -233,8 +233,10 @@ async fn create_note(
             publish_notepad_updated(
                 auth.user_id.as_str(),
                 "note_created",
-                note.and_then(|item| item.get("id")).and_then(|item| item.as_str()),
-                note.and_then(|item| item.get("folder")).and_then(|item| item.as_str()),
+                note.and_then(|item| item.get("id"))
+                    .and_then(|item| item.as_str()),
+                note.and_then(|item| item.get("folder"))
+                    .and_then(|item| item.as_str()),
                 None,
                 None,
             );
@@ -281,7 +283,8 @@ async fn update_note(
                 note.and_then(|item| item.get("id"))
                     .and_then(|item| item.as_str())
                     .or(Some(target_note_id.as_str())),
-                note.and_then(|item| item.get("folder")).and_then(|item| item.as_str()),
+                note.and_then(|item| item.get("folder"))
+                    .and_then(|item| item.as_str()),
                 None,
                 None,
             );

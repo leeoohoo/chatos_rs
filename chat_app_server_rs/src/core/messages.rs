@@ -1,14 +1,14 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::core::tool_call::extract_message_tool_calls;
 use crate::models::message::Message;
-use crate::services::chatos_sessions;
 use crate::services::ai_common::{
     extract_response_id_from_metadata, extract_response_status_from_metadata,
     is_non_terminal_response_status,
 };
+use crate::services::chatos_sessions;
 use crate::services::session_title::maybe_rename_session_title;
-use crate::core::tool_call::extract_message_tool_calls;
 
 #[derive(Debug, Clone, Default)]
 pub struct NewMessageFields {
@@ -584,7 +584,10 @@ mod tests {
             "response_status": "completed",
         }));
 
-        assert_eq!(assistant_message_response_id_candidate(&message), Some("resp_ok"));
+        assert_eq!(
+            assistant_message_response_id_candidate(&message),
+            Some("resp_ok")
+        );
     }
 
     #[test]
@@ -620,9 +623,15 @@ mod tests {
             "response_status": "completed",
         }));
 
-        assert_eq!(assistant_message_response_id_candidate(&tool_call_message), None);
+        assert_eq!(
+            assistant_message_response_id_candidate(&tool_call_message),
+            None
+        );
         assert_eq!(assistant_message_response_id_candidate(&non_terminal), None);
-        assert_eq!(assistant_message_response_id_candidate(&empty_payload), None);
+        assert_eq!(
+            assistant_message_response_id_candidate(&empty_payload),
+            None
+        );
     }
 
     #[test]

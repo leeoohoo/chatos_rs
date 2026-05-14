@@ -5,7 +5,9 @@ use tokio::sync::broadcast;
 
 use crate::core::time::now_rfc3339;
 use crate::models::memory_mapping_types::MemoryContactDto;
-use crate::models::memory_runtime_types::{ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto};
+use crate::models::memory_runtime_types::{
+    ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
+};
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
@@ -14,19 +16,14 @@ use crate::models::terminal::Terminal;
 use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 use super::types::{
-    ChatStreamRealtimePayload,
-    ConversationSummariesUpdatedRealtimePayload,
-    ContactsUpdatedRealtimePayload,
-    NotepadUpdatedRealtimePayload,
-    ProjectChangeSummaryRealtimePayload, ProjectRunCatalogRealtimePayload,
-    ProjectMembersUpdatedRealtimePayload, ProjectRunStateRealtimePayload,
-    ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope,
-    RealtimeEventPayload,
-    RemoteConnectionsUpdatedRealtimePayload,
-    SessionsUpdatedRealtimePayload,
-    RemoteSftpTransferRealtimePayload, TaskBoardRealtimePayload, UiPromptRealtimePayload,
-    ReviewRepairRealtimePayload, TerminalListInvalidatedRealtimePayload,
-    TerminalStateRealtimePayload,
+    ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
+    ConversationSummariesUpdatedRealtimePayload, NotepadUpdatedRealtimePayload,
+    ProjectChangeSummaryRealtimePayload, ProjectMembersUpdatedRealtimePayload,
+    ProjectRunCatalogRealtimePayload, ProjectRunStateRealtimePayload,
+    ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
+    RemoteConnectionsUpdatedRealtimePayload, RemoteSftpTransferRealtimePayload,
+    ReviewRepairRealtimePayload, SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
+    TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload, UiPromptRealtimePayload,
 };
 
 const REALTIME_CHANNEL_CAPACITY: usize = 512;
@@ -48,7 +45,6 @@ impl RealtimeHub {
     fn subscribe(&self) -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
         self.tx.subscribe()
     }
-
 }
 
 static REALTIME_HUB: Lazy<RealtimeHub> = Lazy::new(RealtimeHub::new);
@@ -105,7 +101,10 @@ pub fn publish_review_repair_completed(
                 .contact_id
                 .clone()
                 .or_else(|| scope_req.contact_id.clone()),
-            agent_id: status.agent_id.clone().or_else(|| scope_req.agent_id.clone()),
+            agent_id: status
+                .agent_id
+                .clone()
+                .or_else(|| scope_req.agent_id.clone()),
             running: false,
             pending_message_count: Some(status.pending_message_count),
             running_job_count: Some(status.running_job_count),
@@ -444,11 +443,13 @@ pub fn publish_project_members_updated(
         user_id: user_id.to_string(),
         conversation_id: None,
         project_id: Some(project_id.to_string()),
-        payload: RealtimeEventPayload::ProjectMembersUpdated(ProjectMembersUpdatedRealtimePayload {
-            project_id: project_id.to_string(),
-            reason: reason.to_string(),
-            contact_id: contact_id.map(|value| value.to_string()),
-        }),
+        payload: RealtimeEventPayload::ProjectMembersUpdated(
+            ProjectMembersUpdatedRealtimePayload {
+                project_id: project_id.to_string(),
+                reason: reason.to_string(),
+                contact_id: contact_id.map(|value| value.to_string()),
+            },
+        ),
         ts: now_rfc3339(),
     });
 }

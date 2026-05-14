@@ -5,9 +5,7 @@ use super::super::prev_context::{
     is_context_length_exceeded_error, is_invalid_input_text_error, is_missing_tool_call_error,
     is_system_messages_not_allowed_error, is_unsupported_previous_response_id_error,
 };
-use super::super::{
-    normalize_input_to_text_value, AiClient,
-};
+use super::super::{normalize_input_to_text_value, AiClient};
 use super::support::{merge_pending_tool_items_into_stateless, replay_request_error_policy};
 use crate::services::ai_client_common::AiClientCallbacks;
 

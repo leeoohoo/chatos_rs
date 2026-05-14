@@ -1,9 +1,7 @@
-#[path = "actions_config.rs"]
-mod actions_config;
-#[path = "actions_research.rs"]
-mod actions_research;
 #[path = "actions_basic.rs"]
 mod actions_basic;
+#[path = "actions_config.rs"]
+mod actions_config;
 #[path = "actions_console.rs"]
 mod actions_console;
 #[path = "actions_console_support.rs"]
@@ -12,19 +10,21 @@ mod actions_console_support;
 mod actions_inspect;
 #[path = "actions_inspect_support.rs"]
 mod actions_inspect_support;
+#[path = "actions_research.rs"]
+mod actions_research;
 #[path = "actions_research_payloads.rs"]
 mod actions_research_payloads;
 #[path = "actions_research_text.rs"]
 mod actions_research_text;
 #[path = "actions_shared.rs"]
 mod actions_shared;
+#[cfg(test)]
+#[path = "actions_tests.rs"]
+mod actions_tests;
 #[path = "actions_vision.rs"]
 mod actions_vision;
 #[path = "actions_vision_support.rs"]
 mod actions_vision_support;
-#[cfg(test)]
-#[path = "actions_tests.rs"]
-mod actions_tests;
 
 use serde_json::Value;
 

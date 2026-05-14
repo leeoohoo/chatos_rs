@@ -2,9 +2,7 @@ use std::path::Path;
 
 use super::contracts::{GitActionResult, GitSummary};
 use super::parsing::{compact_output, summary_from_status};
-use super::process::{
-    git_output, GitCommandOutput, GitCommandStatusOutput, DEFAULT_GIT_TIMEOUT,
-};
+use super::process::{git_output, GitCommandOutput, GitCommandStatusOutput, DEFAULT_GIT_TIMEOUT};
 use super::validation::ensure_safe_ref;
 
 pub(super) async fn read_repo_summary(repo_root: &Path) -> Result<GitSummary, String> {
@@ -94,7 +92,10 @@ async fn path_command_output(
     prefix: &[&str],
     paths: &[String],
 ) -> Result<GitCommandOutput, String> {
-    let mut args = prefix.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+    let mut args = prefix
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
     args.push("--".to_string());
     args.extend(paths.iter().cloned());
     git_output(repo_root, args, DEFAULT_GIT_TIMEOUT).await

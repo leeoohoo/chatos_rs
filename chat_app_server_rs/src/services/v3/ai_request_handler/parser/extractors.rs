@@ -130,7 +130,9 @@ pub(super) fn extract_reasoning_event_text(event_type: &str, event: &Value) -> O
     None
 }
 
-pub(in crate::services::v3::ai_request_handler) fn extract_reasoning_from_response(response: &Value) -> String {
+pub(in crate::services::v3::ai_request_handler) fn extract_reasoning_from_response(
+    response: &Value,
+) -> String {
     if let Some(reasoning) = response
         .get("reasoning")
         .or_else(|| response.get("reasoning_summary"))
@@ -200,16 +202,16 @@ fn extract_reasoning_text(value: &Value) -> String {
     flatten_text_value(
         value,
         &[
-        "text",
-        "summary_text",
-        "delta",
-        "content",
-        "summary",
-        "reasoning",
-        "reasoning_text",
-        "value",
-        "part",
-        "item",
+            "text",
+            "summary_text",
+            "delta",
+            "content",
+            "summary",
+            "reasoning",
+            "reasoning_text",
+            "value",
+            "part",
+            "item",
         ],
     )
 }

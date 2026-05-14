@@ -32,7 +32,8 @@ impl McpToolExecute {
     }
 
     pub async fn init_builtin_only(&mut self) -> Result<(), String> {
-        self.shared.build_builtin_only(ToolSchemaFormat::ResponsesStrict)
+        self.shared
+            .build_builtin_only(ToolSchemaFormat::ResponsesStrict)
     }
 
     pub async fn build_tools(&mut self) -> Result<(), String> {

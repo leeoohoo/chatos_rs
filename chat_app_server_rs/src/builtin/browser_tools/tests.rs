@@ -16,7 +16,11 @@ fn list_tools_contains_browser_navigate_and_vision() {
     let names: Vec<String> = service
         .list_tools()
         .into_iter()
-        .filter_map(|item| item.get("name").and_then(|v| v.as_str()).map(str::to_string))
+        .filter_map(|item| {
+            item.get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
         .collect();
     let unavailable = service.unavailable_tools();
     if unavailable.is_empty() {

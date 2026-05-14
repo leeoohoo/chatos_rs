@@ -82,17 +82,11 @@ async fn list_contacts(
     }
 }
 
-async fn get_contact(
-    auth: AuthUser,
-    Path(contact_id): Path<String>,
-) -> (StatusCode, Json<Value>) {
+async fn get_contact(auth: AuthUser, Path(contact_id): Path<String>) -> (StatusCode, Json<Value>) {
     match chatos_memory_mappings::get_memory_contact(contact_id.as_str()).await {
         Ok(Some(contact)) => {
             if contact.user_id != auth.user_id {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(json!({"error": "forbidden"})),
-                );
+                return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
             }
             (StatusCode::OK, Json(json!(contact)))
         }

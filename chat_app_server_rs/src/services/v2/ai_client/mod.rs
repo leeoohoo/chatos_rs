@@ -3,23 +3,20 @@ use tracing::info;
 
 use crate::config::Config;
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::messages::{
-    build_assistant_message_with_parts,
-};
+use crate::core::messages::build_assistant_message_with_parts;
 use crate::core::tool_call::build_tool_role_message;
+use crate::models::session::Session;
+use crate::modules::conversation_runtime::guidance::{
+    build_runtime_guidance_applied_event, drain_runtime_guidance_items,
+    format_runtime_guidance_instruction, resolve_runtime_guidance_locale, RuntimeGuidanceItem,
+};
 pub use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::ai_common::{
     build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
     handle_transient_retry,
 };
 use crate::services::chatos_memory_engine;
-use crate::services::runtime_guidance_manager::support::{
-    build_runtime_guidance_applied_event, drain_runtime_guidance_items,
-    format_runtime_guidance_instruction, resolve_runtime_guidance_locale,
-};
-use crate::models::session::Session;
 use crate::services::task_board_refresh_context::TaskBoardRefreshContextStore;
-use crate::services::runtime_guidance_manager::RuntimeGuidanceItem;
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
@@ -34,9 +31,7 @@ mod token_compaction;
 use self::history_tools::{
     drop_duplicate_tail, ensure_tool_responses, sanitize_messages_for_request,
 };
-use self::runtime_support::{
-    cap_tool_content_for_input,
-};
+use self::runtime_support::cap_tool_content_for_input;
 use self::token_compaction::is_token_limit_error;
 
 pub struct AiClient {
@@ -344,8 +339,8 @@ impl AiClient {
                     async move {
                         if let Some(sid) = persist_session_id.as_ref() {
                             message_manager
-                            .save_tool_results(sid, results.as_slice())
-                            .await;
+                                .save_tool_results(sid, results.as_slice())
+                                .await;
                         }
                     }
                 },
@@ -392,14 +387,15 @@ impl AiClient {
         let Some(session_id) = session_id.map(str::trim).filter(|value| !value.is_empty()) else {
             return false;
         };
-        let Ok(Some(session)) = crate::services::chatos_sessions::get_session_by_id(session_id).await else {
+        let Ok(Some(session)) =
+            crate::services::chatos_sessions::get_session_by_id(session_id).await
+        else {
             return false;
         };
-        let Some(status) = chatos_memory_engine::try_start_chatos_active_summary(
-            &session,
-            "context_overflow",
-        )
-        .await else {
+        let Some(status) =
+            chatos_memory_engine::try_start_chatos_active_summary(&session, "context_overflow")
+                .await
+        else {
             info!(
                 "[AI_V2] active summary trigger unavailable: session_id={}",
                 session_id
@@ -432,21 +428,21 @@ impl AiClient {
             &status,
         );
 
-        let completed = match chatos_memory_engine::wait_for_existing_chatos_active_summary_completion(
-            &session,
-            status,
-        )
-        .await
-        {
-            Ok(status) => status,
-            Err(err) => {
-                info!(
-                    "[AI_V2] active summary wait failed: session_id={} error={}",
-                    session_id, err
-                );
-                return false;
-            }
-        };
+        let completed =
+            match chatos_memory_engine::wait_for_existing_chatos_active_summary_completion(
+                &session, status,
+            )
+            .await
+            {
+                Ok(status) => status,
+                Err(err) => {
+                    info!(
+                        "[AI_V2] active summary wait failed: session_id={} error={}",
+                        session_id, err
+                    );
+                    return false;
+                }
+            };
 
         if completed.failed || (!completed.generated && !completed.compacted) {
             info!(

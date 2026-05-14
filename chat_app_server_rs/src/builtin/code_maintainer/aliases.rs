@@ -120,9 +120,7 @@ fn call_read_file_alias(
             });
             service.call_registered_tool("read_file_raw", mapped_args, ctx)
         }
-        _ => Err(
-            "start_line and end_line must be provided together for read_file".to_string(),
-        ),
+        _ => Err("start_line and end_line must be provided together for read_file".to_string()),
     }
 }
 

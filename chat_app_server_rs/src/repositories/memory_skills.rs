@@ -95,9 +95,7 @@ pub async fn list_skills(
                     .filter(|value| !value.is_empty())
                     .is_some()
                 {
-                    sql.push_str(
-                        " AND (name LIKE ? OR description LIKE ? OR source_path LIKE ?)",
-                    );
+                    sql.push_str(" AND (name LIKE ? OR description LIKE ? OR source_path LIKE ?)");
                 }
                 sql.push_str(" ORDER BY updated_at DESC LIMIT ? OFFSET ?");
 
@@ -118,10 +116,7 @@ pub async fn list_skills(
                     .filter(|value| !value.is_empty())
                 {
                     let like = format!("%{}%", value);
-                    sql_query = sql_query
-                        .bind(like.clone())
-                        .bind(like.clone())
-                        .bind(like);
+                    sql_query = sql_query.bind(like.clone()).bind(like.clone()).bind(like);
                 }
                 let rows = sql_query
                     .bind(limit.max(1).min(500))
@@ -164,7 +159,8 @@ pub async fn get_skill_by_id(
             let user_ids = user_ids.to_vec();
             let skill_id = skill_id.to_string();
             Box::pin(async move {
-                let mut sql = "SELECT * FROM memory_skills WHERE id = ? AND user_id IN (".to_string();
+                let mut sql =
+                    "SELECT * FROM memory_skills WHERE id = ? AND user_id IN (".to_string();
                 sql.push_str(&vec!["?"; user_ids.len()].join(","));
                 sql.push(')');
                 sql.push_str(" ORDER BY updated_at DESC LIMIT 1");
@@ -172,7 +168,10 @@ pub async fn get_skill_by_id(
                 for user_id in &user_ids {
                     query = query.bind(user_id);
                 }
-                let row = query.fetch_optional(pool).await.map_err(|e| e.to_string())?;
+                let row = query
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(row.map(MemorySkillRow::to_model))
             })
         },
@@ -213,8 +212,7 @@ pub async fn list_skills_by_ids(
             let user_ids = user_ids.to_vec();
             let skill_ids = skill_ids.to_vec();
             Box::pin(async move {
-                let mut sql =
-                    "SELECT * FROM memory_skills WHERE user_id IN (".to_string();
+                let mut sql = "SELECT * FROM memory_skills WHERE user_id IN (".to_string();
                 sql.push_str(&vec!["?"; user_ids.len()].join(","));
                 sql.push_str(") AND id IN (");
                 sql.push_str(&vec!["?"; skill_ids.len()].join(","));
@@ -271,8 +269,7 @@ pub async fn list_plugins_by_user_ids(
         |pool| {
             let user_ids = user_ids.to_vec();
             Box::pin(async move {
-                let mut sql =
-                    "SELECT * FROM memory_skill_plugins WHERE user_id IN (".to_string();
+                let mut sql = "SELECT * FROM memory_skill_plugins WHERE user_id IN (".to_string();
                 sql.push_str(&vec!["?"; user_ids.len()].join(","));
                 sql.push_str(") ORDER BY updated_at DESC LIMIT ? OFFSET ?");
                 let mut query = sqlx::query_as::<_, MemorySkillPluginRow>(&sql);
@@ -328,8 +325,7 @@ pub async fn get_plugins_by_sources_for_user_ids(
             let user_ids = user_ids.to_vec();
             let sources = sources.to_vec();
             Box::pin(async move {
-                let mut sql =
-                    "SELECT * FROM memory_skill_plugins WHERE user_id IN (".to_string();
+                let mut sql = "SELECT * FROM memory_skill_plugins WHERE user_id IN (".to_string();
                 sql.push_str(&vec!["?"; user_ids.len()].join(","));
                 sql.push_str(") AND source IN (");
                 sql.push_str(&vec!["?"; sources.len()].join(","));
@@ -529,8 +525,7 @@ pub async fn update_plugin_install_state(
     installed_skill_count: i64,
     discoverable_skills: i64,
 ) -> Result<Option<MemorySkillPlugin>, String> {
-    let existing =
-        get_plugin_by_source_for_user_ids(&[user_id.to_string()], source).await?;
+    let existing = get_plugin_by_source_for_user_ids(&[user_id.to_string()], source).await?;
     let Some(mut plugin) = existing else {
         return Ok(None);
     };

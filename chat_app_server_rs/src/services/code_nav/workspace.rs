@@ -90,7 +90,8 @@ fn ensure_path_inside_root(root: &Path, target: &Path) -> Result<PathBuf, String
     } else {
         root.join(target)
     };
-    let canonical = std::fs::canonicalize(&candidate).map_err(|_| "file_path 不存在".to_string())?;
+    let canonical =
+        std::fs::canonicalize(&candidate).map_err(|_| "file_path 不存在".to_string())?;
     let normalized = normalize_path(canonical.as_path());
     if !path_is_within_root(&normalized, root) {
         return Err("file_path 超出项目根目录".to_string());
@@ -153,8 +154,14 @@ mod tests {
         )
         .expect("build project context");
 
-        assert_eq!(ctx.root, fs::canonicalize(&actual_root).expect("canonical root"));
-        assert_eq!(ctx.file_path, fs::canonicalize(&file_path).expect("canonical file"));
+        assert_eq!(
+            ctx.root,
+            fs::canonicalize(&actual_root).expect("canonical root")
+        );
+        assert_eq!(
+            ctx.file_path,
+            fs::canonicalize(&file_path).expect("canonical file")
+        );
         assert_eq!(ctx.relative_path, "main.rs");
 
         fs::remove_dir_all(&actual_root).expect("cleanup actual root");

@@ -4,8 +4,8 @@ use crate::core::tool_registry::async_text_tool_handler_with_optional_string;
 
 use super::actions::actions_query::get_recent_logs_with_context;
 use super::{
-    BoundContext, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT, RECENT_LOGS_MAX_TERMINAL_LIMIT,
-    TerminalControllerService,
+    BoundContext, TerminalControllerService, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT,
+    RECENT_LOGS_MAX_TERMINAL_LIMIT,
 };
 
 impl TerminalControllerService {
@@ -27,11 +27,11 @@ impl TerminalControllerService {
                     .and_then(|value| value.as_i64())
                     .unwrap_or(10)
                     .clamp(1, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT);
-                let terminal_limit = args
-                    .get("terminal_limit")
-                    .and_then(|value| value.as_u64())
-                    .unwrap_or(20)
-                    .clamp(1, RECENT_LOGS_MAX_TERMINAL_LIMIT) as usize;
+                let terminal_limit =
+                    args.get("terminal_limit")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(20)
+                        .clamp(1, RECENT_LOGS_MAX_TERMINAL_LIMIT) as usize;
                 let ctx = bound.clone();
                 Ok(async move {
                     get_recent_logs_with_context(ctx, per_terminal_limit, terminal_limit).await

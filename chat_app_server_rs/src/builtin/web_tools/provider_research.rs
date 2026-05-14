@@ -1,9 +1,9 @@
 use reqwest::Client;
 
+use super::provider_research_support::select_research_extract_urls;
 use super::provider_types::{
     BrowserRenderOptions, ExtractOutcome, ExtractedPage, ProviderAttempt, SearchOutcome,
 };
-use super::provider_research_support::select_research_extract_urls;
 use super::{extract_with_fallback, search_with_fallback};
 
 #[derive(Debug, Clone)]
@@ -134,8 +134,8 @@ pub(crate) fn compute_research_extract_stats(pages: &[ExtractedPage]) -> Researc
 
 #[cfg(test)]
 mod tests {
-    use super::compute_research_extract_stats;
     use super::super::provider_types::ExtractedPage;
+    use super::compute_research_extract_stats;
 
     #[test]
     fn compute_extract_stats_aggregates_counts_and_omitted_chars() {

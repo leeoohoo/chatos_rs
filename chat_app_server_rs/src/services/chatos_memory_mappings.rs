@@ -1,8 +1,6 @@
 use serde_json::Value;
 
-use crate::models::memory_mapping::{
-    ChatosContact, ChatosMemoryProject, ChatosProjectAgentLink,
-};
+use crate::models::memory_mapping::{ChatosContact, ChatosMemoryProject, ChatosProjectAgentLink};
 use crate::models::memory_mapping_types::{
     CreateMemoryContactRequestDto, CreateMemoryContactResponseDto, MemoryAgentRecallDto,
     MemoryContactDto, MemoryProjectAgentLinkDto, MemoryProjectContactDto, MemoryProjectDto,
@@ -21,8 +19,8 @@ pub async fn list_memory_contacts(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "user_id is required".to_string())?;
-    let items = mappings_repo::list_contacts(user_id, Some("active"), limit.unwrap_or(200), offset)
-        .await?;
+    let items =
+        mappings_repo::list_contacts(user_id, Some("active"), limit.unwrap_or(200), offset).await?;
     Ok(items.into_iter().map(contact_to_dto).collect())
 }
 
@@ -153,17 +151,18 @@ pub async fn sync_project_agent_link(
         .await?;
     }
 
-    let link = mappings_repo::upsert_project_agent_link(mappings_repo::UpsertProjectAgentLinkInput {
-        user_id,
-        project_id,
-        agent_id,
-        contact_id: payload.contact_id.clone(),
-        latest_session_id: payload.session_id.clone(),
-        last_message_at: payload.last_message_at.clone(),
-        status: payload.status.clone(),
-    })
-    .await?
-    .ok_or_else(|| "sync project-agent link failed".to_string())?;
+    let link =
+        mappings_repo::upsert_project_agent_link(mappings_repo::UpsertProjectAgentLinkInput {
+            user_id,
+            project_id,
+            agent_id,
+            contact_id: payload.contact_id.clone(),
+            latest_session_id: payload.session_id.clone(),
+            last_message_at: payload.last_message_at.clone(),
+            status: payload.status.clone(),
+        })
+        .await?
+        .ok_or_else(|| "sync project-agent link failed".to_string())?;
     Ok(project_agent_link_to_dto(link))
 }
 
@@ -206,9 +205,12 @@ pub async fn list_project_contacts(
         .iter()
         .filter_map(|item| item.contact_id.clone())
         .collect::<Vec<_>>();
-    let contacts =
-        mappings_repo::list_contacts_by_ids(user_id.as_str(), contact_ids.as_slice(), Some("active"))
-            .await?;
+    let contacts = mappings_repo::list_contacts_by_ids(
+        user_id.as_str(),
+        contact_ids.as_slice(),
+        Some("active"),
+    )
+    .await?;
     let contact_map = contacts
         .into_iter()
         .map(|item| (item.id.clone(), item))
@@ -274,7 +276,10 @@ pub async fn list_contact_project_memories_by_contact(
         0,
     )
     .await?;
-    let mut project_ids = links.into_iter().map(|item| item.project_id).collect::<Vec<_>>();
+    let mut project_ids = links
+        .into_iter()
+        .map(|item| item.project_id)
+        .collect::<Vec<_>>();
     project_ids.sort();
     project_ids.dedup();
     chatos_memory_engine::list_contact_project_memories_by_contact(
@@ -310,7 +315,8 @@ pub async fn list_contact_projects(
     project_ids.sort();
     project_ids.dedup();
     let projects =
-        mappings_repo::list_projects_by_ids(contact.user_id.as_str(), project_ids.as_slice()).await?;
+        mappings_repo::list_projects_by_ids(contact.user_id.as_str(), project_ids.as_slice())
+            .await?;
     let project_map = projects
         .into_iter()
         .map(|item| (item.project_id.clone(), item))

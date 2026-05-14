@@ -13,9 +13,7 @@ use crate::services::v2::message_manager::MessageManager;
 
 mod parser;
 
-use self::parser::{
-    apply_stream_event, collect_tool_calls, StreamState,
-};
+use self::parser::{apply_stream_event, collect_tool_calls, StreamState};
 
 const REQUEST_BODY_LIMIT_ENV: &str = "AI_V2_REQUEST_BODY_MAX_BYTES";
 

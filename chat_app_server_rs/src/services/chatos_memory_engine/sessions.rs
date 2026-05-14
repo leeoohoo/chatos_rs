@@ -11,12 +11,10 @@ use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 
 use super::client::build_client;
-use super::mapping::{
-    build_thread_mapping, pack_message_metadata, resolve_session_project_scope,
-};
 use super::mappers::{
     engine_record_to_message, engine_summary_to_session_summary, engine_thread_to_session,
 };
+use super::mapping::{build_thread_mapping, pack_message_metadata, resolve_session_project_scope};
 use super::register_subject_memory_scopes;
 use super::types::ComposedChatHistoryContext;
 use memory_engine_sdk::{SdkBatchSyncRecordsRequest, UpsertRecordInput};
@@ -62,7 +60,11 @@ pub async fn compose_chatos_context(
     Ok(ComposedChatHistoryContext {
         merged_summary,
         summary_count: resp.meta.summary_count,
-        messages: resp.recent_records.into_iter().map(engine_record_to_message).collect(),
+        messages: resp
+            .recent_records
+            .into_iter()
+            .map(engine_record_to_message)
+            .collect(),
     })
 }
 
@@ -101,13 +103,15 @@ pub async fn create_chatos_session(
     project_id: Option<String>,
     metadata: Option<Value>,
 ) -> Result<Session, String> {
-    let effective_project_id = resolve_session_project_scope(project_id.as_deref(), metadata.as_ref());
+    let effective_project_id =
+        resolve_session_project_scope(project_id.as_deref(), metadata.as_ref());
     if let Some(existing) = find_existing_active_chatos_session(
         user_id.as_str(),
         effective_project_id.as_str(),
         metadata.as_ref(),
     )
-    .await? {
+    .await?
+    {
         return Ok(existing);
     }
 
@@ -155,17 +159,17 @@ pub async fn update_chatos_session(
 }
 
 pub async fn archive_chatos_session(session_id: &str) -> Result<bool, String> {
-    Ok(update_chatos_session(
-        session_id,
-        None,
-        Some("archived".to_string()),
-        None,
+    Ok(
+        update_chatos_session(session_id, None, Some("archived".to_string()), None)
+            .await?
+            .is_some(),
     )
-    .await?
-    .is_some())
 }
 
-pub async fn get_chatos_session(session_id: &str, tenant_id: Option<&str>) -> Result<Option<Session>, String> {
+pub async fn get_chatos_session(
+    session_id: &str,
+    tenant_id: Option<&str>,
+) -> Result<Option<Session>, String> {
     let client = build_client()?;
     let item = client.get_thread(session_id, tenant_id).await?;
     Ok(item.map(engine_thread_to_session))
@@ -255,7 +259,11 @@ pub async fn list_chatos_messages(
                 summary_status: None,
                 limit,
                 offset: Some(offset),
-                order: Some(if asc { "asc".to_string() } else { "desc".to_string() }),
+                order: Some(if asc {
+                    "asc".to_string()
+                } else {
+                    "desc".to_string()
+                }),
             },
         )
         .await?;
@@ -270,7 +278,10 @@ pub async fn get_chatos_message_by_id(message_id: &str) -> Result<Option<Message
         .map(engine_record_to_message))
 }
 
-pub async fn upsert_chatos_message(session: &Session, message: &Message) -> Result<Message, String> {
+pub async fn upsert_chatos_message(
+    session: &Session,
+    message: &Message,
+) -> Result<Message, String> {
     sync_chatos_session(session).await?;
     let mapping = build_thread_mapping(session)?;
     let client = build_client()?;
@@ -335,7 +346,10 @@ pub async fn list_chatos_summaries(
             },
         )
         .await?;
-    Ok(items.into_iter().map(engine_summary_to_session_summary).collect())
+    Ok(items
+        .into_iter()
+        .map(engine_summary_to_session_summary)
+        .collect())
 }
 
 pub async fn delete_chatos_summary(
@@ -361,7 +375,11 @@ pub async fn delete_chatos_summary(
         return Ok(None);
     }
     client
-        .delete_thread_summary(mapping.thread_id.as_str(), summary_id, mapping.tenant_id.as_str())
+        .delete_thread_summary(
+            mapping.thread_id.as_str(),
+            summary_id,
+            mapping.tenant_id.as_str(),
+        )
         .await
         .map(Some)
 }

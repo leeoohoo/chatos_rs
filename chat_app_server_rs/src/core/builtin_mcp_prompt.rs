@@ -33,7 +33,9 @@ pub fn builtin_mcp_prompt_source_path(locale: InternalContextLocale) -> &'static
 }
 
 pub fn builtin_mcp_prompt_section_ids(locale: InternalContextLocale) -> Vec<String> {
-    sections::prompt_section_registry(locale).ordered_ids.clone()
+    sections::prompt_section_registry(locale)
+        .ordered_ids
+        .clone()
 }
 
 pub fn compose_builtin_mcp_system_prompt(

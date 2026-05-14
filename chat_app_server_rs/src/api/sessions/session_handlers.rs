@@ -10,17 +10,14 @@ use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
-use crate::models::memory_mapping_types::{
-    SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
+use crate::modules::conversation_runtime::sessions::{
+    archive_session, create_session as create_conversation_session,
+    list_sessions as list_conversation_sessions, update_session as update_conversation_session,
+    CreateConversationSessionInput,
 };
-use crate::repositories::projects as projects_repo;
-use crate::services::{chatos_memory_mappings, chatos_sessions};
-use crate::services::realtime::publish_sessions_updated;
+use crate::services::chatos_sessions;
 
 use super::contracts::{CreateSessionRequest, SessionQuery, UpdateSessionRequest};
-use super::support::{
-    contact_agent_id_from_metadata, contact_id_from_metadata, normalize_project_scope,
-};
 
 pub(super) async fn list_sessions(
     auth: AuthUser,
@@ -59,8 +56,8 @@ pub(super) async fn list_sessions(
         })
         .unwrap_or(false);
 
-    let result = chatos_sessions::list_sessions(
-        Some(user_id.as_str()),
+    let result = list_conversation_sessions(
+        user_id.as_str(),
         project_id.as_deref(),
         limit,
         offset,
@@ -104,90 +101,19 @@ pub(super) async fn create_session(
     };
 
     let _ = description;
-    match chatos_sessions::create_session(user_id.clone(), title, project_id, metadata).await {
-        Ok(saved) => {
-            let metadata = saved.metadata.as_ref();
-            let project_id = normalize_project_scope(saved.project_id.as_deref());
-            if project_id != "0" {
-                if let Ok(Some(project)) =
-                    projects_repo::get_project_by_id(project_id.as_str()).await
-                {
-                    let same_owner = project
-                        .user_id
-                        .as_deref()
-                        .map(|owner| owner == user_id.as_str())
-                        .unwrap_or(true);
-                    if same_owner {
-                        if let Err(err) = chatos_memory_mappings::sync_memory_project(
-                            &SyncMemoryProjectRequestDto {
-                                user_id: Some(user_id.clone()),
-                                project_id: Some(project.id.clone()),
-                                name: Some(project.name.clone()),
-                                root_path: Some(project.root_path.clone()),
-                                description: project.description.clone(),
-                                status: Some("active".to_string()),
-                                is_virtual: Some(false),
-                            },
-                        )
-                        .await
-                        {
-                            eprintln!(
-                                "[SESSIONS] sync memory project failed while creating session: project_id={} err={}",
-                                project.id, err
-                            );
-                        }
-                    }
-                }
-            } else if let Err(err) = chatos_memory_mappings::sync_memory_project(
-                &SyncMemoryProjectRequestDto {
-                    user_id: Some(user_id.clone()),
-                    project_id: Some("0".to_string()),
-                    name: Some("未指定项目".to_string()),
-                    root_path: None,
-                    description: None,
-                    status: Some("active".to_string()),
-                    is_virtual: Some(true),
-                },
-            )
-            .await
-            {
-                eprintln!(
-                    "[SESSIONS] sync virtual memory project failed while creating session: err={}",
-                    err
-                );
-            }
-            if let Some(agent_id) = contact_agent_id_from_metadata(metadata) {
-                if let Err(err) = chatos_memory_mappings::sync_project_agent_link(
-                    &SyncProjectAgentLinkRequestDto {
-                        user_id: Some(user_id.clone()),
-                        project_id: Some(project_id.clone()),
-                        agent_id: Some(agent_id),
-                        contact_id: contact_id_from_metadata(metadata),
-                        session_id: Some(saved.id.clone()),
-                        last_message_at: None,
-                        status: Some("active".to_string()),
-                    },
-                )
-                .await
-                {
-                    eprintln!(
-                        "[SESSIONS] sync project-agent link failed: session_id={} err={}",
-                        saved.id, err
-                    );
-                }
-            }
-            publish_sessions_updated(
-                auth.user_id.as_str(),
-                "session_created",
-                Some(saved.id.as_str()),
-                Some(project_id.as_str()),
-                Some(saved.clone()),
-            );
-            (
-                StatusCode::CREATED,
-                Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
-            )
-        }
+    match create_conversation_session(CreateConversationSessionInput {
+        actor_user_id: auth.user_id.clone(),
+        user_id,
+        title,
+        project_id,
+        metadata,
+    })
+    .await
+    {
+        Ok(saved) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),
@@ -218,23 +144,18 @@ pub(super) async fn update_session(
     }
 
     let _ = req.description;
-    match chatos_sessions::update_session(&id, req.title.clone(), None, req.metadata.clone())
-        .await
+    match update_conversation_session(
+        auth.user_id.as_str(),
+        &id,
+        req.title.clone(),
+        req.metadata.clone(),
+    )
+    .await
     {
-        Ok(Some(session)) => {
-            let project_id = normalize_project_scope(session.project_id.as_deref());
-            publish_sessions_updated(
-                auth.user_id.as_str(),
-                "session_updated",
-                Some(session.id.as_str()),
-                Some(project_id.as_str()),
-                Some(session.clone()),
-            );
-            (
-                StatusCode::OK,
-                Json(serde_json::to_value(session).unwrap_or(Value::Null)),
-            )
-        }
+        Ok(Some(session)) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(session).unwrap_or(Value::Null)),
+        ),
         Ok(None) => (StatusCode::OK, Json(Value::Null)),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -252,20 +173,13 @@ pub(super) async fn delete_session(
         Err(err) => return map_session_access_error(err),
     };
 
-    match chatos_sessions::delete_session(&id).await {
+    match archive_session(auth.user_id.as_str(), &id).await {
         Ok(true) => {
             let _archived_session = chatos_sessions::get_session_by_id(&id)
                 .await
                 .ok()
                 .flatten()
                 .unwrap_or(session);
-            publish_sessions_updated(
-                auth.user_id.as_str(),
-                "session_deleted",
-                Some(id.as_str()),
-                None,
-                None,
-            );
             (
                 StatusCode::OK,
                 Json(serde_json::json!({"success": true, "message": "对话线程已归档"})),

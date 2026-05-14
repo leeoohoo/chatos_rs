@@ -5,6 +5,7 @@ use crate::{
             MetadataNodeType, ObjectColumn, ObjectConstraint, ObjectDetailResponse, ObjectIndex,
         },
     },
+    drivers::metadata_common,
     error::{AppError, AppResult},
 };
 
@@ -562,59 +563,54 @@ enum SpecialNodeKind {
 fn parse_relation_node(
     node_id: &str,
 ) -> Option<(MetadataNodeType, String, String, String, &'static str)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?.to_string();
-    let schema = parts.next()?.to_string();
-    let object_name = parts.next()?.to_string();
-
-    match prefix {
-        "table" => Some((MetadataNodeType::Table, database, schema, object_name, "U")),
-        "view" => Some((MetadataNodeType::View, database, schema, object_name, "V")),
-        _ => None,
+    if let Some([database, schema, object_name]) =
+        metadata_common::parse_prefixed_parts(node_id, "table")
+    {
+        return Some((MetadataNodeType::Table, database, schema, object_name, "U"));
     }
+
+    if let Some([database, schema, object_name]) =
+        metadata_common::parse_prefixed_parts(node_id, "view")
+    {
+        return Some((MetadataNodeType::View, database, schema, object_name, "V"));
+    }
+
+    None
 }
 
 fn parse_special_node(
     node_id: &str,
 ) -> Option<(MetadataNodeType, String, String, String, SpecialNodeKind)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?.to_string();
-    let schema = parts.next()?.to_string();
-    let object_name = parts.next()?.to_string();
-
-    match prefix {
-        "procedure" => Some((
+    for (prefix, node_type, kind) in [
+        (
+            "procedure",
             MetadataNodeType::Procedure,
-            database,
-            schema,
-            object_name,
             SpecialNodeKind::Procedure,
-        )),
-        "function" => Some((
+        ),
+        (
+            "function",
             MetadataNodeType::Function,
-            database,
-            schema,
-            object_name,
             SpecialNodeKind::Function,
-        )),
-        "sequence" => Some((
+        ),
+        (
+            "sequence",
             MetadataNodeType::Sequence,
-            database,
-            schema,
-            object_name,
             SpecialNodeKind::Sequence,
-        )),
-        "synonym" => Some((
+        ),
+        (
+            "synonym",
             MetadataNodeType::Synonym,
-            database,
-            schema,
-            object_name,
             SpecialNodeKind::Synonym,
-        )),
-        _ => None,
+        ),
+    ] {
+        if let Some([database, schema, object_name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
+        {
+            return Some((node_type, database, schema, object_name, kind));
+        }
     }
+
+    None
 }
 
 #[cfg(test)]

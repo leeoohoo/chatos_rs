@@ -200,8 +200,12 @@ pub(super) fn inspect_effective_prompt(
         selected_sections.insert(SECTION_GLOBAL);
     }
 
-    let runtime_limitations =
-        build_runtime_limitations(builtin_servers, &selected_sections, &availability_by_server, registry);
+    let runtime_limitations = build_runtime_limitations(
+        builtin_servers,
+        &selected_sections,
+        &availability_by_server,
+        registry,
+    );
     let omitted_section_ids = ordered_difference(&candidate_sections, &selected_sections);
 
     super::BuiltinMcpPromptBuildResult {

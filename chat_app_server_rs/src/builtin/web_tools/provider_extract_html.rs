@@ -8,15 +8,13 @@ use serde_json::Value;
 use super::super::provider_types::{ExtractedPage, HtmlMetadata, StructuredDataContent};
 use super::super::provider_utils::{
     compile_regex, compile_selector, compile_selector_list, decode_basic_html_entities,
-    first_non_empty_owned, guess_title_from_url, normalize_multiline_text,
-    normalize_whitespace, normalized_element_text, push_unique_normalized_text,
-    replace_all_regex,
+    first_non_empty_owned, guess_title_from_url, normalize_multiline_text, normalize_whitespace,
+    normalized_element_text, push_unique_normalized_text, replace_all_regex,
 };
 use super::provider_extract_content::finalize_page;
 use super::provider_extract_support::{
     collect_candidate_text, merge_content_candidates, score_content_candidate, BLOCK_SELECTOR,
-    CONTENT_SELECTOR_LIST,
-    TABLE_CELL_SELECTOR as TABLE_CELL_SELECTOR_RAW,
+    CONTENT_SELECTOR_LIST, TABLE_CELL_SELECTOR as TABLE_CELL_SELECTOR_RAW,
 };
 
 static RE_SCRIPT_TAG: Lazy<Option<Regex>> =
@@ -50,15 +48,13 @@ static BODY_SELECTOR: Lazy<Option<Selector>> =
     Lazy::new(|| compile_selector("body", "body selector"));
 static META_SELECTOR: Lazy<Option<Selector>> =
     Lazy::new(|| compile_selector("meta", "meta selector"));
-static JSON_LD_SELECTOR: Lazy<Option<Selector>> = Lazy::new(|| {
-    compile_selector("script[type='application/ld+json']", "json ld selector")
-});
+static JSON_LD_SELECTOR: Lazy<Option<Selector>> =
+    Lazy::new(|| compile_selector("script[type='application/ld+json']", "json ld selector"));
 static PREFERRED_CONTENT_SELECTORS: Lazy<Vec<Selector>> =
     Lazy::new(|| compile_selector_list(CONTENT_SELECTOR_LIST, "content selector"));
 static PARAGRAPHISH_SELECTOR: Lazy<Option<Selector>> =
     Lazy::new(|| compile_selector(BLOCK_SELECTOR, "paragraphish selector"));
-static LINK_SELECTOR: Lazy<Option<Selector>> =
-    Lazy::new(|| compile_selector("a", "link selector"));
+static LINK_SELECTOR: Lazy<Option<Selector>> = Lazy::new(|| compile_selector("a", "link selector"));
 static TABLE_CELL_SELECTOR: Lazy<Option<Selector>> =
     Lazy::new(|| compile_selector(TABLE_CELL_SELECTOR_RAW, "table cell selector"));
 
@@ -288,17 +284,22 @@ pub(super) fn extract_main_content_text(document: &Html) -> String {
     let table_cell_selector = TABLE_CELL_SELECTOR.as_ref();
     let link_selector = LINK_SELECTOR.as_ref();
 
-    let body_text = if let (Some(body_selector), Some(paragraphish_selector), Some(table_cell_selector)) =
-        (BODY_SELECTOR.as_ref(), paragraphish_selector, table_cell_selector)
-    {
-        document
-            .select(body_selector)
-            .next()
-            .map(|element| collect_candidate_text(&element, paragraphish_selector, table_cell_selector))
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let body_text =
+        if let (Some(body_selector), Some(paragraphish_selector), Some(table_cell_selector)) = (
+            BODY_SELECTOR.as_ref(),
+            paragraphish_selector,
+            table_cell_selector,
+        ) {
+            document
+                .select(body_selector)
+                .next()
+                .map(|element| {
+                    collect_candidate_text(&element, paragraphish_selector, table_cell_selector)
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
 
     let mut best_text = String::new();
     let mut best_score = 0usize;
@@ -321,12 +322,8 @@ pub(super) fn extract_main_content_text(document: &Html) -> String {
                 continue;
             }
 
-            let score = score_content_candidate(
-                &element,
-                text_chars,
-                paragraphish_selector,
-                link_selector,
-            );
+            let score =
+                score_content_candidate(&element, text_chars, paragraphish_selector, link_selector);
             if score > best_score {
                 best_score = score;
                 best_text = text;

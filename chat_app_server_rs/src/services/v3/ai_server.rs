@@ -1,8 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::services::ai_common::{
-    normalize_turn_id, persist_user_message_and_build_content_parts,
-};
+use crate::services::ai_common::{normalize_turn_id, persist_user_message_and_build_content_parts};
 use crate::services::v3::ai_client::{AiClient, AiClientCallbacks, ProcessOptions};
 use crate::services::v3::ai_request_handler::AiRequestHandler;
 use crate::services::v3::mcp_tool_execute::McpToolExecute;

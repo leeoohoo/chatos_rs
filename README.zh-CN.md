@@ -42,6 +42,28 @@
 ./restart_services.sh restart
 ```
 
+统一根级任务入口：
+
+```bash
+make help
+make build
+make test
+make smoke
+```
+
+`make smoke` 会执行仓库治理检查以及轻量级的跨子系统探测。
+其中也包括根级启动脚本语法检查，以及 Git 关注文件的大文件策略检查。
+
+系统构建矩阵：
+
+- [SYSTEM_BUILD_MATRIX.md](./SYSTEM_BUILD_MATRIX.md)
+
+共享本地配置入口：
+
+- 根目录提供 [`.env.example`](./.env.example)
+- `./restart_services.sh` 会先读取根目录 `.env`
+- 如果存在 `chat_app_server_rs/.env`，主后端仍可用它覆盖后端专属配置
+
 常用命令：
 
 ```bash
@@ -50,8 +72,8 @@
 ```
 
 默认日志路径：
-- `/tmp/chatos_rs_dev/backend.log`
-- `/tmp/chatos_rs_dev/frontend.log`
+- `/tmp/chatos_rs_dev_<repo-hash>/backend.log`
+- `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
 
 ## 开发方案归档
 方案/评估/契约文档统一收纳在：
@@ -64,6 +86,8 @@
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
 - [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
 - [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
+- [db_connection_hub backend](./db_connection_hub/backend/README.md)
+- [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
 
 ## 开源协议
 本项目使用 [MIT License](./LICENSE)。

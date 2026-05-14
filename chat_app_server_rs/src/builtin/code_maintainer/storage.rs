@@ -158,6 +158,9 @@ impl ChangeLogStore {
 }
 
 fn publish_project_change_summary_for_record(project_id: &str, record: &ChangeRecord) {
+    let Ok(_handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
     let project_id = project_id.to_string();
     let conversation_id = record.conversation_id.clone();
     let path = record.path.clone();
@@ -207,9 +210,7 @@ fn detect_runner_script_exists(project_root: &str) -> bool {
     if root.is_empty() {
         return false;
     }
-    Path::new(root)
-        .join(".chatos/project_runner.sh")
-        .is_file()
+    Path::new(root).join(".chatos/project_runner.sh").is_file()
 }
 
 fn default_jsonl_path(server_name: &str) -> PathBuf {

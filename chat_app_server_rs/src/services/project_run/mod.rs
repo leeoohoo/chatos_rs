@@ -25,4 +25,6 @@ pub struct RunExecutionInput {
 }
 
 pub(crate) use self::analyzer::{analyze_project, apply_default_target};
-pub(crate) use self::dispatcher::{dispatch_command, resolve_execution, validate_command_preflight};
+pub(crate) use self::dispatcher::{
+    dispatch_command, resolve_execution, validate_command_preflight,
+};

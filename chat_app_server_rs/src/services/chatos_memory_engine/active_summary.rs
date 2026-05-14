@@ -78,25 +78,15 @@ pub async fn try_start_chatos_active_summary(
     }
 }
 
-pub async fn wait_for_chatos_active_summary_completion(
-    session: &Session,
-    trigger_reason: &str,
-) -> Result<RunThreadActiveSummaryResponse, String> {
-    let initial = run_chatos_active_summary(session, trigger_reason).await?;
-    wait_for_existing_chatos_active_summary_completion(session, initial).await
-}
-
 pub async fn wait_for_existing_chatos_active_summary_completion(
     session: &Session,
     initial: RunThreadActiveSummaryResponse,
 ) -> Result<RunThreadActiveSummaryResponse, String> {
     let cfg = Config::try_get()?;
-    let poll_interval = Duration::from_millis(
-        cfg.memory_engine_active_summary_poll_interval_ms.max(1_000) as u64,
-    );
-    let poll_timeout = Duration::from_millis(
-        cfg.memory_engine_active_summary_poll_timeout_ms.max(10_000) as u64,
-    );
+    let poll_interval =
+        Duration::from_millis(cfg.memory_engine_active_summary_poll_interval_ms.max(1_000) as u64);
+    let poll_timeout =
+        Duration::from_millis(cfg.memory_engine_active_summary_poll_timeout_ms.max(10_000) as u64);
     if initial.completed || initial.failed || !initial.running {
         return Ok(initial);
     }
@@ -113,17 +103,9 @@ pub async fn wait_for_existing_chatos_active_summary_completion(
 
         sleep(poll_interval).await;
 
-        let status =
-            get_chatos_active_summary_status(session, job_run_id.as_deref()).await?;
+        let status = get_chatos_active_summary_status(session, job_run_id.as_deref()).await?;
         if status.completed || status.failed || !status.running {
             return Ok(status);
         }
     }
-}
-
-pub async fn try_wait_for_chatos_active_summary_completion(
-    session: &Session,
-    trigger_reason: &str,
-) -> Option<RunThreadActiveSummaryResponse> {
-    try_start_chatos_active_summary(session, trigger_reason).await
 }

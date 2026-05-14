@@ -7,10 +7,21 @@ use crate::domain::{
         ObjectStatsResponse,
     },
 };
+use crate::drivers::metadata_common;
 
 use super::{common::*, MockCatalog};
 
 pub fn build() -> MockCatalog {
+    let orders_db_id = metadata_common::make_node_id("db", &["orders"]);
+    let public_schema_id = metadata_common::make_node_id("schema", &["orders", "public"]);
+    let reporting_schema_id = metadata_common::make_node_id("schema", &["orders", "reporting"]);
+    let orders_table_id = metadata_common::make_node_id("table", &["orders", "public", "orders"]);
+    let daily_kpi_view_id = metadata_common::make_node_id("view", &["orders", "public", "daily_kpi"]);
+    let created_at_index_id = metadata_common::make_node_id(
+        "index",
+        &["orders", "public", "orders", "idx_orders_created_at"],
+    );
+
     let databases = vec![
         DatabaseInfo {
             name: "orders".to_string(),
@@ -48,19 +59,19 @@ pub fn build() -> MockCatalog {
     let mut children = HashMap::new();
     children.insert("root".to_string(), database_nodes(&databases));
     children.insert(
-        "db:orders".to_string(),
+        orders_db_id.clone(),
         vec![
             node(
-                "schema:orders:public",
-                "db:orders",
+                &public_schema_id,
+                &orders_db_id,
                 MetadataNodeType::Schema,
                 "public",
                 "orders.public",
                 true,
             ),
             node(
-                "schema:orders:reporting",
-                "db:orders",
+                &reporting_schema_id,
+                &orders_db_id,
                 MetadataNodeType::Schema,
                 "reporting",
                 "orders.reporting",
@@ -69,19 +80,19 @@ pub fn build() -> MockCatalog {
         ],
     );
     children.insert(
-        "schema:orders:public".to_string(),
+        public_schema_id.clone(),
         vec![
             node(
-                "table:orders:public:orders",
-                "schema:orders:public",
+                &orders_table_id,
+                &public_schema_id,
                 MetadataNodeType::Table,
                 "orders",
                 "orders.public.orders",
                 true,
             ),
             node(
-                "view:orders:public:daily_kpi",
-                "schema:orders:public",
+                &daily_kpi_view_id,
+                &public_schema_id,
                 MetadataNodeType::View,
                 "daily_kpi",
                 "orders.public.daily_kpi",
@@ -90,10 +101,10 @@ pub fn build() -> MockCatalog {
         ],
     );
     children.insert(
-        "table:orders:public:orders".to_string(),
+        orders_table_id.clone(),
         vec![node(
-            "index:orders:public:idx_orders_created_at",
-            "table:orders:public:orders",
+            &created_at_index_id,
+            &orders_table_id,
             MetadataNodeType::Index,
             "idx_orders_created_at",
             "orders.public.orders.idx_orders_created_at",
@@ -103,9 +114,9 @@ pub fn build() -> MockCatalog {
 
     let mut details = HashMap::new();
     details.insert(
-        "table:orders:public:orders".to_string(),
+        orders_table_id.clone(),
         ObjectDetailResponse {
-            node_id: "table:orders:public:orders".to_string(),
+            node_id: orders_table_id,
             node_type: MetadataNodeType::Table,
             name: "orders".to_string(),
             columns: vec![

@@ -46,13 +46,7 @@ pub(super) const BLOCK_SELECTOR: &str = "p, li, pre, blockquote, h1, h2, h3, h4,
 pub(super) const TABLE_CELL_SELECTOR: &str = "th, td";
 
 pub(super) const CONTENT_HINT_MARKERS: &[&str] = &[
-    "content",
-    "article",
-    "post",
-    "markdown",
-    "docs",
-    "main",
-    "body",
+    "content", "article", "post", "markdown", "docs", "main", "body",
 ];
 
 pub(super) const NOISE_EXCLUSION_MARKERS: &[&str] =
@@ -153,7 +147,12 @@ pub(super) async fn fetch_extract_response(
         }
     };
 
-    finalize_extract_response(source_url, response, extract_response_body_limit_bytes(max_extract_chars)).await
+    finalize_extract_response(
+        source_url,
+        response,
+        extract_response_body_limit_bytes(max_extract_chars),
+    )
+    .await
 }
 
 pub(super) fn count_text_marker_hits(text: &str, markers: &[&str]) -> usize {
@@ -376,7 +375,8 @@ fn looks_like_main_content_attr(element: &ElementRef<'_>) -> bool {
         element.value().attr("role"),
         element.value().attr("itemprop"),
     ];
-    attrs.into_iter()
+    attrs
+        .into_iter()
         .flatten()
         .any(looks_like_main_content_attr_value)
 }
@@ -426,7 +426,13 @@ async fn finalize_extract_response(
         ));
     }
 
-    let body = read_response_body_with_limit(response, source_url.as_str(), final_url.as_str(), body_limit_bytes).await?;
+    let body = read_response_body_with_limit(
+        response,
+        source_url.as_str(),
+        final_url.as_str(),
+        body_limit_bytes,
+    )
+    .await?;
 
     Ok(PreparedExtractResponse {
         source_url,
@@ -489,6 +495,9 @@ mod tests {
     fn extract_response_body_limit_bytes_has_floor_and_ceiling() {
         assert_eq!(extract_response_body_limit_bytes(1), 4 * 1024 * 1024);
         assert_eq!(extract_response_body_limit_bytes(100_000), 4 * 1024 * 1024);
-        assert_eq!(extract_response_body_limit_bytes(2_000_000), 16 * 1024 * 1024);
+        assert_eq!(
+            extract_response_body_limit_bytes(2_000_000),
+            16 * 1024 * 1024
+        );
     }
 }

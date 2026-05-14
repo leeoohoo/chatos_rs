@@ -61,7 +61,9 @@ pub(super) fn prompt_source_path(locale: InternalContextLocale) -> &'static str 
     }
 }
 
-pub(super) fn prompt_section_registry(locale: InternalContextLocale) -> &'static PromptSectionRegistry {
+pub(super) fn prompt_section_registry(
+    locale: InternalContextLocale,
+) -> &'static PromptSectionRegistry {
     if locale.is_english() {
         &PROMPT_SECTION_REGISTRY_EN
     } else {

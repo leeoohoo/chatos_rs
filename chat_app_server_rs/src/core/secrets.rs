@@ -23,7 +23,7 @@ fn load_secret_material() -> String {
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
         })
-        .unwrap_or_else(|| "dev-only-change-me-please".to_string())
+        .unwrap_or_else(|| crate::config::Config::get().auth_jwt_secret.clone())
 }
 
 fn secret_key() -> &'static [u8; 32] {
@@ -95,11 +95,13 @@ mod tests {
 
     #[test]
     fn encrypt_and_decrypt_roundtrip() {
+        std::env::set_var("CHATOS_REMOTE_SECRET_KEY", "unit-test-secret");
         let text = "secret-password";
         let encrypted = encrypt_secret(text).expect("encrypt");
         assert!(encrypted.starts_with(SECRET_PREFIX));
         let decrypted = decrypt_secret(encrypted.as_str()).expect("decrypt");
         assert_eq!(decrypted, text);
+        std::env::remove_var("CHATOS_REMOTE_SECRET_KEY");
     }
 
     #[test]

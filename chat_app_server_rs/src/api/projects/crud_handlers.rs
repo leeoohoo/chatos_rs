@@ -95,18 +95,15 @@ pub(super) async fn create_project(
         );
     }
 
-    (
-        StatusCode::CREATED,
-        {
-            publish_projects_updated(
-                auth.user_id.as_str(),
-                "project_created",
-                Some(saved.id.as_str()),
-                Some(saved.clone()),
-            );
-            Json(serde_json::to_value(saved).unwrap_or(Value::Null))
-        },
-    )
+    (StatusCode::CREATED, {
+        publish_projects_updated(
+            auth.user_id.as_str(),
+            "project_created",
+            Some(saved.id.as_str()),
+            Some(saved.clone()),
+        );
+        Json(serde_json::to_value(saved).unwrap_or(Value::Null))
+    })
 }
 
 pub(super) async fn get_project(

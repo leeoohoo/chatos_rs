@@ -3,12 +3,12 @@ use axum::Json;
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
-use crate::core::internal_context_locale::internal_context_locale_from_settings;
 use crate::core::user_scope::ensure_and_set_user_id;
-use crate::services::system_context_ai::{
-    EvaluateDraftInput, GenerateDraftInput, OptimizeDraftInput,
+use crate::modules::platform_admin::system_context_ai::{
+    evaluate_system_context_draft_usecase, generate_system_context_draft_usecase,
+    optimize_system_context_draft_usecase, EvaluateSystemContextDraftUsecaseInput,
+    GenerateSystemContextDraftUsecaseInput, OptimizeSystemContextDraftUsecaseInput,
 };
-use crate::services::user_settings::get_effective_user_settings;
 
 use super::contracts::{
     SystemContextAiEvaluateRequest, SystemContextAiGenerateRequest, SystemContextAiOptimizeRequest,
@@ -22,13 +22,8 @@ pub(super) async fn generate_system_context_draft(
     if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
         return err;
     }
-    let effective_settings = get_effective_user_settings(req.user_id.clone())
-        .await
-        .unwrap_or_else(|_| serde_json::json!({}));
-    let internal_context_locale = internal_context_locale_from_settings(&effective_settings);
-    match crate::services::system_context_ai::generate_draft(GenerateDraftInput {
+    match generate_system_context_draft_usecase(GenerateSystemContextDraftUsecaseInput {
         user_id: req.user_id,
-        internal_context_locale,
         scene: req.scene,
         style: req.style,
         language: req.language,
@@ -56,13 +51,8 @@ pub(super) async fn optimize_system_context_draft(
     if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
         return err;
     }
-    let effective_settings = get_effective_user_settings(req.user_id.clone())
-        .await
-        .unwrap_or_else(|_| serde_json::json!({}));
-    let internal_context_locale = internal_context_locale_from_settings(&effective_settings);
-    match crate::services::system_context_ai::optimize_draft(OptimizeDraftInput {
+    match optimize_system_context_draft_usecase(OptimizeSystemContextDraftUsecaseInput {
         user_id: req.user_id,
-        internal_context_locale,
         content: req.content,
         goal: req.goal,
         keep_intent: req.keep_intent,
@@ -83,12 +73,8 @@ pub(super) async fn evaluate_system_context_draft(
     auth: AuthUser,
     Json(req): Json<SystemContextAiEvaluateRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let effective_settings = get_effective_user_settings(Some(auth.user_id))
-        .await
-        .unwrap_or_else(|_| serde_json::json!({}));
-    let internal_context_locale = internal_context_locale_from_settings(&effective_settings);
-    match crate::services::system_context_ai::evaluate_draft(EvaluateDraftInput {
-        internal_context_locale,
+    match evaluate_system_context_draft_usecase(EvaluateSystemContextDraftUsecaseInput {
+        user_id: Some(auth.user_id),
         content: req.content,
         model_config_id: req.model_config_id,
         ai_model_config: req

@@ -6,10 +6,18 @@ use crate::domain::{
         MetadataNodeType, ObjectColumn, ObjectDetailResponse, ObjectIndex, ObjectStatsResponse,
     },
 };
+use crate::drivers::metadata_common;
 
 use super::{common::*, MockCatalog};
 
 pub fn build() -> MockCatalog {
+    let orders_db_id = metadata_common::make_node_id("db", &["orders"]);
+    let orders_collection_id = metadata_common::make_node_id("collection", &["orders", "orders"]);
+    let daily_summary_view_id =
+        metadata_common::make_node_id("view", &["orders", "orders_daily_summary"]);
+    let created_at_index_id =
+        metadata_common::make_node_id("index", &["orders", "orders", "created_at_1"]);
+
     let databases = vec![
         DatabaseInfo {
             name: "orders".to_string(),
@@ -47,19 +55,19 @@ pub fn build() -> MockCatalog {
     let mut children = HashMap::new();
     children.insert("root".to_string(), database_nodes(&databases));
     children.insert(
-        "db:orders".to_string(),
+        orders_db_id.clone(),
         vec![
             node(
-                "collection:orders:orders",
-                "db:orders",
+                &orders_collection_id,
+                &orders_db_id,
                 MetadataNodeType::Collection,
                 "orders",
                 "orders.orders",
                 true,
             ),
             node(
-                "view:orders:orders_daily_summary",
-                "db:orders",
+                &daily_summary_view_id,
+                &orders_db_id,
                 MetadataNodeType::View,
                 "orders_daily_summary",
                 "orders.orders_daily_summary",
@@ -68,10 +76,10 @@ pub fn build() -> MockCatalog {
         ],
     );
     children.insert(
-        "collection:orders:orders".to_string(),
+        orders_collection_id.clone(),
         vec![node(
-            "index:orders:orders:created_at_1",
-            "collection:orders:orders",
+            &created_at_index_id,
+            &orders_collection_id,
             MetadataNodeType::Index,
             "created_at_1",
             "orders.orders.created_at_1",
@@ -81,9 +89,9 @@ pub fn build() -> MockCatalog {
 
     let mut details = HashMap::new();
     details.insert(
-        "collection:orders:orders".to_string(),
+        orders_collection_id.clone(),
         ObjectDetailResponse {
-            node_id: "collection:orders:orders".to_string(),
+            node_id: orders_collection_id,
             node_type: MetadataNodeType::Collection,
             name: "orders".to_string(),
             columns: vec![

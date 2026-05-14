@@ -7,8 +7,8 @@ use crate::services::v3::ai_request_handler as v3_ai_request_handler;
 use crate::services::v3::message_manager as v3_message_manager;
 
 use super::super::actions_shared::normalize_inline_text;
-use super::super::DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS;
 use super::super::actions_vision_support::{BrowserVisionCandidate, BrowserVisionRunResult};
+use super::super::DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BrowserVisionTransport {

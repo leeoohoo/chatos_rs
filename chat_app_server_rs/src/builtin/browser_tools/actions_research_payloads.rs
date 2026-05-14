@@ -1,13 +1,13 @@
 use serde_json::Value;
 
+use crate::builtin::research_output::{
+    build_extract_results_brief as build_shared_extract_results_brief,
+    build_search_results_brief as build_shared_search_results_brief, ExtractResultsBriefOptions,
+    ExtractStatusStyle, SearchResultsBriefOptions,
+};
 use crate::builtin::research_payloads::{
     build_empty_extract_payload, build_extract_payload_from_research,
     build_search_payload_from_outcome,
-};
-use crate::builtin::research_output::{
-    build_extract_results_brief as build_shared_extract_results_brief,
-    build_search_results_brief as build_shared_search_results_brief,
-    ExtractResultsBriefOptions, ExtractStatusStyle, SearchResultsBriefOptions,
 };
 use crate::builtin::web_tools::provider::{ExtractedPage, ResearchExecution, SearchHit};
 

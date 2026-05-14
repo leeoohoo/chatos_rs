@@ -122,7 +122,10 @@ impl RealtimeSubscriptionSet {
         Ok(normalized)
     }
 
-    pub fn unsubscribe(&mut self, topics: Vec<RealtimeTopic>) -> Result<Vec<RealtimeTopic>, String> {
+    pub fn unsubscribe(
+        &mut self,
+        topics: Vec<RealtimeTopic>,
+    ) -> Result<Vec<RealtimeTopic>, String> {
         let normalized = normalize_topics(topics)?;
         for topic in &normalized {
             self.topics.remove(topic);
@@ -136,7 +139,9 @@ impl RealtimeSubscriptionSet {
         }
 
         let envelope_topics = topics_for_envelope(envelope);
-        envelope_topics.into_iter().any(|topic| self.topics.contains(&topic))
+        envelope_topics
+            .into_iter()
+            .any(|topic| self.topics.contains(&topic))
     }
 }
 
@@ -220,7 +225,11 @@ fn topics_for_envelope(envelope: &RealtimeEventEnvelope) -> Vec<RealtimeTopic> {
         });
     }
 
-    if let Some(project_id) = envelope.project_id.as_deref().and_then(normalize_non_empty_str) {
+    if let Some(project_id) = envelope
+        .project_id
+        .as_deref()
+        .and_then(normalize_non_empty_str)
+    {
         topics.push(RealtimeTopic {
             scope: RealtimeTopicScope::Project,
             id: Some(project_id.to_string()),

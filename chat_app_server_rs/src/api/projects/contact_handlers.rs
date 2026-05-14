@@ -89,17 +89,15 @@ pub(super) async fn add_project_contact(
         );
     };
 
-    match chatos_memory_mappings::sync_project_agent_link(
-        &SyncProjectAgentLinkRequestDto {
-            user_id: Some(auth.user_id.clone()),
-            project_id: Some(id.clone()),
-            agent_id: Some(contact.agent_id),
-            contact_id: Some(contact.id),
-            session_id: None,
-            last_message_at: None,
-            status: Some("active".to_string()),
-        },
-    )
+    match chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
+        user_id: Some(auth.user_id.clone()),
+        project_id: Some(id.clone()),
+        agent_id: Some(contact.agent_id),
+        contact_id: Some(contact.id),
+        session_id: None,
+        last_message_at: None,
+        status: Some("active".to_string()),
+    })
     .await
     {
         Ok(link) => {
@@ -151,17 +149,15 @@ pub(super) async fn remove_project_contact(
         );
     };
 
-    match chatos_memory_mappings::sync_project_agent_link(
-        &SyncProjectAgentLinkRequestDto {
-            user_id: Some(auth.user_id.clone()),
-            project_id: Some(id.clone()),
-            agent_id: Some(linked.agent_id),
-            contact_id: Some(linked.contact_id),
-            session_id: None,
-            last_message_at: None,
-            status: Some("archived".to_string()),
-        },
-    )
+    match chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
+        user_id: Some(auth.user_id.clone()),
+        project_id: Some(id.clone()),
+        agent_id: Some(linked.agent_id),
+        contact_id: Some(linked.contact_id),
+        session_id: None,
+        last_message_at: None,
+        status: Some("archived".to_string()),
+    })
     .await
     {
         Ok(_) => {

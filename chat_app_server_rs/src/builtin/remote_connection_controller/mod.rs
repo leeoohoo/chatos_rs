@@ -83,11 +83,11 @@ impl RemoteConnectionControllerService {
             let reason = "remote_connection_controller 缺少 user_id 上下文".to_string();
             service.registry.register_unavailable_tools(
                 [
-                "list_connections",
-                "test_connection",
-                "run_command",
-                "list_directory",
-                "read_file",
+                    "list_connections",
+                    "test_connection",
+                    "run_command",
+                    "list_directory",
+                    "read_file",
                 ],
                 reason.clone(),
             );
@@ -172,9 +172,7 @@ impl RemoteConnectionControllerService {
             async_text_tool_handler(move |args| {
                 let connection_id = optional_trimmed_string(&args, "connection_id");
                 let ctx = bound.clone();
-                Ok(async move {
-                    test_connection_with_context(ctx, connection_id).await
-                })
+                Ok(async move { test_connection_with_context(ctx, connection_id).await })
             }),
         );
     }
@@ -299,9 +297,7 @@ impl RemoteConnectionControllerService {
                 let path = required_trimmed_string(&args, "path")?;
                 let max_bytes = optional_usize(&args, "max_bytes");
                 let ctx = bound.clone();
-                Ok(async move {
-                    read_file_with_context(ctx, connection_id, path, max_bytes).await
-                })
+                Ok(async move { read_file_with_context(ctx, connection_id, path, max_bytes).await })
             }),
         );
     }

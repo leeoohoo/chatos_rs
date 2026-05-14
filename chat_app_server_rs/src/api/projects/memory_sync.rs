@@ -1,5 +1,5 @@
-use crate::models::project::Project;
 use crate::models::memory_mapping_types::SyncMemoryProjectRequestDto;
+use crate::models::project::Project;
 use crate::services::chatos_memory_mappings;
 
 async fn sync_memory_project_state(project: &Project, status: &str) -> Result<(), String> {

@@ -19,8 +19,8 @@ while [[ "$#" -gt 0 ]]; do
       cat <<'EOF'
 Usage: scripts/check-large-files.sh [--threshold <MB>] [--fail]
 
-Scan repository files larger than threshold MB.
-Excluded directories: .git, node_modules, target, dist
+Scan Git-relevant repository files larger than threshold MB.
+The default scope is tracked files plus untracked files that are not ignored.
 EOF
       exit 0
       ;;
@@ -62,15 +62,34 @@ human_bytes() {
 tmp_file="$(mktemp)"
 trap 'rm -f "$tmp_file"' EXIT
 
-while IFS= read -r -d '' file; do
-  bytes="$(file_size_bytes "$file")"
-  rel="${file#$ROOT_DIR/}"
-  printf '%s\t%s\n' "$bytes" "$rel" >> "$tmp_file"
-done < <(
+scan_git_scope() {
+  git -C "$ROOT_DIR" ls-files -z --cached --others --exclude-standard
+}
+
+scan_fallback_scope() {
   find "$ROOT_DIR" \
-    \( -type d \( -name .git -o -name node_modules -o -name target -o -name dist \) -prune \) \
-    -o \( -type f -size +"${THRESHOLD_MB}"M -print0 \)
-)
+    \( -type d \( -name .git -o -name node_modules -o -name target -o -name target-shared -o -name dist -o -name .local -o -name .cache \) -prune \) \
+    -o \( -type f -print0 \)
+}
+
+if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  while IFS= read -r -d '' rel; do
+    file="$ROOT_DIR/$rel"
+    [[ -f "$file" ]] || continue
+    bytes="$(file_size_bytes "$file")"
+    if (( bytes > THRESHOLD_MB * 1024 * 1024 )); then
+      printf '%s\t%s\n' "$bytes" "$rel" >> "$tmp_file"
+    fi
+  done < <(scan_git_scope)
+else
+  while IFS= read -r -d '' file; do
+    bytes="$(file_size_bytes "$file")"
+    rel="${file#$ROOT_DIR/}"
+    if (( bytes > THRESHOLD_MB * 1024 * 1024 )); then
+      printf '%s\t%s\n' "$bytes" "$rel" >> "$tmp_file"
+    fi
+  done < <(scan_fallback_scope)
+fi
 
 if [[ ! -s "$tmp_file" ]]; then
   echo "No files exceed ${THRESHOLD_MB} MB."

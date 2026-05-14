@@ -6,21 +6,21 @@ use uuid::Uuid;
 
 use crate::builtin::browser_tools::context;
 
-use super::actions_shared::{fail_json, is_success, normalize_inline_text, run_browser_command};
-use super::actions_vision_support::{
-    build_browser_vision_candidates, build_browser_vision_image_data_url,
-    build_browser_vision_prompt, prepare_browser_vision_context,
-};
-use super::BoundContext;
+use self::transport::run_browser_vision_candidate;
 #[allow(unused_imports)]
 pub(super) use self::transport::{
     build_browser_vision_chat_messages, build_browser_vision_responses_input,
     preferred_browser_vision_transport, BrowserVisionTransport,
 };
+use super::actions_shared::{fail_json, is_success, normalize_inline_text, run_browser_command};
 #[allow(unused_imports)]
 pub(super) use super::actions_vision_support::ai_model_config_to_runtime_value;
 pub(super) use super::actions_vision_support::build_browser_vision_unavailable_message;
-use self::transport::run_browser_vision_candidate;
+use super::actions_vision_support::{
+    build_browser_vision_candidates, build_browser_vision_image_data_url,
+    build_browser_vision_prompt, prepare_browser_vision_context,
+};
+use super::BoundContext;
 
 pub(super) async fn browser_vision_with_context(
     ctx: BoundContext,

@@ -1,3 +1,11 @@
+#[path = "provider_browser_support.rs"]
+mod provider_browser_support;
+#[path = "provider_extract.rs"]
+mod provider_extract;
+#[path = "provider_fallback.rs"]
+mod provider_fallback;
+#[path = "provider_flow.rs"]
+mod provider_flow;
 #[path = "provider_research.rs"]
 mod provider_research;
 #[path = "provider_research_support.rs"]
@@ -8,14 +16,6 @@ mod provider_search;
 mod provider_search_shared;
 #[path = "provider_search_support.rs"]
 mod provider_search_support;
-#[path = "provider_browser_support.rs"]
-mod provider_browser_support;
-#[path = "provider_flow.rs"]
-mod provider_flow;
-#[path = "provider_fallback.rs"]
-mod provider_fallback;
-#[path = "provider_extract.rs"]
-mod provider_extract;
 #[path = "provider_types.rs"]
 mod provider_types;
 #[path = "provider_url_policy.rs"]
@@ -25,8 +25,8 @@ mod provider_utils;
 
 pub(crate) use self::provider_flow::{extract_with_fallback, search_with_fallback};
 pub(crate) use self::provider_research::{
-    compute_research_extract_stats, ResearchExecution, ResearchExtractExecution,
-    ResearchExtractStats, run_research_with_fallback,
+    compute_research_extract_stats, run_research_with_fallback, ResearchExecution,
+    ResearchExtractExecution, ResearchExtractStats,
 };
 pub(crate) use self::provider_types::{
     BrowserRenderOptions, ExtractOutcome, ExtractedPage, ProviderAttempt, SearchHit, SearchOutcome,

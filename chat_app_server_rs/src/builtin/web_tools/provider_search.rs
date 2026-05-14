@@ -14,23 +14,20 @@ const BROWSER_SEARCH_OPEN_TIMEOUT_SECONDS: u64 = 8;
 const BROWSER_SEARCH_COMMAND_TIMEOUT_SECONDS: u64 = 6;
 const BROWSER_SEARCH_SETTLE_DELAY_MS: u64 = 600;
 
-use super::{
-    BrowserRenderOptions, SearchHit,
-};
 use self::super::provider_browser_support::{
-    browser_command_error, close_browser_page, eval_on_browser_page,
-    is_browser_command_success, open_browser_page, parse_browser_eval_result,
+    browser_command_error, close_browser_page, eval_on_browser_page, is_browser_command_success,
+    open_browser_page, parse_browser_eval_result,
 };
 use self::super::provider_search_support::{
-    browser_search_eval_expression, extract_duckduckgo_next_page_form,
-    looks_like_duckduckgo_antibot, extract_browser_search_hits,
-    parse_duckduckgo_instant_answer_response,
-    parse_bing_html_results as parse_bing_html_results_support,
+    browser_search_eval_expression, extract_browser_search_hits, extract_duckduckgo_next_page_form,
+    looks_like_duckduckgo_antibot, parse_bing_html_results as parse_bing_html_results_support,
     parse_duckduckgo_html_results as parse_duckduckgo_html_results_support,
+    parse_duckduckgo_instant_answer_response,
 };
 use self::super::provider_utils::{
     read_success_response_text, summarize_reqwest_error, DEFAULT_USER_AGENT,
 };
+use super::{BrowserRenderOptions, SearchHit};
 
 pub(super) async fn duckduckgo_html_search(
     client: &reqwest::Client,

@@ -183,9 +183,12 @@ pub async fn update_agent(agent: &Agent) -> Result<(), String> {
                 let skills = serde_json::to_string(&agent.skills).map_err(|e| e.to_string())?;
                 let skill_ids =
                     serde_json::to_string(&agent.skill_ids).map_err(|e| e.to_string())?;
-                let default_skill_ids = serde_json::to_string(&agent.default_skill_ids)
-                    .map_err(|e| e.to_string())?;
-                let mcp_policy = agent.mcp_policy.as_ref().map(ValueToString::to_string_value);
+                let default_skill_ids =
+                    serde_json::to_string(&agent.default_skill_ids).map_err(|e| e.to_string())?;
+                let mcp_policy = agent
+                    .mcp_policy
+                    .as_ref()
+                    .map(ValueToString::to_string_value);
                 let project_policy = agent
                     .project_policy
                     .as_ref()

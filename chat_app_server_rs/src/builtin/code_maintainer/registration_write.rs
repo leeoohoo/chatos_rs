@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::diff::{build_diff, extract_patch_diffs, extract_patch_targets, read_text_for_diff, DiffInput};
+use super::diff::{
+    build_diff, extract_patch_diffs, extract_patch_targets, read_text_for_diff, DiffInput,
+};
 use super::edit::{apply_edit_text, EditRequest};
 use super::fs_ops::FsOps;
 use super::patch::apply_patch;
@@ -12,7 +14,9 @@ use super::storage::ChangeLogStore;
 use super::utils::{format_bytes, sha256_bytes};
 
 use crate::core::tool_io::text_result;
-use crate::services::workspace_realtime_watcher::{note_workspace_path_changed, suppress_logged_path};
+use crate::services::workspace_realtime_watcher::{
+    note_workspace_path_changed, suppress_logged_path,
+};
 
 pub(super) fn register_write_tools(
     service: &mut CodeMaintainerService,
@@ -300,7 +304,10 @@ fn register_delete_path_tool(
 ) {
     service.register_tool(
         "delete_path",
-        &format!("Delete a file or directory.\n{}.\n{workspace_note}", writes_note),
+        &format!(
+            "Delete a file or directory.\n{}.\n{workspace_note}",
+            writes_note
+        ),
         json!({
             "type": "object",
             "properties": {

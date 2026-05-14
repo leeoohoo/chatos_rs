@@ -10,5 +10,7 @@ pub(in crate::services::ui_prompt_manager) fn trimmed_non_empty(value: &str) -> 
 }
 
 pub(super) fn trimmed(value: Option<&str>) -> String {
-    value.map(|item| item.trim().to_string()).unwrap_or_default()
+    value
+        .map(|item| item.trim().to_string())
+        .unwrap_or_default()
 }

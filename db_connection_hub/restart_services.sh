@@ -5,6 +5,20 @@ set -euo pipefail
 
 SCRIPT_PATH="${CHATOS_RS_SCRIPT_PATH:-${BASH_SOURCE[0]}}"
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+load_optional_env() {
+  local env_file="$1"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+}
+
+load_optional_env "$ROOT_DIR/../.env"
+load_optional_env "$ROOT_DIR/.env"
+
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 

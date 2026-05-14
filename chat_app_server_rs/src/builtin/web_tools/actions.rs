@@ -37,9 +37,9 @@ pub(super) async fn web_research_with_context(
 mod tests {
     use serde_json::json;
 
+    use super::super::provider::{ExtractedPage, SearchHit};
     use super::actions_research::{build_research_summary, build_web_research_findings};
     use super::actions_shared::{build_extract_results_brief, normalize_extract_urls};
-    use super::super::provider::{ExtractedPage, SearchHit};
 
     #[test]
     fn normalize_extract_urls_dedupes_and_clamps() {

@@ -6,8 +6,7 @@ use serde_json::Value;
 use super::provider_types::SearchHit;
 use super::provider_utils::{
     guess_title, guess_title_from_url, normalize_public_web_url, normalize_whitespace,
-    normalized_element_text,
-    resolve_public_web_url,
+    normalized_element_text, resolve_public_web_url,
 };
 
 const DUCKDUCKGO_BASE_URL: &str = "https://duckduckgo.com";

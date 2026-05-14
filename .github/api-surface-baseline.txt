@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=166
-total_route_count=166
+main_backend_route_count=165
+total_route_count=165
 
 ## chat_app_server_rs/src/api (.route lines)
 chat_app_server_rs/src/api/agents.rs: .route(
@@ -133,7 +133,6 @@ chat_app_server_rs/src/api/remote_connections.rs: .route(
 chat_app_server_rs/src/api/remote_connections.rs: .route(
 chat_app_server_rs/src/api/remote_connections.rs: .route(
 chat_app_server_rs/src/api/remote_connections.rs: .route("/api/remote-connections/:id/ws", get(remote_terminal_ws))
-chat_app_server_rs/src/api/session_summary_job_config.rs: Router::new().route(
 chat_app_server_rs/src/api/sessions.rs: .route(
 chat_app_server_rs/src/api/sessions.rs: .route(
 chat_app_server_rs/src/api/sessions.rs: .route(

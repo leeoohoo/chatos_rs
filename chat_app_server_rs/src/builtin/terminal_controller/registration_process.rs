@@ -9,8 +9,8 @@ use super::actions::actions_process::{
 use super::actions::actions_query::list_processes_with_context;
 use super::context::required_trimmed_string;
 use super::{
-    BoundContext, PROCESS_LIST_MAX_LIMIT, PROCESS_POLL_MAX_LIMIT, PROCESS_WAIT_MAX_TIMEOUT_MS,
-    TerminalControllerService,
+    BoundContext, TerminalControllerService, PROCESS_LIST_MAX_LIMIT, PROCESS_POLL_MAX_LIMIT,
+    PROCESS_WAIT_MAX_TIMEOUT_MS,
 };
 
 impl TerminalControllerService {
@@ -166,9 +166,11 @@ impl TerminalControllerService {
                 let terminal_id = required_trimmed_string(&args, "terminal_id")?;
                 let timeout_ms = resolve_wait_timeout_ms(&args);
                 let ctx = bound.clone();
-                Ok(async move {
-                    wait_process_with_context(ctx, terminal_id.as_str(), timeout_ms).await
-                })
+                Ok(
+                    async move {
+                        wait_process_with_context(ctx, terminal_id.as_str(), timeout_ms).await
+                    },
+                )
             }),
         );
     }
@@ -235,9 +237,7 @@ impl TerminalControllerService {
             async_text_tool_handler_with_optional_string(move |args, _conversation_id| {
                 let terminal_id = required_trimmed_string(&args, "terminal_id")?;
                 let ctx = bound.clone();
-                Ok(async move {
-                    kill_process_with_context(ctx, terminal_id.as_str()).await
-                })
+                Ok(async move { kill_process_with_context(ctx, terminal_id.as_str()).await })
             }),
         );
     }

@@ -3,16 +3,16 @@ use std::collections::{HashMap, HashSet};
 use crate::models::agent::{Agent, AgentSkill};
 use crate::models::chatos_agent_types::{
     ChatosAgentDto, ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,
-    ChatosAgentRuntimePluginSummaryDto, ChatosAgentRuntimeSkillSummaryDto,
-    ChatosAgentSkillDto, ChatosSessionDto, ChatosSkillDto, ChatosSkillPluginCommandDto,
-    ChatosSkillPluginDto, CreateChatosAgentRequest, UpdateChatosAgentRequest,
+    ChatosAgentRuntimePluginSummaryDto, ChatosAgentRuntimeSkillSummaryDto, ChatosAgentSkillDto,
+    ChatosSessionDto, ChatosSkillDto, ChatosSkillPluginCommandDto, ChatosSkillPluginDto,
+    CreateChatosAgentRequest, UpdateChatosAgentRequest,
 };
 use crate::repositories::agents as agents_repo;
-use crate::services::{chatos_memory_engine, chatos_skills};
 use crate::services::text_normalization::{
     normalize_optional_text_ref, normalize_required_text_owned, normalize_string_vec,
     resolve_visible_user_ids,
 };
+use crate::services::{chatos_memory_engine, chatos_skills};
 
 pub async fn list_agents(
     user_id: &str,
@@ -37,9 +37,7 @@ pub async fn get_agent(agent_id: &str) -> Result<Option<ChatosAgentDto>, String>
         .map(agent_to_dto))
 }
 
-pub async fn create_agent(
-    payload: &CreateChatosAgentRequest,
-) -> Result<ChatosAgentDto, String> {
+pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAgentDto, String> {
     let user_id = normalize_required_text(payload.user_id.clone(), "user_id")?;
     let name = normalize_required_text(Some(payload.name.clone()), "name")?;
     let role_definition =
@@ -148,11 +146,14 @@ pub async fn get_agent_runtime_context(
     let mut runtime_commands = Vec::new();
     let mut seen_command_keys = HashSet::new();
     for plugin_source in &agent.plugin_sources {
-        let plugin = match chatos_skills::get_skill_plugin(agent.user_id.as_str(), plugin_source.as_str()).await {
-            Ok(Some(item)) => Some(item),
-            Ok(None) => None,
-            Err(_) => None,
-        };
+        let plugin =
+            match chatos_skills::get_skill_plugin(agent.user_id.as_str(), plugin_source.as_str())
+                .await
+            {
+                Ok(Some(item)) => Some(item),
+                Ok(None) => None,
+                Err(_) => None,
+            };
         if let Some(plugin) = plugin {
             runtime_plugins.push(plugin_to_runtime_plugin(&plugin));
             push_runtime_commands(
@@ -195,12 +196,7 @@ pub async fn list_agent_sessions(
     offset: i64,
 ) -> Result<Vec<ChatosSessionDto>, String> {
     let items = chatos_memory_engine::list_chatos_sessions_by_agent(
-        user_id,
-        agent_id,
-        project_id,
-        status,
-        limit,
-        offset,
+        user_id, agent_id, project_id, status, limit, offset,
     )
     .await?;
     Ok(items.into_iter().map(session_to_dto).collect())
@@ -401,7 +397,10 @@ async fn normalize_agent_payload(
             }
             match skill_map.get(skill_id) {
                 Some(skill) => {
-                    if !plugin_sources.iter().any(|item| item == &skill.plugin_source) {
+                    if !plugin_sources
+                        .iter()
+                        .any(|item| item == &skill.plugin_source)
+                    {
                         plugin_sources.push(skill.plugin_source.clone());
                     }
                 }
@@ -409,7 +408,10 @@ async fn normalize_agent_payload(
             }
         }
         if !missing_skill_ids.is_empty() {
-            return Err(format!("unknown skill_ids: {}", missing_skill_ids.join(", ")));
+            return Err(format!(
+                "unknown skill_ids: {}",
+                missing_skill_ids.join(", ")
+            ));
         }
     }
 
@@ -434,7 +436,10 @@ async fn normalize_agent_payload(
 
     let invalid_default_skill_ids = default_skill_ids
         .iter()
-        .filter(|item| !skill_ids.iter().any(|skill_id| skill_id == *item) && !inline_skill_ids.contains(item.as_str()))
+        .filter(|item| {
+            !skill_ids.iter().any(|skill_id| skill_id == *item)
+                && !inline_skill_ids.contains(item.as_str())
+        })
         .cloned()
         .collect::<Vec<_>>();
     if !invalid_default_skill_ids.is_empty() {

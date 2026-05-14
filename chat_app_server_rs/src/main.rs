@@ -32,53 +32,10 @@ async fn main() {
         std::process::exit(1);
     }
 
-    if let Err(err) =
-        core::remote_connection_error_codes::export_remote_connection_error_code_catalog_doc()
-    {
-        warn!("Failed to export remote connection error code catalog: {err}");
-    }
-
-    // Initialize DB
-    if let Err(err) = db::init_global().await {
-        error!("Failed to init database: {err}");
+    if let Err(err) = modules::app_startup::initialize_runtime(cfg).await {
+        error!("{err}");
         std::process::exit(1);
     }
-
-    match services::auth_user_backfill::backfill_legacy_auth_users().await {
-        Ok(report) => {
-            info!(
-                "Legacy auth-user backfill finished: legacy_count={} created_count={} skipped_existing_count={} skipped_invalid_count={}",
-                report.legacy_count,
-                report.created_count,
-                report.skipped_existing_count,
-                report.skipped_invalid_count
-            );
-        }
-        Err(err) => {
-            warn!("Legacy auth-user backfill failed: {err}");
-        }
-    }
-
-    match services::memory_engine_source_bootstrap::ensure_chatos_memory_engine_source().await {
-        Ok(report) => {
-            info!(
-                "Chatos memory_engine source ensured: source_id={} source_type={} status={} sdk_enabled={}",
-                report.source_id,
-                report.source_type,
-                report.status,
-                report.sdk_enabled
-            );
-        }
-        Err(err) => {
-            warn!("Chatos memory_engine source bootstrap failed: {err}");
-        }
-    }
-
-    services::workspace_realtime_watcher::start_workspace_realtime_watcher();
-
-    info!("Memory-only mode enabled, skip local session background jobs");
-
-    cfg.print();
 
     let app = match api::router() {
         Ok(app) => app,

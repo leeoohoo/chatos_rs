@@ -20,12 +20,8 @@ pub(super) fn build_tool_call_execution_plan(tool_calls_arr: &[Value]) -> ToolCa
     let mut exact_key_to_call_id: HashMap<String, String> = HashMap::new();
 
     for tool_call in tool_calls_arr {
-        let call_id = extract_tool_call_id(tool_call)
-            .unwrap_or("")
-            .to_string();
-        let tool_name = extract_tool_call_name(tool_call)
-            .unwrap_or("")
-            .to_string();
+        let call_id = extract_tool_call_id(tool_call).unwrap_or("").to_string();
+        let tool_name = extract_tool_call_name(tool_call).unwrap_or("").to_string();
         let mut canonical_call_id: Option<String> = None;
 
         if canonical_call_id.is_none() && !call_id.is_empty() {
@@ -86,9 +82,7 @@ pub(super) fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
     let mut items = Vec::new();
 
     for tool_call in tool_calls_arr {
-        let call_id = extract_tool_call_id(tool_call)
-            .unwrap_or("")
-            .to_string();
+        let call_id = extract_tool_call_id(tool_call).unwrap_or("").to_string();
         if call_id.is_empty() {
             continue;
         }

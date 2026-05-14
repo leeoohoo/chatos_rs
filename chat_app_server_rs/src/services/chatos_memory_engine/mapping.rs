@@ -148,7 +148,12 @@ pub(crate) fn pack_message_metadata(message: &Message) -> Option<Value> {
         Some(_) | None => serde_json::Map::new(),
     };
 
-    if let Some(value) = message.message_mode.as_deref().map(str::trim).filter(|item| !item.is_empty()) {
+    if let Some(value) = message
+        .message_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
         map.insert("message_mode".to_string(), Value::String(value.to_string()));
     }
     if let Some(value) = message
@@ -157,7 +162,10 @@ pub(crate) fn pack_message_metadata(message: &Message) -> Option<Value> {
         .map(str::trim)
         .filter(|item| !item.is_empty())
     {
-        map.insert("message_source".to_string(), Value::String(value.to_string()));
+        map.insert(
+            "message_source".to_string(),
+            Value::String(value.to_string()),
+        );
     }
     if let Some(value) = message.tool_calls.clone() {
         map.insert("tool_calls".to_string(), value);
@@ -197,7 +205,14 @@ pub(crate) fn unpack_message_metadata(
     Option<Value>,
 ) {
     let Some(Value::Object(mut map)) = metadata else {
-        return (None, Some("memory_engine".to_string()), None, None, None, None);
+        return (
+            None,
+            Some("memory_engine".to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
     };
 
     let message_mode = map

@@ -48,14 +48,31 @@ cargo run
 - `POST /api/v1/queries/execute`
 - `POST /api/v1/queries/{id}/cancel`
 
+## Metadata 节点 ID 约定
+
+为了让各驱动的 metadata 树和对象详情行为保持一致，当前节点 ID 采用统一前缀契约：
+
+- database：`db:{database}`
+- schema：`schema:{database}:{schema}`
+- table/view/materialized_view/sequence/function/procedure/synonym/package：
+  `{prefix}:{database}:{schema}:{name}`
+- mysql / mongodb 这类无 schema 的对象：
+  `{prefix}:{database}:{name}`
+- index/trigger（挂在 table 下）：
+  - schema 型数据库：`{prefix}:{database}:{schema}:{table}:{name}`
+  - 无 schema 型数据库：`{prefix}:{database}:{table}:{name}`
+
+这些格式现在统一由 `src/drivers/metadata_common.rs` 的共享解析函数校验。
+解析规则是严格的：前缀不匹配、段数不足、段数多余，都会直接判为无效节点 ID。
+
 ## 当前状态
 
 - 所有接口已联通，`cargo check` 通过
 - 已接入“混合驱动”：
   - PostgreSQL：真实连接与元数据查询
-    - object detail 支持 `table/view/materialized_view/sequence` 与 `index/trigger`
+    - object detail 支持 `table/view/materialized_view/sequence/function` 与 `index/trigger`
   - MySQL：真实连接与元数据查询
-    - object detail 支持 `table/view` 与 `index/trigger`
+    - object detail 支持 `table/view/procedure/function` 与 `index/trigger`
   - SQLite：真实连接与元数据查询
     - object detail 支持 `table/view` 与 `index/trigger`
   - SQL Server：真实连接与元数据查询

@@ -3,16 +3,15 @@ use serde_json::{json, Value};
 use crate::builtin::browser_command_support::{
     browser_command_error_text, browser_command_succeeded, parse_browser_command_eval_payload,
 };
-use crate::builtin::browser_runtime::{
-    new_browser_session, run_browser_command as runtime_run_browser_command, BrowserRuntimeSession,
-};
 use crate::builtin::browser_page_insights::{
     inspection_warning_line, is_meaningful_browser_url, page_label_from_response,
-    page_state_warning_line,
-    visible_refs_summary_line,
+    page_state_warning_line, visible_refs_summary_line,
 };
 use crate::builtin::browser_page_state_view::{
     browser_console_state_view, has_console_observation,
+};
+use crate::builtin::browser_runtime::{
+    new_browser_session, run_browser_command as runtime_run_browser_command, BrowserRuntimeSession,
 };
 
 use super::BoundContext;
@@ -62,8 +61,11 @@ pub(super) async fn finalize_browser_action_response(
     next_hint: Option<&str>,
 ) -> Value {
     enrich_response_with_page_state(ctx, conversation_key, &mut response, false).await;
-    response["_summary_text"] =
-        Value::String(build_browser_action_summary(action_summary, &response, next_hint));
+    response["_summary_text"] = Value::String(build_browser_action_summary(
+        action_summary,
+        &response,
+        next_hint,
+    ));
     response
 }
 
@@ -83,14 +85,16 @@ pub(super) async fn run_basic_browser_action(
         return Ok(fail_json(&result, action_error.as_str()));
     }
 
-    Ok(finalize_browser_action_response(
-        ctx,
-        conversation_key,
-        response,
-        action_summary,
-        next_hint,
+    Ok(
+        finalize_browser_action_response(
+            ctx,
+            conversation_key,
+            response,
+            action_summary,
+            next_hint,
+        )
+        .await,
     )
-    .await)
 }
 
 pub(super) async fn enrich_response_with_page_metadata(
@@ -144,7 +148,11 @@ pub(super) fn browser_result_data(value: &Value) -> Value {
     value.get("data").cloned().unwrap_or_else(|| json!({}))
 }
 
-pub(super) fn apply_snapshot_payload(response: &mut Value, data: &Value, max_snapshot_chars: usize) {
+pub(super) fn apply_snapshot_payload(
+    response: &mut Value,
+    data: &Value,
+    max_snapshot_chars: usize,
+) {
     let snapshot = data.get("snapshot").and_then(|v| v.as_str()).unwrap_or("");
     let refs = data.get("refs").and_then(|v| v.as_object());
     upsert_string_field(
@@ -328,7 +336,8 @@ pub(super) fn build_browser_inspect_summary(response: &Value, vision_requested: 
 
     if vision_requested {
         if !has_page_signal {
-            parts.push("Vision inspection was skipped because no active page was open.".to_string());
+            parts
+                .push("Vision inspection was skipped because no active page was open.".to_string());
         } else if let Some(vision) = response.get("vision").and_then(|value| value.as_object()) {
             let enabled = vision
                 .get("enabled")

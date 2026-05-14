@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=217
-total_endpoint_count=217
+main_backend_endpoint_count=214
+total_endpoint_count=214
 
 ## chat_app_server_rs endpoints (method + path)
 DELETE /:application_id
@@ -104,7 +104,6 @@ GET /api/remote-connections/:id
 GET /api/remote-connections/:id/sftp/list
 GET /api/remote-connections/:id/sftp/transfer/:transfer_id
 GET /api/remote-connections/:id/ws
-GET /api/session-summary-job-config
 GET /api/skills
 GET /api/skills/:skill_id
 GET /api/skills/plugins
@@ -126,7 +125,6 @@ PATCH /api/memory-agents/:agent_id
 PATCH /api/memory/v1/sessions/:session_id
 PATCH /api/notepad/folders
 PATCH /api/notepad/notes/:note_id
-PATCH /api/session-summary-job-config
 PATCH /api/task-manager/tasks/:task_id
 PATCH /api/user-settings
 POST /
@@ -218,6 +216,5 @@ PUT /api/memory/v1/sessions/:session_id/sync
 PUT /api/memory/v1/sessions/:session_id/turn-runtime-snapshots/:turn_id/sync
 PUT /api/projects/:id
 PUT /api/remote-connections/:id
-PUT /api/session-summary-job-config
 PUT /api/system-contexts/:context_id
 PUT /api/user-settings

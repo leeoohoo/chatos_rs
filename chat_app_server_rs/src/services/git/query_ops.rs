@@ -8,7 +8,9 @@ use super::parsing::{
 };
 use super::process::{git_output, git_version, resolve_git_binary, DEFAULT_GIT_TIMEOUT};
 use super::shared::{comparison_range, read_repo_summary};
-use super::validation::{discover_repo_root, parse_root, require_repo_root, validate_relative_paths};
+use super::validation::{
+    discover_repo_root, parse_root, require_repo_root, validate_relative_paths,
+};
 
 pub async fn client_info() -> GitClientInfo {
     let git_bin = resolve_git_binary();
@@ -155,7 +157,8 @@ pub async fn status(root: &str) -> Result<GitStatus, String> {
 
 pub async fn compare(query: GitCompareQuery) -> Result<GitCompareResult, String> {
     let repo_root = require_repo_root(&query.root).await?;
-    let (current, target, range) = comparison_range(repo_root.as_path(), query.target.trim()).await?;
+    let (current, target, range) =
+        comparison_range(repo_root.as_path(), query.target.trim()).await?;
 
     let diff_output = git_output(
         repo_root.as_path(),

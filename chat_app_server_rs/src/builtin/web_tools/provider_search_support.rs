@@ -26,14 +26,15 @@ pub(super) const DUCKDUCKGO_ANTI_BOT_MARKERS: &[&str] = &[
     "unusual traffic",
 ];
 
-pub(super) static RESULT_BLOCK_SELECTOR: Lazy<Option<Selector>> = Lazy::new(|| {
-    compile_selector(DUCKDUCKGO_RESULT_BLOCK_SELECTOR_RAW, "result selector")
-});
-pub(super) static RESULT_LINK_SELECTOR: Lazy<Option<Selector>> = Lazy::new(|| {
-    compile_selector(DUCKDUCKGO_RESULT_LINK_SELECTOR_RAW, "result link selector")
-});
+pub(super) static RESULT_BLOCK_SELECTOR: Lazy<Option<Selector>> =
+    Lazy::new(|| compile_selector(DUCKDUCKGO_RESULT_BLOCK_SELECTOR_RAW, "result selector"));
+pub(super) static RESULT_LINK_SELECTOR: Lazy<Option<Selector>> =
+    Lazy::new(|| compile_selector(DUCKDUCKGO_RESULT_LINK_SELECTOR_RAW, "result link selector"));
 pub(super) static RESULT_SNIPPET_SELECTOR: Lazy<Option<Selector>> = Lazy::new(|| {
-    compile_selector(DUCKDUCKGO_RESULT_SNIPPET_SELECTOR_RAW, "result snippet selector")
+    compile_selector(
+        DUCKDUCKGO_RESULT_SNIPPET_SELECTOR_RAW,
+        "result snippet selector",
+    )
 });
 pub(super) static ANTI_BOT_SELECTOR: Lazy<Option<Selector>> =
     Lazy::new(|| compile_selector(".anomaly-modal__modal", "anti-bot selector"));
@@ -42,7 +43,10 @@ pub(super) static FORM_SELECTOR: Lazy<Option<Selector>> =
 pub(super) static INPUT_SELECTOR: Lazy<Option<Selector>> =
     Lazy::new(|| compile_selector("input", "input selector"));
 pub(super) static SUBMIT_SELECTOR: Lazy<Option<Selector>> = Lazy::new(|| {
-    compile_selector("input[type='submit'], button[type='submit']", "submit selector")
+    compile_selector(
+        "input[type='submit'], button[type='submit']",
+        "submit selector",
+    )
 });
 
 pub(super) static BING_RESULT_BLOCK_SELECTOR: Lazy<Option<Selector>> =
@@ -315,7 +319,10 @@ pub(super) fn browser_search_eval_expression(limit: usize) -> String {
 })())"##;
 
     template
-        .replace("__ANTI_BOT_MARKERS__", &js_string_array(DUCKDUCKGO_ANTI_BOT_MARKERS))
+        .replace(
+            "__ANTI_BOT_MARKERS__",
+            &js_string_array(DUCKDUCKGO_ANTI_BOT_MARKERS),
+        )
         .replace(
             "__RESULT_BLOCK_SELECTOR__",
             &js_string_literal(DUCKDUCKGO_RESULT_BLOCK_SELECTOR_RAW),

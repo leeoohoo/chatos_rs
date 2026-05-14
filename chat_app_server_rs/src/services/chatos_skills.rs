@@ -12,8 +12,8 @@ use crate::models::memory_skill::{MemorySkill, MemorySkillPlugin};
 use crate::repositories::memory_skills as skills_repo;
 
 use super::chatos_skills_discovery::{
-    discover_cached_plugins, discover_cached_skills, hydrate_plugin_from_cache, plugin_needs_refresh,
-    resolve_plugin_root_from_cache,
+    discover_cached_plugins, discover_cached_skills, hydrate_plugin_from_cache,
+    plugin_needs_refresh, resolve_plugin_root_from_cache,
 };
 use super::chatos_skills_git::{copy_plugin_source_from_repo, ensure_git_repo};
 use super::chatos_skills_helpers::{
@@ -55,10 +55,7 @@ pub async fn list_skills(
     Ok(items.into_iter().map(skill_to_dto).collect())
 }
 
-pub async fn get_skill(
-    user_id: &str,
-    skill_id: &str,
-) -> Result<Option<ChatosSkillDto>, String> {
+pub async fn get_skill(user_id: &str, skill_id: &str) -> Result<Option<ChatosSkillDto>, String> {
     let visible_user_ids = resolve_visible_user_ids(user_id);
     if let Some(item) = skills_repo::get_skill_by_id(visible_user_ids.as_slice(), skill_id).await? {
         return Ok(Some(skill_to_dto(item)));
@@ -100,16 +97,19 @@ pub async fn get_skill_plugin(
     }
 
     let visible_user_ids = resolve_visible_user_ids(user_id);
-    let item =
-        skills_repo::get_plugin_by_source_for_user_ids(visible_user_ids.as_slice(), normalized_source.as_str())
-            .await?;
+    let item = skills_repo::get_plugin_by_source_for_user_ids(
+        visible_user_ids.as_slice(),
+        normalized_source.as_str(),
+    )
+    .await?;
     let mut item = match item {
         Some(item) => item,
         None => {
             let discovered = discover_cached_plugins(visible_user_ids.as_slice())?;
-            match discovered.into_iter().find(|item| {
-                normalize_plugin_source(item.source.as_str()) == normalized_source
-            }) {
+            match discovered
+                .into_iter()
+                .find(|item| normalize_plugin_source(item.source.as_str()) == normalized_source)
+            {
                 Some(item) => item,
                 None => return Ok(None),
             }
@@ -142,7 +142,13 @@ pub async fn import_skills_from_git(
         let repository = repository.clone();
         let branch = branch.clone();
         let git_cache_root = git_cache_root.clone();
-        move || ensure_git_repo(repository.as_str(), branch.as_deref(), git_cache_root.as_path())
+        move || {
+            ensure_git_repo(
+                repository.as_str(),
+                branch.as_deref(),
+                git_cache_root.as_path(),
+            )
+        }
     })
     .await
     .map_err(|err| format!("blocking task join failed: {}", err))??;
@@ -186,7 +192,13 @@ pub async fn import_skills_from_git(
             let repo_root = repo_root.clone();
             let plugins_root = plugins_root.clone();
             let source = candidate.source.clone();
-            move || copy_plugin_source_from_repo(repo_root.as_path(), plugins_root.as_path(), source.as_str())
+            move || {
+                copy_plugin_source_from_repo(
+                    repo_root.as_path(),
+                    plugins_root.as_path(),
+                    source.as_str(),
+                )
+            }
         })
         .await
         .map_err(|err| format!("blocking task join failed: {}", err))??;
@@ -358,9 +370,8 @@ pub async fn install_skill_plugins(user_id: &str, sources: &[String]) -> Result<
             let _ =
                 skills_repo::replace_skills_for_plugin(user_id, plugin.source.as_str(), Vec::new())
                     .await;
-            let _ =
-                skills_repo::update_plugin_install_state(user_id, plugin.source.as_str(), 0, 0)
-                    .await;
+            let _ = skills_repo::update_plugin_install_state(user_id, plugin.source.as_str(), 0, 0)
+                .await;
             if plugin_has_main_content || plugin_command_count > 0 {
                 installed += 1;
                 details.push(json!({
@@ -539,7 +550,10 @@ fn parse_marketplace_candidates(raw: &str) -> Result<Vec<SkillPluginCandidate>, 
     Ok(unique_plugin_candidates(out))
 }
 
-fn fallback_plugin_candidates(repo_root: &Path, plugins_path: Option<&str>) -> Vec<SkillPluginCandidate> {
+fn fallback_plugin_candidates(
+    repo_root: &Path,
+    plugins_path: Option<&str>,
+) -> Vec<SkillPluginCandidate> {
     let root = plugins_path
         .map(normalize_repo_relative_path)
         .filter(|value| !value.is_empty())

@@ -3,13 +3,13 @@ use std::collections::HashSet;
 use serde_json::Value;
 use tracing::info;
 
+use super::compat::cap_tool_output_for_input;
+use super::{build_current_input_items, to_message_item, AiClient};
 use crate::core::messages::is_session_summary_message;
 use crate::core::tool_call::{
     build_function_call_item, build_function_call_output_item, extract_message_tool_calls,
     extract_tool_call_id, extract_tool_call_name, tool_call_arguments_text,
 };
-use super::compat::cap_tool_output_for_input;
-use super::{build_current_input_items, to_message_item, AiClient};
 
 impl AiClient {
     pub(super) async fn maybe_refresh_stateless_context(
@@ -68,8 +68,8 @@ impl AiClient {
     pub(super) async fn build_stateless_items(
         &self,
         session_id: Option<String>,
-        history_limit: i64,
-        stable_prefix_mode: bool,
+        _history_limit: i64,
+        _stable_prefix_mode: bool,
         force_text: bool,
         prefixed_input_items: &[Value],
         current_input_items: &[Value],
@@ -89,7 +89,7 @@ impl AiClient {
             (None, 0, Vec::new())
         };
 
-        let (merged_summary, merged_summary_count, mut pending_history) = context_data;
+        let (merged_summary, merged_summary_count, pending_history) = context_data;
         memory_summary_count = merged_summary_count;
         if !prefixed_input_items.is_empty() {
             items.extend(prefixed_input_items.iter().cloned());

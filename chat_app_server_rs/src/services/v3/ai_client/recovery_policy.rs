@@ -6,9 +6,9 @@ use serde_json::{json, Value};
 use tracing::warn;
 
 use super::{build_current_input_items, AiClient};
+use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::chatos_memory_engine;
 use crate::services::chatos_sessions;
-use crate::services::ai_client_common::AiClientCallbacks;
 
 impl AiClient {
     pub(in crate::services::v3::ai_client) async fn build_stateless_from_raw_input(
@@ -59,14 +59,14 @@ impl AiClient {
         }
         *remote_active_summary_attempted = true;
 
-        let Ok(Some(session)) = chatos_sessions::get_session_by_id(session_id.as_str()).await else {
+        let Ok(Some(session)) = chatos_sessions::get_session_by_id(session_id.as_str()).await
+        else {
             return false;
         };
-        let Some(initial_status) = chatos_memory_engine::try_start_chatos_active_summary(
-            &session,
-            "context_overflow",
-        )
-        .await else {
+        let Some(initial_status) =
+            chatos_memory_engine::try_start_chatos_active_summary(&session, "context_overflow")
+                .await
+        else {
             return false;
         };
         notify_active_summary_progress(

@@ -5,8 +5,8 @@ use crate::core::messages::{
     attach_message_tool_calls, attach_reasoning_content, build_assistant_role_message,
     is_session_summary_message,
 };
-use crate::core::tool_call::extract_message_tool_calls;
 use crate::core::tool_call::build_tool_role_message;
+use crate::core::tool_call::extract_message_tool_calls;
 
 use super::history_tools::ensure_tool_responses;
 use super::runtime_support::cap_tool_content_for_input;
@@ -14,7 +14,9 @@ use super::AiClient;
 
 impl AiClient {
     pub(super) async fn load_runtime_prefixed_messages(&self) -> Option<Vec<Value>> {
-        self.task_board_refresh_context.load_prefixed_messages().await
+        self.task_board_refresh_context
+            .load_prefixed_messages()
+            .await
     }
 
     pub(super) async fn load_memory_context_messages_for_scope(

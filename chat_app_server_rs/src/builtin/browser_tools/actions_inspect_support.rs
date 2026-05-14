@@ -31,7 +31,11 @@ pub(super) fn merge_snapshot_result(
             summarize_browser_failure(snapshot, "snapshot unavailable").as_str(),
         ));
     }
-    if success { "ok" } else { "error" }
+    if success {
+        "ok"
+    } else {
+        "error"
+    }
 }
 
 pub(super) fn merge_console_result(
@@ -64,7 +68,11 @@ pub(super) fn merge_console_result(
             summarize_browser_failure(console, "console inspection unavailable").as_str(),
         ));
     }
-    if success { "ok" } else { "error" }
+    if success {
+        "ok"
+    } else {
+        "error"
+    }
 }
 
 pub(super) fn merge_vision_result(
@@ -80,7 +88,13 @@ pub(super) fn merge_vision_result(
     copy_response_fields(
         response,
         vision,
-        &["analysis", "question", "screenshot_path", "annotations", "vision"],
+        &[
+            "analysis",
+            "question",
+            "screenshot_path",
+            "annotations",
+            "vision",
+        ],
     );
     if !enabled {
         warnings.push(browser_inspect_warning(
@@ -88,7 +102,11 @@ pub(super) fn merge_vision_result(
             summarize_browser_failure(vision, "vision inspection unavailable").as_str(),
         ));
     }
-    if enabled { "ok" } else { "error" }
+    if enabled {
+        "ok"
+    } else {
+        "error"
+    }
 }
 
 pub(super) fn set_inspection_steps(

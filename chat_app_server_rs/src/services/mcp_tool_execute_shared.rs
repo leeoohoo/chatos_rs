@@ -133,9 +133,7 @@ pub(crate) mod test_support {
             .to_string()
     }
 
-    pub(crate) fn assert_parallel_policy_allows_read_only_safe_batch(
-        exec: &SharedMcpToolExecute,
-    ) {
+    pub(crate) fn assert_parallel_policy_allows_read_only_safe_batch(exec: &SharedMcpToolExecute) {
         let prefixed_tool_name = prefixed_tool_name(exec);
         let tool_calls = vec![
             json!({

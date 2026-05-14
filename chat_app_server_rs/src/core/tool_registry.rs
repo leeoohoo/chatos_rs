@@ -46,7 +46,13 @@ impl<H> ToolRegistry<H> {
             .collect()
     }
 
-    pub fn register_tool(&mut self, name: &str, description: &str, input_schema: Value, handler: H) {
+    pub fn register_tool(
+        &mut self,
+        name: &str,
+        description: &str,
+        input_schema: Value,
+        handler: H,
+    ) {
         self.tools.insert(
             name.to_string(),
             RegisteredTool {

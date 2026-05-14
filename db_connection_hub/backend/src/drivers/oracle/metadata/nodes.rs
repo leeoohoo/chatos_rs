@@ -3,6 +3,7 @@ use crate::{
         datasource::DataSource,
         metadata::{MetadataNode, MetadataNodeType, MetadataNodesResponse},
     },
+    drivers::metadata_common,
     error::AppResult,
 };
 
@@ -51,11 +52,11 @@ async fn list_schema_nodes(
     Ok(schemas
         .into_iter()
         .map(|schema| MetadataNode {
-            id: format!("schema:{database}:{schema}"),
-            parent_id: format!("db:{database}"),
+            id: metadata_common::make_node_id("schema", &[database, &schema]),
+            parent_id: metadata_common::make_node_id("db", &[database]),
             node_type: MetadataNodeType::Schema,
             display_name: schema.clone(),
-            path: format!("{database}.{schema}"),
+            path: metadata_common::make_qualified_path(&[database, &schema]),
             has_children: true,
         })
         .collect())

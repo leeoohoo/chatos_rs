@@ -139,9 +139,8 @@ fn browser_research_summary_mentions_page_and_web_context() {
     });
 
     let summary = build_browser_research_summary(&response);
-    assert!(
-        summary.contains("Researched the current browser page for \"What does this pricing page say?\".")
-    );
+    assert!(summary
+        .contains("Researched the current browser page for \"What does this pricing page say?\"."));
     assert!(summary.contains("Current page: Pricing [https://example.com/pricing]."));
     assert!(summary.contains("Page inspect steps: snapshot=ok, console=ok, vision=ok."));
     assert!(summary.contains(
@@ -358,10 +357,8 @@ fn browser_vision_unavailable_message_includes_warnings() {
 
 #[test]
 fn browser_vision_responses_input_uses_input_image_parts() {
-    let input = build_browser_vision_responses_input(
-        "What is on the page?",
-        "data:image/png;base64,abc",
-    );
+    let input =
+        build_browser_vision_responses_input("What is on the page?", "data:image/png;base64,abc");
     let content = input
         .as_array()
         .and_then(|items| items.first())

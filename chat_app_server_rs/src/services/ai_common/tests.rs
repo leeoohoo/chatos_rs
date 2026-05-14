@@ -3,8 +3,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::*;
 use super::request_support::{format_error_response, truncate_log};
+use super::*;
 use crate::core::mcp_tools::ToolResult;
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
@@ -62,6 +62,20 @@ fn completion_failed_error_uses_finish_reason_and_preview() {
 }
 
 #[test]
+fn terminal_empty_response_error_detects_terminal_empty_payload() {
+    let err = terminal_empty_response_error(Some("completed"), "", None, None, None)
+        .expect("terminal empty response should fail");
+    assert!(err.contains("terminal empty response"));
+    assert!(err.contains("finish_reason=completed"));
+
+    assert!(terminal_empty_response_error(Some("in_progress"), "", None, None, None).is_none());
+    assert!(terminal_empty_response_error(Some("completed"), "hello", None, None, None).is_none());
+    assert!(
+        terminal_empty_response_error(Some("completed"), "", Some("thought"), None, None).is_none()
+    );
+}
+
+#[test]
 fn build_assistant_message_metadata_skips_empty_fields() {
     assert!(build_assistant_message_metadata(None, None, None, None).is_none());
     assert!(build_assistant_message_metadata(None, Some("   "), None, None).is_none());
@@ -115,6 +129,12 @@ fn should_persist_assistant_message_skips_empty_non_terminal_responses() {
         None,
         Some("in_progress"),
     ));
+    assert!(!should_persist_assistant_message(
+        "",
+        None,
+        None,
+        Some("completed"),
+    ));
     assert!(should_persist_assistant_message(
         "hello",
         None,
@@ -151,7 +171,9 @@ fn build_ai_client_success_payload_preserves_response_shape() {
         Some("think")
     );
     assert_eq!(
-        payload.get("finish_reason").and_then(|value| value.as_str()),
+        payload
+            .get("finish_reason")
+            .and_then(|value| value.as_str()),
         Some("stop")
     );
     assert_eq!(
@@ -552,7 +574,11 @@ fn emit_stream_callbacks_forwards_chunk_and_thinking() {
         }),
     };
 
-    emit_stream_callbacks(&callbacks, Some("hello".to_string()), Some("think".to_string()));
+    emit_stream_callbacks(
+        &callbacks,
+        Some("hello".to_string()),
+        Some("think".to_string()),
+    );
 
     assert_eq!(
         chunks.lock().expect("lock poisoned").as_slice(),

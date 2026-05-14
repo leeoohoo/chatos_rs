@@ -1,6 +1,4 @@
-use crate::core::messages::{
-    is_session_summary_message as is_session_summary, message_turn_id,
-};
+use crate::core::messages::{is_session_summary_message as is_session_summary, message_turn_id};
 use crate::models::message::Message;
 
 use super::history_process_support::{
@@ -170,8 +168,7 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
         }
     }
 
-    let final_assistant_message_id =
-        final_assistant_index.map(|index| messages[index].id.clone());
+    let final_assistant_message_id = final_assistant_index.map(|index| messages[index].id.clone());
     attach_user_history_process_metadata(
         &mut user_message,
         process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,

@@ -1,8 +1,8 @@
 use serde_json::{json, Value};
 
 use super::actions_inspect_support::{
-    merge_console_result, merge_snapshot_result, merge_vision_result,
-    set_inspection_steps, set_inspection_warning,
+    merge_console_result, merge_snapshot_result, merge_vision_result, set_inspection_steps,
+    set_inspection_warning,
 };
 use super::actions_shared::{
     browser_inspect_warning, build_browser_inspect_summary, has_console_signal,
@@ -74,7 +74,12 @@ pub(super) async fn browser_inspect_with_context(
     let any_success = has_meaningful_page_signal(&response) || has_console_signal(&response);
 
     response["success"] = Value::Bool(any_success);
-    set_inspection_steps(&mut response, snapshot_status, console_status, vision_status);
+    set_inspection_steps(
+        &mut response,
+        snapshot_status,
+        console_status,
+        vision_status,
+    );
     set_inspection_warning(&mut response, &warnings);
     response["_summary_text"] =
         Value::String(build_browser_inspect_summary(&response, vision_requested));

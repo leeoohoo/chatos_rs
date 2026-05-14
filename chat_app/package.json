@@ -1,7 +1,7 @@
 {
-  "name": "@leeoohoo/aichat",
+  "name": "chatos-rs-chat-app",
   "version": "1.0.10",
-  "description": "A complete React AI chat component with session management, MCP support, and SQLite persistence",
+  "description": "Primary React frontend for Chatos RS engineering workflows",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -89,24 +89,23 @@
     "react-dom": ">=18.0.0"
   },
   "keywords": [
+    "chatos-rs",
     "react",
     "ai",
     "chat",
     "openai",
     "mcp",
-    "sqlite",
-    "markdown",
     "typescript",
-    "component"
+    "frontend"
   ],
-  "author": "AI Chat Team",
+  "author": "Chatos RS Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ai-chat/react-component.git"
+    "url": "https://github.com/chatos-rs/chatos-rs.git"
   },
   "bugs": {
-    "url": "https://github.com/ai-chat/react-component/issues"
+    "url": "https://github.com/chatos-rs/chatos-rs/issues"
   },
-  "homepage": "https://github.com/ai-chat/react-component#readme"
+  "homepage": "https://github.com/chatos-rs/chatos-rs#readme"
 }

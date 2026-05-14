@@ -207,9 +207,9 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items.iter().any(|item| {
-                item.get("role").and_then(|value| value.as_str()) == Some("user")
-            });
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str()) == Some("call_tool_1")
@@ -283,9 +283,9 @@ async fn falls_back_to_stateless_when_tool_call_response_has_no_response_id() {
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items.iter().any(|item| {
-                item.get("role").and_then(|value| value.as_str()) == Some("user")
-            });
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str())
@@ -379,9 +379,9 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items.iter().any(|item| {
-                item.get("role").and_then(|value| value.as_str()) == Some("user")
-            });
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str())
@@ -463,9 +463,9 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items.iter().any(|item| {
-                item.get("role").and_then(|value| value.as_str()) == Some("user")
-            });
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str())
@@ -547,9 +547,9 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items.iter().any(|item| {
-                item.get("role").and_then(|value| value.as_str()) == Some("user")
-            });
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
             let has_call = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call")
                     && item.get("call_id").and_then(|value| value.as_str())
@@ -640,9 +640,9 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items.iter().any(|item| {
-                item.get("role").and_then(|value| value.as_str()) == Some("user")
-            });
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
             let call_1 = items
                 .iter()
                 .filter(|item| {
@@ -668,9 +668,9 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items.iter().any(|item| {
-                item.get("role").and_then(|value| value.as_str()) == Some("user")
-            });
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
             let call_1 = items
                 .iter()
                 .filter(|item| {
@@ -891,4 +891,103 @@ async fn retries_non_terminal_empty_stream_response_and_falls_back_from_prev_id(
         .get("input")
         .map(|value| value.is_array())
         .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn retries_terminal_empty_stream_response_and_recovers_with_stateless_retry() {
+    let first_stream_events = vec![json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_terminal_empty",
+            "status": "completed"
+        }
+    })];
+    let second_stream_events = vec![json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_terminal_recovered",
+            "status": "completed",
+            "output_text": "terminal empty recovery success"
+        }
+    })];
+    let steps = vec![
+        MockProviderStep::sse(first_stream_events),
+        MockProviderStep::sse(second_stream_events),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            previous_response_id: Some("prev_resp_terminal_empty_seed".to_string()),
+            callbacks: chunk_callbacks(),
+            purpose: "chat",
+            use_prev_id: true,
+            can_use_prev_id: true,
+            stable_prefix_mode: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("should recover from terminal empty response");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("terminal empty recovery success")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("prev_resp_terminal_empty_seed")
+    );
+    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1]
+        .get("input")
+        .map(|value| value.is_array())
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn terminal_empty_stream_response_surfaces_error_after_retry_budget_exhausted() {
+    let empty_completed = vec![json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_terminal_empty_budget",
+            "status": "completed"
+        }
+    })];
+    let steps = vec![
+        MockProviderStep::sse(empty_completed.clone()),
+        MockProviderStep::sse(empty_completed.clone()),
+        MockProviderStep::sse(empty_completed),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let err = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            previous_response_id: Some("prev_resp_terminal_empty_budget".to_string()),
+            callbacks: chunk_callbacks(),
+            purpose: "chat",
+            use_prev_id: true,
+            can_use_prev_id: true,
+            stable_prefix_mode: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("terminal empty response should fail after retry budget");
+    server.abort();
+
+    assert!(err.contains("terminal empty response"), "{err}");
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 3);
 }

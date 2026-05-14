@@ -1,15 +1,14 @@
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use axum::extract::FromRequestParts;
 use axum::http::{header::AUTHORIZATION, request::Parts, HeaderMap, StatusCode};
 use axum::Json;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::config::Config;
 
-const DEFAULT_CHAT_APP_AUTH_SECRET: &str = "dev-only-change-me-please";
 const DEFAULT_LEGACY_COMPAT_AUTH_SECRET: &str = "legacy_compat_dev_change_me";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,9 +108,9 @@ pub fn resolve_auth_user_from_token(access_token: &str) -> Result<AuthUser, Auth
 
 pub fn build_auth_token(user_id: &str, role: &str) -> Result<String, String> {
     let cfg = Config::try_get()?;
-    let exp =
-        (chrono::Utc::now() + chrono::Duration::seconds(cfg.auth_access_token_ttl_seconds.max(60)))
-            .timestamp();
+    let exp = (chrono::Utc::now()
+        + chrono::Duration::seconds(cfg.auth_access_token_ttl_seconds.max(60)))
+    .timestamp();
     let payload = format!("{}|{}|{}", user_id, role, exp);
     let sig = sign_compat_auth_payload(payload.as_str(), auth_token_signing_secret(cfg));
     Ok(URL_SAFE_NO_PAD.encode(format!("{}|{}", payload, sig)))
@@ -149,6 +148,11 @@ fn sign_compat_auth_payload(payload: &str, secret: &str) -> String {
 
 fn auth_token_secrets<'a>(cfg: &'a Config) -> Vec<&'a str> {
     let mut secrets = vec![cfg.auth_jwt_secret.as_str()];
+    if let Some(secret) = cfg.auth_compat_secret.as_deref() {
+        if secret != cfg.auth_jwt_secret {
+            secrets.push(secret);
+        }
+    }
     if cfg.auth_jwt_secret != DEFAULT_LEGACY_COMPAT_AUTH_SECRET {
         secrets.push(DEFAULT_LEGACY_COMPAT_AUTH_SECRET);
     }
@@ -156,11 +160,7 @@ fn auth_token_secrets<'a>(cfg: &'a Config) -> Vec<&'a str> {
 }
 
 fn auth_token_signing_secret(cfg: &Config) -> &str {
-    if cfg.auth_jwt_secret == DEFAULT_CHAT_APP_AUTH_SECRET {
-        DEFAULT_LEGACY_COMPAT_AUTH_SECRET
-    } else {
-        cfg.auth_jwt_secret.as_str()
-    }
+    cfg.auth_jwt_secret.as_str()
 }
 
 fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
@@ -174,7 +174,11 @@ fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_compat_auth_token, sign_compat_auth_payload};
+    use super::{
+        auth_token_secrets, parse_compat_auth_token, sign_compat_auth_payload,
+        DEFAULT_LEGACY_COMPAT_AUTH_SECRET,
+    };
+    use crate::config::Config;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
 
@@ -199,5 +203,46 @@ mod tests {
         let exp = chrono::Utc::now().timestamp() + 3600;
         let token = build_compat_auth_token("alice", "admin", "secret-1", exp);
         assert!(parse_compat_auth_token(token.as_str(), "secret-2").is_none());
+    }
+
+    #[test]
+    fn auth_token_secrets_include_explicit_compat_secret() {
+        let cfg = Config {
+            openai_api_key: String::new(),
+            openai_base_url: "https://api.openai.com/v1".to_string(),
+            port: 3997,
+            node_env: "development".to_string(),
+            host: "0.0.0.0".to_string(),
+            log_level: "info".to_string(),
+            log_max_files: "7d".to_string(),
+            log_max_size: "10m".to_string(),
+            cors_origins: vec!["*".to_string()],
+            summary_enabled: true,
+            summary_message_limit: 40,
+            summary_max_context_tokens: 6000,
+            summary_keep_last_n: 6,
+            summary_target_tokens: 700,
+            summary_merge_target_tokens: 700,
+            summary_temperature: 0.2,
+            summary_cooldown_seconds: 60,
+            dynamic_summary_enabled: true,
+            summary_bisect_enabled: true,
+            summary_bisect_max_depth: 6,
+            summary_bisect_min_messages: 4,
+            summary_retry_on_context_overflow: true,
+            auth_jwt_secret: "primary-secret".to_string(),
+            auth_compat_secret: Some("compat-secret".to_string()),
+            auth_access_token_ttl_seconds: 3600,
+            memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
+            memory_engine_request_timeout_ms: 5000,
+            memory_engine_active_summary_trigger_timeout_ms: 5000,
+            memory_engine_active_summary_poll_interval_ms: 10_000,
+            memory_engine_active_summary_poll_timeout_ms: 120_000,
+        };
+
+        let secrets = auth_token_secrets(&cfg);
+        assert_eq!(secrets[0], "primary-secret");
+        assert!(secrets.contains(&"compat-secret"));
+        assert!(secrets.contains(&DEFAULT_LEGACY_COMPAT_AUTH_SECRET));
     }
 }

@@ -92,7 +92,10 @@ pub(crate) async fn start_sftp_transfer(
     } else {
         Some(remote_path.clone())
     };
-    let transfer_user_id = connection.user_id.clone().unwrap_or_else(|| auth.user_id.clone());
+    let transfer_user_id = connection
+        .user_id
+        .clone()
+        .unwrap_or_else(|| auth.user_id.clone());
     let transfer_manager = get_sftp_transfer_manager();
     let status = transfer_manager.create(
         resolved_connection.id.as_str(),

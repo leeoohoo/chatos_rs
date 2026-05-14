@@ -1,10 +1,10 @@
 use serde_json::Value;
 use tracing::info;
 
+use crate::core::mcp_tools::ToolResult;
 use crate::core::messages::{
     assistant_message_has_reusable_payload, assistant_message_response_id_candidate,
 };
-use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::message_manager_common::MessageManagerCore;
@@ -138,10 +138,7 @@ impl MessageManager {
         &self,
         session_id: &str,
     ) -> (Option<String>, usize, Vec<Message>) {
-        let context = self
-            .core
-            .get_memory_chat_history_context(session_id)
-            .await;
+        let context = self.core.get_memory_chat_history_context(session_id).await;
         (
             context.merged_summary,
             context.summary_count,
@@ -257,9 +254,15 @@ mod tests {
             "response_status": "completed",
         }));
 
-        assert_eq!(assistant_message_response_id_candidate(&tool_call_message), None);
+        assert_eq!(
+            assistant_message_response_id_candidate(&tool_call_message),
+            None
+        );
         assert_eq!(assistant_message_response_id_candidate(&non_terminal), None);
-        assert_eq!(assistant_message_response_id_candidate(&empty_payload), None);
+        assert_eq!(
+            assistant_message_response_id_candidate(&empty_payload),
+            None
+        );
     }
 
     #[test]

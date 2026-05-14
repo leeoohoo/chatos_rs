@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 pub const MIN_TOKEN_LIMIT: i64 = 500;

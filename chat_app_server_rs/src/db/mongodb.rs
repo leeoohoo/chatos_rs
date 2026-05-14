@@ -101,10 +101,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .await;
     let _ = db
         .collection::<mongodb::bson::Document>("auth_users")
-        .create_index(
-            IndexModel::builder().keys(doc! { "role": 1 }).build(),
-            None,
-        )
+        .create_index(IndexModel::builder().keys(doc! { "role": 1 }).build(), None)
         .await;
     let _ = db
         .collection::<mongodb::bson::Document>("agents")

@@ -13,7 +13,10 @@ use sqlx::Row;
 
 use super::{
     super::connection::connect_pool,
-    common::{parse_index_columns, parse_index_node, parse_relation_node, parse_trigger_node},
+    common::{
+        function_display_name, parse_function_node, parse_index_columns, parse_index_node,
+        parse_relation_node, parse_trigger_node,
+    },
 };
 
 pub async fn object_detail(
@@ -45,6 +48,18 @@ pub async fn object_detail(
             &schema,
             &table,
             &trigger_name,
+        )
+        .await;
+    }
+
+    if let Some((database, schema, function_name, identity_args)) = parse_function_node(node_id) {
+        return load_function_detail(
+            datasource,
+            node_id,
+            &database,
+            &schema,
+            &function_name,
+            &identity_args,
         )
         .await;
     }
@@ -232,6 +247,49 @@ async fn load_trigger_detail(
         node_id: node_id.to_string(),
         node_type: MetadataNodeType::Trigger,
         name: trigger_name.to_string(),
+        columns: Vec::new(),
+        indexes: Vec::new(),
+        constraints: Vec::new(),
+        ddl,
+    })
+}
+
+async fn load_function_detail(
+    datasource: &DataSource,
+    node_id: &str,
+    database: &str,
+    schema: &str,
+    function_name: &str,
+    identity_args: &str,
+) -> AppResult<ObjectDetailResponse> {
+    let pool = connect_pool(datasource, Some(database)).await?;
+    let row = sqlx::query(
+        "select pg_get_functiondef(p.oid) as function_def
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         where n.nspname = $1
+           and p.proname = $2
+           and pg_get_function_identity_arguments(p.oid) = $3",
+    )
+    .bind(schema)
+    .bind(function_name)
+    .bind(identity_args)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|err| AppError::BadRequest(format!("failed to query function detail: {err}")))?;
+
+    let row = row.ok_or_else(|| {
+        AppError::NotFound(format!(
+            "postgres function not found: {database}.{schema}.{}",
+            function_display_name(function_name, identity_args)
+        ))
+    })?;
+    let ddl = row.try_get::<String, _>("function_def").ok();
+
+    Ok(ObjectDetailResponse {
+        node_id: node_id.to_string(),
+        node_type: MetadataNodeType::Function,
+        name: function_display_name(function_name, identity_args),
         columns: Vec::new(),
         indexes: Vec::new(),
         constraints: Vec::new(),

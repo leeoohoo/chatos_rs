@@ -104,8 +104,7 @@ pub(crate) async fn handle_transient_retry(
     transient_retry_count: &mut usize,
     max_transient_retries: usize,
 ) -> Result<bool, String> {
-    let Some(action) =
-        classify_transient_retry(err, *transient_retry_count, max_transient_retries)
+    let Some(action) = classify_transient_retry(err, *transient_retry_count, max_transient_retries)
     else {
         return Ok(false);
     };
@@ -137,9 +136,8 @@ pub(crate) async fn handle_transient_retry(
 mod tests {
     use super::{
         classify_transient_retry, exhausted_transient_retry_message, handle_transient_retry,
-        is_response_parse_error, is_transient_network_error,
-        is_transient_transport_or_parse_error, transient_retry_backoff_ms,
-        transient_retry_kind_label, TransientRetryAction,
+        is_response_parse_error, is_transient_network_error, is_transient_transport_or_parse_error,
+        transient_retry_backoff_ms, transient_retry_kind_label, TransientRetryAction,
     };
 
     #[test]
@@ -158,7 +156,9 @@ mod tests {
         assert!(is_transient_network_error(
             "error sending request for url (https://api.openai.com/v1/chat/completions)"
         ));
-        assert!(is_transient_network_error("status 503: service unavailable"));
+        assert!(is_transient_network_error(
+            "status 503: service unavailable"
+        ));
         assert!(is_transient_network_error(
             "{\"error\":{\"message\":\"The engine is currently overloaded, please try again later\",\"type\":\"engine_overloaded_error\"}}"
         ));
@@ -230,9 +230,14 @@ mod tests {
     #[tokio::test]
     async fn handle_transient_retry_returns_false_for_non_retryable_errors() {
         let mut retry_count = 0usize;
-        let result = handle_transient_retry("[TEST]", "status 400: invalid_request_error", &mut retry_count, 5)
-            .await
-            .expect("non-retryable path should not fail");
+        let result = handle_transient_retry(
+            "[TEST]",
+            "status 400: invalid_request_error",
+            &mut retry_count,
+            5,
+        )
+        .await
+        .expect("non-retryable path should not fail");
 
         assert!(!result);
         assert_eq!(retry_count, 0);
@@ -241,9 +246,14 @@ mod tests {
     #[tokio::test]
     async fn handle_transient_retry_returns_exhausted_error_message() {
         let mut retry_count = 5usize;
-        let err = handle_transient_retry("[TEST]", "status 503: service unavailable", &mut retry_count, 5)
-            .await
-            .expect_err("retry should be exhausted");
+        let err = handle_transient_retry(
+            "[TEST]",
+            "status 503: service unavailable",
+            &mut retry_count,
+            5,
+        )
+        .await
+        .expect_err("retry should be exhausted");
 
         assert!(err.contains("已重试 5 次"));
         assert_eq!(retry_count, 5);

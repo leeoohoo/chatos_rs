@@ -4,7 +4,7 @@ use tracing::info;
 use crate::core::tool_call::tool_calls_value_has_items;
 use crate::services::ai_common::{
     build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
-    handle_transient_retry,
+    handle_transient_retry, terminal_empty_response_error,
 };
 use crate::services::v3::ai_request_handler::StreamCallbacks;
 use crate::utils::abort_registry;
@@ -88,6 +88,8 @@ impl AiClient {
         let mut remote_active_summary_attempted = false;
         let mut non_terminal_empty_retry_count = 0usize;
         let max_non_terminal_empty_retries = 3usize;
+        let mut terminal_empty_retry_count = 0usize;
+        let max_terminal_empty_retries = 2usize;
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -319,6 +321,41 @@ impl AiClient {
                 {
                     continue;
                 }
+                if self
+                    .try_recover_from_terminal_empty_response(
+                        &ai_response,
+                        session_id.as_ref(),
+                        turn_id.as_ref(),
+                        &raw_input,
+                        stable_prefix_mode,
+                        include_tool_items,
+                        effective_prefixed_input_items.as_slice(),
+                        force_text_content,
+                        adaptive_history_limit,
+                        &mut terminal_empty_retry_count,
+                        max_terminal_empty_retries,
+                        pending_tool_calls.as_ref(),
+                        pending_tool_outputs.as_ref(),
+                        &mut use_prev_id,
+                        &mut can_use_prev_id,
+                        &mut previous_response_id,
+                        &mut stateless_context_items,
+                        &mut input,
+                        &mut iteration,
+                    )
+                    .await?
+                {
+                    continue;
+                }
+                if let Some(err) = terminal_empty_response_error(
+                    ai_response.finish_reason.as_deref(),
+                    ai_response.content.as_str(),
+                    ai_response.reasoning.as_deref(),
+                    ai_response.tool_calls.as_ref(),
+                    ai_response.provider_error.as_ref(),
+                ) {
+                    return Err(err);
+                }
                 return Ok(build_ai_client_success_payload(
                     ai_response.content,
                     ai_response.reasoning,
@@ -357,8 +394,8 @@ impl AiClient {
                     async move {
                         if let Some(sid) = persist_session_id.as_ref() {
                             message_manager
-                            .save_tool_results(sid, results.as_slice())
-                            .await;
+                                .save_tool_results(sid, results.as_slice())
+                                .await;
                         }
                     }
                 },

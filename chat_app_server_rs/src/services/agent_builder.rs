@@ -8,10 +8,10 @@ use crate::models::chatos_agent_types::{
     CreateChatosAgentRequest,
 };
 use crate::services::llm_prompt_runner::{run_text_prompt_with_runtime, PromptRunnerRuntime};
-use crate::services::{chatos_agents, chatos_skills};
 use crate::services::text_normalization::{
     normalize_optional_text_owned, normalize_required_text_owned, normalize_string_vec,
 };
+use crate::services::{chatos_agents, chatos_skills};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AiCreateAgentRequest {
@@ -73,12 +73,7 @@ pub async fn ai_create_agent(
 
     let (visible_skills, visible_agents, visible_plugins) = tokio::try_join!(
         chatos_skills::list_skills(request.scope_user_id.as_str(), None, None, Some(1000), 0),
-        chatos_agents::list_agents(
-            request.scope_user_id.as_str(),
-            Some(true),
-            Some(200),
-            0,
-        ),
+        chatos_agents::list_agents(request.scope_user_id.as_str(), Some(true), Some(200), 0,),
         chatos_skills::list_skill_plugins(request.scope_user_id.as_str(), Some(300), 0),
     )?;
 
@@ -207,7 +202,11 @@ fn build_create_agent_request(
     let mut skill_ids = request
         .skill_ids
         .clone()
-        .or_else(|| payload.get("skill_ids").and_then(parse_string_array_from_value))
+        .or_else(|| {
+            payload
+                .get("skill_ids")
+                .and_then(parse_string_array_from_value)
+        })
         .unwrap_or_default();
     dedupe_strings(&mut skill_ids);
 
@@ -249,14 +248,20 @@ fn build_create_agent_request(
         .iter()
         .filter(|skill| skill_ids.iter().any(|item| item == &skill.id))
     {
-        if !plugin_sources.iter().any(|item| item == &skill.plugin_source) {
+        if !plugin_sources
+            .iter()
+            .any(|item| item == &skill.plugin_source)
+        {
             plugin_sources.push(skill.plugin_source.clone());
         }
     }
 
-    let enabled = request
-        .enabled
-        .unwrap_or_else(|| payload.get("enabled").and_then(Value::as_bool).unwrap_or(true));
+    let enabled = request.enabled.unwrap_or_else(|| {
+        payload
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    });
     let mcp_policy = resolve_mcp_policy(request, &payload);
     let project_policy = resolve_project_policy(request, &payload);
 
@@ -534,7 +539,9 @@ fn parse_skill_objects_from_value(value: &Value) -> Option<Vec<ChatosAgentSkillD
     }
 }
 
-fn build_inline_skills_from_prompts(prompts: Option<&[String]>) -> Option<Vec<ChatosAgentSkillDto>> {
+fn build_inline_skills_from_prompts(
+    prompts: Option<&[String]>,
+) -> Option<Vec<ChatosAgentSkillDto>> {
     let prompts = prompts?;
     let mut out = Vec::new();
     for (index, prompt) in prompts.iter().enumerate() {
@@ -617,7 +624,10 @@ fn resolve_mcp_policy(request: &NormalizedRequest, payload: &Map<String, Value>)
         }));
     }
 
-    if let Some(value) = payload.get("mcp_policy").and_then(normalize_mcp_policy_value) {
+    if let Some(value) = payload
+        .get("mcp_policy")
+        .and_then(normalize_mcp_policy_value)
+    {
         return Some(value);
     }
 

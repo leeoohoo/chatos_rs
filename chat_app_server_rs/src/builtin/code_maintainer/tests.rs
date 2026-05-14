@@ -101,7 +101,11 @@ fn search_files_alias_maps_query_to_search_text_pattern() {
     fs::write(&file_path, "Hermes-compatible alias smoke test").expect("write readme");
 
     let result = service
-        .call_tool("search_files", json!({ "query": "alias", "path": "." }), None)
+        .call_tool(
+            "search_files",
+            json!({ "query": "alias", "path": "." }),
+            None,
+        )
         .expect("search files");
     let text = response_text(&result);
     assert!(text.contains("\"count\": 1"));

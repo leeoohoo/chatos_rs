@@ -200,7 +200,8 @@ impl FsPathPolicy {
             let parent = resolved
                 .parent()
                 .ok_or_else(|| FsPolicyError::BadRequest(invalid_message.to_string()))?;
-            let canonical_parent = policy_paths::canonicalize_existing_path(parent, invalid_message)?;
+            let canonical_parent =
+                policy_paths::canonicalize_existing_path(parent, invalid_message)?;
             let file_name = resolved
                 .file_name()
                 .ok_or_else(|| FsPolicyError::BadRequest(invalid_message.to_string()))?;
@@ -283,9 +284,9 @@ impl FsPathPolicy {
 
     fn find_exact_allowed_root(&self, candidate: &Path) -> Option<&FsAllowedRoot> {
         let normalized = policy_paths::normalize_path_for_compare(candidate);
-        self.roots
-            .iter()
-            .find(|root| policy_paths::normalize_path_for_compare(root.path.as_path()) == normalized)
+        self.roots.iter().find(|root| {
+            policy_paths::normalize_path_for_compare(root.path.as_path()) == normalized
+        })
     }
 
     fn is_exact_allowed_root(&self, candidate: &Path) -> bool {
@@ -388,7 +389,8 @@ mod tests {
         fs::create_dir_all(&nested_child).expect("create nested child");
 
         let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
-        let canonical_nested_root = fs::canonicalize(&nested_root).expect("canonicalize nested root");
+        let canonical_nested_root =
+            fs::canonicalize(&nested_root).expect("canonicalize nested root");
         let canonical_nested_child =
             fs::canonicalize(&nested_child).expect("canonicalize nested child");
 

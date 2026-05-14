@@ -1,22 +1,22 @@
 use serde_json::Value;
 
+use super::super::provider_browser_support::{
+    close_browser_page, eval_on_browser_page, is_browser_command_success, open_browser_page,
+    parse_browser_eval_result, snapshot_browser_page,
+};
 use super::super::provider_types::{BrowserRenderOptions, BrowserRenderedPage, ExtractedPage};
 use super::super::provider_utils::{
     first_non_empty_owned, js_string_array, js_string_literal, normalize_multiline_text,
     normalized_text_key, text_contains_any_marker, truncate_chars,
 };
-use super::super::provider_browser_support::{
-    close_browser_page, eval_on_browser_page, is_browser_command_success, open_browser_page,
-    parse_browser_eval_result, snapshot_browser_page,
-};
 use super::provider_extract_content::finalize_page;
 use super::provider_extract_html::extract_html_page;
 use super::provider_extract_support::{
-    content_quality_score, count_text_marker_hits, non_empty_line_count, sentenceish_count,
-    merge_content_candidates, BLOCK_SELECTOR,
-    CONTENT_HINT_MARKERS, CONTENT_SELECTOR_LIST, MIN_BROWSER_RENDER_TRIGGER_CHARS,
-    NAVIGATION_MARKERS, NOISE_ATTR_MARKERS, NOISE_EXCLUSION_MARKERS, NOISE_TAGS,
-    SPA_SHELL_MARKERS, TABLE_CELL_SELECTOR, WEAK_RENDER_TRIGGER_MARKERS,
+    content_quality_score, count_text_marker_hits, merge_content_candidates, non_empty_line_count,
+    sentenceish_count, BLOCK_SELECTOR, CONTENT_HINT_MARKERS, CONTENT_SELECTOR_LIST,
+    MIN_BROWSER_RENDER_TRIGGER_CHARS, NAVIGATION_MARKERS, NOISE_ATTR_MARKERS,
+    NOISE_EXCLUSION_MARKERS, NOISE_TAGS, SPA_SHELL_MARKERS, TABLE_CELL_SELECTOR,
+    WEAK_RENDER_TRIGGER_MARKERS,
 };
 const BROWSER_RENDER_OPEN_TIMEOUT_SECONDS: u64 = 60;
 
@@ -49,7 +49,8 @@ pub(super) async fn browser_render_extract(
     max_extract_chars: usize,
     options: &BrowserRenderOptions,
 ) -> Result<Option<BrowserRenderedPage>, String> {
-    let Some(session) = open_browser_page(url, options, BROWSER_RENDER_OPEN_TIMEOUT_SECONDS).await?
+    let Some(session) =
+        open_browser_page(url, options, BROWSER_RENDER_OPEN_TIMEOUT_SECONDS).await?
     else {
         return Ok(None);
     };

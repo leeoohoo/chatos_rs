@@ -7,10 +7,19 @@ use crate::domain::{
         ObjectStatsResponse,
     },
 };
+use crate::drivers::metadata_common;
 
 use super::{common::*, MockCatalog};
 
 pub fn build() -> MockCatalog {
+    let main_db_id = metadata_common::make_node_id("db", &["main"]);
+    let main_schema_id = metadata_common::make_node_id("schema", &["main", "main"]);
+    let orders_table_id = metadata_common::make_node_id("table", &["main", "main", "orders"]);
+    let created_at_index_id = metadata_common::make_node_id(
+        "index",
+        &["main", "main", "orders", "idx_orders_created_at"],
+    );
+
     let databases = vec![DatabaseInfo {
         name: "main".to_string(),
         owner: None,
@@ -41,10 +50,10 @@ pub fn build() -> MockCatalog {
     let mut children = HashMap::new();
     children.insert("root".to_string(), database_nodes(&databases));
     children.insert(
-        "db:main".to_string(),
+        main_db_id.clone(),
         vec![node(
-            "schema:main:main",
-            "db:main",
+            &main_schema_id,
+            &main_db_id,
             MetadataNodeType::Schema,
             "main",
             "main.main",
@@ -52,33 +61,33 @@ pub fn build() -> MockCatalog {
         )],
     );
     children.insert(
-        "schema:main:main".to_string(),
+        main_schema_id.clone(),
         vec![node(
-            "table:main:orders",
-            "schema:main:main",
+            &orders_table_id,
+            &main_schema_id,
             MetadataNodeType::Table,
             "orders",
-            "main.orders",
+            "main.main.orders",
             true,
         )],
     );
     children.insert(
-        "table:main:orders".to_string(),
+        orders_table_id.clone(),
         vec![node(
-            "index:main:idx_orders_created_at",
-            "table:main:orders",
+            &created_at_index_id,
+            &orders_table_id,
             MetadataNodeType::Index,
             "idx_orders_created_at",
-            "main.orders.idx_orders_created_at",
+            "main.main.orders.idx_orders_created_at",
             false,
         )],
     );
 
     let mut details = HashMap::new();
     details.insert(
-        "table:main:orders".to_string(),
+        orders_table_id.clone(),
         ObjectDetailResponse {
-            node_id: "table:main:orders".to_string(),
+            node_id: orders_table_id,
             node_type: MetadataNodeType::Table,
             name: "orders".to_string(),
             columns: vec![
