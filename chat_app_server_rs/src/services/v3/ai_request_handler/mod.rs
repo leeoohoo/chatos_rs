@@ -58,6 +58,7 @@ impl AiRequestHandler {
         model: String,
         instructions: Option<String>,
         previous_response_id: Option<String>,
+        prompt_cache_key: Option<String>,
         tools: Option<Vec<Value>>,
         request_cwd: Option<String>,
         temperature: Option<f64>,
@@ -76,6 +77,7 @@ impl AiRequestHandler {
             model,
             instructions,
             previous_response_id,
+            prompt_cache_key,
             tools,
             request_cwd,
             temperature,
@@ -198,6 +200,7 @@ fn build_request_payload(
     model: String,
     instructions: Option<String>,
     previous_response_id: Option<String>,
+    prompt_cache_key: Option<String>,
     tools: Option<Vec<Value>>,
     request_cwd: Option<String>,
     temperature: Option<f64>,
@@ -215,6 +218,13 @@ fn build_request_payload(
     }
     if let Some(prev) = previous_response_id {
         payload["previous_response_id"] = Value::String(prev);
+    }
+    if let Some(cache_key) = prompt_cache_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload["prompt_cache_key"] = Value::String(cache_key.to_string());
     }
     if let Some(t) = tools {
         if !t.is_empty() {

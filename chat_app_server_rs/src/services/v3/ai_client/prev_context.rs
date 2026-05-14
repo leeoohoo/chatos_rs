@@ -16,7 +16,32 @@ pub(super) fn should_use_prev_id_for_next_turn(
 pub(super) fn should_disable_prev_id_for_prefixed_input_items(
     prefixed_input_items: &[Value],
 ) -> bool {
-    !prefixed_input_items.is_empty()
+    prefixed_input_items
+        .iter()
+        .any(is_dynamic_runtime_guidance_item)
+}
+
+fn is_dynamic_runtime_guidance_item(item: &Value) -> bool {
+    let text = item
+        .get("content")
+        .and_then(|value| value.as_array())
+        .and_then(|parts| {
+            parts.iter().find_map(|part| {
+                if part.get("type").and_then(|value| value.as_str()) == Some("input_text") {
+                    return part
+                        .get("text")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string());
+                }
+                part.get("text")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string())
+            })
+        })
+        .unwrap_or_default();
+    let normalized = text.trim();
+
+    normalized.starts_with("[Runtime Guidance]") || normalized.starts_with("[Task Board Updated]")
 }
 
 pub(super) fn should_prefer_stateless_context(
@@ -134,7 +159,21 @@ mod tests {
             serde_json::json!({
                 "type": "message",
                 "role": "system",
-                "content": [{ "type": "input_text", "text": "contact runtime" }]
+                "content": [{ "type": "input_text", "text": "[Runtime Guidance]\n- instruction: contact runtime" }]
+            })
+        ]));
+        assert!(should_disable_prev_id_for_prefixed_input_items(&[
+            serde_json::json!({
+                "type": "message",
+                "role": "system",
+                "content": [{ "type": "input_text", "text": "[Task Board Updated]\n- source: system task board refresh" }]
+            })
+        ]));
+        assert!(!should_disable_prev_id_for_prefixed_input_items(&[
+            serde_json::json!({
+                "type": "message",
+                "role": "system",
+                "content": [{ "type": "input_text", "text": "[Task Board]\n当前任务看板由系统维护" }]
             })
         ]));
         assert!(!should_disable_prev_id_for_prefixed_input_items(&[]));

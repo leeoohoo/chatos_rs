@@ -34,6 +34,7 @@ fn build_request_payload_includes_request_cwd_when_present() {
         "gpt-5.3-codex".to_string(),
         Some("system".to_string()),
         None,
+        Some("session-123".to_string()),
         None,
         Some("/tmp/worktree".to_string()),
         Some(0.2),
@@ -48,9 +49,35 @@ fn build_request_payload_includes_request_cwd_when_present() {
         Some("/tmp/worktree")
     );
     assert_eq!(
+        payload
+            .get("prompt_cache_key")
+            .and_then(|value| value.as_str()),
+        Some("session-123")
+    );
+    assert_eq!(
         payload.get("stream").and_then(|value| value.as_bool()),
         Some(true)
     );
+}
+
+#[test]
+fn build_request_payload_skips_blank_prompt_cache_key() {
+    let payload = build_request_payload(
+        json!([{"role":"user","content":[{"type":"input_text","text":"hello"}]}]),
+        "gpt-5.3-codex".to_string(),
+        Some("system".to_string()),
+        None,
+        Some("   ".to_string()),
+        None,
+        None,
+        None,
+        None,
+        Some("gpt".to_string()),
+        Some("medium".to_string()),
+        true,
+    );
+
+    assert!(payload.get("prompt_cache_key").is_none());
 }
 
 #[test]

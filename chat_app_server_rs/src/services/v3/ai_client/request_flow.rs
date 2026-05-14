@@ -41,6 +41,7 @@ impl AiClient {
             .map(|value| value.to_string());
         let callbacks = options.callbacks.unwrap_or_default();
         let stable_prefix_mode = purpose == "chat";
+        let prompt_cache_key = self.build_prompt_cache_key(&purpose, session_id.as_deref());
 
         // Responses-capable models can continue turns via previous_response_id. For legacy
         // chat-completions style models, chat mode keeps the bounded stateless prefix behavior.
@@ -153,6 +154,7 @@ impl AiClient {
         self.process_with_tools(
             initial_input,
             previous_response_id,
+            prompt_cache_key,
             available_tools,
             session_id,
             turn_id,

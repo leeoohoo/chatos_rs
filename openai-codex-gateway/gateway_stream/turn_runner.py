@@ -11,6 +11,7 @@ class StreamTurnRunnerBridge(Protocol):
         self,
         *,
         input_items: list[dict[str, Any]],
+        instructions: str | None,
         model: str | None,
         reasoning_effort: str | None,
         reasoning_summary: str | None,
@@ -41,6 +42,7 @@ def run_stream_turn(
     model = stream_context.model_raw if isinstance(stream_context.model_raw, str) else None
     return bridge._run_turn(
         input_items=input_items,
+        instructions=stream_context.instructions,
         model=model,
         reasoning_effort=stream_context.reasoning_effort,
         reasoning_summary=stream_context.reasoning_summary,

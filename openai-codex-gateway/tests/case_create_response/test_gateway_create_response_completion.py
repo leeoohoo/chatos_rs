@@ -16,10 +16,18 @@ from gateway_base.types import ToolCallRecord, TurnResult  # noqa: E402
 
 class FakeStore:
     def __init__(self) -> None:
-        self.put_calls: list[tuple[str, str]] = []
+        self.put_calls: list[tuple[str, str, str, str]] = []
 
-    def put(self, response_id: str, thread_id: str) -> None:
-        self.put_calls.append((response_id, thread_id))
+    def put(
+        self,
+        response_id: str,
+        thread_id: str,
+        instructions_fingerprint: str = "",
+        resume_fingerprint: str = "",
+    ) -> None:
+        self.put_calls.append(
+            (response_id, thread_id, instructions_fingerprint, resume_fingerprint)
+        )
 
 
 class GatewayCreateResponseCompletionTest(unittest.TestCase):
@@ -28,6 +36,8 @@ class GatewayCreateResponseCompletionTest(unittest.TestCase):
         result = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions="请总结",
+            resume_fingerprint="resume_fp_1",
             output_text="ignored",
             reasoning_text="reasoning",
             status="completed",
@@ -56,7 +66,10 @@ class GatewayCreateResponseCompletionTest(unittest.TestCase):
         )
 
         self.assertEqual(response_id, "resp_1")
-        self.assertEqual(store.put_calls, [("resp_1", "thread_1")])
+        self.assertEqual(len(store.put_calls), 1)
+        self.assertEqual(store.put_calls[0][:2], ("resp_1", "thread_1"))
+        self.assertTrue(store.put_calls[0][2])
+        self.assertEqual(store.put_calls[0][3], "resume_fp_1")
         self.assertEqual(body["id"], "resp_1")
         self.assertEqual(body["output"][0]["id"], "fc_1")
         self.assertEqual(body["metadata"]["thread_id"], "thread_1")
@@ -68,6 +81,8 @@ class GatewayCreateResponseCompletionTest(unittest.TestCase):
         result = TurnResult(
             thread_id="thread_2",
             turn_id="turn_2",
+            instructions=None,
+            resume_fingerprint="",
             output_text="final answer",
             reasoning_text="",
             status="completed",
@@ -90,7 +105,7 @@ class GatewayCreateResponseCompletionTest(unittest.TestCase):
         )
 
         self.assertEqual(response_id, "resp_2")
-        self.assertEqual(store.put_calls, [("resp_2", "thread_2")])
+        self.assertEqual(store.put_calls, [("resp_2", "thread_2", "", "")])
         self.assertEqual(body["output"][0]["id"], "msg_2")
         self.assertEqual(body["output_text"], "final answer")
         self.assertEqual(body["metadata"]["turn_id"], "turn_2")

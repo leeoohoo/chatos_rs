@@ -52,7 +52,69 @@ async fn completion_overflow_without_remote_summary_surfaces_error() {
 }
 
 #[tokio::test]
-async fn prefixed_runtime_items_disable_previous_response_id_reuse() {
+async fn stable_prefixed_items_keep_previous_response_id_reuse() {
+    let steps = vec![MockProviderStep::json(
+        StatusCode::OK,
+        json!({
+            "id": "resp_contact_stable",
+            "status": "completed",
+            "output_text": "contact stable ok"
+        }),
+    )];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            session_id: Some("session_contact_stable".to_string()),
+            previous_response_id: Some("prev_resp_contact_stable".to_string()),
+            prompt_cache_key: Some("session_contact_stable".to_string()),
+            callbacks: empty_callbacks(),
+            use_prev_id: true,
+            can_use_prev_id: true,
+            prefixed_input_items: vec![json!({
+                "type": "message",
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "[Task Board]\n当前任务看板由系统维护"
+                    }
+                ]
+            })],
+            stable_prefix_mode: true,
+            purpose: "chat",
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("stable prefixed items should preserve stateful request");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("contact stable ok")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("prev_resp_contact_stable")
+    );
+    assert_eq!(
+        requests[0]
+            .get("prompt_cache_key")
+            .and_then(|value| value.as_str()),
+        Some("session_contact_stable")
+    );
+}
+
+#[tokio::test]
+async fn runtime_guidance_items_disable_previous_response_id_reuse() {
     let steps = vec![MockProviderStep::json(
         StatusCode::OK,
         json!({
@@ -78,7 +140,7 @@ async fn prefixed_runtime_items_disable_previous_response_id_reuse() {
                 "content": [
                     {
                         "type": "input_text",
-                        "text": "联系人 runtime context"
+                        "text": "[Runtime Guidance]\n- instruction: 联系人 runtime context"
                     }
                 ]
             })],

@@ -31,6 +31,8 @@ class GatewayStreamTurnRunnerTest(unittest.TestCase):
         expected_result = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions="请总结",
+            resume_fingerprint="resume_fp_1",
             output_text="hello",
             reasoning_text="think",
             status="completed",
@@ -40,6 +42,7 @@ class GatewayStreamTurnRunnerTest(unittest.TestCase):
         )
         bridge = FakeBridge(expected_result)
         stream_context = StreamRequestContext(
+            instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id="resp_prev",
@@ -69,6 +72,7 @@ class GatewayStreamTurnRunnerTest(unittest.TestCase):
         self.assertIs(result, expected_result)
         self.assertIsNotNone(bridge.last_kwargs)
         kwargs = bridge.last_kwargs or {}
+        self.assertEqual(kwargs["instructions"], "请总结")
         self.assertEqual(kwargs["model"], "codex-1")
         self.assertEqual(kwargs["reasoning_effort"], "high")
         self.assertEqual(kwargs["reasoning_summary"], "concise")
@@ -86,6 +90,8 @@ class GatewayStreamTurnRunnerTest(unittest.TestCase):
             TurnResult(
                 thread_id="thread_2",
                 turn_id="turn_2",
+                instructions=None,
+                resume_fingerprint="",
                 output_text="",
                 reasoning_text="",
                 status="completed",
@@ -95,6 +101,7 @@ class GatewayStreamTurnRunnerTest(unittest.TestCase):
             )
         )
         stream_context = StreamRequestContext(
+            instructions=None,
             model_raw=123,
             model_name="codex-default",
             previous_response_id=None,
@@ -118,6 +125,7 @@ class GatewayStreamTurnRunnerTest(unittest.TestCase):
 
         self.assertIsNotNone(bridge.last_kwargs)
         kwargs = bridge.last_kwargs or {}
+        self.assertIsNone(kwargs["instructions"])
         self.assertIsNone(kwargs["model"])
         self.assertIsNone(kwargs["reasoning_effort"])
         self.assertIsNone(kwargs["reasoning_summary"])

@@ -26,6 +26,8 @@ class ToolCallRecord:
 class TurnResult:
     thread_id: str
     turn_id: str
+    instructions: str | None
+    resume_fingerprint: str
     output_text: str
     reasoning_text: str
     status: str

@@ -64,6 +64,21 @@ pub struct AiClient {
 }
 
 impl AiClient {
+    pub(super) fn build_prompt_cache_key(
+        &self,
+        purpose: &str,
+        session_id: Option<&str>,
+    ) -> Option<String> {
+        if purpose != "chat" {
+            return None;
+        }
+
+        session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+    }
+
     pub fn new(
         ai_request_handler: AiRequestHandler,
         mcp_tool_execute: McpToolExecute,

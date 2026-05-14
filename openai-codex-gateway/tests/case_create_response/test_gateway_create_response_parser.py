@@ -17,6 +17,7 @@ class GatewayCreateResponseParserTest(unittest.TestCase):
     def test_parse_create_response_context_success(self) -> None:
         payload = {
             "model": "codex-1",
+            "instructions": "请总结",
             "previous_response_id": "resp_prev",
             "reasoning": {"effort": "medium", "summary": "concise"},
             "tools": [{"type": "function", "name": "fn1"}],
@@ -30,6 +31,7 @@ class GatewayCreateResponseParserTest(unittest.TestCase):
 
         self.assertEqual(ctx.model, "codex-1")
         self.assertEqual(ctx.model_name, "codex-1")
+        self.assertEqual(ctx.instructions, "请总结")
         self.assertEqual(ctx.previous_response_id, "resp_prev")
         self.assertEqual(ctx.reasoning_effort, "medium")
         self.assertEqual(ctx.reasoning_summary, "concise")
@@ -51,10 +53,20 @@ class GatewayCreateResponseParserTest(unittest.TestCase):
 
         self.assertEqual(ctx.model, 123)
         self.assertEqual(ctx.model_name, "codex-default")
+        self.assertIsNone(ctx.instructions)
         self.assertIsNone(ctx.previous_response_id)
         self.assertIsNone(ctx.reasoning_effort)
         self.assertIsNone(ctx.reasoning_summary)
         self.assertEqual(ctx.response_tools, [])
+
+    def test_parse_create_response_context_uses_instructions_when_input_missing(self) -> None:
+        ctx = parse_create_response_context(
+            {"instructions": "请只看规则"},
+            provided_tool_outputs={},
+        )
+
+        self.assertEqual(ctx.instructions, "请只看规则")
+        self.assertEqual(ctx.input_items, [{"type": "text", "text": "请只看规则"}])
 
     def test_parse_create_response_context_rejects_empty_input(self) -> None:
         with self.assertRaises(ValueError):

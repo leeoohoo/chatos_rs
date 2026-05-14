@@ -20,6 +20,7 @@ from gateway_stream.request_parser import StreamRequestContext  # noqa: E402
 class GatewayStreamMainFlowInvocationTest(unittest.TestCase):
     def test_invoke_stream_main_flow_with_error_boundary_runs_main_flow(self) -> None:
         stream_context = StreamRequestContext(
+            instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id=None,
@@ -86,6 +87,7 @@ class GatewayStreamMainFlowInvocationTest(unittest.TestCase):
 
     def test_invoke_stream_main_flow_with_error_boundary_allows_short_circuit(self) -> None:
         stream_context = StreamRequestContext(
+            instructions=None,
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id="resp_prev",

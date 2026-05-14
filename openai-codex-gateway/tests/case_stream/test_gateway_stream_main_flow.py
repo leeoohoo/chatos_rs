@@ -20,6 +20,7 @@ from gateway_stream.request_parser import StreamRequestContext  # noqa: E402
 class GatewayStreamMainFlowTest(unittest.TestCase):
     def test_run_stream_main_flow_function_tools(self) -> None:
         stream_context = StreamRequestContext(
+            instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id="resp_prev",
@@ -111,6 +112,7 @@ class GatewayStreamMainFlowTest(unittest.TestCase):
 
     def test_run_stream_main_flow_plain_message(self) -> None:
         stream_context = StreamRequestContext(
+            instructions=None,
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id=None,

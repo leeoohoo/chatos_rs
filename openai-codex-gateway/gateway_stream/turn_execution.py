@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from gateway_runtime.thread_session import instructions_fingerprint
 from gateway_stream.lifecycle import persist_response_thread_mapping
 from gateway_stream.request_parser import StreamRequestContext
 from gateway_stream.turn_runner import StreamTurnRunnerBridge, run_stream_turn
@@ -39,5 +40,6 @@ def run_and_persist_stream_turn(
         store=store,
         response_id=response_id,
         result=result,
+        instructions_fingerprint=instructions_fingerprint(result.instructions),
     )
     return result

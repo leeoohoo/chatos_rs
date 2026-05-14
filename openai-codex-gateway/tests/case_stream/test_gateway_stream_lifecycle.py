@@ -19,10 +19,18 @@ from gateway_base.types import TurnResult  # noqa: E402
 
 class FakeStore:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, str, str]] = []
 
-    def put(self, response_id: str, thread_id: str) -> None:
-        self.calls.append((response_id, thread_id))
+    def put(
+        self,
+        response_id: str,
+        thread_id: str,
+        instructions_fingerprint: str = "",
+        resume_fingerprint: str = "",
+    ) -> None:
+        self.calls.append(
+            (response_id, thread_id, instructions_fingerprint, resume_fingerprint)
+        )
 
 
 class GatewayStreamLifecycleTest(unittest.TestCase):
@@ -58,6 +66,8 @@ class GatewayStreamLifecycleTest(unittest.TestCase):
         result = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions="请总结",
+            resume_fingerprint="resume_fp_1",
             output_text="",
             reasoning_text="",
             status="completed",
@@ -70,9 +80,10 @@ class GatewayStreamLifecycleTest(unittest.TestCase):
             store=store,
             response_id="resp_1",
             result=result,
+            instructions_fingerprint="fp_123",
         )
 
-        self.assertEqual(store.calls, [("resp_1", "thread_1")])
+        self.assertEqual(store.calls, [("resp_1", "thread_1", "fp_123", "resume_fp_1")])
 
 
 if __name__ == "__main__":

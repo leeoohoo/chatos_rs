@@ -31,6 +31,8 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
         expected = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions="请总结",
+            resume_fingerprint="resume_fp_1",
             output_text="out",
             reasoning_text="reasoning",
             status="completed",
@@ -41,6 +43,7 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
         bridge = FakeBridge(expected)
         context = CreateResponseContext(
             input_items=[{"type": "text", "text": "hello"}],
+            instructions="请总结",
             model="codex-1",
             model_name="codex-1",
             previous_response_id="resp_prev",
@@ -66,6 +69,7 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
         self.assertIs(result, expected)
         self.assertIsNotNone(bridge.last_kwargs)
         kwargs = bridge.last_kwargs or {}
+        self.assertEqual(kwargs["instructions"], "请总结")
         self.assertEqual(kwargs["model"], "codex-1")
         self.assertEqual(kwargs["reasoning_effort"], "high")
         self.assertEqual(kwargs["reasoning_summary"], "concise")
@@ -82,6 +86,8 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
             TurnResult(
                 thread_id="thread_2",
                 turn_id="turn_2",
+                instructions=None,
+                resume_fingerprint="",
                 output_text="",
                 reasoning_text="",
                 status="completed",
@@ -92,6 +98,7 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
         )
         context = CreateResponseContext(
             input_items=[{"type": "text", "text": "x"}],
+            instructions=None,
             model=123,
             model_name="codex-default",
             previous_response_id=None,
@@ -113,6 +120,7 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
 
         self.assertIsNotNone(bridge.last_kwargs)
         kwargs = bridge.last_kwargs or {}
+        self.assertIsNone(kwargs["instructions"])
         self.assertEqual(kwargs["model"], 123)
         self.assertIsNone(kwargs["previous_response_id"])
         self.assertIsNone(kwargs["reasoning_effort"])

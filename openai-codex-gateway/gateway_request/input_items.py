@@ -7,12 +7,17 @@ from typing import Any
 from .common import normalize_optional_string
 
 
+def extract_request_instructions(payload: dict[str, Any]) -> str | None:
+    instructions = payload.get("instructions")
+    if isinstance(instructions, str):
+        normalized = instructions.strip()
+        if normalized:
+            return normalized
+    return None
+
+
 def extract_turn_input_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-
-    instructions = payload.get("instructions")
-    if isinstance(instructions, str) and instructions.strip():
-        items.append({"type": "text", "text": instructions.strip()})
 
     input_value = payload.get("input")
     if input_value is None and "messages" in payload:

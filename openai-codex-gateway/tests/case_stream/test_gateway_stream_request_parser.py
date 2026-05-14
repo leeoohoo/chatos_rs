@@ -16,6 +16,7 @@ from gateway_stream.request_parser import parse_stream_request_context  # noqa: 
 class GatewayStreamRequestParserTest(unittest.TestCase):
     def test_parse_stream_request_context_success(self) -> None:
         payload = {
+            "instructions": "请总结",
             "model": "codex-1",
             "previous_response_id": "resp_prev",
             "tools": [{"type": "function", "name": "fn1"}],
@@ -23,6 +24,7 @@ class GatewayStreamRequestParserTest(unittest.TestCase):
         }
         ctx = parse_stream_request_context(payload)
 
+        self.assertEqual(ctx.instructions, "请总结")
         self.assertEqual(ctx.model_raw, "codex-1")
         self.assertEqual(ctx.model_name, "codex-1")
         self.assertEqual(ctx.previous_response_id, "resp_prev")
@@ -39,6 +41,7 @@ class GatewayStreamRequestParserTest(unittest.TestCase):
         }
         ctx = parse_stream_request_context(payload)
 
+        self.assertIsNone(ctx.instructions)
         self.assertEqual(ctx.model_raw, 123)
         self.assertEqual(ctx.model_name, "codex-default")
         self.assertIsNone(ctx.previous_response_id)

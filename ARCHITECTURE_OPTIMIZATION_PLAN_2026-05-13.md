@@ -293,11 +293,23 @@
   - 新增 `chat_app_server_rs/src/modules/platform_admin/system_context_ai.rs`
   - `api/system_contexts/ai_handlers.rs` 中原先直接承担的 user settings / locale 解析，以及 generate/optimize/evaluate 三条 AI draft 编排，已开始通过 `platform_admin::system_context_ai` usecase 调度
   - 这一步之后，`system_contexts` 的 AI 入口也开始具备与 `conversation_runtime` 相同的边界形态：HTTP 层负责鉴权与响应映射，业务域负责上下文解析和应用编排
+- 第二阶段已开始针对 Responses API 的 Prompt 组织与缓存命中补齐关键缺口：
+  - `chat_app_server_rs/src/services/v3/ai_request_handler/mod.rs` 已为 chat 场景补上稳定 `prompt_cache_key`
+  - 当前策略先以 `session_id` 作为 conversation-scoped cache key，只在 `purpose=chat` 时透传，避免影响 summary / browser vision / agent-builder 这类非会话主链路请求
+  - `chat_app_server_rs/src/services/v3/ai_client/prev_context.rs` 中 `previous_response_id` 的禁用条件已从“只要有 prefixed input items 就禁用”收紧为“仅当存在动态 runtime guidance / task-board refresh guidance 时禁用”
+  - 这意味着稳定的 task-board / contact / builtin MCP / command 前缀，不再无条件打断 Responses 的 stateful continuation；只有运行中新增的动态提示仍会保守降级为 stateless
+  - 这一步的目标是向 Codex CLI 的高缓存命中机制靠拢：稳定 `instructions`、稳定前缀、稳定 `prompt_cache_key`、只在真正破坏前缀稳定性的动态注入出现时才放弃 `previous_response_id`
+  - `openai-codex-gateway/gateway_request/input_items.py` 也已进一步收口：请求级 `instructions` 不再被并入普通 turn input item，而是改走 thread/session 的 `baseInstructions`，恢复为独立稳定字段
+  - gateway 同时补了兼容兜底：若请求只有 `instructions`、没有显式 `input`，仍会回退为最小 text input，避免旧调用直接因为空输入失败
+  - `openai-codex-gateway/gateway_runtime/thread_session.py` 现在也已补上 `baseInstructions` 指纹校验：只有当 `previous_response_id` 对应旧 thread 的 instruction fingerprint 与当前请求一致时才会 resume；若系统指令已变化，则自动新开 thread，避免把不同系统指令的上下文错误续接
+  - gateway 的 thread resume 保护现已进一步升级为 `resume_fingerprint`：除了 `baseInstructions` 外，还会把 thread/session 级稳定参数与 turn 级稳定参数（例如 `dynamicTools`、request config overrides、reasoning summary / effort 等）一起纳入复用校验；这让“非 input 参数必须保持一致”这条约束更接近 Codex CLI 的真实复用语义
 - 当前仍然未完成、但价值最高的后续收口点：
   - `chat_v2` / `chat_v3` 仍保留版本前置差异本身，例如默认模型、Responses API 能力门禁、是否尊重 model flags、rename 策略；如果继续压薄，可再抽统一的版本参数对象，进一步压缩 handler 与 usecase 的重复入口骨架
   - `memory_compat.rs` 仍保留兼容语义本身的 HTTP contract、参数忽略策略（如 `mode`）以及少量 compat 风格的响应形状判断；但核心会话域编排与大部分机械映射已大幅收口
   - `conversation_runtime::tools_panel` 目前仍保留 v2/v3 两套 MCP executor 初始化分支；如果下一轮继续压薄，可再评估是否为 tools/status 建立共享 executor adapter，进一步减少版本分叉样板
   - `platform_admin` 域下除了 `system_context_ai` 外，`user_settings` 与部分 `applications/configs` 入口仍主要直连 service；如果继续推进横向边界一致性，可以开始为 `platform_admin` 建第二批 façade/usecase
+  - 当前 `conversation_runtime` 的 task-board / contact / builtin MCP 前缀虽然已允许继续走 `previous_response_id`，但如果后续这些前缀存在高频动态变动，还可以继续补“前缀 diff 注入”或“稳定片段签名”机制，进一步提升命中率与可观测性
+  - gateway 当前的 `resume_fingerprint` 仍然只用于“是否 resume 旧 thread”的门禁判断，还没有把失配原因结构化暴露到日志或响应 metadata；如果后续要继续提升可观测性，可以补“resume miss reason”日志与诊断字段，方便排查为什么某轮没有命中复用
 
 **预期收益**
 

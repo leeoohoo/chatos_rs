@@ -25,11 +25,17 @@ class GatewayStreamInputPrepTest(unittest.TestCase):
             provided_tool_outputs={},
         )
 
-        self.assertEqual(len(items), 2)
+        self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["type"], "text")
-        self.assertEqual(items[0]["text"], "请总结")
-        self.assertEqual(items[1]["type"], "text")
-        self.assertEqual(items[1]["text"], "hello world")
+        self.assertEqual(items[0]["text"], "hello world")
+
+    def test_prepare_stream_input_items_falls_back_to_instructions_when_input_missing(self) -> None:
+        items = prepare_stream_input_items(
+            {"instructions": "请总结"},
+            provided_tool_outputs={},
+        )
+
+        self.assertEqual(items, [{"type": "text", "text": "请总结"}])
 
     def test_prepare_stream_input_items_with_tool_outputs(self) -> None:
         payload = {

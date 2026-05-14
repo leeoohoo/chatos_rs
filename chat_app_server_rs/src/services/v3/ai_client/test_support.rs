@@ -156,6 +156,7 @@ pub(super) struct RunProcessWithToolsArgs {
     pub input: Value,
     pub session_id: Option<String>,
     pub previous_response_id: Option<String>,
+    pub prompt_cache_key: Option<String>,
     pub tools: Vec<Value>,
     pub callbacks: AiClientCallbacks,
     pub purpose: &'static str,
@@ -176,6 +177,7 @@ impl Default for RunProcessWithToolsArgs {
             input: Value::String("hello".to_string()),
             session_id: None,
             previous_response_id: None,
+            prompt_cache_key: None,
             tools: Vec::new(),
             callbacks: AiClientCallbacks::default(),
             purpose: "agent",
@@ -201,6 +203,7 @@ pub(super) async fn run_process_with_tools(
         .process_with_tools(
             args.input,
             args.previous_response_id,
+            args.prompt_cache_key,
             args.tools,
             args.session_id,
             None,

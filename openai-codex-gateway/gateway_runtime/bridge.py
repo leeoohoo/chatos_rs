@@ -17,6 +17,7 @@ from gateway_runtime.sdk_types import (
     ModelListResponse,
 )
 from gateway_runtime.thread_session import (
+    build_resume_fingerprint,
     build_thread_session_params,
     build_turn_start_params,
     resolve_thread_id,
@@ -75,6 +76,7 @@ class CodexBridge:
         self,
         *,
         input_items: list[dict[str, Any]],
+        instructions: str | None,
         model: str | None,
         reasoning_effort: str | None,
         reasoning_summary: str | None,
@@ -137,26 +139,33 @@ class CodexBridge:
             thread_session_params = build_thread_session_params(
                 cfg=self._cfg,
                 model=model,
+                instructions=instructions,
                 request_cwd=request_cwd,
                 request_config_overrides=request_config_overrides,
                 function_tools=function_tools,
+            )
+            turn_start_params = build_turn_start_params(
+                request_cwd=request_cwd,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                reasoning_summary=reasoning_summary,
+            )
+            resume_fingerprint = build_resume_fingerprint(
+                thread_session_params,
+                turn_start_params,
             )
             thread_id = resolve_thread_id(
                 client=client,
                 store=self._store,
                 previous_response_id=previous_response_id,
                 thread_session_params=thread_session_params,
+                expected_resume_fingerprint=resume_fingerprint,
             )
 
             turn_started = client.turn_start(
                 thread_id,
                 input_items,
-                params=build_turn_start_params(
-                    request_cwd=request_cwd,
-                    model=model,
-                    reasoning_effort=reasoning_effort,
-                    reasoning_summary=reasoning_summary,
-                ),
+                params=turn_start_params,
             )
             turn_id = turn_started.turn.id
             reasoning_log(
@@ -195,6 +204,8 @@ class CodexBridge:
         return TurnResult(
             thread_id=thread_id,
             turn_id=turn_id,
+            instructions=instructions,
+            resume_fingerprint=resume_fingerprint,
             output_text=state.output_text,
             reasoning_text=state.reasoning_text,
             status=state.status,

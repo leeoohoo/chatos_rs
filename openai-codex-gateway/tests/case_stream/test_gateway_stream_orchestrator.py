@@ -23,6 +23,8 @@ class GatewayStreamOrchestratorTest(unittest.TestCase):
         result = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions=None,
+            resume_fingerprint="",
             output_text="",
             reasoning_text="",
             status="completed",
@@ -58,6 +60,8 @@ class GatewayStreamOrchestratorTest(unittest.TestCase):
         result = TurnResult(
             thread_id="thread_2",
             turn_id="turn_2",
+            instructions=None,
+            resume_fingerprint="",
             output_text="final text",
             reasoning_text="reasoning",
             status="failed",
@@ -91,6 +95,8 @@ class GatewayStreamOrchestratorTest(unittest.TestCase):
         result = TurnResult(
             thread_id="thread_3",
             turn_id="turn_3",
+            instructions=None,
+            resume_fingerprint="",
             output_text="",
             reasoning_text="",
             status="completed",

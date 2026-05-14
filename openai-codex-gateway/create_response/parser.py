@@ -5,6 +5,7 @@ from typing import Any
 
 from gateway_request.payload import (
     ensure_non_empty_turn_input,
+    extract_request_instructions,
     extract_reasoning_options,
     extract_turn_input_items,
     merge_input_items_with_tool_outputs,
@@ -14,6 +15,7 @@ from gateway_request.payload import (
 @dataclass
 class CreateResponseContext:
     input_items: list[dict[str, Any]]
+    instructions: str | None
     model: Any
     model_name: str
     previous_response_id: str | None
@@ -27,7 +29,10 @@ def parse_create_response_context(
     *,
     provided_tool_outputs: dict[str, list[dict[str, Any]]],
 ) -> CreateResponseContext:
+    instructions = extract_request_instructions(payload)
     input_items = extract_turn_input_items(payload)
+    if not input_items and instructions:
+        input_items = [{"type": "text", "text": instructions}]
     input_items = merge_input_items_with_tool_outputs(input_items, provided_tool_outputs)
     input_items = ensure_non_empty_turn_input(input_items)
     if not input_items:
@@ -48,6 +53,7 @@ def parse_create_response_context(
 
     return CreateResponseContext(
         input_items=input_items,
+        instructions=instructions,
         model=model,
         model_name=model_name,
         previous_response_id=previous_response_id,

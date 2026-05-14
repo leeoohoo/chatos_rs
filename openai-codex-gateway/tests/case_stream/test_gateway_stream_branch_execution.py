@@ -24,6 +24,7 @@ from gateway_base.types import TurnResult  # noqa: E402
 class GatewayStreamBranchExecutionTest(unittest.TestCase):
     def test_execute_function_tools_branch(self) -> None:
         stream_context = StreamRequestContext(
+            instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id="resp_prev",
@@ -41,6 +42,8 @@ class GatewayStreamBranchExecutionTest(unittest.TestCase):
         expected_result = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions="请总结",
+            resume_fingerprint="resume_fp_1",
             output_text="out",
             reasoning_text="reason",
             status="completed",
@@ -96,6 +99,7 @@ class GatewayStreamBranchExecutionTest(unittest.TestCase):
 
     def test_execute_plain_message_branch(self) -> None:
         stream_context = StreamRequestContext(
+            instructions=None,
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id=None,
@@ -112,6 +116,8 @@ class GatewayStreamBranchExecutionTest(unittest.TestCase):
         expected_result = TurnResult(
             thread_id="thread_2",
             turn_id="turn_2",
+            instructions=None,
+            resume_fingerprint="",
             output_text="out",
             reasoning_text="reason",
             status="completed",

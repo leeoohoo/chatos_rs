@@ -11,6 +11,7 @@ class CreateResponseTurnRunnerBridge(Protocol):
         self,
         *,
         input_items: list[dict[str, Any]],
+        instructions: str | None,
         model: str | None,
         reasoning_effort: str | None,
         reasoning_summary: str | None,
@@ -38,6 +39,7 @@ def run_create_response_turn(
 ) -> TurnResult:
     return bridge._run_turn(
         input_items=context.input_items,
+        instructions=context.instructions,
         model=context.model,
         reasoning_effort=context.reasoning_effort,
         reasoning_summary=context.reasoning_summary,

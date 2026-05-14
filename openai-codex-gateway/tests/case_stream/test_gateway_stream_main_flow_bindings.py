@@ -19,6 +19,7 @@ from gateway_stream.request_parser import StreamRequestContext  # noqa: E402
 class GatewayStreamMainFlowBindingsTest(unittest.TestCase):
     def test_bind_stream_main_flow_invocation(self) -> None:
         stream_context = StreamRequestContext(
+            instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id="resp_prev",

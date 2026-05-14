@@ -20,6 +20,8 @@ class GatewayStreamPlainCompletionTest(unittest.TestCase):
         result = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions=None,
+            resume_fingerprint="",
             output_text="hello",
             reasoning_text="reason",
             status="completed",

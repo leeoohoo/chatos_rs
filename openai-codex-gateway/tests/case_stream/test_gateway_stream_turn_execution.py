@@ -28,10 +28,18 @@ class FakeBridge:
 
 class FakeStore:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, str, str]] = []
 
-    def put(self, response_id: str, thread_id: str) -> None:
-        self.calls.append((response_id, thread_id))
+    def put(
+        self,
+        response_id: str,
+        thread_id: str,
+        instructions_fingerprint: str = "",
+        resume_fingerprint: str = "",
+    ) -> None:
+        self.calls.append(
+            (response_id, thread_id, instructions_fingerprint, resume_fingerprint)
+        )
 
 
 class GatewayStreamTurnExecutionTest(unittest.TestCase):
@@ -39,6 +47,8 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
         expected = TurnResult(
             thread_id="thread_1",
             turn_id="turn_1",
+            instructions="请总结",
+            resume_fingerprint="resume_fp_1",
             output_text="hello",
             reasoning_text="think",
             status="completed",
@@ -49,6 +59,7 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
         bridge = FakeBridge(expected)
         store = FakeStore()
         stream_context = StreamRequestContext(
+            instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
             previous_response_id="resp_prev",
@@ -77,9 +88,13 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
         )
 
         self.assertIs(result, expected)
-        self.assertEqual(store.calls, [("resp_1", "thread_1")])
+        self.assertEqual(len(store.calls), 1)
+        self.assertEqual(store.calls[0][:2], ("resp_1", "thread_1"))
+        self.assertTrue(store.calls[0][2])
+        self.assertEqual(store.calls[0][3], "resume_fp_1")
         self.assertIsNotNone(bridge.last_kwargs)
         kwargs = bridge.last_kwargs or {}
+        self.assertEqual(kwargs["instructions"], "请总结")
         self.assertEqual(kwargs["model"], "codex-1")
         self.assertEqual(kwargs["reasoning_effort"], "high")
         self.assertEqual(kwargs["reasoning_summary"], "concise")
@@ -97,6 +112,8 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
             TurnResult(
                 thread_id="thread_2",
                 turn_id="turn_2",
+                instructions=None,
+                resume_fingerprint="",
                 output_text="",
                 reasoning_text="",
                 status="completed",
@@ -107,6 +124,7 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
         )
         store = FakeStore()
         stream_context = StreamRequestContext(
+            instructions=None,
             model_raw=123,
             model_name="codex-default",
             previous_response_id=None,
@@ -130,9 +148,10 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
             on_reasoning_delta=None,
         )
 
-        self.assertEqual(store.calls, [("resp_2", "thread_2")])
+        self.assertEqual(store.calls, [("resp_2", "thread_2", "", "")])
         self.assertIsNotNone(bridge.last_kwargs)
         kwargs = bridge.last_kwargs or {}
+        self.assertIsNone(kwargs["instructions"])
         self.assertIsNone(kwargs["model"])
         self.assertIsNone(kwargs["reasoning_effort"])
         self.assertIsNone(kwargs["reasoning_summary"])

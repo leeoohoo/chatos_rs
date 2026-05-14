@@ -25,6 +25,7 @@ impl AiClient {
         &mut self,
         input: Value,
         previous_response_id: Option<String>,
+        prompt_cache_key: Option<String>,
         tools: Vec<Value>,
         session_id: Option<String>,
         turn_id: Option<String>,
@@ -170,6 +171,7 @@ impl AiClient {
                         } else {
                             None
                         },
+                        prompt_cache_key.clone(),
                         if tools.is_empty() {
                             None
                         } else {

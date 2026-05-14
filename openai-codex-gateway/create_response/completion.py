@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from typing import Any, Callable, Protocol
 
-from gateway_response.builder import build_non_stream_response_body
 from gateway_base.types import TurnResult
+from gateway_response.builder import build_non_stream_response_body
+from gateway_runtime.thread_session import instructions_fingerprint
 
 
 class CreateResponseStore(Protocol):
-    def put(self, response_id: str, thread_id: str) -> None: ...
+    def put(
+        self,
+        response_id: str,
+        thread_id: str,
+        instructions_fingerprint: str = "",
+        resume_fingerprint: str = "",
+    ) -> None: ...
 
 
 def finalize_create_response(
@@ -26,7 +33,12 @@ def finalize_create_response(
     response_id = response_id_factory()
     message_id = message_id_factory()
 
-    store.put(response_id, result.thread_id)
+    store.put(
+        response_id,
+        result.thread_id,
+        instructions_fingerprint(result.instructions),
+        result.resume_fingerprint,
+    )
     body = build_non_stream_response_body(
         response_id=response_id,
         model_name=model_name,

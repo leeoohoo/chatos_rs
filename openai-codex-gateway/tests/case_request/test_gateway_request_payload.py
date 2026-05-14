@@ -15,6 +15,7 @@ from gateway_request.payload import (  # noqa: E402
     ensure_non_empty_turn_input,
     extract_function_call_outputs,
     extract_request_config_overrides,
+    extract_request_instructions,
     extract_turn_input_items,
 )
 
@@ -45,12 +46,18 @@ class GatewayRequestPayloadTest(unittest.TestCase):
 
         items = extract_turn_input_items(payload)
 
-        self.assertEqual(items[0], {"type": "text", "text": "请先阅读附件"})
-        self.assertEqual(items[1], {"type": "text", "text": "你好"})
-        self.assertEqual(items[2]["type"], "text")
-        self.assertIn("Attachment: note.txt (text/plain)", items[2]["text"])
-        self.assertIn("hello gateway", items[2]["text"])
-        self.assertEqual(items[3], {"type": "localImage", "path": "/tmp/example.png"})
+        self.assertEqual(items[0], {"type": "text", "text": "你好"})
+        self.assertEqual(items[1]["type"], "text")
+        self.assertIn("Attachment: note.txt (text/plain)", items[1]["text"])
+        self.assertIn("hello gateway", items[1]["text"])
+        self.assertEqual(items[2], {"type": "localImage", "path": "/tmp/example.png"})
+
+    def test_extract_request_instructions_returns_trimmed_string(self) -> None:
+        self.assertEqual(
+            extract_request_instructions({"instructions": "  请先阅读附件  "}),
+            "请先阅读附件",
+        )
+        self.assertIsNone(extract_request_instructions({"instructions": "   "}))
 
     def test_ensure_non_empty_turn_input_adds_hint_for_image_only_turn(self) -> None:
         items = ensure_non_empty_turn_input(
