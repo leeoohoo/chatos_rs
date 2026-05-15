@@ -37,6 +37,9 @@ const REMOTE_CONNECTION_CREATE_LIKE_REASONS = new Set(['remote_connection_create
 const REMOTE_CONNECTION_UPDATE_LIKE_REASONS = new Set(['remote_connection_updated']);
 const SESSION_CREATE_LIKE_REASONS = new Set(['session_created']);
 const SESSION_UPDATE_LIKE_REASONS = new Set(['session_updated']);
+const TERMINAL_CREATE_LIKE_REASONS = new Set(['created', 'ensured_running']);
+const TERMINAL_UPDATE_LIKE_REASONS = new Set(['updated']);
+const TERMINAL_REFRESH_LIKE_REASONS = new Set(['closed']);
 
 interface SessionListControllerParams {
   store?: typeof useChatStore;
@@ -260,20 +263,28 @@ export const useSessionListController = ({
       const reason = String(payload.reason || '').trim();
       const terminalId = String(payload.terminal_id || '').trim();
       if (reason === 'deleted' && terminalId) {
+        if (currentTerminal?.id === terminalId) {
+          setActivePanel('chat');
+        }
         removeTerminalLocally(terminalId);
         return;
       }
-      if (payload.terminal) {
+      if (payload.terminal && (TERMINAL_CREATE_LIKE_REASONS.has(reason) || TERMINAL_UPDATE_LIKE_REASONS.has(reason))) {
         applyRealtimeTerminalSnapshot(payload.terminal);
         return;
       }
-      if (terminalId) {
+      if (terminalId && (TERMINAL_REFRESH_LIKE_REASONS.has(reason) || !payload.terminal)) {
         void refreshTerminalById(terminalId).then((terminal) => {
           if (!terminal && reason === 'created') {
             markTerminalsStale();
             void loadTerminals();
           }
         });
+        return;
+      }
+      if (terminalId) {
+        markTerminalsStale(undefined);
+        void loadTerminals();
         return;
       }
       markTerminalsStale();

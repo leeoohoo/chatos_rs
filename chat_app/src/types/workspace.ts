@@ -156,24 +156,6 @@ export interface CodeNavDocumentSymbolsResult {
   symbols: CodeNavDocumentSymbol[];
 }
 
-export interface ChangeLogItem {
-  id: string;
-  serverName: string;
-  path: string;
-  action: string;
-  changeKind: 'create' | 'edit' | 'delete';
-  bytes: number;
-  sha256?: string | null;
-  diff?: string | null;
-  sessionId?: string | null;
-  runId?: string | null;
-  confirmed: boolean;
-  confirmedAt?: string | null;
-  confirmedBy?: string | null;
-  createdAt: string;
-  sessionTitle?: string | null;
-}
-
 export interface ProjectChangeMark {
   path: string;
   relativePath: string;

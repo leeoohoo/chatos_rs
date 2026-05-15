@@ -286,18 +286,3 @@ fn path_to_regex(path: &str) -> String {
     let slash_flexible = escaped.replace('/', r"[\\/]");
     format!(r"(^|[\\/]){}$", slash_flexible)
 }
-
-pub(super) fn path_to_sql_like(path: &str) -> String {
-    let trimmed = path.trim_start_matches('/');
-    let mut escaped = String::new();
-    for ch in trimmed.chars() {
-        match ch {
-            '!' | '%' | '_' => {
-                escaped.push('!');
-                escaped.push(ch);
-            }
-            _ => escaped.push(ch),
-        }
-    }
-    format!("%/{}", escaped)
-}

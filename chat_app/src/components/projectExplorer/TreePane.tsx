@@ -18,7 +18,6 @@ interface ProjectTreePaneProps {
   dropTargetDirPath: string | null;
   actionLoading: boolean;
   actionReloadPath: string | null;
-  canConfirmCurrent: boolean;
   showOnlyChanged: boolean;
   changeSummary: ProjectChangeSummary;
   loadingSummary: boolean;
@@ -46,8 +45,6 @@ interface ProjectTreePaneProps {
   onCreateDirectoryAtRoot: () => void;
   onCreateFileAtRoot: () => void;
   onRefresh: () => void;
-  onConfirmCurrent: () => void;
-  onConfirmAll: () => void;
   onSearchQueryChange: (value: string) => void;
   onToggleSearchCaseSensitive: () => void;
   onToggleSearchWholeWord: () => void;
@@ -85,7 +82,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  canConfirmCurrent,
   showOnlyChanged,
   changeSummary,
   loadingSummary,
@@ -113,8 +109,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
-  onConfirmCurrent,
-  onConfirmAll,
   onSearchQueryChange,
   onToggleSearchCaseSensitive,
   onToggleSearchWholeWord,
@@ -156,7 +150,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
         dropTargetDirPath={dropTargetDirPath}
         actionLoading={actionLoading}
         actionReloadPath={actionReloadPath}
-        canConfirmCurrent={canConfirmCurrent}
         showOnlyChanged={showOnlyChanged}
         changeSummary={changeSummary}
         loadingSummary={loadingSummary}
@@ -181,8 +174,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
         onCreateDirectoryAtRoot={onCreateDirectoryAtRoot}
         onCreateFileAtRoot={onCreateFileAtRoot}
         onRefresh={onRefresh}
-        onConfirmCurrent={onConfirmCurrent}
-        onConfirmAll={onConfirmAll}
         onSearchQueryChange={onSearchQueryChange}
         onToggleSearchCaseSensitive={onToggleSearchCaseSensitive}
         onToggleSearchWholeWord={onToggleSearchWholeWord}

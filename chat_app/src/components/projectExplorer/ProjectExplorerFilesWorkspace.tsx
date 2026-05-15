@@ -1,13 +1,12 @@
 import React from 'react';
 
-import type { ChangeLogItem, FsEntry } from '../../types';
+import type { FsEntry } from '../../types';
 import { cn } from '../../lib/utils';
 import {
   EntryContextMenu,
   MoveConflictModal,
   type MoveConflictState,
 } from './Overlays';
-import { ChangeLogPanel } from './ChangeLogPanels';
 import { ProjectPreviewPane } from './PreviewPane';
 import { ProjectTreePane } from './TreePane';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
@@ -20,11 +19,6 @@ interface ProjectExplorerFilesWorkspaceProps {
   resizeStartWidth: React.MutableRefObject<number>;
   setIsResizing: React.Dispatch<React.SetStateAction<boolean>>;
   previewPaneProps: React.ComponentProps<typeof ProjectPreviewPane>;
-  loadingLogs: boolean;
-  logsError: string | null;
-  changeLogs: ChangeLogItem[];
-  selectedLogId: string | null;
-  setSelectedLogId: React.Dispatch<React.SetStateAction<string | null>>;
   moveConflict: MoveConflictState | null;
   actionLoading: boolean;
   setMoveConflict: React.Dispatch<React.SetStateAction<MoveConflictState | null>>;
@@ -51,11 +45,6 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
   resizeStartWidth,
   setIsResizing,
   previewPaneProps,
-  loadingLogs,
-  logsError,
-  changeLogs,
-  selectedLogId,
-  setSelectedLogId,
   moveConflict,
   actionLoading,
   setMoveConflict,
@@ -86,23 +75,6 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
       />
       <div className="flex-1 flex overflow-hidden">
         <ProjectPreviewPane {...previewPaneProps} />
-        {(loadingLogs || logsError || changeLogs.length > 0) && (
-          <div className="w-72 border-l border-border bg-card/60 flex flex-col overflow-hidden">
-            <div className="px-4 py-2 text-xs font-medium text-foreground border-b border-border">变更记录</div>
-            <div className="flex-1 min-h-0 overflow-auto">
-              <ChangeLogPanel
-                selectedPath={treePaneProps.selectedPath}
-                loadingLogs={loadingLogs}
-                logsError={logsError}
-                changeLogs={changeLogs}
-                selectedLogId={selectedLogId}
-                onToggleLog={(logId) => {
-                  setSelectedLogId((prev) => (prev === logId ? null : logId));
-                }}
-              />
-            </div>
-          </div>
-        )}
       </div>
       <MoveConflictModal
         moveConflict={moveConflict}

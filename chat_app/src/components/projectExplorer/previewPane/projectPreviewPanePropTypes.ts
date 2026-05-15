@@ -1,7 +1,6 @@
 import type React from 'react';
 
 import type {
-  ChangeLogItem,
   CodeNavCapabilities,
   FsEntry,
   FsReadResult,
@@ -23,7 +22,6 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   totalSearchHits: number;
   canOpenPreviousSearchHit: boolean;
   canOpenNextSearchHit: boolean;
-  selectedLog: ChangeLogItem | null;
   runStatus: string;
   runCatalogLoading: boolean;
   projectMembers: ProjectRunnerMember[];

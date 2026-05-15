@@ -85,18 +85,19 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
+                      {(() => {
+                        const isRunning = terminal.status === 'running';
+                        return (
+                          <>
                       <h3 className="text-sm font-medium text-foreground truncate min-w-0 flex-1">
                         {terminal.name}
                       </h3>
-                      <span className={cn(
-                        'inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border',
-                        terminal.status === 'running'
-                          ? 'border-emerald-500/40 text-emerald-600'
-                          : 'border-muted-foreground/40 text-muted-foreground',
-                      )}>
-                        {terminal.status === 'running' ? '运行中' : '已退出'}
-                      </span>
-                      {terminal.status === 'running' && (
+                      {isRunning && (
+                        <span className="inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-600">
+                          运行中
+                        </span>
+                      )}
+                      {isRunning && (
                         <span className={cn(
                           'inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border',
                           terminal.busy
@@ -106,6 +107,9 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
                           {terminal.busy ? '忙碌' : '空闲'}
                         </span>
                       )}
+                          </>
+                        );
+                      })()}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground truncate" title={terminal.cwd}>
                       {terminal.cwd}

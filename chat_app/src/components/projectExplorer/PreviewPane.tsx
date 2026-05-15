@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
-import { DiffPanel } from './ChangeLogPanels';
 import { ProjectPreviewFileContent } from './previewPane/ProjectPreviewFileContent';
 import { ProjectPreviewHeader } from './previewPane/ProjectPreviewHeader';
 import { ProjectPreviewNavigation } from './previewPane/ProjectPreviewNavigation';
@@ -36,7 +35,6 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   documentSymbols,
   documentSymbolsLoading,
   documentSymbolsError,
-  selectedLog,
   runStatus,
   runCatalogLoading,
   projectMembers,
@@ -215,8 +213,6 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
             onOpenDocumentSymbol={onOpenDocumentSymbol}
           />
         )}
-
-        <DiffPanel selectedLog={selectedLog} />
 
         <div className="min-h-0 flex-1 overflow-hidden">
           {error ? (

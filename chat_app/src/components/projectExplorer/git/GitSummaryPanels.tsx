@@ -9,27 +9,51 @@ export const GitSummaryBlock: React.FC<{
   branchLabel: string;
   changeCount: number;
   summary: NonNullable<ReturnType<typeof useProjectGit>['summary']>;
-}> = ({ branchLabel, changeCount, summary }) => (
-  <div className="mb-2 rounded-md border border-border bg-background p-3 text-xs">
-    <div className="flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <div className="truncate font-medium text-foreground">{branchLabel}</div>
-        <div className="mt-1 truncate text-muted-foreground">
-          {summary.upstream || '未设置 upstream'}
+}> = ({ branchLabel, changeCount, summary }) => {
+  const changeBadges = [
+    { key: 'staged', label: 'staged', count: summary.changes.staged, className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700' },
+    { key: 'unstaged', label: 'unstaged', count: summary.changes.unstaged, className: 'border-amber-500/30 bg-amber-500/10 text-amber-700' },
+    { key: 'untracked', label: 'untracked', count: summary.changes.untracked, className: 'border-sky-500/30 bg-sky-500/10 text-sky-700' },
+    { key: 'conflicted', label: 'conflicted', count: summary.changes.conflicted, className: 'border-rose-500/30 bg-rose-500/10 text-rose-700' },
+  ].filter((item) => item.count > 0);
+
+  return (
+    <div className="mb-2 rounded-md border border-border bg-background p-3 text-xs">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate font-medium text-foreground">{branchLabel}</div>
+          <div className="mt-1 truncate text-muted-foreground">
+            {summary.upstream || '未设置 upstream'}
+          </div>
+        </div>
+        <div className="shrink-0 text-right text-muted-foreground">
+          <div>↑{summary.ahead} ↓{summary.behind}</div>
+          <div className={changeCount > 0 ? 'text-amber-700' : ''}>{changeCount} 个变更</div>
         </div>
       </div>
-      <div className="shrink-0 text-right text-muted-foreground">
-        <div>↑{summary.ahead} ↓{summary.behind}</div>
-        <div className={changeCount > 0 ? 'text-amber-700' : ''}>{changeCount} 个变更</div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {changeBadges.length > 0 ? changeBadges.map((item) => (
+          <span
+            key={item.key}
+            className={cn('inline-flex items-center rounded-full border px-2 py-1 text-[11px]', item.className)}
+          >
+            {item.label} {item.count}
+          </span>
+        )) : (
+          <span className="text-muted-foreground">工作区干净，可以直接去 Git 面板执行同步操作。</span>
+        )}
       </div>
+      <div className="mt-2 text-[11px] text-muted-foreground">
+        这里负责查看 working tree、diff 和提交前状态；实际 Stage / Commit / Push 也都在当前面板完成。
+      </div>
+      {summary.operationState && (
+        <div className="mt-2 rounded bg-amber-500/10 px-2 py-1 text-amber-700">
+          当前 Git 操作状态：{summary.operationState}
+        </div>
+      )}
     </div>
-    {summary.operationState && (
-      <div className="mt-2 rounded bg-amber-500/10 px-2 py-1 text-amber-700">
-        当前 Git 操作状态：{summary.operationState}
-      </div>
-    )}
-  </div>
-);
+  );
+};
 
 export const GitClientInfoBlock: React.FC<{
   clientInfo: GitClientInfo | null;

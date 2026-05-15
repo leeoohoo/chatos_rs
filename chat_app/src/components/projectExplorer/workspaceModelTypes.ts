@@ -1,7 +1,6 @@
 import type { Project } from '../../types';
 import type { useProjectExplorerCodeNav } from './useProjectExplorerCodeNav';
 import type { useProjectExplorerDataLoading } from './useProjectExplorerDataLoading';
-import type { useProjectExplorerLogs } from './useProjectExplorerLogs';
 import type { useProjectExplorerPathHelpers } from './useProjectExplorerPathHelpers';
 import type { useProjectExplorerRunState } from './useProjectExplorerRunState';
 import type { useProjectExplorerSearch } from './useProjectExplorerSearch';
@@ -17,7 +16,6 @@ export interface UseProjectExplorerWorkspaceModelParams {
   pathHelpers: ReturnType<typeof useProjectExplorerPathHelpers>;
   search: ReturnType<typeof useProjectExplorerSearch>;
   dataLoading: ReturnType<typeof useProjectExplorerDataLoading>;
-  logs: ReturnType<typeof useProjectExplorerLogs>;
   selection: ReturnType<typeof useProjectExplorerSelection>;
   runState: ReturnType<typeof useProjectExplorerRunState>;
   codeNav: ReturnType<typeof useProjectExplorerCodeNav>;

@@ -2,8 +2,6 @@ import * as workspaceApi from '../../workspace';
 import type {
   DeleteSuccessResponse,
   PagingOptions,
-  ProjectChangeConfirmResponse,
-  ProjectChangeLogResponse,
   ProjectChangeSummaryResponse,
   ProjectContactLinkResponse,
   ProjectResponse,
@@ -28,15 +26,7 @@ export interface WorkspaceProjectFacade {
   listProjectContacts(projectId: string, paging?: PagingOptions): Promise<ProjectContactLinkResponse[]>;
   addProjectContact(projectId: string, data: { contact_id: string }): Promise<ProjectContactLinkResponse>;
   removeProjectContact(projectId: string, contactId: string): Promise<DeleteSuccessResponse>;
-  listProjectChangeLogs(
-    projectId: string,
-    params?: { path?: string; limit?: number; offset?: number },
-  ): Promise<ProjectChangeLogResponse[]>;
   getProjectChangeSummary(projectId: string): Promise<ProjectChangeSummaryResponse>;
-  confirmProjectChanges(
-    projectId: string,
-    payload: { mode?: 'all' | 'paths' | 'change_ids'; paths?: string[]; change_ids?: string[] },
-  ): Promise<ProjectChangeConfirmResponse>;
 }
 
 export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient> = {
@@ -76,13 +66,7 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   async removeProjectContact(projectId, contactId) {
     return workspaceApi.removeProjectContact(this.getRequestFn(), projectId, contactId);
   },
-  async listProjectChangeLogs(projectId, params) {
-    return workspaceApi.listProjectChangeLogs(this.getRequestFn(), projectId, params);
-  },
   async getProjectChangeSummary(projectId) {
     return workspaceApi.getProjectChangeSummary(this.getRequestFn(), projectId);
-  },
-  async confirmProjectChanges(projectId, payload) {
-    return workspaceApi.confirmProjectChanges(this.getRequestFn(), projectId, payload);
   },
 };

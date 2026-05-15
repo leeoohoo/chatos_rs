@@ -4,7 +4,6 @@ import type {
   FsMoveOptions,
   FsMoveResponse,
   FsMutationResponse,
-  ProjectChangeConfirmResponse,
 } from '../../lib/api/client/types';
 import type { FsEntry, FsReadResult } from '../../types';
 import type { MoveConflictState } from './Overlays';
@@ -14,10 +13,6 @@ export interface ProjectTreeActionsClient {
   createFsFile(parentPath: string, name: string, content?: string): Promise<FsMutationResponse>;
   deleteFsEntry(path: string, recursive?: boolean): Promise<FsMutationResponse>;
   downloadFsEntry(path: string): Promise<{ blob: Blob; filename: string; contentType: string }>;
-  confirmProjectChanges(
-    projectId: string,
-    payload: { mode?: 'all' | 'paths' | 'change_ids'; paths?: string[]; change_ids?: string[] },
-  ): Promise<ProjectChangeConfirmResponse>;
   moveFsEntry(
     sourcePath: string,
     targetParentPath: string,
@@ -30,16 +25,13 @@ export interface UseProjectTreeActionsOptions {
   selectedDirPath: string | null;
   selectedEntry: FsEntry | null;
   selectedFilePath: string | null;
-  selectedPath: string | null;
   projectRootPath?: string | null;
-  projectId?: string | null;
   actionReloadPath: string | null;
   normalizePath: (value: string) => string;
   getParentPath: (value: string) => string | null;
   toExpandedKey: (path: string) => string;
   loadEntries: (path: string) => Promise<void>;
   loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
-  hasPendingChangesForPath: (path: string | null) => boolean;
   pruneDeletedPath: (deletedPath: string) => void;
   replaceExpandedPathPrefix: (sourcePath: string, movedPath: string) => Set<string>;
   reloadTreeWithExpanded: (nextExpanded: Set<string>) => Promise<void>;

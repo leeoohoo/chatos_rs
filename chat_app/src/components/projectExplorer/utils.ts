@@ -30,10 +30,10 @@ import {
 import { getHighlightLanguage as getDomainHighlightLanguage } from '../../lib/domain/projectExplorerPreview';
 export type { ChangeKind } from '../../lib/domain/projectExplorer';
 export {
+  buildProjectChangeSummaryFromGitStatus,
   EMPTY_CHANGE_SUMMARY,
   isProjectChangeSummaryEqual,
   normalizeChangeKind,
-  normalizeChangeLog,
   normalizeProjectChangeSummary,
   normalizeProjectRunCatalog,
   normalizeProjectRunTarget,

@@ -169,8 +169,8 @@ export const ProjectTreeEntries: React.FC<ProjectTreeEntriesProps> = ({
             <div className="px-3 py-2 text-xs text-muted-foreground">
               {showOnlyChanged
                 ? (changeSummary.counts.total > 0
-                  ? '存在未确认变更，但当前目录树未命中。请查看下方列表。'
-                  : '暂无未确认变更文件')
+                  ? '存在变更，但当前目录树未命中。请查看下方列表。'
+                  : '暂无变更文件')
                 : '目录为空'}
             </div>
           )}

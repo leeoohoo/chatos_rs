@@ -65,32 +65,6 @@ export interface ProjectContactLinkResponse {
   updatedAt?: string | null;
 }
 
-export interface ProjectChangeLogResponse {
-  id: string;
-  server_name?: string;
-  serverName?: string;
-  path?: string;
-  action?: string;
-  change_kind?: 'create' | 'edit' | 'delete' | string;
-  changeKind?: 'create' | 'edit' | 'delete' | string;
-  bytes?: number;
-  sha256?: string | null;
-  diff?: string | null;
-  conversation_id?: string | null;
-  conversationId?: string | null;
-  run_id?: string | null;
-  runId?: string | null;
-  confirmed?: boolean;
-  confirmed_at?: string | null;
-  confirmedAt?: string | null;
-  confirmed_by?: string | null;
-  confirmedBy?: string | null;
-  created_at?: string;
-  createdAt?: string;
-  conversation_title?: string | null;
-  conversationTitle?: string | null;
-}
-
 export interface ProjectChangeMarkResponse {
   path?: string;
   relative_path?: string;
@@ -113,10 +87,4 @@ export interface ProjectChangeSummaryResponse {
     delete?: number;
     total?: number;
   };
-}
-
-export interface ProjectChangeConfirmResponse {
-  confirmed?: number;
-  requested?: number;
-  mode?: 'all' | 'paths' | 'change_ids' | string;
 }

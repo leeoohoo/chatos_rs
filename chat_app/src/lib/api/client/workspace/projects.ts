@@ -1,8 +1,6 @@
 import { buildQuery } from '../shared';
 import type {
   DeleteSuccessResponse,
-  ProjectChangeConfirmResponse,
-  ProjectChangeLogResponse,
   ProjectChangeSummaryResponse,
   ProjectContactLinkResponse,
   ProjectResponse,
@@ -124,33 +122,9 @@ export const removeProjectContact = (
   );
 };
 
-export const listProjectChangeLogs = (
-  request: ApiRequestFn,
-  projectId: string,
-  params?: { path?: string; limit?: number; offset?: number },
-): Promise<ProjectChangeLogResponse[]> => {
-  const query = buildQuery({
-    path: params?.path,
-    limit: params?.limit,
-    offset: params?.offset,
-  });
-  return request<ProjectChangeLogResponse[]>(`/projects/${projectId}/changes${query}`);
-};
-
 export const getProjectChangeSummary = (
   request: ApiRequestFn,
   projectId: string,
 ): Promise<ProjectChangeSummaryResponse> => {
   return request<ProjectChangeSummaryResponse>(`/projects/${projectId}/changes/summary`);
-};
-
-export const confirmProjectChanges = (
-  request: ApiRequestFn,
-  projectId: string,
-  payload: { mode?: 'all' | 'paths' | 'change_ids'; paths?: string[]; change_ids?: string[] },
-): Promise<ProjectChangeConfirmResponse> => {
-  return request<ProjectChangeConfirmResponse>(`/projects/${projectId}/changes/confirm`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
 };

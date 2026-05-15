@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
 use crate::models::terminal::Terminal;
+use crate::repositories::terminal_logs;
 use crate::repositories::terminals;
 use crate::services::realtime::{
     publish_project_run_state_changed, publish_terminal_list_invalidated,
@@ -34,7 +35,6 @@ impl TerminalsManager {
     fn spawn_session(&self, terminal: &Terminal) -> Result<Arc<TerminalSession>, String> {
         let (session, mut child) = TerminalSession::new(terminal)?;
         let id = terminal.id.clone();
-        let terminal_for_events = terminal.clone();
         let sender = session.sender.clone();
         let handle = tokio::runtime::Handle::current();
         std::thread::spawn(move || {
@@ -43,28 +43,39 @@ impl TerminalsManager {
             let id_clone = id.clone();
             let handle = handle.clone();
             handle.spawn(async move {
-                let _ =
-                    terminals::update_terminal_status(&id_clone, Some("exited".to_string()), None)
-                        .await;
-                if let Some(user_id) = terminal_for_events.user_id.as_deref() {
+                let manager = get_terminal_manager();
+                manager.sessions.remove(&id_clone);
+                let Some(existing_terminal) = terminals::get_terminal_by_id(&id_clone)
+                    .await
+                    .ok()
+                    .flatten()
+                else {
+                    return;
+                };
+
+                let _ = terminal_logs::delete_terminal_logs(&id_clone).await;
+                let _ = terminals::delete_terminal(&id_clone).await;
+                if let Some(user_id) = existing_terminal.user_id.as_deref() {
+                    let mut exited_terminal = existing_terminal.clone();
+                    exited_terminal.status = "exited".to_string();
                     publish_terminal_state_changed(
                         user_id,
-                        &terminal_for_events,
+                        &exited_terminal,
                         false,
                         "process_exited",
                     );
                     publish_terminal_list_invalidated(
                         user_id,
-                        Some(terminal_for_events.id.as_str()),
-                        terminal_for_events.project_id.as_deref(),
-                        "process_exited",
-                        Some(&terminal_for_events),
+                        Some(existing_terminal.id.as_str()),
+                        existing_terminal.project_id.as_deref(),
+                        "deleted",
+                        None,
                     );
-                    if let Some(project_id) = terminal_for_events.project_id.as_deref() {
+                    if let Some(project_id) = existing_terminal.project_id.as_deref() {
                         publish_project_run_state_changed(
                             user_id,
                             project_id,
-                            Some(&terminal_for_events),
+                            Some(&exited_terminal),
                             false,
                             false,
                             "exited",
@@ -148,30 +159,49 @@ impl TerminalsManager {
 
     pub async fn close(&self, id: &str) -> Result<(), String> {
         let terminal = terminals::get_terminal_by_id(id).await?;
+        self.close_internal(id, terminal.as_ref(), true).await
+    }
+
+    pub async fn close_silently(&self, id: &str) -> Result<(), String> {
+        let terminal = terminals::get_terminal_by_id(id).await?;
+        self.close_internal(id, terminal.as_ref(), false).await
+    }
+
+    async fn close_internal(
+        &self,
+        id: &str,
+        terminal: Option<&Terminal>,
+        publish_events: bool,
+    ) -> Result<(), String> {
         if let Some(session) = self.sessions.remove(id).map(|(_, s)| s) {
             let _ = session.write_input("exit\n");
         }
-        terminals::update_terminal_status(id, Some("exited".to_string()), None).await?;
-        if let Some(terminal) = terminal {
-            if let Some(user_id) = terminal.user_id.as_deref() {
-                publish_terminal_state_changed(user_id, &terminal, false, "closed");
-                publish_terminal_list_invalidated(
-                    user_id,
-                    Some(terminal.id.as_str()),
-                    terminal.project_id.as_deref(),
-                    "closed",
-                    Some(&terminal),
-                );
-                if let Some(project_id) = terminal.project_id.as_deref() {
-                    publish_project_run_state_changed(
+        let _ = terminal_logs::delete_terminal_logs(id).await;
+        terminals::delete_terminal(id).await?;
+        if publish_events {
+            if let Some(terminal) = terminal {
+                if let Some(user_id) = terminal.user_id.as_deref() {
+                    let mut exited_terminal = terminal.clone();
+                    exited_terminal.status = "exited".to_string();
+                    publish_terminal_state_changed(user_id, &exited_terminal, false, "closed");
+                    publish_terminal_list_invalidated(
                         user_id,
-                        project_id,
-                        Some(&terminal),
-                        false,
-                        false,
-                        "exited",
+                        Some(terminal.id.as_str()),
+                        terminal.project_id.as_deref(),
                         "closed",
+                        None,
                     );
+                    if let Some(project_id) = terminal.project_id.as_deref() {
+                        publish_project_run_state_changed(
+                            user_id,
+                            project_id,
+                            Some(&exited_terminal),
+                            false,
+                            false,
+                            "exited",
+                            "closed",
+                        );
+                    }
                 }
             }
         }

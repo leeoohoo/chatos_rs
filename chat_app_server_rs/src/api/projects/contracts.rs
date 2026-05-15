@@ -32,20 +32,6 @@ pub(super) struct AddProjectContactRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ProjectChangeQuery {
-    pub(super) path: Option<String>,
-    pub(super) limit: Option<i64>,
-    pub(super) offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ConfirmProjectChangesRequest {
-    pub(super) mode: Option<String>,
-    pub(super) paths: Option<Vec<String>>,
-    pub(super) change_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct ProjectRunExecuteRequest {
     pub(super) target_id: Option<String>,
     pub(super) cwd: Option<String>,

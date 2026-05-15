@@ -22,7 +22,6 @@ export interface UseProjectExplorerTreePanePropsParams {
   dropTargetDirPath: string | null;
   actionLoading: boolean;
   actionReloadPath: string | null;
-  canConfirmCurrent: boolean;
   showOnlyChanged: boolean;
   changeSummary: ProjectChangeSummary;
   loadingSummary: boolean;
@@ -59,8 +58,6 @@ export interface UseProjectExplorerTreePanePropsParams {
   handleCreateDirectory: (path: string) => Promise<void>;
   handleCreateFile: (path: string) => Promise<void>;
   handleRefresh: () => Promise<void>;
-  handleConfirmCurrentChanges: () => Promise<void>;
-  handleConfirmAllChanges: () => Promise<void>;
   handleSearchQueryChange: (value: string) => void;
   handleSearchCaseSensitiveChange: React.Dispatch<React.SetStateAction<boolean>>;
   handleSearchWholeWordChange: React.Dispatch<React.SetStateAction<boolean>>;

@@ -77,8 +77,15 @@ export const useSessionListDeleteActions = ({
       await deleteTerminal(terminalId);
     } catch (error) {
       console.error('Failed to delete terminal:', error);
+      const message = error instanceof Error ? error.message : '删除终端失败';
+      await alertDialog({
+        title: '删除失败',
+        message,
+        confirmText: '知道了',
+        type: 'info',
+      });
     }
-  }, [confirmDialog, deleteTerminal, terminals]);
+  }, [alertDialog, confirmDialog, deleteTerminal, terminals]);
 
   const handleDeleteRemoteConnection = useCallback(async (connectionId: string) => {
     const connection = remoteConnections.find((item: RemoteConnection) => item.id === connectionId);

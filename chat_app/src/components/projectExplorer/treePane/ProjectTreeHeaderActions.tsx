@@ -25,26 +25,18 @@ export const ProjectTreeChangeCounters: React.FC<{
 export const ProjectTreeHeaderActions: React.FC<{
   actionLoading: boolean;
   actionReloadPath: string | null;
-  canConfirmCurrent: boolean;
   showOnlyChanged: boolean;
-  totalChangeCount: number;
   onCreateDirectoryAtRoot: () => void;
   onCreateFileAtRoot: () => void;
   onRefresh: () => void;
-  onConfirmCurrent: () => void;
-  onConfirmAll: () => void;
   onToggleShowOnlyChanged: () => void;
 }> = ({
   actionLoading,
   actionReloadPath,
-  canConfirmCurrent,
   showOnlyChanged,
-  totalChangeCount,
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
-  onConfirmCurrent,
-  onConfirmAll,
   onToggleShowOnlyChanged,
 }) => (
   <div className="flex flex-wrap gap-1">
@@ -74,22 +66,6 @@ export const ProjectTreeHeaderActions: React.FC<{
     </button>
     <button
       type="button"
-      onClick={onConfirmCurrent}
-      disabled={!canConfirmCurrent || actionLoading}
-      className="rounded border border-amber-500/40 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      确认当前项
-    </button>
-    <button
-      type="button"
-      onClick={onConfirmAll}
-      disabled={totalChangeCount <= 0 || actionLoading}
-      className="rounded border border-emerald-500/40 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      确认全部变更
-    </button>
-    <button
-      type="button"
       onClick={onToggleShowOnlyChanged}
       className={cn(
         'rounded border px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50',
@@ -116,7 +92,7 @@ export const ProjectTreeHeaderMessages: React.FC<{
 }) => (
   <>
     {loadingSummary && (
-      <div className="text-[11px] text-muted-foreground">正在加载变更标记...</div>
+      <div className="text-[11px] text-muted-foreground">正在加载变更...</div>
     )}
     {summaryError && (
       <div className="truncate text-[11px] text-destructive" title={summaryError}>

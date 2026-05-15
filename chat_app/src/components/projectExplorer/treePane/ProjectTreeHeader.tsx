@@ -18,7 +18,6 @@ interface ProjectTreeHeaderProps {
   dropTargetDirPath: string | null;
   actionLoading: boolean;
   actionReloadPath: string | null;
-  canConfirmCurrent: boolean;
   showOnlyChanged: boolean;
   changeSummary: ProjectChangeSummary;
   loadingSummary: boolean;
@@ -43,8 +42,6 @@ interface ProjectTreeHeaderProps {
   onCreateDirectoryAtRoot: () => void;
   onCreateFileAtRoot: () => void;
   onRefresh: () => void;
-  onConfirmCurrent: () => void;
-  onConfirmAll: () => void;
   onSearchQueryChange: (value: string) => void;
   onToggleSearchCaseSensitive: () => void;
   onToggleSearchWholeWord: () => void;
@@ -67,7 +64,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  canConfirmCurrent,
   showOnlyChanged,
   changeSummary,
   loadingSummary,
@@ -92,8 +88,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
-  onConfirmCurrent,
-  onConfirmAll,
   onSearchQueryChange,
   onToggleSearchCaseSensitive,
   onToggleSearchWholeWord,
@@ -164,18 +158,14 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
       <ProjectTreeHeaderActions
         actionLoading={actionLoading}
         actionReloadPath={actionReloadPath}
-        canConfirmCurrent={canConfirmCurrent}
         showOnlyChanged={showOnlyChanged}
-        totalChangeCount={changeSummary.counts.total}
         onCreateDirectoryAtRoot={onCreateDirectoryAtRoot}
         onCreateFileAtRoot={onCreateFileAtRoot}
         onRefresh={onRefresh}
-        onConfirmCurrent={onConfirmCurrent}
-        onConfirmAll={onConfirmAll}
         onToggleShowOnlyChanged={onToggleShowOnlyChanged}
       />
       <div className="text-[11px] text-muted-foreground">
-        目录/文件的新建、下载、删除请右键对应项操作
+        这里只负责查看目录和变更；Stage、Commit、Push 请使用右上角 Git 面板
       </div>
       <ProjectTreeSearchControls
         searchQuery={searchQuery}

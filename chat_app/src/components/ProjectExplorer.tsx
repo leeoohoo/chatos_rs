@@ -27,11 +27,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     treePaneProps,
     previewPaneProps,
     actionLoading,
-    loadingLogs,
-    logsError,
-    changeLogs,
-    selectedLogId,
-    setSelectedLogId,
     moveConflict,
     setMoveConflict,
     handleMoveConflictCancel,
@@ -88,11 +83,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             resizeStartWidth={resizeStartWidth}
             setIsResizing={setIsResizing}
             previewPaneProps={previewPaneProps}
-            loadingLogs={loadingLogs}
-            logsError={logsError}
-            changeLogs={changeLogs}
-            selectedLogId={selectedLogId}
-            setSelectedLogId={setSelectedLogId}
             moveConflict={moveConflict}
             actionLoading={actionLoading}
             setMoveConflict={setMoveConflict}

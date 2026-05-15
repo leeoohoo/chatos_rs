@@ -27,41 +27,51 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
   canLoadMoreHistory,
   onLoadMoreHistory,
   onReconnect,
-}) => (
-  <div className="flex items-center justify-between border-b border-border px-4 py-2">
-    <div className="min-w-0">
-      <div className="text-sm font-medium text-foreground truncate">{terminalTitle}</div>
-      <div className="text-xs text-muted-foreground truncate">{terminalCwd}</div>
-    </div>
-    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-      <span className={cn(
-        'inline-flex items-center gap-1',
-        connectionState === 'connected' ? 'text-emerald-500' : connectionState === 'error' ? 'text-destructive' : 'text-muted-foreground'
-      )}>
+}) => {
+  const localizedStatus = terminalStatus === 'running'
+    ? '运行中'
+    : terminalStatus === 'exited'
+      ? '已退出'
+      : terminalStatus === 'unknown'
+        ? '未知'
+        : terminalStatus;
+
+  return (
+    <div className="flex items-center justify-between border-b border-border px-4 py-2">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-foreground truncate">{terminalTitle}</div>
+        <div className="text-xs text-muted-foreground truncate">{terminalCwd}</div>
+      </div>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
         <span className={cn(
-          'inline-block h-2 w-2 rounded-full',
-          connectionState === 'connected' ? 'bg-emerald-500' : connectionState === 'error' ? 'bg-destructive' : 'bg-muted-foreground/50'
-        )} />
-        {connectionState === 'connected' ? '已连接' : connectionState === 'connecting' ? '连接中' : connectionState === 'error' ? '连接错误' : '未连接'}
-      </span>
-      <span>状态: {terminalStatus}</span>
-      <button
-        type="button"
-        disabled={historyState === 'loading' || historyBusy || !canLoadMoreHistory}
-        onClick={onLoadMoreHistory}
-        className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {historyBusy ? '加载中...' : 'Load More History'}
-      </button>
-      <button
-        type="button"
-        onClick={onReconnect}
-        className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
-      >
-        重连
-      </button>
+          'inline-flex items-center gap-1',
+          connectionState === 'connected' ? 'text-emerald-500' : connectionState === 'error' ? 'text-destructive' : 'text-muted-foreground'
+        )}>
+          <span className={cn(
+            'inline-block h-2 w-2 rounded-full',
+            connectionState === 'connected' ? 'bg-emerald-500' : connectionState === 'error' ? 'bg-destructive' : 'bg-muted-foreground/50'
+          )} />
+          {connectionState === 'connected' ? '已连接' : connectionState === 'connecting' ? '连接中' : connectionState === 'error' ? '连接错误' : '未连接'}
+        </span>
+        <span>状态: {localizedStatus}</span>
+        <button
+          type="button"
+          disabled={historyState === 'loading' || historyBusy || !canLoadMoreHistory}
+          onClick={onLoadMoreHistory}
+          className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {historyBusy ? '加载中...' : '加载更多历史'}
+        </button>
+        <button
+          type="button"
+          onClick={onReconnect}
+          className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
+        >
+          重连
+        </button>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default TerminalHeader;

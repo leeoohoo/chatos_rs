@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 
 import type { Project } from '../../types';
 import { useProjectExplorerDataLoading } from './useProjectExplorerDataLoading';
-import { useProjectExplorerLogs } from './useProjectExplorerLogs';
 import { useProjectExplorerPathHelpers } from './useProjectExplorerPathHelpers';
 import { useProjectExplorerState } from './useProjectExplorerState';
 import { useProjectExplorerSearch } from './useProjectExplorerSearch';
@@ -45,6 +44,7 @@ export const useProjectExplorerViewModel = ({
   const dataLoading = useProjectExplorerDataLoading({
     client,
     projectId: project?.id,
+    projectRootPath: project?.rootPath,
     summaryLoadingRef: state.summaryLoadingRef,
     setLoadingPaths: state.setLoadingPaths,
     setError: state.setError,
@@ -52,13 +52,6 @@ export const useProjectExplorerViewModel = ({
     setChangeSummary: state.setChangeSummary,
     setSummaryError: state.setSummaryError,
     setLoadingSummary: state.setLoadingSummary,
-  });
-
-  const logs = useProjectExplorerLogs({
-    client,
-    projectId: project?.id,
-    selectedPath: state.selectedPath,
-    selectedFilePath: state.selectedFile?.path || null,
   });
 
   const selection = useProjectExplorerSelection({
@@ -138,7 +131,6 @@ export const useProjectExplorerViewModel = ({
     pathHelpers,
     search,
     dataLoading,
-    logs,
     selection,
     runState,
     codeNav,
@@ -159,11 +151,6 @@ export const useProjectExplorerViewModel = ({
     resizeStartWidth: state.resizeStartWidth,
     setIsResizing: state.setIsResizing,
     previewPaneProps,
-    loadingLogs: logs.loadingLogs,
-    logsError: logs.logsError,
-    changeLogs: logs.changeLogs,
-    selectedLogId: logs.selectedLogId,
-    setSelectedLogId: logs.setSelectedLogId,
     moveConflict: state.moveConflict,
     actionLoading: state.actionLoading,
     setMoveConflict: state.setMoveConflict,

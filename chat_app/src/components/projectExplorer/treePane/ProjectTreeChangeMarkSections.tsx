@@ -31,7 +31,7 @@ export const ProjectTreeChangeMarkSections: React.FC<ProjectTreeChangeMarkSectio
     {changeSummary.deletedMarks.length > 0 && (
       <div className="mt-2 border-t border-border/70">
         <div className="px-3 py-2 text-[11px] font-medium text-rose-600 dark:text-rose-400">
-          已删除（未确认）
+          已删除
         </div>
         <div className="space-y-0.5 pb-2">
           {changeSummary.deletedMarks.map((mark) => {
@@ -64,7 +64,7 @@ export const ProjectTreeChangeMarkSections: React.FC<ProjectTreeChangeMarkSectio
     {showOnlyChanged && hiddenFileMarks.length > 0 && (
       <div className="mt-2 border-t border-border/70">
         <div className="px-3 py-2 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-          未在当前目录树显示（未确认）
+          未在当前目录树显示
         </div>
         <div className="space-y-0.5 pb-2">
           {hiddenFileMarks.map((mark) => {

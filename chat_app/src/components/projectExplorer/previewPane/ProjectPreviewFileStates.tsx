@@ -8,7 +8,7 @@ export const ProjectPreviewLoadingState: React.FC = () => (
 
 export const ProjectPreviewDeletedPathState: React.FC = () => (
   <div className="p-4 text-sm text-muted-foreground">
-    该路径已删除或不存在，当前仅支持查看变更记录。
+    该路径已删除或不存在，当前无法预览。
   </div>
 );
 

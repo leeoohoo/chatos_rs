@@ -145,7 +145,7 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
           {entryChangeKind && (
             <span
               className={cn('inline-block h-2 w-2 rounded-full', CHANGE_KIND_COLOR_CLASS[entryChangeKind])}
-              title={`未确认${CHANGE_KIND_LABEL[entryChangeKind]}变更`}
+              title={`${CHANGE_KIND_LABEL[entryChangeKind]}变更`}
             />
           )}
         </span>

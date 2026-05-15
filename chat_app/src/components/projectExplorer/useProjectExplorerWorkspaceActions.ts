@@ -7,8 +7,7 @@ interface UseProjectExplorerWorkspaceActionsParams {
   dnd: Parameters<typeof useProjectExplorerDnd>[0];
   treeActions: Omit<
     Parameters<typeof useProjectTreeActions>[0],
-    'hasPendingChangesForPath'
-    | 'canDropToDirectory'
+    'canDropToDirectory'
     | 'clearDragExpandTimer'
     | 'clearDragAutoScroll'
   >;
@@ -20,8 +19,6 @@ export const useProjectExplorerWorkspaceActions = ({
   treeActions,
 }: UseProjectExplorerWorkspaceActionsParams) => {
   const {
-    hasPendingChangesForPath,
-    canConfirmCurrent,
     aggregatedChangeKindByPath,
   } = useProjectExplorerChangeTracking(changeTracking);
 
@@ -40,23 +37,18 @@ export const useProjectExplorerWorkspaceActions = ({
     handleDeleteSelected,
     handleDownloadSelected,
     handleRefresh,
-    handleConfirmCurrentChanges,
-    handleConfirmAllChanges,
     handleMoveEntryByDrop,
     handleMoveConflictCancel,
     handleMoveConflictOverwrite,
     handleMoveConflictRename,
   } = useProjectTreeActions({
     ...treeActions,
-    hasPendingChangesForPath,
     canDropToDirectory,
     clearDragExpandTimer,
     clearDragAutoScroll,
   });
 
   return {
-    hasPendingChangesForPath,
-    canConfirmCurrent,
     aggregatedChangeKindByPath,
     canDropToDirectory,
     clearDragExpandTimer,
@@ -69,8 +61,6 @@ export const useProjectExplorerWorkspaceActions = ({
     handleDeleteSelected,
     handleDownloadSelected,
     handleRefresh,
-    handleConfirmCurrentChanges,
-    handleConfirmAllChanges,
     handleMoveEntryByDrop,
     handleMoveConflictCancel,
     handleMoveConflictOverwrite,

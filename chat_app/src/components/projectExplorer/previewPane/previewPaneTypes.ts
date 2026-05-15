@@ -1,5 +1,4 @@
 import type {
-  ChangeLogItem,
   CodeNavCapabilities,
   CodeNavDocumentSymbolsResult,
   CodeNavLocation,
@@ -45,7 +44,6 @@ export interface ProjectPreviewPaneProps {
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
-  selectedLog: ChangeLogItem | null;
   runStatus: string;
   runCatalogLoading: boolean;
   projectMembers: ProjectRunnerMember[];

@@ -3,24 +3,31 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import type {
   FsEntriesResponse,
+  GitStatusResponse,
+  GitSummaryResponse,
   ProjectChangeSummaryResponse,
 } from '../../lib/api/client/types';
 import type { FsEntry, ProjectChangeSummary } from '../../types';
 import {
+  buildProjectChangeSummaryFromGitStatus,
   EMPTY_CHANGE_SUMMARY,
   isProjectChangeSummaryEqual,
   normalizeEntry,
   normalizeProjectChangeSummary,
 } from './utils';
+import { normalizeGitSummary } from '../../lib/domain/git';
 
 interface ProjectExplorerApiClient {
   listFsEntries(path: string): Promise<FsEntriesResponse>;
+  getGitSummary(root: string): Promise<GitSummaryResponse>;
+  getGitStatus(root: string): Promise<GitStatusResponse>;
   getProjectChangeSummary(projectId: string): Promise<ProjectChangeSummaryResponse>;
 }
 
 interface UseProjectExplorerDataLoadingParams {
   client: ProjectExplorerApiClient;
   projectId?: string;
+  projectRootPath?: string;
   summaryLoadingRef: MutableRefObject<boolean>;
   setLoadingPaths: Dispatch<SetStateAction<Set<string>>>;
   setError: Dispatch<SetStateAction<string | null>>;
@@ -41,6 +48,7 @@ interface LoadEntriesOptions {
 export const useProjectExplorerDataLoading = ({
   client,
   projectId,
+  projectRootPath,
   summaryLoadingRef,
   setLoadingPaths,
   setError,
@@ -80,7 +88,7 @@ export const useProjectExplorerDataLoading = ({
 
   const loadChangeSummary = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
-    if (!projectId) {
+    if (!projectId && !projectRootPath) {
       if (!silent) {
         setChangeSummary(EMPTY_CHANGE_SUMMARY);
         setSummaryError(null);
@@ -96,8 +104,31 @@ export const useProjectExplorerDataLoading = ({
       setSummaryError(null);
     }
     try {
-      const data = await client.getProjectChangeSummary(projectId);
-      const nextSummary = normalizeProjectChangeSummary(data);
+      let nextSummary: ProjectChangeSummary | null = null;
+      if (projectRootPath) {
+        try {
+          const gitSummaryRaw = await client.getGitSummary(projectRootPath);
+          const gitSummary = normalizeGitSummary(gitSummaryRaw);
+          if (gitSummary.isRepo) {
+            const gitStatusRaw = await client.getGitStatus(projectRootPath);
+            nextSummary = buildProjectChangeSummaryFromGitStatus(
+              gitSummaryRaw,
+              gitStatusRaw,
+              projectRootPath,
+            );
+          }
+        } catch {
+          nextSummary = null;
+        }
+      }
+      if (!nextSummary) {
+        if (!projectId) {
+          nextSummary = EMPTY_CHANGE_SUMMARY;
+        } else {
+          const data = await client.getProjectChangeSummary(projectId);
+          nextSummary = normalizeProjectChangeSummary(data);
+        }
+      }
       setChangeSummary((prev) => (
         isProjectChangeSummaryEqual(prev, nextSummary) ? prev : nextSummary
       ));
@@ -106,7 +137,7 @@ export const useProjectExplorerDataLoading = ({
       }
     } catch (err) {
       if (!silent) {
-        setSummaryError(readErrorMessage(err, '加载变更标记失败'));
+        setSummaryError(readErrorMessage(err, '加载变更失败'));
         setChangeSummary(EMPTY_CHANGE_SUMMARY);
       }
     } finally {
@@ -118,6 +149,7 @@ export const useProjectExplorerDataLoading = ({
   }, [
     client,
     projectId,
+    projectRootPath,
     setChangeSummary,
     setLoadingSummary,
     setSummaryError,

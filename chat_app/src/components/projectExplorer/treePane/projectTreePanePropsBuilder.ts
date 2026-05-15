@@ -16,7 +16,6 @@ export const buildProjectExplorerTreePaneProps = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  canConfirmCurrent,
   showOnlyChanged,
   changeSummary,
   loadingSummary,
@@ -53,8 +52,6 @@ export const buildProjectExplorerTreePaneProps = ({
   handleCreateDirectory,
   handleCreateFile,
   handleRefresh,
-  handleConfirmCurrentChanges,
-  handleConfirmAllChanges,
   handleSearchQueryChange,
   handleSearchCaseSensitiveChange,
   handleSearchWholeWordChange,
@@ -81,7 +78,6 @@ export const buildProjectExplorerTreePaneProps = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  canConfirmCurrent,
   showOnlyChanged,
   changeSummary,
   loadingSummary,
@@ -118,12 +114,6 @@ export const buildProjectExplorerTreePaneProps = ({
   },
   onRefresh: () => {
     void handleRefresh();
-  },
-  onConfirmCurrent: () => {
-    void handleConfirmCurrentChanges();
-  },
-  onConfirmAll: () => {
-    void handleConfirmAllChanges();
   },
   onSearchQueryChange: handleSearchQueryChange,
   onToggleSearchCaseSensitive: () => {
@@ -181,7 +171,6 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   aggregatedChangeKindByPath,
   canOpenNextSearchHit,
   canOpenPreviousSearchHit,
-  canConfirmCurrent,
   canDropToDirectory,
   cancelDragExpandIfMatches,
   changeSummary,
@@ -191,8 +180,6 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   dropTargetDirPath,
   entriesMap,
   expandedPaths,
-  handleConfirmAllChanges,
-  handleConfirmCurrentChanges,
   handleCreateDirectory,
   handleCreateFile,
   handleClearSearch,
@@ -246,7 +233,6 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   aggregatedChangeKindByPath,
   canOpenNextSearchHit,
   canOpenPreviousSearchHit,
-  canConfirmCurrent,
   canDropToDirectory,
   cancelDragExpandIfMatches,
   changeSummary,
@@ -256,8 +242,6 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   dropTargetDirPath,
   entriesMap,
   expandedPaths,
-  handleConfirmAllChanges,
-  handleConfirmCurrentChanges,
   handleCreateDirectory,
   handleCreateFile,
   handleClearSearch,

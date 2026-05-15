@@ -1,10 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { ProjectChangeSummary } from '../../types';
 import { CHANGE_KIND_PRIORITY, normalizeChangeKind, type ChangeKind } from './utils';
 
 interface Params {
   changeSummary: ProjectChangeSummary;
-  selectedPath: string | null;
   normalizePath: (value: string) => string;
   getParentPath: (value: string) => string | null;
   rootPathNormalized: string;
@@ -12,7 +11,6 @@ interface Params {
 
 export const useProjectExplorerChangeTracking = ({
   changeSummary,
-  selectedPath,
   normalizePath,
   getParentPath,
   rootPathNormalized,
@@ -20,22 +18,6 @@ export const useProjectExplorerChangeTracking = ({
   const pendingMarks = useMemo(
     () => [...changeSummary.fileMarks, ...changeSummary.deletedMarks],
     [changeSummary.deletedMarks, changeSummary.fileMarks]
-  );
-
-  const hasPendingChangesForPath = useCallback((path: string | null): boolean => {
-    if (!path) return false;
-    const normalizedTarget = normalizePath(path);
-    if (!normalizedTarget) return false;
-    const prefix = `${normalizedTarget}/`;
-    return pendingMarks.some((mark) => {
-      const normalizedMarkPath = normalizePath(mark.path);
-      return normalizedMarkPath === normalizedTarget || normalizedMarkPath.startsWith(prefix);
-    });
-  }, [normalizePath, pendingMarks]);
-
-  const canConfirmCurrent = useMemo(
-    () => hasPendingChangesForPath(selectedPath),
-    [hasPendingChangesForPath, selectedPath]
   );
 
   const aggregatedChangeKindByPath = useMemo(() => {
@@ -70,8 +52,6 @@ export const useProjectExplorerChangeTracking = ({
 
   return {
     pendingMarks,
-    hasPendingChangesForPath,
-    canConfirmCurrent,
     aggregatedChangeKindByPath,
   };
 };

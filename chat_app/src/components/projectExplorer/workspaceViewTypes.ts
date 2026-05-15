@@ -1,7 +1,6 @@
 import type React from 'react';
 
 import type {
-  ChangeLogItem,
   CodeNavCapabilities,
   CodeNavDocumentSymbolsResult,
   CodeNavLocation,
@@ -33,7 +32,6 @@ export interface ProjectExplorerWorkspaceTreeState {
   actionLoading: boolean;
   actionReloadPath: string | null;
   contextMenu: ExplorerContextMenuState | null;
-  canConfirmCurrent: boolean;
   showOnlyChanged: boolean;
   changeSummary: ProjectChangeSummary;
   loadingSummary: boolean;
@@ -64,7 +62,6 @@ export interface ProjectExplorerWorkspacePreviewState {
   loadingFile: boolean;
   error: string | null;
   selectedFile: FsReadResult | null;
-  selectedLog: ChangeLogItem | null;
 }
 
 export interface ProjectExplorerWorkspaceCodeNavState {
@@ -136,8 +133,6 @@ export interface ProjectExplorerWorkspaceInteractions {
   handleCreateDirectory: (path: string) => Promise<void>;
   handleCreateFile: (path: string) => Promise<void>;
   handleRefresh: () => Promise<void>;
-  handleConfirmCurrentChanges: () => Promise<void>;
-  handleConfirmAllChanges: () => Promise<void>;
   handleSearchQueryChange: (value: string) => void;
   handleSearchCaseSensitiveChange: React.Dispatch<React.SetStateAction<boolean>>;
   handleSearchWholeWordChange: React.Dispatch<React.SetStateAction<boolean>>;

@@ -14,7 +14,6 @@ interface UseProjectExplorerProjectLifecycleOptions {
   loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
   clearDragExpandTimer: () => void;
   clearDragAutoScroll: () => void;
-  resetLogsState: () => void;
   summaryLoadingRef: MutableRefObject<boolean>;
   setEntriesMap: Dispatch<SetStateAction<Record<string, FsEntry[]>>>;
   setExpandedPaths: Dispatch<SetStateAction<Set<string>>>;
@@ -44,7 +43,6 @@ export const useProjectExplorerProjectLifecycle = ({
   loadChangeSummary,
   clearDragExpandTimer,
   clearDragAutoScroll,
-  resetLogsState,
   summaryLoadingRef,
   setEntriesMap,
   setExpandedPaths,
@@ -78,7 +76,6 @@ export const useProjectExplorerProjectLifecycle = ({
       setMoveConflict(null);
       setDraggingEntryPath(null);
       setDropTargetDirPath(null);
-      resetLogsState();
       setChangeSummary(emptyChangeSummary);
       setSummaryError(null);
       setLoadingSummary(false);
@@ -120,7 +117,6 @@ export const useProjectExplorerProjectLifecycle = ({
     setMoveConflict(null);
     setDraggingEntryPath(null);
     setDropTargetDirPath(null);
-    resetLogsState();
     setChangeSummary(emptyChangeSummary);
     setSummaryError(null);
 
@@ -154,7 +150,6 @@ export const useProjectExplorerProjectLifecycle = ({
     loadEntries,
     projectId,
     projectRootPath,
-    resetLogsState,
     setActionError,
     setActionLoading,
     setActionMessage,
