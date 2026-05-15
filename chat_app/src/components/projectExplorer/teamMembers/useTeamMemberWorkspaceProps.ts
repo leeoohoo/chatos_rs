@@ -8,7 +8,14 @@ export const useTeamMemberWorkspaceProps = ({
   project,
   store,
   resources,
-}: UseTeamMembersPaneViewPropsOptions): ComponentProps<typeof TeamMemberWorkspace> => useMemo(() => ({
+}: UseTeamMembersPaneViewPropsOptions): ComponentProps<typeof TeamMemberWorkspace> => useMemo(() => {
+  const selectedSessionId = resources.conversation.selectedProjectSession?.id || null;
+  const hasMoreMessages = Boolean(
+    selectedSessionId
+    && store.sessionMessagePaginationState?.[selectedSessionId]?.nextBefore
+  );
+
+  return ({
   project,
   selectedContact: resources.conversation.selectedContact,
   currentAgent: resources.conversation.selectedContactAgent,
@@ -21,7 +28,7 @@ export const useTeamMemberWorkspaceProps = ({
   clearingSummaries: resources.summary.clearingSummaries,
   deletingSummaryId: resources.summary.deletingSummaryId,
   messages: store.messages,
-  hasMoreMessages: store.hasMoreMessages,
+  hasMoreMessages,
   chatIsLoading: resources.conversation.chatIsLoading,
   chatIsStreaming: resources.conversation.chatIsStreaming,
   chatIsStopping: resources.conversation.chatIsStopping,
@@ -102,7 +109,8 @@ export const useTeamMemberWorkspaceProps = ({
   runtimeGuidanceAppliedCount: resources.workbar.runtimeGuidanceAppliedCount,
   runtimeGuidanceLastAppliedAt: resources.workbar.runtimeGuidanceLastAppliedAt,
   runtimeGuidanceItems: resources.workbar.runtimeGuidanceItems,
-}), [
+  });
+}, [
   project,
   resources.composer.composerEnabledMcpIds,
   resources.composer.composerMcpEnabled,
@@ -171,8 +179,8 @@ export const useTeamMemberWorkspaceProps = ({
   store.abortCurrentConversation,
   store.aiModelConfigs,
   store.chatConfig?.reasoningEnabled,
-  store.hasMoreMessages,
   store.messages,
+  store.sessionMessagePaginationState,
   store.selectedModelId,
   store.setSelectedModel,
   store.updateChatConfig,

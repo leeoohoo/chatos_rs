@@ -20,7 +20,7 @@ struct ChatosTurnRuntimeSnapshotPayload {
     pub runtime: Option<TurnRuntimeSnapshotRuntimeDto>,
 }
 
-pub(super) fn engine_record_to_message(record: memory_engine_sdk::EngineRecord) -> Message {
+pub fn engine_record_to_message(record: memory_engine_sdk::EngineRecord) -> Message {
     let (message_mode, message_source, tool_calls, tool_call_id, reasoning, metadata) =
         unpack_message_metadata(record.metadata);
 

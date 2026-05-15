@@ -31,9 +31,19 @@ pub(crate) fn is_transient_network_error(err: &str) -> bool {
         || message.contains("status 522")
         || message.contains("status 523")
         || message.contains("status 524")
-        || message.contains("engine_overloaded_error")
-        || message.contains("currently overloaded, please try again later")
+        || is_retryable_provider_overload_error(err)
+}
+
+pub(crate) fn is_retryable_provider_overload_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("engine_overloaded_error")
+        || message.contains("server_is_overloaded")
+        || message.contains("our servers are currently overloaded")
         || message.contains("server is currently overloaded")
+        || message.contains("currently overloaded")
+        || message.contains("selected model is at capacity")
+        || message.contains("model is at capacity")
+        || (message.contains("at capacity") && message.contains("try a different model"))
 }
 
 pub(crate) fn is_transient_transport_or_parse_error(err: &str) -> bool {
@@ -54,6 +64,8 @@ pub(crate) enum TransientRetryAction {
 pub(crate) fn transient_retry_kind_label(err: &str) -> &'static str {
     if is_response_parse_error(err) {
         "响应解析异常"
+    } else if is_retryable_provider_overload_error(err) {
+        "上游暂时过载"
     } else {
         "网络波动"
     }
@@ -136,7 +148,8 @@ pub(crate) async fn handle_transient_retry(
 mod tests {
     use super::{
         classify_transient_retry, exhausted_transient_retry_message, handle_transient_retry,
-        is_response_parse_error, is_transient_network_error, is_transient_transport_or_parse_error,
+        is_response_parse_error, is_retryable_provider_overload_error,
+        is_transient_network_error, is_transient_transport_or_parse_error,
         transient_retry_backoff_ms, transient_retry_kind_label, TransientRetryAction,
     };
 
@@ -162,7 +175,29 @@ mod tests {
         assert!(is_transient_network_error(
             "{\"error\":{\"message\":\"The engine is currently overloaded, please try again later\",\"type\":\"engine_overloaded_error\"}}"
         ));
+        assert!(is_transient_network_error(
+            "ai response failed: finish_reason=failed; provider_error=code=server_is_overloaded; message=Our servers are currently overloaded. Please try again later."
+        ));
+        assert!(is_transient_network_error(
+            "ai response failed: finish_reason=failed; provider_error=message=Selected model is at capacity. Please try a different model."
+        ));
         assert!(!is_transient_network_error("status 401: invalid api key"));
+    }
+
+    #[test]
+    fn detects_retryable_provider_overload_errors() {
+        assert!(is_retryable_provider_overload_error(
+            "provider_error=code=server_is_overloaded"
+        ));
+        assert!(is_retryable_provider_overload_error(
+            "Our servers are currently overloaded. Please try again later."
+        ));
+        assert!(is_retryable_provider_overload_error(
+            "Selected model is at capacity. Please try a different model."
+        ));
+        assert!(!is_retryable_provider_overload_error(
+            "status 400: invalid_request_error"
+        ));
     }
 
     #[test]
@@ -187,6 +222,12 @@ mod tests {
         assert_eq!(
             transient_retry_kind_label("status 503: service unavailable"),
             "网络波动"
+        );
+        assert_eq!(
+            transient_retry_kind_label(
+                "ai response failed: finish_reason=failed; provider_error=message=Selected model is at capacity. Please try a different model."
+            ),
+            "上游暂时过载"
         );
         assert_eq!(transient_retry_backoff_ms(3), 450);
     }

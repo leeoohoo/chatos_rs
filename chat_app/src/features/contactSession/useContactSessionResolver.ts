@@ -59,7 +59,7 @@ interface EnsureContactSessionOptions {
   projectRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
-  createSessionOptions?: { keepActivePanel?: boolean };
+  createSessionOptions?: { keepActivePanel?: boolean; activateSession?: boolean };
 }
 
 interface DisplayRuntimeSessionOptions {

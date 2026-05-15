@@ -10,6 +10,7 @@ import type { ChatActions, ChatState } from '../../../lib/store/createChatStoreW
 
 const selectTeamMembersPaneStore = (state: ChatState & ChatActions) => ({
   currentSession: state.currentSession,
+  currentSessionId: state.currentSessionId,
   sessions: state.sessions,
   contacts: state.contacts,
   agents: state.agents,
@@ -18,6 +19,7 @@ const selectTeamMembersPaneStore = (state: ChatState & ChatActions) => ({
   loadContacts: state.loadContacts,
   messages: state.messages,
   hasMoreMessages: state.hasMoreMessages,
+  sessionMessagePaginationState: state.sessionMessagePaginationState,
   sessionChatState: state.sessionChatState,
   sendMessage: state.sendMessage,
   selectRemoteConnection: state.selectRemoteConnection,

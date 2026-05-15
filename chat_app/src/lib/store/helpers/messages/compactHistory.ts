@@ -10,6 +10,12 @@ import {
 } from '../messageNormalization';
 import { createDefaultHistoryProcessState } from '../../actions/sendMessage/types';
 
+export type CompactHistoryPageResult = {
+  messages: Message[];
+  hasMore: boolean;
+  nextBefore: string | null;
+};
+
 const countThinkingSegments = (message: Message): number => {
   const segments = message.metadata?.contentSegments;
   if (!Array.isArray(segments) || segments.length === 0) {
@@ -192,23 +198,32 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
 export const fetchSessionMessages = async (
   client: ApiClient,
   sessionId: string,
-  options: { limit?: number; offset?: number } = { limit: 50, offset: 0 },
-): Promise<Message[]> => {
+  options: { limit?: number; before?: string | null } = { limit: 50, before: null },
+): Promise<CompactHistoryPageResult> => {
   const limit = options.limit ?? 50;
-  const offset = options.offset ?? 0;
 
-  const rawMessages = await client.getConversationMessages(sessionId, {
+  const response = await client.getConversationCompactHistory(sessionId, {
     limit,
-    offset,
-    compact: true,
-    strategy: 'v2',
+    before: options.before ?? null,
   });
 
-  const normalized = ensureCompactHistoryShape(normalizeRawMessages(rawMessages, sessionId));
+  const rawMessages = Array.isArray(response?.items) ? response.items : [];
+  const messages = ensureCompactHistoryShape(normalizeRawMessages(rawMessages, sessionId));
+  const hasMore = response?.has_more === true;
+  const nextBefore = typeof response?.next_before === 'string' && response.next_before.trim().length > 0
+    ? response.next_before.trim()
+    : null;
   debugLog('[Store] Loaded compact session messages', {
     sessionId,
-    requested: { limit, offset },
-    received: normalized.length,
+    requested: { limit, before: options.before ?? null },
+    received: rawMessages.length,
+    returned: messages.length,
+    hasMore,
+    nextBefore,
   });
-  return normalized;
+  return {
+    messages,
+    hasMore,
+    nextBefore,
+  };
 };

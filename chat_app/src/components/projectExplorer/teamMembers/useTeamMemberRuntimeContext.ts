@@ -45,6 +45,7 @@ export const useTeamMemberRuntimeContext = ({
   const latestSessionIdRef = useRef<string | null>(null);
   const refreshNonceRef = useRef(runtimeContextRefreshNonce);
   const lastRefreshSignatureRef = useRef<string | null>(null);
+  const latestOpenRequestSeqRef = useRef(0);
 
   refreshNonceRef.current = runtimeContextRefreshNonce;
 
@@ -79,10 +80,15 @@ export const useTeamMemberRuntimeContext = ({
   }, [apiClient]);
 
   const handleOpenRuntimeContext = useCallback(async (contact: ContactItem) => {
+    const requestSeq = latestOpenRequestSeqRef.current + 1;
+    latestOpenRequestSeqRef.current = requestSeq;
     setOpeningRuntimeContextContactId(contact.id);
     setSelectedContactId(contact.id);
     try {
       const sessionId = await ensureContactSession(contact);
+      if (latestOpenRequestSeqRef.current !== requestSeq) {
+        return;
+      }
       if (!sessionId) {
         return;
       }
@@ -96,6 +102,7 @@ export const useTeamMemberRuntimeContext = ({
         setRuntimeContextOpen(false);
         return;
       }
+      latestSessionIdRef.current = sessionId;
       setRuntimeContextOpen(true);
       setRuntimeContextSessionId(sessionId);
       setRuntimeContextData(getCachedRuntimeContextData(apiClient, sessionId));

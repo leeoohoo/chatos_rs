@@ -1,4 +1,5 @@
-import type { Message } from '../../../types';
+import type { Message, Session } from '../../../types';
+import { debugLog } from '@/lib/utils';
 import {
   isSessionActive as isSessionActiveDomain,
   matchSessionContactProjectScope as matchSessionContactProjectScopeDomain,
@@ -16,15 +17,13 @@ import {
   normalizeDate as normalizeUnknownDate,
   readValue,
 } from '../helpers/normalizerUtils';
-import type { ChatState } from '../types';
+import type {
+  ChatState,
+  SessionMessagesCacheEntry,
+  SessionMessagesSnapshot,
+} from '../types';
 
-const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
-type SessionMessagesCacheEntry = {
-  fetchedAt: number;
-  messages: Message[];
-};
-
-const sessionMessagesPageCache = new Map<string, SessionMessagesCacheEntry>();
+export const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
 
 export const createPerfMeasureStopper = (measureName: string): (() => number | null) => {
   if (typeof performance === 'undefined' || typeof performance.mark !== 'function' || typeof performance.measure !== 'function') {
@@ -63,26 +62,260 @@ export const cloneStreamingMessageDraft = <T,>(value: T): T => {
   }
 };
 
-export const writeSessionMessagesCache = (sessionId: string, messages: Message[]) => {
-  sessionMessagesPageCache.set(sessionId, {
-    fetchedAt: Date.now(),
-    messages: cloneStreamingMessageDraft(messages),
-  });
+type SessionMessagesCacheState = Pick<ChatState, 'sessionMessagesCache' | 'sessionMessagesCacheOrder'>;
+type CurrentSessionViewState = Pick<
+  ChatState,
+  'currentSessionId' | 'currentSession' | 'messages' | 'selectedModelId' | 'selectedAgentId' | 'isLoading' | 'isStreaming' | 'streamingMessageId' | 'hasMoreMessages'
+>;
 
-  while (sessionMessagesPageCache.size > SESSION_MESSAGES_CACHE_MAX_ENTRIES) {
-    const oldestKey = sessionMessagesPageCache.keys().next().value;
-    if (!oldestKey) {
-      break;
-    }
-    sessionMessagesPageCache.delete(oldestKey);
+const ensureSessionMessagesCacheState = (state: SessionMessagesCacheState) => {
+  if (!state.sessionMessagesCache) {
+    state.sessionMessagesCache = {};
+  }
+  if (!Array.isArray(state.sessionMessagesCacheOrder)) {
+    state.sessionMessagesCacheOrder = [];
   }
 };
 
-export const deleteSessionMessagesCacheEntry = (sessionId: string) => {
-  sessionMessagesPageCache.delete(sessionId);
+const buildSessionMessagesCacheLogPayload = (
+  state: SessionMessagesCacheState,
+  sessionId: string,
+  snapshot?: SessionMessagesSnapshot | SessionMessagesCacheEntry | null,
+) => ({
+  sessionId,
+  messageCount: Array.isArray(snapshot?.messages) ? snapshot.messages.length : 0,
+  nextBefore: snapshot?.nextBefore ?? null,
+  loaded: snapshot?.loaded === true,
+  cacheSize: state.sessionMessagesCacheOrder.length,
+  cacheOrder: [...state.sessionMessagesCacheOrder],
+});
+
+export const writeSessionMessagesCache = (
+  state: SessionMessagesCacheState,
+  sessionId: string,
+  payload: SessionMessagesSnapshot,
+) => {
+  ensureSessionMessagesCacheState(state);
+  const nextEntry: SessionMessagesCacheEntry = {
+    fetchedAt: Date.now(),
+    messages: cloneStreamingMessageDraft(payload.messages),
+    nextBefore: payload.nextBefore,
+    loaded: payload.loaded,
+  };
+  state.sessionMessagesCache[sessionId] = nextEntry;
+  state.sessionMessagesCacheOrder = [
+    sessionId,
+    ...state.sessionMessagesCacheOrder.filter((item) => item !== sessionId),
+  ];
+
+  const evictedSessionIds: string[] = [];
+  while (state.sessionMessagesCacheOrder.length > SESSION_MESSAGES_CACHE_MAX_ENTRIES) {
+    const oldestKey = state.sessionMessagesCacheOrder.pop();
+    if (!oldestKey) {
+      break;
+    }
+    delete state.sessionMessagesCache[oldestKey];
+    evictedSessionIds.push(oldestKey);
+  }
+
+  debugLog('[Store] sessionMessagesCache write', {
+    ...buildSessionMessagesCacheLogPayload(state, sessionId, nextEntry),
+    evicted: evictedSessionIds.length > 0,
+    evictedSessionIds,
+  });
+};
+
+export const readSessionMessagesCache = (
+  state: Pick<ChatState, 'sessionMessagesCache'>,
+  sessionId: string,
+): SessionMessagesSnapshot | null => {
+  const cached = state.sessionMessagesCache?.[sessionId];
+  if (!cached) {
+    return null;
+  }
+  return {
+    messages: cloneStreamingMessageDraft(cached.messages),
+    nextBefore: cached.nextBefore,
+    loaded: cached.loaded,
+  };
+};
+
+export const touchSessionMessagesCacheEntry = (
+  state: SessionMessagesCacheState,
+  sessionId: string,
+): boolean => {
+  ensureSessionMessagesCacheState(state);
+  if (!state.sessionMessagesCache[sessionId]) {
+    return false;
+  }
+
+  state.sessionMessagesCacheOrder = [
+    sessionId,
+    ...state.sessionMessagesCacheOrder.filter((item) => item !== sessionId),
+  ];
+  debugLog('[Store] sessionMessagesCache touch', {
+    ...buildSessionMessagesCacheLogPayload(
+      state,
+      sessionId,
+      state.sessionMessagesCache[sessionId],
+    ),
+  });
+  return true;
+};
+
+export const clearSessionMessagesCache = (state: SessionMessagesCacheState) => {
+  const clearedSessionIds = Array.isArray(state.sessionMessagesCacheOrder)
+    ? [...state.sessionMessagesCacheOrder]
+    : Object.keys(state.sessionMessagesCache || {});
+  state.sessionMessagesCache = {};
+  state.sessionMessagesCacheOrder = [];
+  debugLog('[Store] sessionMessagesCache clear', {
+    clearedCount: clearedSessionIds.length,
+    clearedSessionIds,
+  });
+};
+
+export const deleteSessionMessagesCacheEntry = (
+  state: SessionMessagesCacheState,
+  sessionId: string,
+) => {
+  ensureSessionMessagesCacheState(state);
+  const deletedEntry = state.sessionMessagesCache[sessionId];
+  delete state.sessionMessagesCache[sessionId];
+  state.sessionMessagesCacheOrder = state.sessionMessagesCacheOrder.filter((item) => item !== sessionId);
+  debugLog('[Store] sessionMessagesCache delete', {
+    ...buildSessionMessagesCacheLogPayload(state, sessionId, deletedEntry),
+    existed: Boolean(deletedEntry),
+  });
+};
+
+export const resetCurrentSessionViewState = (state: CurrentSessionViewState) => {
+  state.currentSessionId = null;
+  state.currentSession = null;
+  state.selectedModelId = null;
+  state.selectedAgentId = null;
+  state.messages = [];
+  state.isLoading = false;
+  state.isStreaming = false;
+  state.streamingMessageId = null;
+  state.hasMoreMessages = false;
+};
+
+const normalizeSnapshotCursor = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const readMessageTurnCursor = (message: Message): string => (
+  normalizeSnapshotCursor(
+    message?.metadata?.conversation_turn_id
+    || message?.metadata?.historyProcess?.turnId
+    || message?.metadata?.historyFinalForTurnId
+    || message?.id,
+  )
+);
+
+const matchesSnapshotCursor = (message: Message, cursor: string): boolean => {
+  if (message?.role !== 'user') {
+    return false;
+  }
+
+  const normalizedCursor = normalizeSnapshotCursor(cursor);
+  if (!normalizedCursor) {
+    return false;
+  }
+
+  return message.id === normalizedCursor || readMessageTurnCursor(message) === normalizedCursor;
+};
+
+export const extractCompactHistoryMessages = (messages: Message[]): Message[] => messages.filter((message) => {
+  if (!message || message.role === 'tool') {
+    return false;
+  }
+
+  if (message.status === 'streaming' && message.role === 'assistant') {
+    return false;
+  }
+
+  if (message.metadata?.historyProcessPlaceholder === true) {
+    return false;
+  }
+
+  const processUserMessageId = normalizeSnapshotCursor(message.metadata?.historyProcessUserMessageId);
+  const processTurnId = normalizeSnapshotCursor(message.metadata?.historyProcessTurnId);
+  return !processUserMessageId && !processTurnId;
+});
+
+export const readVisibleSessionMessagesSnapshot = (
+  state: Pick<ChatState, 'currentSessionId' | 'messages' | 'sessionMessagePaginationState'>,
+  sessionId: string,
+): SessionMessagesSnapshot | null => {
+  if (state.currentSessionId !== sessionId) {
+    return null;
+  }
+
+  const pagination = state.sessionMessagePaginationState?.[sessionId];
+  const compactMessages = extractCompactHistoryMessages(
+    (state.messages || []).filter((message) => message?.sessionId === sessionId),
+  );
+  if (compactMessages.length === 0 && pagination?.loaded !== true) {
+    return null;
+  }
+
+  return {
+    messages: cloneStreamingMessageDraft(compactMessages),
+    nextBefore: pagination?.nextBefore ?? null,
+    loaded: pagination?.loaded === true,
+  };
+};
+
+export const mergeLatestCompactHistorySnapshot = (
+  latestMessages: Message[],
+  latestNextBefore: string | null,
+  preservedSnapshot: SessionMessagesSnapshot | null | undefined,
+): SessionMessagesSnapshot => {
+  const compactLatestMessages = extractCompactHistoryMessages(latestMessages);
+  const normalizedCursor = normalizeSnapshotCursor(latestNextBefore);
+
+  if (!preservedSnapshot?.loaded) {
+    return {
+      messages: compactLatestMessages,
+      nextBefore: latestNextBefore,
+      loaded: true,
+    };
+  }
+
+  const splitIndex = normalizedCursor
+    ? preservedSnapshot.messages.findIndex((message) => matchesSnapshotCursor(message, normalizedCursor))
+    : -1;
+  if (splitIndex > 0) {
+    const olderMessages = preservedSnapshot.messages.slice(0, splitIndex);
+    return {
+      messages: [...olderMessages, ...compactLatestMessages],
+      nextBefore: preservedSnapshot.nextBefore,
+      loaded: true,
+    };
+  }
+
+  const latestIds = new Set(compactLatestMessages.map((message) => message.id));
+  const overlapIndex = preservedSnapshot.messages.findIndex((message) => latestIds.has(message.id));
+  if (overlapIndex <= 0) {
+    return {
+      messages: compactLatestMessages,
+      nextBefore: latestNextBefore,
+      loaded: true,
+    };
+  }
+
+  const olderMessages = preservedSnapshot.messages.slice(0, overlapIndex);
+  return {
+    messages: [...olderMessages, ...compactLatestMessages],
+    nextBefore: preservedSnapshot.nextBefore,
+    loaded: true,
+  };
 };
 
 type SessionTurnMapsState = Pick<ChatState, 'sessionTurnProcessState' | 'sessionTurnProcessCache'>;
+type SessionProjectSyncState = Pick<ChatState, 'projects' | 'currentProjectId' | 'currentProject'>;
 
 export const ensureSessionTurnMaps = (state: SessionTurnMapsState, sessionId: string) => {
   if (!state.sessionTurnProcessState) {
@@ -119,6 +352,21 @@ export const matchSessionContactProjectScope = matchSessionContactProjectScopeDo
 export const splitSessionsByMappedContacts = splitSessionsByMappedContactsDomain;
 
 export const normalizeContactSessions = normalizeContactSessionsDomain;
+
+export const syncCurrentProjectFromSession = (
+  state: SessionProjectSyncState,
+  session: Session | null | undefined,
+) => {
+  const projectId = resolveSessionProjectScopeId(session);
+  if (!projectId || projectId === '0') {
+    state.currentProjectId = null;
+    state.currentProject = null;
+    return;
+  }
+
+  state.currentProjectId = projectId;
+  state.currentProject = (state.projects || []).find((project) => project.id === projectId) || null;
+};
 
 export const resolveUserByTurnId = (messages: Message[], turnId: string): Message | null => {
   if (!turnId) {

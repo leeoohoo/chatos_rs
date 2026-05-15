@@ -79,6 +79,7 @@ export const buildWorkspaceEffectsParams = (
     toExpandedKey: pathHelpers.toExpandedKey,
     keyToPath: pathHelpers.keyToPath,
     loadEntries: dataLoading.loadEntries,
+    tryLoadEntries: dataLoading.tryLoadEntries,
     loadChangeSummary: dataLoading.loadChangeSummary,
     clearDragExpandTimer: actions.clearDragExpandTimer,
     clearDragAutoScroll: actions.clearDragAutoScroll,

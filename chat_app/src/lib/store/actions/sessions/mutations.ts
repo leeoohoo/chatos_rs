@@ -2,7 +2,11 @@ import type { Session } from '../../../../types';
 import { normalizeSession } from '../../helpers/sessions';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
 import type { ChatStoreDraft } from '../../types';
-import { deleteSessionMessagesCacheEntry } from '../sessionsUtils';
+import {
+  deleteSessionMessagesCacheEntry,
+  resetCurrentSessionViewState,
+  syncCurrentProjectFromSession,
+} from '../sessionsUtils';
 import type { SessionActionDeps } from './types';
 import {
   markSessionCachesStale,
@@ -33,12 +37,14 @@ export function createSessionMutationActions({
     if (state.sessionAiSelectionBySession && sessionId in state.sessionAiSelectionBySession) {
       delete state.sessionAiSelectionBySession[sessionId];
     }
+    if (state.sessionMessagePaginationState && sessionId in state.sessionMessagePaginationState) {
+      delete state.sessionMessagePaginationState[sessionId];
+    }
+    if (state.sessionRuntimeGuidanceState && sessionId in state.sessionRuntimeGuidanceState) {
+      delete state.sessionRuntimeGuidanceState[sessionId];
+    }
     if (state.currentSessionId === sessionId) {
-      state.currentSessionId = null;
-      state.currentSession = null;
-      state.selectedModelId = null;
-      state.selectedAgentId = null;
-      state.messages = [];
+      resetCurrentSessionViewState(state);
     }
     if (state.activePanel === 'chat' && state.currentSessionId === null) {
       state.activePanel = state.currentProjectId ? 'project' : 'chat';
@@ -64,6 +70,7 @@ export function createSessionMutationActions({
         );
         if (state.currentSessionId === normalizedSessionId) {
           state.currentSession = updatedSession;
+          syncCurrentProjectFromSession(state, updatedSession);
           if (selectionFromMetadata) {
             state.selectedModelId = selectionFromMetadata.selectedModelId ?? null;
             state.selectedAgentId = selectionFromMetadata.selectedAgentId ?? null;
@@ -125,6 +132,7 @@ export function createSessionMutationActions({
           }
           if (state.currentSessionId === sessionId) {
             state.currentSession = updatedSession;
+            syncCurrentProjectFromSession(state, updatedSession);
             if (selectionFromMetadata) {
               state.selectedModelId = selectionFromMetadata.selectedModelId ?? null;
               state.selectedAgentId = selectionFromMetadata.selectedAgentId ?? null;
@@ -192,8 +200,8 @@ export function createSessionMutationActions({
           if (state.activePanel === 'chat' && state.currentSessionId === null) {
             state.activePanel = state.currentProjectId ? 'project' : 'chat';
           }
+          deleteSessionMessagesCacheEntry(state, sessionId);
         });
-        deleteSessionMessagesCacheEntry(sessionId);
       } catch (error) {
         console.error('Failed to delete session:', error);
         set((state: ChatStoreDraft) => {
@@ -210,8 +218,8 @@ export function createSessionMutationActions({
       removeSessionCaches(client, trimmed);
       set((state: ChatStoreDraft) => {
         removeSessionStateLocally(state, trimmed);
+        deleteSessionMessagesCacheEntry(state, trimmed);
       });
-      deleteSessionMessagesCacheEntry(trimmed);
     },
   };
 }

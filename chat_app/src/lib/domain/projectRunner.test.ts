@@ -146,6 +146,26 @@ describe('domain/projectRunner', () => {
     expect(listFsEntries).toHaveBeenCalledTimes(4);
   });
 
+  it('caches missing project root failures until explicitly invalidated', async () => {
+    const listFsEntries = vi.fn(async (path?: string) => {
+      if (path === '/missing-workspace') {
+        throw new Error('路径不存在');
+      }
+      return { entries: [] };
+    });
+
+    const client = { listFsEntries };
+
+    await expect(hasProjectRunnerScript(client, '/missing-workspace/')).rejects.toThrow('路径不存在');
+    await expect(hasProjectRunnerScript(client, '/missing-workspace/')).rejects.toThrow('路径不存在');
+    expect(listFsEntries).toHaveBeenCalledTimes(1);
+
+    markProjectRunnerScriptStateStale(client, '/missing-workspace/');
+
+    await expect(hasProjectRunnerScript(client, '/missing-workspace/')).rejects.toThrow('路径不存在');
+    expect(listFsEntries).toHaveBeenCalledTimes(2);
+  });
+
   it('dedupes concurrent project runner member loads per client and project', async () => {
     let resolveBlocker!: () => void;
     const blocker = new Promise<void>((resolve) => {

@@ -1,6 +1,8 @@
 use memory_engine_sdk::{
-    ComposeContextPolicy, SdkComposeContextRequest, SdkListThreadRecordsRequest,
+    ComposeContextPolicy, CompactTurnsResponse, SdkComposeContextRequest,
+    SdkGetTurnProcessRecordsRequest, SdkListCompactTurnsRequest, SdkListThreadRecordsRequest,
     SdkListThreadSummariesRequest, SdkListThreadsRequest, SdkUpsertThreadRequest,
+    TurnProcessRecordsResponse,
 };
 use serde_json::Value;
 
@@ -265,9 +267,47 @@ pub async fn list_chatos_messages(
                     "desc".to_string()
                 }),
             },
-        )
-        .await?;
+    )
+    .await?;
     Ok(items.into_iter().map(engine_record_to_message).collect())
+}
+
+pub async fn list_chatos_compact_turns(
+    session: &Session,
+    limit: Option<i64>,
+    before_turn_id: Option<&str>,
+) -> Result<CompactTurnsResponse, String> {
+    let mapping = build_thread_mapping(session)?;
+    let client = build_client()?;
+    client
+        .list_compact_turns(
+            mapping.thread_id.as_str(),
+            &SdkListCompactTurnsRequest {
+                tenant_id: mapping.tenant_id,
+                record_type: Some("message".to_string()),
+                limit,
+                before_turn_id: before_turn_id.map(ToOwned::to_owned),
+            },
+        )
+        .await
+}
+
+pub async fn get_chatos_turn_process_records(
+    session: &Session,
+    turn_id: &str,
+) -> Result<TurnProcessRecordsResponse, String> {
+    let mapping = build_thread_mapping(session)?;
+    let client = build_client()?;
+    client
+        .get_turn_process_records(
+            mapping.thread_id.as_str(),
+            turn_id,
+            &SdkGetTurnProcessRecordsRequest {
+                tenant_id: mapping.tenant_id,
+                record_type: Some("message".to_string()),
+            },
+        )
+        .await
 }
 
 pub async fn get_chatos_message_by_id(message_id: &str) -> Result<Option<Message>, String> {

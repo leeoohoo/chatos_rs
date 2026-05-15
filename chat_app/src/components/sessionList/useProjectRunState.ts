@@ -301,14 +301,21 @@ const resolveProjectRunState = async (
   details: ProjectRunStateDetails;
   viewState: ProjectRunViewState;
 }> => {
-  const [memberDetails, scriptDetails] = await Promise.all([
-    loadProjectRunMembersDetails(apiClient, project.id),
-    loadProjectRunScriptDetails(apiClient, project),
-  ]);
+  const scriptDetails = await loadProjectRunScriptDetails(apiClient, project);
+  let memberDetails: Partial<ProjectRunStateDetails> = {
+    membersLoading: false,
+  };
+  if (
+    scriptDetails.runnerRootMissing !== true
+    && scriptDetails.runnerScriptExists !== true
+    && !scriptDetails.runnerScriptError
+  ) {
+    memberDetails = await loadProjectRunMembersDetails(apiClient, project.id);
+  }
   const details: ProjectRunStateDetails = {
     ...createInitialProjectRunStateDetails(),
-    ...memberDetails,
     ...scriptDetails,
+    ...memberDetails,
   };
   return {
     details,
@@ -347,11 +354,6 @@ export const useProjectRunState = ({
 
   useEffect(() => {
     if (!enabled) {
-      setProjectRunStateById({});
-      setProjectRealtimeLiveById({});
-      projectRunStateRef.current = {};
-      projectRunStateDetailsRef.current = {};
-      projectRootPathByIdRef.current = {};
       return;
     }
 
@@ -422,7 +424,6 @@ export const useProjectRunState = ({
 
   useEffect(() => {
     if (!enabled) {
-      setProjectRealtimeLiveById({});
       return;
     }
     setProjectRealtimeLiveById((prev) => {

@@ -239,7 +239,6 @@ export const applySelectSessionState = ({
     state.activePanel = 'chat';
   }
   state.isLoading = false;
-  state.hasMoreMessages = messages.length >= 50;
   state.isStreaming = chatState?.isStreaming ?? false;
   state.streamingMessageId = chatState?.streamingMessageId ?? null;
   if (chatState) {

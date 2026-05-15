@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import type {
   TaskReviewPanelState,
@@ -48,26 +48,36 @@ export const usePendingWorkbarPanels = ({
 }: UsePendingWorkbarPanelsArgs) => {
   const pendingTaskReviewLoadSeqRef = useRef(0);
   const pendingUiPromptLoadSeqRef = useRef(0);
+  const taskReviewPanelsBySessionRef = useRef(taskReviewPanelsBySession);
+  const uiPromptPanelsBySessionRef = useRef(uiPromptPanelsBySession);
 
-  const applyTaskReviewPanels = (targetSessionId: string, panels: TaskReviewPanelState[]) => {
+  useEffect(() => {
+    taskReviewPanelsBySessionRef.current = taskReviewPanelsBySession;
+  }, [taskReviewPanelsBySession]);
+
+  useEffect(() => {
+    uiPromptPanelsBySessionRef.current = uiPromptPanelsBySession;
+  }, [uiPromptPanelsBySession]);
+
+  const applyTaskReviewPanels = useCallback((targetSessionId: string, panels: TaskReviewPanelState[]) => {
     syncTaskReviewPanelsSnapshot({
       sessionId: targetSessionId,
       panels,
-      existingPanels: taskReviewPanelsBySession?.[targetSessionId],
+      existingPanels: taskReviewPanelsBySessionRef.current?.[targetSessionId],
       upsertTaskReviewPanel,
       removeTaskReviewPanel,
     });
-  };
+  }, [removeTaskReviewPanel, upsertTaskReviewPanel]);
 
-  const applyUiPromptPanels = (targetSessionId: string, panels: UiPromptPanelState[]) => {
+  const applyUiPromptPanels = useCallback((targetSessionId: string, panels: UiPromptPanelState[]) => {
     syncUiPromptPanelsSnapshot({
       sessionId: targetSessionId,
       panels,
-      existingPanels: uiPromptPanelsBySession?.[targetSessionId],
+      existingPanels: uiPromptPanelsBySessionRef.current?.[targetSessionId],
       upsertUiPromptPanel,
       removeUiPromptPanel,
     });
-  };
+  }, [removeUiPromptPanel, upsertUiPromptPanel]);
 
   useEffect(() => {
     if (!enabled || !sessionId) {
@@ -88,10 +98,7 @@ export const usePendingWorkbarPanels = ({
     apiClient,
     applyTaskReviewPanels,
     enabled,
-    removeTaskReviewPanel,
     sessionId,
-    taskReviewPanelsBySession,
-    upsertTaskReviewPanel,
   ]);
 
   useEffect(() => {
@@ -113,9 +120,6 @@ export const usePendingWorkbarPanels = ({
     apiClient,
     applyUiPromptPanels,
     enabled,
-    removeUiPromptPanel,
     sessionId,
-    uiPromptPanelsBySession,
-    upsertUiPromptPanel,
   ]);
 };

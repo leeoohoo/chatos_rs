@@ -208,6 +208,97 @@ async fn recovers_input_must_be_list_and_retries_with_list_payload() {
 }
 
 #[tokio::test]
+async fn retries_completion_failure_when_provider_is_overloaded() {
+    let steps = vec![
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_failed_overloaded",
+                "status": "failed",
+                "error": {
+                    "code": "server_is_overloaded",
+                    "message": "Our servers are currently overloaded. Please try again later."
+                }
+            }),
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_ok_after_retry",
+                "status": "completed",
+                "output_text": "retry after overload success"
+            }),
+        ),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            callbacks: empty_callbacks(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("completion overload should retry");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("retry after overload success")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+}
+
+#[tokio::test]
+async fn retries_completion_failure_when_model_is_at_capacity() {
+    let steps = vec![
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_failed_capacity",
+                "status": "failed",
+                "error": {
+                    "message": "Selected model is at capacity. Please try a different model."
+                }
+            }),
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_ok_after_capacity_retry",
+                "status": "completed",
+                "output_text": "retry after capacity success"
+            }),
+        ),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            callbacks: empty_callbacks(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("completion capacity should retry");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("retry after capacity success")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+}
+
+#[tokio::test]
 async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
     let steps = vec![
         MockProviderStep::json(

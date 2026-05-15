@@ -428,7 +428,7 @@ export const useSessionListController = ({
     loadTerminals,
     handleSelectTerminal: sessionListActions.handleSelectTerminal,
     setActivePanel,
-    enabled: activePanel !== 'project',
+    enabled: !isCollapsed && sectionExpansion.projectsExpanded && activePanel !== 'project',
   });
 
   return {

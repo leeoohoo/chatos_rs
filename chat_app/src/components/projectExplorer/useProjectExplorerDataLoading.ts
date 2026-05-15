@@ -34,6 +34,10 @@ const readErrorMessage = (error: unknown, fallback: string): string => (
   error instanceof Error ? error.message : fallback
 );
 
+interface LoadEntriesOptions {
+  silent?: boolean;
+}
+
 export const useProjectExplorerDataLoading = ({
   client,
   projectId,
@@ -45,15 +49,22 @@ export const useProjectExplorerDataLoading = ({
   setSummaryError,
   setLoadingSummary,
 }: UseProjectExplorerDataLoadingParams) => {
-  const loadEntries = useCallback(async (path: string) => {
+  const tryLoadEntries = useCallback(async (path: string, options?: LoadEntriesOptions) => {
+    const silent = options?.silent === true;
     setLoadingPaths((prev) => new Set(prev).add(path));
-    setError(null);
+    if (!silent) {
+      setError(null);
+    }
     try {
       const data = await client.listFsEntries(path);
       const entries = Array.isArray(data?.entries) ? data.entries.map(normalizeEntry) : [];
       setEntriesMap((prev) => ({ ...prev, [path]: entries }));
+      return true;
     } catch (err) {
-      setError(readErrorMessage(err, '加载目录失败'));
+      if (!silent) {
+        setError(readErrorMessage(err, '加载目录失败'));
+      }
+      return false;
     } finally {
       setLoadingPaths((prev) => {
         const next = new Set(prev);
@@ -62,6 +73,10 @@ export const useProjectExplorerDataLoading = ({
       });
     }
   }, [client, setEntriesMap, setError, setLoadingPaths]);
+
+  const loadEntries = useCallback(async (path: string) => {
+    await tryLoadEntries(path);
+  }, [tryLoadEntries]);
 
   const loadChangeSummary = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -111,6 +126,7 @@ export const useProjectExplorerDataLoading = ({
 
   return {
     loadEntries,
+    tryLoadEntries,
     loadChangeSummary,
   };
 };

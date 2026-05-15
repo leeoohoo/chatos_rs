@@ -50,6 +50,12 @@ pub(super) struct PageQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct CompactHistoryQuery {
+    pub(super) limit: Option<String>,
+    pub(super) before: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct AddMcpServerRequest {
     pub(super) mcp_server_name: Option<String>,
     pub(super) mcp_config_id: Option<String>,

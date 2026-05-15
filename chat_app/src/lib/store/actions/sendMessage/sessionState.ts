@@ -4,6 +4,10 @@ import type {
   SessionChatState,
 } from '../../types';
 import {
+  resolveSessionProjectScopeId,
+  syncCurrentProjectFromSession,
+} from '../sessionsUtils';
+import {
   createEmptySessionRuntimeGuidanceState,
   resetRuntimeGuidancePendingCount,
 } from './runtimeGuidanceState';
@@ -33,10 +37,26 @@ export const applySessionRuntimeMetadata = (
   const sessionIndex = state.sessions.findIndex((session) => session.id === sessionId);
   if (sessionIndex >= 0) {
     state.sessions[sessionIndex].metadata = runtimeMetadata;
+    const nextProjectId = resolveSessionProjectScopeId({
+      ...state.sessions[sessionIndex],
+      metadata: runtimeMetadata,
+    });
+    state.sessions[sessionIndex].projectId = nextProjectId === '0' ? '0' : nextProjectId || null;
+    state.sessions[sessionIndex].project_id = nextProjectId === '0' ? '0' : nextProjectId || null;
+    if (state.currentSession?.id === sessionId) {
+      syncCurrentProjectFromSession(state, state.sessions[sessionIndex]);
+    }
   }
 
   if (state.currentSession?.id === sessionId) {
     state.currentSession.metadata = runtimeMetadata;
+    const nextProjectId = resolveSessionProjectScopeId({
+      ...state.currentSession,
+      metadata: runtimeMetadata,
+    });
+    state.currentSession.projectId = nextProjectId === '0' ? '0' : nextProjectId || null;
+    state.currentSession.project_id = nextProjectId === '0' ? '0' : nextProjectId || null;
+    syncCurrentProjectFromSession(state, state.currentSession);
   }
 };
 

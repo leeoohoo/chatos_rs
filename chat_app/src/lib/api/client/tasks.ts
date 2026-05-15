@@ -1,3 +1,4 @@
+import { debugLog } from '@/lib/utils';
 import type {
   TaskReviewItemResponse,
   TaskManagerTaskResponse,
@@ -8,17 +9,22 @@ import type {
 } from './types';
 import type { ApiRequestFn } from './workspace';
 
+const normalizeConversationId = (conversationId: string): string => (
+  typeof conversationId === 'string' ? conversationId.trim() : ''
+);
+
 export const getTaskManagerTasks = async (
   request: ApiRequestFn,
   conversationId: string,
   options?: { conversationTurnId?: string; includeDone?: boolean; limit?: number }
 ): Promise<TaskManagerTaskResponse[]> => {
-  if (!conversationId) {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
     return [];
   }
 
   const params = new URLSearchParams();
-  params.set('conversation_id', conversationId);
+  params.set('conversation_id', normalizedConversationId);
   if (options?.conversationTurnId) {
     params.set('conversation_turn_id', options.conversationTurnId);
   }
@@ -28,14 +34,24 @@ export const getTaskManagerTasks = async (
   if (typeof options?.limit === 'number') {
     params.set('limit', String(options.limit));
   }
-
-  const result = await request<{ tasks?: TaskManagerTaskResponse[] } | TaskManagerTaskResponse[]>(
-    '/task-manager/tasks?' + params.toString(),
-  );
-  if (Array.isArray(result)) {
-    return result;
+  try {
+    const result = await request<{ tasks?: TaskManagerTaskResponse[] } | TaskManagerTaskResponse[]>(
+      '/task-manager/tasks?' + params.toString(),
+    );
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return Array.isArray(result?.tasks) ? result.tasks : [];
+  } catch (error) {
+    debugLog('[tasks] getTaskManagerTasks failed', {
+      conversationId: normalizedConversationId,
+      conversationTurnId: options?.conversationTurnId || null,
+      includeDone: options?.includeDone === true,
+      limit: options?.limit ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
-  return Array.isArray(result?.tasks) ? result.tasks : [];
 };
 
 export const updateTaskManagerTask = (
@@ -44,7 +60,8 @@ export const updateTaskManagerTask = (
   taskId: string,
   payload: TaskManagerUpdatePayload,
 ): Promise<TaskManagerTaskResponse> => {
-  if (!conversationId) {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
     throw new Error('conversationId is required');
   }
   if (!taskId) {
@@ -52,7 +69,7 @@ export const updateTaskManagerTask = (
   }
 
   const params = new URLSearchParams();
-  params.set('conversation_id', conversationId);
+  params.set('conversation_id', normalizedConversationId);
   return request<TaskManagerTaskResponse>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(),
     {
@@ -68,7 +85,8 @@ export const completeTaskManagerTask = (
   taskId: string,
   payload?: Partial<TaskManagerUpdatePayload>
 ): Promise<TaskManagerTaskResponse> => {
-  if (!conversationId) {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
     throw new Error('conversationId is required');
   }
   if (!taskId) {
@@ -76,7 +94,7 @@ export const completeTaskManagerTask = (
   }
 
   const params = new URLSearchParams();
-  params.set('conversation_id', conversationId);
+  params.set('conversation_id', normalizedConversationId);
   return request<TaskManagerTaskResponse>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(),
     {
@@ -91,7 +109,8 @@ export const deleteTaskManagerTask = (
   conversationId: string,
   taskId: string
 ): Promise<{ success?: boolean }> => {
-  if (!conversationId) {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
     throw new Error('conversationId is required');
   }
   if (!taskId) {
@@ -99,7 +118,7 @@ export const deleteTaskManagerTask = (
   }
 
   const params = new URLSearchParams();
-  params.set('conversation_id', conversationId);
+  params.set('conversation_id', normalizedConversationId);
   return request<{ success?: boolean }>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(),
     {
@@ -131,23 +150,33 @@ export const getPendingTaskReviews = async (
   conversationId: string,
   options?: { limit?: number }
 ): Promise<TaskReviewItemResponse[]> => {
-  if (!conversationId) {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
     return [];
   }
 
   const params = new URLSearchParams();
-  params.set('conversation_id', conversationId);
+  params.set('conversation_id', normalizedConversationId);
   if (typeof options?.limit === 'number') {
     params.set('limit', String(options.limit));
   }
 
-  const result = await request<{ reviews?: TaskReviewItemResponse[] } | TaskReviewItemResponse[]>(
-    '/task-manager/reviews/pending?' + params.toString(),
-  );
-  if (Array.isArray(result)) {
-    return result;
+  try {
+    const result = await request<{ reviews?: TaskReviewItemResponse[] } | TaskReviewItemResponse[]>(
+      '/task-manager/reviews/pending?' + params.toString(),
+    );
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return Array.isArray(result?.reviews) ? result.reviews : [];
+  } catch (error) {
+    debugLog('[tasks] getPendingTaskReviews failed', {
+      conversationId: normalizedConversationId,
+      limit: options?.limit ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
-  return Array.isArray(result?.reviews) ? result.reviews : [];
 };
 
 export const getPendingUiPrompts = async (
@@ -155,23 +184,33 @@ export const getPendingUiPrompts = async (
   conversationId: string,
   options?: { limit?: number }
 ): Promise<UiPromptItemResponse[]> => {
-  if (!conversationId) {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
     return [];
   }
 
   const params = new URLSearchParams();
-  params.set('conversation_id', conversationId);
+  params.set('conversation_id', normalizedConversationId);
   if (typeof options?.limit === 'number') {
     params.set('limit', String(options.limit));
   }
 
-  const result = await request<{ prompts?: UiPromptItemResponse[] } | UiPromptItemResponse[]>(
-    '/ui-prompts/pending?' + params.toString(),
-  );
-  if (Array.isArray(result)) {
-    return result;
+  try {
+    const result = await request<{ prompts?: UiPromptItemResponse[] } | UiPromptItemResponse[]>(
+      '/ui-prompts/pending?' + params.toString(),
+    );
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return Array.isArray(result?.prompts) ? result.prompts : [];
+  } catch (error) {
+    debugLog('[tasks] getPendingUiPrompts failed', {
+      conversationId: normalizedConversationId,
+      limit: options?.limit ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
-  return Array.isArray(result?.prompts) ? result.prompts : [];
 };
 
 export const getUiPromptHistory = async (
@@ -179,12 +218,13 @@ export const getUiPromptHistory = async (
   conversationId: string,
   options?: { limit?: number; includePending?: boolean }
 ): Promise<UiPromptItemResponse[]> => {
-  if (!conversationId) {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
     return [];
   }
 
   const params = new URLSearchParams();
-  params.set('conversation_id', conversationId);
+  params.set('conversation_id', normalizedConversationId);
   if (typeof options?.limit === 'number') {
     params.set('limit', String(options.limit));
   }
@@ -192,13 +232,23 @@ export const getUiPromptHistory = async (
     params.set('include_pending', 'true');
   }
 
-  const result = await request<{ prompts?: UiPromptItemResponse[] } | UiPromptItemResponse[]>(
-    '/ui-prompts/history?' + params.toString(),
-  );
-  if (Array.isArray(result)) {
-    return result;
+  try {
+    const result = await request<{ prompts?: UiPromptItemResponse[] } | UiPromptItemResponse[]>(
+      '/ui-prompts/history?' + params.toString(),
+    );
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return Array.isArray(result?.prompts) ? result.prompts : [];
+  } catch (error) {
+    debugLog('[tasks] getUiPromptHistory failed', {
+      conversationId: normalizedConversationId,
+      includePending: options?.includePending === true,
+      limit: options?.limit ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
-  return Array.isArray(result?.prompts) ? result.prompts : [];
 };
 
 export const submitUiPromptResponse = (

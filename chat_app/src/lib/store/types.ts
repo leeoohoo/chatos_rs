@@ -121,6 +121,7 @@ export interface SessionSelectOptions {
 
 export interface SessionCreateOptions {
   keepActivePanel?: boolean;
+  activateSession?: boolean;
 }
 
 export interface SessionChatState {
@@ -140,6 +141,21 @@ export interface SessionRuntimeGuidanceState {
   lastGuidanceAt: string | null;
   lastAppliedAt: string | null;
   items: RuntimeGuidanceItem[];
+}
+
+export interface SessionMessagePaginationState {
+  nextBefore: string | null;
+  loaded: boolean;
+}
+
+export interface SessionMessagesSnapshot {
+  messages: Message[];
+  nextBefore: string | null;
+  loaded: boolean;
+}
+
+export interface SessionMessagesCacheEntry extends SessionMessagesSnapshot {
+  fetchedAt: number;
 }
 
 export interface RuntimeGuidanceItem {
@@ -181,6 +197,9 @@ export interface ChatState {
   streamingMessageId: string | null;
   hasMoreMessages: boolean;
   sessionChatState: Record<string, SessionChatState>;
+  sessionMessagePaginationState: Record<string, SessionMessagePaginationState>;
+  sessionMessagesCache: Record<string, SessionMessagesCacheEntry>;
+  sessionMessagesCacheOrder: string[];
   sessionRuntimeGuidanceState: Record<string, SessionRuntimeGuidanceState>;
   sessionStreamingMessageDrafts: Record<string, Message | null>;
   sessionTurnProcessState: Record<string, Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>>;

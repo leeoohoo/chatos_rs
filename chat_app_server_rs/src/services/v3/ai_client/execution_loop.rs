@@ -4,8 +4,10 @@ use tracing::info;
 use crate::core::tool_call::tool_calls_value_has_items;
 use crate::services::ai_common::{
     build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
-    handle_transient_retry, terminal_empty_response_error,
+    handle_transient_retry, is_retryable_provider_overload_error, terminal_empty_response_error,
 };
+use tokio::time::{sleep, Duration};
+use tracing::warn;
 use crate::services::v3::ai_request_handler::StreamCallbacks;
 use crate::utils::abort_registry;
 
@@ -91,6 +93,8 @@ impl AiClient {
         let max_non_terminal_empty_retries = 3usize;
         let mut terminal_empty_retry_count = 0usize;
         let max_terminal_empty_retries = 2usize;
+        let max_completion_retry_retries = 5usize;
+        let mut completion_retry_count = 0usize;
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -263,6 +267,21 @@ impl AiClient {
                 ai_response.reasoning.as_deref(),
                 ai_response.provider_error.as_ref(),
             ) {
+                if is_retryable_provider_overload_error(err.as_str())
+                    && completion_retry_count < max_completion_retry_retries
+                {
+                    completion_retry_count += 1;
+                    let backoff_ms = 150_u64 * completion_retry_count as u64;
+                    warn!(
+                        "[AI_V3] completion failed with retryable provider overload; retry {}/{} after {}ms: {}",
+                        completion_retry_count,
+                        max_completion_retry_retries,
+                        backoff_ms,
+                        err
+                    );
+                    sleep(Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
                 if self
                     .try_recover_from_completion_error(
                         err.as_str(),
@@ -287,8 +306,16 @@ impl AiClient {
                 {
                     continue;
                 }
+                if is_retryable_provider_overload_error(err.as_str()) {
+                    return Err(format!(
+                        "AI 请求失败：上游暂时过载，已重试 {} 次，最后错误：{}",
+                        max_completion_retry_retries, err
+                    ));
+                }
                 return Err(err);
             }
+
+            completion_retry_count = 0;
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {

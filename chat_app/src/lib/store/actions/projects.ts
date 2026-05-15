@@ -100,6 +100,33 @@ const markProjectCachesStale = (
 };
 
 export function createProjectActions({ set, get, client, getUserIdParam }: Deps) {
+  const syncProjectsIntoState = (formatted: Project[], uid: string) => {
+    set((state: ChatStoreDraft) => {
+      state.projects = formatted;
+      if (!state.currentProjectId) {
+        const lastId = localStorage.getItem(`lastProjectId_${uid}`);
+        if (lastId) {
+          const matched = formatted.find(p => p.id === lastId);
+          if (matched) {
+            state.currentProjectId = matched.id;
+            state.currentProject = matched;
+          }
+        }
+      } else {
+        const matched = formatted.find(p => p.id === state.currentProjectId);
+        if (matched) {
+          state.currentProject = matched;
+        } else {
+          state.currentProjectId = null;
+          state.currentProject = null;
+          if (state.activePanel === 'project') {
+            state.activePanel = 'chat';
+          }
+        }
+      }
+    });
+  };
+
   const syncProjectDetailCache = (project: Project) => {
     const normalizedProjectId = normalizeProjectId(project.id);
     if (!normalizedProjectId) {
@@ -200,24 +227,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         const cached = cacheState.listCache.get(cacheKey);
         if (!options?.force && cached && !cached.stale) {
           const formatted = cached.projects;
-          set((state: ChatStoreDraft) => {
-            state.projects = formatted;
-            if (!state.currentProjectId) {
-              const lastId = localStorage.getItem(`lastProjectId_${uid}`);
-              if (lastId) {
-                const matched = formatted.find(p => p.id === lastId);
-                if (matched) {
-                  state.currentProjectId = matched.id;
-                  state.currentProject = matched;
-                }
-              }
-            } else {
-              const matched = formatted.find(p => p.id === state.currentProjectId);
-              if (matched) {
-                state.currentProject = matched;
-              }
-            }
-          });
+          syncProjectsIntoState(formatted, uid);
           return formatted;
         }
 
@@ -236,24 +246,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         }
 
         const formatted = await inflight;
-        set((state: ChatStoreDraft) => {
-          state.projects = formatted;
-          if (!state.currentProjectId) {
-            const lastId = localStorage.getItem(`lastProjectId_${uid}`);
-            if (lastId) {
-              const matched = formatted.find(p => p.id === lastId);
-              if (matched) {
-                state.currentProjectId = matched.id;
-                state.currentProject = matched;
-              }
-            }
-          } else {
-            const matched = formatted.find(p => p.id === state.currentProjectId);
-            if (matched) {
-              state.currentProject = matched;
-            }
-          }
-        });
+        syncProjectsIntoState(formatted, uid);
         return formatted;
       } catch (error) {
         console.error('Failed to load projects:', error);

@@ -11,9 +11,7 @@ pub(super) fn parse_bool_query_flag(value: Option<String>) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) use super::history_display::{
-    build_turn_process_messages, compact_messages_for_display, find_user_index_by_turn_id,
-};
+pub(super) use super::history_compact::compact_messages_for_display;
 pub(super) use super::history_process::build_turn_display_messages;
 
 #[allow(dead_code)]

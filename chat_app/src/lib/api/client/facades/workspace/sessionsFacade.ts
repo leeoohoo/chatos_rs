@@ -1,6 +1,7 @@
 import * as messagesApi from '../../messages';
 import * as workspaceApi from '../../workspace';
 import type {
+  CompactHistoryResponse,
   DeleteSuccessResponse,
   MessageCreatePayload,
   SessionMessageResponse,
@@ -26,6 +27,10 @@ export interface WorkspaceSessionFacade {
     conversationId: string,
     params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string },
   ): Promise<SessionMessageResponse[]>;
+  getConversationCompactHistory(
+    conversationId: string,
+    params?: { limit?: number; before?: string | null },
+  ): Promise<CompactHistoryResponse>;
   getConversationTurnMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
   getConversationTurnProcessMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
   getConversationTurnProcessMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
@@ -56,6 +61,9 @@ export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient
   },
   async getConversationMessages(conversationId, params) {
     return workspaceApi.getConversationMessages(this.getRequestFn(), conversationId, params);
+  },
+  async getConversationCompactHistory(conversationId, params) {
+    return workspaceApi.getConversationCompactHistory(this.getRequestFn(), conversationId, params);
   },
   async getConversationTurnMessages(conversationId, userMessageId) {
     return workspaceApi.getConversationTurnMessages(this.getRequestFn(), conversationId, userMessageId);

@@ -9,7 +9,9 @@ import type { ChatStoreDraft } from '../../types';
 import {
   type MemoryContact,
   isSessionActive,
+  resetCurrentSessionViewState,
   splitSessionsByMappedContacts,
+  syncCurrentProjectFromSession,
 } from '../sessionsUtils';
 import type {
   LoadSessionsOptions,
@@ -69,10 +71,9 @@ export function createLoadSessionActions({
         const matched = deduped.find((session) => session.id === state.currentSessionId);
         if (matched) {
           state.currentSession = matched;
+          syncCurrentProjectFromSession(state, matched);
         } else {
-          state.currentSessionId = null;
-          state.currentSession = null;
-          state.messages = [];
+          resetCurrentSessionViewState(state);
         }
       }
     });
@@ -274,11 +275,7 @@ export function createLoadSessionActions({
             const remaining = (state.sessions || []).filter((session) => session.id !== trimmed);
             state.sessions = normalizeTrackedSessions(remaining, state.contacts || []);
             if (state.currentSessionId === trimmed) {
-              state.currentSessionId = null;
-              state.currentSession = null;
-              state.selectedModelId = null;
-              state.selectedAgentId = null;
-              state.messages = [];
+              resetCurrentSessionViewState(state);
             }
             if (state.activePanel === 'chat' && state.currentSessionId === null) {
               state.activePanel = state.currentProjectId ? 'project' : 'chat';

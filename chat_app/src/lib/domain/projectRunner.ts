@@ -67,6 +67,7 @@ interface ProjectRunnerContactRowsCacheEntry {
 
 interface ProjectRunnerScriptCacheEntry {
   exists: boolean;
+  missingRoot?: boolean;
   stale: boolean;
 }
 
@@ -176,6 +177,10 @@ export const readProjectRunnerErrorMessage = (
 
 export const isProjectRunnerPathMissingError = (error: unknown): boolean => (
   readProjectRunnerErrorMessage(error, '').includes(FS_PATH_NOT_FOUND_ERROR)
+);
+
+const buildProjectRunnerPathMissingError = (): Error => (
+  new Error(FS_PATH_NOT_FOUND_ERROR)
 );
 
 export const normalizeProjectRunnerMembers = (
@@ -351,6 +356,7 @@ export const patchProjectRunnerScriptStateSnapshot = (
   }
   return setProjectRunnerScriptCacheEntry(client, normalizedRootPath, {
     exists,
+    missingRoot: false,
     stale: false,
   });
 };
@@ -366,11 +372,26 @@ export const hasProjectRunnerScript = async (
 
   const cached = getProjectRunnerScriptScopedCache(client)?.get(safeRoot);
   if (cached && !cached.stale) {
+    if (cached.missingRoot) {
+      throw buildProjectRunnerPathMissingError();
+    }
     return cached.exists;
   }
 
   return withClientInflight(projectRunnerScriptInflight, client, safeRoot, async () => {
-    const rootList = await client.listFsEntries(safeRoot);
+    let rootList;
+    try {
+      rootList = await client.listFsEntries(safeRoot);
+    } catch (error) {
+      if (isProjectRunnerPathMissingError(error)) {
+        setProjectRunnerScriptCacheEntry(client, safeRoot, {
+          exists: false,
+          missingRoot: true,
+          stale: false,
+        });
+      }
+      throw error;
+    }
     const rootEntries = Array.isArray(rootList?.entries)
       ? rootList.entries.map((entry) => normalizeFsEntry(entry))
       : [];
@@ -378,6 +399,7 @@ export const hasProjectRunnerScript = async (
     if (!runnerDirEntry?.path) {
       return setProjectRunnerScriptCacheEntry(client, safeRoot, {
         exists: false,
+        missingRoot: false,
         stale: false,
       });
     }
@@ -389,11 +411,13 @@ export const hasProjectRunnerScript = async (
         : [];
       return setProjectRunnerScriptCacheEntry(client, safeRoot, {
         exists: runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE),
+        missingRoot: false,
         stale: false,
       });
     } catch {
       return setProjectRunnerScriptCacheEntry(client, safeRoot, {
         exists: false,
+        missingRoot: false,
         stale: false,
       });
     }

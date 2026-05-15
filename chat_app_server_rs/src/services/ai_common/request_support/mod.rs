@@ -11,6 +11,7 @@ pub(crate) use self::assistant_response::{
     AssistantResponsePersistenceRequest,
 };
 pub(crate) use self::error_classify::handle_transient_retry;
+pub(crate) use self::error_classify::is_retryable_provider_overload_error;
 #[cfg(test)]
 pub(crate) use self::error_classify::{
     is_response_parse_error, is_transient_network_error, is_transient_transport_or_parse_error,

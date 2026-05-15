@@ -248,7 +248,8 @@ fn select_active_task_id(tasks: &[TaskRecord]) -> Option<String> {
     for preferred_status in [STATUS_DOING, STATUS_TODO] {
         if let Some(task) = tasks
             .iter()
-            .find(|task| task.status.trim() == preferred_status)
+            .rev()
+            .find(|task| normalize_status(task.status.as_str()) == preferred_status)
         {
             return Some(task.id.clone());
         }
@@ -461,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn prefers_earliest_todo_over_newer_todo() {
+    fn prefers_latest_todo_over_older_todo() {
         let prompt = format_task_board_prompt(
             &[
                 build_task("task_a", "todo task a", "todo"),
@@ -471,8 +472,23 @@ mod tests {
             InternalContextLocale::ZhCn,
         );
 
-        assert!(prompt.contains("id=task_a <- 当前优先执行"));
-        assert!(!prompt.contains("id=task_b <- 当前优先执行"));
+        assert!(prompt.contains("id=task_b <- 当前优先执行"));
+        assert!(!prompt.contains("id=task_a <- 当前优先执行"));
+    }
+
+    #[test]
+    fn prefers_latest_doing_over_older_doing() {
+        let prompt = format_task_board_prompt(
+            &[
+                build_task("task_doing_a", "doing task a", "doing"),
+                build_task("task_todo", "todo task", "todo"),
+                build_task("task_doing_b", "doing task b", "doing"),
+            ],
+            InternalContextLocale::ZhCn,
+        );
+
+        assert!(prompt.contains("id=task_doing_b <- 当前优先执行"));
+        assert!(!prompt.contains("id=task_doing_a <- 当前优先执行"));
     }
 
     #[test]

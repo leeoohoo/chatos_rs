@@ -108,6 +108,12 @@ export interface SessionMessageResponse {
   updated_at?: string;
 }
 
+export interface CompactHistoryResponse {
+  items: SessionMessageResponse[];
+  has_more?: boolean;
+  next_before?: string | null;
+}
+
 export interface ConversationMessageEnvelope {
   data: {
     message: SessionMessageResponse;

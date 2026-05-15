@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { isSessionMatchedContactAndProject } from '../../../features/contactSession/sessionResolver';
 import type { Session, AiModelConfig } from '../../../types';
 import type { SendMessageRuntimeOptions } from '../../../lib/store/types';
 import type { ContactItem, ProjectContactRow, SessionChatStateMap } from './types';
@@ -25,6 +26,7 @@ interface UseTeamMemberConversationParams {
   ) => Promise<void>;
   cancelPendingSessionSummariesLoad: () => void;
   ensureContactSession: (contact: ContactItem) => Promise<string | null>;
+  selectSession: (sessionId: string, options?: { keepActivePanel?: boolean }) => Promise<void>;
   sendMessage: (
     content: string,
     attachments?: File[],
@@ -52,29 +54,69 @@ export const useTeamMemberConversation = ({
   clearSummaries,
   cancelPendingSessionSummariesLoad,
   ensureContactSession,
+  selectSession,
   sendMessage,
   toggleTurnProcess,
   loadMoreMessages,
 }: UseTeamMemberConversationParams) => {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [switchingContactId, setSwitchingContactId] = useState<string | null>(null);
   const [openingSummaryContactId, setOpeningSummaryContactId] = useState<string | null>(null);
+  const latestContactSwitchSeqRef = useRef(0);
+  const latestSummaryOpenSeqRef = useRef(0);
+
+  const currentSessionMatchedContactRow = useMemo(() => {
+    if (!currentSession) {
+      return null;
+    }
+    return projectContacts.find((item) => (
+      isSessionMatchedContactAndProject(currentSession, item.contact, projectId)
+    )) || null;
+  }, [currentSession, projectContacts, projectId]);
+
+  const selectedContactRow = useMemo(() => {
+    if (!selectedContactId) {
+      return null;
+    }
+    return projectContacts.find((item) => item.contact.id === selectedContactId) || null;
+  }, [projectContacts, selectedContactId]);
 
   const selectedContact = useMemo(() => {
-    if (!selectedContactId) {
-      return null;
+    if (selectedContactRow?.contact) {
+      return selectedContactRow.contact;
     }
-    const matched = projectContacts.find((item) => item.contact.id === selectedContactId);
-    return matched?.contact || null;
-  }, [projectContacts, selectedContactId]);
+    if (selectedContactId) {
+      return normalizedContacts.find((item) => item.id === selectedContactId) || null;
+    }
+    return currentSessionMatchedContactRow?.contact || null;
+  }, [currentSessionMatchedContactRow?.contact, normalizedContacts, selectedContactId, selectedContactRow?.contact]);
 
   const selectedProjectSession = useMemo(() => {
-    if (!selectedContactId) {
-      return null;
+    const normalizedSelectedSessionId = typeof selectedSessionId === 'string'
+      ? selectedSessionId.trim()
+      : '';
+    if (normalizedSelectedSessionId) {
+      if (currentSession?.id === normalizedSelectedSessionId) {
+        return currentSession;
+      }
+      const bySessionId = projectContacts.find((item) => item.session?.id === normalizedSelectedSessionId);
+      if (bySessionId?.session) {
+        return bySessionId.session;
+      }
     }
-    const matched = projectContacts.find((item) => item.contact.id === selectedContactId);
-    return matched?.session || null;
-  }, [projectContacts, selectedContactId]);
+    if (selectedContactRow?.session) {
+      return selectedContactRow.session;
+    }
+    if (
+      currentSession
+      && selectedContact
+      && isSessionMatchedContactAndProject(currentSession, selectedContact, projectId)
+    ) {
+      return currentSession;
+    }
+    return null;
+  }, [currentSession, projectContacts, projectId, selectedContact, selectedContactRow?.session, selectedSessionId]);
 
   const isSelectedSessionActive = Boolean(
     selectedProjectSession?.id
@@ -114,10 +156,22 @@ export const useTeamMemberConversation = ({
     if (!contact) {
       return;
     }
+    const requestSeq = latestContactSwitchSeqRef.current + 1;
+    latestContactSwitchSeqRef.current = requestSeq;
     setSelectedContactId(contactId);
     setSwitchingContactId(contactId);
     try {
       const sessionId = await ensureContactSession(contact);
+      if (latestContactSwitchSeqRef.current !== requestSeq) {
+        return;
+      }
+      setSelectedSessionId(sessionId);
+      if (sessionId && currentSession?.id !== sessionId) {
+        await selectSession(sessionId, { keepActivePanel: true });
+      }
+      if (latestContactSwitchSeqRef.current !== requestSeq) {
+        return;
+      }
       if (summaryPaneSessionId && sessionId && sessionId !== summaryPaneSessionId) {
         cancelPendingSessionSummariesLoad();
         setSummaryPaneSessionId(null);
@@ -132,6 +186,8 @@ export const useTeamMemberConversation = ({
     normalizedContacts,
     projectContacts,
     resetSummaryState,
+    currentSession?.id,
+    selectSession,
     setSummaryPaneSessionId,
     summaryPaneSessionId,
   ]);
@@ -139,14 +195,53 @@ export const useTeamMemberConversation = ({
   useEffect(() => {
     if (projectContacts.length === 0) {
       setSelectedContactId(null);
+      setSelectedSessionId(null);
       return;
     }
     if (selectedContactId && projectContacts.some((item) => item.contact.id === selectedContactId)) {
       return;
     }
-    const firstId = projectContacts[0].contact.id;
-    void handleSelectContact(firstId);
-  }, [handleSelectContact, projectContacts, selectedContactId]);
+    if (currentSessionMatchedContactRow && currentSession?.id) {
+      setSelectedContactId(currentSessionMatchedContactRow.contact.id);
+      setSelectedSessionId(currentSession.id);
+      return;
+    }
+    const firstRow = projectContacts[0];
+    setSelectedSessionId(firstRow?.session?.id || null);
+    void handleSelectContact(firstRow.contact.id);
+  }, [currentSession?.id, currentSessionMatchedContactRow, handleSelectContact, projectContacts, selectedContactId]);
+
+  useEffect(() => {
+    if (!selectedContactId) {
+      setSelectedSessionId(null);
+      return;
+    }
+    if (
+      currentSession
+      && selectedContact
+      && isSessionMatchedContactAndProject(currentSession, selectedContact, projectId)
+    ) {
+      if (selectedSessionId !== currentSession.id) {
+        setSelectedSessionId(currentSession.id);
+      }
+      return;
+    }
+    if (switchingContactId === selectedContactId) {
+      return;
+    }
+    const latestRowSessionId = selectedContactRow?.session?.id || null;
+    if (selectedSessionId !== latestRowSessionId) {
+      setSelectedSessionId(latestRowSessionId);
+    }
+  }, [
+    currentSession,
+    projectId,
+    selectedContact,
+    selectedContactId,
+    selectedContactRow?.session?.id,
+    selectedSessionId,
+    switchingContactId,
+  ]);
 
   const handleLoadMore = useCallback(() => {
     if (selectedProjectSession?.id) {
@@ -176,6 +271,10 @@ export const useTeamMemberConversation = ({
       if (!sessionId) {
         return;
       }
+      setSelectedSessionId(sessionId);
+      if (currentSession?.id !== sessionId) {
+        await selectSession(sessionId, { keepActivePanel: true });
+      }
       await sendMessage(content, attachments, {
         mcpEnabled: runtimeOptions?.mcpEnabled,
         enabledMcpIds: runtimeOptions?.enabledMcpIds,
@@ -191,20 +290,34 @@ export const useTeamMemberConversation = ({
     }
   }, [
     ensureContactSession,
+    currentSession?.id,
     projectId,
     projectRootPath,
     selectedContact,
+    selectSession,
     sendMessage,
   ]);
 
   const handleOpenSummary = useCallback(async (contact: ContactItem) => {
+    const requestSeq = latestSummaryOpenSeqRef.current + 1;
+    latestSummaryOpenSeqRef.current = requestSeq;
     setOpeningSummaryContactId(contact.id);
     setSelectedContactId(contact.id);
     setSwitchingContactId(contact.id);
     setSummaryError(null);
     try {
       const sessionId = await ensureContactSession(contact);
+      if (latestSummaryOpenSeqRef.current !== requestSeq) {
+        return;
+      }
       if (!sessionId) {
+        return;
+      }
+      setSelectedSessionId(sessionId);
+      if (currentSession?.id !== sessionId) {
+        await selectSession(sessionId, { keepActivePanel: true });
+      }
+      if (latestSummaryOpenSeqRef.current !== requestSeq) {
         return;
       }
       await openSummaryForSession(sessionId);
@@ -212,7 +325,7 @@ export const useTeamMemberConversation = ({
       setSwitchingContactId((prev) => (prev === contact.id ? null : prev));
       setOpeningSummaryContactId((prev) => (prev === contact.id ? null : prev));
     }
-  }, [ensureContactSession, openSummaryForSession, setSummaryError]);
+  }, [ensureContactSession, currentSession?.id, openSummaryForSession, selectSession, setSummaryError]);
 
   const handleDeleteSummary = useCallback(async (summaryId: string) => {
     if (!selectedProjectSession?.id || !summaryId) {
@@ -232,6 +345,7 @@ export const useTeamMemberConversation = ({
 
   return {
     selectedContactId,
+    selectedSessionId,
     switchingContactId,
     openingSummaryContactId,
     selectedContact,

@@ -70,4 +70,108 @@ describe('buildVisibleMessageState', () => {
     expect(assistantMessages).toHaveLength(1);
     expect(assistantMessages[0]?.id).toBe('assistant-2');
   });
+
+  it('keeps the final assistant visible when the same turn also has many process messages and tool traces', () => {
+    const messages: Message[] = [
+      buildUser({
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyProcess: {
+            hasProcess: true,
+            toolCallCount: 2,
+            thinkingCount: 2,
+            processMessageCount: 3,
+            userMessageId: 'user-9',
+            turnId: 'turn-9',
+            finalAssistantMessageId: 'assistant-final-9',
+            expanded: false,
+            loaded: true,
+            loading: false,
+          },
+        },
+        id: 'user-9',
+        content: '帮我查一下并执行',
+      }),
+      buildAssistant({
+        id: 'assistant-process-1',
+        content: '',
+        createdAt: new Date('2026-05-07T10:00:01.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyProcessUserMessageId: 'user-9',
+          historyProcessTurnId: 'turn-9',
+          hidden: true,
+          contentSegments: [
+            { type: 'thinking', content: '先分析需求' },
+            { type: 'tool_call', toolCallId: 'tool-call-1', content: '' as never },
+          ],
+          toolCalls: [{
+            id: 'tool-call-1',
+            messageId: 'assistant-process-1',
+            name: 'search_docs',
+            arguments: {},
+            createdAt: new Date('2026-05-07T10:00:01.000Z'),
+          }],
+        },
+      }),
+      {
+        id: 'tool-result-1',
+        sessionId: 'session-1',
+        role: 'tool',
+        content: '搜索结果',
+        status: 'completed',
+        createdAt: new Date('2026-05-07T10:00:02.000Z'),
+        metadata: {
+          toolCallId: 'tool-call-1',
+          historyProcessUserMessageId: 'user-9',
+          historyProcessTurnId: 'turn-9',
+          hidden: true,
+        },
+      },
+      buildAssistant({
+        id: 'assistant-process-2',
+        content: '',
+        createdAt: new Date('2026-05-07T10:00:03.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyProcessUserMessageId: 'user-9',
+          historyProcessTurnId: 'turn-9',
+          hidden: true,
+          contentSegments: [
+            { type: 'thinking', content: '继续执行' },
+            { type: 'tool_call', toolCallId: 'tool-call-2', content: '' as never },
+          ],
+          toolCalls: [{
+            id: 'tool-call-2',
+            messageId: 'assistant-process-2',
+            name: 'run_task',
+            arguments: {},
+            createdAt: new Date('2026-05-07T10:00:03.000Z'),
+          }],
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-final-9',
+        content: '已经查完并执行好了',
+        createdAt: new Date('2026-05-07T10:00:04.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyFinalForTurnId: 'turn-9',
+          historyFinalForUserMessageId: 'user-9',
+          contentSegments: [
+            { type: 'text', content: '已经查完并执行好了' },
+          ],
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual(['user-9', 'assistant-final-9']);
+    expect(state.derivedProcessStatsByUserId.get('user-9')).toMatchObject({
+      hasProcess: true,
+      toolCallCount: 2,
+      thinkingCount: 2,
+    });
+  });
 });

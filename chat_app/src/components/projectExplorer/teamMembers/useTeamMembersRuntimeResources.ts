@@ -121,40 +121,55 @@ export const useTeamMembersRuntimeResources = ({
 
     let cancelled = false;
     const cleanupFns: Array<(() => void) | undefined> = [];
-    sessionIds.forEach((sessionId) => {
-      cleanupFns.push(syncPendingPanelsFromCacheOrLoad({
-        cachedEntry: peekPendingTaskReviewCacheEntry(apiClient, sessionId),
-        loadPanels: () => loadPendingTaskReviewPanels(apiClient, sessionId, { limit: 50 }),
-        applyPanels: (panels) => {
-          syncTaskReviewPanelsSnapshot({
-            sessionId,
-            panels,
-            existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
-            upsertTaskReviewPanel,
-            removeTaskReviewPanel,
-          });
-        },
-        shouldApply: () => !cancelled,
-      }));
+    let activeCleanup: (() => void) | undefined;
 
-      cleanupFns.push(syncPendingPanelsFromCacheOrLoad({
-        cachedEntry: peekPendingUiPromptCacheEntry(apiClient, sessionId),
-        loadPanels: () => loadPendingUiPromptPanels(apiClient, sessionId, { limit: 50 }),
-        applyPanels: (panels) => {
-          syncUiPromptPanelsSnapshot({
-            sessionId,
-            panels,
-            existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
-            upsertUiPromptPanel,
-            removeUiPromptPanel,
-          });
-        },
-        shouldApply: () => !cancelled,
-      }));
-    });
+    const preloadPendingPanels = async () => {
+      for (const sessionId of sessionIds) {
+        if (cancelled) {
+          return;
+        }
+
+        activeCleanup = syncPendingPanelsFromCacheOrLoad({
+          cachedEntry: peekPendingTaskReviewCacheEntry(apiClient, sessionId),
+          loadPanels: () => loadPendingTaskReviewPanels(apiClient, sessionId, { limit: 50 }),
+          applyPanels: (panels) => {
+            syncTaskReviewPanelsSnapshot({
+              sessionId,
+              panels,
+              existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
+              upsertTaskReviewPanel,
+              removeTaskReviewPanel,
+            });
+          },
+          shouldApply: () => !cancelled,
+        });
+        cleanupFns.push(activeCleanup);
+
+        activeCleanup = syncPendingPanelsFromCacheOrLoad({
+          cachedEntry: peekPendingUiPromptCacheEntry(apiClient, sessionId),
+          loadPanels: () => loadPendingUiPromptPanels(apiClient, sessionId, { limit: 50 }),
+          applyPanels: (panels) => {
+            syncUiPromptPanelsSnapshot({
+              sessionId,
+              panels,
+              existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
+              upsertUiPromptPanel,
+              removeUiPromptPanel,
+            });
+          },
+          shouldApply: () => !cancelled,
+        });
+        cleanupFns.push(activeCleanup);
+
+        await Promise.resolve();
+      }
+    };
+
+    void preloadPendingPanels();
 
     return () => {
       cancelled = true;
+      activeCleanup?.();
       cleanupFns.forEach((cleanup) => {
         cleanup?.();
       });

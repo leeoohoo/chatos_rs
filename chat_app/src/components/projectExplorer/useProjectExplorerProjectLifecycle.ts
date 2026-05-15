@@ -10,6 +10,7 @@ interface UseProjectExplorerProjectLifecycleOptions {
   toExpandedKey: (path: string) => string;
   keyToPath: (key: string) => string;
   loadEntries: (path: string) => Promise<void>;
+  tryLoadEntries: (path: string, options?: { silent?: boolean }) => Promise<boolean>;
   loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
   clearDragExpandTimer: () => void;
   clearDragAutoScroll: () => void;
@@ -39,6 +40,7 @@ export const useProjectExplorerProjectLifecycle = ({
   toExpandedKey,
   keyToPath,
   loadEntries,
+  tryLoadEntries,
   loadChangeSummary,
   clearDragExpandTimer,
   clearDragAutoScroll,
@@ -124,13 +126,25 @@ export const useProjectExplorerProjectLifecycle = ({
 
     void loadEntries(root);
     void loadChangeSummary();
-    nextExpanded.forEach((expandedPath) => {
-      if (!expandedPath) return;
-      const full = keyToPath(expandedPath);
-      if (full !== root) {
-        void loadEntries(full);
+    void (async () => {
+      const validExpanded = new Set<string>();
+      for (const expandedPath of nextExpanded) {
+        if (!expandedPath) {
+          continue;
+        }
+        const full = keyToPath(expandedPath);
+        if (full === root) {
+          continue;
+        }
+        const ok = await tryLoadEntries(full, { silent: true });
+        if (ok) {
+          validExpanded.add(expandedPath);
+        }
       }
-    });
+      if (validExpanded.size !== nextExpanded.size) {
+        setExpandedPaths(validExpanded);
+      }
+    })();
   }, [
     clearDragAutoScroll,
     clearDragExpandTimer,
@@ -158,6 +172,7 @@ export const useProjectExplorerProjectLifecycle = ({
     setSummaryError,
     summaryLoadingRef,
     toExpandedKey,
+    tryLoadEntries,
   ]);
 };
 

@@ -2,6 +2,7 @@ import { debugLog } from '@/lib/utils';
 
 import { buildQuery } from '../shared';
 import type {
+  CompactHistoryResponse,
   DeleteSuccessResponse,
   SessionMessageResponse,
   SessionResponse,
@@ -77,6 +78,18 @@ export const getConversationMessages = (
     strategy: params?.strategy,
   });
   return request<SessionMessageResponse[]>(`/conversations/${conversationId}/messages${query}`);
+};
+
+export const getConversationCompactHistory = (
+  request: ApiRequestFn,
+  conversationId: string,
+  params?: { limit?: number; before?: string | null },
+): Promise<CompactHistoryResponse> => {
+  const query = buildQuery({
+    limit: params?.limit,
+    before: params?.before,
+  });
+  return request<CompactHistoryResponse>(`/conversations/${conversationId}/compact-history${query}`);
 };
 
 export const getConversationTurnProcessMessages = (

@@ -120,26 +120,19 @@ export const useTeamMembersContactResources = ({
   } = useSessionSummaryPanel(apiClient);
 
   const ensureContactSession = useCallback(async (contact: ContactItem): Promise<string | null> => {
-    const sessionId = await ensureContactSessionFromResolver(contact, {
+    return ensureContactSessionFromResolver(contact, {
       projectId: normalizedProjectId,
       title: contact.name || '联系人',
       selectedModelId: selectedModelId ?? null,
       projectRoot: project.rootPath || null,
       mcpEnabled: true,
       enabledMcpIds: [],
-      createSessionOptions: { keepActivePanel: true },
+      createSessionOptions: { keepActivePanel: true, activateSession: false },
     });
-
-    if (sessionId && currentSession?.id !== sessionId) {
-      await selectSession(sessionId, { keepActivePanel: true });
-    }
-    return sessionId;
   }, [
-    currentSession?.id,
     ensureContactSessionFromResolver,
     normalizedProjectId,
     project.rootPath,
-    selectSession,
     selectedModelId,
   ]);
 
@@ -161,6 +154,7 @@ export const useTeamMembersContactResources = ({
     clearSummaries,
     cancelPendingSessionSummariesLoad,
     ensureContactSession,
+    selectSession,
     sendMessage,
     toggleTurnProcess,
     loadMoreMessages,

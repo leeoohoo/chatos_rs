@@ -24,10 +24,6 @@ export const cloneStreamingMessageDraft = <T,>(value: T): T => {
   }
 };
 
-export const countLoadedBaseMessages = (messages: Message[]): number => (
-  messages.filter((message) => !message?.metadata?.historyProcessUserMessageId).length
-);
-
 export const readTurnProcessState = (
   sessionState: Record<string, TurnProcessMapValue> | undefined,
   processKey: string,

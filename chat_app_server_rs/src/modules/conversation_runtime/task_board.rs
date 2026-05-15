@@ -16,7 +16,7 @@ use crate::utils::events::Events;
 use super::guidance;
 use super::user_context::load_runtime_user_context;
 
-const TASK_BOARD_LIMIT: usize = 12;
+const TASK_BOARD_LIMIT: usize = 200;
 
 #[derive(Debug, Clone)]
 pub struct TaskBoardRuntimeContext {
