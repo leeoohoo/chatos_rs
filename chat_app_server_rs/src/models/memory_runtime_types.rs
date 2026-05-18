@@ -59,6 +59,15 @@ pub struct TurnRuntimeSnapshotSystemMessageDto {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct TurnRuntimeSnapshotContextItemDto {
+    pub role: Option<String>,
+    #[serde(rename = "type")]
+    pub item_type: Option<String>,
+    pub source: Option<String>,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TurnRuntimeSnapshotToolDto {
     pub name: String,
@@ -109,6 +118,10 @@ pub struct TurnRuntimeSnapshotRuntimeDto {
     #[serde(default)]
     pub unavailable_builtin_tools: Vec<TurnRuntimeSnapshotUnavailableToolDto>,
     pub builtin_mcp_prompt: Option<TurnRuntimeSnapshotBuiltinMcpPromptDto>,
+    pub actual_context_mode: Option<String>,
+    pub actual_previous_response_id: Option<String>,
+    #[serde(default)]
+    pub actual_context_items: Vec<TurnRuntimeSnapshotContextItemDto>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

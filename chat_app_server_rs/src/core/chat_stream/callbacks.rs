@@ -154,6 +154,7 @@ pub fn build_v2_callbacks(sink: &ChatEventSink, session_id: &str) -> StreamCallb
         on_context_summarized_start: Some(Arc::new(on_sum_start)),
         on_context_summarized_stream: Some(Arc::new(on_sum_stream)),
         on_context_summarized_end: Some(Arc::new(on_sum_end)),
+        on_before_model_request: None,
     };
 
     StreamCallbacksV2 {
@@ -321,6 +322,7 @@ pub fn build_v3_callbacks(
         on_context_summarized_start: Some(on_sum_start),
         on_context_summarized_stream: Some(on_sum_stream),
         on_context_summarized_end: Some(on_sum_end),
+        on_before_model_request: None,
     };
 
     StreamCallbacksV3 {

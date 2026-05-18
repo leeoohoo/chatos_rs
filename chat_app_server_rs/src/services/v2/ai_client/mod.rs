@@ -210,6 +210,9 @@ impl AiClient {
                 api_messages.extend(runtime_guidance_messages);
             }
             api_messages = sanitize_messages_for_request(api_messages);
+            if let Some(cb) = &callbacks.on_before_model_request {
+                cb(api_messages.clone().into(), None, None);
+            }
 
             let mut resp = None;
             let mut last_err: Option<String> = None;

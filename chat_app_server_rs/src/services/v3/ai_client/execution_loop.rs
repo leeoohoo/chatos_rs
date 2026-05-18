@@ -164,6 +164,17 @@ impl AiClient {
                 } else {
                     request_input_source
                 };
+                if let Some(cb) = &callbacks.on_before_model_request {
+                    cb(
+                        request_input.clone(),
+                        if use_prev_id {
+                            previous_response_id.clone()
+                        } else {
+                            None
+                        },
+                        None,
+                    );
+                }
                 let req = self
                     .ai_request_handler
                     .handle_request(

@@ -45,6 +45,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
     handleGitRepositoryChanged,
+    handleGitRepositorySelectionChanged,
   } = useProjectExplorerViewModel({ project });
 
   if (!project) {
@@ -66,6 +67,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             projectId={project.id}
             projectRoot={project.rootPath}
             onRepositoryChanged={handleGitRepositoryChanged}
+            onRepositorySelectionChange={handleGitRepositorySelectionChanged}
           />
         )}
       />

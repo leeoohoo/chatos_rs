@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitRootQuery {
     pub root: String,
+    pub preferred_repo_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitRepositoryCandidate {
+    pub root: String,
+    pub label: String,
+    pub relative_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -98,6 +106,9 @@ pub struct GitSummary {
     pub is_repo: bool,
     pub root: Option<String>,
     pub worktree_root: Option<String>,
+    pub query_root: Option<String>,
+    pub resolved_root: Option<String>,
+    pub selected_root: Option<String>,
     pub head: Option<String>,
     pub current_branch: Option<String>,
     pub detached: bool,
@@ -107,6 +118,7 @@ pub struct GitSummary {
     pub dirty: bool,
     pub operation_state: Option<String>,
     pub changes: GitChangeCounts,
+    pub available_repositories: Vec<GitRepositoryCandidate>,
 }
 
 #[derive(Debug, Clone, Serialize)]

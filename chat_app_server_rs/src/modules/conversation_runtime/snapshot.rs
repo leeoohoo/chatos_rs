@@ -7,16 +7,57 @@ use crate::core::builtin_mcp_prompt::{
     inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
     BuiltinMcpPromptBuildResult,
 };
+use crate::core::messages::join_text_lines_or_json;
 use crate::core::chat_runtime::parse_implicit_command_selections_from_tools_end;
 use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
-use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
+use crate::models::memory_runtime_types::{
+    TurnRuntimeSnapshotContextItemDto, TurnRuntimeSnapshotLookupResponseDto,
+    TurnRuntimeSnapshotSelectedCommandDto,
+};
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::chatos_sessions;
 
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::task_board::build_task_board_prompt;
+
+#[derive(Debug, Clone, Default)]
+pub struct ActualTurnRequestContext {
+    pub context_mode: Option<String>,
+    pub previous_response_id: Option<String>,
+    pub items: Vec<TurnRuntimeSnapshotContextItemDto>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LiveRequestSnapshotContext {
+    pub session_id: String,
+    pub turn_id: String,
+    pub user_message_id: String,
+    pub model: String,
+    pub provider: String,
+    pub tool_metadata: ToolMetadataMap,
+    pub unavailable_builtin_tools: Vec<Value>,
+    pub runtime_context: ResolvedConversationRuntimeContext,
+}
+
+pub fn actual_context_items_from_v2_messages(messages: &[Value]) -> Vec<TurnRuntimeSnapshotContextItemDto> {
+    messages
+        .iter()
+        .filter_map(actual_context_item_from_v2_message)
+        .collect()
+}
+
+pub fn actual_context_items_from_v3_input(input: &Value) -> Vec<TurnRuntimeSnapshotContextItemDto> {
+    input
+        .as_array()
+        .map(|items| {
+            items.iter()
+                .filter_map(actual_context_item_from_v3_input_item)
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 pub fn wire_implicit_command_tracking(
     callbacks: &mut AiClientCallbacks,
@@ -55,7 +96,14 @@ pub async fn sync_chat_turn_snapshot(
     tool_metadata: &ToolMetadataMap,
     unavailable_builtin_tools: &[Value],
     context: &ResolvedConversationRuntimeContext,
+    actual_request: Option<&ActualTurnRequestContext>,
 ) -> Result<(), String> {
+    let preserved_actual = if actual_request.is_none() {
+        load_existing_actual_request_context(session_id, turn_id).await
+    } else {
+        None
+    };
+    let effective_actual = actual_request.or(preserved_actual.as_ref());
     let selected_commands = context
         .selected_commands_for_snapshot
         .lock()
@@ -90,10 +138,35 @@ pub async fn sync_chat_turn_snapshot(
         selected_commands: selected_commands.as_slice(),
         unavailable_builtin_tools,
         builtin_mcp_prompt_debug: Some(&builtin_prompt_debug),
+        actual_context_mode: effective_actual.and_then(|value| value.context_mode.as_deref()),
+        actual_previous_response_id: effective_actual
+            .and_then(|value| value.previous_response_id.as_deref()),
+        actual_context_items: effective_actual
+            .map(|value| value.items.as_slice())
+            .unwrap_or(&[]),
     });
     chatos_sessions::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
         .await
         .map(|_| ())
+}
+
+pub async fn sync_live_request_snapshot(
+    context: &LiveRequestSnapshotContext,
+    actual_request: &ActualTurnRequestContext,
+) -> Result<(), String> {
+    sync_chat_turn_snapshot(
+        context.session_id.as_str(),
+        context.turn_id.as_str(),
+        "running",
+        Some(context.user_message_id.clone()),
+        context.model.as_str(),
+        context.provider.as_str(),
+        &context.tool_metadata,
+        context.unavailable_builtin_tools.as_slice(),
+        &context.runtime_context,
+        Some(actual_request),
+    )
+    .await
 }
 
 pub fn inspect_builtin_mcp_prompt_for_runtime(
@@ -142,5 +215,126 @@ pub fn build_builtin_mcp_debug_payload(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
             .or(inspected.prompt),
+    })
+}
+
+async fn load_existing_actual_request_context(
+    session_id: &str,
+    turn_id: &str,
+) -> Option<ActualTurnRequestContext> {
+    let lookup = chatos_sessions::get_turn_runtime_snapshot_by_turn(session_id, turn_id)
+        .await
+        .ok()?;
+    extract_actual_request_context(lookup)
+}
+
+fn extract_actual_request_context(
+    lookup: TurnRuntimeSnapshotLookupResponseDto,
+) -> Option<ActualTurnRequestContext> {
+    let runtime = lookup.snapshot?.runtime?;
+    if runtime.actual_context_items.is_empty()
+        && runtime
+            .actual_previous_response_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        return None;
+    }
+
+    Some(ActualTurnRequestContext {
+        context_mode: runtime.actual_context_mode,
+        previous_response_id: runtime.actual_previous_response_id,
+        items: runtime.actual_context_items,
+    })
+}
+
+fn actual_context_item_from_v2_message(
+    message: &Value,
+) -> Option<TurnRuntimeSnapshotContextItemDto> {
+    let role = message.get("role").and_then(Value::as_str)?.trim();
+    if role.is_empty() {
+        return None;
+    }
+    let content = message
+        .get("content")
+        .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta"]))
+        .unwrap_or_default();
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(TurnRuntimeSnapshotContextItemDto {
+        role: Some(role.to_string()),
+        item_type: Some(if role == "tool" {
+            "tool".to_string()
+        } else {
+            "message".to_string()
+        }),
+        source: Some("request".to_string()),
+        content: trimmed.to_string(),
+    })
+}
+
+fn actual_context_item_from_v3_input_item(
+    item: &Value,
+) -> Option<TurnRuntimeSnapshotContextItemDto> {
+    let item_type = item.get("type").and_then(Value::as_str).unwrap_or("").trim();
+    if item_type.is_empty() {
+        return None;
+    }
+
+    if item_type == "message" {
+        let role = item
+            .get("role")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("message");
+        let content = item
+            .get("content")
+            .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"]))
+            .unwrap_or_default();
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        return Some(TurnRuntimeSnapshotContextItemDto {
+            role: Some(role.to_string()),
+            item_type: Some("message".to_string()),
+            source: Some("request".to_string()),
+            content: trimmed.to_string(),
+        });
+    }
+
+    let content = match item_type {
+        "function_call" => {
+            let name = item.get("name").and_then(Value::as_str).unwrap_or("").trim();
+            let arguments = item
+                .get("arguments")
+                .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta"]))
+                .unwrap_or_default();
+            format!("name={name}\narguments={arguments}")
+        }
+        "function_call_output" => item
+            .get("output")
+            .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"]))
+            .unwrap_or_default(),
+        _ => serde_json::to_string_pretty(item).ok()?,
+    };
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(TurnRuntimeSnapshotContextItemDto {
+        role: None,
+        item_type: Some(if item_type.starts_with("function_call") {
+            "tool".to_string()
+        } else {
+            item_type.to_string()
+        }),
+        source: Some("request".to_string()),
+        content: trimmed.to_string(),
     })
 }

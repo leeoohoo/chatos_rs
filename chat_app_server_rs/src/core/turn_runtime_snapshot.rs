@@ -7,7 +7,8 @@ use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotBuiltinMcpPromptDto,
-    TurnRuntimeSnapshotRuntimeDto, TurnRuntimeSnapshotSelectedCommandDto,
+    TurnRuntimeSnapshotContextItemDto, TurnRuntimeSnapshotRuntimeDto,
+    TurnRuntimeSnapshotSelectedCommandDto,
     TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
     TurnRuntimeSnapshotUnavailableToolDto,
 };
@@ -33,6 +34,9 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub selected_commands: &'a [TurnRuntimeSnapshotSelectedCommandDto],
     pub unavailable_builtin_tools: &'a [Value],
     pub builtin_mcp_prompt_debug: Option<&'a BuiltinMcpPromptBuildResult>,
+    pub actual_context_mode: Option<&'a str>,
+    pub actual_previous_response_id: Option<&'a str>,
+    pub actual_context_items: &'a [TurnRuntimeSnapshotContextItemDto],
 }
 
 pub fn build_turn_runtime_snapshot_payload(
@@ -110,6 +114,9 @@ pub fn build_turn_runtime_snapshot_payload(
                 input.unavailable_builtin_tools,
             ),
             builtin_mcp_prompt: normalize_builtin_mcp_prompt(input.builtin_mcp_prompt_debug),
+            actual_context_mode: normalize_optional_text(input.actual_context_mode),
+            actual_previous_response_id: normalize_optional_text(input.actual_previous_response_id),
+            actual_context_items: normalize_context_items(input.actual_context_items),
         }),
     }
 }
@@ -160,6 +167,26 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn normalize_context_items(
+    items: &[TurnRuntimeSnapshotContextItemDto],
+) -> Vec<TurnRuntimeSnapshotContextItemDto> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let content = item.content.trim();
+            if content.is_empty() {
+                return None;
+            }
+            Some(TurnRuntimeSnapshotContextItemDto {
+                role: normalize_optional_text(item.role.as_deref()),
+                item_type: normalize_optional_text(item.item_type.as_deref()),
+                source: normalize_optional_text(item.source.as_deref()),
+                content: content.to_string(),
+            })
+        })
+        .collect()
 }
 
 fn normalize_selected_commands(

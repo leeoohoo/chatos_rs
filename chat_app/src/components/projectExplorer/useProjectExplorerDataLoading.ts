@@ -19,7 +19,7 @@ import { normalizeGitSummary } from '../../lib/domain/git';
 
 interface ProjectExplorerApiClient {
   listFsEntries(path: string): Promise<FsEntriesResponse>;
-  getGitSummary(root: string): Promise<GitSummaryResponse>;
+  getGitSummary(root: string, preferredRepoRoot?: string): Promise<GitSummaryResponse>;
   getGitStatus(root: string): Promise<GitStatusResponse>;
   getProjectChangeSummary(projectId: string): Promise<ProjectChangeSummaryResponse>;
 }
@@ -28,6 +28,7 @@ interface UseProjectExplorerDataLoadingParams {
   client: ProjectExplorerApiClient;
   projectId?: string;
   projectRootPath?: string;
+  selectedGitRepoRoot?: string | null;
   summaryLoadingRef: MutableRefObject<boolean>;
   setLoadingPaths: Dispatch<SetStateAction<Set<string>>>;
   setError: Dispatch<SetStateAction<string | null>>;
@@ -49,6 +50,7 @@ export const useProjectExplorerDataLoading = ({
   client,
   projectId,
   projectRootPath,
+  selectedGitRepoRoot,
   summaryLoadingRef,
   setLoadingPaths,
   setError,
@@ -107,7 +109,7 @@ export const useProjectExplorerDataLoading = ({
       let nextSummary: ProjectChangeSummary | null = null;
       if (projectRootPath) {
         try {
-          const gitSummaryRaw = await client.getGitSummary(projectRootPath);
+          const gitSummaryRaw = await client.getGitSummary(projectRootPath, selectedGitRepoRoot || undefined);
           const gitSummary = normalizeGitSummary(gitSummaryRaw);
           if (gitSummary.isRepo) {
             const gitStatusRaw = await client.getGitStatus(projectRootPath);
@@ -150,6 +152,7 @@ export const useProjectExplorerDataLoading = ({
     client,
     projectId,
     projectRootPath,
+    selectedGitRepoRoot,
     setChangeSummary,
     setLoadingSummary,
     setSummaryError,

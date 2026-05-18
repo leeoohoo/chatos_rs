@@ -6,7 +6,7 @@ import type { ProjectGitApiClient } from './projectGitTypes';
 
 interface UseProjectGitCompareParams {
   client: ProjectGitApiClient;
-  projectRoot: string;
+  projectRoot: string | null;
   setError: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
@@ -38,6 +38,7 @@ export const useProjectGitCompare = ({
   }, []);
 
   const compareBranch = useCallback(async (branch: GitBranchInfo) => {
+    if (!projectRoot) return;
     const target = branch.name;
     if (!target) return;
     const requestId = compareRequestIdRef.current + 1;
@@ -61,6 +62,7 @@ export const useProjectGitCompare = ({
   }, [client, projectRoot, setError]);
 
   const loadFileDiff = useCallback(async (path: string, target?: string, staged?: boolean) => {
+    if (!projectRoot) return;
     if (!path) return;
     const requestId = diffRequestIdRef.current + 1;
     diffRequestIdRef.current = requestId;

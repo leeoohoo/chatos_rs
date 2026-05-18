@@ -12,7 +12,7 @@ import type ApiClient from '../../../client';
 
 export interface WorkspaceGitFacade {
   getGitClientInfo(): Promise<GitClientInfoResponse>;
-  getGitSummary(root: string): Promise<GitSummaryResponse>;
+  getGitSummary(root: string, preferredRepoRoot?: string): Promise<GitSummaryResponse>;
   getGitBranches(root: string): Promise<GitBranchesResponse>;
   getGitStatus(root: string): Promise<GitStatusResponse>;
   compareGitBranch(root: string, target: string): Promise<GitCompareResponse>;
@@ -33,8 +33,8 @@ export const workspaceGitFacade: WorkspaceGitFacade & ThisType<ApiClient> = {
   async getGitClientInfo() {
     return workspaceApi.getGitClientInfo(this.getRequestFn());
   },
-  async getGitSummary(root) {
-    return workspaceApi.getGitSummary(this.getRequestFn(), root);
+  async getGitSummary(root, preferredRepoRoot) {
+    return workspaceApi.getGitSummary(this.getRequestFn(), root, preferredRepoRoot);
   },
   async getGitBranches(root) {
     return workspaceApi.getGitBranches(this.getRequestFn(), root);

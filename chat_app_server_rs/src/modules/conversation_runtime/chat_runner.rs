@@ -21,7 +21,7 @@ use super::chat_execution::{
     prepare_mcp_execution_v2, prepare_mcp_execution_v3, ChatExecutionInput,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
-use super::snapshot::{sync_chat_turn_snapshot, wire_implicit_command_tracking};
+use super::snapshot::{sync_chat_turn_snapshot, wire_implicit_command_tracking, LiveRequestSnapshotContext};
 use super::turn_lifecycle::ActiveConversationTurn;
 
 pub struct PreparedChatExecution {
@@ -41,6 +41,21 @@ pub struct ChatLifecycleConfig<'a> {
     pub unavailable_tools: &'a [Value],
     pub runtime_context: &'a ResolvedConversationRuntimeContext,
     pub tool_metadata: &'a ToolMetadataMap,
+}
+
+pub fn build_live_request_snapshot_context(
+    config: &ChatLifecycleConfig<'_>,
+) -> LiveRequestSnapshotContext {
+    LiveRequestSnapshotContext {
+        session_id: config.session_id.to_string(),
+        turn_id: config.turn_id.to_string(),
+        user_message_id: config.user_message_id.to_string(),
+        model: config.model_runtime.model.clone(),
+        provider: config.model_runtime.provider.clone(),
+        tool_metadata: config.tool_metadata.clone(),
+        unavailable_builtin_tools: config.unavailable_tools.to_vec(),
+        runtime_context: config.runtime_context.clone(),
+    }
 }
 
 pub struct BootstrappedChatV2Input<'a> {
@@ -94,12 +109,36 @@ pub fn prepare_chat_execution(
     mut callbacks: AiClientCallbacks,
     chunk_sent: Arc<AtomicBool>,
     streamed_content: Arc<Mutex<String>>,
+    live_request_snapshot: LiveRequestSnapshotContext,
+    actual_context_mode: &'static str,
 ) -> PreparedChatExecution {
     send_tools_unavailable_event(&sink, unavailable_tools);
     wire_implicit_command_tracking(
         &mut callbacks,
         runtime_context.selected_commands_for_snapshot.clone(),
     );
+    callbacks.on_before_model_request = Some(Arc::new(move |request_input, previous_response_id, override_context| {
+        let snapshot_context = override_context.unwrap_or_else(|| live_request_snapshot.clone());
+        let mode = actual_context_mode.to_string();
+        tokio::spawn(async move {
+            let actual_request = crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
+                context_mode: Some(mode.clone()),
+                previous_response_id,
+                items: if mode == "v3" {
+                    crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input)
+                } else {
+                    crate::modules::conversation_runtime::snapshot::actual_context_items_from_v2_messages(
+                        request_input.as_array().map(|items| items.as_slice()).unwrap_or(&[]),
+                    )
+                },
+            };
+            let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
+                &snapshot_context,
+                &actual_request,
+            )
+            .await;
+        });
+    }));
 
     PreparedChatExecution {
         sink,
@@ -151,6 +190,17 @@ pub async fn run_bootstrapped_chat_v2(input: BootstrappedChatV2Input<'_>) {
         callback_bundle.callbacks.clone(),
         callback_bundle.chunk_sent.clone(),
         callback_bundle.streamed_content.clone(),
+        build_live_request_snapshot_context(&ChatLifecycleConfig {
+            session_id,
+            turn_id: resolved_turn_id.as_str(),
+            user_message_id: user_message_id.as_str(),
+            model_runtime,
+            use_tools,
+            unavailable_tools: prepared_mcp.unavailable_tools.as_slice(),
+            runtime_context: &runtime_context,
+            tool_metadata: &prepared_mcp.tool_metadata,
+        }),
+        "v2",
     );
     let mut ai_server = ai_server;
     configure_ai_server_v2(
@@ -250,6 +300,17 @@ pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
         callback_bundle.callbacks.clone(),
         callback_bundle.chunk_sent.clone(),
         callback_bundle.streamed_content.clone(),
+        build_live_request_snapshot_context(&ChatLifecycleConfig {
+            session_id,
+            turn_id: resolved_turn_id.as_str(),
+            user_message_id: user_message_id.as_str(),
+            model_runtime,
+            use_tools,
+            unavailable_tools: prepared_mcp.unavailable_tools.as_slice(),
+            runtime_context: &runtime_context,
+            tool_metadata: &prepared_mcp.tool_metadata,
+        }),
+        "v3",
     );
     let mut ai_server = ai_server;
     configure_ai_server_v3(
@@ -326,6 +387,7 @@ pub async fn sync_execution_snapshot(
         tool_metadata,
         unavailable_tools,
         runtime_context,
+        None,
     )
     .await
     {

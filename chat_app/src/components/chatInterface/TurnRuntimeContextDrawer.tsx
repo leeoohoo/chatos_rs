@@ -46,6 +46,19 @@ function getSystemMessageMetaClass(source?: string | null): string {
   return 'mb-1 text-[11px] text-muted-foreground';
 }
 
+function getPreviewItemTone(role?: string | null, type?: string | null): string {
+  if (type === 'tool') {
+    return 'rounded-md border border-amber-500/40 bg-amber-500/10 p-3';
+  }
+  if (role === 'system') {
+    return 'rounded-md border border-sky-500/40 bg-sky-500/10 p-3';
+  }
+  if (role === 'assistant') {
+    return 'rounded-md border border-border bg-background/80 p-3';
+  }
+  return 'rounded-md border border-border bg-background/70 p-3';
+}
+
 const RuntimeField: React.FC<RuntimeFieldProps> = ({
   label,
   value,
@@ -84,6 +97,9 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
     : [];
   const tools = Array.isArray(snapshot?.tools) ? snapshot?.tools : [];
   const runtime = snapshot?.runtime || null;
+  const actualPreviewItems = Array.isArray(runtime?.actual_context_items)
+    ? runtime.actual_context_items
+    : [];
   const selectedCommands = Array.isArray(runtime?.selected_commands)
     ? runtime?.selected_commands
     : [];
@@ -151,15 +167,49 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
             </div>
 
             <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-950 dark:text-sky-100">
-              这里展示的是最近一轮已经发送到后端并被快照记录的 runtime，不包含输入框里尚未发送的临时目录、工具或 MCP 改动。
+              顶部展示的是发送 AI 请求前落到快照里的最终上下文；下半部分保留运行时配置和历史快照细节，方便核对。
             </div>
 
-            {snapshotSource !== 'captured' || !snapshot ? (
-              <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                当前轮次暂无快照（snapshot_source=missing）
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 text-sm font-medium text-foreground">实际发送上下文预览</div>
+                {actualPreviewItems.length === 0 ? (
+                  <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                    当前快照里还没有记录实际发送上下文
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="rounded-md border border-border bg-background/70 p-3 text-xs text-muted-foreground">
+                      <div>{`mode: ${runtime?.actual_context_mode || '-'}`}</div>
+                      <div>{`previous_response_id: ${runtime?.actual_previous_response_id || '-'}`}</div>
+                      <div>{`item_count: ${actualPreviewItems.length}`}</div>
+                    </div>
+                    <div className="space-y-2">
+                      {actualPreviewItems.map((item, index) => (
+                        <div
+                          key={`actual-preview:${index}:${item.role || '-'}:${item.type || '-'}:${item.source || '-'}`}
+                          className={getPreviewItemTone(item.role, item.type)}
+                        >
+                          <div className="mb-1 text-[11px] text-muted-foreground">
+                            {`${index + 1}. role=${item.role || '-'} · type=${item.type || '-'} · source=${item.source || '-'}`}
+                          </div>
+                          <pre className="whitespace-pre-wrap break-words text-xs text-foreground">
+{item.content}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="space-y-4">
+
+              {snapshotSource !== 'captured' || !snapshot ? (
+                <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                  当前轮次暂无历史快照（snapshot_source=missing）
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="text-sm font-medium text-foreground">历史快照记录</div>
                 <div>
                   <div className="mb-2 text-sm font-medium text-foreground">System 消息</div>
                   {systemMessages.length === 0 ? (
@@ -355,8 +405,9 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

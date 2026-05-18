@@ -276,9 +276,14 @@ export const createStreamingMessageStateHelpers = ({
         const currentContent = typeof segments[lastIdx].content === 'string'
           ? segments[lastIdx].content
           : '';
-        segments[lastIdx].content = `${currentContent}${contentStr}`;
+        segments[lastIdx].content = normalizeStreamedText(
+          joinStreamingText(currentContent, contentStr),
+        );
       } else {
-        segments.push({ content: contentStr, type: 'thinking' as const });
+        segments.push({
+          content: normalizeStreamedText(contentStr),
+          type: 'thinking' as const,
+        });
         createdThinkingSegment = true;
       }
 

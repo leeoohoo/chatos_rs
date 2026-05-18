@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   GitBranchesResult,
   GitClientInfo,
+  GitRepositoryCandidate,
   GitStatusResult,
   GitSummary,
 } from '../../../types';
@@ -43,25 +44,49 @@ import { useProjectGitActions } from './useProjectGitActions';
 import { useProjectGitCompare } from './useProjectGitCompare';
 import { useProjectGitLifecycle } from './useProjectGitLifecycle';
 
+const resolveActiveRepoRoot = (summary: GitSummary | null): string | null => (
+  summary?.selectedRoot
+  || summary?.resolvedRoot
+  || summary?.root
+  || summary?.worktreeRoot
+  || null
+);
+
+const resolveAvailableRepositories = (summary: GitSummary | null): GitRepositoryCandidate[] => (
+  summary?.availableRepositories || []
+);
+
+const mergeSummaryContext = (
+  nextSummary: GitSummary,
+  previousSummary: GitSummary | null,
+  fallbackSelectedRoot: string | null,
+): GitSummary => ({
+  ...nextSummary,
+  queryRoot: nextSummary.queryRoot ?? previousSummary?.queryRoot ?? null,
+  resolvedRoot: nextSummary.resolvedRoot ?? fallbackSelectedRoot ?? previousSummary?.resolvedRoot ?? null,
+  selectedRoot: nextSummary.selectedRoot ?? fallbackSelectedRoot ?? previousSummary?.selectedRoot ?? null,
+  availableRepositories: nextSummary.availableRepositories.length > 0
+    ? nextSummary.availableRepositories
+    : previousSummary?.availableRepositories || [],
+});
+
 export const useProjectGit = ({
   client,
   projectRoot,
   open = false,
   onRepositoryChanged,
+  onRepositorySelectionChange,
 }: UseProjectGitOptions): UseProjectGitResult => {
   const { confirm } = useDialogService();
+  const [preferredRepoRoot, setPreferredRepoRoot] = useState<string | null>(null);
   const [clientInfo, setClientInfo] = useState<GitClientInfo | null>(
     () => peekGitClientInfoCacheEntry(client)?.clientInfo || null,
   );
   const [summary, setSummary] = useState<GitSummary | null>(
     () => peekGitSummaryCacheEntry(client, projectRoot)?.summary || null,
   );
-  const [branches, setBranches] = useState<GitBranchesResult | null>(
-    () => peekGitDetailsCacheEntry(client, projectRoot)?.branches || null,
-  );
-  const [status, setStatus] = useState<GitStatusResult | null>(
-    () => peekGitDetailsCacheEntry(client, projectRoot)?.status || null,
-  );
+  const [branches, setBranches] = useState<GitBranchesResult | null>(null);
+  const [status, setStatus] = useState<GitStatusResult | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingClientInfo, setLoadingClientInfo] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
@@ -76,6 +101,17 @@ export const useProjectGit = ({
   const detailsLoadedRootRef = useRef<string | null>(null);
   const summaryStaleRef = useRef(true);
   const detailsStaleRef = useRef(true);
+  const preferredRepoRootRef = useRef<string | null>(null);
+  const activeRepoRootRef = useRef<string | null>(null);
+
+  const activeRepoRoot = resolveActiveRepoRoot(summary);
+  const availableRepositories = resolveAvailableRepositories(summary);
+  activeRepoRootRef.current = activeRepoRoot;
+
+  useEffect(() => {
+    preferredRepoRootRef.current = null;
+    setPreferredRepoRoot(null);
+  }, [projectRoot]);
 
   const clearMessages = useCallback(() => {
     setError(null);
@@ -85,17 +121,19 @@ export const useProjectGit = ({
   const hydrateCachedState = useCallback((nextProjectRoot: string) => {
     setClientInfo(peekGitClientInfoCacheEntry(client)?.clientInfo || null);
     const cachedSummary = peekGitSummaryCacheEntry(client, nextProjectRoot);
-    setSummary(cachedSummary?.summary || null);
-    summaryRef.current = cachedSummary?.summary || null;
+    const nextSummary = cachedSummary?.summary || null;
+    setSummary(nextSummary);
+    summaryRef.current = nextSummary;
     summaryLoadedRootRef.current = cachedSummary ? nextProjectRoot : null;
     summaryStaleRef.current = cachedSummary?.stale ?? true;
 
-    const cachedDetails = peekGitDetailsCacheEntry(client, nextProjectRoot);
+    const nextRepoRoot = resolveActiveRepoRoot(nextSummary);
+    const cachedDetails = nextRepoRoot ? peekGitDetailsCacheEntry(client, nextRepoRoot) : null;
     setBranches(cachedDetails?.branches || null);
     setStatus(cachedDetails?.status || null);
     branchesRef.current = cachedDetails?.branches || null;
     statusRef.current = cachedDetails?.status || null;
-    detailsLoadedRootRef.current = cachedDetails ? nextProjectRoot : null;
+    detailsLoadedRootRef.current = cachedDetails ? nextRepoRoot : null;
     detailsStaleRef.current = cachedDetails?.stale ?? true;
   }, [client]);
 
@@ -159,13 +197,14 @@ export const useProjectGit = ({
   }, [client, projectRoot]);
 
   const markDetailsStale = useCallback(() => {
-    if (projectRoot) {
-      markGitDetailsCacheStale(client, projectRoot);
+    const nextActiveRepoRoot = activeRepoRootRef.current;
+    if (nextActiveRepoRoot) {
+      markGitDetailsCacheStale(client, nextActiveRepoRoot);
     }
     detailsStaleRef.current = true;
-  }, [client, projectRoot]);
+  }, [client]);
 
-  const refreshSummary = useCallback(async (options?: { force?: boolean }) => {
+  const refreshSummary = useCallback(async (options?: { force?: boolean; preferredRepoRoot?: string | null }) => {
     if (!projectRoot) {
       setSummary(null);
       summaryRef.current = null;
@@ -173,6 +212,9 @@ export const useProjectGit = ({
       summaryStaleRef.current = true;
       return;
     }
+    const effectivePreferredRepoRoot = options?.preferredRepoRoot !== undefined
+      ? options.preferredRepoRoot
+      : preferredRepoRootRef.current;
     const force = options?.force === true;
     if (!force) {
       const cached = peekGitSummaryCacheEntry(client, projectRoot);
@@ -209,7 +251,7 @@ export const useProjectGit = ({
     setLoadingSummary(true);
     setError(null);
     try {
-      const inflight = client.getGitSummary(projectRoot)
+      const inflight = client.getGitSummary(projectRoot, effectivePreferredRepoRoot || undefined)
         .then((raw) => normalizeGitSummary(raw))
         .then((normalized) => {
           setGitSummaryCacheEntry(client, projectRoot, normalized);
@@ -235,7 +277,7 @@ export const useProjectGit = ({
   }, [client, projectRoot]);
 
   const loadDetails = useCallback(async (options?: { force?: boolean }) => {
-    if (!projectRoot) {
+    if (!activeRepoRoot) {
       setBranches(null);
       setStatus(null);
       branchesRef.current = null;
@@ -246,20 +288,20 @@ export const useProjectGit = ({
     }
     const force = options?.force === true;
     if (!force) {
-      const cached = peekGitDetailsCacheEntry(client, projectRoot);
+      const cached = peekGitDetailsCacheEntry(client, activeRepoRoot);
       if (cached) {
         setBranches(cached.branches);
         setStatus(cached.status);
         branchesRef.current = cached.branches;
         statusRef.current = cached.status;
-        detailsLoadedRootRef.current = projectRoot;
+        detailsLoadedRootRef.current = activeRepoRoot;
         detailsStaleRef.current = cached.stale;
       }
     }
-    if (!force && !detailsStaleRef.current && detailsLoadedRootRef.current === projectRoot && branchesRef.current && statusRef.current) {
+    if (!force && !detailsStaleRef.current && detailsLoadedRootRef.current === activeRepoRoot && branchesRef.current && statusRef.current) {
       return;
     }
-    const existingInflight = getGitDetailsInflight(client, projectRoot);
+    const existingInflight = getGitDetailsInflight(client, activeRepoRoot);
     if (existingInflight) {
       setError(null);
       setLoadingBranches(true);
@@ -270,7 +312,7 @@ export const useProjectGit = ({
         setStatus(resolved.status);
         branchesRef.current = resolved.branches;
         statusRef.current = resolved.status;
-        detailsLoadedRootRef.current = projectRoot;
+        detailsLoadedRootRef.current = activeRepoRoot;
         detailsStaleRef.current = false;
       } catch (err) {
         branchesRef.current = null;
@@ -288,29 +330,27 @@ export const useProjectGit = ({
     setLoadingStatus(true);
     try {
       const inflight = Promise.all([
-        client.getGitBranches(projectRoot),
-        client.getGitStatus(projectRoot),
+        client.getGitBranches(activeRepoRoot),
+        client.getGitStatus(activeRepoRoot),
       ])
         .then(([branchesRaw, statusRaw]) => ({
           branches: normalizeGitBranches(branchesRaw),
           status: normalizeGitStatus(statusRaw),
         }))
         .then((resolved) => {
-          setGitDetailsCacheEntry(client, projectRoot, resolved);
+          setGitDetailsCacheEntry(client, activeRepoRoot, resolved);
           return resolved;
         })
         .finally(() => {
-          setGitDetailsInflight(client, projectRoot, null);
+          setGitDetailsInflight(client, activeRepoRoot, null);
         });
-      setGitDetailsInflight(client, projectRoot, inflight);
+      setGitDetailsInflight(client, activeRepoRoot, inflight);
       const resolved = await inflight;
-      const normalizedBranches = resolved.branches;
-      const normalizedStatus = resolved.status;
-      setBranches(normalizedBranches);
-      setStatus(normalizedStatus);
-      branchesRef.current = normalizedBranches;
-      statusRef.current = normalizedStatus;
-      detailsLoadedRootRef.current = projectRoot;
+      setBranches(resolved.branches);
+      setStatus(resolved.status);
+      branchesRef.current = resolved.branches;
+      statusRef.current = resolved.status;
+      detailsLoadedRootRef.current = activeRepoRoot;
       detailsStaleRef.current = false;
     } catch (err) {
       branchesRef.current = null;
@@ -321,7 +361,7 @@ export const useProjectGit = ({
       setLoadingBranches(false);
       setLoadingStatus(false);
     }
-  }, [client, projectRoot]);
+  }, [activeRepoRoot, client]);
 
   const runAction = useCallback(async (
     action: () => Promise<GitActionResponse>,
@@ -334,12 +374,13 @@ export const useProjectGit = ({
     try {
       const result = normalizeGitAction(await action());
       if (result.summary) {
-        setSummary(result.summary);
-        summaryRef.current = result.summary;
+        const nextSummary = mergeSummaryContext(result.summary, summaryRef.current, activeRepoRoot);
+        setSummary(nextSummary);
+        summaryRef.current = nextSummary;
         summaryLoadedRootRef.current = projectRoot || null;
         summaryStaleRef.current = false;
         if (projectRoot) {
-          setGitSummaryCacheEntry(client, projectRoot, result.summary);
+          setGitSummaryCacheEntry(client, projectRoot, nextSummary);
         }
       } else {
         await refreshSummary({ force: true });
@@ -361,7 +402,7 @@ export const useProjectGit = ({
     } finally {
       setActionLoading(false);
     }
-  }, [loadDetails, onRepositoryChanged, projectRoot, refreshSummary]);
+  }, [client, loadDetails, onRepositoryChanged, projectRoot, refreshSummary]);
 
   const {
     compareResult,
@@ -374,7 +415,7 @@ export const useProjectGit = ({
     loadFileDiff,
   } = useProjectGitCompare({
     client,
-    projectRoot,
+    projectRoot: activeRepoRoot,
     setError,
   });
 
@@ -392,12 +433,41 @@ export const useProjectGit = ({
     commitSelected,
   } = useProjectGitActions({
     client,
-    projectRoot,
+    projectRoot: activeRepoRoot,
     summary,
     confirm,
     runAction,
     setError,
   });
+
+  const selectRepository = useCallback(async (repoRoot: string | null) => {
+    const normalized = typeof repoRoot === 'string' && repoRoot.trim() ? repoRoot.trim() : null;
+    if ((normalized || null) === (preferredRepoRoot || null)) {
+      return;
+    }
+    setPreferredRepoRoot(normalized);
+    preferredRepoRootRef.current = normalized;
+    clearMessages();
+    clearCompare();
+    clearFileDiff();
+    setBranches(null);
+    setStatus(null);
+    branchesRef.current = null;
+    statusRef.current = null;
+    detailsLoadedRootRef.current = null;
+    detailsStaleRef.current = true;
+    summaryLoadedRootRef.current = null;
+    summaryStaleRef.current = true;
+    await onRepositorySelectionChange?.(normalized);
+    await refreshSummary({ force: true, preferredRepoRoot: normalized });
+  }, [
+    clearCompare,
+    clearFileDiff,
+    clearMessages,
+    onRepositorySelectionChange,
+    preferredRepoRoot,
+    refreshSummary,
+  ]);
 
   useProjectGitLifecycle({
     open,
@@ -416,6 +486,8 @@ export const useProjectGit = ({
   return useMemo(() => ({
     clientInfo,
     summary,
+    activeRepoRoot,
+    availableRepositories,
     branches,
     status,
     compareResult,
@@ -443,6 +515,7 @@ export const useProjectGit = ({
     loadFileDiff,
     clearCompare,
     clearFileDiff,
+    selectRepository,
     createBranch,
     stageFiles,
     unstageFiles,
@@ -453,23 +526,25 @@ export const useProjectGit = ({
   }), [
     actionLoading,
     actionMessage,
+    activeRepoRoot,
+    availableRepositories,
     branches,
     checkoutBranch,
     clearCompare,
     clearFileDiff,
     clearMessages,
     clientInfo,
-    commitStaged,
     commitSelected,
+    commitStaged,
     compareBranch,
     compareResult,
     createBranch,
+    discardFiles,
     error,
     fetchRemote,
     fileDiff,
     loadDetails,
     loadFileDiff,
-    mergeBranch,
     loadingBranches,
     loadingClientInfo,
     loadingCompare,
@@ -478,14 +553,15 @@ export const useProjectGit = ({
     loadingSummary,
     markDetailsStale,
     markSummaryStale,
+    mergeBranch,
     pullCurrent,
     pushCurrent,
     refreshClientInfo,
     refreshSummary,
+    selectRepository,
     stageFiles,
     status,
     summary,
     unstageFiles,
-    discardFiles,
   ]);
 };

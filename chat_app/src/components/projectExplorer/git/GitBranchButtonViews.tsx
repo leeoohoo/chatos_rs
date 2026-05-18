@@ -49,12 +49,14 @@ export const GitBranchDropdown: React.FC<{
   model: GitBranchButtonModel;
 }> = ({ model }) => {
   const {
+    activeRepoRoot,
     allStatusFiles,
     branchLabel,
     changeCount,
     closePanel,
     createBranch,
     filteredBranches,
+    gitAvailableRepositories,
     git,
     newBranchName,
     openCommitDialog,
@@ -63,6 +65,7 @@ export const GitBranchDropdown: React.FC<{
     query,
     setNewBranchName,
     setQuery,
+    selectRepository,
   } = model;
 
   return (
@@ -94,9 +97,47 @@ export const GitBranchDropdown: React.FC<{
           onRefresh={git.refreshClientInfo}
         />
 
+        {gitAvailableRepositories.length > 0 && (
+          <div className="mb-2 rounded-md border border-border bg-background p-3 text-xs">
+            <div className="mb-2 text-[11px] text-muted-foreground">仓库选择</div>
+            <div className="space-y-2">
+              {gitAvailableRepositories.map((repo) => {
+                const selected = (activeRepoRoot || '') === repo.root;
+                return (
+                  <button
+                    key={repo.root}
+                    type="button"
+                    onClick={() => { void selectRepository(repo.root); }}
+                    className={cn(
+                      'flex w-full items-start justify-between rounded border px-3 py-2 text-left transition-colors',
+                      selected
+                        ? 'border-primary bg-primary/5 text-foreground'
+                        : 'border-border hover:bg-accent text-muted-foreground'
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-foreground">{repo.label}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {repo.relativePath || '.'}
+                      </span>
+                    </span>
+                    {selected && (
+                      <span className="ml-3 shrink-0 text-[11px] text-primary">当前</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {!git.summary?.isRepo ? (
           <div className="space-y-3 p-3 text-sm text-muted-foreground">
-            <div>当前项目目录不是 Git 仓库。</div>
+            <div>
+              {gitAvailableRepositories.length > 0
+                ? '当前目录本身不是 Git 仓库，已自动发现下面的 Git 项目。请选择一个仓库继续。'
+                : '当前项目目录不是 Git 仓库。'}
+            </div>
             <button
               type="button"
               onClick={() => { void git.refreshSummary(); }}
@@ -170,7 +211,7 @@ export const GitBranchDropdown: React.FC<{
 
       <div className="flex items-center justify-between border-t border-border px-3 py-2">
         <span className="text-[11px] text-muted-foreground">
-          {git.loadingSummary || git.loadingBranches || git.loadingStatus ? '加载中...' : projectRoot}
+          {git.loadingSummary || git.loadingBranches || git.loadingStatus ? '加载中...' : activeRepoRoot || projectRoot}
         </span>
         <button
           type="button"

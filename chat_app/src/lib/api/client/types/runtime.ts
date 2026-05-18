@@ -288,6 +288,13 @@ export interface TurnRuntimeSnapshotSelectedCommand {
   arguments?: string | null;
 }
 
+export interface TurnRuntimeSnapshotContextItem {
+  role?: string | null;
+  type?: string | null;
+  source?: string | null;
+  content: string;
+}
+
 export interface TurnRuntimeSnapshotRuntime {
   model?: string | null;
   provider?: string | null;
@@ -299,6 +306,9 @@ export interface TurnRuntimeSnapshotRuntime {
   mcp_enabled?: boolean | null;
   enabled_mcp_ids?: string[];
   selected_commands?: TurnRuntimeSnapshotSelectedCommand[];
+  actual_context_mode?: string | null;
+  actual_previous_response_id?: string | null;
+  actual_context_items?: TurnRuntimeSnapshotContextItem[];
 }
 
 export interface TurnRuntimeSnapshot {

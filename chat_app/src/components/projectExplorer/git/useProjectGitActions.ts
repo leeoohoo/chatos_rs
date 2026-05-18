@@ -7,7 +7,7 @@ import { normalizeNonEmptyPaths } from './projectGitHelpers';
 
 interface UseProjectGitActionsParams {
   client: ProjectGitApiClient;
-  projectRoot: string;
+  projectRoot: string | null;
   summary: {
     dirty?: boolean;
     detached?: boolean;
@@ -38,6 +38,7 @@ export const useProjectGitActions = ({
   setError,
 }: UseProjectGitActionsParams) => {
   const fetchRemote = useCallback(async () => {
+    if (!projectRoot) return;
     await runAction(
       () => client.fetchGit({ root: projectRoot, remote: 'origin' }),
       'Fetch 完成',
@@ -45,6 +46,7 @@ export const useProjectGitActions = ({
   }, [client, projectRoot, runAction]);
 
   const pullCurrent = useCallback(async () => {
+    if (!projectRoot) return;
     await runAction(
       () => client.pullGit({ root: projectRoot, mode: 'ff-only' }),
       'Pull 完成',
@@ -53,6 +55,7 @@ export const useProjectGitActions = ({
   }, [client, projectRoot, runAction]);
 
   const pushCurrent = useCallback(async () => {
+    if (!projectRoot) return;
     await runAction(
       () => client.pushGit({ root: projectRoot }),
       'Push 完成',
@@ -60,6 +63,7 @@ export const useProjectGitActions = ({
   }, [client, projectRoot, runAction]);
 
   const checkoutBranch = useCallback(async (branch: GitBranchInfo) => {
+    if (!projectRoot) return;
     if (branch.current) return;
     if (summary?.dirty) {
       const confirmed = await confirm({
@@ -85,6 +89,7 @@ export const useProjectGitActions = ({
   }, [client, confirm, projectRoot, runAction, summary?.dirty]);
 
   const mergeBranch = useCallback(async (branch: GitBranchInfo) => {
+    if (!projectRoot) return;
     if (branch.current) return;
     const target = branch.name.trim();
     if (!target) return;
@@ -127,6 +132,7 @@ export const useProjectGitActions = ({
   ]);
 
   const createBranch = useCallback(async (name: string, startPoint?: string) => {
+    if (!projectRoot) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setError('分支名不能为空');
@@ -145,6 +151,7 @@ export const useProjectGitActions = ({
   }, [client, projectRoot, runAction, setError]);
 
   const stageFiles = useCallback(async (paths: string[]) => {
+    if (!projectRoot) return;
     const validPaths = normalizeNonEmptyPaths(paths);
     if (validPaths.length === 0) {
       setError('请选择要 Stage 的文件');
@@ -157,6 +164,7 @@ export const useProjectGitActions = ({
   }, [client, projectRoot, runAction, setError]);
 
   const unstageFiles = useCallback(async (paths: string[]) => {
+    if (!projectRoot) return;
     const validPaths = normalizeNonEmptyPaths(paths);
     if (validPaths.length === 0) {
       setError('请选择要 Unstage 的文件');
@@ -169,6 +177,7 @@ export const useProjectGitActions = ({
   }, [client, projectRoot, runAction, setError]);
 
   const discardFiles = useCallback(async (paths: string[]) => {
+    if (!projectRoot) return;
     const validPaths = normalizeNonEmptyPaths(paths);
     if (validPaths.length === 0) {
       setError('请选择要回滚的文件');
@@ -194,6 +203,7 @@ export const useProjectGitActions = ({
   }, [client, confirm, projectRoot, runAction, setError]);
 
   const commitStaged = useCallback(async (message: string) => {
+    if (!projectRoot) return false;
     const trimmed = message.trim();
     if (!trimmed) {
       setError('Commit message 不能为空');
@@ -207,6 +217,7 @@ export const useProjectGitActions = ({
   }, [client, projectRoot, runAction, setError]);
 
   const commitSelected = useCallback(async (message: string, paths: string[]) => {
+    if (!projectRoot) return false;
     const trimmed = message.trim();
     if (!trimmed) {
       setError('Commit message 不能为空');

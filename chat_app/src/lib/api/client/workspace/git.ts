@@ -13,8 +13,9 @@ import type { ApiRequestFn } from './common';
 export const getGitSummary = (
   request: ApiRequestFn,
   root: string,
+  preferredRepoRoot?: string,
 ): Promise<GitSummaryResponse> => {
-  return request<GitSummaryResponse>(`/git/summary${buildQuery({ root })}`);
+  return request<GitSummaryResponse>(`/git/summary${buildQuery({ root, preferred_repo_root: preferredRepoRoot })}`);
 };
 
 export const getGitClientInfo = (

@@ -13,13 +13,14 @@ import type {
   GitClientInfo,
   GitCompareResult,
   GitFileDiff,
+  GitRepositoryCandidate,
   GitStatusResult,
   GitSummary,
 } from '../../../types';
 
 export interface ProjectGitApiClient {
   getGitClientInfo: () => Promise<GitClientInfoResponse>;
-  getGitSummary: (root: string) => Promise<GitSummaryResponse>;
+  getGitSummary: (root: string, preferredRepoRoot?: string) => Promise<GitSummaryResponse>;
   getGitBranches: (root: string) => Promise<GitBranchesResponse>;
   getGitStatus: (root: string) => Promise<GitStatusResponse>;
   compareGitBranch: (root: string, target: string) => Promise<GitCompareResponse>;
@@ -41,11 +42,14 @@ export interface UseProjectGitOptions {
   projectRoot: string;
   open?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
+  onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
 
 export interface UseProjectGitResult {
   clientInfo: GitClientInfo | null;
   summary: GitSummary | null;
+  activeRepoRoot: string | null;
+  availableRepositories: GitRepositoryCandidate[];
   branches: GitBranchesResult | null;
   status: GitStatusResult | null;
   compareResult: GitCompareResult | null;
@@ -73,6 +77,7 @@ export interface UseProjectGitResult {
   loadFileDiff: (path: string, target?: string, staged?: boolean) => Promise<void>;
   clearCompare: () => void;
   clearFileDiff: () => void;
+  selectRepository: (repoRoot: string | null) => Promise<void>;
   createBranch: (name: string, startPoint?: string) => Promise<void>;
   stageFiles: (paths: string[]) => Promise<void>;
   unstageFiles: (paths: string[]) => Promise<void>;

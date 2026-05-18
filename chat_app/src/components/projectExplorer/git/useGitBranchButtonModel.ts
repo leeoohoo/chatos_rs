@@ -10,6 +10,7 @@ interface UseGitBranchButtonModelOptions {
   projectId?: string | null;
   projectRoot: string;
   onRepositoryChanged?: () => Promise<void> | void;
+  onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
 
 export const useGitBranchButtonModel = ({
@@ -17,6 +18,7 @@ export const useGitBranchButtonModel = ({
   projectId,
   projectRoot,
   onRepositoryChanged,
+  onRepositorySelectionChange,
 }: UseGitBranchButtonModelOptions) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -26,7 +28,13 @@ export const useGitBranchButtonModel = ({
   const [commitMessage, setCommitMessage] = useState('');
   const [selectedCommitPaths, setSelectedCommitPaths] = useState<Set<string>>(new Set());
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const git = useProjectGit({ client, projectRoot, open, onRepositoryChanged });
+  const git = useProjectGit({
+    client,
+    projectRoot,
+    open,
+    onRepositoryChanged,
+    onRepositorySelectionChange,
+  });
 
   useProjectChangeSummaryRealtime({
     projectId,
@@ -43,10 +51,13 @@ export const useGitBranchButtonModel = ({
 
   const branchLabel = useMemo(() => {
     if (git.loadingSummary && !git.summary) return 'Git 检查中...';
+    if (!git.summary?.isRepo && git.availableRepositories.length > 0) {
+      return `发现 ${git.availableRepositories.length} 个仓库`;
+    }
     if (!git.summary?.isRepo) return '无 Git 仓库';
     if (git.summary.detached) return `detached: ${git.summary.head || '-'}`;
     return git.summary.currentBranch || '未知分支';
-  }, [git.loadingSummary, git.summary]);
+  }, [git.availableRepositories.length, git.loadingSummary, git.summary]);
 
   const changeCount = git.summary
     ? git.summary.changes.staged
@@ -178,6 +189,8 @@ export const useGitBranchButtonModel = ({
     panelRef,
     projectRoot,
     query,
+    gitAvailableRepositories: git.availableRepositories,
+    activeRepoRoot: git.activeRepoRoot,
     selectableCommitFiles,
     selectedCommitPaths,
     setCommitMessage,
@@ -186,6 +199,7 @@ export const useGitBranchButtonModel = ({
     setQuery,
     submitCommit,
     submitStagedCommit,
+    selectRepository: git.selectRepository,
     toggleCommitPath,
     toggleOpen,
   };

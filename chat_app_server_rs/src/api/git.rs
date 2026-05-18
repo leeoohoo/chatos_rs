@@ -35,7 +35,7 @@ async fn client() -> (StatusCode, Json<Value>) {
 }
 
 async fn summary(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::summary(&query.root).await {
+    match git::summary(&query.root, query.preferred_repo_root.as_deref()).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }

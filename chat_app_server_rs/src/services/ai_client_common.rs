@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::modules::conversation_runtime::snapshot::LiveRequestSnapshotContext;
+
 #[derive(Clone, Default)]
 pub struct AiClientCallbacks {
     pub on_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
@@ -13,6 +15,7 @@ pub struct AiClientCallbacks {
     pub on_context_summarized_start: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     pub on_context_summarized_stream: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     pub on_context_summarized_end: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    pub on_before_model_request: Option<Arc<dyn Fn(Value, Option<String>, Option<LiveRequestSnapshotContext>) + Send + Sync>>,
 }
 
 impl AiClientCallbacks {
@@ -27,6 +30,7 @@ impl AiClientCallbacks {
             on_context_summarized_start: self.on_context_summarized_start,
             on_context_summarized_stream: self.on_context_summarized_stream,
             on_context_summarized_end: self.on_context_summarized_end,
+            on_before_model_request: self.on_before_model_request,
         }
     }
 }

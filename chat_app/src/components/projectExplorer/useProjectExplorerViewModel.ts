@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
@@ -24,6 +24,11 @@ export const useProjectExplorerViewModel = ({
   const client = apiClientFromContext || globalApiClient;
 
   const state = useProjectExplorerState(project?.id);
+  const [selectedGitRepoRoot, setSelectedGitRepoRoot] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedGitRepoRoot(null);
+  }, [project?.id, project?.rootPath]);
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
 
@@ -45,6 +50,7 @@ export const useProjectExplorerViewModel = ({
     client,
     projectId: project?.id,
     projectRootPath: project?.rootPath,
+    selectedGitRepoRoot,
     summaryLoadingRef: state.summaryLoadingRef,
     setLoadingPaths: state.setLoadingPaths,
     setError: state.setError,
@@ -164,5 +170,6 @@ export const useProjectExplorerViewModel = ({
     workspaceHandleCreateFile,
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
+    handleGitRepositorySelectionChanged: setSelectedGitRepoRoot,
   };
 };

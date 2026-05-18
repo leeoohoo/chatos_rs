@@ -13,6 +13,7 @@ interface GitBranchButtonProps {
   projectId?: string | null;
   projectRoot: string;
   onRepositoryChanged?: () => Promise<void> | void;
+  onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
 
 export const GitBranchButton: React.FC<GitBranchButtonProps> = ({
@@ -20,12 +21,14 @@ export const GitBranchButton: React.FC<GitBranchButtonProps> = ({
   projectId,
   projectRoot,
   onRepositoryChanged,
+  onRepositorySelectionChange,
 }) => {
   const model = useGitBranchButtonModel({
     client,
     projectId,
     projectRoot,
     onRepositoryChanged,
+    onRepositorySelectionChange,
   });
 
   return (

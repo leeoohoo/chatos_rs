@@ -55,6 +55,9 @@ pub(super) fn summary_from_status(repo_root: PathBuf, status: &str) -> GitSummar
         is_repo: true,
         root: Some(repo_root.to_string_lossy().to_string()),
         worktree_root: Some(repo_root.to_string_lossy().to_string()),
+        query_root: None,
+        resolved_root: None,
+        selected_root: None,
         head,
         current_branch,
         detached,
@@ -64,6 +67,7 @@ pub(super) fn summary_from_status(repo_root: PathBuf, status: &str) -> GitSummar
         dirty,
         operation_state: detect_operation_state(repo_root.as_path()),
         changes,
+        available_repositories: Vec::new(),
     }
 }
 
@@ -72,6 +76,9 @@ pub(super) fn non_repo_summary() -> GitSummary {
         is_repo: false,
         root: None,
         worktree_root: None,
+        query_root: None,
+        resolved_root: None,
+        selected_root: None,
         head: None,
         current_branch: None,
         detached: false,
@@ -86,6 +93,7 @@ pub(super) fn non_repo_summary() -> GitSummary {
             untracked: 0,
             conflicted: 0,
         },
+        available_repositories: Vec::new(),
     }
 }
 
