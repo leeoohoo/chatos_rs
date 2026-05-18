@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import { StringListCard, TextBlockCard } from '../shared/primitives';
 import { asArray, asRecord, asString } from '../shared/value';
 
@@ -12,6 +14,7 @@ export const ChangeOperationDetails: React.FC<ChangeOperationDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -38,10 +41,10 @@ export const ChangeOperationDetails: React.FC<ChangeOperationDetailsProps> = ({
 
   return (
     <>
-      {!isPatchTool && <StringListCard title="Touched files" values={touchedFiles} fullWidth />}
-      <TextBlockCard title="Diff preview" content={asString(change?.diff)} />
-      <TextBlockCard title="Message" content={asString(record.message)} />
-      <TextBlockCard title="Hint" content={asString(record.hint)} fullWidth={false} />
+      {!isPatchTool && <StringListCard title={translateToolTitle('Touched files', locale)} values={touchedFiles} fullWidth />}
+      <TextBlockCard title={translateToolTitle('Diff preview', locale)} content={asString(change?.diff)} />
+      <TextBlockCard title={translateToolTitle('Message', locale)} content={asString(record.message)} />
+      <TextBlockCard title={translateToolTitle('Hint', locale)} content={asString(record.hint)} fullWidth={false} />
     </>
   );
 };

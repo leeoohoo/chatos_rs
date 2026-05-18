@@ -4,6 +4,7 @@ import type { Message, ToolCall } from '../../types';
 import type { RenderSegment, ToolCallLookupMap } from './types';
 import { ToolCallTimeline } from './ToolCallTimeline';
 import { getCollapsedTextContentForRender, normalizeMetaId } from './helpers';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface MessageContentRendererProps {
   message: Message;
@@ -30,6 +31,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
   collapseAssistantProcessByDefault,
   onApplyCode,
 }) => {
+  const { t } = useI18n();
   const hasContent = message.content && message.content.trim().length > 0;
   const isCurrentlyStreaming = isStreaming && isLast;
 
@@ -140,7 +142,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
               className="group rounded-md border border-gray-200 bg-muted px-3 py-2 dark:border-gray-700"
             >
               <summary className="cursor-pointer select-none text-xs text-gray-500 dark:text-gray-400">
-                Thinking
+                {t('messageContent.thinking')}
               </summary>
               <div className="mt-1">
                 <LazyMarkdownRenderer

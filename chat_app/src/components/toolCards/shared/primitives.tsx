@@ -1,5 +1,11 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import {
+  formatToolPrimitive,
+  translateToolTitle,
+} from '../../../i18n/toolText';
+
 export const renderCardHeader = (title: string, meta?: string) => (
   <div className="tool-card-header">
     <div className="tool-detail-title">{title}</div>
@@ -20,12 +26,13 @@ export const TextBlockCard: React.FC<TextBlockCardProps> = ({
   fullWidth = true,
   meta,
 }) => {
+  const { locale } = useI18n();
   const trimmed = content.trim();
   if (!trimmed) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title, meta)}
+      {renderCardHeader(translateToolTitle(title, locale), meta)}
       <pre className="tool-detail-code">{trimmed}</pre>
     </div>
   );
@@ -42,9 +49,19 @@ export const RowsCard: React.FC<RowsCardProps> = ({
   rows,
   fullWidth = false,
 }) => {
+  const { locale } = useI18n();
   const formatValue = (value: string | number | boolean | null | undefined): string => {
+    if (value === undefined) {
+      return '';
+    }
     if (typeof value === 'boolean') {
-      return value ? 'yes' : 'no';
+      return formatToolPrimitive(value, locale);
+    }
+    if (value === null) {
+      return formatToolPrimitive(value, locale);
+    }
+    if (typeof value === 'string') {
+      return formatToolPrimitive(value, locale);
     }
     return String(value);
   };
@@ -59,7 +76,10 @@ export const RowsCard: React.FC<RowsCardProps> = ({
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title, `${filtered.length} 项`)}
+      {renderCardHeader(
+        translateToolTitle(title, locale),
+        locale === 'zh-CN' ? `${filtered.length} 项` : `${filtered.length} items`,
+      )}
       <div className="tool-detail-rows">
         {filtered.map((row) => (
           <div key={`${title}-${row.key}`} className="tool-detail-row">
@@ -85,12 +105,16 @@ export const StringListCard: React.FC<StringListCardProps> = ({
   linkify = false,
   fullWidth = false,
 }) => {
+  const { locale } = useI18n();
   const filtered = values.map((item) => item.trim()).filter(Boolean);
   if (filtered.length === 0) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title, `${filtered.length} 项`)}
+      {renderCardHeader(
+        translateToolTitle(title, locale),
+        locale === 'zh-CN' ? `${filtered.length} 项` : `${filtered.length} items`,
+      )}
       <div className="tool-detail-list">
         {filtered.map((item, index) => (
           <div key={`${title}-${index}`} className="tool-detail-item">

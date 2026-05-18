@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 
@@ -42,12 +43,13 @@ export const ProjectTreeSearchControls: React.FC<ProjectTreeSearchControlsProps>
   onOpenPreviousSearchHit,
   onOpenNextSearchHit,
 }) => {
+  const { t } = useI18n();
   const activeSearchOptionLabels = useMemo(
     () => [
-      searchCaseSensitive ? '区分大小写' : null,
-      searchWholeWord ? '全词匹配' : null,
+      searchCaseSensitive ? t('projectExplorer.search.caseSensitive') : null,
+      searchWholeWord ? t('projectExplorer.search.wholeWord') : null,
     ].filter((value): value is string => Boolean(value)),
-    [searchCaseSensitive, searchWholeWord],
+    [searchCaseSensitive, searchWholeWord, t],
   );
 
   const activeSearchPositionLabel = useMemo(() => {
@@ -81,7 +83,7 @@ export const ProjectTreeSearchControls: React.FC<ProjectTreeSearchControlsProps>
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.target.value)}
           onKeyDown={handleSearchInputKeyDown}
-          placeholder="全文搜索注释、符号、字符串"
+          placeholder={t('projectExplorer.search.placeholder')}
           className="h-8 flex-1 rounded border border-border bg-background px-2 text-xs outline-none focus:border-primary"
         />
         {searchQuery.trim().length > 0 && (
@@ -90,7 +92,7 @@ export const ProjectTreeSearchControls: React.FC<ProjectTreeSearchControlsProps>
             onClick={onClearSearch}
             className="h-8 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent"
           >
-            清空
+            {t('projectExplorer.search.clear')}
           </button>
         )}
       </div>
@@ -105,7 +107,7 @@ export const ProjectTreeSearchControls: React.FC<ProjectTreeSearchControlsProps>
               : 'border-border hover:bg-accent',
           )}
         >
-          区分大小写
+          {t('projectExplorer.search.caseSensitive')}
         </button>
         <button
           type="button"
@@ -117,7 +119,7 @@ export const ProjectTreeSearchControls: React.FC<ProjectTreeSearchControlsProps>
               : 'border-border hover:bg-accent',
           )}
         >
-          全词匹配
+          {t('projectExplorer.search.wholeWord')}
         </button>
       </div>
       {searchQuery.trim().length > 0 && totalSearchHits > 0 && (
@@ -128,7 +130,7 @@ export const ProjectTreeSearchControls: React.FC<ProjectTreeSearchControlsProps>
             disabled={!canOpenPreviousSearchHit}
             className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
-            上一处
+            {t('projectExplorer.preview.nav.previous')}
           </button>
           <button
             type="button"
@@ -136,27 +138,31 @@ export const ProjectTreeSearchControls: React.FC<ProjectTreeSearchControlsProps>
             disabled={!canOpenNextSearchHit}
             className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
-            下一处
+            {t('projectExplorer.preview.nav.next')}
           </button>
           <span className="text-[11px] text-muted-foreground">
-            当前命中 {activeSearchPositionLabel}
+            {t('projectExplorer.search.currentHit', { label: activeSearchPositionLabel || '' })}
           </span>
         </div>
       )}
       <div className="text-[11px] text-muted-foreground">
         {searchQuery.trim().length > 0
-          ? `全文搜索结果 ${searchResults.length}${searchTruncated ? '+' : ''}${activeSearchOptionLabels.length > 0 ? ` · ${activeSearchOptionLabels.join(' · ')}` : ''}`
-          : activeSearchOptionLabels.length > 0
-            ? `支持跨文件全文搜索 · ${activeSearchOptionLabels.join(' · ')}`
-            : '支持跨文件全文搜索'}
+          ? t('projectExplorer.search.summaryResults', {
+            count: searchResults.length,
+            suffix: searchTruncated ? t('projectExplorer.search.truncatedSuffix') : '',
+            options: activeSearchOptionLabels.length > 0 ? t('projectExplorer.search.optionsPrefix', { options: activeSearchOptionLabels.join(' · ') }) : '',
+          })
+          : t('projectExplorer.search.summaryReady', {
+            options: activeSearchOptionLabels.length > 0 ? t('projectExplorer.search.optionsPrefix', { options: activeSearchOptionLabels.join(' · ') }) : '',
+          })}
       </div>
       {searchQuery.trim().length > 0 && (
         <div className="text-[11px] text-muted-foreground">
-          快捷键：Enter 下一处 / Shift+Enter 上一处
+          {t('projectExplorer.search.shortcuts')}
         </div>
       )}
       {searchLoading && (
-        <div className="text-[11px] text-muted-foreground">全文搜索中...</div>
+        <div className="text-[11px] text-muted-foreground">{t('projectExplorer.search.loading')}</div>
       )}
       {searchError && (
         <div className="text-[11px] text-destructive truncate" title={searchError}>

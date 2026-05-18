@@ -1,4 +1,6 @@
 import React from 'react';
+import { useI18n } from '../i18n/I18nProvider';
+import { translateToolTitle } from '../i18n/toolText';
 import { getToolDisplayName } from '../lib/tools/displayName';
 import { shouldHideArgumentKey } from './toolArgumentsDetails/argumentVisibility';
 import {
@@ -24,7 +26,10 @@ interface ToolArgumentsDetailsProps {
   rawToolName?: string;
 }
 
-const renderPatchInput = (argumentsValue: Record<string, unknown>) => {
+const renderPatchInput = (
+  argumentsValue: Record<string, unknown>,
+  locale: 'zh-CN' | 'en-US',
+) => {
   const patchText = asString(argumentsValue.patch).trim();
   if (!patchText) {
     return null;
@@ -32,7 +37,7 @@ const renderPatchInput = (argumentsValue: Record<string, unknown>) => {
 
   return (
     <div className="tool-detail-stack">
-      {renderTextBlock('Patch payload', patchText)}
+      {renderTextBlock(translateToolTitle('Patch payload', locale), patchText)}
     </div>
   );
 };
@@ -41,12 +46,13 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
   argumentsValue,
   rawToolName,
 }) => {
+  const { locale } = useI18n();
   const displayName = rawToolName ? getToolDisplayName(rawToolName) : '';
 
   if (typeof argumentsValue === 'string') {
     return (
       <div className="tool-detail-stack">
-        {renderTextBlock('Input payload', argumentsValue)}
+        {renderTextBlock(translateToolTitle('Input payload', locale), argumentsValue)}
       </div>
     );
   }
@@ -57,10 +63,11 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
       return (
         <div className="tool-detail-stack">
           {renderStringListCard(
-            'Input items',
-            primitiveValues.map((item) => formatPrimitive(item)),
+            translateToolTitle('Input items', locale),
+            primitiveValues.map((item) => formatPrimitive(item, locale)),
             false,
             true,
+            locale,
           )}
         </div>
       );
@@ -68,7 +75,7 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
 
     return (
       <div className="tool-detail-stack">
-        {renderObjectListCard('Input items', argumentsValue)}
+        {renderObjectListCard(translateToolTitle('Input items', locale), argumentsValue)}
       </div>
     );
   }
@@ -79,7 +86,7 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
   }
 
   if (displayName === 'apply_patch' || displayName === 'patch') {
-    return renderPatchInput(record);
+    return renderPatchInput(record, locale);
   }
 
   const summaryRows: Array<{ key: string; value: string }> = [];
@@ -110,7 +117,7 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
         return;
       }
 
-      summaryRows.push({ key: label, value: formatPrimitive(value) });
+      summaryRows.push({ key: label, value: formatPrimitive(value, locale) });
       return;
     }
 
@@ -127,6 +134,7 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
             stringValues,
             stringValues.every((item) => isUrlLike(item)),
             true,
+            locale,
           ),
         );
         return;
@@ -145,7 +153,12 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
     sections.push(renderTextBlock(sectionTitle, String(value)));
   });
 
-  const summaryCard = renderRowsCard('Input summary', summaryRows);
+  const summaryCard = renderRowsCard(
+    translateToolTitle('Input summary', locale),
+    summaryRows,
+    false,
+    locale,
+  );
   const validSections = sections.filter(Boolean);
 
   if (!summaryCard && validSections.length === 0) {
@@ -155,7 +168,7 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
 
     return (
       <div className="tool-detail-stack">
-        {renderTextBlock('Input payload', JSON.stringify(argumentsValue, null, 2))}
+        {renderTextBlock(translateToolTitle('Input payload', locale), JSON.stringify(argumentsValue, null, 2))}
       </div>
     );
   }

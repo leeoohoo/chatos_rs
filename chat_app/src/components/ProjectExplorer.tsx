@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import type { Project } from '../types';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
@@ -15,6 +16,7 @@ interface ProjectExplorerProps {
 }
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
+  const { t } = useI18n();
   const {
     client,
     containerRef,
@@ -48,7 +50,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   if (!project) {
     return (
       <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
-        请选择一个项目查看文件
+        {t('projectExplorer.emptyProject')}
       </div>
     );
   }

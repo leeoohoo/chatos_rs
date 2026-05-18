@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { FsEntry } from '../../types';
 
 export interface MoveConflictState {
@@ -26,6 +27,7 @@ export const MoveConflictModal: React.FC<MoveConflictModalProps> = ({
   onOverwrite,
   onRename,
 }) => {
+  const { t } = useI18n();
   if (!moveConflict) {
     return null;
   }
@@ -43,17 +45,17 @@ export const MoveConflictModal: React.FC<MoveConflictModalProps> = ({
         className="w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="text-sm font-medium text-foreground">目标目录存在同名项</div>
+        <div className="text-sm font-medium text-foreground">{t('projectExplorer.moveConflict.title')}</div>
         <div className="mt-2 text-xs text-muted-foreground">
-          将 {moveConflict.sourceName} 移动到目标目录时发生冲突，请选择处理方式。
+          {t('projectExplorer.moveConflict.message', { name: moveConflict.sourceName })}
         </div>
         <div className="mt-3 space-y-1.5">
-          <label className="text-xs text-muted-foreground">重命名后移动</label>
+          <label className="text-xs text-muted-foreground">{t('projectExplorer.moveConflict.renameLabel')}</label>
           <input
             value={moveConflict.renameTo}
             onChange={(event) => onRenameChange(event.target.value)}
             className="w-full h-9 rounded border border-input bg-background px-2 text-sm"
-            placeholder="请输入新名称"
+            placeholder={t('projectExplorer.moveConflict.renamePlaceholder')}
           />
         </div>
         <div className="mt-4 flex justify-end gap-2">
@@ -63,7 +65,7 @@ export const MoveConflictModal: React.FC<MoveConflictModalProps> = ({
             disabled={actionLoading}
             className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -71,7 +73,7 @@ export const MoveConflictModal: React.FC<MoveConflictModalProps> = ({
             disabled={actionLoading}
             className="px-3 py-1.5 text-xs rounded border border-amber-500/50 text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            覆盖后移动
+            {t('projectExplorer.moveConflict.overwrite')}
           </button>
           <button
             type="button"
@@ -79,7 +81,7 @@ export const MoveConflictModal: React.FC<MoveConflictModalProps> = ({
             disabled={actionLoading}
             className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            重命名后移动
+            {t('projectExplorer.moveConflict.rename')}
           </button>
         </div>
       </div>
@@ -112,6 +114,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
   onDownload,
   onDelete,
 }) => {
+  const { t } = useI18n();
   if (!contextMenu || !contextMenuStyle) {
     return null;
   }
@@ -124,7 +127,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
       onContextMenu={(event) => event.preventDefault()}
     >
       <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
-        {contextMenu.entry.isDir ? '目录' : '文件'}：{contextMenu.entry.path}
+        {contextMenu.entry.isDir ? t('projectExplorer.context.folder') : t('projectExplorer.context.file')}：{contextMenu.entry.path}
       </div>
       {contextMenu.entry.isDir && (
         <button
@@ -132,7 +135,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
           onClick={() => onCreateDirectory(contextMenu.entry.path)}
           className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
         >
-          新建目录
+          {t('projectExplorer.context.createDirectory')}
         </button>
       )}
       {contextMenu.entry.isDir && (
@@ -141,7 +144,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
           onClick={() => onCreateFile(contextMenu.entry.path)}
           className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
         >
-          新建文件
+          {t('projectExplorer.context.createFile')}
         </button>
       )}
       <button
@@ -149,7 +152,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
         onClick={() => onDownload(contextMenu.entry)}
         className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
       >
-        下载
+        {t('projectExplorer.context.download')}
       </button>
       <button
         type="button"
@@ -157,7 +160,7 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
         disabled={isContextRootEntry}
         className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        删除
+        {t('aiModelManager.action.delete')}
       </button>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import { apiClient } from '../lib/api/client';
 import { normalizeRawMessages } from '../lib/domain/messages';
 import { normalizeProject } from '../lib/domain/projects';
@@ -32,6 +33,7 @@ type AgentManagerWindow = Window & {
 };
 
 const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalStore }) => {
+  const { t } = useI18n();
   const internalStoreData = useChatStoreResolved();
   const storeData = externalStore ? externalStore() : internalStoreData;
   const {
@@ -111,8 +113,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     event.preventDefault();
     if (!canSubmitAgentForm(formData)) {
       await alert({
-        title: '信息不完整',
-        message: '名称和角色定义是必填项。',
+        title: t('agentManager.incompleteTitle'),
+        message: t('agentManager.incompleteMessage'),
         type: 'warning',
       });
       return;
@@ -147,10 +149,10 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
 
   const handleDelete = async (agentId: string) => {
     const confirmed = await confirm({
-      title: '删除智能体',
-      message: '确定要删除这个智能体吗？此操作无法撤销。',
-      confirmText: '删除',
-      cancelText: '取消',
+      title: t('agentManager.deleteTitle'),
+      message: t('agentManager.deleteMessage'),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -162,8 +164,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   const handleAiCreate = async () => {
     if (!canSubmitAiCreateAgentForm(aiCreateForm)) {
       await alert({
-        title: '信息不完整',
-        message: '请先填写智能体名称和需求描述。',
+        title: t('agentManager.incompleteTitle'),
+        message: t('agentManager.aiIncompleteMessage'),
         type: 'warning',
       });
       return;
@@ -182,8 +184,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     const created = await aiCreateAgent(payload);
     if (!created) {
       await alert({
-        title: '创建失败',
-        message: 'AI 创建智能体失败，请稍后重试。',
+        title: t('agentManager.aiCreateFailedTitle'),
+        message: t('agentManager.aiCreateFailedMessage'),
         type: 'danger',
       });
     }
@@ -260,9 +262,9 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
           }
           return acc;
         }, {});
-      projectNames['0'] = projectNames['0'] || '未归属项目';
+      projectNames['0'] = projectNames['0'] || t('agentManager.session.unassignedProject');
 
-      const groupedSessions = buildGroupedConversationSessions(sessions, projectNames);
+      const groupedSessions = buildGroupedConversationSessions(sessions, projectNames, t);
       setConversationState({
         open: true,
         loading: false,
@@ -281,8 +283,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     } catch (error) {
       console.error('Failed to load agent sessions:', error);
       await alert({
-        title: '加载失败',
-        message: error instanceof Error ? error.message : '加载智能体会话失败',
+        title: t('agentManager.loadFailedTitle'),
+        message: error instanceof Error ? error.message : t('agentManager.loadFailedMessage'),
         type: 'danger',
       });
       setConversationState({
@@ -306,14 +308,14 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center space-x-3">
             <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" />
-            <h2 className="text-lg font-semibold text-foreground">智能体管理</h2>
+            <h2 className="text-lg font-semibold text-foreground">{t('agentManager.title')}</h2>
           </div>
           <button
             onClick={onClose}
             className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-            title="关闭"
+            title={t('common.close')}
           >
-            关闭
+            {t('common.close')}
           </button>
         </div>
 

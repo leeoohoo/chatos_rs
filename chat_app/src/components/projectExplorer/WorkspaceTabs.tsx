@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 
 export type WorkspaceTab = 'files' | 'team' | 'settings';
@@ -15,6 +16,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
   onChange,
   rightActions,
 }) => {
+  const { t } = useI18n();
   return (
     <div className="border-b border-border bg-card px-3 py-2">
       <div className="flex items-center justify-between gap-3">
@@ -29,7 +31,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
             )}
           >
-            项目目录
+            {t('projectExplorer.tab.files')}
           </button>
           <button
             type="button"
@@ -41,7 +43,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
             )}
           >
-            团队成员
+            {t('projectExplorer.tab.team')}
           </button>
           <button
             type="button"
@@ -53,7 +55,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
             )}
           >
-            项目设置
+            {t('projectExplorer.tab.settings')}
           </button>
         </div>
         {rightActions && (

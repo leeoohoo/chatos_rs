@@ -4,6 +4,7 @@ import {
   useChatRuntimeEnv,
 } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
+import { useI18n } from '../i18n/I18nProvider';
 
 interface Props { onClose: () => void }
 
@@ -12,6 +13,7 @@ interface UserSettingsForm {
   LOG_LEVEL?: string;
   CHAT_MAX_TOKENS?: number | string | null;
   INTERNAL_CONTEXT_LOCALE?: string;
+  UI_LOCALE?: string;
   [key: string]: string | number | boolean | null | undefined;
 }
 
@@ -20,6 +22,7 @@ interface UserSettingsPayload {
   LOG_LEVEL: string;
   CHAT_MAX_TOKENS: number | null;
   INTERNAL_CONTEXT_LOCALE: string;
+  UI_LOCALE: string;
   [key: string]: string | number | null;
 }
 
@@ -43,26 +46,27 @@ const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
   return result;
 };
 
-const getErrorMessage = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  return '操作失败';
-};
-
 const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   const clientFromContext = useChatApiClientFromContext();
   const client = clientFromContext || globalApiClient;
   const { userId } = useChatRuntimeEnv();
+  const { locale, setLocale, t } = useI18n();
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [settings, setSettings] = React.useState<UserSettingsForm>({});
+
+  const getErrorMessage = React.useCallback((err: unknown): string => {
+    if (err instanceof Error) {
+      return err.message;
+    }
+    if (typeof err === 'string') {
+      return err;
+    }
+    return t('common.unknown');
+  }, [t]);
 
   React.useEffect(() => {
     let mounted = true;
@@ -95,11 +99,12 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   });
 
   const save = async () => {
-    if (!userId) { setError('缺少 userId，无法保存'); return; }
+    if (!userId) { setError(t('settings.missingUserId')); return; }
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
+      const nextUiLocale = String(settings.UI_LOCALE || locale || 'zh-CN') === 'en-US' ? 'en-US' : 'zh-CN';
       const userSettingsPayload: UserSettingsPayload = {
         MAX_ITERATIONS: Number(settings.MAX_ITERATIONS || 0),
         LOG_LEVEL: String(settings.LOG_LEVEL || 'info'),
@@ -107,12 +112,14 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
           ? null
           : Number(settings.CHAT_MAX_TOKENS),
         INTERNAL_CONTEXT_LOCALE: String(settings.INTERNAL_CONTEXT_LOCALE || 'zh-CN'),
+        UI_LOCALE: nextUiLocale,
       };
 
       const savedSettings = await client.updateUserSettings(userId, userSettingsPayload);
 
       setSettings(normalizeUserSettingsForm(savedSettings?.effective || userSettingsPayload));
-      setNotice('保存成功');
+      setLocale(nextUiLocale);
+      setNotice(t('settings.saved'));
     } catch (e: unknown) {
       setError(getErrorMessage(e));
     } finally {
@@ -130,17 +137,17 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 16v-2m8-6h2M4 12H2m15.364 5.364l1.414 1.414M5.636 6.636L4.222 5.222m12.728 0l1.414 1.414M5.636 17.364l-1.414 1.414" /></svg>
               </div>
               <div>
-              <h3 className="font-semibold leading-tight">运行参数</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">管理当前账号在 chatos 内的运行参数</p>
+              <h3 className="font-semibold leading-tight">{t('settings.title')}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('settings.subtitle')}</p>
               </div>
             </div>
-          <button onClick={onClose} className="p-2 hover:bg-accent rounded-lg transition-colors" aria-label="关闭">
+          <button onClick={onClose} className="p-2 hover:bg-accent rounded-lg transition-colors" aria-label={t('common.close')}>
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
         <div className="p-4 sm:p-6 space-y-4 max-h-[75vh] overflow-auto">
           {loading ? (
-            <div className="text-sm text-muted-foreground">加载中...</div>
+            <div className="text-sm text-muted-foreground">{t('common.loading')}</div>
           ) : (
             <>
               {error && (
@@ -151,25 +158,41 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
               )}
 
               <div className="rounded-xl border border-border/60 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">递归与日志</div>
+                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">{t('settings.section.runtime')}</div>
                 <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs text-muted-foreground">最大输出 Tokens（每次回复）</label>
+                    <label className="text-xs text-muted-foreground">{t('settings.chatMaxTokens')}</label>
                     <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('CHAT_MAX_TOKENS')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">后端只从此处读取。留空则不限制，模型按默认生成。</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.chatMaxTokensHelp')}</p>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground">最大递归轮数</label>
+                    <label className="text-xs text-muted-foreground">{t('settings.maxIterations')}</label>
                     <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('MAX_ITERATIONS')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">一次请求内的工具调用迭代上限，用于防止无限循环。建议: 4-6。</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.maxIterationsHelp')}</p>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground">日志级别</label>
-                    <input type="text" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('LOG_LEVEL')} placeholder="info|warn|error|debug" />
-                    <p className="text-[11px] text-muted-foreground mt-1">仅作为本用户偏好保存，不修改服务器全局日志。</p>
+                    <label className="text-xs text-muted-foreground">{t('settings.logLevel')}</label>
+                    <input type="text" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('LOG_LEVEL')} placeholder={t('settings.logLevelPlaceholder')} />
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.logLevelHelp')}</p>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground">内部上下文语言</label>
+                    <label className="text-xs text-muted-foreground">{t('settings.uiLocale')}</label>
+                    <select
+                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={typeof settings.UI_LOCALE === 'string' ? settings.UI_LOCALE : locale}
+                      onChange={(e) => {
+                        const next = e.target.value === 'en-US' ? 'en-US' : 'zh-CN';
+                        setSettings((s) => ({ ...s, UI_LOCALE: next }));
+                        setLocale(next);
+                      }}
+                    >
+                      <option value="zh-CN">{t('language.chinese')}</option>
+                      <option value="en-US">{t('language.english')}</option>
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.uiLocaleHelp')}</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">{t('settings.internalContextLocale')}</label>
                     <select
                       className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                       value={typeof settings.INTERNAL_CONTEXT_LOCALE === 'string' ? settings.INTERNAL_CONTEXT_LOCALE : 'zh-CN'}
@@ -178,10 +201,10 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                         setSettings((s) => ({ ...s, INTERNAL_CONTEXT_LOCALE: next }));
                       }}
                     >
-                      <option value="zh-CN">中文</option>
-                      <option value="en-US">English</option>
+                      <option value="zh-CN">{t('language.chinese')}</option>
+                      <option value="en-US">{t('language.english')}</option>
                     </select>
-                    <p className="text-[11px] text-muted-foreground mt-1">仅影响 Chatos 系统内部生成的上下文语言；用户输入、工具输出、外部内容，以及 memory engine 返回的压缩记忆原文都保持原样。</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.internalContextLocaleHelp')}</p>
                   </div>
                 </div>
               </div>
@@ -189,8 +212,8 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
           )}
         </div>
         <div className="p-4 sm:p-5 border-t border-border/60 flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80">取消</button>
-          <button onClick={save} disabled={saving} className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">{saving ? '保存中...' : '保存'}</button>
+          <button onClick={onClose} className="px-3 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80">{t('common.cancel')}</button>
+          <button onClick={save} disabled={saving} className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">{saving ? t('common.saving') : t('common.save')}</button>
         </div>
       </div>
     </div>

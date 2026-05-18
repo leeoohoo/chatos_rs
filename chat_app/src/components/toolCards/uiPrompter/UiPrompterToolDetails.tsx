@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import GenericStructuredResultDetails from '../shared/GenericStructuredResultDetails';
 import { RowsCard, StringListCard } from '../shared/primitives';
 import { asArray, asRecord, asString } from '../shared/value';
@@ -18,12 +20,13 @@ const formatLabel = (value: string): string => (
 );
 
 const FormValuesCard: React.FC<{ value: unknown }> = ({ value }) => {
+  const { locale } = useI18n();
   const valuesRecord = asRecord(value);
   if (!valuesRecord) {
     const text = asString(value).trim();
     return text ? (
       <RowsCard
-        title="Form values"
+        title={translateToolTitle('Form values', locale)}
         rows={[{ key: 'value', value: text }]}
         fullWidth
       />
@@ -53,7 +56,7 @@ const FormValuesCard: React.FC<{ value: unknown }> = ({ value }) => {
   return (
     <>
       {primitiveRows.length > 0 && (
-        <RowsCard title="Form values" rows={primitiveRows} fullWidth />
+        <RowsCard title={translateToolTitle('Form values', locale)} rows={primitiveRows} fullWidth />
       )}
       {Object.keys(complexEntries).length > 0 && (
         <GenericStructuredResultDetails value={complexEntries} />
@@ -66,6 +69,7 @@ export const UiPrompterToolDetails: React.FC<UiPrompterToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -74,13 +78,13 @@ export const UiPrompterToolDetails: React.FC<UiPrompterToolDetailsProps> = ({
     ? asArray(selectionValue).map((item) => asString(item)).filter(Boolean)
     : [];
   const resultTitle = displayName === 'prompt_choices'
-    ? 'Choice result'
+    ? translateToolTitle('Choice result', locale)
     : displayName === 'prompt_mixed_form'
-      ? 'Mixed form result'
-      : 'Form result';
+      ? translateToolTitle('Mixed form result', locale)
+      : translateToolTitle('Form result', locale);
   const selectionTitle = displayName === 'prompt_choices'
-    ? (selectionStrings.length > 1 ? 'Chosen options' : 'Chosen option')
-    : 'Selection';
+    ? translateToolTitle(selectionStrings.length > 1 ? 'Chosen options' : 'Chosen option', locale)
+    : translateToolTitle('Selection', locale);
 
   return (
     <div className="tool-detail-stack">

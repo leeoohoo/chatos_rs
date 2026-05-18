@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { FsEntry } from '../../types';
 import { useDialogService } from '../ui/DialogProvider';
 import { readProjectTreeErrorMessage } from './projectTreeActionHelpers';
@@ -37,29 +38,30 @@ export const useProjectTreeDeleteAction = ({
   setActionError,
   setActionMessage,
 }: UseProjectTreeDeleteActionOptions) => {
+  const { t } = useI18n();
   const { confirm } = useDialogService();
 
   const handleDeleteSelected = useCallback(async (entryOverride?: FsEntry) => {
     const targetEntry = entryOverride || selectedEntry;
     if (!targetEntry) {
-      setActionError('请先选择要删除的文件或目录');
+      setActionError(t('projectExplorer.delete.selectFirst'));
       return;
     }
 
     const targetIsRoot = !!projectRootPath
       && normalizePath(targetEntry.path) === normalizePath(projectRootPath);
     if (targetIsRoot) {
-      setActionError('不支持删除项目根目录');
+      setActionError(t('projectExplorer.delete.rootNotAllowed'));
       return;
     }
 
     const confirmed = await confirm({
-      title: targetEntry.isDir ? '删除目录' : '删除文件',
+      title: targetEntry.isDir ? t('projectExplorer.delete.titleDir') : t('projectExplorer.delete.titleFile'),
       message: targetEntry.isDir
-        ? `确认删除目录 "${targetEntry.name}" 吗？将递归删除其全部内容。`
-        : `确认删除文件 "${targetEntry.name}" 吗？`,
-      confirmText: '删除',
-      cancelText: '取消',
+        ? t('projectExplorer.delete.messageDir', { name: targetEntry.name })
+        : t('projectExplorer.delete.messageFile', { name: targetEntry.name }),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) return;
@@ -79,9 +81,9 @@ export const useProjectTreeDeleteAction = ({
       if (fallbackPath) {
         await loadEntries(fallbackPath);
       }
-      setActionMessage(`已删除：${targetEntry.name}`);
+      setActionMessage(t('projectExplorer.delete.success', { name: targetEntry.name }));
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '删除失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.delete.failed')));
     } finally {
       setActionLoading(false);
     }
@@ -100,6 +102,7 @@ export const useProjectTreeDeleteAction = ({
     setActionMessage,
     setSelectedFile,
     setSelectedPath,
+    t,
   ]);
 
   return {

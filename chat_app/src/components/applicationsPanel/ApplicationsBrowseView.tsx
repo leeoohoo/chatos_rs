@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import { AppGridIcon } from './icons';
 import type { ApplicationsBrowseViewProps } from './types';
 
@@ -7,6 +8,7 @@ const ApplicationsBrowseView = ({
   onApplicationSelect,
   onSwitchToManageMode,
 }: ApplicationsBrowseViewProps) => {
+  const { t } = useI18n();
   const gridClassName = compact
     ? 'grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4'
     : 'grid grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-6';
@@ -47,12 +49,12 @@ const ApplicationsBrowseView = ({
       {applications.length === 0 && (
         <div className="col-span-full flex flex-col items-center justify-center py-10 text-center">
           <AppGridIcon className={compact ? 'w-16 h-16 text-muted-foreground/30 mb-3' : 'w-20 h-20 text-muted-foreground/30 mb-4'} />
-          <div className="text-sm text-muted-foreground mb-2">暂无应用</div>
+          <div className="text-sm text-muted-foreground mb-2">{t('applications.empty.browse')}</div>
           <button
             onClick={onSwitchToManageMode}
             className="text-sm text-blue-500 hover:text-blue-600 underline"
           >
-            {compact ? '切换到管理模式以添加应用' : '点击切换到管理模式添加应用'}
+            {compact ? t('applications.empty.switchToManageCompact') : t('applications.empty.switchToManage')}
           </button>
         </div>
       )}

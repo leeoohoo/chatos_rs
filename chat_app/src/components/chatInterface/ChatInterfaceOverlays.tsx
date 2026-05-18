@@ -2,6 +2,7 @@ import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
 import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
+import { useI18n } from '../../i18n/I18nProvider';
 
 const AiModelManager = lazy(() => import('../AiModelManager'));
 const AgentManager = lazy(() => import('../AgentManager'));
@@ -61,6 +62,8 @@ export default function ChatInterfaceOverlays({
   showApplicationsPanel,
   setShowApplicationsPanel,
 }: ChatInterfaceOverlaysProps) {
+  const { t } = useI18n();
+
   return (
     <>
       <UiPromptHistoryDrawer {...uiPromptHistoryProps} />
@@ -93,7 +96,7 @@ export default function ChatInterfaceOverlays({
         <ApplicationsPanel
           isOpen={showApplicationsPanel}
           onClose={() => setShowApplicationsPanel(false)}
-          title="应用列表"
+          title={t('applications.title')}
           layout="modal"
         />
       </LazyOverlay>

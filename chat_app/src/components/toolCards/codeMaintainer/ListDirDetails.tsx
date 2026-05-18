@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import { renderCardHeader } from '../shared/primitives';
 import { asArray, asNumber, asRecord, asString, formatDateTime } from '../shared/value';
 
@@ -8,6 +10,7 @@ interface ListDirDetailsProps {
 }
 
 export const ListDirDetails: React.FC<ListDirDetailsProps> = ({ result }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -19,7 +22,10 @@ export const ListDirDetails: React.FC<ListDirDetailsProps> = ({ result }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Directory entries', `${entries.length} 项`)}
+      {renderCardHeader(
+        translateToolTitle('Directory entries', locale),
+        locale === 'zh-CN' ? `${entries.length} 项` : `${entries.length} items`,
+      )}
       <div className="tool-detail-list">
         {entries.map((entry, index) => {
           const name = asString(entry.name).trim() || `entry ${index + 1}`;
@@ -43,4 +49,3 @@ export const ListDirDetails: React.FC<ListDirDetailsProps> = ({ result }) => {
 };
 
 export default ListDirDetails;
-

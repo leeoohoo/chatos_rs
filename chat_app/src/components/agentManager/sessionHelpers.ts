@@ -1,3 +1,4 @@
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { Message, Session } from '../../types';
 
 export interface AgentConversationGroup {
@@ -16,6 +17,7 @@ export const normalizeProjectId = (projectId?: string | null): string => {
 export const buildGroupedConversationSessions = (
   sessions: Session[],
   projectNames: Record<string, string>,
+  t: TranslateFn,
 ): AgentConversationGroup[] => {
   const latestByProject = new Map<string, Session>();
   for (const session of sessions) {
@@ -35,24 +37,26 @@ export const buildGroupedConversationSessions = (
   return Array.from(latestByProject.entries())
     .map(([projectId, session]) => ({
       projectId,
-      projectName: projectNames[projectId]?.trim() || (projectId === '0' ? '未归属项目' : '未命名项目'),
+      projectName: projectNames[projectId]?.trim() || (
+        projectId === '0' ? t('agentManager.session.unassignedProject') : t('agentManager.session.unnamedProject')
+      ),
       session,
     }))
     .sort((left, right) => right.session.updatedAt.getTime() - left.session.updatedAt.getTime());
 };
 
-export const formatMessageTime = (message: Message): string => {
+export const formatMessageTime = (message: Message, t?: TranslateFn): string => {
   const createdAt = message.createdAt;
   if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) {
-    return '-';
+    return t ? t('toolSummary.na') : '-';
   }
   return createdAt.toLocaleString();
 };
 
-export const getMessageRoleLabel = (role: Message['role']): string => {
-  if (role === 'user') return '用户';
-  if (role === 'assistant') return '助手';
-  if (role === 'system') return '系统';
-  if (role === 'tool') return '工具';
+export const getMessageRoleLabel = (role: Message['role'], t?: TranslateFn): string => {
+  if (role === 'user') return t ? t('agentManager.session.role.user') : '用户';
+  if (role === 'assistant') return t ? t('agentManager.session.role.assistant') : '助手';
+  if (role === 'system') return t ? t('agentManager.session.role.system') : '系统';
+  if (role === 'tool') return t ? t('agentManager.session.role.tool') : '工具';
   return role;
 };

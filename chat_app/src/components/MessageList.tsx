@@ -4,6 +4,7 @@ import { MessageItem } from './MessageItem';
 import type { MessageListProps } from '../types';
 import { useMessageListDerivedState } from './messageList/useMessageListDerivedState';
 import { useMessageListWindowing } from './messageList/useMessageListWindowing';
+import { useI18n } from '../i18n/I18nProvider';
 
 const buildPreviewSentenceQueue = (value: string): string[] => {
   const input = typeof value === 'string' ? value : '';
@@ -47,6 +48,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   onMessageDelete,
   customRenderer,
 }) => {
+  const { t } = useI18n();
   const {
     dedupedVisibleMessages,
     toolResultById,
@@ -110,9 +112,9 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             </svg>
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-foreground">Start a conversation</h3>
+            <h3 className="text-lg font-semibold text-foreground">{t('messageList.emptyTitle')}</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Send a message to begin your chat with AI
+              {t('messageList.emptyDescription')}
             </p>
           </div>
         </div>
@@ -135,7 +137,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
               onClick={onLoadMore}
               className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
             >
-              加载更多
+              {t('messageList.loadMore')}
             </button>
           </div>
         )}
@@ -146,7 +148,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
               onClick={expandRenderedWindow}
               className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
             >
-              显示更早消息（{boundedRenderStartIndex}）
+              {t('messageList.showEarlier', { count: boundedRenderStartIndex })}
             </button>
           </div>
         )}
@@ -176,7 +178,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
           <div className="flex justify-start">
             <div className="w-fit min-w-[16rem] max-w-[78vw] rounded-lg border border-border bg-muted/40 px-3 py-3">
               <span className="block text-[11px] text-muted-foreground">
-                {isStopping ? 'AI is stopping...' : 'AI is thinking...'}
+                {isStopping ? t('messageList.aiStopping') : t('messageList.aiThinking')}
               </span>
               {hasPreviewSentence ? (
                 <div
@@ -200,8 +202,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
       {!isAtBottom && (
         <button
           type="button"
-          aria-label="回到底部"
-          title="回到底部"
+          aria-label={t('messageList.jumpToBottom')}
+          title={t('messageList.jumpToBottom')}
           onClick={handleJumpToBottom}
           className="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-full bg-primary text-primary-foreground px-4 py-2 shadow-md hover:bg-primary/90"
         >
@@ -209,7 +211,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             <path d="M12 5v12" />
             <path d="M19 12l-7 7-7-7" />
           </svg>
-          <span className="text-sm">回到底部</span>
+          <span className="text-sm">{t('messageList.jumpToBottom')}</span>
         </button>
       )}
     </div>

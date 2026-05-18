@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import type { AgentConfig } from '../../types';
 
 interface AgentListProps {
@@ -8,10 +9,11 @@ interface AgentListProps {
 }
 
 const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListProps) => {
+  const { t } = useI18n();
   if (!agents.length) {
     return (
       <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
-        还没有智能体，先创建一个吧。
+        {t('agentManager.list.empty')}
       </div>
     );
   }
@@ -26,7 +28,7 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                 <h3 className="text-sm font-semibold text-foreground truncate">{agent.name}</h3>
                 {agent.ui_status === 'creating' ? (
                   <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-600">
-                    创建中
+                    {t('agentManager.list.status.creating')}
                   </span>
                 ) : (
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${
@@ -34,7 +36,7 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                       ? 'bg-emerald-500/15 text-emerald-600'
                       : 'bg-muted text-muted-foreground'
                   }`}>
-                    {agent.enabled !== false ? '启用' : '未启用'}
+                    {agent.enabled !== false ? t('agentManager.list.status.enabled') : t('agentManager.list.status.disabled')}
                   </span>
                 )}
               </div>
@@ -42,14 +44,14 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                 <div className="mt-1 text-xs text-muted-foreground">{agent.category}</div>
               ) : null}
               {agent.ui_status === 'creating' ? (
-                <div className="mt-2 text-sm text-muted-foreground">正在根据你的需求生成智能体配置...</div>
+                <div className="mt-2 text-sm text-muted-foreground">{t('agentManager.list.creatingHint')}</div>
               ) : null}
               {agent.description ? (
                 <div className="mt-2 text-sm text-muted-foreground">{agent.description}</div>
               ) : null}
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <span>插件 {Array.isArray(agent.plugin_sources) ? agent.plugin_sources.length : 0}</span>
-                <span>技能 {Array.isArray(agent.skill_ids) ? agent.skill_ids.length : 0}</span>
+                <span>{t('agentManager.list.pluginCount', { count: Array.isArray(agent.plugin_sources) ? agent.plugin_sources.length : 0 })}</span>
+                <span>{t('agentManager.list.skillCount', { count: Array.isArray(agent.skill_ids) ? agent.skill_ids.length : 0 })}</span>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -64,7 +66,7 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                     : 'bg-muted hover:bg-accent'
                 }`}
               >
-                会话
+                {t('agentManager.list.inspectSessions')}
               </button>
               <button
                 onClick={() => onEdit(agent)}
@@ -75,7 +77,7 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                     : 'bg-muted hover:bg-accent'
                 }`}
               >
-                编辑
+                {t('aiModelManager.action.edit')}
               </button>
               <button
                 onClick={() => {
@@ -88,7 +90,7 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
                     : 'bg-red-500/10 text-red-600 hover:bg-red-500/15'
                 }`}
               >
-                删除
+                {t('aiModelManager.action.delete')}
               </button>
             </div>
           </div>

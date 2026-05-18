@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { ProjectPreviewFileContent } from './previewPane/ProjectPreviewFileContent';
 import { ProjectPreviewHeader } from './previewPane/ProjectPreviewHeader';
 import { ProjectPreviewNavigation } from './previewPane/ProjectPreviewNavigation';
@@ -46,6 +47,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   onOpenNavLocation,
   onOpenDocumentSymbol,
 }) => {
+  const { t } = useI18n();
   const [documentSymbolsExpanded, setDocumentSymbolsExpanded] = useState(false);
 
   useEffect(() => {
@@ -65,10 +67,10 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   );
   const navResultLabel = useMemo(() => {
     if (!navResult || !navRequestKind) return null;
-    if (navRequestKind === 'definition') return '定义结果';
-    if (navRequestKind === 'references') return '引用结果';
-    return '导航结果';
-  }, [navRequestKind, navResult]);
+    if (navRequestKind === 'definition') return t('projectExplorer.preview.nav.definition');
+    if (navRequestKind === 'references') return t('projectExplorer.preview.nav.references');
+    return t('projectExplorer.preview.nav.default');
+  }, [navRequestKind, navResult, t]);
   const documentSymbolCount = documentSymbols?.symbols?.length || 0;
 
   return (

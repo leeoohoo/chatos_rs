@@ -6,6 +6,7 @@ import {
   isPrimitive,
   truncateText,
 } from './valueUtils';
+import type { UiLocale } from '../../i18n/messages';
 
 const renderCardHeader = (title: string, meta?: string) => (
   <div className="tool-card-header">
@@ -18,13 +19,14 @@ export const renderRowsCard = (
   title: string,
   rows: Array<{ key: string; value: string }>,
   fullWidth: boolean = false,
+  locale: UiLocale = 'zh-CN',
 ) => {
   const filtered = rows.filter((row) => row.value.trim().length > 0);
   if (filtered.length === 0) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title, `${filtered.length} 项`)}
+      {renderCardHeader(title, locale === 'zh-CN' ? `${filtered.length} 项` : `${filtered.length} items`)}
       <div className="tool-detail-rows">
         {filtered.map((row) => (
           <div key={`${title}-${row.key}`} className="tool-detail-row">
@@ -54,13 +56,14 @@ export const renderStringListCard = (
   values: string[],
   linkify: boolean = false,
   fullWidth: boolean = false,
+  locale: UiLocale = 'zh-CN',
 ) => {
   const filtered = values.map((item) => item.trim()).filter(Boolean);
   if (filtered.length === 0) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title, `${filtered.length} 项`)}
+      {renderCardHeader(title, locale === 'zh-CN' ? `${filtered.length} 项` : `${filtered.length} items`)}
       <div className="tool-detail-list">
         {filtered.map((item, index) => (
           <div key={`${title}-${index}`} className="tool-detail-item">

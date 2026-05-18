@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AiModelConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
@@ -20,6 +21,7 @@ type AiModelManagerWindow = Window & {
 };
 
 const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externalStore }) => {
+  const { t } = useI18n();
   const internalStoreData = useChatStoreResolved();
   const storeData = externalStore ? externalStore() : internalStoreData;
 
@@ -75,10 +77,12 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
   const handleDeleteServer = async (id: string) => {
     const config = aiModelConfigs.find((c: AiModelConfig) => c.id === id);
     const confirmed = await confirm({
-      title: '删除确认',
-      message: `确定要删除AI模型配置 "${config?.name || 'Unknown'}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: t('aiModelManager.confirmDeleteTitle'),
+      message: t('aiModelManager.confirmDeleteMessage', {
+        name: config?.name || t('common.unknown'),
+      }),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -110,7 +114,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
           <div className="flex items-center space-x-3">
             <BrainIcon />
             <h2 className="text-xl font-semibold text-foreground">
-              AI 模型管理
+              {t('aiModelManager.title')}
             </h2>
           </div>
           <button

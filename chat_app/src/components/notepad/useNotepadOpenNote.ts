@@ -1,10 +1,12 @@
 import { useCallback } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { NoteDetail } from './utils';
 
 interface UseNotepadOpenNoteOptions {
   ensureFolderExpanded: (folderPath: string) => void;
   loadNoteDetail: (noteId: string, options?: { force?: boolean }) => Promise<NoteDetail>;
+  t: TranslateFn;
   setContent: (value: string) => void;
   setDirty: (value: boolean) => void;
   setError: (value: string | null) => void;
@@ -18,6 +20,7 @@ interface UseNotepadOpenNoteOptions {
 export const useNotepadOpenNote = ({
   ensureFolderExpanded,
   loadNoteDetail,
+  t,
   setContent,
   setDirty,
   setError,
@@ -44,7 +47,7 @@ export const useNotepadOpenNote = ({
     ensureFolderExpanded(noteFolder);
     setDirty(false);
   } catch (err) {
-    setError(err instanceof Error ? err.message : '打开笔记失败');
+    setError(err instanceof Error ? err.message : t('notepad.error.open'));
   } finally {
     setLoading(false);
   }
@@ -59,4 +62,5 @@ export const useNotepadOpenNote = ({
   setSelectedNoteId,
   setTagsText,
   setTitle,
+  t,
 ]);

@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { AgentFormData } from './types';
 
 interface AgentManagerFormProps {
@@ -27,6 +28,7 @@ const AgentManagerForm = ({
   onFormDataChange,
   onOpenAiCreate,
 }: AgentManagerFormProps) => {
+  const { t } = useI18n();
   if (!showForm) {
     return (
       <div className="flex items-center gap-2 pb-4">
@@ -34,13 +36,13 @@ const AgentManagerForm = ({
           onClick={onToggleForm}
           className="px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
         >
-          新建智能体
+          {t('agentManager.action.create')}
         </button>
         <button
           onClick={onOpenAiCreate}
           className="px-3 py-2 text-sm rounded-lg bg-muted hover:bg-accent transition-colors"
         >
-          AI 创建
+          {t('agentManager.action.aiCreate')}
         </button>
       </div>
     );
@@ -50,7 +52,7 @@ const AgentManagerForm = ({
     <form onSubmit={(event) => void onSubmit(event)} className="space-y-4 rounded-xl border border-border bg-background/40 p-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">
-          {editingAgentId ? '编辑智能体' : '新建智能体'}
+          {editingAgentId ? t('agentManager.form.titleEdit') : t('agentManager.form.titleCreate')}
         </h3>
         <div className="flex items-center gap-2">
           <button
@@ -58,63 +60,63 @@ const AgentManagerForm = ({
             onClick={onOpenAiCreate}
             className="px-2.5 py-1.5 text-xs rounded-md bg-muted hover:bg-accent transition-colors"
           >
-            AI 创建
+            {t('agentManager.action.aiCreate')}
           </button>
           <button
             type="button"
             onClick={onCancel}
             className="px-2.5 py-1.5 text-xs rounded-md bg-muted hover:bg-accent transition-colors"
           >
-            取消
+            {t('common.cancel')}
           </button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="space-y-1">
-          <span className="text-xs text-muted-foreground">名称</span>
+          <span className="text-xs text-muted-foreground">{t('agentManager.form.name')}</span>
           <input
             value={formData.name}
             onChange={(event) => onFormDataChange({ name: event.target.value })}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="输入智能体名称"
+            placeholder={t('agentManager.form.namePlaceholder')}
           />
         </label>
         <label className="space-y-1">
-          <span className="text-xs text-muted-foreground">分类</span>
+          <span className="text-xs text-muted-foreground">{t('agentManager.form.category')}</span>
           <input
             value={formData.category}
             onChange={(event) => onFormDataChange({ category: event.target.value })}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="输入分类"
+            placeholder={t('agentManager.form.categoryPlaceholder')}
           />
         </label>
       </div>
 
       <label className="space-y-1 block">
-        <span className="text-xs text-muted-foreground">描述</span>
+        <span className="text-xs text-muted-foreground">{t('agentManager.form.description')}</span>
         <input
           value={formData.description}
           onChange={(event) => onFormDataChange({ description: event.target.value })}
           className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="补充用途和边界"
+          placeholder={t('agentManager.form.descriptionPlaceholder')}
         />
       </label>
 
       <label className="space-y-1 block">
-        <span className="text-xs text-muted-foreground">角色定义</span>
+        <span className="text-xs text-muted-foreground">{t('agentManager.form.roleDefinition')}</span>
         <textarea
           value={formData.roleDefinition}
           onChange={(event) => onFormDataChange({ roleDefinition: event.target.value })}
           rows={5}
           className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="描述这个智能体的职责、行为边界和输出风格"
+          placeholder={t('agentManager.form.roleDefinitionPlaceholder')}
         />
       </label>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="space-y-1 block">
-          <span className="text-xs text-muted-foreground">插件引用</span>
+          <span className="text-xs text-muted-foreground">{t('agentManager.form.pluginSources')}</span>
           <select
             multiple
             value={formData.pluginSources}
@@ -133,7 +135,7 @@ const AgentManagerForm = ({
         </label>
 
         <label className="space-y-1 block">
-          <span className="text-xs text-muted-foreground">技能引用</span>
+          <span className="text-xs text-muted-foreground">{t('agentManager.form.skillIds')}</span>
           <select
             multiple
             value={formData.skillIds}
@@ -159,7 +161,7 @@ const AgentManagerForm = ({
           onChange={(event) => onFormDataChange({ enabled: event.target.checked })}
           className="rounded border-border"
         />
-        启用
+        {t('agentManager.form.enabled')}
       </label>
 
       <div className="flex items-center justify-end gap-2">
@@ -168,13 +170,13 @@ const AgentManagerForm = ({
           onClick={onCancel}
           className="px-3 py-2 text-sm rounded-lg bg-muted hover:bg-accent transition-colors"
         >
-          取消
+          {t('common.cancel')}
         </button>
         <button
           type="submit"
           className="px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
         >
-          {editingAgentId ? '保存修改' : '创建智能体'}
+          {editingAgentId ? t('agentManager.form.submitEdit') : t('agentManager.form.submitCreate')}
         </button>
       </div>
     </form>

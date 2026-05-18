@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import SystemContextSidebar from './systemContextEditor/SystemContextSidebar';
 import SystemContextWorkspace from './systemContextEditor/SystemContextWorkspace';
@@ -38,6 +39,7 @@ function useResolvedStore(externalStore?: SystemContextEditorProps['store']): Sy
 }
 
 const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, store: externalStore }) => {
+  const { t } = useI18n();
   const storeData = useResolvedStore(externalStore);
   const {
     viewMode,
@@ -75,8 +77,8 @@ const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, stor
         <div className="flex items-center gap-3">
           <DocumentIcon />
           <div>
-            <h2 className="text-xl font-semibold">系统提示词管理</h2>
-            <p className="text-xs text-muted-foreground">全屏工作区（AI 生成 / 优化 / 评估）</p>
+            <h2 className="text-xl font-semibold">{t('systemContext.title')}</h2>
+            <p className="text-xs text-muted-foreground">{t('systemContext.subtitle')}</p>
           </div>
         </div>
         <button
@@ -84,7 +86,7 @@ const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, stor
           className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-md hover:bg-accent"
         >
           <XMarkIcon />
-          <span>返回</span>
+          <span>{t('systemContext.back')}</span>
         </button>
       </div>
 
@@ -123,21 +125,21 @@ const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, stor
                 disabled={assistantBusy}
                 className="px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
               >
-                {assistantBusy ? '执行中...' : 'AI 生成'}
+                {assistantBusy ? t('systemContext.action.running') : t('systemContext.action.generate')}
               </button>
               <button
                 onClick={handleAiOptimize}
                 disabled={assistantBusy}
                 className="px-3 py-2 text-sm border border-border rounded-md hover:bg-accent disabled:opacity-50"
               >
-                AI 优化
+                {t('systemContext.action.optimize')}
               </button>
               <button
                 onClick={handleAiEvaluate}
                 disabled={assistantBusy}
                 className="px-3 py-2 text-sm border border-border rounded-md hover:bg-accent disabled:opacity-50"
               >
-                AI 评估
+                {t('systemContext.action.evaluate')}
               </button>
             </div>
             <div className="flex items-center gap-2">
@@ -145,7 +147,7 @@ const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, stor
                 onClick={handleBackToList}
                 className="px-3 py-2 text-sm border border-border rounded-md hover:bg-accent"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSave}
@@ -153,7 +155,7 @@ const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, stor
                 className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
               >
                 <SaveIcon />
-                <span>{isSaving ? '保存中...' : '保存'}</span>
+                <span>{isSaving ? t('systemContext.action.saving') : t('systemContext.action.save')}</span>
               </button>
             </div>
           </div>

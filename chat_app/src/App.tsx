@@ -7,15 +7,17 @@ import { useAuthStore } from './lib/auth/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DialogProvider } from './components/ui/DialogProvider';
 import { RealtimeProvider } from './lib/realtime/RealtimeProvider';
+import { I18nProvider, useI18n } from './i18n/I18nProvider';
 import './styles/index.css';
 
 interface AppProps {
   projectId?: string;
 }
 
-function App({ projectId }: AppProps = {}) {
+function AppShell({ projectId }: AppProps = {}) {
   const { actualTheme } = useTheme();
   const { user, initialized, bootstrap, accessToken } = useAuthStore();
+  const { t } = useI18n();
 
   // 确保主题正确应用
   useEffect(() => {
@@ -30,7 +32,7 @@ function App({ projectId }: AppProps = {}) {
   if (!initialized) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-500">
-        正在初始化...
+        {t('app.initializing')}
       </div>
     );
   }
@@ -51,6 +53,14 @@ function App({ projectId }: AppProps = {}) {
         </DialogProvider>
       </RealtimeProvider>
     </ErrorBoundary>
+  );
+}
+
+function App({ projectId }: AppProps = {}) {
+  return (
+    <I18nProvider>
+      <AppShell projectId={projectId} />
+    </I18nProvider>
   );
 }
 

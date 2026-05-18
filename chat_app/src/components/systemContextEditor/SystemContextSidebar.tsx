@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import { readContextName, readContextUpdatedAt } from './helpers';
 import type { SystemContextLike } from './types';
 
@@ -34,6 +35,8 @@ export default function SystemContextSidebar({
   onSelectContext,
   onDeleteContext,
 }: SystemContextSidebarProps) {
+  const { t } = useI18n();
+
   return (
     <aside className="w-80 min-w-80 border-r border-border flex flex-col">
       <div className="p-4 border-b border-border space-y-3">
@@ -42,22 +45,22 @@ export default function SystemContextSidebar({
           className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
         >
           <PlusIcon />
-          <span>新建提示词</span>
+          <span>{t('systemContext.list.create')}</span>
         </button>
         <input
           type="text"
           value={searchKeyword}
           onChange={(event) => onSearchKeywordChange(event.target.value)}
-          placeholder="搜索提示词"
+          placeholder={t('systemContext.list.searchPlaceholder')}
           className="w-full px-3 py-2 text-sm border border-input bg-background rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="p-4 text-sm text-muted-foreground">加载中...</div>
+          <div className="p-4 text-sm text-muted-foreground">{t('systemContext.list.loading')}</div>
         ) : filteredContexts.length === 0 ? (
-          <div className="p-4 text-sm text-muted-foreground">暂无提示词</div>
+          <div className="p-4 text-sm text-muted-foreground">{t('systemContext.list.empty')}</div>
         ) : (
           <ul className="divide-y divide-border">
             {filteredContexts.map((context) => {
@@ -71,13 +74,13 @@ export default function SystemContextSidebar({
                     >
                       <p className="text-sm font-medium truncate">{readContextName(context)}</p>
                       <p className="text-xs text-muted-foreground truncate">
-                        更新时间：{readContextUpdatedAt(context)}
+                        {t('systemContext.list.updatedAt', { time: readContextUpdatedAt(context) })}
                       </p>
                     </button>
                     <button
                       onClick={() => onDeleteContext(context)}
                       className="p-1 text-muted-foreground hover:text-red-600"
-                      title="删除"
+                      title={t('aiModelManager.action.delete')}
                     >
                       <TrashIcon />
                     </button>

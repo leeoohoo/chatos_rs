@@ -46,6 +46,7 @@ describe('agentsPage helpers', () => {
       {
         project_1: '项目一',
       },
+      ((key: string) => key === 'agentManager.session.unassignedProject' ? '未归属项目' : '未命名项目'),
     );
 
     expect(groups).toHaveLength(2);

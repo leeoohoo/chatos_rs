@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { AuthUser } from '../../lib/auth/authStore';
 import { ThemeToggle } from '../ThemeToggle';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface HeaderBarProps {
   headerTitle: string;
@@ -31,6 +32,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   onLogout,
   user,
 }) => {
+  const { t } = useI18n();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -39,8 +41,8 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
     || user?.username?.trim()
     || user?.email?.trim()
     || user?.id
-    || '当前用户'
-  ), [user]);
+    || t('common.currentUser')
+  ), [t, user]);
   const userInitial = useMemo(() => (
     userDisplayName.trim().charAt(0).toUpperCase() || 'U'
   ), [userDisplayName]);
@@ -67,7 +69,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         <button
           onClick={onToggleSidebar}
           className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-          title={sidebarOpen ? '收起联系人列表' : '展开联系人列表'}
+          title={sidebarOpen ? t('header.toggleSidebar.close') : t('header.toggleSidebar.open')}
         >
           <svg className={`w-5 h-5 transition-transform ${sidebarOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 18L9 12l6-6" />
@@ -87,7 +89,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         <button
           onClick={onOpenNotepad}
           className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-          title="打开记事本"
+          title={t('header.openNotepad')}
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M7 3h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V5a2 2 0 0 1 2-2z" strokeWidth="1.8" />
@@ -96,7 +98,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         <button
           onClick={onOpenApplications}
           className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-          title="打开应用列表"
+          title={t('header.openApplications')}
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M4 5h6v14H4z" strokeWidth="2" />
@@ -110,7 +112,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
               setShowUserMenu((prev) => !prev);
             }}
             className="flex items-center gap-2 pl-2 pr-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-            title="当前用户"
+            title={t('header.currentUser')}
           >
             <span className="w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-semibold flex items-center justify-center">
               {userInitial}
@@ -123,7 +125,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             <div className="absolute right-0 mt-2 w-64 bg-popover border border-border rounded-lg shadow-lg z-50 py-1">
               <div className="px-3 py-2 border-b border-border">
                 <div className="text-sm font-medium text-foreground truncate">
-                  {user?.display_name?.trim() || '未设置昵称'}
+                  {user?.display_name?.trim() || t('header.unnamedUser')}
                 </div>
                 <div className="text-xs text-muted-foreground truncate mt-0.5">
                   {user?.username || user?.email || user?.id}
@@ -136,7 +138,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
-                MCP 服务管理
+                {t('header.mcpManager')}
               </button>
               <button
                 onClick={() => {
@@ -145,7 +147,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
-                智能体管理
+                {t('header.agentManager')}
               </button>
               <button
                 onClick={() => {
@@ -154,7 +156,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
-                AI 模型管理
+                {t('header.aiModelManager')}
               </button>
               <button
                 onClick={() => {
@@ -163,7 +165,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
-                系统上下文设置
+                {t('header.systemContext')}
               </button>
               <button
                 onClick={() => {
@@ -172,7 +174,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 }}
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
-                运行参数
+                {t('header.userSettings')}
               </button>
               <div className="my-1 border-t border-border" />
               <button
@@ -182,7 +184,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 }}
                 className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-accent"
               >
-                退出登录
+                {t('header.logout')}
               </button>
             </div>
           ) : null}

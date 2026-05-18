@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import type { AgentConversationState } from './types';
 import { formatMessageTime, getMessageRoleLabel } from './sessionHelpers';
 
@@ -12,6 +13,7 @@ const AgentConversationPanel = ({
   onClose,
   onSelectSession,
 }: AgentConversationPanelProps) => {
+  const { t } = useI18n();
   if (!state.open) {
     return null;
   }
@@ -23,7 +25,7 @@ const AgentConversationPanel = ({
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
             <div className="min-w-0">
-              <div className="text-base font-semibold text-foreground">智能体会话</div>
+              <div className="text-base font-semibold text-foreground">{t('agentManager.conversation.title')}</div>
               <div className="truncate text-sm text-muted-foreground">
                 {state.agent?.name || '-'}
               </div>
@@ -32,7 +34,7 @@ const AgentConversationPanel = ({
               onClick={onClose}
               className="rounded-lg bg-muted px-3 py-2 text-sm hover:bg-accent transition-colors"
             >
-              关闭
+              {t('common.close')}
             </button>
           </div>
 
@@ -40,11 +42,11 @@ const AgentConversationPanel = ({
             <div className="border-b border-border lg:border-b-0 lg:border-r border-border min-h-0 overflow-y-auto p-4">
               {state.loading ? (
                 <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  正在加载会话...
+                  {t('agentManager.conversation.loadingSessions')}
                 </div>
               ) : state.groupedSessions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  这个智能体还没有找到可查看的会话。
+                  {t('agentManager.conversation.emptySessions')}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -67,7 +69,7 @@ const AgentConversationPanel = ({
                           {group.session.title?.trim() || group.session.id}
                         </div>
                         <div className="mt-2 text-[11px] text-muted-foreground">
-                          更新于 {group.session.updatedAt.toLocaleString()}
+                          {t('agentManager.conversation.updatedAt', { time: group.session.updatedAt.toLocaleString() })}
                         </div>
                       </button>
                     );
@@ -79,11 +81,11 @@ const AgentConversationPanel = ({
             <div className="min-h-0 overflow-y-auto p-4">
               {state.messagesLoading ? (
                 <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  正在加载消息...
+                  {t('agentManager.conversation.loadingMessages')}
                 </div>
               ) : state.messages.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  这个会话目前没有消息记录。
+                  {t('agentManager.conversation.emptyMessages')}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -91,12 +93,12 @@ const AgentConversationPanel = ({
                     <div key={message.id} className="rounded-xl border border-border bg-background/40 p-4">
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <span className="rounded-full bg-muted px-2 py-0.5 text-foreground">
-                          {getMessageRoleLabel(message.role)}
+                          {getMessageRoleLabel(message.role, t)}
                         </span>
-                        <span>{formatMessageTime(message)}</span>
+                        <span>{formatMessageTime(message, t)}</span>
                       </div>
                       <div className="mt-3 whitespace-pre-wrap break-words text-sm text-foreground">
-                        {message.content?.trim() || '[空内容]'}
+                        {message.content?.trim() || t('agentManager.conversation.emptyContent')}
                       </div>
                     </div>
                   ))}

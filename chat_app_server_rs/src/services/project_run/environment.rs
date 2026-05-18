@@ -1418,6 +1418,32 @@ fn selected_or_first_option<'a>(
     })
 }
 
+fn normalize_path_entries(raw: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
+
+    for path in std::env::split_paths(raw) {
+        let normalized = normalize_path(path.as_path());
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
+            continue;
+        }
+        entries.push(normalized);
+    }
+
+    entries
+}
+
+fn join_path_entries(entries: &[String]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    let joined = std::env::join_paths(entries.iter().map(PathBuf::from));
+    joined
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|_| entries.join(if cfg!(windows) { ";" } else { ":" }))
+}
+
 fn prepend_path_entry(env: &mut HashMap<String, String>, value: &str) {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1427,11 +1453,15 @@ fn prepend_path_entry(env: &mut HashMap<String, String>, value: &str) {
         .get("PATH")
         .cloned()
         .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
-    if existing.split(':').any(|segment| segment.trim() == trimmed) {
-        env.insert("PATH".to_string(), existing);
+
+    let mut entries = normalize_path_entries(existing.as_str());
+    if entries.iter().any(|segment| segment == trimmed) {
+        env.insert("PATH".to_string(), join_path_entries(entries.as_slice()));
         return;
     }
-    env.insert("PATH".to_string(), format!("{trimmed}:{existing}"));
+
+    entries.insert(0, trimmed.to_string());
+    env.insert("PATH".to_string(), join_path_entries(entries.as_slice()));
 }
 
 fn push_validation_issue(
@@ -2065,4 +2095,59 @@ pub(crate) async fn load_environment_selection(
     project_id: &str,
 ) -> Result<Option<ProjectRunEnvironmentSelection>, String> {
     project_run_environment_settings::get_by_project_id(project_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{join_path_entries, normalize_path_entries, prepend_path_entry};
+    use std::collections::HashMap;
+
+    #[test]
+    fn normalize_path_entries_deduplicates_preserving_order() {
+        let entries = normalize_path_entries("/usr/local/bin:/usr/bin:/usr/local/bin:/bin");
+        assert_eq!(entries, vec![
+            "/usr/local/bin".to_string(),
+            "/usr/bin".to_string(),
+            "/bin".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn prepend_path_entry_adds_once() {
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string());
+
+        prepend_path_entry(&mut env, "/opt/homebrew/bin");
+        prepend_path_entry(&mut env, "/usr/local/bin");
+
+        let path = env.get("PATH").cloned().unwrap_or_default();
+        let normalized = normalize_path_entries(path.as_str());
+        assert_eq!(normalized.first().map(String::as_str), Some("/opt/homebrew/bin"));
+        assert_eq!(
+            normalized,
+            vec![
+                "/opt/homebrew/bin".to_string(),
+                "/usr/local/bin".to_string(),
+                "/usr/bin".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn join_path_entries_round_trips_simple_paths() {
+        let joined = join_path_entries(&[
+            "/opt/homebrew/bin".to_string(),
+            "/usr/local/bin".to_string(),
+            "/usr/bin".to_string(),
+        ]);
+        let normalized = normalize_path_entries(joined.as_str());
+        assert_eq!(
+            normalized,
+            vec![
+                "/opt/homebrew/bin".to_string(),
+                "/usr/local/bin".to_string(),
+                "/usr/bin".to_string(),
+            ]
+        );
+    }
 }

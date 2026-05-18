@@ -10,6 +10,7 @@ pub const USER_SETTING_KEYS: &[&str] = &[
     "HISTORY_LIMIT",
     "CHAT_MAX_TOKENS",
     "INTERNAL_CONTEXT_LOCALE",
+    "UI_LOCALE",
 ];
 
 fn coerce(value: &Value, key: &str) -> Value {
@@ -22,6 +23,14 @@ fn coerce(value: &Value, key: &str) -> Value {
             .unwrap_or(Value::Null),
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
         "INTERNAL_CONTEXT_LOCALE" => Value::String(
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|item| matches!(*item, "zh-CN" | "en-US"))
+                .unwrap_or("zh-CN")
+                .to_string(),
+        ),
+        "UI_LOCALE" => Value::String(
             value
                 .as_str()
                 .map(str::trim)
@@ -56,6 +65,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         "HISTORY_LIMIT": history_limit,
         "CHAT_MAX_TOKENS": chat_max_tokens,
         "INTERNAL_CONTEXT_LOCALE": "zh-CN",
+        "UI_LOCALE": "zh-CN",
     }))
 }
 

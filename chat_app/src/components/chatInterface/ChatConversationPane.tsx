@@ -15,6 +15,7 @@ import type {
   SendMessageHandler,
   Session,
 } from '../../types';
+import { useI18n } from '../../i18n/I18nProvider';
 
 type SummaryPaneProps = ComponentProps<typeof SummaryPane>;
 type ChatComposerPanelProps = ComponentProps<typeof ChatComposerPanel>;
@@ -172,6 +173,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   onCloseSummary,
   toggleSidebar,
 }) => {
+  const { t } = useI18n();
   void currentContactId;
   void onRunReviewRepair;
   void reviewRepairRunning;
@@ -183,16 +185,16 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <h2 className="text-xl font-semibold text-muted-foreground mb-2">
-            欢迎使用 AI 聊天
+            {t('chat.welcomeTitle')}
           </h2>
           <p className="text-muted-foreground mb-4">
-            点击左上角按钮选择联系人，或先添加联系人开始对话
+            {t('chat.welcomeDescription')}
           </p>
           <button
             onClick={toggleSidebar}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
           >
-            展开联系人列表
+            {t('chat.expandSidebar')}
           </button>
         </div>
       </div>

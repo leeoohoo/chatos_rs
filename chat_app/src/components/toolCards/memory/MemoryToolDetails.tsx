@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import { RowsCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
 import { asArray, asNumber, asRecord, asString } from '../shared/value';
 
@@ -70,6 +72,7 @@ export const MemoryToolDetails: React.FC<MemoryToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -77,7 +80,7 @@ export const MemoryToolDetails: React.FC<MemoryToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Command"
+          title={translateToolTitle('Command', locale)}
           rows={[
             { key: 'ref', value: asString(record.command_ref ?? record.commandRef).trim() },
             { key: 'name', value: asString(record.name).trim() },
@@ -88,8 +91,8 @@ export const MemoryToolDetails: React.FC<MemoryToolDetailsProps> = ({
           ]}
           fullWidth
         />
-        <TextBlockCard title="Command description" content={asString(record.description)} fullWidth={false} />
-        <TextBlockCard title="Command content" content={asString(record.content)} />
+        <TextBlockCard title={translateToolTitle('Command description', locale)} content={asString(record.description)} fullWidth={false} />
+        <TextBlockCard title={translateToolTitle('Command content', locale)} content={asString(record.content)} />
       </div>
     );
   }
@@ -98,7 +101,7 @@ export const MemoryToolDetails: React.FC<MemoryToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Skill"
+          title={translateToolTitle('Skill', locale)}
           rows={[
             { key: 'ref', value: asString(record.skill_ref ?? record.skillRef).trim() },
             { key: 'name', value: asString(record.name).trim() },
@@ -109,8 +112,8 @@ export const MemoryToolDetails: React.FC<MemoryToolDetailsProps> = ({
           ]}
           fullWidth
         />
-        <TextBlockCard title="Skill description" content={asString(record.description)} fullWidth={false} />
-        <TextBlockCard title="Skill content" content={asString(record.content)} />
+        <TextBlockCard title={translateToolTitle('Skill description', locale)} content={asString(record.description)} fullWidth={false} />
+        <TextBlockCard title={translateToolTitle('Skill content', locale)} content={asString(record.content)} />
       </div>
     );
   }
@@ -119,7 +122,7 @@ export const MemoryToolDetails: React.FC<MemoryToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Plugin"
+          title={translateToolTitle('Plugin', locale)}
           rows={[
             { key: 'ref', value: asString(record.plugin_ref ?? record.pluginRef).trim() },
             { key: 'name', value: asString(record.name).trim() },
@@ -133,8 +136,8 @@ export const MemoryToolDetails: React.FC<MemoryToolDetailsProps> = ({
           ]}
           fullWidth
         />
-        <TextBlockCard title="Plugin description" content={asString(record.description)} fullWidth={false} />
-        <TextBlockCard title="Plugin content" content={asString(record.content)} />
+        <TextBlockCard title={translateToolTitle('Plugin description', locale)} content={asString(record.description)} fullWidth={false} />
+        <TextBlockCard title={translateToolTitle('Plugin content', locale)} content={asString(record.content)} />
         <PluginCommandListCard items={asArray(record.commands)} />
         <RelatedSkillsCard items={asArray(record.related_skills ?? record.relatedSkills)} />
       </div>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { Application } from '../types';
 import ApplicationsBrowseView from './applicationsPanel/ApplicationsBrowseView';
@@ -24,6 +25,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
   layout = 'modal',
   onApplicationSelect,
 }) => {
+    const { t } = useI18n();
     const storeData: ApplicationPanelStore = useChatStoreResolved();
 
     const {
@@ -100,7 +102,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
     const shouldRender = layout === 'modal' ? !!isOpen : true;
     if (!shouldRender) return null;
     const effectiveManageMode = manageOnly ? true : showManageMode;
-    const effectiveTitle = title ?? (effectiveManageMode ? '应用管理' : '应用列表');
+    const effectiveTitle = title ?? (effectiveManageMode ? t('applications.manageTitle') : t('applications.title'));
 
     // modal 布局：保留原来的居中弹窗
     if (layout === 'modal') {
@@ -119,13 +121,13 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                                     onClick={handleToggleManageMode}
                                     className="px-3 py-1.5 text-sm rounded bg-muted hover:bg-accent transition-colors"
                                 >
-                                    {effectiveManageMode ? '浏览模式' : '管理模式'}
+                                    {effectiveManageMode ? t('applications.mode.browse') : t('applications.mode.manage')}
                                 </button>
                             )}
                             <button
                                 onClick={onClose}
                                 className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-                                title="关闭"
+                                title={t('common.close')}
                             >
                                 <XMarkIcon />
                             </button>
@@ -172,14 +174,14 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                             onClick={handleToggleManageMode}
                             className="px-2 py-1 text-xs rounded bg-muted hover:bg-accent transition-colors"
                         >
-                            {effectiveManageMode ? '浏览模式' : '管理模式'}
+                            {effectiveManageMode ? t('applications.mode.browse') : t('applications.mode.manage')}
                         </button>
                     )}
                     {onClose && (
                         <button
                             onClick={onClose}
                             className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-                            title="关闭"
+                            title={t('common.close')}
                         >
                             <XMarkIcon className="w-4 h-4" />
                         </button>

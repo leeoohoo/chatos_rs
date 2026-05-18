@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface RemoteVerificationModalProps {
   isOpen: boolean;
@@ -19,6 +20,8 @@ const RemoteVerificationModal: React.FC<RemoteVerificationModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  const { t } = useI18n();
+
   if (!isOpen) {
     return null;
   }
@@ -27,9 +30,9 @@ const RemoteVerificationModal: React.FC<RemoteVerificationModalProps> = ({
     <div className="fixed inset-0 z-[70] flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50" onClick={submitting ? undefined : onClose} />
       <div className="relative w-[520px] max-w-[92vw] rounded-xl border border-border bg-card p-6 shadow-2xl">
-        <h3 className="text-xl font-semibold text-foreground">Two-Step Verification required</h3>
+        <h3 className="text-xl font-semibold text-foreground">{t('remoteVerification.title')}</h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          {prompt?.trim() || 'Please input verification code (SMS / OTP)'}
+          {prompt?.trim() || t('remoteVerification.promptFallback')}
         </p>
 
         <input
@@ -38,7 +41,7 @@ const RemoteVerificationModal: React.FC<RemoteVerificationModalProps> = ({
           value={code}
           onChange={(event) => onCodeChange(event.target.value)}
           className="mt-4 w-full rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="请输入验证码"
+          placeholder={t('remoteVerification.codePlaceholder')}
           disabled={submitting}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
@@ -54,7 +57,7 @@ const RemoteVerificationModal: React.FC<RemoteVerificationModalProps> = ({
             disabled={submitting}
             className="rounded bg-muted px-4 py-2 text-muted-foreground hover:bg-accent disabled:opacity-50"
           >
-            Close
+            {t('remoteVerification.close')}
           </button>
           <button
             type="button"
@@ -62,7 +65,7 @@ const RemoteVerificationModal: React.FC<RemoteVerificationModalProps> = ({
             disabled={submitting || !code.trim()}
             className="rounded bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
-            {submitting ? 'Continue...' : 'Continue'}
+            {submitting ? t('remoteVerification.continuing') : t('remoteVerification.continue')}
           </button>
         </div>
       </div>

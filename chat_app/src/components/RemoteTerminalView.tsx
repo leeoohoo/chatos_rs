@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { useI18n } from '../i18n/I18nProvider';
 import {
   resolveRemoteConnectionErrorMessage,
   resolveRemoteTerminalWsErrorMessage,
@@ -28,6 +29,7 @@ interface RemoteTerminalViewProps {
 }
 
 const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) => {
+  const { t } = useI18n();
   const currentRemoteConnection = useChatStoreSelector((state) => state.currentRemoteConnection);
   const openRemoteSftp = useChatStoreSelector((state) => state.openRemoteSftp);
   const apiClientFromContext = useChatApiClientFromContext();
@@ -73,11 +75,11 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setConnectionState('disconnected');
       setBusy(false);
     } catch (error) {
-      setErrorMessage(resolveRemoteConnectionErrorMessage(error, '断开连接失败'));
+      setErrorMessage(resolveRemoteConnectionErrorMessage(error, t('remote.terminal.disconnectFailed')));
     } finally {
       setDisconnecting(false);
     }
-  }, [client, currentRemoteConnection?.id, disconnecting]);
+  }, [client, currentRemoteConnection?.id, disconnecting, t]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -247,12 +249,12 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
             setBusy(false);
             setErrorMessage(
               verificationCodeForAttempt
-                ? '验证码未通过或已过期，请重新输入后继续连接'
-                : '需要验证码，请输入后继续连接',
+                ? t('remote.common.needsVerificationRetry')
+                : t('remote.common.needsVerification'),
             );
             return;
           }
-          setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, '远端终端错误'));
+          setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, t('remote.terminal.wsError')));
           return;
         }
       } catch {
@@ -264,7 +266,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       if (socketRef.current !== ws) return;
       setConnectionState('error');
       setBusy(false);
-      setErrorMessage('远端终端连接异常，请重试');
+      setErrorMessage(t('remote.terminal.connectionError'));
     };
 
     ws.onclose = () => {
@@ -279,12 +281,12 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       }
       closeWebSocketSafely(ws);
     };
-  }, [currentRemoteConnection?.id, apiBaseUrl, accessToken, connectSeq]);
+  }, [currentRemoteConnection?.id, apiBaseUrl, accessToken, connectSeq, t]);
 
   if (!currentRemoteConnection) {
     return (
       <div className={cn('flex h-full items-center justify-center text-muted-foreground', className)}>
-        请选择一个远端连接
+        {t('remote.common.chooseConnection')}
       </div>
     );
   }

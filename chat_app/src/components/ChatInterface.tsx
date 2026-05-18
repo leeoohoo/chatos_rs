@@ -7,6 +7,7 @@ import ChatInterfaceOverlays from './chatInterface/ChatInterfaceOverlays';
 import { useChatInterfaceModel } from './chatInterface/useChatInterfaceModel';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
+import { useI18n } from '../i18n/I18nProvider';
 
 const SystemContextEditor = lazy(() => import('./SystemContextEditor'));
 
@@ -15,6 +16,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onMessageSend,
   customRenderer,
 }) => {
+  const { t } = useI18n();
   const {
     user,
     logout,
@@ -58,7 +60,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return (
       <Suspense fallback={(
         <div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">
-          系统提示词工作区加载中...
+          {t('chat.systemContextLoading')}
         </div>
       )}>
         <SystemContextEditor onClose={() => setShowSystemContextEditor(false)} />

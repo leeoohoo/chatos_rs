@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import type { AiModelListProps } from './types';
 import { BrainIcon, PencilIcon, TrashIcon } from './icons';
 
@@ -7,12 +8,13 @@ const AiModelList = ({
   onEdit,
   onDelete,
 }: AiModelListProps) => {
+  const { t } = useI18n();
   if (aiModelConfigs.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         <BrainIcon />
-        <p className="mt-2">暂无 AI 模型配置</p>
-        <p className="text-sm">点击上方按钮添加第一个模型</p>
+        <p className="mt-2">{t('aiModelManager.emptyTitle')}</p>
+        <p className="text-sm">{t('aiModelManager.emptyDescription')}</p>
       </div>
     );
   }
@@ -47,17 +49,17 @@ const AiModelList = ({
                   )}
                   {config.provider === 'gpt' && config.thinking_level && (
                     <span className="rounded bg-accent px-1.5 py-0.5">
-                      thinking:{config.thinking_level}
+                      {t('aiModelManager.badge.thinking', { value: config.thinking_level })}
                     </span>
                   )}
                   {config.supports_images && (
-                    <span className="rounded bg-accent px-1.5 py-0.5">图片</span>
+                    <span className="rounded bg-accent px-1.5 py-0.5">{t('aiModelManager.badge.images')}</span>
                   )}
                   {config.supports_reasoning && (
-                    <span className="rounded bg-accent px-1.5 py-0.5">推理</span>
+                    <span className="rounded bg-accent px-1.5 py-0.5">{t('aiModelManager.badge.reasoning')}</span>
                   )}
                   {config.supports_responses && (
-                    <span className="rounded bg-accent px-1.5 py-0.5">Responses</span>
+                    <span className="rounded bg-accent px-1.5 py-0.5">{t('aiModelManager.badge.responses')}</span>
                   )}
                 </div>
               )}
@@ -73,13 +75,13 @@ const AiModelList = ({
                   : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
               }`}
             >
-              {config.enabled ? '已启用' : '已禁用'}
+              {config.enabled ? t('aiModelManager.status.enabled') : t('aiModelManager.status.disabled')}
             </button>
 
             <button
               onClick={() => onEdit(config)}
               className="p-2 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 rounded transition-colors"
-              title="编辑"
+              title={t('aiModelManager.action.edit')}
             >
               <PencilIcon />
             </button>
@@ -87,7 +89,7 @@ const AiModelList = ({
             <button
               onClick={() => void onDelete(config.id)}
               className="p-2 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900 rounded transition-colors"
-              title="删除"
+              title={t('aiModelManager.action.delete')}
             >
               <TrashIcon />
             </button>

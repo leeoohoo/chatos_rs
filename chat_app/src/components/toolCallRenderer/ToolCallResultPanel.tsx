@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import { ToolResultSummaryStack } from './ToolResultSummaryStack';
 import { SectionIcon } from './ToolCallIcons';
@@ -35,14 +36,17 @@ export const ToolCallResultPanel: React.FC<ToolCallResultPanelProps> = ({
   processSummary,
   renderContext,
   resultRenderer,
-}) => (
-  <section className="tool-panel-section">
+}) => {
+  const { t } = useI18n();
+
+  return (
+    <section className="tool-panel-section">
     <div className="details-title">
       <span className="tool-section-icon">
         <SectionIcon kind="result" />
       </span>
-      <span className="tool-section-label">结果</span>
-      <span className="tool-section-subtitle">工具返回的结构化内容与摘要</span>
+      <span className="tool-section-label">{t('toolPanel.result')}</span>
+      <span className="tool-section-subtitle">{t('toolPanel.resultHelp')}</span>
     </div>
     {resultSummaryText && (
       <div className="tool-rich-note tool-rich-note--summary">
@@ -59,4 +63,5 @@ export const ToolCallResultPanel: React.FC<ToolCallResultPanelProps> = ({
     />
     {resultRenderer.render(renderContext)}
   </section>
-);
+  );
+};

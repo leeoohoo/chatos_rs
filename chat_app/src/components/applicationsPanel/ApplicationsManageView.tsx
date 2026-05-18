@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import { AppGridIcon } from './icons';
 import type { ApplicationsManageViewProps } from './types';
 
@@ -14,6 +15,8 @@ const ApplicationsManageView = ({
   onEdit,
   onDelete,
 }: ApplicationsManageViewProps) => {
+  const { t } = useI18n();
+
   return (
     <div className="space-y-4">
       <div className={compact ? 'mb-4 flex items-center justify-between' : ''}>
@@ -26,7 +29,7 @@ const ApplicationsManageView = ({
               : 'w-full p-4 border-2 border-dashed border-border rounded-lg hover:border-blue-500 transition-colors flex items-center justify-center space-x-2 text-muted-foreground hover:text-blue-600'
           }
         >
-          <span>{showAddForm ? '取消' : compact ? '新增应用' : '新增应用'}</span>
+          <span>{showAddForm ? t('common.cancel') : t('applications.action.add')}</span>
         </button>
       </div>
 
@@ -37,39 +40,39 @@ const ApplicationsManageView = ({
         >
           <div>
             <label className={`block font-medium text-foreground mb-2 ${compact ? 'text-xs' : 'text-sm'}`}>
-              名称
+              {t('applications.form.name')}
             </label>
             <input
               type="text"
               value={formData.name}
               onChange={(event) => onFormDataChange({ name: event.target.value })}
               className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={compact ? '例如：飞书' : '例如：Jira、GitHub'}
+              placeholder={compact ? t('applications.form.namePlaceholderCompact') : t('applications.form.namePlaceholder')}
               required
             />
           </div>
           <div>
             <label className={`block font-medium text-foreground mb-2 ${compact ? 'text-xs' : 'text-sm'}`}>
-              URL
+              {t('applications.form.url')}
             </label>
             <input
               type="text"
               value={formData.url}
               onChange={(event) => onFormDataChange({ url: event.target.value })}
               className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="https://app.example.com"
+              placeholder={t('applications.form.urlPlaceholder')}
             />
           </div>
           <div>
             <label className={`block font-medium text-foreground mb-2 ${compact ? 'text-xs' : 'text-sm'}`}>
-              图标URL
+              {t('applications.form.iconUrl')}
             </label>
             <input
               type="text"
               value={formData.iconUrl}
               onChange={(event) => onFormDataChange({ iconUrl: event.target.value })}
               className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={compact ? 'https://.../icon.png' : 'https://app.example.com/icon.png'}
+              placeholder={compact ? t('applications.form.iconUrlPlaceholderCompact') : t('applications.form.iconUrlPlaceholder')}
             />
           </div>
           <div className="flex items-center justify-end space-x-2">
@@ -78,7 +81,7 @@ const ApplicationsManageView = ({
               className="px-3 py-2 rounded bg-muted hover:bg-accent"
               onClick={onCancel}
             >
-              取消
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
@@ -86,7 +89,7 @@ const ApplicationsManageView = ({
                 ? 'px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90'
                 : 'px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700'}
             >
-              {editingId ? '保存' : '创建'}
+              {editingId ? t('applications.form.submitEdit') : t('applications.form.submitCreate')}
             </button>
           </div>
         </form>
@@ -122,7 +125,7 @@ const ApplicationsManageView = ({
                   : 'px-2 py-1 text-xs bg-muted rounded hover:bg-accent'}
                 onClick={() => onEdit(app)}
               >
-                编辑
+                {t('aiModelManager.action.edit')}
               </button>
               <button
                 className={compact
@@ -130,7 +133,7 @@ const ApplicationsManageView = ({
                   : 'px-2 py-1 text-xs bg-destructive text-destructive-foreground rounded hover:bg-destructive/90'}
                 onClick={() => void onDelete(app.id)}
               >
-                删除
+                {t('aiModelManager.action.delete')}
               </button>
             </div>
           </div>
@@ -138,7 +141,7 @@ const ApplicationsManageView = ({
         {applications.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
             <AppGridIcon className={compact ? 'w-16 h-16 text-muted-foreground/30 mb-3' : undefined} />
-            <div className="text-sm">{compact ? '暂无应用，点击上方按钮添加。' : '暂无应用，点击上方按钮添加'}</div>
+            <div className="text-sm">{compact ? t('applications.empty.manageCompact') : t('applications.empty.manage')}</div>
           </div>
         )}
       </div>

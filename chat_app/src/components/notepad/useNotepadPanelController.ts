@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useNotepadRealtime } from '../../lib/realtime/useNotepadRealtime';
 import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
@@ -72,6 +73,7 @@ interface UseNotepadPanelControllerResult {
 export const useNotepadPanelController = ({
   isOpen,
 }: UseNotepadPanelControllerParams): UseNotepadPanelControllerResult => {
+  const { t } = useI18n();
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
   const { confirm, prompt } = useDialogService();
@@ -145,15 +147,16 @@ export const useNotepadPanelController = ({
         loadNotes(options),
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载记事本失败');
+      setError(err instanceof Error ? err.message : t('notepad.error.load'));
     } finally {
       setLoading(false);
     }
-  }, [ensureInit, loadFolders, loadNotes, markFoldersStale, markNotesStale]);
+  }, [ensureInit, loadFolders, loadNotes, markFoldersStale, markNotesStale, t]);
 
   const openNote = useNotepadOpenNote({
     ensureFolderExpanded,
     loadNoteDetail,
+    t,
     setContent,
     setDirty,
     setError,
@@ -171,6 +174,7 @@ export const useNotepadPanelController = ({
     getCachedNoteDetail,
     loadNoteDetail,
     selectedNoteId,
+    t,
     title,
     content,
     setError,
@@ -187,6 +191,7 @@ export const useNotepadPanelController = ({
     apiClient,
     confirm,
     content,
+    t,
     ensureFolderExpanded,
     loadNotes,
     markNotesStale,
@@ -334,6 +339,7 @@ export const useNotepadPanelController = ({
     handleContextDeleteSelectedNote,
   } = useNotepadContextMenuController({
     selectedNoteMeta,
+    t,
     setSelectedFolder,
     ensureFolderExpanded,
     createFolder: handleCreateFolderInternal,

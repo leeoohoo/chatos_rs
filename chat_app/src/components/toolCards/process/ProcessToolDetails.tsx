@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import { RowsCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
@@ -84,6 +86,7 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -101,7 +104,7 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Command status"
+          title={translateToolTitle('Command status', locale)}
           rows={[
             { key: 'path', value: asString(record.path).trim() },
             { key: 'background', value: asBoolean(record.background) },
@@ -111,7 +114,7 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
             { key: 'truncated', value: asBoolean(record.truncated) },
           ]}
         />
-        <TextBlockCard title="Output" content={output || outputPreview} />
+        <TextBlockCard title={translateToolTitle('Output', locale)} content={output || outputPreview} />
       </div>
     );
   }
@@ -120,13 +123,13 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Terminal summary"
+          title={translateToolTitle('Terminal summary', locale)}
           rows={[
             { key: 'scope', value: asString(record.result_scope ?? record.resultScope).trim() },
             { key: 'terminals', value: asNumber(record.terminal_count ?? record.terminalCount) },
           ]}
         />
-        <TerminalListCard title="Recent terminals" items={terminals} />
+        <TerminalListCard title={translateToolTitle('Recent terminals', locale)} items={terminals} />
       </div>
     );
   }
@@ -135,7 +138,10 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title={effectiveDisplayName === 'process_list' ? 'Process summary' : 'Process state'}
+          title={translateToolTitle(
+            effectiveDisplayName === 'process_list' ? 'Process summary' : 'Process state',
+            locale,
+          )}
           rows={[
             { key: 'status', value: asString(record.process_status ?? record.status).trim() },
             { key: 'busy', value: asBoolean(record.busy) },
@@ -144,8 +150,8 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
             { key: 'truncated', value: asBoolean(record.truncated) },
           ]}
         />
-        <TerminalListCard title="Processes" items={terminals} />
-        <LogListCard title="Recent logs" items={logs} />
+        <TerminalListCard title={translateToolTitle('Processes', locale)} items={terminals} />
+        <LogListCard title={translateToolTitle('Recent logs', locale)} items={logs} />
       </div>
     );
   }
@@ -154,14 +160,14 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Log window"
+          title={translateToolTitle('Log window', locale)}
           rows={[
             { key: 'showing', value: asString(record.showing).trim() },
             { key: 'total lines', value: asNumber(record.total_lines ?? record.totalLines) },
             { key: 'has more', value: asBoolean(record.has_more ?? record.hasMore) },
           ]}
         />
-        <TextBlockCard title="Process log" content={output} />
+        <TextBlockCard title={translateToolTitle('Process log', locale)} content={output} />
       </div>
     );
   }
@@ -170,7 +176,7 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Wait result"
+          title={translateToolTitle('Wait result', locale)}
           rows={[
             { key: 'status', value: asString(record.wait_status ?? record.waitStatus).trim() },
             { key: 'completed', value: asBoolean(record.completed) },
@@ -179,8 +185,8 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
             { key: 'exit code', value: asNumber(record.exit_code ?? record.exitCode) },
           ]}
         />
-        <TextBlockCard title="Output" content={output || outputPreview} />
-        <TextBlockCard title="Timeout note" content={asString(record.timeout_note ?? record.timeoutNote)} fullWidth={false} />
+        <TextBlockCard title={translateToolTitle('Output', locale)} content={output || outputPreview} />
+        <TextBlockCard title={translateToolTitle('Timeout note', locale)} content={asString(record.timeout_note ?? record.timeoutNote)} fullWidth={false} />
       </div>
     );
   }
@@ -189,7 +195,7 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Input sent"
+          title={translateToolTitle('Input sent', locale)}
           rows={[
             { key: 'status', value: asString(record.operation_status ?? record.operationStatus).trim() },
             { key: 'submit', value: asBoolean(record.submit) },
@@ -205,7 +211,7 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Termination result"
+          title={translateToolTitle('Termination result', locale)}
           rows={[
             { key: 'status', value: asString(record.operation_status ?? record.operationStatus).trim() },
             { key: 'already exited', value: asBoolean(record.already_exited ?? record.alreadyExited) },
@@ -221,16 +227,16 @@ export const ProcessToolDetails: React.FC<ProcessToolDetailsProps> = ({
   return (
     <div className="tool-detail-stack">
       <RowsCard
-        title="Process details"
+        title={translateToolTitle('Process details', locale)}
         rows={[
           { key: 'status', value: asString(record.status).trim() },
           { key: 'busy', value: asBoolean(record.busy) },
           { key: 'completed', value: asBoolean(record.completed) },
         ]}
       />
-      <TerminalListCard title="Processes" items={terminals} />
-      <LogListCard title="Recent logs" items={logs} />
-      <TextBlockCard title="Output" content={output || outputPreview} />
+      <TerminalListCard title={translateToolTitle('Processes', locale)} items={terminals} />
+      <LogListCard title={translateToolTitle('Recent logs', locale)} items={logs} />
+      <TextBlockCard title={translateToolTitle('Output', locale)} content={output || outputPreview} />
     </div>
   );
 };

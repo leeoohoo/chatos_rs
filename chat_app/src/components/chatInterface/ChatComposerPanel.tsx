@@ -18,6 +18,7 @@ import type {
   UiPromptPanelState,
   UiPromptResponsePayload,
 } from '../../lib/store/types';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface ChatComposerPanelProps {
   sessionId: string;
@@ -161,7 +162,10 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   runtimeGuidanceAppliedCount = 0,
   runtimeGuidanceLastAppliedAt = null,
   runtimeGuidanceItems = [],
-}) => (
+}) => {
+  const { t } = useI18n();
+
+  return (
   <div className="border-t border-border">
     <TaskWorkbar
       tasks={mergedCurrentTurnTasks}
@@ -217,7 +221,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       disabled={inputDisabled}
       isStreaming={isStreaming}
       isStopping={isStopping}
-      placeholder="输入消息..."
+      placeholder={t('chat.inputPlaceholder')}
       allowAttachments={true}
       supportedFileTypes={supportedFileTypes}
       reasoningSupported={reasoningSupported}
@@ -246,6 +250,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       onEnabledMcpIdsChange={onEnabledMcpIdsChange}
     />
   </div>
-);
+  );
+};
 
 export default ChatComposerPanel;

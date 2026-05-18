@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import {
   extractSecondFactorPrompt as extractSecondFactorPromptFromError,
   isSecondFactorRequiredError,
@@ -9,11 +10,13 @@ import {
 interface UseRemoteSftpVerificationOptions {
   setError: (message: string | null) => void;
   setMessage: (message: string | null) => void;
+  t: TranslateFn;
 }
 
 export const useRemoteSftpVerification = ({
   setError,
   setMessage,
+  t,
 }: UseRemoteSftpVerificationOptions) => {
   const [activeVerificationCode, setActiveVerificationCode] = useState<string | null>(null);
   const [verificationOpen, setVerificationOpen] = useState(false);
@@ -27,8 +30,8 @@ export const useRemoteSftpVerification = ({
   ), []);
 
   const extractSecondFactorPrompt = useCallback((err: unknown) => {
-    return extractSecondFactorPromptFromError(err, '请输入短信验证码或 OTP');
-  }, []);
+    return extractSecondFactorPromptFromError(err, t('remote.common.verificationPrompt'));
+  }, [t]);
 
   const handleSecondFactorRequired = useCallback((
     err: unknown,
@@ -72,13 +75,13 @@ export const useRemoteSftpVerification = ({
   const submitVerification = useCallback(async () => {
     const code = verificationCodeInput.trim();
     if (!code) {
-      setError('请输入验证码');
+      setError(t('remote.common.enterVerificationCode'));
       return;
     }
     const pendingAction = pendingVerificationActionRef.current;
     if (!pendingAction) {
       setVerificationOpen(false);
-      setError('验证码上下文已失效，请重试当前操作');
+      setError(t('remote.common.verificationExpired'));
       return;
     }
 
@@ -98,14 +101,14 @@ export const useRemoteSftpVerification = ({
         setVerificationPrompt(extractSecondFactorPrompt(err));
         setVerificationCodeInput('');
         setVerificationOpen(true);
-        setError('验证码错误或已过期，请重试');
+        setError(t('remote.common.verificationInvalid'));
         return;
       }
       setVerificationOpen(false);
       setVerificationPrompt('');
       setVerificationCodeInput('');
       pendingVerificationActionRef.current = null;
-      setError(resolveRemoteSftpErrorMessage(err, 'SFTP 操作失败'));
+      setError(resolveRemoteSftpErrorMessage(err, t('remote.sftp.error.operationFailed')));
     } finally {
       setVerificationSubmitting(false);
     }
@@ -114,6 +117,7 @@ export const useRemoteSftpVerification = ({
     isSecondFactorRequired,
     setError,
     setMessage,
+    t,
     verificationCodeInput,
   ]);
 

@@ -1,14 +1,16 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import type { McpServerListProps } from './types';
 import { EditIcon, ServerIcon, TrashIcon } from './icons';
 import { getMcpDisplayName, isReadonlyMcpConfig } from './helpers';
 
 const McpServerList = ({ mcpConfigs, onEdit, onDelete }: McpServerListProps) => {
+  const { t } = useI18n();
   if (mcpConfigs.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         <ServerIcon />
-        <p className="mt-2">暂无 MCP 服务器配置</p>
-        <p className="text-sm">点击上方按钮添加第一个服务器</p>
+        <p className="mt-2">{t('mcpManager.emptyTitle')}</p>
+        <p className="text-sm">{t('mcpManager.emptyDescription')}</p>
       </div>
     );
   }
@@ -38,11 +40,11 @@ const McpServerList = ({ mcpConfigs, onEdit, onDelete }: McpServerListProps) => 
                         : 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
                     }`}
                   >
-                    {config.type === 'http' ? 'HTTP' : 'Stdio'}
+                    {config.type === 'http' ? t('mcpManager.type.http') : t('mcpManager.type.stdio')}
                   </span>
                   {isReadonly && (
                     <span className="px-2 py-1 text-xs rounded-full bg-muted text-muted-foreground">
-                      内置
+                      {t('mcpManager.readonly')}
                     </span>
                   )}
                 </div>
@@ -62,7 +64,7 @@ const McpServerList = ({ mcpConfigs, onEdit, onDelete }: McpServerListProps) => 
                 className={`p-2 text-muted-foreground transition-colors ${
                   isReadonly ? 'opacity-50 cursor-not-allowed' : 'hover:text-blue-600'
                 }`}
-                title="编辑"
+                title={t('mcpManager.action.edit')}
               >
                 <EditIcon />
               </button>
@@ -72,7 +74,7 @@ const McpServerList = ({ mcpConfigs, onEdit, onDelete }: McpServerListProps) => 
                 className={`p-2 text-muted-foreground transition-colors ${
                   isReadonly ? 'opacity-50 cursor-not-allowed' : 'hover:text-red-600'
                 }`}
-                title="删除"
+                title={t('mcpManager.action.delete')}
               >
                 <TrashIcon />
               </button>

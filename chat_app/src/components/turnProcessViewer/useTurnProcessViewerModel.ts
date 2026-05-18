@@ -170,13 +170,13 @@ export const useTurnProcessViewerModel = ({
       }
       setFetchedProcessMessages(items);
       setLoading(false);
-    }).catch((fetchError) => {
+}).catch((fetchError) => {
       if (!active) {
         return;
       }
       setFetchedProcessMessages([]);
       setLoading(false);
-      setError(fetchError instanceof Error ? fetchError.message : 'Failed to load process');
+      setError(fetchError instanceof Error ? fetchError.message : '加载过程内容失败');
     });
 
     return () => {

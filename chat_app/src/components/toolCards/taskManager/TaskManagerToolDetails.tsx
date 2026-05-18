@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import { RowsCard, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
@@ -63,6 +65,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -70,7 +73,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Review result"
+          title={translateToolTitle('Review result', locale)}
           rows={[
             { key: 'confirmed', value: asBoolean(record.confirmed) },
             { key: 'cancelled', value: asBoolean(record.cancelled) },
@@ -78,7 +81,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
             { key: 'reason', value: asString(record.reason).trim() },
           ]}
         />
-        <TaskListCard title="Tasks" items={asArray(record.tasks)} />
+        <TaskListCard title={translateToolTitle('Tasks', locale)} items={asArray(record.tasks)} />
       </div>
     );
   }
@@ -87,13 +90,13 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Task scope"
+          title={translateToolTitle('Task scope', locale)}
           rows={[
             { key: 'count', value: asNumber(record.count) },
             { key: 'current turn only', value: asString(record.conversation_turn_id ?? record.conversationTurnId).trim() ? 'yes' : 'no' },
           ]}
         />
-        <TaskListCard title="Tasks" items={asArray(record.tasks)} />
+        <TaskListCard title={translateToolTitle('Tasks', locale)} items={asArray(record.tasks)} />
       </div>
     );
   }
@@ -102,13 +105,13 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title={displayName === 'complete_task' ? 'Completion result' : 'Update result'}
+          title={translateToolTitle(displayName === 'complete_task' ? 'Completion result' : 'Update result', locale)}
           rows={[
             { key: 'updated', value: asBoolean(record.updated) },
             { key: 'completed', value: asBoolean(record.completed) },
           ]}
         />
-        <TaskListCard title="Task" items={[record.task]} />
+        <TaskListCard title={translateToolTitle('Task', locale)} items={[record.task]} />
       </div>
     );
   }
@@ -117,7 +120,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Delete result"
+          title={translateToolTitle('Delete result', locale)}
           rows={[
             { key: 'deleted', value: asBoolean(record.deleted) },
             { key: 'task id', value: asString(record.task_id ?? record.taskId).trim() },

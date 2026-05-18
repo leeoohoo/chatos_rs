@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import { resolveRemoteSftpErrorMessage } from '../../lib/api/remoteConnectionErrors';
 import type { FsEntry } from '../../types';
 
@@ -16,6 +17,7 @@ interface UseRemoteSftpBrowsersOptions {
   currentRemoteDefaultPath: string;
   setError: (message: string | null) => void;
   getVerificationCode: () => string | null;
+  t: TranslateFn;
   onSecondFactorRequired: (
     error: unknown,
     retryWithCode: (code: string) => Promise<void>,
@@ -28,6 +30,7 @@ export const useRemoteSftpBrowsers = ({
   currentRemoteDefaultPath,
   setError,
   getVerificationCode,
+  t,
   onSecondFactorRequired,
 }: UseRemoteSftpBrowsersOptions) => {
   const [localPath, setLocalPath] = useState<string | null>(null);
@@ -56,11 +59,11 @@ export const useRemoteSftpBrowsers = ({
       setLocalEntries(normalized.entries);
       setLocalRoots(normalized.roots);
     } catch (error) {
-      setError(resolveRemoteSftpErrorMessage(error, '读取本地目录失败'));
+      setError(resolveRemoteSftpErrorMessage(error, t('remote.sftp.error.readLocal')));
     } finally {
       setLoadingLocal(false);
     }
-  }, [client, setError]);
+  }, [client, setError, t]);
 
   const loadRemote = useCallback(async (path?: string, verificationCodeOverride?: string) => {
     if (!currentRemoteConnectionId) return;
@@ -87,7 +90,7 @@ export const useRemoteSftpBrowsers = ({
       })) {
         return;
       }
-      setError(resolveRemoteSftpErrorMessage(error, '读取远端目录失败'));
+      setError(resolveRemoteSftpErrorMessage(error, t('remote.sftp.error.readRemote')));
     } finally {
       setLoadingRemote(false);
     }
@@ -97,6 +100,7 @@ export const useRemoteSftpBrowsers = ({
     getVerificationCode,
     onSecondFactorRequired,
     setError,
+    t,
   ]);
 
   useEffect(() => {

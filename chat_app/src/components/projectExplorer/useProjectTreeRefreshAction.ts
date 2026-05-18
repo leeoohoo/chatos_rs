@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { readProjectTreeErrorMessage } from './projectTreeActionHelpers';
 import type { UseProjectTreeActionsOptions } from './projectTreeActionTypes';
 
@@ -25,6 +26,7 @@ export const useProjectTreeRefreshAction = ({
   setActionError,
   setActionMessage,
 }: UseProjectTreeRefreshActionOptions) => {
+  const { t } = useI18n();
   const handleRefresh = useCallback(async () => {
     if (!actionReloadPath) return;
 
@@ -40,9 +42,9 @@ export const useProjectTreeRefreshAction = ({
         await loadEntries(projectRootPath);
       }
       await loadChangeSummary();
-      setActionMessage('目录已刷新');
+      setActionMessage(t('projectExplorer.refresh.success'));
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '刷新失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.refresh.failed')));
     } finally {
       setActionLoading(false);
     }
@@ -55,6 +57,7 @@ export const useProjectTreeRefreshAction = ({
     setActionError,
     setActionLoading,
     setActionMessage,
+    t,
   ]);
 
   return {
