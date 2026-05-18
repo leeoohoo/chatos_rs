@@ -76,8 +76,37 @@ async fn main() {
 }
 
 async fn shutdown_signal() {
-    let _ = signal::ctrl_c().await;
-    info!("Shutdown signal received");
+    #[cfg(unix)]
+    {
+        let mut terminate = match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(signal) => signal,
+            Err(err) => {
+                warn!("Failed to listen for SIGTERM: {}", err);
+                let _ = signal::ctrl_c().await;
+                info!("Shutdown signal received via Ctrl+C");
+                let manager = get_terminal_manager();
+                if let Err(err) = manager.shutdown_all_project_run_terminals().await {
+                    warn!("Failed to shutdown project run terminals cleanly: {}", err);
+                }
+                return;
+            }
+        };
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("Shutdown signal received via Ctrl+C");
+            }
+            _ = terminate.recv() => {
+                info!("Shutdown signal received via SIGTERM");
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = signal::ctrl_c().await;
+        info!("Shutdown signal received via Ctrl+C");
+    }
+
     let manager = get_terminal_manager();
     if let Err(err) = manager.shutdown_all_project_run_terminals().await {
         warn!("Failed to shutdown project run terminals cleanly: {}", err);

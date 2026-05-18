@@ -287,15 +287,17 @@ impl TerminalsManager {
         .await?;
         let mut closed = 0usize;
         for terminal in terminals {
-          let _ = self.close_internal(terminal.id.as_str(), Some(&terminal), true).await;
-          let _ = TerminalLogService::create(TerminalLog::new(
-              terminal.id.clone(),
-              "signal".to_string(),
-              "terminate:project_run_cleanup".to_string(),
-          ))
-          .await;
-          let _ = crate::models::terminal::TerminalService::delete(terminal.id.as_str()).await;
-          closed += 1;
+            let _ = self
+                .close_internal(terminal.id.as_str(), Some(&terminal), true)
+                .await;
+            let _ = TerminalLogService::create(TerminalLog::new(
+                terminal.id.clone(),
+                "signal".to_string(),
+                "terminate:project_run_cleanup".to_string(),
+            ))
+            .await;
+            let _ = crate::models::terminal::TerminalService::delete(terminal.id.as_str()).await;
+            closed += 1;
         }
         Ok(closed)
     }
