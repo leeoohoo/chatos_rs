@@ -52,6 +52,7 @@ interface ProjectRunSettingsPanelProps {
   starting: boolean;
   stopping: boolean;
   restarting: boolean;
+  deleting: boolean;
   runnerMessage?: string | null;
   runnerError?: string | null;
   runnerDiagnosis?: string | null;
@@ -62,7 +63,7 @@ interface ProjectRunSettingsPanelProps {
   projectRunTerminal: Terminal | null;
   projectRunTerminalBusy: boolean;
   onSelectRunTarget: (targetId: string) => void;
-  onSelectRunInstance: (terminalId: string) => void;
+  onSelectRunInstance: (terminalId: string | null) => void;
   onSelectToolchain: (kind: string, optionId: string) => void;
   onApplySuggestion: (suggestion: ProjectRunResolutionSuggestion) => void;
   onCustomToolchainDraftChange: (kind: string, value: string) => void;
@@ -72,6 +73,7 @@ interface ProjectRunSettingsPanelProps {
   onRunnerStart: () => void;
   onRunnerStop: () => void;
   onRunnerRestart: () => void;
+  onRunnerDelete: () => void;
   onRefreshRunnerState: () => void;
 }
 
@@ -359,6 +361,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   starting,
   stopping,
   restarting,
+  deleting,
   runnerMessage,
   runnerError,
   runnerDiagnosis,
@@ -379,6 +382,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   onRunnerStart,
   onRunnerStop,
   onRunnerRestart,
+  onRunnerDelete,
   onRefreshRunnerState,
 }) => {
   const apiClientFromContext = useChatApiClientFromContext();
@@ -552,7 +556,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                 <select
                   value={selectedRunTargetId || runTargets[0]?.id || ''}
                   onChange={(event) => onSelectRunTarget(event.target.value)}
-                  disabled={starting || stopping || restarting || runCatalogLoading}
+                  disabled={starting || stopping || restarting || deleting || runCatalogLoading}
                   className="h-9 min-w-[280px] max-w-[520px] rounded border border-border bg-background px-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {runTargets.map((target) => (
@@ -591,7 +595,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                 <button
                   type="button"
                   onClick={onRunnerStart}
-                  disabled={runStatus !== 'ready' || starting || stopping || restarting || runCatalogLoading}
+                  disabled={runStatus !== 'ready' || starting || stopping || restarting || deleting || runCatalogLoading}
                   className="h-8 rounded border border-emerald-500/40 px-3 text-xs text-emerald-700 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                   title={commandPreview}
                 >
@@ -600,7 +604,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                 <button
                   type="button"
                   onClick={onRunnerStop}
-                  disabled={runStatus !== 'ready' || starting || stopping || restarting || !selectedRunInstanceId}
+                  disabled={runStatus !== 'ready' || starting || stopping || restarting || deleting || !selectedRunInstanceId}
                   className="h-8 rounded border border-rose-500/40 px-3 text-xs text-rose-700 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {stopping ? '停止中...' : '停止当前实例'}
@@ -608,7 +612,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                 <button
                   type="button"
                   onClick={onRunnerRestart}
-                  disabled={runStatus !== 'ready' || starting || stopping || restarting || runCatalogLoading || !selectedRunInstanceId}
+                  disabled={runStatus !== 'ready' || starting || stopping || restarting || deleting || runCatalogLoading || !selectedRunInstanceId}
                   className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                   title={commandPreview}
                 >
@@ -616,8 +620,16 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                 </button>
                 <button
                   type="button"
+                  onClick={onRunnerDelete}
+                  disabled={starting || stopping || restarting || deleting || !selectedRunInstanceId}
+                  className="h-8 rounded border border-destructive/40 px-3 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deleting ? '删除中...' : '删除当前实例'}
+                </button>
+                <button
+                  type="button"
                   onClick={onRefreshRunnerState}
-                  disabled={runCatalogLoading || runEnvironmentLoading}
+                  disabled={runCatalogLoading || runEnvironmentLoading || deleting}
                   className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {runCatalogLoading || runEnvironmentLoading ? '刷新中...' : '刷新状态'}
@@ -727,7 +739,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                     <select
                       value={selectedOption?.id || options[0]?.id || ''}
                       onChange={(event) => onSelectToolchain(kind, event.target.value)}
-                      disabled={options.length === 0 || starting || stopping || restarting || runEnvironmentLoading}
+                      disabled={options.length === 0 || starting || stopping || restarting || deleting || runEnvironmentLoading}
                       className="h-9 w-full rounded border border-border bg-background px-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                       title={selectedOption?.path || kind}
                     >

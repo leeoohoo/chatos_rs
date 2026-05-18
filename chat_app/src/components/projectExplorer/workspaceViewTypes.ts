@@ -113,6 +113,7 @@ export interface ProjectExplorerWorkspaceRunState {
   starting: boolean;
   stopping: boolean;
   restarting: boolean;
+  deleting: boolean;
   runnerMessage: string | null;
   runnerError: string | null;
   runnerDiagnosis: string | null;
@@ -124,10 +125,11 @@ export interface ProjectExplorerWorkspaceRunState {
   activeRun: ProjectRunnerActiveTerminal | null;
   lastExitedRun: ProjectRunnerActiveTerminal | null;
   activeTerminalBusy: boolean;
-  selectRunInstance: (terminalId: string) => void;
+  selectRunInstance: (terminalId: string | null) => void;
   handleRunnerStart: () => Promise<void>;
   handleRunnerStop: () => Promise<void>;
   handleRunnerRestart: () => Promise<void>;
+  handleRunnerDelete: () => Promise<void>;
   refreshRunnerState: () => Promise<void>;
 }
 

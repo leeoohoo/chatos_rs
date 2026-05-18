@@ -15,6 +15,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::signal;
 use tracing::{error, info, warn};
 
+use crate::services::terminal_manager::get_terminal_manager;
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -76,4 +78,8 @@ async fn main() {
 async fn shutdown_signal() {
     let _ = signal::ctrl_c().await;
     info!("Shutdown signal received");
+    let manager = get_terminal_manager();
+    if let Err(err) = manager.shutdown_all_project_run_terminals().await {
+        warn!("Failed to shutdown project run terminals cleanly: {}", err);
+    }
 }

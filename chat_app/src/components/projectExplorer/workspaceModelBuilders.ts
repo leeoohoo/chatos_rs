@@ -222,6 +222,7 @@ export const buildWorkspaceViewModelParams = (
     starting: runState.starting,
     stopping: runState.stopping,
     restarting: runState.restarting,
+    deleting: runState.deleting,
     runnerMessage: runState.runnerMessage,
     runnerError: runState.runnerError,
     runnerDiagnosis: runState.runnerDiagnosis,
@@ -237,6 +238,7 @@ export const buildWorkspaceViewModelParams = (
     handleRunnerStart: runState.handleRunnerStart,
     handleRunnerStop: runState.handleRunnerStop,
     handleRunnerRestart: runState.handleRunnerRestart,
+    handleRunnerDelete: runState.handleRunnerDelete,
     refreshRunnerState: runState.refreshRunnerState,
   },
   interactions: {

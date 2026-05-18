@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
 use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
+use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
 use crate::services::realtime::{
     publish_project_run_instance_changed, publish_project_run_state_changed,
@@ -228,7 +229,7 @@ impl TerminalsManager {
         publish_events: bool,
     ) -> Result<(), String> {
         if let Some(session) = self.sessions.remove(id).map(|(_, s)| s) {
-            let _ = session.write_input("exit\n");
+            let _ = session.terminate();
         }
         let _ = terminals::update_terminal_status(id, Some("exited".to_string()), None).await;
         if publish_events {
@@ -268,6 +269,56 @@ impl TerminalsManager {
             }
         }
         Ok(())
+    }
+
+    pub async fn close_project_run_terminals(
+        &self,
+        user_id: Option<&str>,
+        project_id: &str,
+    ) -> Result<usize, String> {
+        let normalized_project_id = project_id.trim();
+        if normalized_project_id.is_empty() {
+            return Ok(0);
+        }
+        let terminals = crate::models::terminal::TerminalService::list_project_runs_by_project_id(
+            user_id.map(|value| value.to_string()),
+            normalized_project_id,
+        )
+        .await?;
+        let mut closed = 0usize;
+        for terminal in terminals {
+          let _ = self.close_internal(terminal.id.as_str(), Some(&terminal), true).await;
+          let _ = TerminalLogService::create(TerminalLog::new(
+              terminal.id.clone(),
+              "signal".to_string(),
+              "terminate:project_run_cleanup".to_string(),
+          ))
+          .await;
+          let _ = crate::models::terminal::TerminalService::delete(terminal.id.as_str()).await;
+          closed += 1;
+        }
+        Ok(closed)
+    }
+
+    pub async fn shutdown_all_project_run_terminals(&self) -> Result<usize, String> {
+        let terminals = crate::models::terminal::TerminalService::list_by_kind(
+            None,
+            TERMINAL_KIND_PROJECT_RUN,
+        )
+        .await?;
+        let mut closed = 0usize;
+        for terminal in terminals {
+            let _ = self.close_internal(terminal.id.as_str(), Some(&terminal), false).await;
+            let _ = TerminalLogService::create(TerminalLog::new(
+                terminal.id.clone(),
+                "signal".to_string(),
+                "terminate:server_shutdown".to_string(),
+            ))
+            .await;
+            let _ = crate::models::terminal::TerminalService::delete(terminal.id.as_str()).await;
+            closed += 1;
+        }
+        Ok(closed)
     }
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 
 import type ApiClient from '../../../lib/api/client';
 import { ApiRequestError } from '../../../lib/api/client/shared';
@@ -19,11 +20,14 @@ interface UseProjectRunnerCommandsOptions {
   selectedRunTargetId: string | null;
   commandPreview: string;
   activeRun: ProjectRunnerActiveTerminal | null;
+  projectRunTerminalIds: string[];
   selectedTerminalId: string | null;
-  selectRunInstance: (terminalId: string) => void;
+  selectRunInstance: (terminalId: string | null) => void;
   setActiveRun: (value: ProjectRunnerActiveTerminal | null) => void;
-  setLastExitedRun: (value: ProjectRunnerActiveTerminal | null) => void;
+  setLastExitedRun: Dispatch<SetStateAction<ProjectRunnerActiveTerminal | null>>;
   setActiveTerminalBusy: (value: boolean) => void;
+  removeRunInstanceLocally: (terminalId: string, nextSelectedTerminalId?: string | null) => void;
+  refreshProjectActiveRun: () => Promise<void>;
 }
 
 const extractRunValidationMessage = (error: unknown, fallback: string): string => {
@@ -48,15 +52,19 @@ export const useProjectRunnerCommands = ({
   selectedRunTargetId,
   commandPreview,
   activeRun,
+  projectRunTerminalIds,
   selectedTerminalId,
   selectRunInstance,
   setActiveRun,
   setLastExitedRun,
   setActiveTerminalBusy,
+  removeRunInstanceLocally,
+  refreshProjectActiveRun,
 }: UseProjectRunnerCommandsOptions) => {
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [runnerMessage, setRunnerMessage] = useState<string | null>(null);
   const [runnerError, setRunnerError] = useState<string | null>(null);
   const [runnerDiagnosis, setRunnerDiagnosis] = useState<string | null>(null);
@@ -177,6 +185,50 @@ export const useProjectRunnerCommands = ({
     }
   }, [activeRun?.terminalId, client, dispatchProjectRunTarget, project?.id, selectedRunTarget, selectedTerminalId]);
 
+  const handleRunnerDelete = useCallback(async () => {
+    setDeleting(true);
+    setRunnerError(null);
+    try {
+      const terminalId = readTrimmedString(selectedTerminalId || activeRun?.terminalId);
+      if (!terminalId) {
+        throw new Error('当前项目还没有独立运行终端');
+      }
+      const currentIndex = projectRunTerminalIds.findIndex((item) => item === terminalId);
+      const nextTerminalId = currentIndex >= 0
+        ? (projectRunTerminalIds[currentIndex + 1]
+          || projectRunTerminalIds[currentIndex - 1]
+          || null)
+        : null;
+      await client.deleteTerminal(terminalId);
+      removeRunInstanceLocally(terminalId, nextTerminalId);
+      selectRunInstance(nextTerminalId);
+      if (activeRun?.terminalId === terminalId) {
+        setActiveRun(null);
+      }
+      setLastExitedRun((value) => (value?.terminalId === terminalId ? null : value));
+      setActiveTerminalBusy(false);
+      setRunnerMessage(nextTerminalId ? '删除成功：已切换到其它项目实例' : '删除成功：当前项目实例已移除');
+      setRunnerDiagnosis(null);
+      await refreshProjectActiveRun();
+    } catch (error) {
+      setRunnerError(error instanceof Error ? error.message : '删除失败');
+      setRunnerMessage(null);
+    } finally {
+      setDeleting(false);
+    }
+  }, [
+    selectedTerminalId,
+    activeRun,
+    projectRunTerminalIds,
+    client,
+    removeRunInstanceLocally,
+    selectRunInstance,
+    setActiveRun,
+    setLastExitedRun,
+    setActiveTerminalBusy,
+    refreshProjectActiveRun,
+  ]);
+
   const resetRunnerCommandState = useCallback(() => {
     setRunnerMessage(null);
     setRunnerError(null);
@@ -189,6 +241,7 @@ export const useProjectRunnerCommands = ({
     starting,
     stopping,
     restarting,
+    deleting,
     runnerMessage,
     runnerError,
     runnerDiagnosis,
@@ -202,5 +255,6 @@ export const useProjectRunnerCommands = ({
     handleRunnerStart,
     handleRunnerStop,
     handleRunnerRestart,
+    handleRunnerDelete,
   };
 };

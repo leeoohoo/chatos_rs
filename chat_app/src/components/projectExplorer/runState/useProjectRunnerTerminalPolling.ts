@@ -60,6 +60,44 @@ export const useProjectRunnerTerminalPolling = ({
     setActiveTerminalBusy(false);
   }, []);
 
+  const removeRunInstanceLocally = useCallback((
+    terminalId: string,
+    nextSelectedTerminalId?: string | null,
+  ) => {
+    const normalizedTerminalId = readTrimmedString(terminalId);
+    const normalizedNextSelectedTerminalId = nextSelectedTerminalId === undefined
+      ? undefined
+      : readTrimmedString(nextSelectedTerminalId) || null;
+    if (!normalizedTerminalId) {
+      return;
+    }
+
+    setProjectRunState((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const nextInstances = (prev.instances || []).filter((item) => item.terminalId !== normalizedTerminalId);
+      const nextSelectedInstance = normalizedNextSelectedTerminalId === undefined
+        ? (nextInstances[0] || null)
+        : (normalizedNextSelectedTerminalId
+          ? nextInstances.find((item) => item.terminalId === normalizedNextSelectedTerminalId) || null
+          : null);
+      return {
+        ...prev,
+        running: nextInstances.some((item) => item.running),
+        busy: nextInstances.some((item) => item.busy),
+        status: nextInstances.some((item) => item.running) ? 'running' : (nextInstances[0]?.status || 'idle'),
+        terminalId: nextSelectedInstance?.terminalId || null,
+        terminalName: nextSelectedInstance?.terminalName || null,
+        cwd: nextSelectedInstance?.cwd || null,
+        terminal: nextSelectedInstance?.terminal || null,
+        instances: nextInstances,
+      };
+    });
+    setSelectedRunInstanceId(normalizedNextSelectedTerminalId === undefined ? null : normalizedNextSelectedTerminalId);
+    setLastExitedRun((prev) => (prev?.terminalId === normalizedTerminalId ? null : prev));
+  }, []);
+
   const refreshProjectActiveRun = useCallback(async () => {
     if (!project?.id) {
       resetActiveRunState();
@@ -201,6 +239,7 @@ export const useProjectRunnerTerminalPolling = ({
     setLastExitedRun,
     setActiveTerminalBusy,
     resetActiveRunState,
+    removeRunInstanceLocally,
     refreshProjectActiveRun,
   };
 };

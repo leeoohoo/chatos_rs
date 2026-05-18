@@ -163,6 +163,7 @@ export const useProjectExplorerWorkspaceView = ({
     starting: run.starting,
     stopping: run.stopping,
     restarting: run.restarting,
+    deleting: run.deleting,
     runnerMessage: run.runnerMessage,
     runnerError: run.runnerError,
     runnerDiagnosis: run.runnerDiagnosis,
@@ -203,6 +204,7 @@ export const useProjectExplorerWorkspaceView = ({
     onRunnerStart: run.handleRunnerStart,
     onRunnerStop: run.handleRunnerStop,
     onRunnerRestart: run.handleRunnerRestart,
+    onRunnerDelete: run.handleRunnerDelete,
     onRefreshRunnerState: run.refreshRunnerState,
   };
 

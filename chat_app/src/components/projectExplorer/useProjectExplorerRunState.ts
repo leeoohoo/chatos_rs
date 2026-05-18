@@ -46,11 +46,14 @@ export const useProjectExplorerRunState = ({
     selectedRunTargetId: runnerCatalog.selectedRunTargetId,
     commandPreview: runnerCatalog.commandPreview,
     activeRun: runnerTerminal.activeRun,
+    projectRunTerminalIds: runnerTerminal.projectRunInstances.map((item) => item.terminalId),
     selectedTerminalId: runnerTerminal.selectedRunInstanceId,
     selectRunInstance: runnerTerminal.selectRunInstance,
     setActiveRun: runnerTerminal.setActiveRun,
     setLastExitedRun: runnerTerminal.setLastExitedRun,
     setActiveTerminalBusy: runnerTerminal.setActiveTerminalBusy,
+    removeRunInstanceLocally: runnerTerminal.removeRunInstanceLocally,
+    refreshProjectActiveRun: runnerTerminal.refreshProjectActiveRun,
   });
 
   useProjectRunnerExitInspection({
@@ -102,6 +105,16 @@ export const useProjectExplorerRunState = ({
     selectedRunTarget,
   ]);
 
+  const refreshRunnerState = useMemo(() => async () => {
+    await Promise.all([
+      runnerCatalog.refreshRunnerState(),
+      runnerTerminal.refreshProjectActiveRun(),
+    ]);
+  }, [
+    runnerCatalog.refreshRunnerState,
+    runnerTerminal.refreshProjectActiveRun,
+  ]);
+
   return {
     runStatus: runnerCatalog.runStatus,
     runTargets: runnerCatalog.runTargets,
@@ -129,6 +142,7 @@ export const useProjectExplorerRunState = ({
     starting: runnerCommands.starting,
     stopping: runnerCommands.stopping,
     restarting: runnerCommands.restarting,
+    deleting: runnerCommands.deleting,
     runnerMessage: runnerCommands.runnerMessage,
     runnerError: runnerCommands.runnerError,
     runnerDiagnosis: runnerCommands.runnerDiagnosis,
@@ -144,6 +158,7 @@ export const useProjectExplorerRunState = ({
     handleRunnerStart: runnerCommands.handleRunnerStart,
     handleRunnerStop: runnerCommands.handleRunnerStop,
     handleRunnerRestart: runnerCommands.handleRunnerRestart,
-    refreshRunnerState: runnerCatalog.refreshRunnerState,
+    handleRunnerDelete: runnerCommands.handleRunnerDelete,
+    refreshRunnerState,
   };
 };

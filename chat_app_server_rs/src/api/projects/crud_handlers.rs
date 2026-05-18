@@ -13,6 +13,7 @@ use crate::core::validation::{
 };
 use crate::models::project::{Project, ProjectService};
 use crate::services::realtime::publish_projects_updated;
+use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::{CreateProjectRequest, ProjectQuery, UpdateProjectRequest};
 use super::memory_sync::{sync_active_project, sync_archived_project};
@@ -186,6 +187,13 @@ pub(super) async fn delete_project(
         Ok(project) => project,
         Err(err) => return map_project_access_error(err),
     };
+    let manager = get_terminal_manager();
+    let _ = manager
+        .close_project_run_terminals(
+            project.user_id.as_deref().or(Some(auth.user_id.as_str())),
+            project.id.as_str(),
+        )
+        .await;
     match ProjectService::delete(&id).await {
         Ok(_) => {
             if let Err(err) = sync_archived_project(&project).await {

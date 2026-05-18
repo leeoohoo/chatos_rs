@@ -34,6 +34,7 @@ export interface ProjectRunSettingsViewProps {
   starting: boolean;
   stopping: boolean;
   restarting: boolean;
+  deleting: boolean;
   runnerMessage: string | null;
   runnerError: string | null;
   runnerDiagnosis: string | null;
@@ -44,7 +45,7 @@ export interface ProjectRunSettingsViewProps {
   projectRunTerminal: Terminal | null;
   projectRunTerminalBusy: boolean;
   onSelectRunTarget: (targetId: string) => void;
-  onSelectRunInstance: (terminalId: string) => void;
+  onSelectRunInstance: (terminalId: string | null) => void;
   onSelectToolchain: (kind: string, optionId: string) => void;
   onApplySuggestion: (suggestion: ProjectRunResolutionSuggestion) => void;
   onCustomToolchainDraftChange: (kind: string, value: string) => void;
@@ -54,5 +55,6 @@ export interface ProjectRunSettingsViewProps {
   onRunnerStart: () => void;
   onRunnerStop: () => void;
   onRunnerRestart: () => void;
+  onRunnerDelete: () => void;
   onRefreshRunnerState: () => void;
 }
