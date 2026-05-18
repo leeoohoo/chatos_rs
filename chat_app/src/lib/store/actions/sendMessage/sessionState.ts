@@ -65,28 +65,14 @@ export const beginUserTurnInState = (
   {
     sessionId,
     userMessage,
-    turnProcessKey,
     conversationTurnId,
   }: {
     sessionId: string;
     userMessage: Message;
-    turnProcessKey: string;
     conversationTurnId: string;
   },
 ) => {
   state.messages.push(userMessage);
-
-  if (!state.sessionTurnProcessState) {
-    state.sessionTurnProcessState = {};
-  }
-  if (!state.sessionTurnProcessState[sessionId]) {
-    state.sessionTurnProcessState[sessionId] = {};
-  }
-  state.sessionTurnProcessState[sessionId][turnProcessKey] = {
-    expanded: false,
-    loaded: false,
-    loading: false,
-  };
 
   const prev = resolveSessionChatState(state, sessionId);
   state.sessionChatState[sessionId] = {

@@ -50,7 +50,6 @@ describe('applyRealtimeSessionSnapshot', () => {
       sessionAiSelectionBySession: {},
       sessionStreamingMessageDrafts: {},
       sessionChatState: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
       sessionRuntimeGuidanceState: {
         session_1: {

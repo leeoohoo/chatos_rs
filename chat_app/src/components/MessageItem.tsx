@@ -21,12 +21,10 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   onEdit,
   onDelete,
   onToggleTurnProcess,
-  renderContext = 'chat',
   derivedProcessStatsByUserId,
   toolResultById,
   assistantToolCallsById,
   customRenderer,
-  linkedUserExpandedForAssistant,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -50,8 +48,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     isSystem,
     isTool,
     hasHistoryProcess,
-    historyProcessExpanded,
-    historyProcessLoading,
     historyToolCount,
     historyThinkingCount,
     historyUnavailableToolCount,
@@ -65,9 +61,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   } = useMessageItemModel({
     message,
     isStreaming,
-    renderContext,
     derivedProcessStatsByUserId,
-    linkedUserExpandedForAssistant,
   });
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
@@ -143,8 +137,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
         {isUser && hasHistoryProcess && (
           <HistoryProcessSummary
             userMessageId={message.id}
-            historyProcessLoading={historyProcessLoading}
-            historyProcessExpanded={historyProcessExpanded}
             historyToolCount={historyToolCount}
             historyThinkingCount={historyThinkingCount}
             historyUnavailableToolCount={historyUnavailableToolCount}
@@ -227,11 +219,9 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.message === nextProps.message &&
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
-    (prevProps.renderContext ?? 'chat') === (nextProps.renderContext ?? 'chat') &&
     (prevProps.processSignal ?? "") === (nextProps.processSignal ?? "") &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
-    (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "") &&
-    (prevProps.linkedUserExpandedForAssistant ?? null) === (nextProps.linkedUserExpandedForAssistant ?? null)
+    (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
   );
 });
 

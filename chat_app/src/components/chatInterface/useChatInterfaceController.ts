@@ -29,6 +29,7 @@ interface UseChatInterfaceControllerParams {
   setUiPromptHistoryOpen: (value: boolean) => void;
   summaryPaneSessionId: string | null;
   setSummaryPaneSessionId: (value: string | null | ((prev: string | null) => string | null)) => void;
+  closeTurnProcessViewer: () => void;
   setTaskHistoryOpen?: (value: boolean) => void;
   onMessageSend?: (content: string, attachments?: File[]) => void;
   sendMessage: SendMessageHandler;
@@ -41,10 +42,11 @@ interface UseChatInterfaceControllerParams {
     options: { conversationId: string; turnId: string; projectId?: string | null },
   ) => Promise<unknown>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
-  toggleTurnProcess: (
+  openTurnProcessViewer: (
+    sessionId: string,
     userMessageId: string,
-    options?: { forceExpand?: boolean; forceCollapse?: boolean },
-  ) => Promise<void>;
+    options?: { turnId?: string | null },
+  ) => void;
   loadProjects: () => Promise<unknown>;
   loadAiModelConfigs: () => Promise<void>;
   loadAgents: () => Promise<void>;
@@ -84,13 +86,14 @@ export const useChatInterfaceController = ({
   setUiPromptHistoryOpen,
   summaryPaneSessionId,
   setSummaryPaneSessionId,
+  closeTurnProcessViewer,
   setTaskHistoryOpen,
   onMessageSend,
   sendMessage,
   selectRemoteConnection,
   submitRuntimeGuidance,
   loadMoreMessages,
-  toggleTurnProcess,
+  openTurnProcessViewer,
   loadProjects,
   loadAiModelConfigs,
   loadAgents,
@@ -116,6 +119,7 @@ export const useChatInterfaceController = ({
     currentSession,
     uiPromptHistoryOpen,
     summaryPaneSessionId,
+    closeTurnProcessViewer,
     setTaskHistoryOpen,
     loadProjects,
     loadAiModelConfigs,
@@ -249,13 +253,22 @@ export const useChatInterfaceController = ({
   }, [currentSession, loadMoreMessages]);
 
   const handleToggleTurnProcess = useCallback((userMessageId: string) => {
-    if (!userMessageId) {
+    const sessionId = currentSession?.id || '';
+    const normalizedUserMessageId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
+    if (!sessionId || !normalizedUserMessageId) {
       return;
     }
-    void toggleTurnProcess(userMessageId).catch((error) => {
-      console.error('Failed to toggle turn process messages:', error);
-    });
-  }, [toggleTurnProcess]);
+    const userMessage = messages.find((message) => (
+      message.role === 'user' && message.id === normalizedUserMessageId
+    ));
+    const turnId = typeof userMessage?.metadata?.conversation_turn_id === 'string'
+      ? userMessage.metadata.conversation_turn_id.trim()
+      : (typeof userMessage?.metadata?.historyProcess?.turnId === 'string'
+        ? userMessage.metadata.historyProcess.turnId.trim()
+        : '');
+
+    openTurnProcessViewer(sessionId, normalizedUserMessageId, { turnId: turnId || null });
+  }, [currentSession?.id, messages, openTurnProcessViewer]);
 
   const handleRefreshMemory = useCallback((sessionId: string) => {
     void loadContactMemoryContext(sessionId, true);

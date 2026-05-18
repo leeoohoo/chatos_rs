@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 
 import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/viewHelpers';
+import TurnProcessModal from '../../TurnProcessModal';
 import { TeamMemberWorkspaceComposer } from './TeamMemberWorkspaceComposer';
 import { TeamMemberWorkspaceContent } from './TeamMemberWorkspaceContent';
 import type { TeamMemberWorkspaceProps } from './TeamMemberWorkspaceTypes';
@@ -33,6 +34,13 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onRemoteConnectionChange,
   onLoadMore,
   onToggleTurnProcess,
+  turnProcessViewerOpen,
+  turnProcessViewerSessionId,
+  turnProcessViewerUserMessageId,
+  turnProcessViewerTurnId,
+  turnProcessViewerCachedMessages,
+  turnProcessApiClient,
+  onCloseTurnProcessViewer,
   onClearSummaries,
   onRefreshSummaries,
   onCloseSummary,
@@ -177,6 +185,17 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
         runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
         runtimeGuidanceItems={runtimeGuidanceItems}
+      />
+
+      <TurnProcessModal
+        open={turnProcessViewerOpen}
+        sessionId={turnProcessViewerSessionId}
+        userMessageId={turnProcessViewerUserMessageId}
+        turnId={turnProcessViewerTurnId}
+        messages={messages}
+        cachedProcessMessages={turnProcessViewerCachedMessages}
+        apiClient={turnProcessApiClient}
+        onClose={onCloseTurnProcessViewer}
       />
     </div>
   );

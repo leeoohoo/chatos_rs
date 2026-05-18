@@ -43,6 +43,15 @@ export const useTeamMemberWorkspaceProps = ({
   onRemoteConnectionChange: resources.composer.handleComposerRemoteConnectionChange,
   onLoadMore: resources.conversation.handleLoadMore,
   onToggleTurnProcess: resources.conversation.handleToggleTurnProcess,
+  turnProcessViewerOpen: store.turnProcessViewer.open,
+  turnProcessViewerSessionId: store.turnProcessViewer.sessionId,
+  turnProcessViewerUserMessageId: store.turnProcessViewer.userMessageId,
+  turnProcessViewerTurnId: store.turnProcessViewer.turnId,
+  turnProcessViewerCachedMessages: store.turnProcessViewer.sessionId
+    ? (store.sessionTurnProcessCache?.[store.turnProcessViewer.sessionId] || null)
+    : null,
+  turnProcessApiClient: store.apiClient,
+  onCloseTurnProcessViewer: store.closeTurnProcessViewer,
   onClearSummaries: () => {
     void resources.conversation.handleClearSummaries();
   },
@@ -177,11 +186,14 @@ export const useTeamMemberWorkspaceProps = ({
   resources.workbar.workbarHistoryTasks,
   resources.workbar.workbarLoading,
   store.abortCurrentConversation,
+  store.apiClient,
   store.aiModelConfigs,
   store.chatConfig?.reasoningEnabled,
+  store.closeTurnProcessViewer,
   store.messages,
   store.sessionMessagePaginationState,
   store.selectedModelId,
+  store.turnProcessViewer,
   store.setSelectedModel,
   store.updateChatConfig,
 ]);

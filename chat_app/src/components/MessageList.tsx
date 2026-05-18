@@ -53,7 +53,6 @@ const MessageListComponent: React.FC<MessageListProps> = ({
     assistantToolCallById,
     derivedProcessStatsByUserId,
     processSignalByUserMessageId,
-    linkedUserExpandedByAssistantId,
     toolResultKeyByMessageId,
     toolCallLookupKeyByMessageId,
   } = useMessageListDerivedState(messages || []);
@@ -165,7 +164,6 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             derivedProcessStatsByUserId={derivedProcessStatsByUserId}
             toolResultById={toolResultById}
             assistantToolCallsById={assistantToolCallById}
-            linkedUserExpandedForAssistant={linkedUserExpandedByAssistantId.get(message.id)}
             toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
             toolCallLookupKey={toolCallLookupKeyByMessageId.get(message.id) || ''}
             processSignal={processSignalByUserMessageId.get(message.id) || ''}

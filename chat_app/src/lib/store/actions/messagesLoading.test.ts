@@ -14,7 +14,6 @@ import {
 
 vi.mock('../helpers/messages', () => ({
   fetchSessionMessages: vi.fn(),
-  applyTurnProcessCache: vi.fn((messages: Message[]) => messages),
 }));
 
 import { fetchSessionMessages } from '../helpers/messages';
@@ -78,7 +77,6 @@ describe('syncSessionMessagesInBackground', () => {
       sessionStreamingMessageDrafts: {
         session_2: draft,
       },
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
@@ -139,7 +137,6 @@ describe('syncSessionMessagesInBackground', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
@@ -199,7 +196,6 @@ describe('syncSessionMessagesInBackground', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
@@ -259,7 +255,6 @@ describe('syncSessionMessagesInBackground', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
@@ -315,7 +310,6 @@ describe('syncSessionMessagesInBackground', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {

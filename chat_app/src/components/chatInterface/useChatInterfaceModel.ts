@@ -94,13 +94,14 @@ export const useChatInterfaceModel = ({
     setUiPromptHistoryOpen,
     summaryPaneSessionId,
     setSummaryPaneSessionId,
+    closeTurnProcessViewer: store.closeTurnProcessViewer,
     setTaskHistoryOpen,
     onMessageSend,
     sendMessage: store.sendMessage,
     selectRemoteConnection: store.selectRemoteConnection,
     submitRuntimeGuidance: store.submitRuntimeGuidance,
     loadMoreMessages: store.loadMoreMessages,
-    toggleTurnProcess: store.toggleTurnProcess,
+    openTurnProcessViewer: store.openTurnProcessViewer,
     loadProjects: store.loadProjects,
     loadAiModelConfigs: store.loadAiModelConfigs,
     loadAgents: store.loadAgents,
@@ -171,6 +172,9 @@ export const useChatInterfaceModel = ({
     remoteConnections: store.remoteConnections || [],
     composerMcpEnabled: runtimeSettings.mcpEnabled,
     composerEnabledMcpIds: runtimeSettings.enabledMcpIds,
+    turnProcessViewer: store.turnProcessViewer,
+    turnProcessCacheBySession: store.sessionTurnProcessCache || {},
+    apiClient: store.apiClient,
     runtimeGuidancePendingCount: resources.runtimeGuidancePendingCount,
     runtimeGuidanceAppliedCount: resources.runtimeGuidanceAppliedCount,
     runtimeGuidanceLastAppliedAt: resources.runtimeGuidanceLastAppliedAt,
@@ -214,6 +218,7 @@ export const useChatInterfaceModel = ({
     handleComposerRemoteConnectionChange: controller.handleComposerRemoteConnectionChange,
     handleComposerMcpEnabledChange: runtimeSettings.setMcpEnabled,
     handleComposerEnabledMcpIdsChange: runtimeSettings.setEnabledMcpIds,
+    closeTurnProcessViewer: store.closeTurnProcessViewer,
   };
 
   const overlay: ChatInterfaceOverlayState = {

@@ -1,5 +1,4 @@
 import type { Message, Session } from '../../../types';
-import { applyTurnProcessCache } from '../helpers/messages';
 import {
   asRecord,
   normalizeDate,
@@ -184,12 +183,6 @@ export const applySelectSessionState = ({
   }
 
   ensureSessionTurnMaps(state, sessionId);
-
-  nextMessages = applyTurnProcessCache(
-    nextMessages,
-    state.sessionTurnProcessCache?.[sessionId],
-    state.sessionTurnProcessState?.[sessionId],
-  );
 
   state.currentSessionId = sessionId;
   state.currentSession = session;

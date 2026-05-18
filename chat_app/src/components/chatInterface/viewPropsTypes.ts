@@ -1,6 +1,7 @@
 import type { ComponentProps } from 'react';
 
-import type { AgentConfig, Project, RemoteConnection, Session } from '../../types';
+import type ApiClient from '../../lib/api/client';
+import type { AgentConfig, Message, Project, RemoteConnection, Session } from '../../types';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
 import ChatConversationPane from './ChatConversationPane';
@@ -58,6 +59,14 @@ export interface ChatInterfaceConversationState {
   remoteConnections: RemoteConnection[];
   composerMcpEnabled: boolean;
   composerEnabledMcpIds: string[];
+  turnProcessViewer: {
+    open: boolean;
+    sessionId: string | null;
+    userMessageId: string | null;
+    turnId: string | null;
+  };
+  turnProcessCacheBySession: Record<string, Record<string, Message[]>>;
+  apiClient: ApiClient;
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
   runtimeGuidanceLastAppliedAt?: string | null;
@@ -94,6 +103,7 @@ export interface ChatInterfaceConversationActions {
   handleComposerRemoteConnectionChange: (connectionId: string | null) => void;
   handleComposerMcpEnabledChange: (enabled: boolean) => void;
   handleComposerEnabledMcpIdsChange: (ids: string[]) => void;
+  closeTurnProcessViewer: () => void;
 }
 
 export interface ChatInterfaceOverlayState {

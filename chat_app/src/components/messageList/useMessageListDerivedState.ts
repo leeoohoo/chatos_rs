@@ -60,7 +60,6 @@ export const useMessageListDerivedState = (messages: Message[]) => {
     assistantToolCallMetaById,
     derivedProcessStatsByUserId,
     processSignalByUserMessageId,
-    linkedUserExpandedByAssistantId,
   } = useMemo(() => buildVisibleMessageState(parsedMessages), [parsedMessages]);
 
   const dedupedVisibleMessages = useMemo(() => {
@@ -131,7 +130,6 @@ export const useMessageListDerivedState = (messages: Message[]) => {
     assistantToolCallById,
     derivedProcessStatsByUserId,
     processSignalByUserMessageId,
-    linkedUserExpandedByAssistantId,
     toolResultKeyByMessageId,
     toolCallLookupKeyByMessageId,
   };

@@ -65,7 +65,6 @@ export const createDraftAssistantMessage = ({
     ...buildModelConfigMetadata(selectedModel),
     historyFinalForUserMessageId: userMessage.id,
     historyFinalForTurnId: conversationTurnId,
-    historyProcessExpanded: false,
     historyDraftUserMessage: {
       id: userMessage.id,
       content: userMessage.content,

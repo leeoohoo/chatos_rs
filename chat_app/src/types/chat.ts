@@ -69,14 +69,11 @@ export interface MessageMetadata extends UnknownRecord {
   type?: string;
   conversation_turn_id?: string;
   historyProcess?: MessageHistoryProcessState;
-  historyProcessInlineMessages?: Message[];
   historyFinalForUserMessageId?: string;
   historyFinalForTurnId?: string;
   historyProcessUserMessageId?: string;
   historyProcessTurnId?: string;
   historyProcessPlaceholder?: boolean;
-  historyProcessLoaded?: boolean;
-  historyProcessExpanded?: boolean;
   historyDraftUserMessage?: DraftUserMessageSnapshot;
   unavailableTools?: UnavailableToolInfo[];
   requestError?: string;

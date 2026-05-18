@@ -23,7 +23,7 @@ use crate::modules::conversation_runtime::tools_panel::{
 use crate::services::access_token_scope;
 use crate::services::ai_common::normalize_turn_id;
 use crate::utils::abort_registry;
-use crate::utils::sse::{sse_channel, SseSender};
+use crate::utils::sse::SseSender;
 
 #[derive(Debug, Deserialize)]
 struct UserQuery {
@@ -32,7 +32,6 @@ struct UserQuery {
 
 pub fn router() -> Router {
     Router::new()
-        .route("/api/agent_v2/chat/stream", post(agent_chat_stream))
         .route("/api/agent_v2/chat/send", post(agent_chat_send))
         .route("/api/agent_v2/tools", get(agent_tools))
         .route("/api/agent_v2/status", get(agent_status))
@@ -41,35 +40,6 @@ pub fn router() -> Router {
             post(reset_conversation),
         )
         .route("/api/chat/stop", post(stop_chat))
-}
-
-async fn agent_chat_stream(
-    auth: AuthUser,
-    Json(mut req): Json<ChatStreamRequest>,
-) -> Result<
-    axum::response::Sse<
-        impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-    >,
-    (StatusCode, Json<Value>),
-> {
-    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
-        return Err(err);
-    }
-    validate_chat_stream_request(&req, false).await?;
-    let conversation_id = req.conversation_id.clone().unwrap_or_default();
-
-    abort_registry::reset(&conversation_id);
-    let (sse, sender) = sse_channel();
-
-    access_token_scope::spawn_with_current_access_token(stream_chat_v2(
-        Some(sender),
-        req,
-        false,
-        true,
-        false,
-    ));
-
-    Ok(sse)
 }
 
 async fn agent_chat_send(

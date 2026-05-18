@@ -7,6 +7,7 @@ interface UseChatSessionEffectsParams {
   currentSession: Session | null;
   uiPromptHistoryOpen: boolean;
   summaryPaneSessionId: string | null;
+  closeTurnProcessViewer?: () => void;
   setTaskHistoryOpen?: (value: boolean) => void;
   loadProjects: () => Promise<unknown>;
   loadAiModelConfigs: () => Promise<void>;
@@ -29,6 +30,7 @@ export const useChatSessionEffects = ({
   currentSession,
   uiPromptHistoryOpen,
   summaryPaneSessionId,
+  closeTurnProcessViewer,
   setTaskHistoryOpen,
   loadProjects,
   loadAiModelConfigs,
@@ -72,6 +74,7 @@ export const useChatSessionEffects = ({
       resetAllWorkbarState();
       resetMemoryState();
       resetUiPromptHistoryState();
+      closeTurnProcessViewer?.();
       setUiPromptHistoryOpen(false);
       setTaskHistoryOpen?.(false);
       return;
@@ -83,6 +86,7 @@ export const useChatSessionEffects = ({
       cancelPendingMemoryLoad();
       cancelPendingUiPromptHistoryLoad();
       setTaskHistoryOpen?.(false);
+      closeTurnProcessViewer?.();
       resetHistoryWorkbarState();
       resetMemoryState();
       hydrateUiPromptHistoryFromCache(currentSession.id);
@@ -105,6 +109,7 @@ export const useChatSessionEffects = ({
     loadContactMemoryContext,
     loadUiPromptHistory,
     resetAllWorkbarState,
+    closeTurnProcessViewer,
     resetHistoryWorkbarState,
     resetMemoryState,
     resetUiPromptHistoryState,

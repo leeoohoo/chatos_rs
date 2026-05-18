@@ -72,10 +72,6 @@ export const isMessageHistoryProcessExpanded = (message: Message): boolean => (
   readBoolean(getMessageHistoryProcessRecord(message), 'expanded') === true
 );
 
-export const isMessageHistoryProcessLoading = (message: Message): boolean => (
-  readBoolean(getMessageHistoryProcessRecord(message), 'loading') === true
-);
-
 export const hasMessageHistoryProcess = (message: Message): boolean => (
   readBoolean(getMessageHistoryProcessRecord(message), 'hasProcess') === true
 );

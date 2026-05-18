@@ -174,4 +174,61 @@ describe('buildVisibleMessageState', () => {
       thinkingCount: 2,
     });
   });
+
+  it('filters inline process assistant messages from the main visible message list', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-inline-1',
+        metadata: {
+          conversation_turn_id: 'turn-inline-1',
+          historyProcess: {
+            hasProcess: true,
+            toolCallCount: 1,
+            thinkingCount: 1,
+            processMessageCount: 1,
+            userMessageId: 'user-inline-1',
+            turnId: 'turn-inline-1',
+            finalAssistantMessageId: 'assistant-final-inline-1',
+            expanded: true,
+            loaded: true,
+            loading: false,
+          },
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-inline-process-1',
+        content: '',
+        metadata: {
+          conversation_turn_id: 'turn-inline-1',
+          historyProcessUserMessageId: 'user-inline-1',
+          historyProcessTurnId: 'turn-inline-1',
+          hidden: false,
+          contentSegments: [
+            { type: 'thinking', content: '分析一下' },
+          ],
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-final-inline-1',
+        content: '最终答案',
+        metadata: {
+          conversation_turn_id: 'turn-inline-1',
+          historyFinalForUserMessageId: 'user-inline-1',
+          historyFinalForTurnId: 'turn-inline-1',
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-inline-1',
+      'assistant-final-inline-1',
+    ]);
+    expect(state.derivedProcessStatsByUserId.get('user-inline-1')).toMatchObject({
+      hasProcess: true,
+      thinkingCount: 1,
+      processMessageCount: 1,
+    });
+  });
 });

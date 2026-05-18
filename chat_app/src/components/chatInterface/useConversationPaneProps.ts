@@ -101,6 +101,15 @@ export const useConversationPaneProps = ({
   currentRemoteConnectionId: conversation.currentRemoteConnectionId,
   availableRemoteConnections: conversation.remoteConnections || [],
   onRemoteConnectionChange: actions.handleComposerRemoteConnectionChange,
+  turnProcessViewerOpen: conversation.turnProcessViewer.open,
+  turnProcessViewerSessionId: conversation.turnProcessViewer.sessionId,
+  turnProcessViewerUserMessageId: conversation.turnProcessViewer.userMessageId,
+  turnProcessViewerTurnId: conversation.turnProcessViewer.turnId,
+  turnProcessViewerCachedMessages: conversation.turnProcessViewer.sessionId
+    ? (conversation.turnProcessCacheBySession?.[conversation.turnProcessViewer.sessionId] || null)
+    : null,
+  turnProcessApiClient: conversation.apiClient,
+  onCloseTurnProcessViewer: actions.closeTurnProcessViewer,
   mcpEnabled: conversation.composerMcpEnabled,
   enabledMcpIds: conversation.composerEnabledMcpIds,
   onMcpEnabledChange: actions.handleComposerMcpEnabledChange,

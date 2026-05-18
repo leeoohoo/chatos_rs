@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { isSessionMatchedContactAndProject } from '../../../features/contactSession/sessionResolver';
-import type { Session, AiModelConfig } from '../../../types';
+import type { Session, AiModelConfig, Message } from '../../../types';
 import type { SendMessageRuntimeOptions } from '../../../lib/store/types';
 import type { ContactItem, ProjectContactRow, SessionChatStateMap } from './types';
 
@@ -32,7 +32,12 @@ interface UseTeamMemberConversationParams {
     attachments?: File[],
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => Promise<void>;
-  toggleTurnProcess: (userMessageId: string) => Promise<void>;
+  messages: Message[];
+  openTurnProcessViewer: (
+    sessionId: string,
+    userMessageId: string,
+    options?: { turnId?: string | null },
+  ) => void;
   loadMoreMessages: (sessionId: string) => Promise<void>;
 }
 
@@ -56,7 +61,8 @@ export const useTeamMemberConversation = ({
   ensureContactSession,
   selectSession,
   sendMessage,
-  toggleTurnProcess,
+  messages,
+  openTurnProcessViewer,
   loadMoreMessages,
 }: UseTeamMemberConversationParams) => {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
@@ -250,13 +256,21 @@ export const useTeamMemberConversation = ({
   }, [loadMoreMessages, selectedProjectSession?.id]);
 
   const handleToggleTurnProcess = useCallback((userMessageId: string) => {
-    if (!userMessageId) {
+    const sessionId = selectedProjectSession?.id || '';
+    const normalizedUserMessageId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
+    if (!sessionId || !normalizedUserMessageId) {
       return;
     }
-    void toggleTurnProcess(userMessageId).catch((error) => {
-      console.error('Failed to toggle turn process messages in team pane:', error);
-    });
-  }, [toggleTurnProcess]);
+    const userMessage = messages.find((message) => (
+      message.role === 'user' && message.id === normalizedUserMessageId
+    ));
+    const turnId = typeof userMessage?.metadata?.conversation_turn_id === 'string'
+      ? userMessage.metadata.conversation_turn_id.trim()
+      : (typeof userMessage?.metadata?.historyProcess?.turnId === 'string'
+        ? userMessage.metadata.historyProcess.turnId.trim()
+        : '');
+    openTurnProcessViewer(sessionId, normalizedUserMessageId, { turnId: turnId || null });
+  }, [messages, openTurnProcessViewer, selectedProjectSession?.id]);
 
   const handleSendMessage = useCallback(async (
     content: string,

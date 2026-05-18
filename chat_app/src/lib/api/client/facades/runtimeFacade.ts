@@ -39,15 +39,6 @@ import type {
 import type ApiClient from '../../client';
 
 export interface RuntimeFacade {
-  streamChat(
-    conversationId: string,
-    content: string,
-    modelConfig: StreamChatModelConfigPayload,
-    userId?: string,
-    attachments?: StreamChatAttachmentPayload[],
-    reasoningEnabled?: boolean,
-    options?: StreamChatOptions,
-  ): Promise<ReadableStream>;
   sendChatCommand(
     conversationId: string,
     content: string,
@@ -116,18 +107,6 @@ export interface RuntimeFacade {
 }
 
 export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
-  async streamChat(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
-    return streamApi.streamChat(
-      this.getStreamApiContext(),
-      conversationId,
-      content,
-      modelConfig,
-      userId,
-      attachments,
-      reasoningEnabled,
-      options,
-    );
-  },
   async sendChatCommand(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
     return streamApi.sendChatCommand(
       this.getStreamApiContext(),

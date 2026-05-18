@@ -1,8 +1,10 @@
 import React, { type ComponentProps } from 'react';
 
+import type ApiClient from '../../lib/api/client';
 import { MessageList } from '../MessageList';
 import ChatComposerPanel from './ChatComposerPanel';
 import SummaryPane from './SummaryPane';
+import TurnProcessModal from '../TurnProcessModal';
 import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
 import type {
   ChatInterfaceProps,
@@ -96,6 +98,13 @@ interface ChatConversationPaneProps {
   currentAgent?: ChatComposerPanelProps['currentAgent'];
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
+  turnProcessViewerOpen?: boolean;
+  turnProcessViewerSessionId?: string | null;
+  turnProcessViewerUserMessageId?: string | null;
+  turnProcessViewerTurnId?: string | null;
+  turnProcessViewerCachedMessages?: Record<string, Message[]> | null;
+  turnProcessApiClient?: ApiClient;
+  onCloseTurnProcessViewer?: () => void;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
@@ -315,6 +324,13 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentAgent,
   availableRemoteConnections,
   onRemoteConnectionChange,
+  turnProcessViewerOpen = false,
+  turnProcessViewerSessionId = null,
+  turnProcessViewerUserMessageId = null,
+  turnProcessViewerTurnId = null,
+  turnProcessViewerCachedMessages = null,
+  turnProcessApiClient,
+  onCloseTurnProcessViewer,
   mcpEnabled,
   enabledMcpIds,
   onMcpEnabledChange,
@@ -428,6 +444,19 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
           runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
           runtimeGuidanceItems={runtimeGuidanceItems}
+        />
+      )}
+
+      {turnProcessApiClient && (
+        <TurnProcessModal
+          open={turnProcessViewerOpen}
+          sessionId={turnProcessViewerSessionId}
+          userMessageId={turnProcessViewerUserMessageId}
+          turnId={turnProcessViewerTurnId}
+          messages={messages}
+          cachedProcessMessages={turnProcessViewerCachedMessages}
+          apiClient={turnProcessApiClient}
+          onClose={() => onCloseTurnProcessViewer?.()}
         />
       )}
     </div>

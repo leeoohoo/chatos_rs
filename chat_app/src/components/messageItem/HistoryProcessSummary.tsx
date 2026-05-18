@@ -2,8 +2,6 @@ import type { FC } from 'react';
 
 interface HistoryProcessSummaryProps {
   userMessageId: string;
-  historyProcessLoading: boolean;
-  historyProcessExpanded: boolean;
   historyToolCount: number;
   historyThinkingCount: number;
   historyUnavailableToolCount: number;
@@ -12,8 +10,6 @@ interface HistoryProcessSummaryProps {
 
 export const HistoryProcessSummary: FC<HistoryProcessSummaryProps> = ({
   userMessageId,
-  historyProcessLoading,
-  historyProcessExpanded,
   historyToolCount,
   historyThinkingCount,
   historyUnavailableToolCount,
@@ -23,14 +19,10 @@ export const HistoryProcessSummary: FC<HistoryProcessSummaryProps> = ({
     <button
       type="button"
       onClick={() => onToggleTurnProcess?.(userMessageId)}
-      disabled={historyProcessLoading || !onToggleTurnProcess}
+      disabled={!onToggleTurnProcess}
       className="px-2 py-0.5 rounded border border-border bg-muted text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
     >
-      {historyProcessLoading
-        ? 'Loading...'
-        : historyProcessExpanded
-          ? 'Hide process'
-          : 'Show process'}
+      查看过程
     </button>
     <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
       Tools: {historyToolCount}

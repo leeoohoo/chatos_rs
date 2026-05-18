@@ -1,4 +1,5 @@
 import type { SessionSummaryItem } from '../../../features/sessionSummary/useSessionSummaryPanel';
+import type ApiClient from '../../../lib/api/client';
 import type {
   SendMessageRuntimeOptions,
   TaskReviewDraft,
@@ -46,6 +47,13 @@ export interface TeamMemberWorkspaceProps {
   onRemoteConnectionChange: (connectionId: string | null) => void;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
+  turnProcessViewerOpen: boolean;
+  turnProcessViewerSessionId: string | null;
+  turnProcessViewerUserMessageId: string | null;
+  turnProcessViewerTurnId: string | null;
+  turnProcessViewerCachedMessages: Record<string, Message[]> | null;
+  turnProcessApiClient: ApiClient;
+  onCloseTurnProcessViewer: () => void;
   onClearSummaries: () => void;
   onRefreshSummaries: () => void;
   onCloseSummary: () => void;

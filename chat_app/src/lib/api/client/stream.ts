@@ -35,64 +35,6 @@ const buildStreamHttpError = async (response: Response): Promise<ApiRequestError
   });
 };
 
-export const streamChat = async (
-  context: StreamApiContext,
-  conversationId: string,
-  content: string,
-  modelConfig: StreamChatModelConfigPayload,
-  userId?: string,
-  attachments?: StreamChatAttachmentPayload[],
-  reasoningEnabled?: boolean,
-  options?: StreamChatOptions,
-): Promise<ReadableStream> => {
-  const useResponses = modelConfig?.supports_responses === true;
-  const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
-  const hasRemoteConnectionId = Boolean(
-    options && Object.prototype.hasOwnProperty.call(options, 'remoteConnectionId'),
-  );
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {}),
-    },
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      content,
-      user_id: userId,
-      attachments: attachments || [],
-      reasoning_enabled: reasoningEnabled,
-      turn_id: options?.turnId,
-      contact_agent_id: options?.contactAgentId || undefined,
-      remote_connection_id: hasRemoteConnectionId
-        ? (options?.remoteConnectionId ?? null)
-        : undefined,
-      project_id: options?.projectId || undefined,
-      project_root: options?.projectRoot || undefined,
-      mcp_enabled: options?.mcpEnabled,
-      enabled_mcp_ids: options?.enabledMcpIds || [],
-      skills_enabled: options?.skillsEnabled === true,
-      selected_skill_ids: options?.selectedSkillIds || [],
-      model_config_id: modelConfig.id,
-      ai_model_config: {
-        temperature: modelConfig.temperature || 0.7,
-      },
-    }),
-  });
-  context.applyRefreshedAccessToken(response);
-
-  if (!response.ok) {
-    throw await buildStreamHttpError(response);
-  }
-
-  if (!response.body) {
-    throw new Error('Response body is null');
-  }
-
-  return response.body;
-};
-
 export const sendChatCommand = async (
   context: StreamApiContext,
   conversationId: string,

@@ -78,7 +78,6 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
           ...message,
           metadata: {
             ...(message.metadata || {}),
-            historyProcessExpanded: message.metadata?.historyProcessExpanded === true,
             ...(finalTurnId ? { historyFinalForTurnId: finalTurnId } : {}),
           },
         };
@@ -140,7 +139,6 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
             ...(message.metadata || {}),
             hidden: false,
             historyProcessPlaceholder: false,
-            historyProcessLoaded: true,
             historyProcessUserMessageId: userMessageId,
             ...(conversationTurnId ? { historyProcessTurnId: conversationTurnId } : {}),
           },
@@ -165,7 +163,6 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
           thinkingCount,
           processMessageCount,
         },
-        ...(processMessageCount > 0 ? { historyProcessInlineMessages: inlineProcessMessages } : {}),
       },
     });
 
@@ -187,7 +184,6 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
         hidden: false,
         historyFinalForUserMessageId: userMessageId,
         ...(conversationTurnId ? { historyFinalForTurnId: conversationTurnId } : {}),
-        historyProcessExpanded: false,
       },
     });
   });

@@ -18,24 +18,18 @@ import {
   getMessageKeepLastN,
   getMessagePrimaryToolCalls,
   hasMessageHistoryProcess,
-  isMessageHistoryProcessExpanded,
-  isMessageHistoryProcessLoading,
 } from './messageReaders';
 
 interface UseMessageItemModelOptions {
   message: Message;
   isStreaming: boolean;
-  renderContext: 'chat' | 'process_drawer';
   derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
-  linkedUserExpandedForAssistant?: boolean;
 }
 
 export const useMessageItemModel = ({
   message,
   isStreaming,
-  renderContext,
   derivedProcessStatsByUserId,
-  linkedUserExpandedForAssistant,
 }: UseMessageItemModelOptions) => {
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
@@ -59,18 +53,11 @@ export const useMessageItemModel = ({
       hasMessageHistoryProcess(message)
       || getMessageHistoryProcessToolCount(message) > 0
       || getMessageHistoryProcessThinkingCount(message) > 0
-      || isMessageHistoryProcessLoading(message)
     ))
     || derivedProcessStats.hasProcess
     || derivedProcessStats.hasStreamingAssistant
     || derivedProcessStats.processMessageCount > 0
   );
-  const historyProcessExpanded = isUser
-    ? isMessageHistoryProcessExpanded(message)
-    : false;
-  const historyProcessLoading = isUser
-    ? isMessageHistoryProcessLoading(message)
-    : false;
   const historyToolCount = Math.max(
     getMessageHistoryProcessToolCount(message),
     derivedProcessStats.toolCallCount,
@@ -85,13 +72,6 @@ export const useMessageItemModel = ({
     isAssistant
     && Boolean(getMessageHistoryProcessUserMessageId(message) || getMessageHistoryProcessTurnId(message))
   );
-  const linkedUserExpandedForFinalAssistant = useMemo(() => {
-    if (typeof linkedUserExpandedForAssistant === 'boolean') {
-      return linkedUserExpandedForAssistant;
-    }
-    return false;
-  }, [linkedUserExpandedForAssistant]);
-
   const isTurnLinkedAssistant = (
     isAssistant
     && Boolean(
@@ -104,8 +84,6 @@ export const useMessageItemModel = ({
   const collapseAssistantProcessByDefault = (
     isTurnLinkedAssistant
     && !isProcessAssistant
-    && !linkedUserExpandedForFinalAssistant
-    && renderContext !== 'process_drawer'
   );
 
   const attachments = message.metadata?.attachments || [];
@@ -154,8 +132,6 @@ export const useMessageItemModel = ({
     isSystem,
     isTool,
     hasHistoryProcess,
-    historyProcessExpanded,
-    historyProcessLoading,
     historyToolCount,
     historyThinkingCount,
     historyUnavailableToolCount,

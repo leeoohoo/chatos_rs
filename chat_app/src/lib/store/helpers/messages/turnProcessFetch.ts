@@ -34,12 +34,10 @@ export const fetchTurnProcessMessages = async (
       ...message.metadata,
       hidden: false,
       historyProcessPlaceholder: false,
-      historyProcessLoaded: true,
       historyProcessUserMessageId: userMessageId,
       ...((turnId || getConversationTurnId(message))
         ? { historyProcessTurnId: turnId || getConversationTurnId(message) }
         : {}),
-      historyProcessExpanded: true,
     },
   }));
 };

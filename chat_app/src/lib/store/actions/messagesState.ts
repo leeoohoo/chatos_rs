@@ -2,12 +2,6 @@ import type { Message } from '../../../types';
 import type { ChatStoreDraft } from '../types';
 import { normalizeTurnId } from '../../domain/messages';
 
-export type TurnProcessMapValue = {
-  expanded: boolean;
-  loaded: boolean;
-  loading: boolean;
-};
-
 export const cloneStreamingMessageDraft = <T,>(value: T): T => {
   try {
     if (typeof structuredClone === 'function') {
@@ -21,36 +15,6 @@ export const cloneStreamingMessageDraft = <T,>(value: T): T => {
     return JSON.parse(JSON.stringify(value));
   } catch {
     return value;
-  }
-};
-
-export const readTurnProcessState = (
-  sessionState: Record<string, TurnProcessMapValue> | undefined,
-  processKey: string,
-  userMessageId: string,
-): TurnProcessMapValue | undefined => {
-  if (!sessionState) {
-    return undefined;
-  }
-  if (processKey && sessionState[processKey]) {
-    return sessionState[processKey];
-  }
-  if (userMessageId && sessionState[userMessageId]) {
-    return sessionState[userMessageId];
-  }
-  return undefined;
-};
-
-export const writeTurnProcessState = (
-  sessionState: Record<string, TurnProcessMapValue>,
-  processKey: string,
-  userMessageId: string,
-  value: TurnProcessMapValue,
-) => {
-  const key = processKey || userMessageId;
-  sessionState[key] = value;
-  if (userMessageId && key !== userMessageId && userMessageId in sessionState) {
-    delete sessionState[userMessageId];
   }
 };
 
@@ -68,13 +32,6 @@ export const writeTurnProcessCache = (
 };
 
 export const ensureSessionTurnMaps = (state: ChatStoreDraft, sessionId: string) => {
-  if (!state.sessionTurnProcessState) {
-    state.sessionTurnProcessState = {};
-  }
-  if (!state.sessionTurnProcessState[sessionId]) {
-    state.sessionTurnProcessState[sessionId] = {};
-  }
-
   if (!state.sessionTurnProcessCache) {
     state.sessionTurnProcessCache = {};
   }

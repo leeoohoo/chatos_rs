@@ -157,7 +157,7 @@ async fn root() -> axum::Json<serde_json::Value> {
             "auth_login": "/api/auth/login",
             "sessions": "/api/sessions",
             "messages": "/api/messages",
-            "chat_v3_stream": "/api/agent_v3/chat/stream",
+            "chat_v3_send": "/api/agent_v3/chat/send",
             "realtime_ws": "/api/realtime/ws",
             "fs_list": "/api/fs/list",
             "git_status": "/api/git/status"

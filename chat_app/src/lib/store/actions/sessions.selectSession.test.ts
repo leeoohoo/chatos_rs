@@ -17,7 +17,6 @@ vi.mock('../helpers/sessions', () => ({
 
 vi.mock('../helpers/messages', () => ({
   fetchSessionMessages: vi.fn(),
-  applyTurnProcessCache: vi.fn((messages: Message[]) => messages),
 }));
 
 import { fetchSession } from '../helpers/sessions';
@@ -79,7 +78,6 @@ describe('selectSession', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
 
@@ -170,7 +168,6 @@ describe('selectSession', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
 
@@ -259,7 +256,6 @@ describe('selectSession', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
 
@@ -331,7 +327,6 @@ describe('selectSession', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
 
@@ -408,7 +403,6 @@ describe('selectSession', () => {
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
       sessionStreamingMessageDrafts: {},
-      sessionTurnProcessState: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
 

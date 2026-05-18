@@ -28,9 +28,6 @@ export function createSessionMutationActions({
     if (state.sessionChatState && sessionId in state.sessionChatState) {
       delete state.sessionChatState[sessionId];
     }
-    if (state.sessionTurnProcessState && sessionId in state.sessionTurnProcessState) {
-      delete state.sessionTurnProcessState[sessionId];
-    }
     if (state.sessionTurnProcessCache && sessionId in state.sessionTurnProcessCache) {
       delete state.sessionTurnProcessCache[sessionId];
     }
@@ -180,9 +177,6 @@ export function createSessionMutationActions({
           }
           if (state.sessionChatState && sessionId in state.sessionChatState) {
             delete state.sessionChatState[sessionId];
-          }
-          if (state.sessionTurnProcessState && sessionId in state.sessionTurnProcessState) {
-            delete state.sessionTurnProcessState[sessionId];
           }
           if (state.sessionTurnProcessCache && sessionId in state.sessionTurnProcessCache) {
             delete state.sessionTurnProcessCache[sessionId];

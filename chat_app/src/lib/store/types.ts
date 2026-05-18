@@ -12,6 +12,7 @@ import type {
   Session,
   SystemContext,
   Terminal,
+  TurnProcessViewerState,
   Theme,
 } from '../../types';
 import type {
@@ -202,8 +203,8 @@ export interface ChatState {
   sessionMessagesCacheOrder: string[];
   sessionRuntimeGuidanceState: Record<string, SessionRuntimeGuidanceState>;
   sessionStreamingMessageDrafts: Record<string, Message | null>;
-  sessionTurnProcessState: Record<string, Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>>;
   sessionTurnProcessCache: Record<string, Record<string, Message[]>>;
+  turnProcessViewer: TurnProcessViewerState;
   taskReviewPanel: TaskReviewPanelState | null;
   taskReviewPanelsBySession: Record<string, TaskReviewPanelState[]>;
   uiPromptPanel: UiPromptPanelState | null;
@@ -335,10 +336,12 @@ export interface ChatActions {
   loadMessages: (sessionId: string) => Promise<void>;
   syncSessionMessagesInBackground: (sessionId: string) => Promise<void>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
-  toggleTurnProcess: (
+  openTurnProcessViewer: (
+    sessionId: string,
     userMessageId: string,
-    options?: { forceExpand?: boolean; forceCollapse?: boolean }
-  ) => Promise<void>;
+    options?: { turnId?: string | null }
+  ) => void;
+  closeTurnProcessViewer: () => void;
   sendMessage: (
     content: string,
     attachments?: File[],

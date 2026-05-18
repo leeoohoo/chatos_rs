@@ -1,8 +1,5 @@
 import type ApiClient from '../../api/client';
-import {
-  applyTurnProcessCache,
-  fetchSessionMessages,
-} from '../helpers/messages';
+import { fetchSessionMessages } from '../helpers/messages';
 import type {
   ChatStoreGet,
   ChatStoreSet,
@@ -57,12 +54,7 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
     );
     set((state) => {
       ensureSessionTurnMaps(state, sessionId);
-      const nextMessages = mergeMessagesWithStreamingDraft(state, sessionId, mergedSnapshot.messages);
-      const mergedMessages = applyTurnProcessCache(
-        nextMessages,
-        state.sessionTurnProcessCache?.[sessionId],
-        state.sessionTurnProcessState?.[sessionId],
-      );
+      const mergedMessages = mergeMessagesWithStreamingDraft(state, sessionId, mergedSnapshot.messages);
 
       if (options.updateVisibleMessages || state.currentSessionId === sessionId) {
         state.messages = mergedMessages;
@@ -152,11 +144,7 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           const merged = [...older, ...state.messages];
           mergedSnapshotMessages = extractCompactHistoryMessages(merged);
 
-          state.messages = applyTurnProcessCache(
-            merged,
-            state.sessionTurnProcessCache?.[sessionId],
-            state.sessionTurnProcessState?.[sessionId],
-          );
+          state.messages = merged;
           writePaginationState(state.sessionMessagePaginationState, sessionId, result, true);
           state.hasMoreMessages = Boolean(state.sessionMessagePaginationState[sessionId]?.nextBefore);
         });

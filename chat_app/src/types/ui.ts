@@ -56,6 +56,13 @@ export interface MessageListProps {
   };
 }
 
+export interface TurnProcessViewerState {
+  open: boolean;
+  sessionId: string | null;
+  userMessageId: string | null;
+  turnId: string | null;
+}
+
 export interface InputAreaProps {
   onSend: SendMessageHandler;
   onGuide?: GuideMessageHandler;

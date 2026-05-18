@@ -33,11 +33,11 @@ export const useTeamMembersContactResources = ({
     sessionChatState,
     sendMessage,
     loadMoreMessages,
-    toggleTurnProcess,
     createSession,
     selectSession,
     aiModelConfigs,
     selectedModelId,
+    messages,
   } = store;
 
   const normalizedProjectId = normalizeProjectScopeId(project.id || null);
@@ -156,7 +156,8 @@ export const useTeamMembersContactResources = ({
     ensureContactSession,
     selectSession,
     sendMessage,
-    toggleTurnProcess,
+    messages,
+    openTurnProcessViewer: store.openTurnProcessViewer,
     loadMoreMessages,
   });
 

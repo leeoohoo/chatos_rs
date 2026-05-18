@@ -4,12 +4,9 @@ import type {
   TurnRuntimeSnapshotLookupResponse,
 } from '../../../api/client/types';
 import { normalizeRawMessages } from '../../../domain/messages';
-import { applyTurnProcessCache } from '../../helpers/messages';
 import {
   ensureSessionTurnMaps,
-  readTurnProcessState,
   writeTurnProcessCache,
-  writeTurnProcessState,
 } from '../messagesState';
 import type {
   ChatStoreDraft,
@@ -192,16 +189,6 @@ const upsertRecoveredTurnMessages = (
       ...(recoveredUser.metadata || {}),
       historyProcess: nextHistoryProcess,
     };
-    writeTurnProcessState(
-      state.sessionTurnProcessState[sessionId],
-      processKey,
-      recoveredUser.id,
-      {
-        expanded: readTurnProcessState(state.sessionTurnProcessState[sessionId], processKey, recoveredUser.id)?.expanded === true,
-        loaded: true,
-        loading: false,
-      },
-    );
     writeTurnProcessCache(
       state.sessionTurnProcessCache[sessionId],
       processKey,
@@ -229,12 +216,6 @@ const upsertRecoveredTurnMessages = (
     }
     state.messages.push(message);
   });
-
-  state.messages = applyTurnProcessCache(
-    state.messages,
-    state.sessionTurnProcessCache?.[sessionId],
-    state.sessionTurnProcessState?.[sessionId],
-  );
 
   return true;
 };

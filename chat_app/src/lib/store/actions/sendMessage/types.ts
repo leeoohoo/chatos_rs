@@ -41,7 +41,6 @@ export interface StreamingMessageMetadata extends Record<string, unknown> {
   historyProcess?: MessageHistoryProcessState;
   historyFinalForUserMessageId?: string;
   historyFinalForTurnId?: string;
-  historyProcessExpanded?: boolean;
   historyDraftUserMessage?: DraftUserMessageSnapshot;
   requestError?: string;
 }

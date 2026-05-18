@@ -9,7 +9,6 @@ export interface MessageItemProps {
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
-  renderContext?: 'chat' | 'process_drawer';
   derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
   toolResultById?: Map<string, Message>;
   assistantToolCallsById?: Map<string, ToolCall>;
@@ -20,5 +19,4 @@ export interface MessageItemProps {
     renderMessage?: (message: Message) => ReactNode;
     renderAttachment?: (attachment: Attachment) => ReactNode;
   };
-  linkedUserExpandedForAssistant?: boolean;
 }

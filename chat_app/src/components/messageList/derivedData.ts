@@ -12,7 +12,6 @@ import {
   getMessageMetadataToolCalls,
   getMessageMetadataRecord,
   getMessageToolResultCallId,
-  isMessageHistoryProcessExpanded,
   isMessageHistoryProcessPlaceholder,
   normalizeMetaId,
   normalizeTurnId,
@@ -39,7 +38,6 @@ type ParsedMessageForList = {
   historyFinalForUserMessageId: string;
   historyFinalForTurnId: string;
   historyProcessPlaceholder: boolean;
-  userExpanded: boolean;
   userTurnId: string;
   userFinalAssistantMessageId: string;
 };
@@ -130,7 +128,6 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
   const historyFinalForUserMessageId = getMessageHistoryFinalForUserMessageId(message);
   const historyFinalForTurnId = getMessageHistoryFinalForTurnId(message);
   const historyProcessPlaceholder = isMessageHistoryProcessPlaceholder(message);
-  const userExpanded = isMessageHistoryProcessExpanded(message);
   const userTurnId = normalizeTurnId(
     conversationTurnId || historyProcessTurnId,
   );
@@ -156,7 +153,6 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
     historyFinalForUserMessageId,
     historyFinalForTurnId,
     historyProcessPlaceholder,
-    userExpanded,
     userTurnId,
     userFinalAssistantMessageId,
   };
@@ -180,12 +176,13 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
     toolCallIds: Set<string>;
   }>();
 
-  const userExpandedById = new Map<string, boolean>();
-  const turnExpandedById = new Map<string, boolean>();
-  const finalAssistantExpandedById = new Map<string, boolean>();
-
   parsedMessages.forEach((parsed) => {
-    if (parsed.visible) {
+    const isInlineProcessMessage = parsed.role !== 'user' && Boolean(
+      parsed.historyProcessUserMessageId
+      || parsed.historyProcessTurnId,
+    );
+
+    if (parsed.visible && !isInlineProcessMessage) {
       visibleCandidates.push(parsed);
     }
 
@@ -223,14 +220,6 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
         && !assistantIdToUserMessageId.has(parsed.userFinalAssistantMessageId)
       ) {
         assistantIdToUserMessageId.set(parsed.userFinalAssistantMessageId, parsed.id);
-      }
-
-      userExpandedById.set(parsed.id, parsed.userExpanded);
-      if (parsed.userTurnId) {
-        turnExpandedById.set(parsed.userTurnId, parsed.userExpanded);
-      }
-      if (parsed.userFinalAssistantMessageId) {
-        finalAssistantExpandedById.set(parsed.userFinalAssistantMessageId, parsed.userExpanded);
       }
     }
   });
@@ -344,32 +333,6 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
     });
   });
 
-  const expandedByAssistantId = new Map<string, boolean>();
-  parsedMessages.forEach((parsed) => {
-    if (parsed.role !== 'assistant') {
-      return;
-    }
-    if (parsed.historyProcessUserMessageId || parsed.historyProcessTurnId) {
-      return;
-    }
-
-    const linkedUserMessageId = parsed.historyFinalForUserMessageId;
-    if (linkedUserMessageId && userExpandedById.has(linkedUserMessageId)) {
-      expandedByAssistantId.set(parsed.id, userExpandedById.get(linkedUserMessageId) === true);
-      return;
-    }
-
-    const linkedTurnId = parsed.historyFinalForTurnId || parsed.conversationTurnId;
-    if (linkedTurnId && turnExpandedById.has(linkedTurnId)) {
-      expandedByAssistantId.set(parsed.id, turnExpandedById.get(linkedTurnId) === true);
-      return;
-    }
-
-    if (finalAssistantExpandedById.has(parsed.id)) {
-      expandedByAssistantId.set(parsed.id, finalAssistantExpandedById.get(parsed.id) === true);
-    }
-  });
-
   const visible = (() => {
     if (visibleCandidates.length <= 1) {
       return visibleCandidates.map((item) => item.message);
@@ -429,6 +392,5 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
     assistantToolCallMetaById: assistantToolMetaById,
     derivedProcessStatsByUserId: derivedStats,
     processSignalByUserMessageId: signalMap,
-    linkedUserExpandedByAssistantId: expandedByAssistantId,
   };
 };

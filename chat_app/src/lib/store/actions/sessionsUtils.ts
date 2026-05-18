@@ -314,17 +314,10 @@ export const mergeLatestCompactHistorySnapshot = (
   };
 };
 
-type SessionTurnMapsState = Pick<ChatState, 'sessionTurnProcessState' | 'sessionTurnProcessCache'>;
+type SessionTurnMapsState = Pick<ChatState, 'sessionTurnProcessCache'>;
 type SessionProjectSyncState = Pick<ChatState, 'projects' | 'currentProjectId' | 'currentProject'>;
 
 export const ensureSessionTurnMaps = (state: SessionTurnMapsState, sessionId: string) => {
-  if (!state.sessionTurnProcessState) {
-    state.sessionTurnProcessState = {};
-  }
-  if (!state.sessionTurnProcessState[sessionId]) {
-    state.sessionTurnProcessState[sessionId] = {};
-  }
-
   if (!state.sessionTurnProcessCache) {
     state.sessionTurnProcessCache = {};
   }

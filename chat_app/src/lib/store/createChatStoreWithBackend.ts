@@ -83,8 +83,13 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sessionMessagesCacheOrder: [],
                     sessionRuntimeGuidanceState: {},
                     sessionStreamingMessageDrafts: {},
-                    sessionTurnProcessState: {},
                     sessionTurnProcessCache: {},
+                    turnProcessViewer: {
+                        open: false,
+                        sessionId: null,
+                        userMessageId: null,
+                        turnId: null,
+                    },
                     taskReviewPanel: null,
                     taskReviewPanelsBySession: {},
                     uiPromptPanel: null,
@@ -117,6 +122,34 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createTerminalActions({ set, get, client, getUserIdParam }),
                     ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
+                    openTurnProcessViewer: (sessionId, userMessageId, options) => {
+                        const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+                        const normalizedUserMessageId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
+                        const normalizedTurnId = typeof options?.turnId === 'string'
+                            ? options.turnId.trim()
+                            : '';
+                        if (!normalizedSessionId || !normalizedUserMessageId) {
+                            return;
+                        }
+                        set((state: ChatStoreDraft) => {
+                            state.turnProcessViewer = {
+                                open: true,
+                                sessionId: normalizedSessionId,
+                                userMessageId: normalizedUserMessageId,
+                                turnId: normalizedTurnId || null,
+                            };
+                        });
+                    },
+                    closeTurnProcessViewer: () => {
+                        set((state: ChatStoreDraft) => {
+                            state.turnProcessViewer = {
+                                open: false,
+                                sessionId: null,
+                                userMessageId: null,
+                                turnId: null,
+                            };
+                        });
+                    },
                     ...createRuntimeGuidanceActions({ set, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
                     ...createStreamingActions({ set, get, client }),

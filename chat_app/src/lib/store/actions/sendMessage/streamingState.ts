@@ -139,15 +139,6 @@ export const createStreamingMessageStateHelpers = ({
     );
 
     metadata.historyProcess = next;
-
-    const assistantMessage = state.messages.find(
-      (message): message is StreamingMessage => (
-        message.id === tempAssistantMessage.id && message.role === 'assistant'
-      ),
-    );
-    if (assistantMessage) {
-      ensureStreamingMetadata(assistantMessage).historyProcessExpanded = next.expanded === true;
-    }
   };
 
   const applyTextDeltaToMessage = (contentStr: string) => {
