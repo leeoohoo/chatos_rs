@@ -42,7 +42,7 @@ export const sortTasks = (items: TaskWorkbarItem[]) => {
   return [...items].sort((a, b) => {
     const left = Date.parse(a.createdAt) || 0;
     const right = Date.parse(b.createdAt) || 0;
-    return left - right;
+    return right - left;
   });
 };
 

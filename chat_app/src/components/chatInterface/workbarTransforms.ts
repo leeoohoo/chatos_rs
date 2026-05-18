@@ -94,11 +94,17 @@ export const selectLatestTurnTasks = (tasks: TaskWorkbarItem[]): TaskWorkbarItem
     return [];
   }
 
-  const earliestTaskWithTurn = tasks.find((task) => task.conversationTurnId.trim().length > 0);
-  if (!earliestTaskWithTurn) {
+  const latestTaskWithTurn = [...tasks]
+    .sort((left, right) => {
+      const leftTs = Date.parse(left.createdAt) || 0;
+      const rightTs = Date.parse(right.createdAt) || 0;
+      return rightTs - leftTs;
+    })
+    .find((task) => task.conversationTurnId.trim().length > 0);
+  if (!latestTaskWithTurn) {
     return tasks.slice(0, 8);
   }
 
-  const currentTurnId = earliestTaskWithTurn.conversationTurnId.trim();
+  const currentTurnId = latestTaskWithTurn.conversationTurnId.trim();
   return tasks.filter((task) => task.conversationTurnId.trim() === currentTurnId);
 };

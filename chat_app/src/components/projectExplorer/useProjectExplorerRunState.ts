@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import type ApiClient from '../../lib/api/client';
 import type { FsEntry, Project } from '../../types';
@@ -67,20 +67,23 @@ export const useProjectExplorerRunState = ({
     setRunnerMessage: runnerCommands.setRunnerMessage,
   });
 
+  const lastInitializedProjectIdRef = useRef<string | null>(null);
+
   useEffect(() => {
+    const nextProjectId = project?.id || null;
+    if (lastInitializedProjectIdRef.current === nextProjectId) {
+      return;
+    }
+    lastInitializedProjectIdRef.current = nextProjectId;
     runnerCatalog.resetRunnerCatalogState();
     runnerCommands.resetRunnerCommandState();
     runnerTerminal.resetActiveRunState();
-    if (!project?.id) {
+    if (!nextProjectId) {
       return;
     }
     void runnerCatalog.refreshRunnerState();
   }, [
     project?.id,
-    runnerCatalog.refreshRunnerState,
-    runnerCatalog.resetRunnerCatalogState,
-    runnerCommands.resetRunnerCommandState,
-    runnerTerminal.resetActiveRunState,
   ]);
 
   const selectedRunTarget = useMemo(
