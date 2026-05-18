@@ -14,6 +14,12 @@ pub struct AuthUserRecord {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateUserResult {
+    Created,
+    AlreadyExists,
+}
+
 #[derive(Debug, Clone, FromRow)]
 struct AuthUserRow {
     user_id: String,
@@ -135,6 +141,53 @@ pub async fn upsert_user(user: &AuthUserRecord) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
                 Ok(())
+            })
+        },
+    )
+    .await
+}
+
+pub async fn create_user(user: &AuthUserRecord) -> Result<CreateUserResult, String> {
+    let user = user.clone();
+
+    with_db(
+        |db| {
+            let user = user.clone();
+            Box::pin(async move {
+                match db.collection::<AuthUserRecord>("auth_users").insert_one(user, None).await {
+                    Ok(_) => Ok(CreateUserResult::Created),
+                    Err(err) => {
+                        if err.to_string().contains("E11000") {
+                            return Ok(CreateUserResult::AlreadyExists);
+                        }
+                        Err(err.to_string())
+                    }
+                }
+            })
+        },
+        |pool| {
+            let user = user.clone();
+            Box::pin(async move {
+                match sqlx::query(
+                    "INSERT INTO auth_users (user_id, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(&user.user_id)
+                .bind(&user.password_hash)
+                .bind(&user.role)
+                .bind(&user.created_at)
+                .bind(&user.updated_at)
+                .execute(pool)
+                .await
+                {
+                    Ok(_) => Ok(CreateUserResult::Created),
+                    Err(err) => {
+                        let message = err.to_string();
+                        if message.contains("UNIQUE constraint failed") {
+                            return Ok(CreateUserResult::AlreadyExists);
+                        }
+                        Err(message)
+                    }
+                }
             })
         },
     )

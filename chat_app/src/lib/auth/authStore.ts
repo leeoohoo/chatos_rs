@@ -22,6 +22,7 @@ interface AuthState {
   error: string | null;
   bootstrap: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
+  register: (username: string, password: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
 }
@@ -67,6 +68,26 @@ function normalizeAuthUser(input: unknown): AuthUser | null {
         ? rawEmail.trim()
         : String(readStringField(record, 'username') || readStringField(record, 'user_id') || id),
   };
+}
+
+function applyAuthSuccess(
+  response: unknown,
+  set: (partial: Partial<AuthState>) => void,
+) {
+  const record = (response && typeof response === 'object') ? response as Record<string, unknown> : null;
+  const token = record?.access_token;
+  const user = normalizeAuthUser(record?.user);
+  if (typeof token !== 'string' || !token.trim() || !user?.id) {
+    throw new Error('认证失败：返回数据不完整');
+  }
+  apiClient.setAccessToken(token);
+  set({
+    accessToken: token,
+    user,
+    initialized: true,
+    loading: false,
+    error: null,
+  });
 }
 
 let tokenRefreshListenerRegistered = false;
@@ -128,19 +149,18 @@ export const useAuthStore = createWithEqualityFn<AuthState>()(
           set({ loading: true, error: null });
           try {
             const resp = await apiClient.login({ username, password });
-            const token = resp?.access_token as string | undefined;
-            const user = normalizeAuthUser(resp?.user);
-            if (!token || !user?.id) {
-              throw new Error('登录失败：返回数据不完整');
-            }
-            apiClient.setAccessToken(token);
-            set({
-              accessToken: token,
-              user,
-              initialized: true,
-              loading: false,
-              error: null,
-            });
+            applyAuthSuccess(resp, set);
+          } catch (error) {
+            set({ loading: false, error: extractErrorMessage(error) });
+            throw error;
+          }
+        },
+
+        register: async (username: string, password: string) => {
+          set({ loading: true, error: null });
+          try {
+            const resp = await apiClient.register({ username, password });
+            applyAuthSuccess(resp, set);
           } catch (error) {
             set({ loading: false, error: extractErrorMessage(error) });
             throw error;

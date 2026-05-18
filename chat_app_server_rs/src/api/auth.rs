@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::auth::{build_auth_token, AuthUser};
+use crate::core::time::now_rfc3339;
 use crate::repositories::auth_users;
 
 #[derive(Debug, Deserialize)]
@@ -33,8 +34,66 @@ pub fn router() -> Router {
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {
-    // 过渡阶段 register 仍等价于 login；后续用户管理完全并回 chatos 后再单独开放注册语义。
-    login_inner(req.username, req.email, req.password).await
+    let username = req
+        .username
+        .or(req.email)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let password = req
+        .password
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let Some(username) = username else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "username 为必填项"})),
+        );
+    };
+    let Some(password) = password else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "password 为必填项"})),
+        );
+    };
+
+    if username.chars().count() < 3 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "用户名至少需要 3 个字符"})),
+        );
+    }
+
+    if password.chars().count() < 6 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "密码至少需要 6 个字符"})),
+        );
+    }
+
+    let now = now_rfc3339();
+    let user = auth_users::AuthUserRecord {
+        user_id: username,
+        password_hash: auth_users::hash_password(password.as_str()),
+        role: "user".to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    match auth_users::create_user(&user).await {
+        Ok(auth_users::CreateUserResult::Created) => build_login_success_response(&user),
+        Ok(auth_users::CreateUserResult::AlreadyExists) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "用户名已存在"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "注册失败",
+                "detail": err
+            })),
+        ),
+    }
 }
 
 async fn login(Json(req): Json<LoginRequest>) -> (StatusCode, Json<Value>) {
