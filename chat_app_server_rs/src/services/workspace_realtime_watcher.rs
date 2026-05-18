@@ -14,12 +14,30 @@ use crate::models::project::{Project, ProjectService};
 use crate::services::realtime::publish_project_run_catalog_updated;
 
 const WORKSPACE_WATCHER_SERVER_NAME: &str = "workspace_watcher";
-const WORKSPACE_WATCHER_FULL_SCAN_INTERVAL: Duration = Duration::from_secs(4);
+const DEFAULT_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS: u64 = 60;
+const MIN_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS: u64 = 5;
 const WORKSPACE_WATCHER_IDLE_WAIT: Duration = Duration::from_secs(1);
 const WORKSPACE_WATCHER_SUPPRESSION_TTL: Duration = Duration::from_secs(30);
 
 static WATCHER_STATE: Lazy<Arc<WorkspaceRealtimeWatcherState>> =
     Lazy::new(|| Arc::new(WorkspaceRealtimeWatcherState::default()));
+static WORKSPACE_WATCHER_FULL_SCAN_INTERVAL: Lazy<Option<Duration>> = Lazy::new(|| {
+    let parsed = std::env::var("WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECONDS")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok());
+
+    match parsed {
+        Some(0) => None,
+        Some(seconds) => Some(Duration::from_secs(
+            seconds.max(MIN_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS),
+        )),
+        None => Some(Duration::from_secs(
+            DEFAULT_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS,
+        )),
+    }
+});
 
 #[derive(Default)]
 struct WorkspaceRealtimeWatcherState {
@@ -62,6 +80,7 @@ struct WorkspacePathChange {
     kind: &'static str,
     bytes: i64,
     signature: String,
+    fingerprint: Option<FileFingerprint>,
 }
 
 enum SnapshotCollectResult {
@@ -112,16 +131,22 @@ pub fn suppress_logged_path(path: &str) {
 }
 
 async fn run_workspace_realtime_watcher() {
-    let mut last_full_scan = Instant::now()
-        .checked_sub(WORKSPACE_WATCHER_FULL_SCAN_INTERVAL)
+    let full_scan_interval = *WORKSPACE_WATCHER_FULL_SCAN_INTERVAL;
+    let mut pending_initial_scan = true;
+    let mut last_full_scan = full_scan_interval
+        .and_then(|interval| Instant::now().checked_sub(interval))
         .unwrap_or_else(Instant::now);
 
     loop {
-        let should_run_full_scan = last_full_scan.elapsed() >= WORKSPACE_WATCHER_FULL_SCAN_INTERVAL;
+        let should_run_full_scan = pending_initial_scan
+            || full_scan_interval
+                .map(|interval| last_full_scan.elapsed() >= interval)
+                .unwrap_or(false);
         let dirty_paths = take_dirty_paths();
 
         if should_run_full_scan || !dirty_paths.is_empty() {
             if should_run_full_scan {
+                pending_initial_scan = false;
                 last_full_scan = Instant::now();
             }
             if let Err(err) = scan_projects(should_run_full_scan, dirty_paths).await {
@@ -237,7 +262,7 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                 return Ok(());
             }
 
-            let previous_files = state.files.clone();
+            let previous_files = std::mem::take(&mut state.files);
             let changes = diff_workspace_files(&previous_files, &current_files);
             state.files = current_files;
             state.initialized = true;
@@ -247,20 +272,24 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                 return Ok(());
             }
 
-            let store = ChangeLogStore::new(
-                WORKSPACE_WATCHER_SERVER_NAME,
-                Some(project.id.clone()),
-                None,
-            )?;
+            let mut store: Option<ChangeLogStore> = None;
+            let mut logged_change_count = 0usize;
 
             for change in changes {
-                let current_fingerprint = match change.kind {
-                    "delete" => None,
-                    _ => current_file_fingerprint(Path::new(change.path.as_str())),
-                };
-                if is_suppressed_path(change.path.as_str(), current_fingerprint.as_ref()) {
+                if is_suppressed_path(change.path.as_str(), change.fingerprint.as_ref()) {
                     continue;
                 }
+                let store = match store.as_ref() {
+                    Some(existing) => existing,
+                    None => {
+                        store = Some(ChangeLogStore::new(
+                            WORKSPACE_WATCHER_SERVER_NAME,
+                            Some(project.id.clone()),
+                            None,
+                        )?);
+                        store.as_ref().expect("workspace watcher store initialized")
+                    }
+                };
                 store.log_change(
                     change.path.as_str(),
                     "workspace_scan",
@@ -271,6 +300,11 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                     "",
                     None,
                 )?;
+                logged_change_count += 1;
+            }
+
+            if logged_change_count == 0 {
+                return Ok(());
             }
 
             if let Some(user_id) = project.user_id.as_deref() {
@@ -301,12 +335,14 @@ fn diff_workspace_files(
                 kind: "edit",
                 bytes: current_fp.size_bytes.min(i64::MAX as u64) as i64,
                 signature: current_fp.signature(),
+                fingerprint: Some(current_fp.clone()),
             }),
             None => changes.push(WorkspacePathChange {
                 path: path.clone(),
                 kind: "create",
                 bytes: current_fp.size_bytes.min(i64::MAX as u64) as i64,
                 signature: current_fp.signature(),
+                fingerprint: Some(current_fp.clone()),
             }),
         }
     }
@@ -320,6 +356,7 @@ fn diff_workspace_files(
             kind: "delete",
             bytes: previous_fp.size_bytes.min(i64::MAX as u64) as i64,
             signature: previous_fp.signature(),
+            fingerprint: None,
         });
     }
 
