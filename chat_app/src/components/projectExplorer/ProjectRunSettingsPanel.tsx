@@ -701,6 +701,193 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
           )}
         </div>
 
+        <details className="rounded border border-border/70 bg-background/50" open={false}>
+          <summary className="cursor-pointer list-none px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-[11px] text-muted-foreground">运行环境</div>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="rounded border border-border px-2 py-1">
+                  工具链项: {availableToolchainKinds.length}
+                </span>
+                {missingToolchainKinds.length > 0 && (
+                  <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-700">
+                    缺失: {missingToolchainKinds.length}
+                  </span>
+                )}
+                <span className="rounded border border-border px-2 py-1">
+                  默认收起
+                </span>
+              </div>
+            </div>
+          </summary>
+          <div className="border-t border-border/60 px-3 py-3">
+            {availableToolchainKinds.length === 0 ? (
+              <div className="text-sm text-muted-foreground">当前运行目标不需要额外工具链配置。</div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {availableToolchainKinds.map((kind) => {
+                  const options = runEnvironment?.optionsByKind[kind] || [];
+                  const selectedOption = selectedToolchainOptions[kind];
+                  const isMissing = missingToolchainKinds.includes(kind);
+                  const manualDraft = customToolchainDrafts[kind] || '';
+                  const showManualInput = isMissing || selectedOption?.source === 'manual';
+                  return (
+                    <div key={kind} className="rounded border border-border/60 bg-card p-3">
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <div className="text-xs font-medium text-foreground">{formatToolchainKind(kind)}</div>
+                        {options.length > 0 && (
+                          <div className="text-[11px] text-muted-foreground">
+                            已发现 {options.length} 个可用环境
+                          </div>
+                        )}
+                      </div>
+                      <select
+                        value={selectedOption?.id || options[0]?.id || ''}
+                        onChange={(event) => onSelectToolchain(kind, event.target.value)}
+                        disabled={options.length === 0 || starting || stopping || restarting || deleting || runEnvironmentLoading}
+                        className="h-9 w-full rounded border border-border bg-background px-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        title={selectedOption?.path || kind}
+                      >
+                        {options.length === 0 ? (
+                          <option value="">未发现 {formatToolchainKind(kind)}</option>
+                        ) : (
+                          options.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label} · {formatToolchainSource(option.source)}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <div className="mt-2 space-y-2">
+                        <div className="truncate text-[11px] text-muted-foreground" title={selectedOption?.path || ''}>
+                          {selectedOption?.path || (isMissing ? `未发现 ${formatToolchainKind(kind)}，请补充本地路径` : '')}
+                        </div>
+                        {selectedOption && (
+                          <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                            <span className="rounded border border-border px-2 py-1">
+                              来源: {formatToolchainSource(selectedOption.source)}
+                            </span>
+                            {selectedOption.version && (
+                              <span className="rounded border border-border px-2 py-1">
+                                版本提示: {selectedOption.version}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <details className="mt-3 rounded border border-dashed border-border/70 bg-background/40">
+                        <summary className="cursor-pointer list-none px-3 py-2 text-xs text-muted-foreground">
+                          {showManualInput ? '补充本地路径' : '没有想要的版本？补充本地路径'}
+                        </summary>
+                        <div className="border-t border-border/60 px-3 py-3">
+                          <div className="mb-2 text-[11px] text-muted-foreground">
+                            {resolveManualHint(kind)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={manualDraft}
+                              onChange={(event) => onCustomToolchainDraftChange(kind, event.target.value)}
+                              placeholder={`手动指定 ${formatToolchainKind(kind)} 路径`}
+                              className="h-9 flex-1 rounded border border-border bg-background px-3 text-sm text-foreground"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => onSaveCustomToolchain(kind)}
+                              disabled={!manualDraft.trim() || runEnvironmentLoading}
+                              className="h-9 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              保存并选中
+                            </button>
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="mt-4 rounded border border-border/70 bg-background/50 p-3">
+              <div className="mb-2 text-[11px] text-muted-foreground">{resolveConfigSectionTitle(selectedTarget)}</div>
+              {selectedConfigFiles.length === 0 ? (
+                <div className="text-sm text-muted-foreground">
+                  {resolveConfigFilesEmptyText(selectedTarget, availableToolchainKinds)}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {selectedConfigFiles.map((file) => (
+                    <div key={`${file.kind}:${file.path}`} className="rounded border border-border/60 bg-card p-3">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-medium text-foreground">{file.label}</span>
+                        <span className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground">
+                          来源: {formatToolchainSource(file.source)}
+                        </span>
+                      </div>
+                      <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
+                        {file.path}
+                      </div>
+                      {file.preview && (
+                        <div className="mt-2 rounded border border-border/60 bg-background px-2 py-2 font-mono text-[11px] text-foreground">
+                          {file.preview}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="text-[11px] text-muted-foreground">
+                    这些文件即使不在上面的下拉里手动选择，也会被当前运行目标对应的构建工具或运行时自动读取，所以这里做成只读说明，帮助用户看清这次启动真正会生效的配置。
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 rounded border border-border/70 bg-background/50 p-3">
+              <div className="mb-2 text-[11px] text-muted-foreground">项目环境变量</div>
+              {environmentHints.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                  {environmentHints.map((hint) => (
+                    <span key={hint} className="rounded border border-border px-2 py-1">
+                      {hint}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <textarea
+                value={envVarsDraft}
+                onChange={(event) => onEnvVarsDraftChange(event.target.value)}
+                placeholder={envVarsPlaceholder}
+                className="min-h-[120px] w-full rounded border border-border bg-background px-3 py-2 font-mono text-xs text-foreground"
+              />
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div className="text-[11px] text-muted-foreground">
+                  每行一个 `KEY=VALUE`，支持 `#` 注释。{buildInjectedEnvHint(availableToolchainKinds)}
+                </div>
+                <button
+                  type="button"
+                  onClick={onSaveEnvVarsDraft}
+                  disabled={runEnvironmentLoading}
+                  className="h-9 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  保存环境变量
+                </button>
+              </div>
+              <div className="mt-3 rounded border border-border/60 bg-card p-3">
+                <div className="mb-2 text-[11px] text-muted-foreground">启动前环境预览</div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
+                  {envPreview || '当前未注入额外环境变量'}
+                </pre>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded border border-border/70 bg-background/50 p-3">
+              <div className="mb-2 text-[11px] text-muted-foreground">执行命令预览</div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
+                {commandPreview || '暂无命令'}
+              </pre>
+            </div>
+          </div>
+        </details>
+
         <div className="rounded border border-border/70 bg-background/50 p-3">
           <div className="mb-2 text-[11px] text-muted-foreground">独立运行终端</div>
           <div className="h-[420px] overflow-hidden rounded border border-border/60 bg-card">
@@ -712,174 +899,6 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
               actualTheme={actualTheme}
             />
           </div>
-        </div>
-
-        <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">运行环境</div>
-          {availableToolchainKinds.length === 0 ? (
-            <div className="text-sm text-muted-foreground">当前运行目标不需要额外工具链配置。</div>
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              {availableToolchainKinds.map((kind) => {
-                const options = runEnvironment?.optionsByKind[kind] || [];
-                const selectedOption = selectedToolchainOptions[kind];
-                const isMissing = missingToolchainKinds.includes(kind);
-                const manualDraft = customToolchainDrafts[kind] || '';
-                const showManualInput = isMissing || selectedOption?.source === 'manual';
-                return (
-                  <div key={kind} className="rounded border border-border/60 bg-card p-3">
-                    <div className="mb-1 flex items-center justify-between gap-3">
-                      <div className="text-xs font-medium text-foreground">{formatToolchainKind(kind)}</div>
-                      {options.length > 0 && (
-                        <div className="text-[11px] text-muted-foreground">
-                          已发现 {options.length} 个可用环境
-                        </div>
-                      )}
-                    </div>
-                    <select
-                      value={selectedOption?.id || options[0]?.id || ''}
-                      onChange={(event) => onSelectToolchain(kind, event.target.value)}
-                      disabled={options.length === 0 || starting || stopping || restarting || deleting || runEnvironmentLoading}
-                      className="h-9 w-full rounded border border-border bg-background px-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                      title={selectedOption?.path || kind}
-                    >
-                      {options.length === 0 ? (
-                        <option value="">未发现 {formatToolchainKind(kind)}</option>
-                      ) : (
-                        options.map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label} · {formatToolchainSource(option.source)}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                    <div className="mt-2 space-y-2">
-                      <div className="truncate text-[11px] text-muted-foreground" title={selectedOption?.path || ''}>
-                        {selectedOption?.path || (isMissing ? `未发现 ${formatToolchainKind(kind)}，请补充本地路径` : '')}
-                      </div>
-                      {selectedOption && (
-                        <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                          <span className="rounded border border-border px-2 py-1">
-                            来源: {formatToolchainSource(selectedOption.source)}
-                          </span>
-                          {selectedOption.version && (
-                            <span className="rounded border border-border px-2 py-1">
-                              版本提示: {selectedOption.version}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <details className="mt-3 rounded border border-dashed border-border/70 bg-background/40">
-                      <summary className="cursor-pointer list-none px-3 py-2 text-xs text-muted-foreground">
-                        {showManualInput ? '补充本地路径' : '没有想要的版本？补充本地路径'}
-                      </summary>
-                      <div className="border-t border-border/60 px-3 py-3">
-                        <div className="mb-2 text-[11px] text-muted-foreground">
-                          {resolveManualHint(kind)}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            value={manualDraft}
-                            onChange={(event) => onCustomToolchainDraftChange(kind, event.target.value)}
-                            placeholder={`手动指定 ${formatToolchainKind(kind)} 路径`}
-                            className="h-9 flex-1 rounded border border-border bg-background px-3 text-sm text-foreground"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => onSaveCustomToolchain(kind)}
-                            disabled={!manualDraft.trim() || runEnvironmentLoading}
-                            className="h-9 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            保存并选中
-                          </button>
-                        </div>
-                      </div>
-                    </details>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">{resolveConfigSectionTitle(selectedTarget)}</div>
-          {selectedConfigFiles.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              {resolveConfigFilesEmptyText(selectedTarget, availableToolchainKinds)}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {selectedConfigFiles.map((file) => (
-                <div key={`${file.kind}:${file.path}`} className="rounded border border-border/60 bg-card p-3">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-medium text-foreground">{file.label}</span>
-                    <span className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground">
-                      来源: {formatToolchainSource(file.source)}
-                    </span>
-                  </div>
-                  <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
-                    {file.path}
-                  </div>
-                  {file.preview && (
-                    <div className="mt-2 rounded border border-border/60 bg-background px-2 py-2 font-mono text-[11px] text-foreground">
-                      {file.preview}
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div className="text-[11px] text-muted-foreground">
-                这些文件即使不在上面的下拉里手动选择，也会被当前运行目标对应的构建工具或运行时自动读取，所以这里做成只读说明，帮助用户看清这次启动真正会生效的配置。
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">项目环境变量</div>
-          {environmentHints.length > 0 && (
-            <div className="mb-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-              {environmentHints.map((hint) => (
-                <span key={hint} className="rounded border border-border px-2 py-1">
-                  {hint}
-                </span>
-              ))}
-            </div>
-          )}
-          <textarea
-            value={envVarsDraft}
-            onChange={(event) => onEnvVarsDraftChange(event.target.value)}
-            placeholder={envVarsPlaceholder}
-            className="min-h-[120px] w-full rounded border border-border bg-background px-3 py-2 font-mono text-xs text-foreground"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <div className="text-[11px] text-muted-foreground">
-              每行一个 `KEY=VALUE`，支持 `#` 注释。{buildInjectedEnvHint(availableToolchainKinds)}
-            </div>
-            <button
-              type="button"
-              onClick={onSaveEnvVarsDraft}
-              disabled={runEnvironmentLoading}
-              className="h-9 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              保存环境变量
-            </button>
-          </div>
-          <div className="mt-3 rounded border border-border/60 bg-card p-3">
-            <div className="mb-2 text-[11px] text-muted-foreground">启动前环境预览</div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
-              {envPreview || '当前未注入额外环境变量'}
-            </pre>
-          </div>
-        </div>
-
-        <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">执行命令预览</div>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
-            {commandPreview || '暂无命令'}
-          </pre>
         </div>
       </div>
     </div>
