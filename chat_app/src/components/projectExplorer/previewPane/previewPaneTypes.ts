@@ -7,7 +7,6 @@ import type {
   FsReadResult,
   ProjectSearchHit,
 } from '../../../types';
-import type { ProjectRunnerMember } from '../useProjectExplorerRunState';
 
 export interface PreviewTokenSelection {
   token: string;
@@ -44,21 +43,6 @@ export interface ProjectPreviewPaneProps {
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
-  runStatus: string;
-  runCatalogLoading: boolean;
-  projectMembers: ProjectRunnerMember[];
-  projectMembersLoading: boolean;
-  runnerScriptExists: boolean;
-  runnerScriptChecking: boolean;
-  runnerScriptPath: string;
-  runnerStartCommand: string;
-  runnerStopCommand: string;
-  runnerRestartCommand: string;
-  starting: boolean;
-  stopping: boolean;
-  restarting: boolean;
-  runnerMessage: string | null;
-  runnerError: string | null;
   onTokenSelection: (selection: PreviewTokenSelection | null) => void;
   onClearTokenSelection: () => void;
   onRequestDefinition: () => void;
@@ -70,9 +54,4 @@ export interface ProjectPreviewPaneProps {
   onActivateSearchHit: (hit: ProjectSearchHit) => void;
   onOpenNavLocation: (location: CodeNavLocation) => void;
   onOpenDocumentSymbol: (line: number) => void;
-  onRunnerStart: () => void;
-  onRunnerStop: () => void;
-  onRunnerRestart: () => void;
-  onRefreshRunnerState: () => void;
-  onGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
 }

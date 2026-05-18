@@ -25,6 +25,7 @@ export interface WorkspaceGitFacade {
   mergeGit(data: { root: string; branch: string; mode?: 'default' | 'no-ff' | 'ff-only' | string }): Promise<GitActionResponse>;
   stageGitPaths(data: { root: string; paths: string[] }): Promise<GitActionResponse>;
   unstageGitPaths(data: { root: string; paths: string[] }): Promise<GitActionResponse>;
+  discardGitPaths(data: { root: string; paths: string[] }): Promise<GitActionResponse>;
   commitGit(data: { root: string; message: string; paths?: string[] }): Promise<GitActionResponse>;
 }
 
@@ -70,6 +71,9 @@ export const workspaceGitFacade: WorkspaceGitFacade & ThisType<ApiClient> = {
   },
   async unstageGitPaths(data) {
     return workspaceApi.unstageGitPaths(this.getRequestFn(), data);
+  },
+  async discardGitPaths(data) {
+    return workspaceApi.discardGitPaths(this.getRequestFn(), data);
   },
   async commitGit(data) {
     return workspaceApi.commitGit(this.getRequestFn(), data);

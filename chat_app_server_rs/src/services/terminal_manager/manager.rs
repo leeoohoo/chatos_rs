@@ -3,11 +3,11 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
-use crate::models::terminal::Terminal;
-use crate::repositories::terminal_logs;
+use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
 use crate::repositories::terminals;
 use crate::services::realtime::{
-    publish_project_run_state_changed, publish_terminal_list_invalidated,
+    publish_project_run_instance_changed, publish_project_run_state_changed,
+    publish_terminal_list_invalidated,
     publish_terminal_state_changed,
 };
 
@@ -32,6 +32,29 @@ impl TerminalsManager {
         self.sessions.get(id).map(|s| s.is_busy())
     }
 
+    fn should_publish_terminal_list(terminal: &Terminal) -> bool {
+        terminal.kind != TERMINAL_KIND_PROJECT_RUN
+    }
+
+    fn publish_list_invalidated_if_needed(
+        terminal: &Terminal,
+        reason: &str,
+        terminal_payload: Option<&Terminal>,
+    ) {
+        if !Self::should_publish_terminal_list(terminal) {
+            return;
+        }
+        if let Some(user_id) = terminal.user_id.as_deref() {
+            publish_terminal_list_invalidated(
+                user_id,
+                Some(terminal.id.as_str()),
+                terminal.project_id.as_deref(),
+                reason,
+                terminal_payload,
+            );
+        }
+    }
+
     fn spawn_session(&self, terminal: &Terminal) -> Result<Arc<TerminalSession>, String> {
         let (session, mut child) = TerminalSession::new(terminal)?;
         let id = terminal.id.clone();
@@ -53,8 +76,12 @@ impl TerminalsManager {
                     return;
                 };
 
-                let _ = terminal_logs::delete_terminal_logs(&id_clone).await;
-                let _ = terminals::delete_terminal(&id_clone).await;
+                let _ = terminals::update_terminal_status(
+                    &id_clone,
+                    Some("exited".to_string()),
+                    None,
+                )
+                .await;
                 if let Some(user_id) = existing_terminal.user_id.as_deref() {
                     let mut exited_terminal = existing_terminal.clone();
                     exited_terminal.status = "exited".to_string();
@@ -63,15 +90,24 @@ impl TerminalsManager {
                         &exited_terminal,
                         false,
                         "process_exited",
+                        Some(code),
                     );
-                    publish_terminal_list_invalidated(
-                        user_id,
-                        Some(existing_terminal.id.as_str()),
-                        existing_terminal.project_id.as_deref(),
-                        "deleted",
-                        None,
+                    Self::publish_list_invalidated_if_needed(
+                        &existing_terminal,
+                        "process_exited",
+                        Some(&exited_terminal),
                     );
                     if let Some(project_id) = existing_terminal.project_id.as_deref() {
+                        publish_project_run_instance_changed(
+                            user_id,
+                            project_id,
+                            &exited_terminal,
+                            false,
+                            false,
+                            "exited",
+                            "process_exited",
+                            Some(code),
+                        );
                         publish_project_run_state_changed(
                             user_id,
                             project_id,
@@ -80,6 +116,7 @@ impl TerminalsManager {
                             false,
                             "exited",
                             "process_exited",
+                            Some(code),
                         );
                     }
                 }
@@ -93,22 +130,27 @@ impl TerminalsManager {
         &self,
         name: String,
         cwd: String,
+        kind: String,
         user_id: Option<String>,
         project_id: Option<String>,
     ) -> Result<Terminal, String> {
-        let terminal = Terminal::new(name, cwd, user_id, project_id);
+        let terminal = Terminal::new(name, cwd, kind, user_id, project_id);
         terminals::create_terminal(&terminal).await?;
         let _ = self.spawn_session(&terminal)?;
         if let Some(user_id) = terminal.user_id.as_deref() {
-            publish_terminal_list_invalidated(
-                user_id,
-                Some(terminal.id.as_str()),
-                terminal.project_id.as_deref(),
-                "created",
-                Some(&terminal),
-            );
-            publish_terminal_state_changed(user_id, &terminal, false, "created");
+            Self::publish_list_invalidated_if_needed(&terminal, "created", Some(&terminal));
+            publish_terminal_state_changed(user_id, &terminal, false, "created", None);
             if let Some(project_id) = terminal.project_id.as_deref() {
+                publish_project_run_instance_changed(
+                    user_id,
+                    project_id,
+                    &terminal,
+                    false,
+                    true,
+                    "running",
+                    "created",
+                    None,
+                );
                 publish_project_run_state_changed(
                     user_id,
                     project_id,
@@ -117,6 +159,7 @@ impl TerminalsManager {
                     true,
                     "running",
                     "created",
+                    None,
                 );
             }
         }
@@ -134,15 +177,25 @@ impl TerminalsManager {
         let _ = terminals::update_terminal_status(&terminal.id, Some("running".to_string()), None)
             .await;
         if let Some(user_id) = terminal.user_id.as_deref() {
-            publish_terminal_list_invalidated(
+            Self::publish_list_invalidated_if_needed(terminal, "ensured_running", Some(terminal));
+            publish_terminal_state_changed(
                 user_id,
-                Some(terminal.id.as_str()),
-                terminal.project_id.as_deref(),
+                terminal,
+                session.is_busy(),
                 "ensured_running",
-                Some(terminal),
+                None,
             );
-            publish_terminal_state_changed(user_id, terminal, session.is_busy(), "ensured_running");
             if let Some(project_id) = terminal.project_id.as_deref() {
+                publish_project_run_instance_changed(
+                    user_id,
+                    project_id,
+                    terminal,
+                    session.is_busy(),
+                    true,
+                    "running",
+                    "ensured_running",
+                    None,
+                );
                 publish_project_run_state_changed(
                     user_id,
                     project_id,
@@ -151,6 +204,7 @@ impl TerminalsManager {
                     true,
                     "running",
                     "ensured_running",
+                    None,
                 );
             }
         }
@@ -176,22 +230,29 @@ impl TerminalsManager {
         if let Some(session) = self.sessions.remove(id).map(|(_, s)| s) {
             let _ = session.write_input("exit\n");
         }
-        let _ = terminal_logs::delete_terminal_logs(id).await;
-        terminals::delete_terminal(id).await?;
+        let _ = terminals::update_terminal_status(id, Some("exited".to_string()), None).await;
         if publish_events {
             if let Some(terminal) = terminal {
                 if let Some(user_id) = terminal.user_id.as_deref() {
                     let mut exited_terminal = terminal.clone();
                     exited_terminal.status = "exited".to_string();
-                    publish_terminal_state_changed(user_id, &exited_terminal, false, "closed");
-                    publish_terminal_list_invalidated(
-                        user_id,
-                        Some(terminal.id.as_str()),
-                        terminal.project_id.as_deref(),
+                    publish_terminal_state_changed(user_id, &exited_terminal, false, "closed", None);
+                    Self::publish_list_invalidated_if_needed(
+                        terminal,
                         "closed",
-                        None,
+                        Some(&exited_terminal),
                     );
                     if let Some(project_id) = terminal.project_id.as_deref() {
+                        publish_project_run_instance_changed(
+                            user_id,
+                            project_id,
+                            &exited_terminal,
+                            false,
+                            false,
+                            "exited",
+                            "closed",
+                            None,
+                        );
                         publish_project_run_state_changed(
                             user_id,
                             project_id,
@@ -200,6 +261,7 @@ impl TerminalsManager {
                             false,
                             "exited",
                             "closed",
+                            None,
                         );
                     }
                 }

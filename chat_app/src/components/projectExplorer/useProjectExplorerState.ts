@@ -42,7 +42,7 @@ export const useProjectExplorerState = (projectId?: string | null) => {
       return 'files';
     }
     const saved = window.localStorage.getItem(`project_workspace_tab_${projectId}`);
-    return saved === 'team' ? 'team' : 'files';
+    return saved === 'team' || saved === 'settings' ? saved : 'files';
   });
   const [treeWidth, setTreeWidth] = useState(() => {
     if (typeof window === 'undefined') return 288;

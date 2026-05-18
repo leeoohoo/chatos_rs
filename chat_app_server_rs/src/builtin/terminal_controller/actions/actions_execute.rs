@@ -3,7 +3,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
-use crate::models::terminal::{Terminal, TerminalService};
+use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::terminal_manager::get_terminal_manager;
 
@@ -34,6 +34,7 @@ pub(in crate::builtin::terminal_controller) async fn execute_command_with_contex
             .create(
                 name,
                 project_root.to_string_lossy().to_string(),
+                TERMINAL_KIND_SHARED.to_string(),
                 ctx.user_id.clone(),
                 project_id.clone(),
             )

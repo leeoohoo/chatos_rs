@@ -127,6 +127,7 @@ export const GitBranchDropdown: React.FC<{
               onLoadDiff={openDiffDialog}
               onStageFiles={git.stageFiles}
               onUnstageFiles={git.unstageFiles}
+              onDiscardFiles={git.discardFiles}
             />
             <ComparePanel
               compareResult={git.compareResult}

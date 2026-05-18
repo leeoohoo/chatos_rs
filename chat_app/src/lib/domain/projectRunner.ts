@@ -1,25 +1,9 @@
-import type { ProjectRunTarget, Terminal } from '../../types';
+import type { ProjectRunState } from '../../types';
 import type {
   ProjectContactLinkResponse,
   TerminalDispatchResponse,
 } from '../api/client/types';
-import { normalizeFsEntry } from './filesystem';
 import { asRecord, readValue } from './normalizerUtils';
-
-export const RUNNER_SCRIPT_DIR = '.chatos';
-export const RUNNER_SCRIPT_FILE = 'project_runner.sh';
-export const RUNNER_SCRIPT_REL_PATH = `${RUNNER_SCRIPT_DIR}/${RUNNER_SCRIPT_FILE}`;
-export const RUNNER_LOG_DIR_REL_PATH = 'project_runner/logs';
-export const RUNNER_START_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} start`;
-export const RUNNER_STOP_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} stop`;
-export const RUNNER_RESTART_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} restart`;
-export const RUNNER_GENERATION_MCP_IDS = [
-  'builtin_code_maintainer_read',
-  'builtin_code_maintainer_write',
-  'builtin_terminal_controller',
-];
-
-const FS_PATH_NOT_FOUND_ERROR = '路径不存在';
 
 export interface ProjectRunnerMember {
   contactId: string;
@@ -33,16 +17,19 @@ export interface ProjectRunnerActiveTerminal {
   cwd: string;
   command: string;
   dispatchedAt: number;
+  origin?: 'dispatched' | 'discovered';
+  exitCode?: number | null;
+  exitReason?: string | null;
 }
 
-export interface ProjectRuntimeTerminalSelection {
-  busyTerminal: Terminal | null;
-  activeTerminal: Terminal | null;
+export interface ProjectRunnerBoundTerminal {
+  terminalId: string;
+  terminalName: string;
+  cwd: string;
+  running: boolean;
+  busy: boolean;
+  status: string;
 }
-
-type RunnerFilesystemClient = {
-  listFsEntries: (path?: string) => Promise<{ entries?: unknown[] } | null | undefined>;
-};
 
 type RunnerProjectContactsClient = {
   listProjectContacts: (
@@ -50,6 +37,14 @@ type RunnerProjectContactsClient = {
     paging?: { limit?: number; offset?: number },
   ) => Promise<ProjectContactLinkResponse[]>;
 };
+
+interface ProjectRunnerContactRowsCacheEntry {
+  rows: ProjectContactLinkResponse[];
+  stale: boolean;
+}
+
+const projectRunnerContactRowsInflight = new WeakMap<object, Map<string, Promise<ProjectContactLinkResponse[]>>>();
+const projectRunnerContactRowsCache = new WeakMap<object, Map<string, ProjectRunnerContactRowsCacheEntry>>();
 
 const readTrimmedString = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
@@ -59,22 +54,6 @@ const readProjectRunnerContactId = (value: ProjectContactLinkResponse | unknown)
   const record = asRecord(value) || {};
   return readTrimmedString(readValue(record, 'contact_id') ?? readValue(record, 'contactId'));
 };
-
-interface ProjectRunnerContactRowsCacheEntry {
-  rows: ProjectContactLinkResponse[];
-  stale: boolean;
-}
-
-interface ProjectRunnerScriptCacheEntry {
-  exists: boolean;
-  missingRoot?: boolean;
-  stale: boolean;
-}
-
-const projectRunnerContactRowsInflight = new WeakMap<object, Map<string, Promise<ProjectContactLinkResponse[]>>>();
-const projectRunnerContactRowsCache = new WeakMap<object, Map<string, ProjectRunnerContactRowsCacheEntry>>();
-const projectRunnerScriptInflight = new WeakMap<object, Map<string, Promise<boolean>>>();
-const projectRunnerScriptCache = new WeakMap<object, Map<string, ProjectRunnerScriptCacheEntry>>();
 
 const getProjectRunnerContactRowsScopedCache = (
   client: object,
@@ -92,34 +71,6 @@ const ensureProjectRunnerContactRowsScopedCache = (
   const next = new Map<string, ProjectRunnerContactRowsCacheEntry>();
   projectRunnerContactRowsCache.set(client, next);
   return next;
-};
-
-const getProjectRunnerScriptScopedCache = (
-  client: object,
-): Map<string, ProjectRunnerScriptCacheEntry> | null => (
-  projectRunnerScriptCache.get(client) || null
-);
-
-const ensureProjectRunnerScriptScopedCache = (
-  client: object,
-): Map<string, ProjectRunnerScriptCacheEntry> => {
-  const existing = getProjectRunnerScriptScopedCache(client);
-  if (existing) {
-    return existing;
-  }
-  const next = new Map<string, ProjectRunnerScriptCacheEntry>();
-  projectRunnerScriptCache.set(client, next);
-  return next;
-};
-
-const setProjectRunnerScriptCacheEntry = (
-  client: object,
-  rootPath: string,
-  entry: ProjectRunnerScriptCacheEntry,
-): boolean => {
-  const scopedCache = ensureProjectRunnerScriptScopedCache(client);
-  scopedCache.set(rootPath, entry);
-  return entry.exists;
 };
 
 const setProjectRunnerContactRowsCacheEntry = (
@@ -166,21 +117,6 @@ const withClientInflight = <Result,>(
 
 export const normalizeProjectRunnerRootPath = (value: string): string => (
   value.trim().replace(/[\\/]+$/, '')
-);
-
-export const readProjectRunnerErrorMessage = (
-  error: unknown,
-  fallback: string,
-): string => (
-  error instanceof Error ? error.message : fallback
-);
-
-export const isProjectRunnerPathMissingError = (error: unknown): boolean => (
-  readProjectRunnerErrorMessage(error, '').includes(FS_PATH_NOT_FOUND_ERROR)
-);
-
-const buildProjectRunnerPathMissingError = (): Error => (
-  new Error(FS_PATH_NOT_FOUND_ERROR)
 );
 
 export const normalizeProjectRunnerMembers = (
@@ -326,123 +262,6 @@ export const markProjectRunnerContactRowsStale = (
   });
 };
 
-export const markProjectRunnerScriptStateStale = (
-  client: RunnerFilesystemClient,
-  rootPath: string,
-): void => {
-  const normalizedRootPath = normalizeProjectRunnerRootPath(rootPath);
-  if (!normalizedRootPath) {
-    return;
-  }
-  const scopedCache = getProjectRunnerScriptScopedCache(client);
-  const cached = scopedCache?.get(normalizedRootPath);
-  if (!scopedCache || !cached) {
-    return;
-  }
-  scopedCache.set(normalizedRootPath, {
-    ...cached,
-    stale: true,
-  });
-};
-
-export const patchProjectRunnerScriptStateSnapshot = (
-  client: RunnerFilesystemClient,
-  rootPath: string,
-  exists: boolean,
-): boolean => {
-  const normalizedRootPath = normalizeProjectRunnerRootPath(rootPath);
-  if (!normalizedRootPath) {
-    return exists;
-  }
-  return setProjectRunnerScriptCacheEntry(client, normalizedRootPath, {
-    exists,
-    missingRoot: false,
-    stale: false,
-  });
-};
-
-export const hasProjectRunnerScript = async (
-  client: RunnerFilesystemClient,
-  rootPath: string,
-): Promise<boolean> => {
-  const safeRoot = normalizeProjectRunnerRootPath(rootPath);
-  if (!safeRoot) {
-    return false;
-  }
-
-  const cached = getProjectRunnerScriptScopedCache(client)?.get(safeRoot);
-  if (cached && !cached.stale) {
-    if (cached.missingRoot) {
-      throw buildProjectRunnerPathMissingError();
-    }
-    return cached.exists;
-  }
-
-  return withClientInflight(projectRunnerScriptInflight, client, safeRoot, async () => {
-    let rootList;
-    try {
-      rootList = await client.listFsEntries(safeRoot);
-    } catch (error) {
-      if (isProjectRunnerPathMissingError(error)) {
-        setProjectRunnerScriptCacheEntry(client, safeRoot, {
-          exists: false,
-          missingRoot: true,
-          stale: false,
-        });
-      }
-      throw error;
-    }
-    const rootEntries = Array.isArray(rootList?.entries)
-      ? rootList.entries.map((entry) => normalizeFsEntry(entry))
-      : [];
-    const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
-    if (!runnerDirEntry?.path) {
-      return setProjectRunnerScriptCacheEntry(client, safeRoot, {
-        exists: false,
-        missingRoot: false,
-        stale: false,
-      });
-    }
-
-    try {
-      const runnerList = await client.listFsEntries(runnerDirEntry.path);
-      const runnerEntries = Array.isArray(runnerList?.entries)
-        ? runnerList.entries.map((entry) => normalizeFsEntry(entry))
-        : [];
-      return setProjectRunnerScriptCacheEntry(client, safeRoot, {
-        exists: runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE),
-        missingRoot: false,
-        stale: false,
-      });
-    } catch {
-      return setProjectRunnerScriptCacheEntry(client, safeRoot, {
-        exists: false,
-        missingRoot: false,
-        stale: false,
-      });
-    }
-  });
-};
-
-export const resolveProjectRuntimeTerminal = (
-  terminals: Terminal[],
-  projectId: string,
-): ProjectRuntimeTerminalSelection => {
-  const related = terminals
-    .filter((terminal) => String(terminal?.projectId || '') === projectId && terminal?.status === 'running')
-    .sort((left, right) => {
-      const leftTime = new Date(left?.lastActiveAt || 0).getTime();
-      const rightTime = new Date(right?.lastActiveAt || 0).getTime();
-      return rightTime - leftTime;
-    });
-
-  const busyTerminal = related.find((terminal) => Boolean(terminal?.busy)) || null;
-  return {
-    busyTerminal,
-    activeTerminal: busyTerminal || related[0] || null,
-  };
-};
-
 export const readProjectRunnerDispatchTarget = (
   value: TerminalDispatchResponse | unknown,
 ): {
@@ -463,37 +282,18 @@ export const readProjectRunnerDispatchTarget = (
   };
 };
 
-export const buildProjectRunnerTarget = (
-  rootPath: string,
-): ProjectRunTarget => ({
-  id: 'project_runner_start',
-  label: 'project_runner.sh start',
-  kind: 'script',
-  cwd: rootPath,
-  command: RUNNER_START_COMMAND,
-  source: 'script',
-  confidence: 1,
-  isDefault: true,
-});
-
-export const buildProjectRunnerGenerationPrompt = (rootPath: string): string => [
-  `你是项目运行脚本生成助手。请在项目根目录 ${rootPath} 下创建文件 ${RUNNER_SCRIPT_REL_PATH}。`,
-  '',
-  '目标：',
-  '1) 生成一个 bash 脚本，支持参数 start / stop / restart。',
-  '2) start: 启动当前项目下所有可启动服务（前端、后端、worker 等都包含，能启动的都要启动）。',
-  '3) stop: 停止 start 启动的全部进程（优先使用 pid 文件，避免误杀非本脚本启动进程）。',
-  '4) restart: 等价于 stop + start。',
-  `5) 所有服务日志必须写入 ${rootPath}/${RUNNER_LOG_DIR_REL_PATH}/。`,
-  '',
-  '强制要求：',
-  '1) 先读取项目关键文件（如 package.json / pyproject.toml / Cargo.toml / go.mod / pom.xml 等）再决策。',
-  '2) 可使用终端工具做必要探测（如命令是否存在）。',
-  '3) 脚本必须可执行（#!/usr/bin/env bash，set -euo pipefail）。',
-  `4) 必须创建日志目录 ${rootPath}/${RUNNER_LOG_DIR_REL_PATH}/，并按服务拆分日志文件（例如 frontend.log、backend.log）。`,
-  '5) 若无法确定某服务启动命令，要在注释与日志里明确标记该服务待人工补充，但其他可启动服务仍需正常启动。',
-  '6) 禁止把后端端口写死为 3997 或其它固定值；每个服务启动前必须检测端口是否可用，不可用时自动选择可用端口。',
-  '7) 必须把实际使用端口写入 project_runner/runtime/ports.env，重启时优先复用该文件中的端口配置。',
-  '8) stop 只能按本脚本维护的 pid 文件停止，不允许按端口全局 kill，避免误伤其他项目服务。',
-  `9) 完成后请回复：脚本已生成: ${RUNNER_SCRIPT_REL_PATH}`,
-].join('\n');
+export const readProjectRunnerBoundTerminal = (
+  value: ProjectRunState | null | undefined,
+): ProjectRunnerBoundTerminal | null => {
+  if (!value?.terminalId) {
+    return null;
+  }
+  return {
+    terminalId: value.terminalId,
+    terminalName: value.terminalName || value.terminalId,
+    cwd: value.cwd || value.terminal?.cwd || '',
+    running: Boolean(value.running),
+    busy: Boolean(value.busy),
+    status: value.status || 'idle',
+  };
+};

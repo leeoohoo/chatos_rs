@@ -1,8 +1,9 @@
 use std::env;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::models::project_run::ProjectRunCatalog;
-use crate::models::terminal::TerminalService;
+use crate::models::terminal::{TerminalService, TERMINAL_KIND_PROJECT_RUN};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::terminal_manager::get_terminal_manager;
 
@@ -112,9 +113,12 @@ pub(crate) fn resolve_execution(
 pub(crate) async fn dispatch_command(
     user_id: &str,
     project_id: Option<&str>,
+    project_root: &str,
     cwd: &str,
     command: &str,
     create_if_missing: bool,
+    env_overrides: HashMap<String, String>,
+    preferred_terminal_id: Option<&str>,
 ) -> Result<RunDispatchResult, String> {
     let cwd = normalized_cwd(cwd);
     if cwd.is_empty() {
@@ -124,37 +128,46 @@ pub(crate) async fn dispatch_command(
         return Err("运行命令不能为空".to_string());
     }
     validate_command_preflight(command, cwd.as_str())?;
-    let mut terminals = TerminalService::list(Some(user_id.to_string())).await?;
-    terminals.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
+    let project_root = normalized_cwd(project_root);
+    if project_root.is_empty() {
+        return Err("项目根目录不能为空".to_string());
+    }
+    let project_root_path = PathBuf::from(project_root.as_str());
+    if !project_root_path.exists() || !project_root_path.is_dir() {
+        return Err("项目根目录不存在或不是目录".to_string());
+    }
 
     let manager = get_terminal_manager();
-    let reusable = terminals.into_iter().find(|terminal| {
-        if terminal.status != "running" {
-            return false;
-        }
-        if !is_same_cwd(terminal.cwd.as_str(), cwd.as_str()) {
-            return false;
-        }
-        if let Some(pid) = project_id {
-            if terminal.project_id.as_deref() != Some(pid) {
-                return false;
-            }
-        }
-        !manager.get_busy(terminal.id.as_str()).unwrap_or(false)
-    });
+    let reusable = if let Some(terminal_id) = preferred_terminal_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let terminal = TerminalService::get_by_id(terminal_id).await?;
+        terminal.filter(|item| {
+            item.kind == TERMINAL_KIND_PROJECT_RUN
+                && item.user_id.as_deref() == Some(user_id)
+                && project_id
+                    .map(|pid| item.project_id.as_deref() == Some(pid))
+                    .unwrap_or(true)
+        })
+    } else {
+        None
+    };
 
     let (terminal, reused) = if let Some(terminal) = reusable {
         (terminal, true)
     } else if create_if_missing {
-        let name = Path::new(cwd.as_str())
+        let name = Path::new(project_root.as_str())
             .file_name()
             .map(|value| value.to_string_lossy().to_string())
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "Terminal".to_string());
+            .map(|value| format!("{value} 运行实例"))
+            .unwrap_or_else(|| "项目运行终端".to_string());
         let created = manager
             .create(
                 name,
-                cwd.clone(),
+                project_root.clone(),
+                TERMINAL_KIND_PROJECT_RUN.to_string(),
                 Some(user_id.to_string()),
                 project_id.map(|value| value.to_string()),
             )
@@ -165,7 +178,21 @@ pub(crate) async fn dispatch_command(
     };
 
     let session = manager.ensure_running(&terminal).await?;
-    let input = format!("{}\n", command.trim());
+    if !env_overrides.is_empty() {
+        let mut lines = String::new();
+        for (key, value) in env_overrides {
+            let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+            lines.push_str(format!("export {}=\"{}\"\n", key, escaped).as_str());
+        }
+        if !lines.is_empty() {
+            session.write_input(lines.as_str())?;
+        }
+    }
+    let input = build_project_run_input(
+        terminal.cwd.as_str(),
+        cwd.as_str(),
+        command.trim(),
+    );
     session.write_input(input.as_str())?;
     let _ = TerminalLogService::create(TerminalLog::new(
         terminal.id.clone(),
@@ -181,11 +208,29 @@ pub(crate) async fn dispatch_command(
     .await;
     let _ = TerminalService::touch(terminal.id.as_str()).await;
 
+    let terminal_id = terminal.id.clone();
+    let terminal_name = terminal.name.clone();
     Ok(RunDispatchResult {
-        terminal_id: terminal.id,
-        terminal_name: terminal.name,
+        terminal_id,
+        terminal_name,
         terminal_reused: reused,
-        cwd: terminal.cwd,
+        terminal_status: terminal.status.clone(),
+        cwd: cwd.to_string(),
         executed_command: command.trim().to_string(),
     })
+}
+
+fn shell_quote_path(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "'\"'\"'"))
+}
+
+fn build_project_run_input(project_root: &str, target_cwd: &str, command: &str) -> String {
+    let mut payload = String::new();
+    payload.push_str(format!("cd {}\n", shell_quote_path(project_root)).as_str());
+    if !is_same_cwd(project_root, target_cwd) {
+        payload.push_str(format!("cd {}\n", shell_quote_path(target_cwd)).as_str());
+    }
+    payload.push_str(command);
+    payload.push('\n');
+    payload
 }

@@ -3,6 +3,7 @@ import React from 'react';
 import type { Project } from '../types';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
+import ProjectRunSettingsPanel from './projectExplorer/ProjectRunSettingsPanel';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
 import GitBranchButton from './projectExplorer/git/GitBranchButton';
@@ -26,6 +27,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     isResizing,
     treePaneProps,
     previewPaneProps,
+    projectSettingsProps,
     actionLoading,
     moveConflict,
     setMoveConflict,
@@ -36,10 +38,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     contextMenuStyle,
     isContextRootEntry,
     setContextMenu,
-    workspaceCanRunFile,
     workspaceHandleCreateDirectory,
     workspaceHandleCreateFile,
-    workspaceHandleRunFile,
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
     handleGitRepositoryChanged,
@@ -74,6 +74,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             project={project}
             className="h-full"
           />
+        ) : workspaceTab === 'settings' ? (
+          <div className="h-full overflow-auto p-4">
+            <ProjectRunSettingsPanel {...projectSettingsProps} />
+          </div>
         ) : (
           <ProjectExplorerFilesWorkspace
             treePaneProps={treePaneProps}
@@ -93,10 +97,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             contextMenuStyle={contextMenuStyle}
             isContextRootEntry={isContextRootEntry}
             setContextMenu={setContextMenu}
-            canRunFile={workspaceCanRunFile}
             onCreateDirectory={workspaceHandleCreateDirectory}
             onCreateFile={workspaceHandleCreateFile}
-            onRunFile={workspaceHandleRunFile}
             onDownloadSelected={workspaceHandleDownloadSelected}
             onDeleteSelected={workspaceHandleDeleteSelected}
           />

@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 use portable_pty::{native_pty_system, MasterPty, PtySize};
 use tokio::sync::broadcast;
 
-use crate::models::terminal::Terminal;
+use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
 use crate::services::realtime::{
-    publish_project_run_state_changed, publish_terminal_list_invalidated,
+    publish_project_run_instance_changed, publish_project_run_state_changed,
+    publish_terminal_list_invalidated,
     publish_terminal_state_changed,
 };
 
@@ -413,15 +414,28 @@ impl TerminalSession {
                     &self.terminal,
                     busy,
                     if busy { "busy_started" } else { "busy_cleared" },
+                    None,
                 );
-                publish_terminal_list_invalidated(
-                    user_id,
-                    Some(self.terminal.id.as_str()),
-                    self.terminal.project_id.as_deref(),
-                    if busy { "busy_started" } else { "busy_cleared" },
-                    Some(&self.terminal),
-                );
+                if self.terminal.kind != TERMINAL_KIND_PROJECT_RUN {
+                    publish_terminal_list_invalidated(
+                        user_id,
+                        Some(self.terminal.id.as_str()),
+                        self.terminal.project_id.as_deref(),
+                        if busy { "busy_started" } else { "busy_cleared" },
+                        Some(&self.terminal),
+                    );
+                }
                 if let Some(project_id) = self.terminal.project_id.as_deref() {
+                    publish_project_run_instance_changed(
+                        user_id,
+                        project_id,
+                        &self.terminal,
+                        busy,
+                        true,
+                        "running",
+                        if busy { "busy_started" } else { "busy_cleared" },
+                        None,
+                    );
                     publish_project_run_state_changed(
                         user_id,
                         project_id,
@@ -430,6 +444,7 @@ impl TerminalSession {
                         true,
                         "running",
                         if busy { "busy_started" } else { "busy_cleared" },
+                        None,
                     );
                 }
             }

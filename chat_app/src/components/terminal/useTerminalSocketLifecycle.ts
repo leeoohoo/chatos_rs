@@ -204,6 +204,7 @@ export const useTerminalSocketLifecycle = ({
       snapshotLoadingRef.current = false;
       supportsSnapshotPagingRef.current = false;
       snapshotRequestContextRef.current = null;
+      setErrorMessage('终端实时连接失败，请点击“重连”；如果仍无输出，可先查看右侧命令历史并刷新运行状态。');
       setConnectionState('error');
     };
 

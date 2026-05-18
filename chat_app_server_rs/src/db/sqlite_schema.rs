@@ -221,6 +221,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             cwd TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'shared',
             user_id TEXT,
             project_id TEXT,
             status TEXT NOT NULL,
@@ -236,6 +237,14 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             targets_json TEXT NOT NULL DEFAULT '[]',
             error_message TEXT,
             analyzed_at TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS project_run_environment_settings (
+            project_id TEXT PRIMARY KEY,
+            user_id TEXT,
+            selected_toolchains_json TEXT NOT NULL DEFAULT '{}',
+            custom_toolchains_json TEXT NOT NULL DEFAULT '{}',
+            env_vars_json TEXT NOT NULL DEFAULT '{}',
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
         r#"CREATE TABLE IF NOT EXISTS remote_connections (
@@ -338,6 +347,9 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     ensure_column(pool, "terminals", "project_id", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "terminals", "kind", "TEXT NOT NULL DEFAULT 'shared'")
+        .await
+        .ok();
     ensure_column(pool, "remote_connections", "password", "TEXT")
         .await
         .ok();
@@ -350,6 +362,14 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     ensure_column(pool, "remote_connections", "jump_certificate_path", "TEXT")
         .await
         .ok();
+    ensure_column(
+        pool,
+        "project_run_environment_settings",
+        "custom_toolchains_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )
+    .await
+    .ok();
     ensure_column(pool, "mcp_change_logs", "change_kind", "TEXT")
         .await
         .ok();
@@ -462,10 +482,13 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         "CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_terminals_kind ON terminals(kind)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_project_id ON terminals(project_id)",
+        "CREATE INDEX IF NOT EXISTS idx_terminals_project_kind ON terminals(project_id, kind)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_status ON terminals(status)",
         "CREATE INDEX IF NOT EXISTS idx_project_run_catalogs_user_id ON project_run_catalogs(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_project_run_catalogs_status ON project_run_catalogs(status)",
+        "CREATE INDEX IF NOT EXISTS idx_project_run_environment_settings_user_id ON project_run_environment_settings(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_user_id ON remote_connections(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_host ON remote_connections(host)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_id ON terminal_logs(terminal_id)",

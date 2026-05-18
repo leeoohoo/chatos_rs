@@ -2,7 +2,7 @@ import React from 'react';
 
 import { cn } from '../../lib/utils';
 
-export type WorkspaceTab = 'files' | 'team';
+export type WorkspaceTab = 'files' | 'team' | 'settings';
 
 interface WorkspaceTabsProps {
   activeTab: WorkspaceTab;
@@ -42,6 +42,18 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
             )}
           >
             团队成员
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange('settings')}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded transition-colors',
+              activeTab === 'settings'
+                ? 'bg-accent text-foreground'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
+            )}
+          >
+            项目设置
           </button>
         </div>
         {rightActions && (

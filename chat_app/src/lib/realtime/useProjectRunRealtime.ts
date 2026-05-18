@@ -5,6 +5,7 @@ import type {
   RealtimeEventEnvelope,
   RealtimeProjectMembersUpdatedPayloadWrapper,
   RealtimeProjectRunCatalogPayloadWrapper,
+  RealtimeProjectRunInstancePayloadWrapper,
   RealtimeProjectRunStatePayloadWrapper,
 } from './types';
 
@@ -12,6 +13,7 @@ interface UseProjectRunRealtimeOptions {
   projectId?: string | null;
   enabled?: boolean;
   onRunStateChanged?: (payload: RealtimeProjectRunStatePayloadWrapper) => void | Promise<void>;
+  onRunInstanceChanged?: (payload: RealtimeProjectRunInstancePayloadWrapper) => void | Promise<void>;
   onCatalogUpdated?: (payload: RealtimeProjectRunCatalogPayloadWrapper) => void | Promise<void>;
   onMembersUpdated?: (payload: RealtimeProjectMembersUpdatedPayloadWrapper) => void | Promise<void>;
 }
@@ -28,6 +30,12 @@ const isProjectRunCatalogPayload = (
   envelope?.payload?.kind === 'project_run_catalog'
 );
 
+const isProjectRunInstancePayload = (
+  envelope: RealtimeEventEnvelope,
+): envelope is RealtimeEventEnvelope & { payload: RealtimeProjectRunInstancePayloadWrapper } => (
+  envelope?.payload?.kind === 'project_run_instance'
+);
+
 const isProjectMembersUpdatedPayload = (
   envelope: RealtimeEventEnvelope,
 ): envelope is RealtimeEventEnvelope & { payload: RealtimeProjectMembersUpdatedPayloadWrapper } => (
@@ -38,16 +46,22 @@ export const useProjectRunRealtime = ({
   projectId,
   enabled = true,
   onRunStateChanged,
+  onRunInstanceChanged,
   onCatalogUpdated,
   onMembersUpdated,
 }: UseProjectRunRealtimeOptions) => {
   const onRunStateChangedRef = useRef(onRunStateChanged);
+  const onRunInstanceChangedRef = useRef(onRunInstanceChanged);
   const onCatalogUpdatedRef = useRef(onCatalogUpdated);
   const onMembersUpdatedRef = useRef(onMembersUpdated);
 
   useEffect(() => {
     onRunStateChangedRef.current = onRunStateChanged;
   }, [onRunStateChanged]);
+
+  useEffect(() => {
+    onRunInstanceChangedRef.current = onRunInstanceChanged;
+  }, [onRunInstanceChanged]);
 
   useEffect(() => {
     onCatalogUpdatedRef.current = onCatalogUpdated;
@@ -75,6 +89,18 @@ export const useProjectRunRealtime = ({
       ).trim();
       if (payloadProjectId === projectId) {
         void onRunStateChangedRef.current?.(event.payload);
+      }
+      return;
+    }
+
+    if (event.event === 'project.run.instance_changed' && isProjectRunInstancePayload(event)) {
+      const payloadProjectId = String(
+        event.project_id
+        || event.payload.project_id
+        || '',
+      ).trim();
+      if (payloadProjectId === projectId) {
+        void onRunInstanceChangedRef.current?.(event.payload);
       }
       return;
     }

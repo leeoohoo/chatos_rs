@@ -168,6 +168,31 @@ export const useProjectGitActions = ({
     );
   }, [client, projectRoot, runAction, setError]);
 
+  const discardFiles = useCallback(async (paths: string[]) => {
+    const validPaths = normalizeNonEmptyPaths(paths);
+    if (validPaths.length === 0) {
+      setError('请选择要回滚的文件');
+      return;
+    }
+    const targetLabel = validPaths.length === 1
+      ? validPaths[0]
+      : `${validPaths.length} 个文件`;
+    const confirmed = await confirm({
+      title: '取消变更',
+      message: `确认回滚 ${targetLabel} 的变更吗？\n\n已跟踪文件会恢复到 HEAD；未跟踪文件会被删除。该操作不可撤销。`,
+      confirmText: '确认回滚',
+      cancelText: '取消',
+      type: 'danger',
+    });
+    if (!confirmed) {
+      return;
+    }
+    await runAction(
+      () => client.discardGitPaths({ root: projectRoot, paths: validPaths }),
+      '回滚完成',
+    );
+  }, [client, confirm, projectRoot, runAction, setError]);
+
   const commitStaged = useCallback(async (message: string) => {
     const trimmed = message.trim();
     if (!trimmed) {
@@ -207,6 +232,7 @@ export const useProjectGitActions = ({
     createBranch,
     stageFiles,
     unstageFiles,
+    discardFiles,
     commitStaged,
     commitSelected,
   };

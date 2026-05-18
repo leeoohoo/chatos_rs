@@ -1,30 +1,57 @@
 import { useCallback, useState } from 'react';
 
 import type ApiClient from '../../../lib/api/client';
-import type { Project } from '../../../types';
-import {
-  readProjectRunnerDispatchTarget,
-  RUNNER_RESTART_COMMAND,
-  RUNNER_START_COMMAND,
-  RUNNER_STOP_COMMAND,
-} from '../../../lib/domain/projectRunner';
+import { ApiRequestError } from '../../../lib/api/client/shared';
+import { readProjectRunnerDispatchTarget } from '../../../lib/domain/projectRunner';
+import { normalizeProjectRunValidationIssue } from '../../../lib/domain/projectExplorer';
 import type { ProjectRunnerActiveTerminal } from '../../../lib/domain/projectRunner';
+import type { Project, ProjectRunTarget } from '../../../types';
+import {
+  formatProjectRunValidationIssues,
+} from './projectRunnerFailureDiagnostics';
 
 const readTrimmedString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 interface UseProjectRunnerCommandsOptions {
   client: ApiClient;
   project: Project | null;
-  runnerScriptExists: boolean;
+  runTargets: ProjectRunTarget[];
+  selectedRunTargetId: string | null;
+  commandPreview: string;
+  activeRun: ProjectRunnerActiveTerminal | null;
+  selectedTerminalId: string | null;
+  selectRunInstance: (terminalId: string) => void;
   setActiveRun: (value: ProjectRunnerActiveTerminal | null) => void;
+  setLastExitedRun: (value: ProjectRunnerActiveTerminal | null) => void;
   setActiveTerminalBusy: (value: boolean) => void;
 }
+
+const extractRunValidationMessage = (error: unknown, fallback: string): string => {
+  if (!(error instanceof ApiRequestError) || !error.payload || typeof error.payload !== 'object') {
+    return fallback;
+  }
+  const payload = error.payload as Record<string, unknown>;
+  const rawIssues = payload.validation_issues;
+  if (!Array.isArray(rawIssues)) {
+    return fallback;
+  }
+  const issues = rawIssues
+    .map(normalizeProjectRunValidationIssue)
+    .filter((item) => item.kind && item.message);
+  return formatProjectRunValidationIssues(issues, fallback);
+};
 
 export const useProjectRunnerCommands = ({
   client,
   project,
-  runnerScriptExists,
+  runTargets,
+  selectedRunTargetId,
+  commandPreview,
+  activeRun,
+  selectedTerminalId,
+  selectRunInstance,
   setActiveRun,
+  setLastExitedRun,
   setActiveTerminalBusy,
 }: UseProjectRunnerCommandsOptions) => {
   const [starting, setStarting] = useState(false);
@@ -32,44 +59,55 @@ export const useProjectRunnerCommands = ({
   const [restarting, setRestarting] = useState(false);
   const [runnerMessage, setRunnerMessage] = useState<string | null>(null);
   const [runnerError, setRunnerError] = useState<string | null>(null);
+  const [runnerDiagnosis, setRunnerDiagnosis] = useState<string | null>(null);
+  const [manualControlAt, setManualControlAt] = useState(0);
+  const [lastExitCheckedRunKey, setLastExitCheckedRunKey] = useState('');
 
-  const dispatchRunnerCommand = useCallback(async (command: string, label: string) => {
-    const rootPath = readTrimmedString(project?.rootPath || '');
-    if (!project?.id || !rootPath) {
-      throw new Error('项目根目录不存在');
-    }
-    if (!runnerScriptExists) {
-      throw new Error('启动脚本不存在，请先点击“生成启动脚本”');
-    }
+  const selectedRunTarget = runTargets.find((item) => item.id === selectedRunTargetId) || runTargets[0] || null;
 
-    const result = await client.dispatchTerminalCommand({
-      cwd: rootPath,
-      command,
-      project_id: project.id,
+  const dispatchProjectRunTarget = useCallback(async (
+    target: ProjectRunTarget,
+    label: string,
+    preferredTerminalId?: string | null,
+  ) => {
+    if (!project?.id) {
+      throw new Error('项目不存在');
+    }
+    const result = await client.executeProjectRun(project.id, {
+      target_id: target.id,
       create_if_missing: true,
+      terminal_id: preferredTerminalId || undefined,
     });
     const { terminalId, terminalName } = readProjectRunnerDispatchTarget(result);
+    setLastExitedRun(null);
     if (terminalId) {
+      selectRunInstance(terminalId);
       setActiveRun({
         terminalId,
         terminalName: terminalName || terminalId,
-        cwd: rootPath,
-        command,
+        cwd: target.cwd,
+        command: commandPreview || target.command,
         dispatchedAt: Date.now(),
+        origin: 'dispatched',
+        exitCode: null,
+        exitReason: null,
       });
       setActiveTerminalBusy(true);
+      setLastExitCheckedRunKey('');
     }
     setRunnerMessage(
       terminalName
         ? `${label}：已在终端 ${terminalName} 执行`
         : `${label}：命令已派发到终端`,
     );
+    setRunnerDiagnosis(null);
   }, [
+    commandPreview,
     client,
     project?.id,
-    project?.rootPath,
-    runnerScriptExists,
+    selectRunInstance,
     setActiveRun,
+    setLastExitedRun,
     setActiveTerminalBusy,
   ]);
 
@@ -77,44 +115,74 @@ export const useProjectRunnerCommands = ({
     setStarting(true);
     setRunnerError(null);
     try {
-      await dispatchRunnerCommand(RUNNER_START_COMMAND, '启动成功');
+      if (!selectedRunTarget) {
+        throw new Error('未发现可运行目标');
+      }
+      await dispatchProjectRunTarget(selectedRunTarget, '启动成功', null);
     } catch (error) {
-      setRunnerError(error instanceof Error ? error.message : '启动失败');
+      setRunnerError(extractRunValidationMessage(error, error instanceof Error ? error.message : '启动失败'));
       setRunnerMessage(null);
     } finally {
       setStarting(false);
     }
-  }, [dispatchRunnerCommand]);
+  }, [dispatchProjectRunTarget, selectedRunTarget]);
 
   const handleRunnerStop = useCallback(async () => {
     setStopping(true);
     setRunnerError(null);
     try {
-      await dispatchRunnerCommand(RUNNER_STOP_COMMAND, '停止成功');
+      const terminalId = readTrimmedString(selectedTerminalId || activeRun?.terminalId);
+      if (!terminalId) {
+        throw new Error('当前项目还没有独立运行终端');
+      }
+      setManualControlAt(Date.now());
+      await client.interruptTerminal(terminalId, { reason: 'project_run_stop' });
+      setActiveTerminalBusy(false);
+      setRunnerMessage('停止成功：已请求中断当前运行终端');
+      setRunnerDiagnosis(null);
     } catch (error) {
       setRunnerError(error instanceof Error ? error.message : '停止失败');
       setRunnerMessage(null);
     } finally {
       setStopping(false);
     }
-  }, [dispatchRunnerCommand]);
+  }, [
+    client,
+    selectedTerminalId,
+    activeRun?.terminalId,
+    setActiveTerminalBusy,
+  ]);
 
   const handleRunnerRestart = useCallback(async () => {
     setRestarting(true);
     setRunnerError(null);
     try {
-      await dispatchRunnerCommand(RUNNER_RESTART_COMMAND, '重启成功');
+      if (!project?.id) {
+        throw new Error('项目不存在');
+      }
+      if (!selectedRunTarget) {
+        throw new Error('未发现可运行目标');
+      }
+      const terminalId = readTrimmedString(selectedTerminalId || activeRun?.terminalId);
+      if (terminalId) {
+        setManualControlAt(Date.now());
+        await client.interruptTerminal(terminalId, { reason: 'project_run_restart' });
+      }
+      await dispatchProjectRunTarget(selectedRunTarget, '重启成功', terminalId || null);
     } catch (error) {
-      setRunnerError(error instanceof Error ? error.message : '重启失败');
+      setRunnerError(extractRunValidationMessage(error, error instanceof Error ? error.message : '重启失败'));
       setRunnerMessage(null);
     } finally {
       setRestarting(false);
     }
-  }, [dispatchRunnerCommand]);
+  }, [activeRun?.terminalId, client, dispatchProjectRunTarget, project?.id, selectedRunTarget, selectedTerminalId]);
 
   const resetRunnerCommandState = useCallback(() => {
     setRunnerMessage(null);
     setRunnerError(null);
+    setRunnerDiagnosis(null);
+    setManualControlAt(0);
+    setLastExitCheckedRunKey('');
   }, []);
 
   return {
@@ -123,6 +191,13 @@ export const useProjectRunnerCommands = ({
     restarting,
     runnerMessage,
     runnerError,
+    runnerDiagnosis,
+    manualControlAt,
+    lastExitCheckedRunKey,
+    setLastExitCheckedRunKey,
+    setRunnerDiagnosis,
+    setRunnerError,
+    setRunnerMessage,
     resetRunnerCommandState,
     handleRunnerStart,
     handleRunnerStop,

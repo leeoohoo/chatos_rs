@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use super::contracts::{GitActionResult, GitSummary};
+use super::inspection::is_tracked_path;
 use super::parsing::{compact_output, summary_from_status};
 use super::process::{git_output, GitCommandOutput, GitCommandStatusOutput, DEFAULT_GIT_TIMEOUT};
 use super::validation::ensure_safe_ref;
@@ -61,6 +62,51 @@ pub(super) async fn unstage_paths(
     paths: &[String],
 ) -> Result<GitCommandOutput, String> {
     path_command_output(repo_root, &["restore", "--staged"], paths).await
+}
+
+pub(super) async fn discard_paths(
+    repo_root: &Path,
+    paths: &[String],
+) -> Result<GitCommandOutput, String> {
+    let mut tracked_paths = Vec::new();
+    let mut untracked_paths = Vec::new();
+    for path in paths {
+        if is_tracked_path(repo_root, path.as_str()).await {
+            tracked_paths.push(path.clone());
+        } else {
+            untracked_paths.push(path.clone());
+        }
+    }
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    if !tracked_paths.is_empty() {
+        let output =
+            path_command_output(repo_root, &["restore", "--staged", "--worktree"], &tracked_paths)
+                .await?;
+        if !output.stdout.trim().is_empty() {
+            stdout.push(output.stdout.trim().to_string());
+        }
+        if !output.stderr.trim().is_empty() {
+            stderr.push(output.stderr.trim().to_string());
+        }
+    }
+
+    if !untracked_paths.is_empty() {
+        let output = path_command_output(repo_root, &["clean", "-f"], &untracked_paths).await?;
+        if !output.stdout.trim().is_empty() {
+            stdout.push(output.stdout.trim().to_string());
+        }
+        if !output.stderr.trim().is_empty() {
+            stderr.push(output.stderr.trim().to_string());
+        }
+    }
+
+    Ok(GitCommandOutput {
+        stdout: stdout.join("\n"),
+        stderr: stderr.join("\n"),
+    })
 }
 
 pub(super) async fn action_result(

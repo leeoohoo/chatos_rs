@@ -96,6 +96,7 @@ pub struct TerminalStateRealtimePayload {
     pub status: String,
     pub busy: bool,
     pub reason: String,
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +117,20 @@ pub struct ProjectRunStateRealtimePayload {
     pub busy: bool,
     pub running: bool,
     pub reason: String,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectRunInstanceRealtimePayload {
+    pub project_id: String,
+    pub terminal_id: String,
+    pub terminal_name: String,
+    pub cwd: String,
+    pub status: String,
+    pub busy: bool,
+    pub running: bool,
+    pub reason: String,
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,8 +138,6 @@ pub struct ProjectRunCatalogRealtimePayload {
     pub project_id: String,
     pub reason: String,
     pub path: Option<String>,
-    pub runner_script_exists: Option<bool>,
-    pub root_missing: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -202,6 +215,7 @@ pub enum RealtimeEventPayload {
     TerminalState(TerminalStateRealtimePayload),
     TerminalListInvalidated(TerminalListInvalidatedRealtimePayload),
     ProjectRunState(ProjectRunStateRealtimePayload),
+    ProjectRunInstance(ProjectRunInstanceRealtimePayload),
     ProjectRunCatalog(ProjectRunCatalogRealtimePayload),
     ProjectMembersUpdated(ProjectMembersUpdatedRealtimePayload),
     TaskBoard(TaskBoardRealtimePayload),

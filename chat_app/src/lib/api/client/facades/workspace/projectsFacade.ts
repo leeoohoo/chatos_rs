@@ -4,9 +4,11 @@ import type {
   PagingOptions,
   ProjectChangeSummaryResponse,
   ProjectContactLinkResponse,
+  ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
   ProjectRunExecuteResponse,
+  ProjectRunStateResponse,
 } from '../../types';
 import type ApiClient from '../../../client';
 
@@ -18,9 +20,25 @@ export interface WorkspaceProjectFacade {
   getProject(id: string): Promise<ProjectResponse>;
   analyzeProjectRun(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunCatalog(projectId: string): Promise<ProjectRunCatalogResponse>;
+  getProjectRunState(projectId: string): Promise<ProjectRunStateResponse>;
+  getProjectRunEnvironment(projectId: string): Promise<ProjectRunEnvironmentResponse>;
+  updateProjectRunEnvironment(
+    projectId: string,
+    data: {
+      selected_toolchains?: Record<string, string>;
+      custom_toolchains?: Record<string, { kind?: string; label?: string; path?: string }>;
+      env_vars?: Record<string, string>;
+    },
+  ): Promise<ProjectRunEnvironmentResponse>;
   executeProjectRun(
     projectId: string,
-    data: { target_id?: string; cwd?: string; command?: string; create_if_missing?: boolean },
+    data: {
+      target_id?: string;
+      cwd?: string;
+      command?: string;
+      create_if_missing?: boolean;
+      terminal_id?: string;
+    },
   ): Promise<ProjectRunExecuteResponse>;
   setProjectRunDefault(projectId: string, targetId: string): Promise<ProjectRunCatalogResponse>;
   listProjectContacts(projectId: string, paging?: PagingOptions): Promise<ProjectContactLinkResponse[]>;
@@ -50,6 +68,15 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async getProjectRunCatalog(projectId) {
     return workspaceApi.getProjectRunCatalog(this.getRequestFn(), projectId);
+  },
+  async getProjectRunState(projectId) {
+    return workspaceApi.getProjectRunState(this.getRequestFn(), projectId);
+  },
+  async getProjectRunEnvironment(projectId) {
+    return workspaceApi.getProjectRunEnvironment(this.getRequestFn(), projectId);
+  },
+  async updateProjectRunEnvironment(projectId, data) {
+    return workspaceApi.updateProjectRunEnvironment(this.getRequestFn(), projectId, data);
   },
   async executeProjectRun(projectId, data) {
     return workspaceApi.executeProjectRun(this.getRequestFn(), projectId, data);

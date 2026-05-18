@@ -9,13 +9,17 @@ import type {
   FsReadResult,
   Project,
   ProjectChangeSummary,
+  ProjectRunEnvironment,
+  ProjectRunInstance,
+  ProjectRunResolutionSuggestion,
+  ProjectRunState,
+  ProjectRunTarget,
+  ProjectRunToolchainOption,
   ProjectSearchHit,
+  Terminal,
 } from '../../types';
 import type { MoveConflictState } from './Overlays';
-import type {
-  ProjectRunnerActiveTerminal,
-  ProjectRunnerMember,
-} from './useProjectExplorerRunState';
+import type { ProjectRunnerActiveTerminal } from './useProjectExplorerRunState';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
 import type { ChangeKind } from './utils';
 
@@ -83,32 +87,48 @@ export interface ProjectExplorerWorkspaceCodeNavState {
 }
 
 export interface ProjectExplorerWorkspaceRunState {
-  canRunFile: (entry: FsEntry) => boolean;
-  handleRunFile: (entry: FsEntry) => Promise<void>;
   runStatus: string;
   runCatalogLoading: boolean;
   runCatalogError: string | null;
-  projectMembers: ProjectRunnerMember[];
-  projectMembersLoading: boolean;
-  projectMembersError: string | null;
-  runnerScriptExists: boolean;
-  runnerScriptChecking: boolean;
-  runnerScriptPath: string;
-  runnerStartCommand: string;
-  runnerStopCommand: string;
-  runnerRestartCommand: string;
+  runEnvironment: ProjectRunEnvironment | null;
+  runEnvironmentLoading: boolean;
+  runEnvironmentError: string | null;
+  runTargets: ProjectRunTarget[];
+  availableToolchainKinds: string[];
+  selectedToolchainOptions: Record<string, ProjectRunToolchainOption | null>;
+  missingToolchainKinds: string[];
+  customToolchainDrafts: Record<string, string>;
+  envVarsDraft: string;
+  commandPreview: string;
+  envPreview: string;
+  environmentHints: string[];
+  envVarsPlaceholder: string;
+  selectedRunTargetId: string | null;
+  setSelectedRunTargetId: (targetId: string) => Promise<void> | void;
+  updateSelectedToolchain: (kind: string, optionId: string) => Promise<void> | void;
+  updateCustomToolchainDraft: (kind: string, value: string) => void;
+  saveCustomToolchain: (kind: string) => Promise<void> | void;
+  setEnvVarsDraft: (value: string) => void;
+  saveEnvVarsDraft: () => Promise<void> | void;
   starting: boolean;
   stopping: boolean;
   restarting: boolean;
   runnerMessage: string | null;
   runnerError: string | null;
+  runnerDiagnosis: string | null;
+  runnerSuggestions: ProjectRunResolutionSuggestion[];
+  projectRunState: ProjectRunState | null;
+  projectRunInstances: ProjectRunInstance[];
+  selectedRunInstanceId: string | null;
+  projectRunTerminal: Terminal | null;
   activeRun: ProjectRunnerActiveTerminal | null;
+  lastExitedRun: ProjectRunnerActiveTerminal | null;
   activeTerminalBusy: boolean;
+  selectRunInstance: (terminalId: string) => void;
   handleRunnerStart: () => Promise<void>;
   handleRunnerStop: () => Promise<void>;
   handleRunnerRestart: () => Promise<void>;
   refreshRunnerState: () => Promise<void>;
-  handleGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
 }
 
 export interface ProjectExplorerWorkspaceInteractions {

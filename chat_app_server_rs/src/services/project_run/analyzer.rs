@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::core::time::now_rfc3339;
 use crate::models::project::Project;
 use crate::models::project_run::{ProjectRunCatalog, ProjectRunTarget};
+use regex::Regex;
 
 const MAX_SCAN_DIRS: usize = 2500;
 const MAX_SCAN_DEPTH: usize = 6;
@@ -60,12 +61,54 @@ fn push_target(out: &mut Vec<ProjectRunTarget>, target: ProjectRunTarget) {
     out.push(target);
 }
 
+fn build_target(
+    cwd: &str,
+    label: String,
+    kind: &str,
+    command: String,
+    confidence: f64,
+    entrypoint: Option<String>,
+    manifest_path: Option<String>,
+    required_toolchains: Vec<&str>,
+) -> ProjectRunTarget {
+    ProjectRunTarget {
+        id: target_id_from(cwd, command.as_str()),
+        label,
+        kind: kind.to_string(),
+        language: Some(kind.to_string()),
+        cwd: cwd.to_string(),
+        command,
+        source: "auto".to_string(),
+        confidence,
+        is_default: false,
+        entrypoint,
+        manifest_path,
+        required_toolchains: required_toolchains
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect(),
+    }
+}
+
 fn detect_node_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
     let package_json = dir.join("package.json");
     if !package_json.is_file() {
         return;
     }
     let cwd = dir.to_string_lossy().to_string();
+    let manifest_path = Some(package_json.to_string_lossy().to_string());
+    let package_manager = if dir.join("pnpm-lock.yaml").is_file() {
+        "pnpm"
+    } else if dir.join("yarn.lock").is_file() {
+        "yarn"
+    } else {
+        "npm"
+    };
+    let required_toolchains = match package_manager {
+        "pnpm" => vec!["node", "pnpm"],
+        "yarn" => vec!["node", "yarn"],
+        _ => vec!["node", "npm"],
+    };
     let raw = fs::read_to_string(&package_json).unwrap_or_default();
     let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok();
     let scripts = parsed
@@ -80,20 +123,24 @@ fn detect_node_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
             if scripts_obj.contains_key(key) {
                 push_target(
                     out,
-                    ProjectRunTarget {
-                        id: target_id_from(cwd.as_str(), format!("npm run {}", key).as_str()),
-                        label: format!("Node: npm run {}", key),
-                        kind: "node".to_string(),
-                        cwd: cwd.clone(),
-                        command: format!("npm run {}", key),
-                        source: "auto".to_string(),
-                        confidence: normalize_confidence(if key == "dev" || key == "start" {
+                    build_target(
+                        cwd.as_str(),
+                        format!("Node: {package_manager} {}", key),
+                        "node",
+                        if package_manager == "npm" {
+                            format!("npm run {}", key)
+                        } else {
+                            format!("{package_manager} {}", key)
+                        },
+                        normalize_confidence(if key == "dev" || key == "start" {
                             0.95
                         } else {
                             0.85
                         }),
-                        is_default: false,
-                    },
+                        Some(format!("package.json:scripts.{}", key)),
+                        manifest_path.clone(),
+                        required_toolchains.clone(),
+                    ),
                 );
                 added = true;
             }
@@ -102,16 +149,20 @@ fn detect_node_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
     if !added {
         push_target(
             out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), "npm start"),
-                label: "Node: npm start".to_string(),
-                kind: "node".to_string(),
-                cwd,
-                command: "npm start".to_string(),
-                source: "auto".to_string(),
-                confidence: 0.7,
-                is_default: false,
-            },
+            build_target(
+                cwd.as_str(),
+                format!("Node: {package_manager} start"),
+                "node",
+                if package_manager == "npm" {
+                    "npm start".to_string()
+                } else {
+                    format!("{package_manager} start")
+                },
+                0.7,
+                Some("package.json:scripts.start".to_string()),
+                manifest_path,
+                required_toolchains,
+            ),
         );
     }
 }
@@ -123,63 +174,124 @@ fn detect_java_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
         || dir.join("build.gradle.kts").is_file()
         || dir.join("settings.gradle").is_file()
         || dir.join("settings.gradle.kts").is_file();
+    let has_mvnw = dir.join("mvnw").is_file();
     let has_gradlew = dir.join("gradlew").is_file();
+    let java_entrypoints = detect_java_entrypoints(dir);
+    let pom_path = dir.join("pom.xml");
+    let gradle_manifest = if dir.join("build.gradle").is_file() {
+        Some(dir.join("build.gradle"))
+    } else if dir.join("build.gradle.kts").is_file() {
+        Some(dir.join("build.gradle.kts"))
+    } else if dir.join("settings.gradle").is_file() {
+        Some(dir.join("settings.gradle"))
+    } else if dir.join("settings.gradle.kts").is_file() {
+        Some(dir.join("settings.gradle.kts"))
+    } else {
+        None
+    };
 
     if has_pom {
+        let runner = if has_mvnw { "./mvnw" } else { "mvn" };
+        let required_toolchains = if has_mvnw {
+            vec!["java_home"]
+        } else {
+            vec!["java_home", "mvn"]
+        };
+        if java_entrypoints.is_empty() {
+            push_target(
+                out,
+                build_target(
+                    cwd.as_str(),
+                    "Java(Maven): spring-boot:run".to_string(),
+                    "java",
+                    format!("{runner} spring-boot:run"),
+                    0.9,
+                    None,
+                    Some(pom_path.to_string_lossy().to_string()),
+                    required_toolchains.clone(),
+                ),
+            );
+        } else {
+            for entrypoint in &java_entrypoints {
+                push_target(
+                    out,
+                    build_target(
+                        cwd.as_str(),
+                        format!("Java(Maven): {}", entrypoint),
+                        "java",
+                        format!("{runner} -Dexec.mainClass={} exec:java", entrypoint),
+                        0.94,
+                        Some(entrypoint.clone()),
+                        Some(pom_path.to_string_lossy().to_string()),
+                        required_toolchains.clone(),
+                    ),
+                );
+            }
+        }
         push_target(
             out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), "mvn spring-boot:run"),
-                label: "Java(Maven): spring-boot:run".to_string(),
-                kind: "java".to_string(),
-                cwd: cwd.clone(),
-                command: "mvn spring-boot:run".to_string(),
-                source: "auto".to_string(),
-                confidence: 0.9,
-                is_default: false,
-            },
-        );
-        push_target(
-            out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), "mvn test"),
-                label: "Java(Maven): test".to_string(),
-                kind: "java".to_string(),
-                cwd: cwd.clone(),
-                command: "mvn test".to_string(),
-                source: "auto".to_string(),
-                confidence: 0.8,
-                is_default: false,
-            },
+            build_target(
+                cwd.as_str(),
+                "Java(Maven): test".to_string(),
+                "java",
+                format!("{runner} test"),
+                0.8,
+                None,
+                Some(pom_path.to_string_lossy().to_string()),
+                required_toolchains,
+            ),
         );
     }
     if has_gradle {
         let runner = if has_gradlew { "./gradlew" } else { "gradle" };
+        let required_toolchains = if has_gradlew {
+            vec!["java_home", "gradle_user_home"]
+        } else {
+            vec!["java_home", "gradle", "gradle_user_home"]
+        };
+        if java_entrypoints.is_empty() {
+            push_target(
+                out,
+                build_target(
+                    cwd.as_str(),
+                    "Java(Gradle): bootRun".to_string(),
+                    "java",
+                    format!("{runner} bootRun"),
+                    0.88,
+                    None,
+                    gradle_manifest.as_ref().map(|path| path.to_string_lossy().to_string()),
+                    required_toolchains.clone(),
+                ),
+            );
+        } else {
+            for entrypoint in &java_entrypoints {
+                push_target(
+                    out,
+                    build_target(
+                        cwd.as_str(),
+                        format!("Java(Gradle): {}", entrypoint),
+                        "java",
+                        format!("{runner} run -PmainClass={entrypoint}"),
+                        0.9,
+                        Some(entrypoint.clone()),
+                        gradle_manifest.as_ref().map(|path| path.to_string_lossy().to_string()),
+                        required_toolchains.clone(),
+                    ),
+                );
+            }
+        }
         push_target(
             out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), format!("{runner} bootRun").as_str()),
-                label: "Java(Gradle): bootRun".to_string(),
-                kind: "java".to_string(),
-                cwd: cwd.clone(),
-                command: format!("{runner} bootRun"),
-                source: "auto".to_string(),
-                confidence: 0.88,
-                is_default: false,
-            },
-        );
-        push_target(
-            out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), format!("{runner} test").as_str()),
-                label: "Java(Gradle): test".to_string(),
-                kind: "java".to_string(),
-                cwd,
-                command: format!("{runner} test"),
-                source: "auto".to_string(),
-                confidence: 0.78,
-                is_default: false,
-            },
+            build_target(
+                cwd.as_str(),
+                "Java(Gradle): test".to_string(),
+                "java",
+                format!("{runner} test"),
+                0.78,
+                None,
+                gradle_manifest.as_ref().map(|path| path.to_string_lossy().to_string()),
+                required_toolchains,
+            ),
         );
     }
 }
@@ -194,34 +306,41 @@ fn detect_python_targets(dir: &Path, files: &HashSet<String>, out: &mut Vec<Proj
         return;
     }
     let cwd = dir.to_string_lossy().to_string();
+    let manifest_path = if files.contains("pyproject.toml") {
+        Some(dir.join("pyproject.toml").to_string_lossy().to_string())
+    } else if files.contains("requirements.txt") {
+        Some(dir.join("requirements.txt").to_string_lossy().to_string())
+    } else {
+        None
+    };
     if files.contains("main.py") {
         push_target(
             out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), "python main.py"),
-                label: "Python: main.py".to_string(),
-                kind: "python".to_string(),
-                cwd: cwd.clone(),
-                command: "python main.py".to_string(),
-                source: "auto".to_string(),
-                confidence: 0.9,
-                is_default: false,
-            },
+            build_target(
+                cwd.as_str(),
+                "Python: main.py".to_string(),
+                "python",
+                "python main.py".to_string(),
+                0.9,
+                Some("main.py".to_string()),
+                manifest_path.clone(),
+                vec!["python"],
+            ),
         );
     }
     if files.contains("app.py") {
         push_target(
             out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), "python app.py"),
-                label: "Python: app.py".to_string(),
-                kind: "python".to_string(),
-                cwd: cwd.clone(),
-                command: "python app.py".to_string(),
-                source: "auto".to_string(),
-                confidence: 0.88,
-                is_default: false,
-            },
+            build_target(
+                cwd.as_str(),
+                "Python: app.py".to_string(),
+                "python",
+                "python app.py".to_string(),
+                0.88,
+                Some("app.py".to_string()),
+                manifest_path.clone(),
+                vec!["python"],
+            ),
         );
     }
     if files.contains("pytest.ini")
@@ -230,16 +349,16 @@ fn detect_python_targets(dir: &Path, files: &HashSet<String>, out: &mut Vec<Proj
     {
         push_target(
             out,
-            ProjectRunTarget {
-                id: target_id_from(cwd.as_str(), "pytest"),
-                label: "Python: pytest".to_string(),
-                kind: "python".to_string(),
-                cwd,
-                command: "pytest".to_string(),
-                source: "auto".to_string(),
-                confidence: 0.75,
-                is_default: false,
-            },
+            build_target(
+                cwd.as_str(),
+                "Python: pytest".to_string(),
+                "python",
+                "pytest".to_string(),
+                0.75,
+                None,
+                manifest_path,
+                vec!["python"],
+            ),
         );
     }
 }
@@ -249,31 +368,51 @@ fn detect_go_targets(dir: &Path, files: &HashSet<String>, out: &mut Vec<ProjectR
         return;
     }
     let cwd = dir.to_string_lossy().to_string();
+    let manifest_path = Some(dir.join("go.mod").to_string_lossy().to_string());
+    let go_entrypoints = detect_go_entrypoints(dir);
+    if go_entrypoints.is_empty() {
+        push_target(
+            out,
+            build_target(
+                cwd.as_str(),
+                "Go: run".to_string(),
+                "go",
+                "go run .".to_string(),
+                0.86,
+                Some(".".to_string()),
+                manifest_path.clone(),
+                vec!["go"],
+            ),
+        );
+    } else {
+        for entrypoint in go_entrypoints {
+            push_target(
+                out,
+                build_target(
+                    cwd.as_str(),
+                    format!("Go: {}", entrypoint),
+                    "go",
+                    format!("go run {}", entrypoint),
+                    0.9,
+                    Some(entrypoint.clone()),
+                    manifest_path.clone(),
+                    vec!["go"],
+                ),
+            );
+        }
+    }
     push_target(
         out,
-        ProjectRunTarget {
-            id: target_id_from(cwd.as_str(), "go run ."),
-            label: "Go: run".to_string(),
-            kind: "go".to_string(),
-            cwd: cwd.clone(),
-            command: "go run .".to_string(),
-            source: "auto".to_string(),
-            confidence: 0.86,
-            is_default: false,
-        },
-    );
-    push_target(
-        out,
-        ProjectRunTarget {
-            id: target_id_from(cwd.as_str(), "go test ./..."),
-            label: "Go: test".to_string(),
-            kind: "go".to_string(),
-            cwd,
-            command: "go test ./...".to_string(),
-            source: "auto".to_string(),
-            confidence: 0.8,
-            is_default: false,
-        },
+        build_target(
+            cwd.as_str(),
+            "Go: test".to_string(),
+            "go",
+            "go test ./...".to_string(),
+            0.8,
+            None,
+            manifest_path,
+            vec!["go"],
+        ),
     );
 }
 
@@ -282,40 +421,265 @@ fn detect_rust_targets(dir: &Path, files: &HashSet<String>, out: &mut Vec<Projec
         return;
     }
     let cwd = dir.to_string_lossy().to_string();
+    let manifest_path = Some(dir.join("Cargo.toml").to_string_lossy().to_string());
+    let rust_bins = detect_rust_bins(dir);
+    let has_default_main = dir.join("src").join("main.rs").is_file();
+    if has_default_main {
+        push_target(
+            out,
+            build_target(
+                cwd.as_str(),
+                "Rust: cargo run".to_string(),
+                "rust",
+                "cargo run".to_string(),
+                0.86,
+                Some("src/main.rs".to_string()),
+                manifest_path.clone(),
+                vec!["cargo"],
+            ),
+        );
+    } else if rust_bins.is_empty() {
+        push_target(
+            out,
+            build_target(
+                cwd.as_str(),
+                "Rust: cargo run".to_string(),
+                "rust",
+                "cargo run".to_string(),
+                0.8,
+                None,
+                manifest_path.clone(),
+                vec!["cargo"],
+            ),
+        );
+    }
+    for bin_name in rust_bins {
+        let entrypoint = if bin_name.contains('/') {
+            format!("src/bin/{}/main.rs", bin_name)
+        } else {
+            format!("src/bin/{}.rs", bin_name)
+        };
+        push_target(
+            out,
+            build_target(
+                cwd.as_str(),
+                format!("Rust: {}", bin_name),
+                "rust",
+                format!("cargo run --bin {}", bin_name),
+                0.93,
+                Some(entrypoint),
+                manifest_path.clone(),
+                vec!["cargo"],
+            ),
+        );
+    }
     push_target(
         out,
-        ProjectRunTarget {
-            id: target_id_from(cwd.as_str(), "cargo run"),
-            label: "Rust: cargo run".to_string(),
-            kind: "rust".to_string(),
-            cwd: cwd.clone(),
-            command: "cargo run".to_string(),
-            source: "auto".to_string(),
-            confidence: 0.86,
-            is_default: false,
-        },
+        build_target(
+            cwd.as_str(),
+            "Rust: cargo test".to_string(),
+            "rust",
+            "cargo test".to_string(),
+            0.8,
+            None,
+            manifest_path,
+            vec!["cargo"],
+        ),
     );
-    push_target(
-        out,
-        ProjectRunTarget {
-            id: target_id_from(cwd.as_str(), "cargo test"),
-            label: "Rust: cargo test".to_string(),
-            kind: "rust".to_string(),
-            cwd,
-            command: "cargo test".to_string(),
-            source: "auto".to_string(),
-            confidence: 0.8,
-            is_default: false,
-        },
-    );
+}
+
+fn detect_java_entrypoints(dir: &Path) -> Vec<String> {
+    let src_root = dir.join("src").join("main").join("java");
+    if !src_root.is_dir() {
+        return Vec::new();
+    }
+
+    let package_re = Regex::new(r"(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;").ok();
+    let main_re =
+        Regex::new(r"public\s+static\s+void\s+main\s*\(\s*String(?:\[\]|\s*\.\.\.)").ok();
+    let class_re = Regex::new(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)").ok();
+
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in walkdir::WalkDir::new(&src_root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if entry.path().extension().and_then(|value| value.to_str()) != Some("java") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        if !main_re.as_ref().is_some_and(|re| re.is_match(&content)) {
+            continue;
+        }
+        let class_name = class_re
+            .as_ref()
+            .and_then(|re| re.captures(&content))
+            .and_then(|captures| captures.get(1))
+            .map(|value| value.as_str().to_string());
+        let Some(class_name) = class_name else {
+            continue;
+        };
+        let package_name = package_re
+            .as_ref()
+            .and_then(|re| re.captures(&content))
+            .and_then(|captures| captures.get(1))
+            .map(|value| value.as_str().to_string());
+        let fqcn = match package_name {
+            Some(package) if !package.trim().is_empty() => format!("{package}.{class_name}"),
+            _ => class_name,
+        };
+        if seen.insert(fqcn.clone()) {
+            out.push(fqcn);
+        }
+    }
+    out.sort();
+    out
+}
+
+pub(super) fn detect_rust_bins(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+
+    let src_bin_dir = dir.join("src").join("bin");
+    if src_bin_dir.is_dir() {
+        for entry in walkdir::WalkDir::new(&src_bin_dir).max_depth(2).into_iter().flatten() {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|value| value.to_str()) != Some("rs") {
+                continue;
+            }
+            let relative = match entry.path().strip_prefix(&src_bin_dir) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if relative
+                .file_name()
+                .and_then(|value| value.to_str())
+                == Some("main.rs")
+            {
+                let Some(parent) = relative.parent() else {
+                    continue;
+                };
+                let name = parent.to_string_lossy().trim().replace('\\', "/");
+                if !name.is_empty() && seen.insert(name.clone()) {
+                    out.push(name);
+                }
+                continue;
+            }
+            let Some(stem) = entry.path().file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let stem = stem.trim();
+            if !stem.is_empty() && seen.insert(stem.to_string()) {
+                out.push(stem.to_string());
+            }
+        }
+    }
+
+    let cargo_toml = dir.join("Cargo.toml");
+    if cargo_toml.is_file() {
+        if let Ok(content) = fs::read_to_string(&cargo_toml) {
+            for raw_line in content.lines() {
+                let line = raw_line.trim();
+                if line == "[[bin]]" {
+                    continue;
+                }
+                if line.starts_with('[') {
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("name") {
+                    let Some((_, value)) = rest.split_once('=') else {
+                        continue;
+                    };
+                    let normalized = value.trim().trim_matches('"').trim_matches('\'').trim();
+                    if normalized.is_empty() {
+                        continue;
+                    }
+                    if seen.insert(normalized.to_string()) {
+                        out.push(normalized.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    out.sort();
+    out
+}
+
+pub(super) fn detect_go_entrypoints(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let main_re = Regex::new(r"(?m)^\s*func\s+main\s*\(").ok();
+
+    let cmd_dir = dir.join("cmd");
+    if cmd_dir.is_dir() {
+        for entry in fs::read_dir(&cmd_dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let has_main = walkdir::WalkDir::new(&path)
+                .max_depth(2)
+                .into_iter()
+                .flatten()
+                .filter(|item| item.file_type().is_file())
+                .filter(|item| item.path().extension().and_then(|value| value.to_str()) == Some("go"))
+                .any(|item| {
+                    fs::read_to_string(item.path())
+                        .ok()
+                        .zip(main_re.as_ref())
+                        .is_some_and(|(content, re)| re.is_match(&content))
+                });
+            if !has_main {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let rel = format!("./cmd/{name}");
+            if seen.insert(rel.clone()) {
+                out.push(rel);
+            }
+        }
+    }
+
+    if seen.is_empty() {
+        let has_root_main = fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.path().is_file())
+            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("go"))
+            .any(|entry| {
+                fs::read_to_string(entry.path())
+                    .ok()
+                    .zip(main_re.as_ref())
+                    .is_some_and(|(content, re)| re.is_match(&content))
+            });
+        if has_root_main {
+            out.push(".".to_string());
+        }
+    }
+
+    out.sort();
+    out
 }
 
 fn default_target_priority(target: &ProjectRunTarget) -> i32 {
     let cmd = target.command.to_lowercase();
-    if target.kind == "node" && cmd.contains("npm run dev") {
+    if target.kind == "node"
+        && (cmd.contains("npm run dev") || cmd == "pnpm dev" || cmd == "yarn dev")
+    {
         return 100;
     }
-    if target.kind == "node" && cmd.contains("npm run start") {
+    if target.kind == "node"
+        && (cmd.contains("npm run start") || cmd == "pnpm start" || cmd == "yarn start")
+    {
         return 95;
     }
     if target.kind == "java" && cmd.contains("spring-boot:run") {
@@ -324,14 +688,23 @@ fn default_target_priority(target: &ProjectRunTarget) -> i32 {
     if target.kind == "java" && cmd.contains("bootrun") {
         return 90;
     }
+    if target.kind == "java" && cmd.contains("exec:java") {
+        return 89;
+    }
     if target.kind == "python" && cmd.contains("main.py") {
         return 88;
+    }
+    if target.kind == "go" && cmd.starts_with("go run ./cmd/") {
+        return 87;
     }
     if target.kind == "go" && cmd == "go run ." {
         return 85;
     }
     if target.kind == "rust" && cmd == "cargo run" {
         return 84;
+    }
+    if target.kind == "rust" && cmd.starts_with("cargo run --bin ") {
+        return 83;
     }
     if cmd.contains("test") {
         return 40;

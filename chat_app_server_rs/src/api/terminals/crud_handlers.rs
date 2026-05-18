@@ -8,7 +8,7 @@ use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::{normalize_non_empty, validate_existing_dir};
-use crate::models::terminal::{Terminal, TerminalService};
+use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::project_run::validate_command_preflight;
 use crate::services::realtime::publish_terminal_list_invalidated;
@@ -100,7 +100,13 @@ pub(super) async fn create_terminal(
 
     let manager = get_terminal_manager();
     match manager
-        .create(name, cwd, Some(user_id), normalize_non_empty(project_id))
+        .create(
+            name,
+            cwd,
+            TERMINAL_KIND_SHARED.to_string(),
+            Some(user_id),
+            normalize_non_empty(project_id),
+        )
         .await
     {
         Ok(terminal) => (StatusCode::CREATED, Json(attach_busy(&manager, terminal))),
@@ -264,6 +270,7 @@ pub(super) async fn dispatch_terminal_command(
             .create(
                 name,
                 cwd.clone(),
+                TERMINAL_KIND_SHARED.to_string(),
                 Some(user_id.clone()),
                 normalized_project_id.clone(),
             )

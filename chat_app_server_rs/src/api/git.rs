@@ -26,6 +26,7 @@ pub fn router() -> Router {
         .route("/api/git/merge", post(merge_branch))
         .route("/api/git/stage", post(stage))
         .route("/api/git/unstage", post(unstage))
+        .route("/api/git/discard", post(discard))
         .route("/api/git/commit", post(commit))
 }
 
@@ -126,6 +127,13 @@ async fn unstage(Json(request): Json<GitPathRequest>) -> (StatusCode, Json<Value
 
 async fn commit(Json(request): Json<GitCommitRequest>) -> (StatusCode, Json<Value>) {
     match git::commit(request).await {
+        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Err(message) => error_response(message),
+    }
+}
+
+async fn discard(Json(request): Json<GitPathRequest>) -> (StatusCode, Json<Value>) {
+    match git::discard(request).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }

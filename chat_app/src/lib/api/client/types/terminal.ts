@@ -2,6 +2,7 @@ export interface TerminalResponse {
   id: string;
   name?: string;
   cwd?: string;
+  kind?: string | null;
   user_id?: string | null;
   userId?: string | null;
   project_id?: string | null;

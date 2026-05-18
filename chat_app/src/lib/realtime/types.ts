@@ -258,6 +258,7 @@ export interface RealtimeTerminalStatePayloadWrapper {
   status: string;
   busy: boolean;
   reason: string;
+  exit_code?: number | null;
 }
 
 export interface RealtimeTerminalListInvalidatedPayloadWrapper {
@@ -294,6 +295,20 @@ export interface RealtimeProjectRunStatePayloadWrapper {
   busy: boolean;
   running: boolean;
   reason: string;
+  exit_code?: number | null;
+}
+
+export interface RealtimeProjectRunInstancePayloadWrapper {
+  kind: 'project_run_instance';
+  project_id: string;
+  terminal_id: string;
+  terminal_name: string;
+  cwd: string;
+  status: string;
+  busy: boolean;
+  running: boolean;
+  reason: string;
+  exit_code?: number | null;
 }
 
 export interface RealtimeProjectRunCatalogPayloadWrapper {
@@ -301,8 +316,6 @@ export interface RealtimeProjectRunCatalogPayloadWrapper {
   project_id: string;
   reason: string;
   path?: string | null;
-  runner_script_exists?: boolean | null;
-  root_missing?: boolean | null;
 }
 
 export interface RealtimeProjectMembersUpdatedPayloadWrapper {
@@ -424,6 +437,7 @@ export type RealtimeProjectScopedPayload =
   | RealtimeTerminalStatePayloadWrapper
   | RealtimeTerminalListInvalidatedPayloadWrapper
   | RealtimeProjectRunStatePayloadWrapper
+  | RealtimeProjectRunInstancePayloadWrapper
   | RealtimeProjectRunCatalogPayloadWrapper
   | RealtimeProjectMembersUpdatedPayloadWrapper;
 

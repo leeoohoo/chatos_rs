@@ -7,7 +7,6 @@ import type {
   ProjectSearchHit,
 } from '../../../types';
 import { ProjectPreviewPane } from '../PreviewPane';
-import type { ProjectRunnerMember } from '../useProjectExplorerRunState';
 
 export interface UseProjectExplorerPreviewPanePropsParams {
   selectedFile: FsReadResult | null;
@@ -22,21 +21,6 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   totalSearchHits: number;
   canOpenPreviousSearchHit: boolean;
   canOpenNextSearchHit: boolean;
-  runStatus: string;
-  runCatalogLoading: boolean;
-  projectMembers: ProjectRunnerMember[];
-  projectMembersLoading: boolean;
-  runnerScriptExists: boolean;
-  runnerScriptChecking: boolean;
-  runnerScriptPath: string;
-  runnerStartCommand: string;
-  runnerStopCommand: string;
-  runnerRestartCommand: string;
-  starting: boolean;
-  stopping: boolean;
-  restarting: boolean;
-  runnerMessage: string | null;
-  runnerError: string | null;
   previewTargetLine: number | null;
   previewTargetLineRevision: number;
   navCapabilities: CodeNavCapabilities | null;
@@ -64,9 +48,4 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   handleActivateSearchHit: (hit: ProjectSearchHit) => void;
   handleOpenNavLocation: React.ComponentProps<typeof ProjectPreviewPane>['onOpenNavLocation'];
   handleOpenDocumentSymbol: (line: number) => void;
-  handleRunnerStart: () => Promise<void>;
-  handleRunnerStop: () => Promise<void>;
-  handleRunnerRestart: () => Promise<void>;
-  refreshRunnerState: () => Promise<void>;
-  handleGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
 }

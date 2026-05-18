@@ -17,7 +17,6 @@ const WORKSPACE_WATCHER_SERVER_NAME: &str = "workspace_watcher";
 const WORKSPACE_WATCHER_FULL_SCAN_INTERVAL: Duration = Duration::from_secs(4);
 const WORKSPACE_WATCHER_IDLE_WAIT: Duration = Duration::from_secs(1);
 const WORKSPACE_WATCHER_SUPPRESSION_TTL: Duration = Duration::from_secs(30);
-const WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH: &str = ".chatos/project_runner.sh";
 
 static WATCHER_STATE: Lazy<Arc<WorkspaceRealtimeWatcherState>> =
     Lazy::new(|| Arc::new(WorkspaceRealtimeWatcherState::default()));
@@ -214,8 +213,6 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                         project.id.as_str(),
                         "project_root_missing",
                         Some(project.root_path.as_str()),
-                        Some(false),
-                        Some(true),
                     );
                 }
             }
@@ -230,11 +227,6 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                         project.id.as_str(),
                         "project_root_available",
                         Some(project.root_path.as_str()),
-                        Some(snapshot_has_runner_script(
-                            project.root_path.as_str(),
-                            &current_files,
-                        )),
-                        Some(false),
                     );
                 }
             }
@@ -249,8 +241,6 @@ async fn scan_project(project: &Project) -> Result<(), String> {
             let changes = diff_workspace_files(&previous_files, &current_files);
             state.files = current_files;
             state.initialized = true;
-            let runner_script_exists =
-                snapshot_has_runner_script(project.root_path.as_str(), &state.files);
             drop(state_guard);
 
             if changes.is_empty() {
@@ -262,11 +252,8 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                 Some(project.id.clone()),
                 None,
             )?;
-            let mut runner_script_changed = false;
 
             for change in changes {
-                runner_script_changed = runner_script_changed
-                    || is_runner_script_path(project.root_path.as_str(), change.path.as_str());
                 let current_fingerprint = match change.kind {
                     "delete" => None,
                     _ => current_file_fingerprint(Path::new(change.path.as_str())),
@@ -286,21 +273,13 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                 )?;
             }
 
-            if runner_script_changed {
-                if let Some(user_id) = project.user_id.as_deref() {
-                    let runner_script_path = Path::new(project.root_path.as_str())
-                        .join(WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH)
-                        .to_string_lossy()
-                        .to_string();
-                    publish_project_run_catalog_updated(
-                        user_id,
-                        project.id.as_str(),
-                        "workspace_runner_script_changed",
-                        Some(runner_script_path.as_str()),
-                        Some(runner_script_exists),
-                        Some(false),
-                    );
-                }
+            if let Some(user_id) = project.user_id.as_deref() {
+                publish_project_run_catalog_updated(
+                    user_id,
+                    project.id.as_str(),
+                    "workspace_files_changed",
+                    Some(project.root_path.as_str()),
+                );
             }
         }
     }
@@ -451,7 +430,6 @@ fn should_descend_into(entry: &DirEntry, root: &Path) -> bool {
             | ".idea"
             | ".vscode"
             | "coverage"
-            | "project_runner"
     )
 }
 
@@ -462,9 +440,6 @@ fn should_ignore_file(path: &Path, root: &Path) -> bool {
     let normalized = normalize_relative_string(relative);
     if normalized.is_empty() {
         return false;
-    }
-    if normalized.starts_with("project_runner/") {
-        return true;
     }
     false
 }
@@ -484,37 +459,6 @@ fn current_file_fingerprint(path: &Path) -> Option<FileFingerprint> {
         modified_millis,
         size_bytes: metadata.len(),
     })
-}
-
-fn is_runner_script_path(project_root: &str, path: &str) -> bool {
-    let project_root = normalize_path_string(project_root);
-    if project_root.is_empty() {
-        return false;
-    }
-    let runner_path = normalize_path_string(
-        Path::new(project_root.as_str())
-            .join(WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH)
-            .to_string_lossy()
-            .as_ref(),
-    );
-    runner_path == normalize_path_string(path)
-}
-
-fn snapshot_has_runner_script(
-    project_root: &str,
-    files: &HashMap<String, FileFingerprint>,
-) -> bool {
-    let project_root = normalize_path_string(project_root);
-    if project_root.is_empty() {
-        return false;
-    }
-    let runner_path = normalize_path_string(
-        Path::new(project_root.as_str())
-            .join(WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH)
-            .to_string_lossy()
-            .as_ref(),
-    );
-    files.contains_key(runner_path.as_str())
 }
 
 fn path_matches_root(path: &str, root: &str) -> bool {
@@ -578,7 +522,7 @@ impl FileFingerprint {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_runner_script_path, normalize_path_string, path_matches_root};
+    use super::{normalize_path_string, path_matches_root};
 
     #[test]
     fn normalize_path_string_keeps_absolute_paths_stable() {
@@ -590,17 +534,5 @@ mod tests {
     fn path_matches_root_requires_same_root_scope() {
         assert!(path_matches_root("/tmp/demo/file.txt", "/tmp/demo"));
         assert!(!path_matches_root("/tmp/demo-two/file.txt", "/tmp/demo"));
-    }
-
-    #[test]
-    fn runner_script_detection_matches_expected_relative_path() {
-        assert!(is_runner_script_path(
-            "/tmp/project",
-            "/tmp/project/.chatos/project_runner.sh"
-        ));
-        assert!(!is_runner_script_path(
-            "/tmp/project",
-            "/tmp/project/project_runner/index.ts"
-        ));
     }
 }

@@ -2,6 +2,8 @@
 mod analyzer;
 #[path = "dispatcher.rs"]
 mod dispatcher;
+#[path = "environment.rs"]
+mod environment;
 
 const SHELL_BUILTINS: &[&str] = &[
     "cd", "export", "unset", "alias", "unalias", "source", ".", "echo", "printf", "test", "[",
@@ -12,6 +14,7 @@ pub struct RunDispatchResult {
     pub terminal_id: String,
     pub terminal_name: String,
     pub terminal_reused: bool,
+    pub terminal_status: String,
     pub cwd: String,
     pub executed_command: String,
 }
@@ -27,4 +30,9 @@ pub struct RunExecutionInput {
 pub(crate) use self::analyzer::{analyze_project, apply_default_target};
 pub(crate) use self::dispatcher::{
     dispatch_command, resolve_execution, validate_command_preflight,
+};
+pub(crate) use self::environment::{
+    env_overrides_for_target, load_environment_selection, load_environment_snapshot,
+    resolve_command_with_toolchains, save_environment_selection,
+    validate_project_run_target,
 };

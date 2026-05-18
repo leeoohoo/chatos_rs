@@ -20,7 +20,6 @@ export const useProjectExplorerWorkspaceModel = ({
   runState,
   codeNav,
   treeStateOps,
-  handleGenerateRunnerScriptForContact,
 }: UseProjectExplorerWorkspaceModelParams) => {
   const modelParams = {
     project,
@@ -33,7 +32,6 @@ export const useProjectExplorerWorkspaceModel = ({
     runState,
     codeNav,
     treeStateOps,
-    handleGenerateRunnerScriptForContact,
   };
   const {
     handlePreviewTokenSelection,

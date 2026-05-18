@@ -181,3 +181,16 @@ export const commitGit = (
     }),
   });
 };
+
+export const discardGitPaths = (
+  request: ApiRequestFn,
+  data: { root: string; paths: string[] },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/discard', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      paths: data.paths,
+    }),
+  });
+};

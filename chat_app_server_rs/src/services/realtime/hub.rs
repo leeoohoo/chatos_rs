@@ -19,7 +19,8 @@ use super::types::{
     ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
     ConversationSummariesUpdatedRealtimePayload, NotepadUpdatedRealtimePayload,
     ProjectChangeSummaryRealtimePayload, ProjectMembersUpdatedRealtimePayload,
-    ProjectRunCatalogRealtimePayload, ProjectRunStateRealtimePayload,
+    ProjectRunCatalogRealtimePayload, ProjectRunInstanceRealtimePayload,
+    ProjectRunStateRealtimePayload,
     ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
     RemoteConnectionsUpdatedRealtimePayload, RemoteSftpTransferRealtimePayload,
     ReviewRepairRealtimePayload, SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
@@ -325,6 +326,7 @@ pub fn publish_terminal_state_changed(
     terminal: &Terminal,
     busy: bool,
     reason: &str,
+    exit_code: Option<i32>,
 ) {
     let status = terminal.status.trim();
     let payload = TerminalStateRealtimePayload {
@@ -339,6 +341,7 @@ pub fn publish_terminal_state_changed(
         },
         busy,
         reason: reason.to_string(),
+        exit_code,
     };
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -384,6 +387,7 @@ pub fn publish_project_run_state_changed(
     running: bool,
     status: &str,
     reason: &str,
+    exit_code: Option<i32>,
 ) {
     let payload = ProjectRunStateRealtimePayload {
         project_id: project_id.to_string(),
@@ -394,6 +398,7 @@ pub fn publish_project_run_state_changed(
         busy,
         running,
         reason: reason.to_string(),
+        exit_code,
     };
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -406,13 +411,43 @@ pub fn publish_project_run_state_changed(
     });
 }
 
+pub fn publish_project_run_instance_changed(
+    user_id: &str,
+    project_id: &str,
+    terminal: &Terminal,
+    busy: bool,
+    running: bool,
+    status: &str,
+    reason: &str,
+    exit_code: Option<i32>,
+) {
+    let payload = ProjectRunInstanceRealtimePayload {
+        project_id: project_id.to_string(),
+        terminal_id: terminal.id.clone(),
+        terminal_name: terminal.name.clone(),
+        cwd: terminal.cwd.clone(),
+        status: status.to_string(),
+        busy,
+        running,
+        reason: reason.to_string(),
+        exit_code,
+    };
+    REALTIME_HUB.send(RealtimeEventEnvelope {
+        message_type: "event",
+        event: "project.run.instance_changed",
+        user_id: user_id.to_string(),
+        conversation_id: None,
+        project_id: Some(project_id.to_string()),
+        payload: RealtimeEventPayload::ProjectRunInstance(payload),
+        ts: now_rfc3339(),
+    });
+}
+
 pub fn publish_project_run_catalog_updated(
     user_id: &str,
     project_id: &str,
     reason: &str,
     path: Option<&str>,
-    runner_script_exists: Option<bool>,
-    root_missing: Option<bool>,
 ) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -424,8 +459,6 @@ pub fn publish_project_run_catalog_updated(
             project_id: project_id.to_string(),
             reason: reason.to_string(),
             path: path.map(|value| value.to_string()),
-            runner_script_exists,
-            root_missing,
         }),
         ts: now_rfc3339(),
     });

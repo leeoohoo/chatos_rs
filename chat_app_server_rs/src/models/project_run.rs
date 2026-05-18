@@ -5,11 +5,15 @@ pub struct ProjectRunTarget {
     pub id: String,
     pub label: String,
     pub kind: String,
+    pub language: Option<String>,
     pub cwd: String,
     pub command: String,
     pub source: String,
     pub confidence: f64,
     pub is_default: bool,
+    pub entrypoint: Option<String>,
+    pub manifest_path: Option<String>,
+    pub required_toolchains: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

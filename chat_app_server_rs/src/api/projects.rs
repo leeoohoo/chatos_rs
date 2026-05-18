@@ -16,7 +16,9 @@ use self::crud_handlers::{
     create_project, delete_project, get_project, list_projects, update_project,
 };
 use self::run_handlers::{
-    analyze_project_run, execute_project_run, get_project_run_catalog, set_project_run_default,
+    analyze_project_run, execute_project_run, get_project_run_catalog,
+    get_project_run_environment, get_project_run_state, set_project_run_default,
+    update_project_run_environment,
 };
 
 pub fn router() -> Router {
@@ -44,8 +46,13 @@ pub fn router() -> Router {
             get(get_project_run_catalog),
         )
         .route("/api/projects/:id/run/execute", post(execute_project_run))
+        .route("/api/projects/:id/run/state", get(get_project_run_state))
         .route(
             "/api/projects/:id/run/default",
             post(set_project_run_default),
+        )
+        .route(
+            "/api/projects/:id/run/environment",
+            get(get_project_run_environment).put(update_project_run_environment),
         )
 }

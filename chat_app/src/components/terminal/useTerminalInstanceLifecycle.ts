@@ -36,6 +36,7 @@ import {
   TERMINAL_SNAPSHOT_MAX_LINES,
   TERMINAL_SNAPSHOT_PAGE_LINES,
 } from './historyViewUtils';
+import { writeToTerminalInChunks } from './commandHistory';
 
 interface TerminalApiClient {
   listTerminalLogs(
@@ -323,6 +324,16 @@ export const useTerminalInstanceLifecycle = ({
         );
         const parsedHistory = parseCommandHistoryFromLogs(uniqueLogs, commandSeqRef.current);
         commandSeqRef.current = parsedHistory.nextSequence;
+
+        if (mode === 'initial' && terminalRef.current === term) {
+          const outputReplay = parsedHistory.outputLogs
+            .map((log) => log.content || '')
+            .join('');
+          if (outputReplay) {
+            term.reset();
+            await writeToTerminalInChunks(term, outputReplay);
+          }
+        }
 
         inputParseStateRef.current = createInitialInputCommandParseState();
         const cachedMergedHistory = commandHistoryCacheRef.current[currentTerminal.id] ?? [];

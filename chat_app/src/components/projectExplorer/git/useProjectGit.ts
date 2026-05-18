@@ -387,6 +387,7 @@ export const useProjectGit = ({
     createBranch,
     stageFiles,
     unstageFiles,
+    discardFiles,
     commitStaged,
     commitSelected,
   } = useProjectGitActions({
@@ -445,6 +446,7 @@ export const useProjectGit = ({
     createBranch,
     stageFiles,
     unstageFiles,
+    discardFiles,
     commitStaged,
     commitSelected,
     clearMessages,
@@ -484,5 +486,6 @@ export const useProjectGit = ({
     status,
     summary,
     unstageFiles,
+    discardFiles,
   ]);
 };

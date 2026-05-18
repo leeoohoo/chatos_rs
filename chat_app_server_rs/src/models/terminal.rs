@@ -4,11 +4,15 @@ use uuid::Uuid;
 
 use crate::repositories::terminals as repo;
 
+pub const TERMINAL_KIND_SHARED: &str = "shared";
+pub const TERMINAL_KIND_PROJECT_RUN: &str = "project_run";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Terminal {
     pub id: String,
     pub name: String,
     pub cwd: String,
+    pub kind: String,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
     pub status: String,
@@ -22,6 +26,7 @@ pub struct TerminalRow {
     pub id: String,
     pub name: String,
     pub cwd: String,
+    pub kind: String,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
     pub status: String,
@@ -36,6 +41,7 @@ impl TerminalRow {
             id: self.id,
             name: self.name,
             cwd: self.cwd,
+            kind: normalize_terminal_kind(Some(self.kind)),
             user_id: self.user_id,
             project_id: self.project_id,
             status: self.status,
@@ -50,6 +56,7 @@ impl Terminal {
     pub fn new(
         name: String,
         cwd: String,
+        kind: String,
         user_id: Option<String>,
         project_id: Option<String>,
     ) -> Terminal {
@@ -58,6 +65,7 @@ impl Terminal {
             id: Uuid::new_v4().to_string(),
             name,
             cwd,
+            kind: normalize_terminal_kind(Some(kind)),
             user_id,
             project_id,
             status: "running".to_string(),
@@ -65,6 +73,17 @@ impl Terminal {
             updated_at: now.clone(),
             last_active_at: now,
         }
+    }
+}
+
+pub fn normalize_terminal_kind(value: Option<String>) -> String {
+    match value
+        .as_deref()
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+    {
+        Some(TERMINAL_KIND_PROJECT_RUN) => TERMINAL_KIND_PROJECT_RUN.to_string(),
+        _ => TERMINAL_KIND_SHARED.to_string(),
     }
 }
 
@@ -80,7 +99,25 @@ impl TerminalService {
     }
 
     pub async fn list(user_id: Option<String>) -> Result<Vec<Terminal>, String> {
-        repo::list_terminals(user_id).await
+        repo::list_terminals_by_kind(user_id, TERMINAL_KIND_SHARED).await
+    }
+
+    pub async fn list_by_kind(user_id: Option<String>, kind: &str) -> Result<Vec<Terminal>, String> {
+        repo::list_terminals_by_kind(user_id, kind).await
+    }
+
+    pub async fn get_project_run_by_project_id(
+        user_id: Option<String>,
+        project_id: &str,
+    ) -> Result<Option<Terminal>, String> {
+        repo::get_project_run_terminal_by_project_id(user_id, project_id).await
+    }
+
+    pub async fn list_project_runs_by_project_id(
+        user_id: Option<String>,
+        project_id: &str,
+    ) -> Result<Vec<Terminal>, String> {
+        repo::list_project_run_terminals_by_project_id(user_id, project_id).await
     }
 
     pub async fn update_status(

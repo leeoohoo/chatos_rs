@@ -10,7 +10,7 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::warn;
 
 #[derive(Clone)]
@@ -182,35 +182,13 @@ fn publish_project_change_summary_for_record(project_id: &str, record: &ChangeRe
             Some(conversation_id.as_str()),
             Some(path.as_str()),
         );
-        if is_runner_script_change_path(path.as_str()) {
-            publish_project_run_catalog_updated(
-                user_id,
-                project_id.as_str(),
-                "runner_script_changed",
-                Some(path.as_str()),
-                Some(detect_runner_script_exists(project.root_path.as_str())),
-                Some(project_root_missing(project.root_path.as_str())),
-            );
-        }
+        publish_project_run_catalog_updated(
+            user_id,
+            project_id.as_str(),
+            "project_files_changed",
+            Some(path.as_str()),
+        );
     });
-}
-
-fn is_runner_script_change_path(path: &str) -> bool {
-    let normalized = path.trim().replace('\\', "/");
-    normalized == ".chatos/project_runner.sh" || normalized.ends_with("/.chatos/project_runner.sh")
-}
-
-fn project_root_missing(project_root: &str) -> bool {
-    let root = project_root.trim();
-    root.is_empty() || !Path::new(root).is_dir()
-}
-
-fn detect_runner_script_exists(project_root: &str) -> bool {
-    let root = project_root.trim();
-    if root.is_empty() {
-        return false;
-    }
-    Path::new(root).join(".chatos/project_runner.sh").is_file()
 }
 
 fn default_jsonl_path(server_name: &str) -> PathBuf {

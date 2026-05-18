@@ -12,6 +12,7 @@ pub mod memory_skill;
 pub mod message;
 pub mod project;
 pub mod project_run;
+pub mod project_run_environment;
 pub mod remote_connection;
 pub mod session;
 pub mod session_mcp_server;

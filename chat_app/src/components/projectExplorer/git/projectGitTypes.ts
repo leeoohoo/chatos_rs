@@ -32,6 +32,7 @@ export interface ProjectGitApiClient {
   mergeGit: (data: { root: string; branch: string; mode?: 'default' | 'no-ff' | 'ff-only' | string }) => Promise<GitActionResponse>;
   stageGitPaths: (data: { root: string; paths: string[] }) => Promise<GitActionResponse>;
   unstageGitPaths: (data: { root: string; paths: string[] }) => Promise<GitActionResponse>;
+  discardGitPaths: (data: { root: string; paths: string[] }) => Promise<GitActionResponse>;
   commitGit: (data: { root: string; message: string; paths?: string[] }) => Promise<GitActionResponse>;
 }
 
@@ -75,6 +76,7 @@ export interface UseProjectGitResult {
   createBranch: (name: string, startPoint?: string) => Promise<void>;
   stageFiles: (paths: string[]) => Promise<void>;
   unstageFiles: (paths: string[]) => Promise<void>;
+  discardFiles: (paths: string[]) => Promise<void>;
   commitStaged: (message: string) => Promise<boolean>;
   commitSelected: (message: string, paths: string[]) => Promise<boolean>;
   clearMessages: () => void;

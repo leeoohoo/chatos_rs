@@ -18,7 +18,6 @@ import { useInlineActionMenus } from './useInlineActionMenus';
 import { useSectionExpansion } from './useSectionExpansion';
 import { useSessionListBootstrap } from './useSessionListBootstrap';
 import { useLocalFsPickers } from './useLocalFsPickers';
-import { useProjectRunState } from './useProjectRunState';
 import { useSessionListDeleteActions } from './useSessionListDeleteActions';
 import { useSessionListActions } from './useSessionListActions';
 import { useSessionListStoreState } from './useSessionListStoreState';
@@ -432,16 +431,6 @@ export const useSessionListController = ({
     },
   });
 
-  const projectRunState = useProjectRunState({
-    apiClient,
-    projects,
-    terminals,
-    loadTerminals,
-    handleSelectTerminal: sessionListActions.handleSelectTerminal,
-    setActivePanel,
-    enabled: !isCollapsed && sectionExpansion.projectsExpanded && activePanel !== 'project',
-  });
-
   return {
     agents,
     apiClient,
@@ -460,7 +449,6 @@ export const useSessionListController = ({
     projectError,
     projectModalOpen,
     projectRoot,
-    projectRunState,
     projects,
     remoteConnections,
     remoteForm,

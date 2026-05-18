@@ -101,22 +101,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             expanded={controller.sectionExpansion.projectsExpanded}
             projects={controller.projects}
             currentProjectId={controller.currentProject?.id}
-            projectRunStateById={controller.projectRunState.projectRunStateById}
-            runningProjectId={controller.projectRunState.runningProjectId}
-            projectLiveStateById={controller.projectRunState.projectLiveStateById}
             onToggle={controller.sectionExpansion.handleToggleProjectsSection}
             onCreate={controller.sessionListActions.openProjectModal}
             onSelect={(projectId) => {
               void controller.sessionListActions.handleSelectProject(projectId);
-            }}
-            onRunProject={(project, targetId) => {
-              void controller.projectRunState.handleRunProject(project.id, targetId);
-            }}
-            onStopProject={(project) => {
-              void controller.projectRunState.handleStopProject(project.id);
-            }}
-            onRestartProject={(project) => {
-              void controller.projectRunState.handleRestartProject(project.id);
             }}
             onArchive={(projectId) => {
               void controller.deleteActions.handleArchiveProject(projectId);

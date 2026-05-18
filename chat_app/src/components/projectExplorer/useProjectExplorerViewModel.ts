@@ -1,14 +1,15 @@
 import { useCallback } from 'react';
 
+import { apiClient as globalApiClient } from '../../lib/api/client';
+import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
 import type { Project } from '../../types';
+import { useProjectExplorerCodeNav } from './useProjectExplorerCodeNav';
 import { useProjectExplorerDataLoading } from './useProjectExplorerDataLoading';
 import { useProjectExplorerPathHelpers } from './useProjectExplorerPathHelpers';
-import { useProjectExplorerState } from './useProjectExplorerState';
-import { useProjectExplorerSearch } from './useProjectExplorerSearch';
-import { useProjectExplorerCodeNav } from './useProjectExplorerCodeNav';
 import { useProjectExplorerRunState } from './useProjectExplorerRunState';
+import { useProjectExplorerSearch } from './useProjectExplorerSearch';
 import { useProjectExplorerSelection } from './useProjectExplorerSelection';
-import { useProjectExplorerSessionBridge } from './useProjectExplorerSessionBridge';
+import { useProjectExplorerState } from './useProjectExplorerState';
 import { useProjectExplorerTreeStateOps } from './useProjectExplorerTreeStateOps';
 import { useProjectExplorerWorkspaceModel } from './useProjectExplorerWorkspaceModel';
 
@@ -19,9 +20,8 @@ interface UseProjectExplorerViewModelParams {
 export const useProjectExplorerViewModel = ({
   project,
 }: UseProjectExplorerViewModelParams) => {
-  const { client, handleGenerateRunnerScriptForContact } = useProjectExplorerSessionBridge({
-    project,
-  });
+  const apiClientFromContext = useChatApiClientFromContext();
+  const client = apiClientFromContext || globalApiClient;
 
   const state = useProjectExplorerState(project?.id);
 
@@ -113,10 +113,9 @@ export const useProjectExplorerViewModel = ({
   const {
     treePaneProps,
     previewPaneProps,
+    projectSettingsProps,
     contextMenuStyle,
     isContextRootEntry,
-    canRunFile: workspaceCanRunFile,
-    handleRunFile: workspaceHandleRunFile,
     handleCreateDirectory: workspaceHandleCreateDirectory,
     handleCreateFile: workspaceHandleCreateFile,
     handleDownloadSelected: workspaceHandleDownloadSelected,
@@ -135,7 +134,6 @@ export const useProjectExplorerViewModel = ({
     runState,
     codeNav,
     treeStateOps,
-    handleGenerateRunnerScriptForContact,
   });
 
   return {
@@ -151,6 +149,7 @@ export const useProjectExplorerViewModel = ({
     resizeStartWidth: state.resizeStartWidth,
     setIsResizing: state.setIsResizing,
     previewPaneProps,
+    projectSettingsProps,
     moveConflict: state.moveConflict,
     actionLoading: state.actionLoading,
     setMoveConflict: state.setMoveConflict,
@@ -161,10 +160,8 @@ export const useProjectExplorerViewModel = ({
     contextMenuStyle,
     isContextRootEntry,
     setContextMenu: state.setContextMenu,
-    workspaceCanRunFile,
     workspaceHandleCreateDirectory,
     workspaceHandleCreateFile,
-    workspaceHandleRunFile,
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
   };
