@@ -18,6 +18,7 @@ fn normalize_doc(doc: &Document) -> Option<Terminal> {
         kind: normalize_terminal_kind(doc.get_str("kind").ok().map(|s| s.to_string())),
         user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
         project_id: doc.get_str("project_id").ok().map(|s| s.to_string()),
+        process_id: doc.get_i64("process_id").ok(),
         status: doc.get_str("status").unwrap_or("running").to_string(),
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
@@ -219,6 +220,7 @@ pub async fn create_terminal(terminal: &Terminal) -> Result<String, String> {
                 ("kind", Bson::String(term_mongo.kind.clone())),
                 ("user_id", crate::core::values::optional_string_bson(term_mongo.user_id.clone())),
                 ("project_id", crate::core::values::optional_string_bson(term_mongo.project_id.clone())),
+                ("process_id", term_mongo.process_id.map(Bson::Int64).unwrap_or(Bson::Null)),
                 ("status", Bson::String(term_mongo.status.clone())),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
@@ -231,13 +233,14 @@ pub async fn create_terminal(terminal: &Terminal) -> Result<String, String> {
         },
         |pool| {
             Box::pin(async move {
-                sqlx::query("INSERT INTO terminals (id, name, cwd, kind, user_id, project_id, status, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO terminals (id, name, cwd, kind, user_id, project_id, process_id, status, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(&term_sqlite.id)
                     .bind(&term_sqlite.name)
                     .bind(&term_sqlite.cwd)
                     .bind(&term_sqlite.kind)
                     .bind(&term_sqlite.user_id)
                     .bind(&term_sqlite.project_id)
+                    .bind(term_sqlite.process_id)
                     .bind(&term_sqlite.status)
                     .bind(&now_sqlite)
                     .bind(&now_sqlite)
@@ -255,6 +258,7 @@ pub async fn update_terminal_status(
     id: &str,
     status: Option<String>,
     last_active_at: Option<String>,
+    process_id: Option<i64>,
 ) -> Result<(), String> {
     let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
@@ -263,11 +267,16 @@ pub async fn update_terminal_status(
     let status_sqlite = status.clone();
     let last_mongo = last_active_at.clone().unwrap_or_else(|| now.clone());
     let last_sqlite = last_active_at.clone().unwrap_or_else(|| now.clone());
+    let process_id_mongo = process_id;
+    let process_id_sqlite = process_id;
     with_db(
         |db| {
             let id = id.to_string();
             Box::pin(async move {
                 let mut set_doc = mongo_set_doc_from_optional_strings([("status", status_mongo)]);
+                if let Some(pid) = process_id_mongo {
+                    set_doc.insert("process_id", pid);
+                }
                 set_doc.insert("updated_at", now_mongo.clone());
                 set_doc.insert("last_active_at", last_mongo.clone());
                 db.collection::<Document>("terminals")
@@ -282,12 +291,18 @@ pub async fn update_terminal_status(
             Box::pin(async move {
                 let (mut fields, binds) =
                     sqlite_update_parts_from_optional_strings([("status", status_sqlite)]);
+                if process_id_sqlite.is_some() {
+                    fields.push("process_id = ?".to_string());
+                }
                 fields.push("updated_at = ?".to_string());
                 fields.push("last_active_at = ?".to_string());
                 let query_sql = format!("UPDATE terminals SET {} WHERE id = ?", fields.join(", "));
                 let mut q = sqlx::query(&query_sql);
                 for b in binds {
                     q = q.bind(b);
+                }
+                if let Some(pid) = process_id_sqlite {
+                    q = q.bind(pid);
                 }
                 q = q.bind(&now_sqlite).bind(&last_sqlite).bind(&id);
                 q.execute(pool).await.map_err(|e| e.to_string())?;
@@ -299,7 +314,7 @@ pub async fn update_terminal_status(
 }
 
 pub async fn touch_terminal(id: &str) -> Result<(), String> {
-    update_terminal_status(id, None, Some(crate::core::time::now_rfc3339())).await
+    update_terminal_status(id, None, Some(crate::core::time::now_rfc3339()), None).await
 }
 
 pub async fn delete_terminal(id: &str) -> Result<(), String> {

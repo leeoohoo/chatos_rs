@@ -58,9 +58,23 @@ impl TerminalsManager {
 
     fn spawn_session(&self, terminal: &Terminal) -> Result<Arc<TerminalSession>, String> {
         let (session, mut child) = TerminalSession::new(terminal)?;
+        let process_id = child.process_id().map(|value| value as i64);
         let id = terminal.id.clone();
         let sender = session.sender.clone();
         let handle = tokio::runtime::Handle::current();
+        if process_id.is_some() {
+            let id_for_pid = id.clone();
+            let process_id_for_pid = process_id;
+            handle.spawn(async move {
+                let _ = terminals::update_terminal_status(
+                    id_for_pid.as_str(),
+                    Some("running".to_string()),
+                    None,
+                    process_id_for_pid,
+                )
+                .await;
+            });
+        }
         std::thread::spawn(move || {
             let code = child.wait().ok().map(|s| s.exit_code()).unwrap_or(0) as i32;
             let _ = sender.send(TerminalEvent::Exit(code));
@@ -81,6 +95,7 @@ impl TerminalsManager {
                     &id_clone,
                     Some("exited".to_string()),
                     None,
+                    Some(0),
                 )
                 .await;
                 if let Some(user_id) = existing_terminal.user_id.as_deref() {
@@ -175,7 +190,7 @@ impl TerminalsManager {
             return Ok(session);
         }
         let session = self.spawn_session(terminal)?;
-        let _ = terminals::update_terminal_status(&terminal.id, Some("running".to_string()), None)
+        let _ = terminals::update_terminal_status(&terminal.id, Some("running".to_string()), None, None)
             .await;
         if let Some(user_id) = terminal.user_id.as_deref() {
             Self::publish_list_invalidated_if_needed(terminal, "ensured_running", Some(terminal));
@@ -231,7 +246,7 @@ impl TerminalsManager {
         if let Some(session) = self.sessions.remove(id).map(|(_, s)| s) {
             let _ = session.terminate();
         }
-        let _ = terminals::update_terminal_status(id, Some("exited".to_string()), None).await;
+        let _ = terminals::update_terminal_status(id, Some("exited".to_string()), None, Some(0)).await;
         if publish_events {
             if let Some(terminal) = terminal {
                 if let Some(user_id) = terminal.user_id.as_deref() {
@@ -321,6 +336,28 @@ impl TerminalsManager {
             closed += 1;
         }
         Ok(closed)
+    }
+
+    pub async fn cleanup_stale_project_run_terminals(&self) -> Result<usize, String> {
+        let terminals = crate::models::terminal::TerminalService::list_by_kind(
+            None,
+            TERMINAL_KIND_PROJECT_RUN,
+        )
+        .await?;
+        let mut cleaned = 0usize;
+        for terminal in terminals {
+            let pid = terminal.process_id.unwrap_or(0);
+            #[cfg(unix)]
+            if pid > 0 {
+                unsafe {
+                    let _ = libc::kill(pid as i32, libc::SIGTERM);
+                }
+            }
+            let _ = TerminalLogService::delete_by_terminal(terminal.id.as_str()).await;
+            let _ = crate::models::terminal::TerminalService::delete(terminal.id.as_str()).await;
+            cleaned += 1;
+        }
+        Ok(cleaned)
     }
 }
 

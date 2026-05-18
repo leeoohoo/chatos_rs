@@ -224,6 +224,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             kind TEXT NOT NULL DEFAULT 'shared',
             user_id TEXT,
             project_id TEXT,
+            process_id INTEGER,
             status TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -553,6 +554,7 @@ async fn ensure_legacy_ai_model_config_columns_sqlite(pool: &SqlitePool) -> Resu
             .await
             .map_err(|e| format!("add supports_responses column failed: {e}"))?;
     }
+    ensure_column(pool, "terminals", "process_id", "INTEGER").await?;
     let _ = sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_model_configs_user_id ON ai_model_configs(user_id)",
     )

@@ -15,6 +15,7 @@ pub struct Terminal {
     pub kind: String,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
+    pub process_id: Option<i64>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -29,6 +30,7 @@ pub struct TerminalRow {
     pub kind: String,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
+    pub process_id: Option<i64>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -44,6 +46,7 @@ impl TerminalRow {
             kind: normalize_terminal_kind(Some(self.kind)),
             user_id: self.user_id,
             project_id: self.project_id,
+            process_id: self.process_id,
             status: self.status,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -68,6 +71,7 @@ impl Terminal {
             kind: normalize_terminal_kind(Some(kind)),
             user_id,
             project_id,
+            process_id: None,
             status: "running".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
@@ -124,8 +128,9 @@ impl TerminalService {
         id: &str,
         status: Option<String>,
         last_active_at: Option<String>,
+        process_id: Option<i64>,
     ) -> Result<(), String> {
-        repo::update_terminal_status(id, status, last_active_at).await
+        repo::update_terminal_status(id, status, last_active_at, process_id).await
     }
 
     pub async fn touch(id: &str) -> Result<(), String> {

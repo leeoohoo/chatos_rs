@@ -20,6 +20,17 @@ else
   ROOT_HASH="prod"
 fi
 
+# 固定使用当前仓库可用的 Rust stable，避免后台登录 shell 吃到旧 nightly Cargo。
+if [[ -d "$HOME/.cargo/bin" ]]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
+fi
+if command -v rustup >/dev/null 2>&1; then
+  ACTIVE_TOOLCHAIN="$(cd "$ROOT_DIR" && rustup show active-toolchain 2>/dev/null | awk 'NR==1 {print $1}')"
+  if [[ -n "$ACTIVE_TOOLCHAIN" ]]; then
+    export RUSTUP_TOOLCHAIN="$ACTIVE_TOOLCHAIN"
+  fi
+fi
+
 # 与开发环境隔离的生产端口。
 export MAIN_BACKEND_PORT="${MAIN_BACKEND_PORT:-13997}"
 export BACKEND_PORT="${BACKEND_PORT:-$MAIN_BACKEND_PORT}"

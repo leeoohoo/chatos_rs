@@ -1,6 +1,7 @@
 use tracing::{info, warn};
 
 use crate::{config::Config, core, db, services};
+use crate::services::terminal_manager::get_terminal_manager;
 
 pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
     if let Err(err) =
@@ -40,6 +41,20 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         }
         Err(err) => {
             warn!("Chatos memory_engine source bootstrap failed: {err}");
+        }
+    }
+
+    {
+        let manager = get_terminal_manager();
+        match manager.cleanup_stale_project_run_terminals().await {
+            Ok(count) => {
+                if count > 0 {
+                    info!("Cleaned stale project-run terminals on startup: {}", count);
+                }
+            }
+            Err(err) => {
+                warn!("Failed to cleanup stale project-run terminals on startup: {err}");
+            }
         }
     }
 
