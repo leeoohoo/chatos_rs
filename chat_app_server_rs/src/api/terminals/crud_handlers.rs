@@ -337,6 +337,36 @@ pub(super) async fn interrupt_terminal_command(
         Err(err) => return map_terminal_access_error(err),
     };
     let manager = get_terminal_manager();
+    let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
+    if reason == "project_run_restart" {
+        match manager.close(&id).await {
+            Ok(_) => {
+                let _ = TerminalService::touch(terminal.id.as_str()).await;
+                let _ = TerminalLogService::create(TerminalLog::new(
+                    terminal.id.clone(),
+                    "signal".to_string(),
+                    format!("terminate:{reason}"),
+                ))
+                .await;
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "terminal_id": terminal.id,
+                        "terminal_name": terminal.name,
+                        "interrupted": true,
+                        "signal": "SIGTERM",
+                        "reason": reason,
+                    })),
+                );
+            }
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": err })),
+                );
+            }
+        }
+    }
     let session = match manager.ensure_running(&terminal).await {
         Ok(session) => session,
         Err(err) => {
@@ -352,7 +382,6 @@ pub(super) async fn interrupt_terminal_command(
             Json(serde_json::json!({ "error": err })),
         );
     }
-    let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
     let _ = TerminalLogService::create(TerminalLog::new(
         terminal.id.clone(),
         "signal".to_string(),

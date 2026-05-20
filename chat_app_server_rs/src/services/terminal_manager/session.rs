@@ -181,12 +181,12 @@ impl TerminalSession {
         Ok((session, child))
     }
 
-    pub fn terminate(&self) -> Result<(), String> {
+    fn terminate_with_signal(&self, signal: i32) -> Result<(), String> {
         #[cfg(unix)]
         {
             if let Ok(master) = self.master.lock() {
                 if let Some(process_group_leader) = master.process_group_leader() {
-                    let signal_result = unsafe { libc::kill(-(process_group_leader as i32), libc::SIGTERM) };
+                    let signal_result = unsafe { libc::kill(-(process_group_leader as i32), signal) };
                     if signal_result == 0 {
                         return Ok(());
                     }
@@ -198,6 +198,14 @@ impl TerminalSession {
             .lock()
             .map_err(|_| "child killer lock failed".to_string())?;
         killer.kill().map_err(|e| format!("kill child failed: {e}"))
+    }
+
+    pub fn terminate(&self) -> Result<(), String> {
+        self.terminate_with_signal(libc::SIGTERM)
+    }
+
+    pub fn force_terminate(&self) -> Result<(), String> {
+        self.terminate_with_signal(libc::SIGKILL)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<TerminalEvent> {

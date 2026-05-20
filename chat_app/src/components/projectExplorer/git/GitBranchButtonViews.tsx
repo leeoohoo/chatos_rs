@@ -140,7 +140,7 @@ export const GitBranchDropdown: React.FC<{
             </div>
             <button
               type="button"
-              onClick={() => { void git.refreshSummary(); }}
+              onClick={() => { void git.refreshSummary({ force: true }); }}
               className="h-8 rounded border border-border px-3 text-xs hover:bg-accent"
             >
               刷新

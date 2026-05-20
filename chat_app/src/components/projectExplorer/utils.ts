@@ -20,21 +20,8 @@ import {
   splitTextByQuery as splitDomainTextByQuery,
   type TextMatchSegment,
 } from '../../lib/domain/projectExplorerText';
-import {
-  CHANGE_KIND_COLOR_CLASS,
-  CHANGE_KIND_LABEL,
-  CHANGE_KIND_PRIORITY,
-  CHANGE_KIND_ROW_CLASS,
-  CHANGE_KIND_TEXT_CLASS,
-} from '../../lib/domain/projectExplorerPresentation';
 import { getHighlightLanguage as getDomainHighlightLanguage } from '../../lib/domain/projectExplorerPreview';
-export type { ChangeKind } from '../../lib/domain/projectExplorer';
 export {
-  buildProjectChangeSummaryFromGitStatus,
-  EMPTY_CHANGE_SUMMARY,
-  isProjectChangeSummaryEqual,
-  normalizeChangeKind,
-  normalizeProjectChangeSummary,
   normalizeProjectRunCatalog,
   normalizeProjectRunTarget,
 } from '../../lib/domain/projectExplorer';
@@ -67,14 +54,6 @@ export const splitTextByQuery = (
     wholeWord?: boolean;
   },
 ): TextMatchSegment[] => splitDomainTextByQuery(text, query, options);
-
-export {
-  CHANGE_KIND_COLOR_CLASS,
-  CHANGE_KIND_LABEL,
-  CHANGE_KIND_PRIORITY,
-  CHANGE_KIND_ROW_CLASS,
-  CHANGE_KIND_TEXT_CLASS,
-};
 
 export const getHighlightLanguage = (filename: string): string | null => (
   getDomainHighlightLanguage(filename)

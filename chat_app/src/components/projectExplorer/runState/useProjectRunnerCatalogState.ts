@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../../lib/api/client';
 import {
@@ -6,6 +6,7 @@ import {
   normalizeProjectRunEnvironment,
 } from '../../../lib/domain/projectExplorer';
 import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealtime';
+import type { RealtimeProjectRunCatalogPayloadWrapper } from '../../../lib/realtime/types';
 import type {
   Project,
   ProjectRunCustomToolchain,
@@ -17,7 +18,20 @@ import type {
 interface UseProjectRunnerCatalogStateOptions {
   client: ApiClient;
   project: Project | null;
+  enabled?: boolean;
 }
+
+type ProjectRunRefreshMode = 'catalog' | 'analyze';
+
+const mergeProjectRunRefreshMode = (
+  current: ProjectRunRefreshMode | null,
+  next: ProjectRunRefreshMode,
+): ProjectRunRefreshMode => {
+  if (current === 'analyze' || next === 'analyze') {
+    return 'analyze';
+  }
+  return 'catalog';
+};
 
 const resolveCommandPreview = (
   command: string,
@@ -240,6 +254,7 @@ const buildEnvVarsPlaceholder = (target: ProjectRunTarget | null): string => {
 export const useProjectRunnerCatalogState = ({
   client,
   project,
+  enabled = true,
 }: UseProjectRunnerCatalogStateOptions) => {
   const [selectedRunTargetId, setSelectedRunTargetId] = useState<string | null>(null);
   const [runTargets, setRunTargets] = useState<ProjectRunTarget[]>([]);
@@ -250,32 +265,69 @@ export const useProjectRunnerCatalogState = ({
   const [runEnvironmentError, setRunEnvironmentError] = useState<string | null>(null);
   const [customToolchainDrafts, setCustomToolchainDrafts] = useState<Record<string, string>>({});
   const [envVarsDraft, setEnvVarsDraft] = useState('');
+  const runCatalogRequestRef = useRef<Promise<void> | null>(null);
+  const queuedRunCatalogModeRef = useRef<ProjectRunRefreshMode | null>(null);
+  const runCatalogVersionRef = useRef(0);
+  const runEnvironmentVersionRef = useRef(0);
+
+  const applyRunCatalog = useCallback((catalog: ReturnType<typeof normalizeProjectRunCatalog>) => {
+    setRunTargets(catalog.targets);
+    setRunCatalogError(catalog.errorMessage || null);
+    setSelectedRunTargetId((prev) => {
+      if (prev && catalog.targets.some((item) => item.id === prev)) {
+        return prev;
+      }
+      return catalog.defaultTargetId || catalog.targets[0]?.id || null;
+    });
+  }, []);
 
   const loadRunEnvironment = useCallback(async () => {
-    if (!project?.id) {
+    if (!enabled || !project?.id) {
       setRunEnvironment(null);
       setRunEnvironmentLoading(false);
       setRunEnvironmentError(null);
       return;
     }
 
+    const projectId = project.id;
+    const requestVersion = ++runEnvironmentVersionRef.current;
     setRunEnvironmentLoading(true);
     setRunEnvironmentError(null);
     try {
-      const raw = await client.getProjectRunEnvironment(project.id);
+      const raw = await client.getProjectRunEnvironment(projectId);
+      if (
+        runEnvironmentVersionRef.current !== requestVersion
+        || !enabled
+        || project?.id !== projectId
+      ) {
+        return;
+      }
       const normalized = normalizeProjectRunEnvironment(raw);
       setRunEnvironment(normalized);
       setEnvVarsDraft(serializeEnvVarsDraft(normalized.envVars));
     } catch (error) {
+      if (
+        runEnvironmentVersionRef.current !== requestVersion
+        || !enabled
+        || project?.id !== projectId
+      ) {
+        return;
+      }
       setRunEnvironment(null);
       setRunEnvironmentError(error instanceof Error ? error.message : '加载运行环境失败');
     } finally {
-      setRunEnvironmentLoading(false);
+      if (
+        runEnvironmentVersionRef.current === requestVersion
+        && enabled
+        && project?.id === projectId
+      ) {
+        setRunEnvironmentLoading(false);
+      }
     }
-  }, [client, project?.id]);
+  }, [client, enabled, project?.id]);
 
-  const loadRunCatalog = useCallback(async () => {
-    if (!project?.id) {
+  const loadRunCatalogOnce = useCallback(async (mode: ProjectRunRefreshMode = 'analyze') => {
+    if (!enabled || !project?.id) {
       setRunTargets([]);
       setRunCatalogLoading(false);
       setRunCatalogError(null);
@@ -283,31 +335,89 @@ export const useProjectRunnerCatalogState = ({
       return;
     }
 
+    const projectId = project.id;
+    const requestVersion = ++runCatalogVersionRef.current;
     setRunCatalogLoading(true);
     setRunCatalogError(null);
     try {
-      const raw = await client.analyzeProjectRun(project.id);
+      const raw = mode === 'catalog'
+        ? await client.getProjectRunCatalog(projectId)
+        : await client.analyzeProjectRun(projectId);
+      if (
+        runCatalogVersionRef.current !== requestVersion
+        || !enabled
+        || project?.id !== projectId
+      ) {
+        return;
+      }
       const catalog = normalizeProjectRunCatalog(raw);
-      setRunTargets(catalog.targets);
-      setRunCatalogError(catalog.errorMessage || null);
-      setSelectedRunTargetId((prev) => {
-        if (prev && catalog.targets.some((item) => item.id === prev)) {
-          return prev;
-        }
-        return catalog.defaultTargetId || catalog.targets[0]?.id || null;
-      });
+      applyRunCatalog(catalog);
     } catch (error) {
+      if (
+        runCatalogVersionRef.current !== requestVersion
+        || !enabled
+        || project?.id !== projectId
+      ) {
+        return;
+      }
       setRunTargets([]);
       setRunCatalogError(error instanceof Error ? error.message : '分析运行目标失败');
       setSelectedRunTargetId(null);
     } finally {
+      if (
+        runCatalogVersionRef.current === requestVersion
+        && enabled
+        && project?.id === projectId
+      ) {
       setRunCatalogLoading(false);
+      }
     }
-  }, [client, project?.id]);
+  }, [applyRunCatalog, client, enabled, project?.id]);
+
+  const queueRunCatalogMode = useCallback((mode: ProjectRunRefreshMode) => {
+    queuedRunCatalogModeRef.current = mergeProjectRunRefreshMode(
+      queuedRunCatalogModeRef.current,
+      mode,
+    );
+  }, []);
+
+  const loadRunCatalog = useCallback(async (mode: ProjectRunRefreshMode = 'analyze') => {
+    if (!enabled || !project?.id) {
+      setRunTargets([]);
+      setRunCatalogLoading(false);
+      setRunCatalogError(null);
+      setSelectedRunTargetId(null);
+      return;
+    }
+
+    if (runCatalogRequestRef.current) {
+      queueRunCatalogMode(mode);
+      await runCatalogRequestRef.current;
+      return;
+    }
+
+    const run = async () => {
+      let nextMode: ProjectRunRefreshMode | null = mode;
+      do {
+        const activeMode = nextMode || 'catalog';
+        queuedRunCatalogModeRef.current = null;
+        nextMode = null;
+        await loadRunCatalogOnce(activeMode);
+        nextMode = queuedRunCatalogModeRef.current;
+      } while (nextMode && enabled && Boolean(project?.id));
+    };
+
+    const request = run().finally(() => {
+      runCatalogRequestRef.current = null;
+      queuedRunCatalogModeRef.current = null;
+    });
+    runCatalogRequestRef.current = request;
+    await request;
+  }, [enabled, loadRunCatalogOnce, project?.id, queueRunCatalogMode]);
 
   const selectRunTarget = useCallback(async (targetId: string) => {
     const normalizedTargetId = targetId.trim();
-    if (!project?.id || !normalizedTargetId) {
+    if (!enabled || !project?.id || !normalizedTargetId) {
       return;
     }
 
@@ -321,24 +431,22 @@ export const useProjectRunnerCatalogState = ({
     } catch (error) {
       setRunCatalogError(error instanceof Error ? error.message : '设置默认运行目标失败');
     }
-  }, [client, project?.id]);
+  }, [client, enabled, project?.id]);
 
-  const refreshRunnerState = useCallback(async () => {
+  const refreshRunnerState = useCallback(async (mode: ProjectRunRefreshMode = 'catalog') => {
     await Promise.all([
-      loadRunCatalog(),
+      loadRunCatalog(mode),
       loadRunEnvironment(),
     ]);
   }, [loadRunCatalog, loadRunEnvironment]);
 
-  const resetRunnerCatalogState = useCallback(() => {
-    setRunTargets([]);
+  const invalidateRunnerCatalogState = useCallback(() => {
+    queuedRunCatalogModeRef.current = null;
+    runCatalogRequestRef.current = null;
+    runCatalogVersionRef.current += 1;
+    runEnvironmentVersionRef.current += 1;
     setRunCatalogLoading(false);
-    setRunCatalogError(null);
-    setSelectedRunTargetId(null);
-    setRunEnvironment(null);
     setRunEnvironmentLoading(false);
-    setRunEnvironmentError(null);
-    setEnvVarsDraft('');
   }, []);
 
   const selectedRunTarget = useMemo(
@@ -351,10 +459,9 @@ export const useProjectRunnerCatalogState = ({
   ), [selectedRunTarget?.requiredToolchains]);
 
   useEffect(() => {
-    setCustomToolchainDrafts((prev) => ({
-      ...buildCustomToolchainDrafts(runEnvironment, availableToolchainKinds),
-      ...prev,
-    }));
+    setCustomToolchainDrafts(
+      buildCustomToolchainDrafts(runEnvironment, availableToolchainKinds),
+    );
   }, [availableToolchainKinds, runEnvironment]);
 
   const selectedToolchainOptions = useMemo<Record<string, ProjectRunToolchainOption | null>>(() => {
@@ -377,7 +484,7 @@ export const useProjectRunnerCatalogState = ({
     nextCustomToolchains: Record<string, ProjectRunCustomToolchain>,
     nextEnvVars: Record<string, string>,
   ) => {
-    if (!project?.id) {
+    if (!enabled || !project?.id) {
       return;
     }
     const raw = await client.updateProjectRunEnvironment(project.id, {
@@ -398,12 +505,12 @@ export const useProjectRunnerCatalogState = ({
     setRunEnvironment(normalized);
     setEnvVarsDraft(serializeEnvVarsDraft(normalized.envVars));
     setRunEnvironmentError(null);
-  }, [client, project?.id]);
+  }, [client, enabled, project?.id]);
 
   const updateSelectedToolchain = useCallback(async (kind: string, optionId: string) => {
     const normalizedKind = kind.trim();
     const normalizedOptionId = optionId.trim();
-    if (!project?.id || !normalizedKind || !normalizedOptionId) {
+    if (!enabled || !project?.id || !normalizedKind || !normalizedOptionId) {
       return;
     }
 
@@ -431,6 +538,7 @@ export const useProjectRunnerCatalogState = ({
     loadRunEnvironment,
     persistEnvironment,
     project?.id,
+    enabled,
     runEnvironment?.customToolchains,
     runEnvironment?.selectedToolchains,
   ]);
@@ -449,7 +557,7 @@ export const useProjectRunnerCatalogState = ({
   const saveCustomToolchain = useCallback(async (kind: string) => {
     const normalizedKind = kind.trim();
     const draftPath = (customToolchainDrafts[normalizedKind] || '').trim();
-    if (!project?.id || !normalizedKind || !draftPath) {
+    if (!enabled || !project?.id || !normalizedKind || !draftPath) {
       return;
     }
 
@@ -479,7 +587,6 @@ export const useProjectRunnerCatalogState = ({
         nextCustomToolchains,
         runEnvironment?.envVars || {},
       );
-      await loadRunEnvironment();
     } catch (error) {
       setRunEnvironmentError(error instanceof Error ? error.message : '保存自定义工具链失败');
       await loadRunEnvironment();
@@ -489,12 +596,13 @@ export const useProjectRunnerCatalogState = ({
     loadRunEnvironment,
     persistEnvironment,
     project?.id,
+    enabled,
     runEnvironment?.customToolchains,
     runEnvironment?.selectedToolchains,
   ]);
 
   const saveEnvVarsDraft = useCallback(async () => {
-    if (!project?.id) {
+    if (!enabled || !project?.id) {
       return;
     }
 
@@ -510,7 +618,6 @@ export const useProjectRunnerCatalogState = ({
         runEnvironment?.customToolchains || {},
         nextEnvVars,
       );
-      await loadRunEnvironment();
     } catch (error) {
       setRunEnvironmentError(error instanceof Error ? error.message : '保存环境变量失败');
       await loadRunEnvironment();
@@ -520,6 +627,7 @@ export const useProjectRunnerCatalogState = ({
     loadRunEnvironment,
     persistEnvironment,
     project?.id,
+    enabled,
     runEnvironment?.customToolchains,
     runEnvironment?.selectedToolchains,
   ]);
@@ -549,15 +657,32 @@ export const useProjectRunnerCatalogState = ({
   );
 
   useProjectRunRealtime({
-    enabled: Boolean(project?.id),
+    enabled: enabled && Boolean(project?.id),
     projectId: project?.id || null,
-    onCatalogUpdated: async () => {
-      await loadRunCatalog();
+    onCatalogUpdated: async (payload: RealtimeProjectRunCatalogPayloadWrapper) => {
+      const reason = String(payload.reason || '').trim();
+      if (reason === 'project_root_missing') {
+        setRunTargets([]);
+        setRunCatalogError(null);
+        setRunCatalogLoading(false);
+        setRunEnvironment(null);
+        setRunEnvironmentError(null);
+        setRunEnvironmentLoading(false);
+        setEnvVarsDraft('');
+        setCustomToolchainDrafts({});
+        setSelectedRunTargetId(null);
+        return;
+      }
+      if (reason === 'project_run_environment_changed') {
+        await loadRunEnvironment();
+        return;
+      }
+      await loadRunCatalog('catalog');
     },
   });
 
   const runStatus = useMemo(() => {
-    if (!project?.id) {
+    if (!enabled || !project?.id) {
       return 'idle';
     }
     if (runCatalogLoading) {
@@ -570,15 +695,18 @@ export const useProjectRunnerCatalogState = ({
       return 'ready';
     }
     return 'empty';
-  }, [project?.id, runCatalogError, runCatalogLoading, runTargets.length]);
+  }, [enabled, project?.id, runCatalogError, runCatalogLoading, runTargets.length]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     if (runTargets.length === 0) {
       setSelectedRunTargetId(null);
       return;
     }
     setSelectedRunTargetId((prev) => prev || runTargets[0].id);
-  }, [runTargets]);
+  }, [enabled, runTargets]);
 
   return {
     runStatus,
@@ -607,6 +735,6 @@ export const useProjectRunnerCatalogState = ({
     loadRunCatalog,
     loadRunEnvironment,
     refreshRunnerState,
-    resetRunnerCatalogState,
+    invalidateRunnerCatalogState,
   };
 };

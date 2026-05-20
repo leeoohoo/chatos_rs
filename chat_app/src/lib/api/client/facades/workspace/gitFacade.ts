@@ -12,9 +12,9 @@ import type ApiClient from '../../../client';
 
 export interface WorkspaceGitFacade {
   getGitClientInfo(): Promise<GitClientInfoResponse>;
-  getGitSummary(root: string, preferredRepoRoot?: string): Promise<GitSummaryResponse>;
-  getGitBranches(root: string): Promise<GitBranchesResponse>;
-  getGitStatus(root: string): Promise<GitStatusResponse>;
+  getGitSummary(root: string, preferredRepoRoot?: string, forceRefresh?: boolean): Promise<GitSummaryResponse>;
+  getGitBranches(root: string, forceRefresh?: boolean): Promise<GitBranchesResponse>;
+  getGitStatus(root: string, forceRefresh?: boolean): Promise<GitStatusResponse>;
   compareGitBranch(root: string, target: string): Promise<GitCompareResponse>;
   getGitDiff(data: { root: string; path: string; target?: string; staged?: boolean }): Promise<GitFileDiffResponse>;
   fetchGit(data: { root: string; remote?: string }): Promise<GitActionResponse>;
@@ -33,14 +33,14 @@ export const workspaceGitFacade: WorkspaceGitFacade & ThisType<ApiClient> = {
   async getGitClientInfo() {
     return workspaceApi.getGitClientInfo(this.getRequestFn());
   },
-  async getGitSummary(root, preferredRepoRoot) {
-    return workspaceApi.getGitSummary(this.getRequestFn(), root, preferredRepoRoot);
+  async getGitSummary(root, preferredRepoRoot, forceRefresh) {
+    return workspaceApi.getGitSummary(this.getRequestFn(), root, preferredRepoRoot, forceRefresh);
   },
-  async getGitBranches(root) {
-    return workspaceApi.getGitBranches(this.getRequestFn(), root);
+  async getGitBranches(root, forceRefresh) {
+    return workspaceApi.getGitBranches(this.getRequestFn(), root, forceRefresh);
   },
-  async getGitStatus(root) {
-    return workspaceApi.getGitStatus(this.getRequestFn(), root);
+  async getGitStatus(root, forceRefresh) {
+    return workspaceApi.getGitStatus(this.getRequestFn(), root, forceRefresh);
   },
   async compareGitBranch(root, target) {
     return workspaceApi.compareGitBranch(this.getRequestFn(), root, target);

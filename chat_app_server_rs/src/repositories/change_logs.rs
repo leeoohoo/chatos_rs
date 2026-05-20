@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 mod conversation_meta;
 mod path_support;
@@ -15,7 +15,7 @@ pub struct ProjectScopedChangeRecord {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectChangeMark {
     pub path: String,
     pub relative_path: String,
@@ -24,7 +24,7 @@ pub struct ProjectChangeMark {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectChangeCounts {
     pub create: usize,
     pub edit: usize,
@@ -34,6 +34,13 @@ pub struct ProjectChangeCounts {
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ProjectChangeSummary {
+    pub file_marks: Vec<ProjectChangeMark>,
+    pub deleted_marks: Vec<ProjectChangeMark>,
+    pub counts: ProjectChangeCounts,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct ProjectChangeSummarySnapshot {
     pub file_marks: Vec<ProjectChangeMark>,
     pub deleted_marks: Vec<ProjectChangeMark>,
     pub counts: ProjectChangeCounts,

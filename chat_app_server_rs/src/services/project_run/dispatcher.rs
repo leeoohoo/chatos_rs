@@ -148,6 +148,7 @@ pub(crate) async fn dispatch_command(
         terminal.filter(|item| {
             item.kind == TERMINAL_KIND_PROJECT_RUN
                 && item.user_id.as_deref() == Some(user_id)
+                && item.status == "running"
                 && project_id
                     .map(|pid| item.project_id.as_deref() == Some(pid))
                     .unwrap_or(true)

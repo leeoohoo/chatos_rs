@@ -10,8 +10,7 @@ interface UseProjectExplorerTreeStateOpsParams {
   keyToPath: (key: string) => string;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
-  loadEntries: (path: string) => Promise<void>;
-  loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
+  loadEntries: (path: string, options?: { silent?: boolean; forceRefresh?: boolean }) => Promise<void>;
   clearSearch: () => void;
   clearSearchNavigation: () => void;
   clearTokenSelection: () => void;
@@ -31,7 +30,6 @@ export const useProjectExplorerTreeStateOps = ({
   normalizePath,
   toExpandedKey,
   loadEntries,
-  loadChangeSummary,
   clearSearch,
   clearSearchNavigation,
   clearTokenSelection,
@@ -91,10 +89,10 @@ export const useProjectExplorerTreeStateOps = ({
   const reloadTreeWithExpanded = useCallback(async (nextExpanded: Set<string>) => {
     if (!projectRootPath) return;
     setEntriesMap({});
-    await loadEntries(projectRootPath);
+    await loadEntries(projectRootPath, { forceRefresh: true });
     const tasks = Array.from(nextExpanded)
       .filter((key) => key.length > 0)
-      .map((key) => loadEntries(keyToPath(key)));
+      .map((key) => loadEntries(keyToPath(key), { forceRefresh: true }));
     if (tasks.length > 0) {
       await Promise.all(tasks);
     }
@@ -140,13 +138,11 @@ export const useProjectExplorerTreeStateOps = ({
     setSelectedFile(null);
     setError(null);
     setEntriesMap({});
-    await loadEntries(projectRootPath);
-    await loadChangeSummary();
+    await loadEntries(projectRootPath, { forceRefresh: true });
   }, [
     clearSearch,
     clearSearchNavigation,
     clearTokenSelection,
-    loadChangeSummary,
     loadEntries,
     projectRootPath,
     setEntriesMap,

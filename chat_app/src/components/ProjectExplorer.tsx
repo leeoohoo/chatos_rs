@@ -44,8 +44,15 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     workspaceHandleCreateFile,
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
+    workspaceHandleCopyFilePath,
+    workspaceHandleCopyRelativeFilePath,
+    workspaceHandleIgnoreFile,
+    workspaceHandleIgnoreFolder,
+    workspaceHandleIgnoreByExtension,
+    workspaceHandleOpenPathInDefaultProgram,
+    workspaceHandleRevealInFinder,
+    workspaceHandleOpenInCode,
     handleGitRepositoryChanged,
-    handleGitRepositorySelectionChanged,
   } = useProjectExplorerViewModel({ project });
 
   if (!project) {
@@ -66,8 +73,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             client={client}
             projectId={project.id}
             projectRoot={project.rootPath}
+            enabled={workspaceTab === 'files'}
             onRepositoryChanged={handleGitRepositoryChanged}
-            onRepositorySelectionChange={handleGitRepositorySelectionChanged}
           />
         )}
       />
@@ -104,6 +111,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             onCreateDirectory={workspaceHandleCreateDirectory}
             onCreateFile={workspaceHandleCreateFile}
             onDownloadSelected={workspaceHandleDownloadSelected}
+            onCopyFilePath={workspaceHandleCopyFilePath}
+            onCopyRelativeFilePath={workspaceHandleCopyRelativeFilePath}
+            onIgnoreFile={workspaceHandleIgnoreFile}
+            onIgnoreFolder={workspaceHandleIgnoreFolder}
+            onIgnoreByExtension={workspaceHandleIgnoreByExtension}
+            onOpenPathInDefaultProgram={workspaceHandleOpenPathInDefaultProgram}
+            onRevealInFinder={workspaceHandleRevealInFinder}
+            onOpenInCode={workspaceHandleOpenInCode}
             onDeleteSelected={workspaceHandleDeleteSelected}
           />
         )}

@@ -20,9 +20,9 @@ import type {
 
 export interface ProjectGitApiClient {
   getGitClientInfo: () => Promise<GitClientInfoResponse>;
-  getGitSummary: (root: string, preferredRepoRoot?: string) => Promise<GitSummaryResponse>;
-  getGitBranches: (root: string) => Promise<GitBranchesResponse>;
-  getGitStatus: (root: string) => Promise<GitStatusResponse>;
+  getGitSummary: (root: string, preferredRepoRoot?: string, forceRefresh?: boolean) => Promise<GitSummaryResponse>;
+  getGitBranches: (root: string, forceRefresh?: boolean) => Promise<GitBranchesResponse>;
+  getGitStatus: (root: string, forceRefresh?: boolean) => Promise<GitStatusResponse>;
   compareGitBranch: (root: string, target: string) => Promise<GitCompareResponse>;
   getGitDiff: (data: { root: string; path: string; target?: string; staged?: boolean }) => Promise<GitFileDiffResponse>;
   fetchGit: (data: { root: string; remote?: string }) => Promise<GitActionResponse>;
@@ -41,6 +41,7 @@ export interface UseProjectGitOptions {
   client: ProjectGitApiClient;
   projectRoot: string;
   open?: boolean;
+  enabled?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
   onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }

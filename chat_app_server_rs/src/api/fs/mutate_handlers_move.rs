@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
+use crate::services::project_fs_cache::invalidate_directory_listing_cache_for_path;
 use crate::services::workspace_realtime_watcher::{
     note_workspace_path_changed, suppress_logged_path,
 };
@@ -184,6 +185,12 @@ pub(in super::super) async fn move_entry(
             );
         }
         invalidate_project_symbol_indexes_for_path(target_path.as_path());
+        if let Some(project_root) = target_parent.project_root.as_ref() {
+            let _ = invalidate_directory_listing_cache_for_path(
+                project_root.to_string_lossy().as_ref(),
+                target_path.as_path(),
+            );
+        }
         replaced = true;
     }
 
@@ -195,6 +202,18 @@ pub(in super::super) async fn move_entry(
     }
     invalidate_project_symbol_indexes_for_path(source_path.path.as_path());
     invalidate_project_symbol_indexes_for_path(target_path.as_path());
+    if let Some(project_root) = source_path.project_root.as_ref() {
+        let _ = invalidate_directory_listing_cache_for_path(
+            project_root.to_string_lossy().as_ref(),
+            source_path.path.as_path(),
+        );
+    }
+    if let Some(project_root) = target_parent.project_root.as_ref() {
+        let _ = invalidate_directory_listing_cache_for_path(
+            project_root.to_string_lossy().as_ref(),
+            target_path.as_path(),
+        );
+    }
     suppress_logged_path(source_norm.as_str());
     note_workspace_path_changed(source_norm.as_str());
     suppress_logged_path(target_norm.as_str());

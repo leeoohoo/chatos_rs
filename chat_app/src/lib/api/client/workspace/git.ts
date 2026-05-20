@@ -14,8 +14,13 @@ export const getGitSummary = (
   request: ApiRequestFn,
   root: string,
   preferredRepoRoot?: string,
+  forceRefresh?: boolean,
 ): Promise<GitSummaryResponse> => {
-  return request<GitSummaryResponse>(`/git/summary${buildQuery({ root, preferred_repo_root: preferredRepoRoot })}`);
+  return request<GitSummaryResponse>(`/git/summary${buildQuery({
+    root,
+    preferred_repo_root: preferredRepoRoot,
+    force_refresh: forceRefresh,
+  })}`);
 };
 
 export const getGitClientInfo = (
@@ -27,15 +32,17 @@ export const getGitClientInfo = (
 export const getGitBranches = (
   request: ApiRequestFn,
   root: string,
+  forceRefresh?: boolean,
 ): Promise<GitBranchesResponse> => {
-  return request<GitBranchesResponse>(`/git/branches${buildQuery({ root })}`);
+  return request<GitBranchesResponse>(`/git/branches${buildQuery({ root, force_refresh: forceRefresh })}`);
 };
 
 export const getGitStatus = (
   request: ApiRequestFn,
   root: string,
+  forceRefresh?: boolean,
 ): Promise<GitStatusResponse> => {
-  return request<GitStatusResponse>(`/git/status${buildQuery({ root })}`);
+  return request<GitStatusResponse>(`/git/status${buildQuery({ root, force_refresh: forceRefresh })}`);
 };
 
 export const compareGitBranch = (

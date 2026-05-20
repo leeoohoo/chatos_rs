@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react';
 
-import type { FsEntry, FsReadResult, ProjectChangeSummary } from '../../types';
+import type { FsEntry, FsReadResult } from '../../types';
 import type { MoveConflictState } from './Overlays';
 import type { WorkspaceTab } from './WorkspaceTabs';
-import { EMPTY_CHANGE_SUMMARY } from './utils';
 
 export interface ExplorerContextMenuState {
   x: number;
@@ -16,7 +15,6 @@ export const useProjectExplorerState = (projectId?: string | null) => {
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
-  const summaryLoadingRef = useRef(false);
 
   const [entriesMap, setEntriesMap] = useState<Record<string, FsEntry[]>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
@@ -32,11 +30,7 @@ export const useProjectExplorerState = (projectId?: string | null) => {
   const [moveConflict, setMoveConflict] = useState<MoveConflictState | null>(null);
   const [draggingEntryPath, setDraggingEntryPath] = useState<string | null>(null);
   const [dropTargetDirPath, setDropTargetDirPath] = useState<string | null>(null);
-  const [changeSummary, setChangeSummary] = useState<ProjectChangeSummary>(EMPTY_CHANGE_SUMMARY);
-  const [loadingSummary, setLoadingSummary] = useState(false);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [expandedReady, setExpandedReady] = useState(false);
-  const [showOnlyChanged, setShowOnlyChanged] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(() => {
     if (typeof window === 'undefined' || !projectId) {
       return 'files';
@@ -57,7 +51,6 @@ export const useProjectExplorerState = (projectId?: string | null) => {
     treeScrollRef,
     resizeStartX,
     resizeStartWidth,
-    summaryLoadingRef,
     entriesMap,
     setEntriesMap,
     expandedPaths,
@@ -86,16 +79,8 @@ export const useProjectExplorerState = (projectId?: string | null) => {
     setDraggingEntryPath,
     dropTargetDirPath,
     setDropTargetDirPath,
-    changeSummary,
-    setChangeSummary,
-    loadingSummary,
-    setLoadingSummary,
-    summaryError,
-    setSummaryError,
     expandedReady,
     setExpandedReady,
-    showOnlyChanged,
-    setShowOnlyChanged,
     workspaceTab,
     setWorkspaceTab,
     treeWidth,

@@ -11,6 +11,11 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::builtin::code_maintainer::ChangeLogStore;
 use crate::models::project::{Project, ProjectService};
+use crate::services::project_fs_cache::invalidate_directory_listing_cache_for_path;
+use crate::services::project_local_cache::is_project_runtime_relative_path;
+use crate::services::project_run::{
+    classify_project_run_path_change, ProjectRunPathChangeKind,
+};
 use crate::services::realtime::publish_project_run_catalog_updated;
 
 const WORKSPACE_WATCHER_SERVER_NAME: &str = "workspace_watcher";
@@ -274,6 +279,7 @@ async fn scan_project(project: &Project) -> Result<(), String> {
 
             let mut store: Option<ChangeLogStore> = None;
             let mut logged_change_count = 0usize;
+            let mut project_run_change: Option<(ProjectRunPathChangeKind, String)> = None;
 
             for change in changes {
                 if is_suppressed_path(change.path.as_str(), change.fingerprint.as_ref()) {
@@ -301,18 +307,39 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                     None,
                 )?;
                 logged_change_count += 1;
+                let _ = invalidate_directory_listing_cache_for_path(
+                    project.root_path.as_str(),
+                    Path::new(change.path.as_str()),
+                );
+
+                if let Some(kind) = classify_project_run_path_change(
+                    change.path.as_str(),
+                    Some(change.kind),
+                ) {
+                    match &project_run_change {
+                        Some((ProjectRunPathChangeKind::Catalog, _)) => {}
+                        Some((ProjectRunPathChangeKind::Environment, _))
+                            if kind == ProjectRunPathChangeKind::Environment => {}
+                        _ => {
+                            project_run_change = Some((kind, change.path.clone()));
+                        }
+                    }
+                }
             }
 
             if logged_change_count == 0 {
                 return Ok(());
             }
 
-            if let Some(user_id) = project.user_id.as_deref() {
+            if let Some((kind, path)) = project_run_change {
+                let Some(user_id) = project.user_id.as_deref() else {
+                    return Ok(());
+                };
                 publish_project_run_catalog_updated(
                     user_id,
                     project.id.as_str(),
-                    "workspace_files_changed",
-                    Some(project.root_path.as_str()),
+                    kind.realtime_reason(),
+                    Some(path.as_str()),
                 );
             }
         }
@@ -454,6 +481,9 @@ fn should_descend_into(entry: &DirEntry, root: &Path) -> bool {
     if normalized.is_empty() {
         return true;
     }
+    if is_ignored_runtime_relative_path(normalized.as_str()) {
+        return false;
+    }
 
     !matches!(
         normalized.as_str(),
@@ -478,7 +508,11 @@ fn should_ignore_file(path: &Path, root: &Path) -> bool {
     if normalized.is_empty() {
         return false;
     }
-    false
+    is_ignored_runtime_relative_path(normalized.as_str())
+}
+
+fn is_ignored_runtime_relative_path(path: &str) -> bool {
+    is_project_runtime_relative_path(path)
 }
 
 fn current_file_fingerprint(path: &Path) -> Option<FileFingerprint> {

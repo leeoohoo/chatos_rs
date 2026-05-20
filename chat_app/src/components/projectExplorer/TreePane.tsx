@@ -1,9 +1,8 @@
 import React, { useMemo } from 'react';
 
-import type { FsEntry, Project, ProjectChangeSummary, ProjectSearchHit } from '../../types';
+import type { FsEntry, Project, ProjectSearchHit } from '../../types';
 import { ProjectTreeEntries } from './treePane/ProjectTreeEntries';
 import { ProjectTreeHeader } from './treePane/ProjectTreeHeader';
-import type { ChangeKind } from './utils';
 
 interface ProjectTreePaneProps {
   project: Project;
@@ -18,10 +17,6 @@ interface ProjectTreePaneProps {
   dropTargetDirPath: string | null;
   actionLoading: boolean;
   actionReloadPath: string | null;
-  showOnlyChanged: boolean;
-  changeSummary: ProjectChangeSummary;
-  loadingSummary: boolean;
-  summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
   searchQuery: string;
@@ -36,12 +31,10 @@ interface ProjectTreePaneProps {
   totalSearchHits: number;
   canOpenPreviousSearchHit: boolean;
   canOpenNextSearchHit: boolean;
-  aggregatedChangeKindByPath: Map<string, ChangeKind>;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
   onSelectProjectRoot: () => void;
-  onToggleShowOnlyChanged: () => void;
   onCreateDirectoryAtRoot: () => void;
   onCreateFileAtRoot: () => void;
   onRefresh: () => void;
@@ -53,8 +46,6 @@ interface ProjectTreePaneProps {
   onOpenNextSearchHit: () => void;
   onOpenContextMenu: (event: React.MouseEvent, entry: FsEntry) => void;
   onOpenSearchHit: (hit: ProjectSearchHit) => void;
-  onSelectDeletedPath: (path: string) => void;
-  onSelectMarkedPath: (path: string) => void;
   onToggleDir: (entry: FsEntry) => void;
   onOpenFile: (entry: FsEntry) => void;
   onDragStart: (event: React.DragEvent, entry: FsEntry) => void;
@@ -82,10 +73,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  showOnlyChanged,
-  changeSummary,
-  loadingSummary,
-  summaryError,
   actionMessage,
   actionError,
   searchQuery,
@@ -100,12 +87,10 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   totalSearchHits,
   canOpenPreviousSearchHit,
   canOpenNextSearchHit,
-  aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
   canDropToDirectory,
   onSelectProjectRoot,
-  onToggleShowOnlyChanged,
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
@@ -117,8 +102,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   onOpenNextSearchHit,
   onOpenContextMenu,
   onOpenSearchHit,
-  onSelectDeletedPath,
-  onSelectMarkedPath,
   onToggleDir,
   onOpenFile,
   onDragStart,
@@ -150,10 +133,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
         dropTargetDirPath={dropTargetDirPath}
         actionLoading={actionLoading}
         actionReloadPath={actionReloadPath}
-        showOnlyChanged={showOnlyChanged}
-        changeSummary={changeSummary}
-        loadingSummary={loadingSummary}
-        summaryError={summaryError}
         actionMessage={actionMessage}
         actionError={actionError}
         searchQuery={searchQuery}
@@ -170,7 +149,6 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
         normalizePath={normalizePath}
         canDropToDirectory={canDropToDirectory}
         onSelectProjectRoot={onSelectProjectRoot}
-        onToggleShowOnlyChanged={onToggleShowOnlyChanged}
         onCreateDirectoryAtRoot={onCreateDirectoryAtRoot}
         onCreateFileAtRoot={onCreateFileAtRoot}
         onRefresh={onRefresh}
@@ -196,20 +174,15 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
         selectedPath={selectedPath}
         draggingEntryPath={draggingEntryPath}
         dropTargetDirPath={dropTargetDirPath}
-        showOnlyChanged={showOnlyChanged}
-        changeSummary={changeSummary}
         searchQuery={searchQuery}
         searchCaseSensitive={searchCaseSensitive}
         searchWholeWord={searchWholeWord}
         searchResults={searchResults}
         activeSearchHitId={activeSearchHitId}
-        aggregatedChangeKindByPath={aggregatedChangeKindByPath}
         normalizePath={normalizePath}
         toExpandedKey={toExpandedKey}
         canDropToDirectory={canDropToDirectory}
         onOpenSearchHit={onOpenSearchHit}
-        onSelectDeletedPath={onSelectDeletedPath}
-        onSelectMarkedPath={onSelectMarkedPath}
         onToggleDir={onToggleDir}
         onOpenFile={onOpenFile}
         onOpenContextMenu={onOpenContextMenu}

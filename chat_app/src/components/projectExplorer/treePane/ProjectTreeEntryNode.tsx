@@ -2,13 +2,6 @@ import React from 'react';
 
 import type { FsEntry } from '../../../types';
 import { cn, formatFileSize } from '../../../lib/utils';
-import {
-  CHANGE_KIND_COLOR_CLASS,
-  CHANGE_KIND_LABEL,
-  CHANGE_KIND_ROW_CLASS,
-  CHANGE_KIND_TEXT_CLASS,
-} from '../utils';
-import type { ChangeKind } from '../utils';
 
 interface ProjectTreeEntryNodeProps {
   entry: FsEntry;
@@ -18,11 +11,9 @@ interface ProjectTreeEntryNodeProps {
   selectedPath: string | null;
   draggingEntryPath: string | null;
   dropTargetDirPath: string | null;
-  aggregatedChangeKindByPath: Map<string, ChangeKind>;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
-  isEntryVisible: (entryPath: string) => boolean;
   onToggleDir: (entry: FsEntry) => void;
   onOpenFile: (entry: FsEntry) => void;
   onOpenContextMenu: (event: React.MouseEvent, entry: FsEntry) => void;
@@ -44,11 +35,9 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
   selectedPath,
   draggingEntryPath,
   dropTargetDirPath,
-  aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
   canDropToDirectory,
-  isEntryVisible,
   onToggleDir,
   onOpenFile,
   onOpenContextMenu,
@@ -68,9 +57,8 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
   const isDropTarget = entry.isDir && dropTargetDirPath
     ? normalizePath(dropTargetDirPath) === normalizedEntryPath
     : false;
-  const entryChangeKind = aggregatedChangeKindByPath.get(normalizedEntryPath);
   const childEntries = entry.isDir && expandedPaths.has(entryKey)
-    ? (entriesMap[entry.path] || []).filter((child) => isEntryVisible(child.path))
+    ? (entriesMap[entry.path] || [])
     : [];
 
   return (
@@ -124,7 +112,6 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
         }}
         className={cn(
           'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 rounded py-1.5 pr-2 text-left transition-colors hover:bg-accent',
-          entryChangeKind && CHANGE_KIND_ROW_CLASS[entryChangeKind],
           isActive && 'bg-accent',
           isDragging && 'opacity-50',
           isDropTarget && 'bg-blue-500/10 ring-1 ring-blue-500',
@@ -138,16 +125,9 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
           className={cn(
             'inline-flex items-center gap-1 whitespace-nowrap text-sm',
             entry.isDir ? 'text-foreground' : 'text-muted-foreground',
-            entryChangeKind && CHANGE_KIND_TEXT_CLASS[entryChangeKind],
           )}
         >
           {entry.name}
-          {entryChangeKind && (
-            <span
-              className={cn('inline-block h-2 w-2 rounded-full', CHANGE_KIND_COLOR_CLASS[entryChangeKind])}
-              title={`${CHANGE_KIND_LABEL[entryChangeKind]}变更`}
-            />
-          )}
         </span>
         <span className="whitespace-nowrap text-right text-[11px] tabular-nums text-muted-foreground">
           {!entry.isDir && entry.size != null ? formatFileSize(entry.size) : ''}
@@ -163,11 +143,9 @@ export const ProjectTreeEntryNode: React.FC<ProjectTreeEntryNodeProps> = ({
           selectedPath={selectedPath}
           draggingEntryPath={draggingEntryPath}
           dropTargetDirPath={dropTargetDirPath}
-          aggregatedChangeKindByPath={aggregatedChangeKindByPath}
           normalizePath={normalizePath}
           toExpandedKey={toExpandedKey}
           canDropToDirectory={canDropToDirectory}
-          isEntryVisible={isEntryVisible}
           onToggleDir={onToggleDir}
           onOpenFile={onOpenFile}
           onOpenContextMenu={onOpenContextMenu}

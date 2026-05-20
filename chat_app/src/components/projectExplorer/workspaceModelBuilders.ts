@@ -1,4 +1,3 @@
-import { EMPTY_CHANGE_SUMMARY } from './utils';
 import type { useProjectExplorerPreviewNavigation } from './useProjectExplorerPreviewNavigation';
 import type { useProjectExplorerWorkspaceActions } from './useProjectExplorerWorkspaceActions';
 import type { useProjectExplorerWorkspaceViewModel } from './useProjectExplorerWorkspaceViewModel';
@@ -16,12 +15,6 @@ export const buildWorkspaceActionsParams = ({
   selection,
   treeStateOps,
 }: UseProjectExplorerWorkspaceModelParams): Parameters<typeof useProjectExplorerWorkspaceActions>[0] => ({
-  changeTracking: {
-    changeSummary: state.changeSummary,
-    normalizePath: pathHelpers.normalizePath,
-    getParentPath: pathHelpers.getParentPath,
-    rootPathNormalized: pathHelpers.rootPathNormalized,
-  },
   dnd: {
     treeScrollRef: state.treeScrollRef,
     entriesMap: state.entriesMap,
@@ -44,7 +37,6 @@ export const buildWorkspaceActionsParams = ({
     getParentPath: pathHelpers.getParentPath,
     toExpandedKey: pathHelpers.toExpandedKey,
     loadEntries: dataLoading.loadEntries,
-    loadChangeSummary: dataLoading.loadChangeSummary,
     pruneDeletedPath: treeStateOps.pruneDeletedPath,
     replaceExpandedPathPrefix: treeStateOps.replaceExpandedPathPrefix,
     reloadTreeWithExpanded: treeStateOps.reloadTreeWithExpanded,
@@ -63,6 +55,7 @@ export const buildWorkspaceActionsParams = ({
 export const buildWorkspaceEffectsParams = (
   {
     project,
+    filesTabActive,
     state,
     pathHelpers,
     dataLoading,
@@ -72,14 +65,13 @@ export const buildWorkspaceEffectsParams = (
   lifecycle: {
     projectId: project?.id,
     projectRootPath: project?.rootPath,
+    filesTabActive,
     toExpandedKey: pathHelpers.toExpandedKey,
     keyToPath: pathHelpers.keyToPath,
     loadEntries: dataLoading.loadEntries,
     tryLoadEntries: dataLoading.tryLoadEntries,
-    loadChangeSummary: dataLoading.loadChangeSummary,
     clearDragExpandTimer: actions.clearDragExpandTimer,
     clearDragAutoScroll: actions.clearDragAutoScroll,
-    summaryLoadingRef: state.summaryLoadingRef,
     setEntriesMap: state.setEntriesMap,
     setExpandedPaths: state.setExpandedPaths,
     setSelectedPath: state.setSelectedPath,
@@ -91,19 +83,13 @@ export const buildWorkspaceEffectsParams = (
     setMoveConflict: state.setMoveConflict,
     setDraggingEntryPath: state.setDraggingEntryPath,
     setDropTargetDirPath: state.setDropTargetDirPath,
-    setChangeSummary: state.setChangeSummary,
-    setSummaryError: state.setSummaryError,
-    setLoadingSummary: state.setLoadingSummary,
     setExpandedReady: state.setExpandedReady,
-    emptyChangeSummary: EMPTY_CHANGE_SUMMARY,
   },
   persistence: {
     projectId: project?.id,
     projectRootPath: project?.rootPath,
     expandedReady: state.expandedReady,
     expandedPaths: state.expandedPaths,
-    showOnlyChanged: state.showOnlyChanged,
-    setShowOnlyChanged: state.setShowOnlyChanged,
     workspaceTab: state.workspaceTab,
     setWorkspaceTab: state.setWorkspaceTab,
     contextMenu: state.contextMenu,
@@ -114,10 +100,6 @@ export const buildWorkspaceEffectsParams = (
     setTreeWidth: state.setTreeWidth,
     treeWidth: state.treeWidth,
     setIsResizing: state.setIsResizing,
-  },
-  summaryRealtime: {
-    projectId: project?.id,
-    loadChangeSummary: dataLoading.loadChangeSummary,
   },
 });
 
@@ -149,13 +131,8 @@ export const buildWorkspaceViewModelParams = (
     actionLoading: state.actionLoading,
     actionReloadPath: selection.actionReloadPath,
     contextMenu: state.contextMenu,
-    showOnlyChanged: state.showOnlyChanged,
-    changeSummary: state.changeSummary,
-    loadingSummary: state.loadingSummary,
-    summaryError: state.summaryError,
     actionMessage: state.actionMessage,
     actionError: state.actionError,
-    aggregatedChangeKindByPath: actions.aggregatedChangeKindByPath,
   },
   search: {
     searchQuery: search.searchQuery,
@@ -194,6 +171,7 @@ export const buildWorkspaceViewModelParams = (
     documentSymbols: codeNav.documentSymbols,
     documentSymbolsLoading: codeNav.documentSymbolsLoading,
     documentSymbolsError: codeNav.documentSymbolsError,
+    requestDocumentSymbols: codeNav.requestDocumentSymbols,
   },
   run: {
     runStatus: runState.runStatus,
@@ -247,7 +225,6 @@ export const buildWorkspaceViewModelParams = (
     canDropToDirectory: actions.canDropToDirectory,
     setSelectedPath: state.setSelectedPath,
     setSelectedFile: state.setSelectedFile,
-    setShowOnlyChanged: state.setShowOnlyChanged,
     setDraggingEntryPath: state.setDraggingEntryPath,
     setDropTargetDirPath: state.setDropTargetDirPath,
     setMoveConflict: state.setMoveConflict,
@@ -282,5 +259,13 @@ export const buildWorkspaceViewModelParams = (
     handleMoveEntryByDrop: actions.handleMoveEntryByDrop,
     handleDownloadSelected: actions.handleDownloadSelected,
     handleDeleteSelected: actions.handleDeleteSelected,
+    handleCopyFilePath: actions.handleCopyFilePath,
+    handleCopyRelativeFilePath: actions.handleCopyRelativeFilePath,
+    handleIgnoreFile: async (entry) => actions.handleAppendGitignore(entry, 'file'),
+    handleIgnoreFolder: async (entry) => actions.handleAppendGitignore(entry, 'folder'),
+    handleIgnoreByExtension: async (entry) => actions.handleAppendGitignore(entry, 'extension'),
+    handleOpenPathInDefaultProgram: async (entry) => actions.handleOpenExternally(entry, 'default'),
+    handleRevealInFinder: async (entry) => actions.handleOpenExternally(entry, 'reveal'),
+    handleOpenInCode: async (entry) => actions.handleOpenExternally(entry, 'code'),
   },
 });

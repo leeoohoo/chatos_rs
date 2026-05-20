@@ -32,6 +32,7 @@ export const buildProjectExplorerPreviewPaneProps = ({
   documentSymbols,
   documentSymbolsLoading,
   documentSymbolsError,
+  requestDocumentSymbols,
   handleTokenSelection,
   clearTokenSelection,
   requestDefinition,
@@ -72,6 +73,9 @@ export const buildProjectExplorerPreviewPaneProps = ({
   documentSymbols,
   documentSymbolsLoading,
   documentSymbolsError,
+  onRequestDocumentSymbols: () => {
+    void requestDocumentSymbols();
+  },
   onTokenSelection: handleTokenSelection,
   onClearTokenSelection: clearTokenSelection,
   onRequestDefinition: () => {
@@ -107,6 +111,7 @@ export const buildProjectExplorerPreviewPanePropsDeps = ({
   documentSymbols,
   documentSymbolsError,
   documentSymbolsLoading,
+  requestDocumentSymbols,
   error,
   handleActivateSearchHit,
   handleOpenDocumentSymbol,
@@ -147,6 +152,7 @@ export const buildProjectExplorerPreviewPanePropsDeps = ({
   documentSymbols,
   documentSymbolsError,
   documentSymbolsLoading,
+  requestDocumentSymbols,
   error,
   handleActivateSearchHit,
   handleOpenDocumentSymbol,

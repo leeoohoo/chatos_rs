@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::contracts::{GitChangeCounts, GitCompareCommit, GitDiffFile, GitStatusFile, GitSummary};
+use crate::services::project_local_cache::is_project_local_cache_relative_path;
 
 pub(super) fn summary_from_status(repo_root: PathBuf, status: &str) -> GitSummary {
     let mut head = None;
@@ -44,7 +45,7 @@ pub(super) fn summary_from_status(repo_root: PathBuf, status: &str) -> GitSummar
             }
             continue;
         }
-        count_status_line(line, &mut changes);
+        count_status_line(line, &mut changes, repo_root.as_path());
     }
 
     let dirty = changes.staged > 0
@@ -97,7 +98,7 @@ pub(super) fn non_repo_summary() -> GitSummary {
     }
 }
 
-pub(super) fn parse_status_files(raw: &str) -> Vec<GitStatusFile> {
+pub(super) fn parse_status_files(_repo_root: &Path, raw: &str) -> Vec<GitStatusFile> {
     let mut files = Vec::new();
     let mut parts = raw.split('\0').peekable();
     while let Some(record) = parts.next() {
@@ -105,6 +106,9 @@ pub(super) fn parse_status_files(raw: &str) -> Vec<GitStatusFile> {
             continue;
         }
         if let Some(path) = record.strip_prefix("? ") {
+            if should_ignore_repo_relative_path(path) {
+                continue;
+            }
             files.push(GitStatusFile {
                 path: path.to_string(),
                 old_path: None,
@@ -117,6 +121,9 @@ pub(super) fn parse_status_files(raw: &str) -> Vec<GitStatusFile> {
         }
         if record.starts_with("u ") {
             if let Some((xy, path)) = parse_status_record(record, 10) {
+                if should_ignore_repo_relative_path(path.as_str()) {
+                    continue;
+                }
                 files.push(GitStatusFile {
                     path,
                     old_path: None,
@@ -131,6 +138,14 @@ pub(super) fn parse_status_files(raw: &str) -> Vec<GitStatusFile> {
         if record.starts_with("2 ") {
             if let Some((xy, path)) = parse_status_record(record, 9) {
                 let old_path = parts.next().map(ToOwned::to_owned);
+                if should_ignore_repo_relative_path(path.as_str())
+                    || old_path
+                        .as_deref()
+                        .map(should_ignore_repo_relative_path)
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
                 files.push(GitStatusFile {
                     path,
                     old_path,
@@ -144,6 +159,9 @@ pub(super) fn parse_status_files(raw: &str) -> Vec<GitStatusFile> {
         }
         if record.starts_with("1 ") {
             if let Some((xy, path)) = parse_status_record(record, 8) {
+                if should_ignore_repo_relative_path(path.as_str()) {
+                    continue;
+                }
                 files.push(GitStatusFile {
                     path,
                     old_path: None,
@@ -170,12 +188,18 @@ pub(super) fn parse_name_status_z(raw: &str) -> Vec<GitDiffFile> {
             let Some(new_path) = parts.next() else {
                 break;
             };
+            if should_ignore_repo_relative_path(path) || should_ignore_repo_relative_path(new_path) {
+                continue;
+            }
             files.push(GitDiffFile {
                 path: new_path.to_string(),
                 old_path: Some(path.to_string()),
                 status: status_from_name_status(code),
             });
         } else {
+            if should_ignore_repo_relative_path(path) {
+                continue;
+            }
             files.push(GitDiffFile {
                 path: path.to_string(),
                 old_path: None,
@@ -240,14 +264,38 @@ pub(super) fn non_empty(value: &str) -> Option<String> {
     }
 }
 
-fn count_status_line(line: &str, changes: &mut GitChangeCounts) {
-    if let Some(rest) = line.strip_prefix("1 ").or_else(|| line.strip_prefix("2 ")) {
+fn count_status_line(line: &str, changes: &mut GitChangeCounts, _repo_root: &Path) {
+    if let Some(rest) = line.strip_prefix("1 ") {
+        if let Some((_, path)) = parse_status_record(line, 8) {
+            if should_ignore_repo_relative_path(path.as_str()) {
+                return;
+            }
+        }
+        count_xy(rest, changes);
+    } else if let Some(rest) = line.strip_prefix("2 ") {
+        if let Some((_, path)) = parse_status_record(line, 9) {
+            if should_ignore_repo_relative_path(path.as_str()) {
+                return;
+            }
+        }
         count_xy(rest, changes);
     } else if line.starts_with("u ") {
+        if let Some((_, path)) = parse_status_record(line, 10) {
+            if should_ignore_repo_relative_path(path.as_str()) {
+                return;
+            }
+        }
         changes.conflicted += 1;
-    } else if line.starts_with("? ") {
+    } else if let Some(path) = line.strip_prefix("? ") {
+        if should_ignore_repo_relative_path(path) {
+            return;
+        }
         changes.untracked += 1;
     }
+}
+
+fn should_ignore_repo_relative_path(path: &str) -> bool {
+    is_project_local_cache_relative_path(path)
 }
 
 fn count_xy(rest: &str, changes: &mut GitChangeCounts) {
@@ -357,7 +405,7 @@ mod tests {
         let raw = "1 .M N... 100644 100644 100644 abc abc src/main.rs\0\
 2 R. N... 100644 100644 100644 abc def R100 src/new name.rs\0src/old name.rs\0\
 ? src/loose file.rs\0";
-        let files = parse_status_files(raw);
+        let files = parse_status_files(PathBuf::from("/tmp/repo").as_path(), raw);
         assert_eq!(files.len(), 3);
         assert_eq!(files[0].path, "src/main.rs");
         assert_eq!(files[0].status, "modified");
@@ -369,6 +417,16 @@ mod tests {
         assert!(files[1].staged);
         assert!(!files[1].unstaged);
         assert_eq!(files[2].status, "untracked");
+    }
+
+    #[test]
+    fn filters_project_cache_from_git_status() {
+        let raw = "1 .M N... 100644 100644 100644 abc abc .chatos/cache/fs/listing.json\0\
+? .chatos/cache/git/status.json\0\
+1 .M N... 100644 100644 100644 abc abc src/main.rs\0";
+        let files = parse_status_files(PathBuf::from("/tmp/repo").as_path(), raw);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "src/main.rs");
     }
 
     #[test]

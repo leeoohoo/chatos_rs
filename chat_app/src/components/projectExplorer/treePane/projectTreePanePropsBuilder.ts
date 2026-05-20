@@ -16,10 +16,6 @@ export const buildProjectExplorerTreePaneProps = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  showOnlyChanged,
-  changeSummary,
-  loadingSummary,
-  summaryError,
   actionMessage,
   actionError,
   searchQuery,
@@ -32,13 +28,9 @@ export const buildProjectExplorerTreePaneProps = ({
   activeSearchHitId,
   activeSearchHitIndex,
   totalSearchHits,
-  aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
   canDropToDirectory,
-  setSelectedPath,
-  setSelectedFile,
-  setShowOnlyChanged,
   setDraggingEntryPath,
   setDropTargetDirPath,
   clearDragExpandTimer,
@@ -78,10 +70,6 @@ export const buildProjectExplorerTreePaneProps = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  showOnlyChanged,
-  changeSummary,
-  loadingSummary,
-  summaryError,
   actionMessage,
   actionError,
   searchQuery,
@@ -96,15 +84,11 @@ export const buildProjectExplorerTreePaneProps = ({
   totalSearchHits,
   canOpenPreviousSearchHit,
   canOpenNextSearchHit,
-  aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
   canDropToDirectory,
   onSelectProjectRoot: () => {
     void selectProjectRoot();
-  },
-  onToggleShowOnlyChanged: () => {
-    setShowOnlyChanged((prev) => !prev);
   },
   onCreateDirectoryAtRoot: () => {
     void handleCreateDirectory(project.rootPath);
@@ -133,14 +117,6 @@ export const buildProjectExplorerTreePaneProps = ({
   onOpenSearchHit: (hit) => {
     void handleOpenSearchHit(hit);
   },
-  onSelectDeletedPath: (path) => {
-    setSelectedPath(path);
-    setSelectedFile(null);
-  },
-  onSelectMarkedPath: (path) => {
-    setSelectedPath(path);
-    setSelectedFile(null);
-  },
   onToggleDir: (entry) => {
     void toggleDir(entry);
   },
@@ -168,12 +144,10 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   actionReloadPath,
   activeSearchHitId,
   activeSearchHitIndex,
-  aggregatedChangeKindByPath,
   canOpenNextSearchHit,
   canOpenPreviousSearchHit,
   canDropToDirectory,
   cancelDragExpandIfMatches,
-  changeSummary,
   clearDragAutoScroll,
   clearDragExpandTimer,
   draggingEntryPath,
@@ -194,7 +168,6 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   handleSearchQueryChange,
   handleSearchWholeWordChange,
   loadingPaths,
-  loadingSummary,
   normalizePath,
   openEntryContextMenu,
   openFile,
@@ -212,12 +185,7 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   selectedPath,
   setDraggingEntryPath,
   setDropTargetDirPath,
-  setSelectedFile,
-  setSelectedPath,
-  setShowOnlyChanged,
-  showOnlyChanged,
   startDragAutoScroll,
-  summaryError,
   toExpandedKey,
   toggleDir,
   totalSearchHits,
@@ -230,12 +198,10 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   actionReloadPath,
   activeSearchHitId,
   activeSearchHitIndex,
-  aggregatedChangeKindByPath,
   canOpenNextSearchHit,
   canOpenPreviousSearchHit,
   canDropToDirectory,
   cancelDragExpandIfMatches,
-  changeSummary,
   clearDragAutoScroll,
   clearDragExpandTimer,
   draggingEntryPath,
@@ -256,7 +222,6 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   handleSearchQueryChange,
   handleSearchWholeWordChange,
   loadingPaths,
-  loadingSummary,
   normalizePath,
   openEntryContextMenu,
   openFile,
@@ -274,12 +239,7 @@ export const buildProjectExplorerTreePanePropsDeps = ({
   selectedPath,
   setDraggingEntryPath,
   setDropTargetDirPath,
-  setSelectedFile,
-  setSelectedPath,
-  setShowOnlyChanged,
-  showOnlyChanged,
   startDragAutoScroll,
-  summaryError,
   toExpandedKey,
   toggleDir,
   totalSearchHits,

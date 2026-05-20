@@ -24,7 +24,6 @@ export const useProjectGitLifecycle = ({
   setActionMessage,
   hydrateCachedState,
   refreshClientInfo,
-  refreshSummary,
   markSummaryStale,
   markDetailsStale,
   projectRoot,
@@ -37,14 +36,12 @@ export const useProjectGitLifecycle = ({
     markSummaryStale();
     markDetailsStale();
     hydrateCachedState(projectRoot);
-    void refreshSummary();
   }, [
     clearCompare,
     hydrateCachedState,
     markDetailsStale,
     markSummaryStale,
     projectRoot,
-    refreshSummary,
     setActionMessage,
     setBranches,
     setStatus,
@@ -58,15 +55,6 @@ export const useProjectGitLifecycle = ({
   }, [open, refreshClientInfo]);
 
   useEffect(() => {
-    const handleFocus = () => {
-      markSummaryStale();
-      if (open) {
-        void refreshSummary();
-      }
-    };
-    window.addEventListener('focus', handleFocus);
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [markSummaryStale, open, refreshSummary]);
+    return () => {};
+  }, []);
 };

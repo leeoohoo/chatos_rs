@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   CodeNavCapabilities,
@@ -29,6 +29,51 @@ export const useCodeNavResources = ({
   const [documentSymbols, setDocumentSymbols] = useState<CodeNavDocumentSymbolsResult | null>(null);
   const [documentSymbolsLoading, setDocumentSymbolsLoading] = useState(false);
   const [documentSymbolsError, setDocumentSymbolsError] = useState<string | null>(null);
+  const documentSymbolsRequestVersionRef = useRef(0);
+  const documentSymbolsLoadedKeyRef = useRef<string | null>(null);
+  const currentFileKey = projectRootPath && selectedFilePath
+    ? `${projectRootPath}::${selectedFilePath}`
+    : null;
+
+  const resetDocumentSymbols = useCallback(() => {
+    documentSymbolsLoadedKeyRef.current = null;
+    setDocumentSymbols(null);
+    setDocumentSymbolsError(null);
+    setDocumentSymbolsLoading(false);
+  }, []);
+
+  const requestDocumentSymbols = useCallback(async () => {
+    if (!projectRootPath || !selectedFilePath || !currentFileKey) {
+      resetDocumentSymbols();
+      return;
+    }
+    if (documentSymbolsLoadedKeyRef.current === currentFileKey) {
+      return;
+    }
+
+    const requestVersion = ++documentSymbolsRequestVersionRef.current;
+    setDocumentSymbolsLoading(true);
+    setDocumentSymbolsError(null);
+    try {
+      const raw = await client.getCodeNavDocumentSymbols(projectRootPath, selectedFilePath);
+      if (documentSymbolsRequestVersionRef.current !== requestVersion) {
+        return;
+      }
+      setDocumentSymbols(normalizeCodeNavDocumentSymbolsResult(raw));
+      documentSymbolsLoadedKeyRef.current = currentFileKey;
+    } catch (error) {
+      if (documentSymbolsRequestVersionRef.current !== requestVersion) {
+        return;
+      }
+      setDocumentSymbols(null);
+      setDocumentSymbolsError(error instanceof Error ? error.message : '获取文件符号失败');
+      documentSymbolsLoadedKeyRef.current = null;
+    } finally {
+      if (documentSymbolsRequestVersionRef.current === requestVersion) {
+        setDocumentSymbolsLoading(false);
+      }
+    }
+  }, [client, currentFileKey, projectRootPath, resetDocumentSymbols, selectedFilePath]);
 
   useEffect(() => {
     clearTokenSelection();
@@ -36,9 +81,7 @@ export const useCodeNavResources = ({
       setNavCapabilities(null);
       setNavCapabilitiesError(null);
       setNavCapabilitiesLoading(false);
-      setDocumentSymbols(null);
-      setDocumentSymbolsError(null);
-      setDocumentSymbolsLoading(false);
+      resetDocumentSymbols();
       return;
     }
 
@@ -61,31 +104,13 @@ export const useCodeNavResources = ({
       }
     };
 
-    const loadDocumentSymbols = async () => {
-      setDocumentSymbolsLoading(true);
-      setDocumentSymbolsError(null);
-      try {
-        const raw = await client.getCodeNavDocumentSymbols(projectRootPath, selectedFilePath);
-        if (cancelled) return;
-        setDocumentSymbols(normalizeCodeNavDocumentSymbolsResult(raw));
-      } catch (error) {
-        if (cancelled) return;
-        setDocumentSymbols(null);
-        setDocumentSymbolsError(error instanceof Error ? error.message : '获取文件符号失败');
-      } finally {
-        if (!cancelled) {
-          setDocumentSymbolsLoading(false);
-        }
-      }
-    };
-
     void loadCapabilities();
-    void loadDocumentSymbols();
+    resetDocumentSymbols();
 
     return () => {
       cancelled = true;
     };
-  }, [clearTokenSelection, client, projectRootPath, selectedFilePath]);
+  }, [clearTokenSelection, client, projectRootPath, resetDocumentSymbols, selectedFilePath]);
 
   return {
     navCapabilities,
@@ -94,5 +119,6 @@ export const useCodeNavResources = ({
     documentSymbols,
     documentSymbolsLoading,
     documentSymbolsError,
+    requestDocumentSymbols,
   };
 };

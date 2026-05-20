@@ -37,6 +37,7 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   documentSymbols: React.ComponentProps<typeof ProjectPreviewPane>['documentSymbols'];
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
+  requestDocumentSymbols: () => Promise<void>;
   handleTokenSelection: React.ComponentProps<typeof ProjectPreviewPane>['onTokenSelection'];
   clearTokenSelection: () => void;
   requestDefinition: () => Promise<void>;

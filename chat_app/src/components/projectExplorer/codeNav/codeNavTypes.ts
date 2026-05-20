@@ -70,6 +70,7 @@ export interface UseProjectExplorerCodeNavResult {
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
+  requestDocumentSymbols: () => Promise<void>;
   handleTokenSelection: (selection: TokenSelection | null) => void;
   clearTokenSelection: () => void;
   requestDefinition: () => Promise<void>;

@@ -10,10 +10,11 @@ use crate::models::project_run::ProjectRunCatalog;
 use crate::models::project_run_environment::ProjectRunCustomToolchain;
 use crate::repositories::project_run_catalogs;
 use crate::services::project_run::{
-    analyze_project, apply_default_target, dispatch_command, env_overrides_for_target,
-    load_environment_selection, load_environment_snapshot, resolve_execution,
+    analyze_project, apply_default_target, clear_cached_environment_snapshot, dispatch_command,
+    env_overrides_for_target, load_environment_selection, load_environment_snapshot,
+    read_cached_catalog, refresh_environment_snapshot, resolve_execution,
     resolve_command_with_toolchains, save_environment_selection, validate_project_run_target,
-    RunExecutionInput,
+    write_cached_catalog, RunExecutionInput,
 };
 use crate::services::terminal_manager::get_terminal_manager;
 
@@ -73,6 +74,11 @@ async fn load_or_analyze_catalog(
     if let Some(cached) =
         project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await?
     {
+        let _ = write_cached_catalog(project.root_path.as_str(), &cached);
+        return Ok(cached);
+    }
+    if let Some(cached) = read_cached_catalog(project.root_path.as_str())? {
+        let _ = project_run_catalogs::upsert_catalog(&cached).await;
         return Ok(cached);
     }
     Ok(ProjectRunCatalog {
@@ -102,6 +108,8 @@ pub(super) async fn analyze_project_run(
             Json(json!({"error": err})),
         );
     }
+    let _ = write_cached_catalog(project.root_path.as_str(), &analyzed);
+    let _ = clear_cached_environment_snapshot(project.root_path.as_str());
     (
         StatusCode::OK,
         Json(serde_json::to_value(analyzed).unwrap_or(Value::Null)),
@@ -410,7 +418,7 @@ pub(super) async fn update_project_run_environment(
     )
     .await
     {
-        Ok(_) => match load_environment_snapshot(&project).await {
+        Ok(_) => match refresh_environment_snapshot(&project).await {
             Ok(snapshot) => (
                 StatusCode::OK,
                 Json(serde_json::to_value(snapshot).unwrap_or(Value::Null)),

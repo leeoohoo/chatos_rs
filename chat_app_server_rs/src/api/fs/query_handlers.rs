@@ -148,6 +148,7 @@ mod tests {
             mock_auth(),
             Query(FsQuery {
                 path: Some(root.to_string_lossy().to_string()),
+                force_refresh: None,
             }),
         )
         .await;

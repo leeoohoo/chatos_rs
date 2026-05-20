@@ -18,6 +18,10 @@ export interface FsEntriesResponse {
   truncated?: boolean;
 }
 
+export interface FsListEntriesOptions {
+  forceRefresh?: boolean;
+}
+
 export interface FsReadFileResponse {
   path?: string;
   name?: string;
@@ -64,4 +68,19 @@ export interface FsMoveResponse extends FsMutationResponse {
 export interface FsMoveOptions {
   targetName?: string;
   replaceExisting?: boolean;
+}
+
+export interface FsAppendGitignoreResponse extends FsMutationResponse {
+  pattern?: string;
+  created?: boolean;
+  appended?: boolean;
+}
+
+export interface FsOpenPathResponse extends FsMutationResponse {
+  mode?: string;
+}
+
+export interface FsDiscardGitChangesResponse extends FsMutationResponse {
+  stdout?: string | null;
+  stderr?: string | null;
 }

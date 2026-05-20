@@ -8,7 +8,6 @@ import type {
   FsEntry,
   FsReadResult,
   Project,
-  ProjectChangeSummary,
   ProjectRunEnvironment,
   ProjectRunInstance,
   ProjectRunResolutionSuggestion,
@@ -21,7 +20,6 @@ import type {
 import type { MoveConflictState } from './Overlays';
 import type { ProjectRunnerActiveTerminal } from './useProjectExplorerRunState';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
-import type { ChangeKind } from './utils';
 
 export interface ProjectExplorerWorkspaceTreeState {
   treeWidth: number;
@@ -36,13 +34,8 @@ export interface ProjectExplorerWorkspaceTreeState {
   actionLoading: boolean;
   actionReloadPath: string | null;
   contextMenu: ExplorerContextMenuState | null;
-  showOnlyChanged: boolean;
-  changeSummary: ProjectChangeSummary;
-  loadingSummary: boolean;
-  summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
-  aggregatedChangeKindByPath: Map<string, ChangeKind>;
 }
 
 export interface ProjectExplorerWorkspaceSearchState {
@@ -84,6 +77,7 @@ export interface ProjectExplorerWorkspaceCodeNavState {
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
+  requestDocumentSymbols: () => Promise<void>;
 }
 
 export interface ProjectExplorerWorkspaceRunState {
@@ -139,7 +133,6 @@ export interface ProjectExplorerWorkspaceInteractions {
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
   setSelectedPath: React.Dispatch<React.SetStateAction<string | null>>;
   setSelectedFile: React.Dispatch<React.SetStateAction<FsReadResult | null>>;
-  setShowOnlyChanged: React.Dispatch<React.SetStateAction<boolean>>;
   setDraggingEntryPath: React.Dispatch<React.SetStateAction<string | null>>;
   setDropTargetDirPath: React.Dispatch<React.SetStateAction<string | null>>;
   setMoveConflict: React.Dispatch<React.SetStateAction<MoveConflictState | null>>;
@@ -174,6 +167,14 @@ export interface ProjectExplorerWorkspaceInteractions {
   handleMoveEntryByDrop: (sourcePath: string, targetDirPath: string) => Promise<void>;
   handleDownloadSelected: (entry: FsEntry) => Promise<void>;
   handleDeleteSelected: (entry: FsEntry) => Promise<void>;
+  handleCopyFilePath: (entry: FsEntry) => Promise<boolean>;
+  handleCopyRelativeFilePath: (entry: FsEntry) => Promise<boolean>;
+  handleIgnoreFile: (entry: FsEntry) => Promise<boolean>;
+  handleIgnoreFolder: (entry: FsEntry) => Promise<boolean>;
+  handleIgnoreByExtension: (entry: FsEntry) => Promise<boolean>;
+  handleOpenPathInDefaultProgram: (entry: FsEntry) => Promise<boolean>;
+  handleRevealInFinder: (entry: FsEntry) => Promise<boolean>;
+  handleOpenInCode: (entry: FsEntry) => Promise<boolean>;
 }
 
 export interface ProjectExplorerWorkspaceViewParams {

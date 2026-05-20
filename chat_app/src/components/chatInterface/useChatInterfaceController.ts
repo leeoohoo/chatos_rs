@@ -21,6 +21,7 @@ interface UseChatInterfaceControllerParams {
   currentSession: Session | null;
   messages: Message[];
   currentMessageCount: number;
+  currentSessionHasMoreMessages: boolean;
   runtimeContextRefreshNonce: number;
   currentChatStateActiveTurnId: string | null | undefined;
   activeConversationTurnId: string | null | undefined;
@@ -78,6 +79,7 @@ export const useChatInterfaceController = ({
   currentSession,
   messages,
   currentMessageCount,
+  currentSessionHasMoreMessages,
   runtimeContextRefreshNonce,
   currentChatStateActiveTurnId,
   activeConversationTurnId,
@@ -151,6 +153,12 @@ export const useChatInterfaceController = ({
     runtimeContextRefreshNonce,
   });
 
+  const reviewRepairAutoLoad = Boolean(
+    activePanel === 'chat'
+    && currentSession?.id
+    && summaryPaneSessionId === currentSession.id,
+  );
+
   const {
     reviewRepairRunning,
     reviewRepairPendingCount,
@@ -160,6 +168,7 @@ export const useChatInterfaceController = ({
     apiClient,
     sessionId: activePanel === 'chat' ? (currentSession?.id || null) : null,
     enabled: activePanel === 'chat',
+    autoLoad: reviewRepairAutoLoad,
     messageCountHint: activePanel === 'chat' && currentSession?.id
       ? currentMessageCount
       : undefined,
@@ -177,9 +186,11 @@ export const useChatInterfaceController = ({
   const loadedReviewRepairPendingCount = activePanel === 'chat' && currentSession?.id
     ? countPendingReviewRepairMessages(messages, currentSession.id)
     : 0;
+  const effectiveReviewRepairPendingCount = reviewRepairPendingCount ?? 0;
   const reviewRepairDisabled = !reviewRepairRunning
-    && reviewRepairPendingCount === 0
-    && loadedReviewRepairPendingCount === 0;
+    && effectiveReviewRepairPendingCount === 0
+    && loadedReviewRepairPendingCount === 0
+    && !currentSessionHasMoreMessages;
 
   const handleMessageSend = useCallback(async (
     content: string,
@@ -202,11 +213,6 @@ export const useChatInterfaceController = ({
           ? (remoteConnectionIdOverride ?? null)
           : (currentRemoteConnectionId || null),
       });
-      if (currentSession?.id) {
-        void refreshReviewRepairStatus(currentSession.id).catch((statusError) => {
-          console.error('Failed to refresh review repair status after send:', statusError);
-        });
-      }
       onMessageSend?.(content, attachments);
     } catch (error) {
       console.error('Failed to send message:', error);
@@ -215,7 +221,6 @@ export const useChatInterfaceController = ({
     currentRemoteConnectionId,
     currentSession?.id,
     onMessageSend,
-    refreshReviewRepairStatus,
     sendMessage,
   ]);
 

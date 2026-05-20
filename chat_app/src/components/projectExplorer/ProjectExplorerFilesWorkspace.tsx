@@ -32,6 +32,14 @@ interface ProjectExplorerFilesWorkspaceProps {
   onCreateDirectory: (path: string) => Promise<void> | void;
   onCreateFile: (path: string) => Promise<void> | void;
   onDownloadSelected: (entry: FsEntry) => Promise<void> | void;
+  onCopyFilePath: (entry: FsEntry) => Promise<boolean> | boolean;
+  onCopyRelativeFilePath: (entry: FsEntry) => Promise<boolean> | boolean;
+  onIgnoreFile: (entry: FsEntry) => Promise<boolean> | boolean;
+  onIgnoreFolder: (entry: FsEntry) => Promise<boolean> | boolean;
+  onIgnoreByExtension: (entry: FsEntry) => Promise<boolean> | boolean;
+  onOpenPathInDefaultProgram: (entry: FsEntry) => Promise<boolean> | boolean;
+  onRevealInFinder: (entry: FsEntry) => Promise<boolean> | boolean;
+  onOpenInCode: (entry: FsEntry) => Promise<boolean> | boolean;
   onDeleteSelected: (entry: FsEntry) => Promise<void> | void;
 }
 
@@ -56,8 +64,21 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
   onCreateDirectory,
   onCreateFile,
   onDownloadSelected,
+  onCopyFilePath,
+  onCopyRelativeFilePath,
+  onIgnoreFile,
+  onIgnoreFolder,
+  onIgnoreByExtension,
+  onOpenPathInDefaultProgram,
+  onRevealInFinder,
+  onOpenInCode,
   onDeleteSelected,
 }) => {
+  const runMenuAction = (action: () => Promise<unknown> | unknown) => {
+    setContextMenu(null);
+    void action();
+  };
+
   return (
     <div className="flex h-full overflow-hidden">
       <ProjectTreePane {...treePaneProps} />
@@ -91,20 +112,40 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
         contextMenuStyle={contextMenuStyle}
         isContextRootEntry={isContextRootEntry}
         onCreateDirectory={(path) => {
-          setContextMenu(null);
-          void onCreateDirectory(path);
+          runMenuAction(() => onCreateDirectory(path));
         }}
         onCreateFile={(path) => {
-          setContextMenu(null);
-          void onCreateFile(path);
+          runMenuAction(() => onCreateFile(path));
         }}
         onDownload={(entry) => {
-          setContextMenu(null);
-          void onDownloadSelected(entry);
+          runMenuAction(() => onDownloadSelected(entry));
+        }}
+        onCopyFilePath={(entry) => {
+          runMenuAction(() => onCopyFilePath(entry));
+        }}
+        onCopyRelativeFilePath={(entry) => {
+          runMenuAction(() => onCopyRelativeFilePath(entry));
+        }}
+        onIgnoreFile={(entry) => {
+          runMenuAction(() => onIgnoreFile(entry));
+        }}
+        onIgnoreFolder={(entry) => {
+          runMenuAction(() => onIgnoreFolder(entry));
+        }}
+        onIgnoreByExtension={(entry) => {
+          runMenuAction(() => onIgnoreByExtension(entry));
+        }}
+        onOpenPathInDefaultProgram={(entry) => {
+          runMenuAction(() => onOpenPathInDefaultProgram(entry));
+        }}
+        onRevealInFinder={(entry) => {
+          runMenuAction(() => onRevealInFinder(entry));
+        }}
+        onOpenInCode={(entry) => {
+          runMenuAction(() => onOpenInCode(entry));
         }}
         onDelete={(entry) => {
-          setContextMenu(null);
-          void onDeleteSelected(entry);
+          runMenuAction(() => onDeleteSelected(entry));
         }}
       />
     </div>

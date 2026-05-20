@@ -1,9 +1,8 @@
 import React from 'react';
 
-import type { FsEntry, Project, ProjectChangeSummary, ProjectSearchHit } from '../../../types';
+import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 import {
-  ProjectTreeChangeCounters,
   ProjectTreeHeaderActions,
   ProjectTreeHeaderMessages,
 } from './ProjectTreeHeaderActions';
@@ -18,10 +17,6 @@ interface ProjectTreeHeaderProps {
   dropTargetDirPath: string | null;
   actionLoading: boolean;
   actionReloadPath: string | null;
-  showOnlyChanged: boolean;
-  changeSummary: ProjectChangeSummary;
-  loadingSummary: boolean;
-  summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
   searchQuery: string;
@@ -38,7 +33,6 @@ interface ProjectTreeHeaderProps {
   normalizePath: (value: string) => string;
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
   onSelectProjectRoot: () => void;
-  onToggleShowOnlyChanged: () => void;
   onCreateDirectoryAtRoot: () => void;
   onCreateFileAtRoot: () => void;
   onRefresh: () => void;
@@ -64,10 +58,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  showOnlyChanged,
-  changeSummary,
-  loadingSummary,
-  summaryError,
   actionMessage,
   actionError,
   searchQuery,
@@ -84,7 +74,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   normalizePath,
   canDropToDirectory,
   onSelectProjectRoot,
-  onToggleShowOnlyChanged,
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
@@ -154,19 +143,14 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
       >
         选中项目根目录
       </button>
-      <ProjectTreeChangeCounters changeSummary={changeSummary} />
       <ProjectTreeHeaderActions
         actionLoading={actionLoading}
         actionReloadPath={actionReloadPath}
-        showOnlyChanged={showOnlyChanged}
         onCreateDirectoryAtRoot={onCreateDirectoryAtRoot}
         onCreateFileAtRoot={onCreateFileAtRoot}
         onRefresh={onRefresh}
-        onToggleShowOnlyChanged={onToggleShowOnlyChanged}
       />
-      <div className="text-[11px] text-muted-foreground">
-        这里只负责查看目录和变更；Stage、Commit、Push 请使用右上角 Git 面板
-      </div>
+      <div className="text-[11px] text-muted-foreground">这里仅负责查看目录；Stage、Commit、Push 请使用右上角 Git 面板</div>
       <ProjectTreeSearchControls
         searchQuery={searchQuery}
         searchCaseSensitive={searchCaseSensitive}
@@ -187,8 +171,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         onOpenNextSearchHit={onOpenNextSearchHit}
       />
       <ProjectTreeHeaderMessages
-        loadingSummary={loadingSummary}
-        summaryError={summaryError}
         actionMessage={actionMessage}
         actionError={actionError}
       />

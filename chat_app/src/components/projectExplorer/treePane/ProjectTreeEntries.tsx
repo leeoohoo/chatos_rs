@@ -1,12 +1,9 @@
 import React from 'react';
 
-import type { FsEntry, Project, ProjectChangeSummary, ProjectSearchHit } from '../../../types';
-import type { ChangeKind } from '../utils';
-import { ProjectTreeChangeMarkSections } from './ProjectTreeChangeMarkSections';
+import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { ProjectTreeEntryNode } from './ProjectTreeEntryNode';
 import { ProjectTreeSearchResults } from './ProjectTreeSearchResults';
 import { useProjectTreeAutoScrollHandlers } from './useProjectTreeAutoScrollHandlers';
-import { useProjectTreeEntriesDerivedState } from './useProjectTreeEntriesDerivedState';
 
 interface ProjectTreeEntriesProps {
   project: Project;
@@ -17,20 +14,15 @@ interface ProjectTreeEntriesProps {
   selectedPath: string | null;
   draggingEntryPath: string | null;
   dropTargetDirPath: string | null;
-  showOnlyChanged: boolean;
-  changeSummary: ProjectChangeSummary;
   searchQuery: string;
   searchCaseSensitive: boolean;
   searchWholeWord: boolean;
   searchResults: ProjectSearchHit[];
   activeSearchHitId: string | null;
-  aggregatedChangeKindByPath: Map<string, ChangeKind>;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
   onOpenSearchHit: (hit: ProjectSearchHit) => void;
-  onSelectDeletedPath: (path: string) => void;
-  onSelectMarkedPath: (path: string) => void;
   onToggleDir: (entry: FsEntry) => void;
   onOpenFile: (entry: FsEntry) => void;
   onOpenContextMenu: (event: React.MouseEvent, entry: FsEntry) => void;
@@ -54,20 +46,15 @@ export const ProjectTreeEntries: React.FC<ProjectTreeEntriesProps> = ({
   selectedPath,
   draggingEntryPath,
   dropTargetDirPath,
-  showOnlyChanged,
-  changeSummary,
   searchQuery,
   searchCaseSensitive,
   searchWholeWord,
   searchResults,
   activeSearchHitId,
-  aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
   canDropToDirectory,
   onOpenSearchHit,
-  onSelectDeletedPath,
-  onSelectMarkedPath,
   onToggleDir,
   onOpenFile,
   onOpenContextMenu,
@@ -81,20 +68,7 @@ export const ProjectTreeEntries: React.FC<ProjectTreeEntriesProps> = ({
   onStartDragAutoScroll,
   onClearDragAutoScroll,
 }) => {
-  const {
-    hiddenFileMarks,
-    isEntryVisible,
-    visibleRootEntryCount,
-  } = useProjectTreeEntriesDerivedState({
-    projectRootPath: project.rootPath,
-    entriesMap,
-    showOnlyChanged,
-    changeSummary,
-    aggregatedChangeKindByPath,
-    normalizePath,
-  });
-
-  const rootEntries = (entriesMap[project.rootPath] || []).filter((entry) => isEntryVisible(entry.path));
+  const rootEntries = entriesMap[project.rootPath] || [];
   const {
     handleContainerDragLeave,
     handleContainerDragOver,
@@ -135,11 +109,9 @@ export const ProjectTreeEntries: React.FC<ProjectTreeEntriesProps> = ({
               selectedPath={selectedPath}
               draggingEntryPath={draggingEntryPath}
               dropTargetDirPath={dropTargetDirPath}
-              aggregatedChangeKindByPath={aggregatedChangeKindByPath}
               normalizePath={normalizePath}
               toExpandedKey={toExpandedKey}
               canDropToDirectory={canDropToDirectory}
-              isEntryVisible={isEntryVisible}
               onToggleDir={onToggleDir}
               onOpenFile={onOpenFile}
               onOpenContextMenu={onOpenContextMenu}
@@ -153,26 +125,11 @@ export const ProjectTreeEntries: React.FC<ProjectTreeEntriesProps> = ({
               onClearDragAutoScroll={onClearDragAutoScroll}
             />
           ))}
-          <ProjectTreeChangeMarkSections
-            selectedPath={selectedPath}
-            showOnlyChanged={showOnlyChanged}
-            changeSummary={changeSummary}
-            hiddenFileMarks={hiddenFileMarks}
-            normalizePath={normalizePath}
-            onSelectDeletedPath={onSelectDeletedPath}
-            onSelectMarkedPath={onSelectMarkedPath}
-          />
           {loadingPaths.has(project.rootPath) && (
             <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
           )}
-          {!loadingPaths.has(project.rootPath) && visibleRootEntryCount === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">
-              {showOnlyChanged
-                ? (changeSummary.counts.total > 0
-                  ? '存在变更，但当前目录树未命中。请查看下方列表。'
-                  : '暂无变更文件')
-                : '目录为空'}
-            </div>
+          {!loadingPaths.has(project.rootPath) && rootEntries.length === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">目录为空</div>
           )}
         </>
       )}

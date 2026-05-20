@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useProjectChangeSummaryRealtime } from '../../../lib/realtime/useProjectChangeSummaryRealtime';
 import type { GitBranchInfo } from '../../../types';
@@ -9,6 +9,7 @@ interface UseGitBranchButtonModelOptions {
   client: ProjectGitApiClient;
   projectId?: string | null;
   projectRoot: string;
+  enabled?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
   onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
@@ -17,6 +18,7 @@ export const useGitBranchButtonModel = ({
   client,
   projectId,
   projectRoot,
+  enabled = true,
   onRepositoryChanged,
   onRepositorySelectionChange,
 }: UseGitBranchButtonModelOptions) => {
@@ -32,25 +34,25 @@ export const useGitBranchButtonModel = ({
     client,
     projectRoot,
     open,
+    enabled,
     onRepositoryChanged,
     onRepositorySelectionChange,
   });
+  const gitRef = useRef(git);
+  const openLoadTokenRef = useRef<string | null>(null);
 
   useProjectChangeSummaryRealtime({
     projectId,
-    enabled: Boolean(projectId),
+    enabled: enabled && Boolean(projectId),
     onInvalidate: async () => {
       git.markSummaryStale();
       git.markDetailsStale();
-      await git.refreshSummary();
-      if (open) {
-        await git.loadDetails();
-      }
     },
   });
 
   const branchLabel = useMemo(() => {
     if (git.loadingSummary && !git.summary) return 'Git 检查中...';
+    if (!git.summary) return 'Git';
     if (!git.summary?.isRepo && git.availableRepositories.length > 0) {
       return `发现 ${git.availableRepositories.length} 个仓库`;
     }
@@ -86,15 +88,30 @@ export const useGitBranchButtonModel = ({
   const allStatusFiles = git.status?.files || [];
   const selectableCommitFiles = allStatusFiles.filter((file) => !file.conflicted);
 
+  useEffect(() => {
+    gitRef.current = git;
+  }, [git]);
+
+  useEffect(() => {
+    if (!open) {
+      openLoadTokenRef.current = null;
+      return;
+    }
+    const loadToken = `${projectRoot}:${enabled ? '1' : '0'}:${client ? '1' : '0'}`;
+    if (openLoadTokenRef.current === loadToken) {
+      return;
+    }
+    openLoadTokenRef.current = loadToken;
+    const { clearMessages, refreshSummary, loadDetails } = gitRef.current;
+    clearMessages();
+    void (async () => {
+      await refreshSummary({ force: true });
+      await loadDetails({ force: true });
+    })();
+  }, [client, enabled, open, projectRoot]);
+
   const toggleOpen = () => {
-    setOpen((value) => {
-      const next = !value;
-      if (next) {
-        git.clearMessages();
-        void git.loadDetails();
-      }
-      return next;
-    });
+    setOpen((value) => !value);
   };
 
   const closePanel = () => {

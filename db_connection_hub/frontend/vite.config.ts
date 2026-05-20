@@ -5,6 +5,7 @@ const backendOrigin = process.env.VITE_DEV_BACKEND_ORIGIN || "http://127.0.0.1:8
 export default defineConfig({
   server: {
     port: 5174,
+    strictPort: true,
     proxy: {
       "/api/v1": {
         target: backendOrigin,

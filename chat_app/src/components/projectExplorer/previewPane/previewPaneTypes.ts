@@ -43,6 +43,7 @@ export interface ProjectPreviewPaneProps {
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
+  onRequestDocumentSymbols: () => void;
   onTokenSelection: (selection: PreviewTokenSelection | null) => void;
   onClearTokenSelection: () => void;
   onRequestDefinition: () => void;

@@ -1,7 +1,6 @@
 import { buildQuery } from '../shared';
 import type {
   DeleteSuccessResponse,
-  ProjectChangeSummaryResponse,
   ProjectContactLinkResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
@@ -152,11 +151,4 @@ export const removeProjectContact = (
     `/projects/${encodeURIComponent(projectId)}/contacts/${encodeURIComponent(contactId)}`,
     { method: 'DELETE' },
   );
-};
-
-export const getProjectChangeSummary = (
-  request: ApiRequestFn,
-  projectId: string,
-): Promise<ProjectChangeSummaryResponse> => {
-  return request<ProjectChangeSummaryResponse>(`/projects/${projectId}/changes/summary`);
 };

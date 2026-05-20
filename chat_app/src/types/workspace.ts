@@ -237,22 +237,3 @@ export interface CodeNavDocumentSymbolsResult {
   mode: string;
   symbols: CodeNavDocumentSymbol[];
 }
-
-export interface ProjectChangeMark {
-  path: string;
-  relativePath: string;
-  kind: 'create' | 'edit' | 'delete';
-  lastChangeId: string;
-  updatedAt: string;
-}
-
-export interface ProjectChangeSummary {
-  fileMarks: ProjectChangeMark[];
-  deletedMarks: ProjectChangeMark[];
-  counts: {
-    create: number;
-    edit: number;
-    delete: number;
-    total: number;
-  };
-}

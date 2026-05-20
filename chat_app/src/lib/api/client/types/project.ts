@@ -155,27 +155,3 @@ export interface ProjectContactLinkResponse {
   updated_at?: string | null;
   updatedAt?: string | null;
 }
-
-export interface ProjectChangeMarkResponse {
-  path?: string;
-  relative_path?: string;
-  relativePath?: string;
-  kind?: 'create' | 'edit' | 'delete' | string;
-  last_change_id?: string;
-  lastChangeId?: string;
-  updated_at?: string;
-  updatedAt?: string;
-}
-
-export interface ProjectChangeSummaryResponse {
-  file_marks?: ProjectChangeMarkResponse[];
-  fileMarks?: ProjectChangeMarkResponse[];
-  deleted_marks?: ProjectChangeMarkResponse[];
-  deletedMarks?: ProjectChangeMarkResponse[];
-  counts?: {
-    create?: number;
-    edit?: number;
-    delete?: number;
-    total?: number;
-  };
-}

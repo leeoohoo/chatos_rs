@@ -204,18 +204,17 @@ export const useTeamMemberConversation = ({
       setSelectedSessionId(null);
       return;
     }
-    if (selectedContactId && projectContacts.some((item) => item.contact.id === selectedContactId)) {
-      return;
-    }
     if (currentSessionMatchedContactRow && currentSession?.id) {
       setSelectedContactId(currentSessionMatchedContactRow.contact.id);
       setSelectedSessionId(currentSession.id);
       return;
     }
-    const firstRow = projectContacts[0];
-    setSelectedSessionId(firstRow?.session?.id || null);
-    void handleSelectContact(firstRow.contact.id);
-  }, [currentSession?.id, currentSessionMatchedContactRow, handleSelectContact, projectContacts, selectedContactId]);
+    if (selectedContactId && projectContacts.some((item) => item.contact.id === selectedContactId)) {
+      return;
+    }
+    setSelectedContactId(null);
+    setSelectedSessionId(null);
+  }, [currentSession?.id, currentSessionMatchedContactRow, projectContacts, selectedContactId]);
 
   useEffect(() => {
     if (!selectedContactId) {

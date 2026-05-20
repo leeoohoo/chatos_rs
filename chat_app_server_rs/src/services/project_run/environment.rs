@@ -4,15 +4,20 @@ use std::path::{Path, PathBuf};
 
 use crate::core::time::now_rfc3339;
 use crate::models::project::Project;
-use crate::models::project_run::ProjectRunTarget;
+use crate::models::project_run::{ProjectRunCatalog, ProjectRunTarget};
 use crate::models::project_run_environment::{
     ProjectRunConfigFileSummary, ProjectRunCustomToolchain, ProjectRunEnvironmentSelection,
     ProjectRunEnvironmentSnapshot, ProjectRunToolchainOption, ProjectRunValidationIssue,
 };
+use crate::repositories::project_run_catalogs;
 use crate::repositories::project_run_environment_settings;
 use crate::utils::workspace::resolve_workspace_dir;
 
-use super::analyzer::{analyze_project, detect_go_entrypoints, detect_rust_bins};
+use super::analyzer::{detect_go_entrypoints, detect_rust_bins};
+use super::cache::{
+    read_cached_catalog, read_cached_environment_selection, read_cached_environment_snapshot,
+    write_cached_environment_selection, write_cached_environment_snapshot,
+};
 
 #[derive(Debug, Default)]
 struct ProjectToolchainHints {
@@ -1964,13 +1969,13 @@ pub(crate) fn resolve_command_with_toolchains(
     command
 }
 
-pub(crate) async fn load_environment_snapshot(
+fn build_environment_snapshot(
     project: &Project,
+    selection: Option<ProjectRunEnvironmentSelection>,
+    analyzed: ProjectRunCatalog,
 ) -> Result<ProjectRunEnvironmentSnapshot, String> {
-    let selection = project_run_environment_settings::get_by_project_id(project.id.as_str()).await?;
     let options_by_kind = discover_toolchain_options(project, selection.as_ref());
     let project_root = PathBuf::from(resolve_user_path(project.root_path.as_str()));
-    let analyzed = analyze_project(project).await;
     let config_files = collect_project_config_files(
         project_root.as_path(),
         analyzed.targets.as_slice(),
@@ -2023,6 +2028,43 @@ pub(crate) async fn load_environment_snapshot(
             .unwrap_or_default(),
         updated_at: selection.map(|value| value.updated_at),
     })
+}
+
+pub(crate) async fn refresh_environment_snapshot(
+    project: &Project,
+) -> Result<ProjectRunEnvironmentSnapshot, String> {
+    let selection = match project_run_environment_settings::get_by_project_id(project.id.as_str()).await? {
+        Some(selection) => {
+            let _ = write_cached_environment_selection(project.root_path.as_str(), &selection);
+            Some(selection)
+        }
+        None => read_cached_environment_selection(project.root_path.as_str())?,
+    };
+    let analyzed = match project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await? {
+        Some(cached) => cached,
+        None => read_cached_catalog(project.root_path.as_str())?.unwrap_or(ProjectRunCatalog {
+            project_id: project.id.clone(),
+            user_id: project.user_id.clone(),
+            status: "empty".to_string(),
+            default_target_id: None,
+            targets: vec![],
+            error_message: None,
+            analyzed_at: None,
+            updated_at: now_rfc3339(),
+        }),
+    };
+    let snapshot = build_environment_snapshot(project, selection, analyzed)?;
+    let _ = write_cached_environment_snapshot(project.root_path.as_str(), &snapshot);
+    Ok(snapshot)
+}
+
+pub(crate) async fn load_environment_snapshot(
+    project: &Project,
+) -> Result<ProjectRunEnvironmentSnapshot, String> {
+    if let Some(cached) = read_cached_environment_snapshot(project.root_path.as_str())? {
+        return Ok(cached);
+    }
+    refresh_environment_snapshot(project).await
 }
 
 pub(crate) async fn save_environment_selection(
@@ -2088,7 +2130,9 @@ pub(crate) async fn save_environment_selection(
         env_vars: normalized_env_vars,
         updated_at: now_rfc3339(),
     };
-    project_run_environment_settings::upsert(&selection).await
+    let saved = project_run_environment_settings::upsert(&selection).await?;
+    let _ = write_cached_environment_selection(project.root_path.as_str(), &saved);
+    Ok(saved)
 }
 
 pub(crate) async fn load_environment_selection(

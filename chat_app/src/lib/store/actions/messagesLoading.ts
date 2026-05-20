@@ -24,6 +24,7 @@ interface LoadingDeps {
 }
 
 export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
+  const backgroundSyncInflight = new Map<string, Promise<void>>();
   const writePaginationState = (
     target: Record<string, SessionMessagePaginationState>,
     sessionId: string,
@@ -109,14 +110,33 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
     },
 
     syncSessionMessagesInBackground: async (sessionId: string) => {
+      const normalizedSessionId = String(sessionId || '').trim();
+      if (!normalizedSessionId) {
+        return;
+      }
+      const existingInflight = backgroundSyncInflight.get(normalizedSessionId);
+      if (existingInflight) {
+        await existingInflight;
+        return;
+      }
+      const request = (async () => {
+        try {
+          const result = await fetchSessionMessages(client, normalizedSessionId, { limit: 50, before: null });
+          applySessionMessagesSnapshot(normalizedSessionId, result, {
+            updateVisibleMessages: false,
+            settleGlobalLoading: false,
+          });
+        } catch (error) {
+          console.error('Failed to sync session messages in background:', error);
+        } finally {
+          backgroundSyncInflight.delete(normalizedSessionId);
+        }
+      })();
+      backgroundSyncInflight.set(normalizedSessionId, request);
       try {
-        const result = await fetchSessionMessages(client, sessionId, { limit: 50, before: null });
-        applySessionMessagesSnapshot(sessionId, result, {
-          updateVisibleMessages: false,
-          settleGlobalLoading: false,
-        });
-      } catch (error) {
-        console.error('Failed to sync session messages in background:', error);
+        await request;
+      } catch {
+        // request already handled its own errors
       }
     },
 

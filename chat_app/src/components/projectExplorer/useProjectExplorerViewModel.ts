@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
@@ -24,11 +24,8 @@ export const useProjectExplorerViewModel = ({
   const client = apiClientFromContext || globalApiClient;
 
   const state = useProjectExplorerState(project?.id);
-  const [selectedGitRepoRoot, setSelectedGitRepoRoot] = useState<string | null>(null);
-
-  useEffect(() => {
-    setSelectedGitRepoRoot(null);
-  }, [project?.id, project?.rootPath]);
+  const filesTabActive = state.workspaceTab === 'files';
+  const settingsTabActive = state.workspaceTab === 'settings';
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
 
@@ -48,16 +45,9 @@ export const useProjectExplorerViewModel = ({
 
   const dataLoading = useProjectExplorerDataLoading({
     client,
-    projectId: project?.id,
-    projectRootPath: project?.rootPath,
-    selectedGitRepoRoot,
-    summaryLoadingRef: state.summaryLoadingRef,
     setLoadingPaths: state.setLoadingPaths,
     setError: state.setError,
     setEntriesMap: state.setEntriesMap,
-    setChangeSummary: state.setChangeSummary,
-    setSummaryError: state.setSummaryError,
-    setLoadingSummary: state.setLoadingSummary,
   });
 
   const selection = useProjectExplorerSelection({
@@ -80,6 +70,7 @@ export const useProjectExplorerViewModel = ({
   const runState = useProjectExplorerRunState({
     client,
     project,
+    enabled: settingsTabActive,
     selectedEntry: selection.selectedEntry,
     selectedPath: state.selectedPath,
     getParentPath: resolveParentPath,
@@ -104,7 +95,6 @@ export const useProjectExplorerViewModel = ({
     normalizePath: pathHelpers.normalizePath,
     toExpandedKey: pathHelpers.toExpandedKey,
     loadEntries: dataLoading.loadEntries,
-    loadChangeSummary: dataLoading.loadChangeSummary,
     clearSearch: search.clearSearch,
     clearSearchNavigation: search.clearSearchNavigation,
     clearTokenSelection: codeNav.clearTokenSelection,
@@ -126,11 +116,20 @@ export const useProjectExplorerViewModel = ({
     handleCreateFile: workspaceHandleCreateFile,
     handleDownloadSelected: workspaceHandleDownloadSelected,
     handleDeleteSelected: workspaceHandleDeleteSelected,
+    handleCopyFilePath: workspaceHandleCopyFilePath,
+    handleCopyRelativeFilePath: workspaceHandleCopyRelativeFilePath,
+    handleIgnoreFile: workspaceHandleIgnoreFile,
+    handleIgnoreFolder: workspaceHandleIgnoreFolder,
+    handleIgnoreByExtension: workspaceHandleIgnoreByExtension,
+    handleOpenPathInDefaultProgram: workspaceHandleOpenPathInDefaultProgram,
+    handleRevealInFinder: workspaceHandleRevealInFinder,
+    handleOpenInCode: workspaceHandleOpenInCode,
     handleMoveConflictCancel,
     handleMoveConflictOverwrite,
     handleMoveConflictRename,
   } = useProjectExplorerWorkspaceModel({
     project,
+    filesTabActive,
     client,
     state,
     pathHelpers,
@@ -170,6 +169,13 @@ export const useProjectExplorerViewModel = ({
     workspaceHandleCreateFile,
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
-    handleGitRepositorySelectionChanged: setSelectedGitRepoRoot,
+    workspaceHandleCopyFilePath,
+    workspaceHandleCopyRelativeFilePath,
+    workspaceHandleIgnoreFile,
+    workspaceHandleIgnoreFolder,
+    workspaceHandleIgnoreByExtension,
+    workspaceHandleOpenPathInDefaultProgram,
+    workspaceHandleRevealInFinder,
+    workspaceHandleOpenInCode,
   };
 };

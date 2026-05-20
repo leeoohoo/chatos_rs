@@ -51,12 +51,17 @@ export function createSelectSessionActions({
       }
 
       try {
+        const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
+        const visibleSnapshot = readVisibleSessionMessagesSnapshot(get(), sessionId);
+        const cachedPage = readSessionMessagesCache(get(), sessionId);
+        const sessionSnapshot = visibleSnapshot ?? cachedPage;
+        const hasImmediateSnapshot = Boolean(existingSession && sessionSnapshot);
+
         set((state: ChatStoreDraft) => {
-          state.isLoading = true;
+          state.isLoading = !hasImmediateSnapshot;
           state.error = null;
         });
 
-        const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
         if (existingSession) {
           const sessionProjectId = resolveSessionProjectScopeId(existingSession);
           set((state: ChatStoreDraft) => {
@@ -67,7 +72,7 @@ export function createSelectSessionActions({
             }
             if (!state.sessionChatState[sessionId]) {
               state.sessionChatState[sessionId] = {
-                isLoading: true,
+                isLoading: !hasImmediateSnapshot,
                 isStreaming: false,
                 isStopping: false,
                 streamingMessageId: null,
@@ -79,7 +84,7 @@ export function createSelectSessionActions({
             } else {
               state.sessionChatState[sessionId] = {
                 ...state.sessionChatState[sessionId],
-                isLoading: true,
+                isLoading: !hasImmediateSnapshot,
               };
             }
 
@@ -93,10 +98,6 @@ export function createSelectSessionActions({
             }
           });
         }
-
-        const visibleSnapshot = readVisibleSessionMessagesSnapshot(get(), sessionId);
-        const cachedPage = readSessionMessagesCache(get(), sessionId);
-        const sessionSnapshot = visibleSnapshot ?? cachedPage;
         if (!sessionSnapshot && existingSession) {
           set((state: ChatStoreDraft) => {
             state.messages = [];
@@ -146,7 +147,23 @@ export function createSelectSessionActions({
               loaded: sessionSnapshot.loaded,
             };
             state.hasMoreMessages = Boolean(sessionSnapshot.nextBefore);
+            const currentChatState = state.sessionChatState?.[sessionId];
+            if (currentChatState) {
+              state.sessionChatState[sessionId] = {
+                ...currentChatState,
+                isLoading: Boolean(currentChatState.isStreaming || currentChatState.isStopping),
+              };
+            }
+            state.isLoading = false;
           });
+          void get().syncSessionMessagesInBackground(sessionId);
+          debugLog('[Store] selectSession served from cache', {
+            sessionId,
+            previousSessionId,
+            messageCount: sessionSnapshot.messages.length,
+            nextBefore: sessionSnapshot.nextBefore,
+          });
+          return;
         }
 
         const [session, messageResult] = await Promise.all([

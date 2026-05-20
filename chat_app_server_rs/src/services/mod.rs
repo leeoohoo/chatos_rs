@@ -28,6 +28,8 @@ pub(crate) mod message_manager_common;
 pub mod model_runtime_resolver;
 pub mod notepad;
 pub mod project_run;
+pub mod project_local_cache;
+pub mod project_fs_cache;
 pub mod realtime;
 pub mod runtime_guidance_manager;
 pub mod session_mirror;

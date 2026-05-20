@@ -35,21 +35,27 @@ async fn client() -> (StatusCode, Json<Value>) {
 }
 
 async fn summary(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::summary(&query.root, query.preferred_repo_root.as_deref()).await {
+    match git::summary(
+        &query.root,
+        query.preferred_repo_root.as_deref(),
+        query.force_refresh.unwrap_or(false),
+    )
+    .await
+    {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
 async fn branches(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::branches(&query.root).await {
+    match git::branches(&query.root, query.force_refresh.unwrap_or(false)).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
 async fn status(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::status(&query.root).await {
+    match git::status(&query.root, query.force_refresh.unwrap_or(false)).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }

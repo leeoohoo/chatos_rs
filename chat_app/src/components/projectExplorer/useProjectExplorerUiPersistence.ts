@@ -8,8 +8,6 @@ interface Params {
   projectRootPath?: string;
   expandedReady: boolean;
   expandedPaths: Set<string>;
-  showOnlyChanged: boolean;
-  setShowOnlyChanged: React.Dispatch<React.SetStateAction<boolean>>;
   workspaceTab: WorkspaceTab;
   setWorkspaceTab: React.Dispatch<React.SetStateAction<WorkspaceTab>>;
   contextMenu: ExplorerContextMenuState | null;
@@ -27,8 +25,6 @@ export const useProjectExplorerUiPersistence = ({
   projectRootPath,
   expandedReady,
   expandedPaths,
-  showOnlyChanged,
-  setShowOnlyChanged,
   workspaceTab,
   contextMenu,
   setContextMenu,
@@ -44,24 +40,6 @@ export const useProjectExplorerUiPersistence = ({
     const next = Array.from(expandedPaths);
     localStorage.setItem(`project_explorer_expanded_${projectId}`, JSON.stringify(next));
   }, [expandedPaths, expandedReady, projectId, projectRootPath]);
-
-  useEffect(() => {
-    if (!projectId) {
-      setShowOnlyChanged(false);
-      return;
-    }
-    if (typeof window === 'undefined') return;
-    const saved = window.localStorage.getItem(`project_explorer_only_changed_${projectId}`);
-    setShowOnlyChanged(saved === '1');
-  }, [projectId, setShowOnlyChanged]);
-
-  useEffect(() => {
-    if (!projectId || typeof window === 'undefined') return;
-    window.localStorage.setItem(
-      `project_explorer_only_changed_${projectId}`,
-      showOnlyChanged ? '1' : '0',
-    );
-  }, [projectId, showOnlyChanged]);
 
   useEffect(() => {
     if (!projectId || typeof window === 'undefined') return;

@@ -35,6 +35,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   documentSymbols,
   documentSymbolsLoading,
   documentSymbolsError,
+  onRequestDocumentSymbols,
   onTokenSelection,
   onClearTokenSelection,
   onRequestDefinition,
@@ -107,7 +108,13 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
             documentSymbols={documentSymbols}
             targetLine={targetLine}
             onToggleDocumentSymbols={() => {
-              setDocumentSymbolsExpanded((value) => !value);
+              setDocumentSymbolsExpanded((value) => {
+                const next = !value;
+                if (next) {
+                  onRequestDocumentSymbols();
+                }
+                return next;
+              });
             }}
             onOpenPreviousSearchHit={onOpenPreviousSearchHit}
             onOpenNextSearchHit={onOpenNextSearchHit}

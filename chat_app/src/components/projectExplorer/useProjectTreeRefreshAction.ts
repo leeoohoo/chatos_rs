@@ -10,7 +10,6 @@ type UseProjectTreeRefreshActionOptions = Pick<
   | 'projectRootPath'
   | 'normalizePath'
   | 'loadEntries'
-  | 'loadChangeSummary'
   | 'setActionLoading'
   | 'setActionError'
   | 'setActionMessage'
@@ -21,7 +20,6 @@ export const useProjectTreeRefreshAction = ({
   projectRootPath,
   normalizePath,
   loadEntries,
-  loadChangeSummary,
   setActionLoading,
   setActionError,
   setActionMessage,
@@ -34,14 +32,13 @@ export const useProjectTreeRefreshAction = ({
     setActionError(null);
     setActionMessage(null);
     try {
-      await loadEntries(actionReloadPath);
+      await loadEntries(actionReloadPath, { forceRefresh: true });
       if (
         projectRootPath
         && normalizePath(actionReloadPath) !== normalizePath(projectRootPath)
       ) {
-        await loadEntries(projectRootPath);
+        await loadEntries(projectRootPath, { forceRefresh: true });
       }
-      await loadChangeSummary();
       setActionMessage(t('projectExplorer.refresh.success'));
     } catch (err) {
       setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.refresh.failed')));
@@ -50,7 +47,6 @@ export const useProjectTreeRefreshAction = ({
     }
   }, [
     actionReloadPath,
-    loadChangeSummary,
     loadEntries,
     normalizePath,
     projectRootPath,

@@ -35,11 +35,13 @@ const toActiveRun = (
 interface UseProjectRunnerTerminalPollingOptions {
   client: ApiClient;
   project: Project | null;
+  enabled?: boolean;
 }
 
 export const useProjectRunnerTerminalPolling = ({
   client,
   project,
+  enabled = true,
 }: UseProjectRunnerTerminalPollingOptions) => {
   const [projectRunState, setProjectRunState] = useState<ProjectRunState | null>(null);
   const [selectedRunInstanceId, setSelectedRunInstanceId] = useState<string | null>(null);
@@ -47,12 +49,14 @@ export const useProjectRunnerTerminalPolling = ({
   const [lastExitedRun, setLastExitedRun] = useState<ProjectRunnerActiveTerminal | null>(null);
   const [activeTerminalBusy, setActiveTerminalBusy] = useState(false);
   const activeRunRef = useRef<ProjectRunnerActiveTerminal | null>(null);
+  const runStateRequestVersionRef = useRef(0);
 
   useEffect(() => {
     activeRunRef.current = activeRun;
   }, [activeRun]);
 
   const resetActiveRunState = useCallback(() => {
+    runStateRequestVersionRef.current += 1;
     setProjectRunState(null);
     setSelectedRunInstanceId(null);
     setActiveRun(null);
@@ -103,8 +107,20 @@ export const useProjectRunnerTerminalPolling = ({
       resetActiveRunState();
       return;
     }
+    if (!enabled) {
+      return;
+    }
+    const projectId = project.id;
+    const requestVersion = ++runStateRequestVersionRef.current;
     try {
-      const raw = await client.getProjectRunState(project.id);
+      const raw = await client.getProjectRunState(projectId);
+      if (
+        runStateRequestVersionRef.current !== requestVersion
+        || !enabled
+        || project?.id !== projectId
+      ) {
+        return;
+      }
       const state = normalizeProjectRunState(raw);
       setProjectRunState(state);
       setSelectedRunInstanceId((prev) => {
@@ -116,11 +132,14 @@ export const useProjectRunnerTerminalPolling = ({
     } catch {
       // ignore refresh errors
     }
-  }, [client, project?.id, resetActiveRunState]);
+  }, [client, enabled, project?.id, resetActiveRunState]);
 
   useEffect(() => {
+    if (!enabled || !project?.id) {
+      return;
+    }
     void refreshProjectActiveRun();
-  }, [refreshProjectActiveRun]);
+  }, [enabled, project?.id, refreshProjectActiveRun]);
 
   const projectRunInstances = useMemo(
     () => projectRunState?.instances || [],
@@ -153,7 +172,7 @@ export const useProjectRunnerTerminalPolling = ({
   }, []);
 
   useProjectRunRealtime({
-    enabled: Boolean(project?.id),
+    enabled: enabled && Boolean(project?.id),
     projectId: project?.id || null,
     onRunStateChanged: async () => {
       await refreshProjectActiveRun();
@@ -172,7 +191,7 @@ export const useProjectRunnerTerminalPolling = ({
   });
 
   useTerminalStateRealtime({
-    enabled: Boolean(selectedInstance?.terminalId),
+    enabled: enabled && Boolean(selectedInstance?.terminalId),
     terminalId: selectedInstance?.terminalId || null,
     onStateChanged: async (payload) => {
       const nextStatus = readTrimmedString(payload.status) || 'idle';

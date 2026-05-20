@@ -11,6 +11,7 @@ import type { useProjectExplorerTreeStateOps } from './useProjectExplorerTreeSta
 
 export interface UseProjectExplorerWorkspaceModelParams {
   project: Project | null;
+  filesTabActive: boolean;
   client: ApiClient;
   state: ReturnType<typeof useProjectExplorerState>;
   pathHelpers: ReturnType<typeof useProjectExplorerPathHelpers>;

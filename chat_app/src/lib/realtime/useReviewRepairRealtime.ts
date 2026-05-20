@@ -10,6 +10,7 @@ interface UseReviewRepairRealtimeOptions {
   apiClient: ApiClient;
   sessionId: string | null;
   enabled?: boolean;
+  autoLoad?: boolean;
   messageCountHint?: number;
   onCompleted?: () => void | Promise<void>;
   onFailed?: (errorMessage: string) => void;
@@ -114,6 +115,7 @@ export const useReviewRepairRealtime = ({
   apiClient,
   sessionId,
   enabled = true,
+  autoLoad = true,
   messageCountHint,
   onCompleted,
   onFailed,
@@ -258,6 +260,10 @@ export const useReviewRepairRealtime = ({
       return undefined;
     }
 
+    if (!autoLoad) {
+      return undefined;
+    }
+
     if (connectionState === 'connected' && statusHydratedRef.current) {
       return undefined;
     }
@@ -274,13 +280,14 @@ export const useReviewRepairRealtime = ({
   }, [
     connectionState,
     enabled,
+    autoLoad,
     apiClient,
     applyStatusToState,
     sessionId,
   ]);
 
   useEffect(() => {
-    if (!enabled || !sessionId) {
+    if (!enabled || !sessionId || !autoLoad) {
       lastMessageCountHintRef.current = null;
       return;
     }
@@ -297,6 +304,7 @@ export const useReviewRepairRealtime = ({
     });
   }, [
     enabled,
+    autoLoad,
     messageCountHint,
     refreshReviewRepairStatus,
     sessionId,

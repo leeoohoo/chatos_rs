@@ -175,6 +175,7 @@ export const useProjectRunnerCommands = ({
       if (terminalId) {
         setManualControlAt(Date.now());
         await client.interruptTerminal(terminalId, { reason: 'project_run_restart' });
+        setActiveTerminalBusy(false);
       }
       await dispatchProjectRunTarget(selectedRunTarget, '重启成功', terminalId || null);
     } catch (error) {
@@ -183,7 +184,16 @@ export const useProjectRunnerCommands = ({
     } finally {
       setRestarting(false);
     }
-  }, [activeRun?.terminalId, client, dispatchProjectRunTarget, project?.id, selectedRunTarget, selectedTerminalId]);
+  }, [
+    activeRun?.terminalId,
+    client,
+    dispatchProjectRunTarget,
+    project?.id,
+    selectedRunTarget,
+    selectedTerminalId,
+    setActiveTerminalBusy,
+    setManualControlAt,
+  ]);
 
   const handleRunnerDelete = useCallback(async () => {
     setDeleting(true);

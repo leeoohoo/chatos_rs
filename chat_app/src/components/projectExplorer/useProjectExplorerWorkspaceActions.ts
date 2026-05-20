@@ -1,9 +1,7 @@
-import { useProjectExplorerChangeTracking } from './useProjectExplorerChangeTracking';
 import { useProjectExplorerDnd } from './useProjectExplorerDnd';
 import { useProjectTreeActions } from './useProjectTreeActions';
 
 interface UseProjectExplorerWorkspaceActionsParams {
-  changeTracking: Parameters<typeof useProjectExplorerChangeTracking>[0];
   dnd: Parameters<typeof useProjectExplorerDnd>[0];
   treeActions: Omit<
     Parameters<typeof useProjectTreeActions>[0],
@@ -14,14 +12,9 @@ interface UseProjectExplorerWorkspaceActionsParams {
 }
 
 export const useProjectExplorerWorkspaceActions = ({
-  changeTracking,
   dnd,
   treeActions,
 }: UseProjectExplorerWorkspaceActionsParams) => {
-  const {
-    aggregatedChangeKindByPath,
-  } = useProjectExplorerChangeTracking(changeTracking);
-
   const {
     canDropToDirectory,
     clearDragExpandTimer,
@@ -34,6 +27,10 @@ export const useProjectExplorerWorkspaceActions = ({
   const {
     handleCreateDirectory,
     handleCreateFile,
+    handleCopyFilePath,
+    handleCopyRelativeFilePath,
+    handleAppendGitignore,
+    handleOpenExternally,
     handleDeleteSelected,
     handleDownloadSelected,
     handleRefresh,
@@ -49,7 +46,6 @@ export const useProjectExplorerWorkspaceActions = ({
   });
 
   return {
-    aggregatedChangeKindByPath,
     canDropToDirectory,
     clearDragExpandTimer,
     cancelDragExpandIfMatches,
@@ -58,6 +54,10 @@ export const useProjectExplorerWorkspaceActions = ({
     startDragAutoScroll,
     handleCreateDirectory,
     handleCreateFile,
+    handleCopyFilePath,
+    handleCopyRelativeFilePath,
+    handleAppendGitignore,
+    handleOpenExternally,
     handleDeleteSelected,
     handleDownloadSelected,
     handleRefresh,

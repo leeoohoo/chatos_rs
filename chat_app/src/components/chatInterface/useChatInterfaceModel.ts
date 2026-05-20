@@ -86,6 +86,7 @@ export const useChatInterfaceModel = ({
     currentSession: store.currentSession,
     messages: store.messages,
     currentMessageCount: Array.isArray(store.messages) ? store.messages.length : 0,
+    currentSessionHasMoreMessages: Boolean(store.hasMoreMessages),
     runtimeContextRefreshNonce: derived.runtimeContextRefreshNonce,
     currentChatStateActiveTurnId: derived.currentChatState?.activeTurnId,
     activeConversationTurnId: resources.activeConversationTurnId,

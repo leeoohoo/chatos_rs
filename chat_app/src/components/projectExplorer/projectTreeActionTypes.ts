@@ -1,9 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react';
 
 import type {
+  FsAppendGitignoreResponse,
   FsMoveOptions,
   FsMoveResponse,
   FsMutationResponse,
+  FsOpenPathResponse,
 } from '../../lib/api/client/types';
 import type { FsEntry, FsReadResult } from '../../types';
 import type { MoveConflictState } from './Overlays';
@@ -18,6 +20,8 @@ export interface ProjectTreeActionsClient {
     targetParentPath: string,
     options?: FsMoveOptions,
   ): Promise<FsMoveResponse>;
+  appendFsGitignore(path: string, mode: 'file' | 'folder' | 'extension'): Promise<FsAppendGitignoreResponse>;
+  openFsPathExternally(path: string, mode: 'default' | 'reveal' | 'code'): Promise<FsOpenPathResponse>;
 }
 
 export interface UseProjectTreeActionsOptions {
@@ -30,8 +34,7 @@ export interface UseProjectTreeActionsOptions {
   normalizePath: (value: string) => string;
   getParentPath: (value: string) => string | null;
   toExpandedKey: (path: string) => string;
-  loadEntries: (path: string) => Promise<void>;
-  loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
+  loadEntries: (path: string, options?: { silent?: boolean; forceRefresh?: boolean }) => Promise<void>;
   pruneDeletedPath: (deletedPath: string) => void;
   replaceExpandedPathPrefix: (sourcePath: string, movedPath: string) => Set<string>;
   reloadTreeWithExpanded: (nextExpanded: Set<string>) => Promise<void>;

@@ -13,8 +13,44 @@ use super::validation::{
     discover_child_repo_roots, discover_repo_root, parse_optional_root, parse_root,
     require_repo_root, validate_relative_paths,
 };
+use crate::services::project_local_cache::{
+    cache_key, read_cache_json, write_cache_json,
+};
 
 const CHILD_REPO_DISCOVERY_LIMIT: usize = 32;
+const GIT_SUMMARY_CACHE_NAMESPACE: &str = "git";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GitSummaryCacheEntry {
+    summary: GitSummary,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GitBranchesCacheEntry {
+    branches: GitBranches,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GitStatusCacheEntry {
+    status: GitStatus,
+}
+
+fn git_summary_cache_path(query_root: &str, preferred_repo_root: Option<&str>) -> String {
+    let key = format!(
+        "{}|{}",
+        query_root.trim(),
+        preferred_repo_root.unwrap_or("").trim(),
+    );
+    format!("{GIT_SUMMARY_CACHE_NAMESPACE}/summary-{}.json", cache_key(key.as_str()))
+}
+
+fn git_branches_cache_path(root: &str) -> String {
+    format!("{GIT_SUMMARY_CACHE_NAMESPACE}/branches-{}.json", cache_key(root))
+}
+
+fn git_status_cache_path(root: &str) -> String {
+    format!("{GIT_SUMMARY_CACHE_NAMESPACE}/status-{}.json", cache_key(root))
+}
 
 pub async fn client_info() -> GitClientInfo {
     let git_bin = resolve_git_binary();
@@ -37,7 +73,22 @@ pub async fn client_info() -> GitClientInfo {
     }
 }
 
-pub async fn summary(root: &str, preferred_repo_root: Option<&str>) -> Result<GitSummary, String> {
+pub async fn summary(
+    root: &str,
+    preferred_repo_root: Option<&str>,
+    force_refresh: bool,
+) -> Result<GitSummary, String> {
+    let preferred_repo_root_text = preferred_repo_root.map(|value| value.trim().to_string());
+    if !force_refresh {
+        if let Some(cached) =
+            read_cache_json::<GitSummaryCacheEntry>(
+                root,
+                git_summary_cache_path(root, preferred_repo_root_text.as_deref()).as_str(),
+            )?
+        {
+            return Ok(cached.summary);
+        }
+    }
     let query_root = parse_root(root)?;
     let preferred_root = parse_optional_root(preferred_repo_root)?;
     if let Some(preferred_root) = preferred_root.as_ref() {
@@ -83,6 +134,13 @@ pub async fn summary(root: &str, preferred_repo_root: Option<&str>) -> Result<Gi
     summary.resolved_root = Some(selected_root_text.clone());
     summary.selected_root = Some(selected_root_text);
     summary.available_repositories = candidates;
+    let _ = write_cache_json(
+        root,
+        git_summary_cache_path(root, preferred_repo_root_text.as_deref()).as_str(),
+        &GitSummaryCacheEntry {
+            summary: summary.clone(),
+        },
+    );
     Ok(summary)
 }
 
@@ -173,7 +231,14 @@ fn normalize_path_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-pub async fn branches(root: &str) -> Result<GitBranches, String> {
+pub async fn branches(root: &str, force_refresh: bool) -> Result<GitBranches, String> {
+    if !force_refresh {
+        if let Some(cached) =
+            read_cache_json::<GitBranchesCacheEntry>(root, git_branches_cache_path(root).as_str())?
+        {
+            return Ok(cached.branches);
+        }
+    }
     let repo_root = require_repo_root(root).await?;
     let current = read_repo_summary(repo_root.as_path()).await?.current_branch;
 
@@ -267,14 +332,29 @@ pub async fn branches(root: &str) -> Result<GitBranches, String> {
     locals.sort_by(|left, right| left.name.cmp(&right.name));
     remotes.sort_by(|left, right| left.name.cmp(&right.name));
 
-    Ok(GitBranches {
+    let branches = GitBranches {
         current,
         locals,
         remotes,
-    })
+    };
+    let _ = write_cache_json(
+        root,
+        git_branches_cache_path(root).as_str(),
+        &GitBranchesCacheEntry {
+            branches: branches.clone(),
+        },
+    );
+    Ok(branches)
 }
 
-pub async fn status(root: &str) -> Result<GitStatus, String> {
+pub async fn status(root: &str, force_refresh: bool) -> Result<GitStatus, String> {
+    if !force_refresh {
+        if let Some(cached) =
+            read_cache_json::<GitStatusCacheEntry>(root, git_status_cache_path(root).as_str())?
+        {
+            return Ok(cached.status);
+        }
+    }
     let repo_root = require_repo_root(root).await?;
     let output = git_output(
         repo_root.as_path(),
@@ -282,9 +362,17 @@ pub async fn status(root: &str) -> Result<GitStatus, String> {
         DEFAULT_GIT_TIMEOUT,
     )
     .await?;
-    Ok(GitStatus {
-        files: parse_status_files(&output.stdout),
-    })
+    let status = GitStatus {
+        files: parse_status_files(repo_root.as_path(), &output.stdout),
+    };
+    let _ = write_cache_json(
+        root,
+        git_status_cache_path(root).as_str(),
+        &GitStatusCacheEntry {
+            status: status.clone(),
+        },
+    );
+    Ok(status)
 }
 
 pub async fn compare(query: GitCompareQuery) -> Result<GitCompareResult, String> {

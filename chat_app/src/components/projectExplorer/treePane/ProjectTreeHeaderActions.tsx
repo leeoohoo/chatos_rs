@@ -1,43 +1,17 @@
 import React from 'react';
 
-import type { ProjectChangeSummary } from '../../../types';
-import { cn } from '../../../lib/utils';
-
-export const ProjectTreeChangeCounters: React.FC<{
-  changeSummary: ProjectChangeSummary;
-}> = ({ changeSummary }) => (
-  <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-    <span className="inline-flex items-center gap-1">
-      <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-      新增 {changeSummary.counts.create}
-    </span>
-    <span className="inline-flex items-center gap-1">
-      <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
-      编辑 {changeSummary.counts.edit}
-    </span>
-    <span className="inline-flex items-center gap-1">
-      <span className="inline-block h-2 w-2 rounded-full bg-rose-500" />
-      删除 {changeSummary.counts.delete}
-    </span>
-  </div>
-);
-
 export const ProjectTreeHeaderActions: React.FC<{
   actionLoading: boolean;
   actionReloadPath: string | null;
-  showOnlyChanged: boolean;
   onCreateDirectoryAtRoot: () => void;
   onCreateFileAtRoot: () => void;
   onRefresh: () => void;
-  onToggleShowOnlyChanged: () => void;
 }> = ({
   actionLoading,
   actionReloadPath,
-  showOnlyChanged,
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
-  onToggleShowOnlyChanged,
 }) => (
   <div className="flex flex-wrap gap-1">
     <button
@@ -64,41 +38,17 @@ export const ProjectTreeHeaderActions: React.FC<{
     >
       刷新
     </button>
-    <button
-      type="button"
-      onClick={onToggleShowOnlyChanged}
-      className={cn(
-        'rounded border px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50',
-        showOnlyChanged
-          ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20'
-          : 'border-border hover:bg-accent',
-      )}
-    >
-      {showOnlyChanged ? '显示全部' : '仅看变更'}
-    </button>
   </div>
 );
 
 export const ProjectTreeHeaderMessages: React.FC<{
-  loadingSummary: boolean;
-  summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
 }> = ({
-  loadingSummary,
-  summaryError,
   actionMessage,
   actionError,
 }) => (
   <>
-    {loadingSummary && (
-      <div className="text-[11px] text-muted-foreground">正在加载变更...</div>
-    )}
-    {summaryError && (
-      <div className="truncate text-[11px] text-destructive" title={summaryError}>
-        {summaryError}
-      </div>
-    )}
     {actionMessage && (
       <div className="truncate text-[11px] text-emerald-600" title={actionMessage}>
         {actionMessage}

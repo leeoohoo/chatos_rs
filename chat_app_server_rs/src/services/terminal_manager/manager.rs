@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
@@ -243,9 +244,24 @@ impl TerminalsManager {
         terminal: Option<&Terminal>,
         publish_events: bool,
     ) -> Result<(), String> {
-        if let Some(session) = self.sessions.remove(id).map(|(_, s)| s) {
+        let session = self.sessions.get(id).map(|entry| entry.clone());
+        if let Some(session) = session.as_ref() {
             let _ = session.terminate();
         }
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            if self.sessions.get(id).is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if self.sessions.get(id).is_some() {
+            if let Some(session) = session.as_ref() {
+                let _ = session.force_terminate();
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        self.sessions.remove(id);
         let _ = terminals::update_terminal_status(id, Some("exited".to_string()), None, Some(0)).await;
         if publish_events {
             if let Some(terminal) = terminal {

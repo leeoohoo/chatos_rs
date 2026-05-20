@@ -1,4 +1,5 @@
 import { useProjectTreeCreateActions } from './useProjectTreeCreateActions';
+import { useProjectTreeContextActions } from './useProjectTreeContextActions';
 import { useProjectTreeDeleteAction } from './useProjectTreeDeleteAction';
 import { useProjectTreeDownloadAction } from './useProjectTreeDownloadAction';
 import { useProjectTreeRefreshAction } from './useProjectTreeRefreshAction';
@@ -16,7 +17,6 @@ type UseProjectTreeMutationActionsOptions = Pick<
   | 'getParentPath'
   | 'toExpandedKey'
   | 'loadEntries'
-  | 'loadChangeSummary'
   | 'pruneDeletedPath'
   | 'setExpandedPaths'
   | 'setSelectedPath'
@@ -30,12 +30,14 @@ type UseProjectTreeMutationActionsOptions = Pick<
 
 export const useProjectTreeMutationActions = (options: UseProjectTreeMutationActionsOptions) => {
   const createActions = useProjectTreeCreateActions(options);
+  const contextActions = useProjectTreeContextActions(options);
   const deleteAction = useProjectTreeDeleteAction(options);
   const downloadAction = useProjectTreeDownloadAction(options);
   const refreshAction = useProjectTreeRefreshAction(options);
 
   return {
     ...createActions,
+    ...contextActions,
     ...deleteAction,
     ...downloadAction,
     ...refreshAction,

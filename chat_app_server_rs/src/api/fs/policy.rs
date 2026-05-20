@@ -84,6 +84,7 @@ pub(super) struct FsPathPolicy {
 pub(super) struct AuthorizedPath {
     pub(super) path: PathBuf,
     pub(super) navigation_root: PathBuf,
+    pub(super) project_root: Option<PathBuf>,
     pub(super) can_write: bool,
 }
 
@@ -270,6 +271,9 @@ impl FsPathPolicy {
             .ok_or_else(|| FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string()))?;
         Ok(AuthorizedPath {
             navigation_root: root.path.clone(),
+            project_root: self.find_project_root(path.as_path()).map(|project_root| {
+                project_root.path.clone()
+            }),
             path,
             can_write: root.kind.can_write(),
         })
@@ -287,6 +291,14 @@ impl FsPathPolicy {
         self.roots.iter().find(|root| {
             policy_paths::normalize_path_for_compare(root.path.as_path()) == normalized
         })
+    }
+
+    fn find_project_root(&self, candidate: &Path) -> Option<&FsAllowedRoot> {
+        self.roots
+            .iter()
+            .filter(|root| root.kind == FsAllowedRootKind::Project)
+            .filter(|root| policy_paths::path_is_within_root(candidate, root.path.as_path()))
+            .max_by_key(|root| policy_paths::normalize_path_for_compare(root.path.as_path()).len())
     }
 
     fn is_exact_allowed_root(&self, candidate: &Path) -> bool {
@@ -370,6 +382,7 @@ mod tests {
         let path = super::AuthorizedPath {
             path: canonical_child,
             navigation_root: canonical_root.clone(),
+            project_root: Some(canonical_root.clone()),
             can_write: true,
         };
 

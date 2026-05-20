@@ -105,6 +105,7 @@ export const useProjectExplorerCodeNav = ({
     documentSymbols,
     documentSymbolsLoading,
     documentSymbolsError,
+    requestDocumentSymbols,
   } = useCodeNavResources({
     client,
     projectRootPath,
@@ -144,6 +145,7 @@ export const useProjectExplorerCodeNav = ({
     documentSymbols,
     documentSymbolsLoading,
     documentSymbolsError,
+    requestDocumentSymbols,
     handleTokenSelection,
     clearTokenSelection,
     requestDefinition,

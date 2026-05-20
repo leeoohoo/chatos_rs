@@ -194,7 +194,7 @@ export const useContactMemoryContext = ({
       errorMessage: '会话总结加载失败',
       load: () => loadConversationSummaryItems(apiClient, sessionId, {
         force,
-        limit: 300,
+        limit: 100,
       }),
       setError: setMemoryError,
       setLoading: setMemoryLoading,
@@ -259,8 +259,8 @@ export const useContactMemoryContext = ({
       errorMessage: '记忆加载失败',
       load: async () => {
         const [selectedSessionSummaries, recallRows] = await Promise.all([
-          loadConversationSummaryItems(apiClient, sessionId, { force, limit: 300 }),
-          apiClient.getContactAgentRecalls(normalizedContactId, { limit: 200, offset: 0 }),
+          loadConversationSummaryItems(apiClient, sessionId, { force, limit: 100 }),
+          apiClient.getContactAgentRecalls(normalizedContactId, { limit: 50, offset: 0 }),
         ]);
         return {
           selectedSessionSummaries,

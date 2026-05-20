@@ -13,7 +13,10 @@ mod response;
 mod roots;
 mod search;
 
-use self::mutate_handlers::{create_dir, create_file, delete_entry, move_entry};
+use self::mutate_handlers::{
+    append_gitignore_entry, create_dir, create_file, delete_entry, discard_git_changes,
+    move_entry, open_path_externally,
+};
 use self::query_handlers::{
     download_entry, list_dirs, list_entries, read_file, search_content, search_entries,
 };
@@ -28,6 +31,9 @@ pub fn router() -> Router {
         .route("/api/fs/touch", post(create_file))
         .route("/api/fs/delete", post(delete_entry))
         .route("/api/fs/move", post(move_entry))
+        .route("/api/fs/gitignore", post(append_gitignore_entry))
+        .route("/api/fs/open", post(open_path_externally))
+        .route("/api/fs/discard-git-changes", post(discard_git_changes))
         .route("/api/fs/download", get(download_entry))
         .route("/api/fs/read", get(read_file))
 }

@@ -12,6 +12,7 @@ export type { ProjectRunnerActiveTerminal } from '../../lib/domain/projectRunner
 interface UseProjectExplorerRunStateParams {
   client: ApiClient;
   project: Project | null;
+  enabled: boolean;
   selectedEntry: FsEntry | null;
   selectedPath: string | null;
   getParentPath: (path: string | null | undefined) => string;
@@ -23,6 +24,7 @@ interface UseProjectExplorerRunStateParams {
 export const useProjectExplorerRunState = ({
   client,
   project,
+  enabled,
   selectedEntry,
   selectedPath,
   getParentPath,
@@ -37,8 +39,8 @@ export const useProjectExplorerRunState = ({
   void setActionLoading;
   void setActionMessage;
 
-  const runnerCatalog = useProjectRunnerCatalogState({ client, project });
-  const runnerTerminal = useProjectRunnerTerminalPolling({ client, project });
+  const runnerCatalog = useProjectRunnerCatalogState({ client, project, enabled });
+  const runnerTerminal = useProjectRunnerTerminalPolling({ client, project, enabled });
   const runnerCommands = useProjectRunnerCommands({
     client,
     project,
@@ -71,19 +73,15 @@ export const useProjectExplorerRunState = ({
 
   useEffect(() => {
     const nextProjectId = project?.id || null;
-    if (lastInitializedProjectIdRef.current === nextProjectId) {
+    if (!enabled || !nextProjectId || lastInitializedProjectIdRef.current === nextProjectId) {
       return;
     }
     lastInitializedProjectIdRef.current = nextProjectId;
-    runnerCatalog.resetRunnerCatalogState();
-    runnerCommands.resetRunnerCommandState();
-    runnerTerminal.resetActiveRunState();
-    if (!nextProjectId) {
-      return;
-    }
-    void runnerCatalog.refreshRunnerState();
+    void runnerCatalog.loadRunCatalog('catalog');
   }, [
+    enabled,
     project?.id,
+    runnerCatalog.loadRunCatalog,
   ]);
 
   const selectedRunTarget = useMemo(
@@ -106,16 +104,6 @@ export const useProjectExplorerRunState = ({
     runnerCommands.runnerDiagnosis,
     runnerCommands.runnerError,
     selectedRunTarget,
-  ]);
-
-  const refreshRunnerState = useMemo(() => async () => {
-    await Promise.all([
-      runnerCatalog.refreshRunnerState(),
-      runnerTerminal.refreshProjectActiveRun(),
-    ]);
-  }, [
-    runnerCatalog.refreshRunnerState,
-    runnerTerminal.refreshProjectActiveRun,
   ]);
 
   return {
@@ -162,6 +150,9 @@ export const useProjectExplorerRunState = ({
     handleRunnerStop: runnerCommands.handleRunnerStop,
     handleRunnerRestart: runnerCommands.handleRunnerRestart,
     handleRunnerDelete: runnerCommands.handleRunnerDelete,
-    refreshRunnerState,
+    refreshRunnerState: async () => {
+      await runnerCatalog.refreshRunnerState('analyze');
+      await runnerTerminal.refreshProjectActiveRun();
+    },
   };
 };

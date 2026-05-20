@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { resolveSessionProjectScopeId } from '../../../features/contactSession/sessionResolver';
 import { countPendingReviewRepairMessages } from '../../../lib/domain/reviewRepair';
@@ -11,18 +11,8 @@ import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
 import { useReviewRepairRealtime } from '../../../lib/realtime/useReviewRepairRealtime';
 import { useConversationSummariesRealtime } from '../../../lib/realtime/useConversationSummariesRealtime';
 import {
-  syncTaskReviewPanelsSnapshot,
-  syncUiPromptPanelsSnapshot,
+  pickFirstSessionPanel,
 } from '../../chatInterface/panelStateSync';
-import {
-  loadPendingTaskReviewPanels,
-  peekPendingTaskReviewCacheEntry,
-} from '../../chatInterface/pendingTaskReviewCache';
-import {
-  loadPendingUiPromptPanels,
-  peekPendingUiPromptCacheEntry,
-} from '../../chatInterface/pendingUiPromptCache';
-import { syncPendingPanelsFromCacheOrLoad } from '../../chatInterface/pendingPanelSync';
 
 interface UseTeamMembersRuntimeResourcesOptions {
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
@@ -55,17 +45,6 @@ export const useTeamMembersRuntimeResources = ({
     upsertUiPromptPanel,
     removeUiPromptPanel,
   } = store;
-  const taskReviewPanelsBySessionRef = useRef(taskReviewPanelsBySession);
-  const uiPromptPanelsBySessionRef = useRef(uiPromptPanelsBySession);
-
-  useEffect(() => {
-    taskReviewPanelsBySessionRef.current = taskReviewPanelsBySession;
-  }, [taskReviewPanelsBySession]);
-
-  useEffect(() => {
-    uiPromptPanelsBySessionRef.current = uiPromptPanelsBySession;
-  }, [uiPromptPanelsBySession]);
-
   const {
     normalizedProjectId,
     ensureContactSession,
@@ -110,78 +89,6 @@ export const useTeamMembersRuntimeResources = ({
   useEffect(() => {
     setTaskHistoryOpen(false);
   }, [conversation.isSelectedSessionActive, conversation.selectedProjectSession?.id]);
-
-  useEffect(() => {
-    const sessionIds = members.projectContacts
-      .map((item) => String(item.session?.id || '').trim())
-      .filter((sessionId, index, arr) => sessionId.length > 0 && arr.indexOf(sessionId) === index);
-    if (sessionIds.length === 0) {
-      return;
-    }
-
-    let cancelled = false;
-    const cleanupFns: Array<(() => void) | undefined> = [];
-    let activeCleanup: (() => void) | undefined;
-
-    const preloadPendingPanels = async () => {
-      for (const sessionId of sessionIds) {
-        if (cancelled) {
-          return;
-        }
-
-        activeCleanup = syncPendingPanelsFromCacheOrLoad({
-          cachedEntry: peekPendingTaskReviewCacheEntry(apiClient, sessionId),
-          loadPanels: () => loadPendingTaskReviewPanels(apiClient, sessionId, { limit: 50 }),
-          applyPanels: (panels) => {
-            syncTaskReviewPanelsSnapshot({
-              sessionId,
-              panels,
-              existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
-              upsertTaskReviewPanel,
-              removeTaskReviewPanel,
-            });
-          },
-          shouldApply: () => !cancelled,
-        });
-        cleanupFns.push(activeCleanup);
-
-        activeCleanup = syncPendingPanelsFromCacheOrLoad({
-          cachedEntry: peekPendingUiPromptCacheEntry(apiClient, sessionId),
-          loadPanels: () => loadPendingUiPromptPanels(apiClient, sessionId, { limit: 50 }),
-          applyPanels: (panels) => {
-            syncUiPromptPanelsSnapshot({
-              sessionId,
-              panels,
-              existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
-              upsertUiPromptPanel,
-              removeUiPromptPanel,
-            });
-          },
-          shouldApply: () => !cancelled,
-        });
-        cleanupFns.push(activeCleanup);
-
-        await Promise.resolve();
-      }
-    };
-
-    void preloadPendingPanels();
-
-    return () => {
-      cancelled = true;
-      activeCleanup?.();
-      cleanupFns.forEach((cleanup) => {
-        cleanup?.();
-      });
-    };
-  }, [
-    apiClient,
-    members.projectContacts,
-    removeTaskReviewPanel,
-    removeUiPromptPanel,
-    upsertTaskReviewPanel,
-    upsertUiPromptPanel,
-  ]);
 
   const workbar = useSessionWorkbarPanels({
     apiClient,
@@ -280,6 +187,8 @@ export const useTeamMembersRuntimeResources = ({
   } = useReviewRepairRealtime({
     apiClient,
     sessionId: conversation.selectedProjectSession?.id || null,
+    enabled: Boolean(conversation.selectedProjectSession?.id),
+    autoLoad: false,
     messageCountHint: conversation.selectedProjectSession?.id
       ? messages.length
       : undefined,
@@ -305,9 +214,24 @@ export const useTeamMembersRuntimeResources = ({
     }
     return countPendingReviewRepairMessages(messages, selectedSessionId);
   }, [conversation.selectedProjectSession?.id, messages]);
-  const reviewRepairDisabled = !reviewRepairRunning
-    && reviewRepairPendingCount === 0
-    && loadedReviewRepairPendingCount === 0;
+  const activeTaskReviewPanel = useMemo(
+    () => pickFirstSessionPanel(taskReviewPanelsBySession, conversation.selectedProjectSession?.id || null),
+    [conversation.selectedProjectSession?.id, taskReviewPanelsBySession],
+  );
+  const activeUiPromptPanel = useMemo(
+    () => pickFirstSessionPanel(uiPromptPanelsBySession, conversation.selectedProjectSession?.id || null),
+    [conversation.selectedProjectSession?.id, uiPromptPanelsBySession],
+  );
+  const pendingWorkbarPanelCount = (activeTaskReviewPanel ? 1 : 0) + (activeUiPromptPanel ? 1 : 0);
+  const effectiveReviewRepairPendingCount = reviewRepairPendingCount ?? 0;
+  const reviewRepairDisabled = !conversation.isSelectedSessionActive
+    || (
+      !reviewRepairRunning
+      && effectiveReviewRepairPendingCount === 0
+    && loadedReviewRepairPendingCount === 0
+    && pendingWorkbarPanelCount === 0
+      && !store.sessionMessagePaginationState?.[conversation.selectedProjectSession?.id || '']?.nextBefore
+    );
 
   const handleRunReviewRepair = useCallback(async (sessionId: string) => {
     if (!sessionId) {

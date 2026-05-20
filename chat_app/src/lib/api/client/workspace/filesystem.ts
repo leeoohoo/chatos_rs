@@ -1,19 +1,31 @@
 import { buildQuery } from '../shared';
 import type {
+  FsAppendGitignoreResponse,
   FsContentSearchResponse,
+  FsDiscardGitChangesResponse,
   FsEntriesResponse,
+  FsListEntriesOptions,
   FsMoveResponse,
   FsMutationResponse,
+  FsOpenPathResponse,
   FsReadFileResponse,
 } from '../types';
 import type { ApiRequestFn } from './common';
 
-export const listFsDirectories = (request: ApiRequestFn, path?: string): Promise<FsEntriesResponse> => {
-  return request<FsEntriesResponse>(`/fs/list${buildQuery({ path })}`);
+export const listFsDirectories = (
+  request: ApiRequestFn,
+  path?: string,
+  options?: FsListEntriesOptions,
+): Promise<FsEntriesResponse> => {
+  return request<FsEntriesResponse>(`/fs/list${buildQuery({ path, force_refresh: options?.forceRefresh })}`);
 };
 
-export const listFsEntries = (request: ApiRequestFn, path?: string): Promise<FsEntriesResponse> => {
-  return request<FsEntriesResponse>(`/fs/entries${buildQuery({ path })}`);
+export const listFsEntries = (
+  request: ApiRequestFn,
+  path?: string,
+  options?: FsListEntriesOptions,
+): Promise<FsEntriesResponse> => {
+  return request<FsEntriesResponse>(`/fs/entries${buildQuery({ path, force_refresh: options?.forceRefresh })}`);
 };
 
 export const searchFsEntries = (
@@ -105,6 +117,46 @@ export const moveFsEntry = (
       target_parent_path: targetParentPath,
       target_name: options?.targetName,
       replace_existing: options?.replaceExisting,
+    }),
+  });
+};
+
+export const appendFsGitignore = (
+  request: ApiRequestFn,
+  path: string,
+  mode: 'file' | 'folder' | 'extension',
+): Promise<FsAppendGitignoreResponse> => {
+  return request<FsAppendGitignoreResponse>('/fs/gitignore', {
+    method: 'POST',
+    body: JSON.stringify({
+      path,
+      mode,
+    }),
+  });
+};
+
+export const openFsPathExternally = (
+  request: ApiRequestFn,
+  path: string,
+  mode: 'default' | 'reveal' | 'code',
+): Promise<FsOpenPathResponse> => {
+  return request<FsOpenPathResponse>('/fs/open', {
+    method: 'POST',
+    body: JSON.stringify({
+      path,
+      mode,
+    }),
+  });
+};
+
+export const discardFsGitChanges = (
+  request: ApiRequestFn,
+  path: string,
+): Promise<FsDiscardGitChangesResponse> => {
+  return request<FsDiscardGitChangesResponse>('/fs/discard-git-changes', {
+    method: 'POST',
+    body: JSON.stringify({
+      path,
     }),
   });
 };

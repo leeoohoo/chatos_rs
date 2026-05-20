@@ -11,6 +11,7 @@ import type { UseProjectExplorerWorkspaceModelParams } from './workspaceModelTyp
 
 export const useProjectExplorerWorkspaceModel = ({
   project,
+  filesTabActive,
   client,
   state,
   pathHelpers,
@@ -23,6 +24,7 @@ export const useProjectExplorerWorkspaceModel = ({
 }: UseProjectExplorerWorkspaceModelParams) => {
   const modelParams = {
     project,
+    filesTabActive,
     client,
     state,
     pathHelpers,

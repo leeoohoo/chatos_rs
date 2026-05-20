@@ -102,6 +102,14 @@ interface EntryContextMenuProps {
   onCreateDirectory: (path: string) => void;
   onCreateFile: (path: string) => void;
   onDownload: (entry: FsEntry) => void;
+  onCopyFilePath: (entry: FsEntry) => void;
+  onCopyRelativeFilePath: (entry: FsEntry) => void;
+  onIgnoreFile: (entry: FsEntry) => void;
+  onIgnoreFolder: (entry: FsEntry) => void;
+  onIgnoreByExtension: (entry: FsEntry) => void;
+  onOpenPathInDefaultProgram: (entry: FsEntry) => void;
+  onRevealInFinder: (entry: FsEntry) => void;
+  onOpenInCode: (entry: FsEntry) => void;
   onDelete: (entry: FsEntry) => void;
 }
 
@@ -112,12 +120,28 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
   onCreateDirectory,
   onCreateFile,
   onDownload,
+  onCopyFilePath,
+  onCopyRelativeFilePath,
+  onIgnoreFile,
+  onIgnoreFolder,
+  onIgnoreByExtension,
+  onOpenPathInDefaultProgram,
+  onRevealInFinder,
+  onOpenInCode,
   onDelete,
 }) => {
   const { t } = useI18n();
   if (!contextMenu || !contextMenuStyle) {
     return null;
   }
+
+  const { entry } = contextMenu;
+  const fileExtension = entry.isDir
+    ? ''
+    : entry.name.includes('.')
+      ? entry.name.split('.').pop()?.trim() || ''
+      : '';
+  const hasIgnoreByExtension = !entry.isDir && fileExtension.length > 0;
 
   return (
     <div
@@ -127,29 +151,96 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
       onContextMenu={(event) => event.preventDefault()}
     >
       <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
-        {contextMenu.entry.isDir ? t('projectExplorer.context.folder') : t('projectExplorer.context.file')}：{contextMenu.entry.path}
+        {entry.isDir ? t('projectExplorer.context.folder') : t('projectExplorer.context.file')}：{entry.path}
       </div>
-      {contextMenu.entry.isDir && (
+      {entry.isDir && (
         <button
           type="button"
-          onClick={() => onCreateDirectory(contextMenu.entry.path)}
+          onClick={() => onCreateDirectory(entry.path)}
           className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
         >
           {t('projectExplorer.context.createDirectory')}
         </button>
       )}
-      {contextMenu.entry.isDir && (
+      {entry.isDir && (
         <button
           type="button"
-          onClick={() => onCreateFile(contextMenu.entry.path)}
+          onClick={() => onCreateFile(entry.path)}
           className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
         >
           {t('projectExplorer.context.createFile')}
         </button>
       )}
+      {entry.isDir ? (
+        <button
+          type="button"
+          onClick={() => onIgnoreFolder(entry)}
+          disabled={isContextRootEntry}
+          className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {t('projectExplorer.context.ignoreFolder')}
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => onIgnoreFile(entry)}
+            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+          >
+            {t('projectExplorer.context.ignoreFile')}
+          </button>
+          {hasIgnoreByExtension && (
+            <button
+              type="button"
+              onClick={() => onIgnoreByExtension(entry)}
+              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+            >
+              {t('projectExplorer.context.ignoreByExtension', { extension: fileExtension })}
+            </button>
+          )}
+        </>
+      )}
+      <div className="my-1 h-px bg-border" />
       <button
         type="button"
-        onClick={() => onDownload(contextMenu.entry)}
+        onClick={() => onCopyFilePath(entry)}
+        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+      >
+        {t('projectExplorer.context.copyPath')}
+      </button>
+      <button
+        type="button"
+        onClick={() => onCopyRelativeFilePath(entry)}
+        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+      >
+        {t('projectExplorer.context.copyRelativePath')}
+      </button>
+      <div className="my-1 h-px bg-border" />
+      <button
+        type="button"
+        onClick={() => onRevealInFinder(entry)}
+        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+      >
+        {t('projectExplorer.context.revealInFinder')}
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenInCode(entry)}
+        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+      >
+        {t('projectExplorer.context.openInCode')}
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenPathInDefaultProgram(entry)}
+        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+      >
+        {t('projectExplorer.context.openDefault')}
+      </button>
+      <div className="my-1 h-px bg-border" />
+      <button
+        type="button"
+        onClick={() => onDownload(entry)}
         className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
       >
         {t('projectExplorer.context.download')}

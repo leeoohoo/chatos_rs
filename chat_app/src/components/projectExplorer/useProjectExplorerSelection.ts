@@ -17,7 +17,7 @@ interface UseProjectExplorerSelectionParams {
   clearSearchNavigation: () => void;
   normalizePath: (path: string) => string;
   getParentPath: (path: string | null | undefined) => string;
-  loadEntries: (path: string) => Promise<void>;
+  loadEntries: (path: string, options?: { silent?: boolean; forceRefresh?: boolean }) => Promise<void>;
   setActionError: (value: string | null) => void;
   setSelectedPath: (value: string | null) => void;
   setSelectedFile: (value: FsReadResult | null) => void;

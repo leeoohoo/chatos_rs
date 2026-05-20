@@ -1,5 +1,7 @@
 #[path = "analyzer.rs"]
 mod analyzer;
+#[path = "cache.rs"]
+mod cache;
 #[path = "dispatcher.rs"]
 mod dispatcher;
 #[path = "environment.rs"]
@@ -27,12 +29,19 @@ pub struct RunExecutionInput {
     pub create_if_missing: bool,
 }
 
-pub(crate) use self::analyzer::{analyze_project, apply_default_target};
+pub(crate) use self::analyzer::{
+    analyze_project, apply_default_target, classify_project_run_path_change,
+    ProjectRunPathChangeKind,
+};
 pub(crate) use self::dispatcher::{
     dispatch_command, resolve_execution, validate_command_preflight,
 };
+pub(crate) use self::cache::{
+    clear_cached_environment_snapshot, read_cached_catalog, write_cached_catalog,
+};
 pub(crate) use self::environment::{
     env_overrides_for_target, load_environment_selection, load_environment_snapshot,
+    refresh_environment_snapshot,
     resolve_command_with_toolchains, save_environment_selection,
     validate_project_run_target,
 };

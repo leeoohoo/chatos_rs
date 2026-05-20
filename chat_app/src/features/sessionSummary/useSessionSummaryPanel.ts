@@ -114,7 +114,7 @@ export const useSessionSummaryPanel = (
       return;
     }
     const normalized = applyConversationSummaryItemsSnapshot(apiClient, sessionId, payload, {
-      loadedLimit: 200,
+      loadedLimit: 100,
     });
     summaryStaleSessionsRef.current.delete(sessionId);
     if (currentSummarySessionIdRef.current !== sessionId) {
@@ -177,7 +177,7 @@ export const useSessionSummaryPanel = (
     try {
       const normalized = await loadConversationSummaryItems(apiClient, sessionId, {
         force,
-        limit: 200,
+        limit: 100,
       });
       if (
         summaryLoadSeqRef.current !== requestSeq
