@@ -8,7 +8,7 @@ export interface McpManagerProps {
     mcpConfigs: McpConfig[];
     updateMcpConfig: (config: McpConfig) => Promise<McpConfig | null>;
     deleteMcpConfig: (id: string) => Promise<void>;
-    loadMcpConfigs: () => Promise<void>;
+    loadMcpConfigs: (options?: { forceRefresh?: boolean }) => Promise<void>;
   };
 }
 

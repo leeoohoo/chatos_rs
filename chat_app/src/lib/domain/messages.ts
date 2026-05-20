@@ -25,6 +25,7 @@ type NormalizedRawMessage = {
   reasoning: unknown;
   role: Message['role'];
   sessionId: string;
+  status: Message['status'];
   summary?: string;
   summaryId?: string | null;
   summarizedAt?: string | null;
@@ -152,6 +153,23 @@ const parseMessageMetadata = (metadata: unknown): unknown => {
   }
 };
 
+const normalizeMessageStatus = (value: unknown): Message['status'] => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (normalized === 'in_progress' || normalized === 'queued' || normalized === 'pending' || normalized === 'incomplete') {
+    return 'streaming';
+  }
+  if (normalized === 'streaming') {
+    return 'streaming';
+  }
+  if (normalized === 'error' || normalized === 'failed' || normalized === 'cancelled' || normalized === 'canceled') {
+    return 'error';
+  }
+  if (normalized === 'completed' || normalized === 'complete' || normalized === 'done') {
+    return 'completed';
+  }
+  return 'completed';
+};
+
 export const normalizeTurnId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
@@ -223,6 +241,13 @@ export const normalizeRawMessages = (
       sessionId: typeof conversationId === 'string' ? conversationId : sessionId,
       role: readValue(messageRecord, 'role') as Message['role'],
       content: typeof rawContent === 'string' ? rawContent : String(rawContent ?? ''),
+      status: normalizeMessageStatus(
+        readValue(metadata, 'response_status')
+        ?? readValue(metadata, 'responseStatus')
+        ?? readValue(metadata, 'finish_reason')
+        ?? readValue(metadata, 'finishReason')
+        ?? readValue(metadata, 'status'),
+      ),
       summary: readValue(messageRecord, 'summary') as string | undefined,
       summaryStatus: typeof readValue(messageRecord, 'summary_status') === 'string'
         ? String(readValue(messageRecord, 'summary_status'))
@@ -364,7 +389,7 @@ export const normalizeRawMessages = (
       content: message.content,
       rawContent: message.summary,
       tokensUsed: undefined,
-      status: 'completed' as const,
+      status: message.status,
       createdAt: message.createdAt,
       updatedAt: undefined,
       summaryStatus: message.summaryStatus,

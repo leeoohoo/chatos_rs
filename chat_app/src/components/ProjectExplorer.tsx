@@ -69,13 +69,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
         activeTab={workspaceTab}
         onChange={setWorkspaceTab}
         rightActions={(
-          <GitBranchButton
-            client={client}
-            projectId={project.id}
-            projectRoot={project.rootPath}
-            enabled={workspaceTab === 'files'}
-            onRepositoryChanged={handleGitRepositoryChanged}
-          />
+          workspaceTab === 'files' ? (
+            <GitBranchButton
+              client={client}
+              projectId={project.id}
+              projectRoot={project.rootPath}
+              onRepositoryChanged={handleGitRepositoryChanged}
+            />
+          ) : null
         )}
       />
 

@@ -104,6 +104,9 @@ export const useSessionWorkbarPanels = ({
       resetAllWorkbarState();
       return;
     }
+    if (!preferredTurnId) {
+      return;
+    }
     void loadCurrentTurnWorkbarTasks(sessionId, preferredTurnId);
   }, [
     enabled,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Message, Session } from '../../../types';
 import type {
@@ -7,9 +7,12 @@ import type {
 } from '../types';
 import { createSelectSessionActions } from './sessions/selectSession';
 import {
+  mergeLatestCompactHistorySnapshot,
   readSessionMessagesCache,
+  readVisibleSessionMessagesSnapshot,
   writeSessionMessagesCache,
 } from './sessionsUtils';
+import { setRealtimeConnectionStateSnapshot } from '../../realtime/state';
 
 vi.mock('../helpers/sessions', () => ({
   fetchSession: vi.fn(),
@@ -23,6 +26,11 @@ import { fetchSession } from '../helpers/sessions';
 import { fetchSessionMessages } from '../helpers/messages';
 
 type FetchSessionMessagesResult = Awaited<ReturnType<typeof fetchSessionMessages>>;
+
+afterEach(() => {
+  setRealtimeConnectionStateSnapshot('idle');
+  vi.clearAllMocks();
+});
 
 const createSession = (id: string): Session => ({
   id,
@@ -57,7 +65,163 @@ const createMessage = (
   metadata,
 });
 
+const installBackgroundSyncSpy = (state: ChatStoreShape) => {
+  const syncSessionMessagesInBackground = vi.fn(async (sessionId: string) => {
+    const result = await fetchSessionMessages({} as never, sessionId, { limit: 50, before: null });
+    const preservedSnapshot = (
+      readVisibleSessionMessagesSnapshot(state, sessionId)
+      ?? readSessionMessagesCache(state, sessionId)
+    );
+    const mergedSnapshot = mergeLatestCompactHistorySnapshot(
+      result.messages,
+      result.nextBefore,
+      preservedSnapshot,
+    );
+    writeSessionMessagesCache(state, sessionId, {
+      messages: mergedSnapshot.messages,
+      nextBefore: mergedSnapshot.nextBefore,
+      loaded: true,
+    });
+  });
+  (state as ChatStoreShape & {
+    syncSessionMessagesInBackground: typeof syncSessionMessagesInBackground;
+  }).syncSessionMessagesInBackground = syncSessionMessagesInBackground;
+  return syncSessionMessagesInBackground;
+};
+
 describe('selectSession', () => {
+  it('skips background compact-history sync when realtime is connected and cache is fresh', async () => {
+    setRealtimeConnectionStateSnapshot('connected');
+    const now = Date.now();
+    const state = {
+      sessions: [createSession('session_1')],
+      currentSessionId: null,
+      currentSession: null,
+      activePanel: 'chat',
+      messages: [],
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      hasMoreMessages: true,
+      error: null,
+      selectedModelId: null,
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionChatState: {},
+      sessionMessagePaginationState: {},
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    installBackgroundSyncSpy(state);
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSession).mockImplementation(async (_client, sessionId) => (
+      createSession(sessionId)
+    ));
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [createMessage('session_1', 'msg_1', 'cached 1', {
+        conversation_turn_id: 'turn_1',
+      })],
+      hasMore: true,
+      nextBefore: 'turn_1',
+    });
+
+    writeSessionMessagesCache(state, 'session_1', {
+      messages: [createMessage('session_1', 'msg_1', 'cached 1', {
+        conversation_turn_id: 'turn_1',
+      })],
+      nextBefore: 'turn_1',
+      loaded: true,
+    });
+    const cacheEntry = state.sessionMessagesCache.session_1;
+    if (cacheEntry) {
+      cacheEntry.fetchedAt = now;
+    }
+    const session = createSession('session_1');
+    session.updatedAt = new Date(now - 1000);
+    session.createdAt = new Date(now - 1000);
+    state.sessions = [session];
+
+    const actions = createSelectSessionActions({
+      set,
+      get,
+      client: {} as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '' }),
+    });
+
+    await actions.selectSession('session_1');
+
+    expect(fetchSessionMessages).toHaveBeenCalledTimes(0);
+    expect(state.messages.map((message) => message.id)).toEqual(['msg_1']);
+  });
+
+  it('keeps background compact-history sync when realtime is disconnected', async () => {
+    setRealtimeConnectionStateSnapshot('disconnected');
+    const state = {
+      sessions: [createSession('session_1')],
+      currentSessionId: null,
+      currentSession: null,
+      activePanel: 'chat',
+      messages: [],
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      hasMoreMessages: true,
+      error: null,
+      selectedModelId: null,
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionChatState: {},
+      sessionMessagePaginationState: {},
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    installBackgroundSyncSpy(state);
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSession).mockImplementation(async (_client, sessionId) => (
+      createSession(sessionId)
+    ));
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [createMessage('session_1', 'msg_1', 'cached 1', {
+        conversation_turn_id: 'turn_1',
+      })],
+      hasMore: true,
+      nextBefore: 'turn_1',
+    });
+
+    writeSessionMessagesCache(state, 'session_1', {
+      messages: [createMessage('session_1', 'msg_1', 'cached 1', {
+        conversation_turn_id: 'turn_1',
+      })],
+      nextBefore: 'turn_1',
+      loaded: true,
+    });
+
+    const actions = createSelectSessionActions({
+      set,
+      get,
+      client: {} as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '' }),
+    });
+
+    await actions.selectSession('session_1');
+
+    expect(fetchSessionMessages).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores stale results from an earlier slower selection request', async () => {
     const state = {
       sessions: [createSession('session_1'), createSession('session_2')],
@@ -80,6 +244,7 @@ describe('selectSession', () => {
       sessionStreamingMessageDrafts: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
+    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -170,6 +335,7 @@ describe('selectSession', () => {
       sessionStreamingMessageDrafts: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
+    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -258,6 +424,7 @@ describe('selectSession', () => {
       sessionStreamingMessageDrafts: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
+    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -329,6 +496,7 @@ describe('selectSession', () => {
       sessionStreamingMessageDrafts: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
+    const backgroundSync = installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -369,6 +537,7 @@ describe('selectSession', () => {
     };
 
     await actions.selectSession('session_1');
+    await backgroundSync.mock.results[0]?.value;
 
     expect(state.messages.map((message) => message.id)).toEqual(['msg_older', 'msg_latest']);
     expect(state.sessionMessagePaginationState.session_1).toEqual({
@@ -405,6 +574,7 @@ describe('selectSession', () => {
       sessionStreamingMessageDrafts: {},
       sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
+    const backgroundSync = installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -464,11 +634,82 @@ describe('selectSession', () => {
       nextBefore: 'turn_1',
     });
     await selectionPromise;
+    await backgroundSync.mock.results[0]?.value;
 
     expect(state.sessionMessagesCacheOrder[0]).toBe('session_1');
     expect(readSessionMessagesCache(state, 'session_1')).toMatchObject({
       nextBefore: 'turn_1',
       loaded: true,
     });
+  });
+
+  it('still backgrounds compact-history sync when cached snapshot is older than the session update', async () => {
+    setRealtimeConnectionStateSnapshot('connected');
+    const now = Date.now();
+    const state = {
+      sessions: [createSession('session_1')],
+      currentSessionId: null,
+      currentSession: null,
+      activePanel: 'chat',
+      messages: [],
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      hasMoreMessages: true,
+      error: null,
+      selectedModelId: null,
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionChatState: {},
+      sessionMessagePaginationState: {},
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    installBackgroundSyncSpy(state);
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSession).mockImplementation(async (_client, sessionId) => (
+      createSession(sessionId)
+    ));
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [createMessage('session_1', 'msg_1', 'cached 1', {
+        conversation_turn_id: 'turn_1',
+      })],
+      hasMore: true,
+      nextBefore: 'turn_1',
+    });
+
+    writeSessionMessagesCache(state, 'session_1', {
+      messages: [createMessage('session_1', 'msg_1', 'cached 1', {
+        conversation_turn_id: 'turn_1',
+      })],
+      nextBefore: 'turn_1',
+      loaded: true,
+    });
+    const cacheEntry = state.sessionMessagesCache.session_1;
+    if (cacheEntry) {
+      cacheEntry.fetchedAt = now - 60_000;
+    }
+    const session = createSession('session_1');
+    session.updatedAt = new Date(now);
+    session.createdAt = new Date(now);
+    state.sessions = [session];
+
+    const actions = createSelectSessionActions({
+      set,
+      get,
+      client: {} as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '' }),
+    });
+
+    await actions.selectSession('session_1');
+
+    expect(fetchSessionMessages).toHaveBeenCalledTimes(1);
   });
 });

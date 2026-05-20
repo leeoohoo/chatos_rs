@@ -29,7 +29,7 @@ export type {
 export { buildMcpToolsetPresets } from './mcpSelection/mcpToolsetPresets';
 
 interface McpApiClient {
-  getMcpConfigs: () => Promise<unknown>;
+  getMcpConfigs: (userId?: string, options?: { forceRefresh?: boolean }) => Promise<unknown>;
 }
 
 interface UseMcpSelectionOptions {
@@ -143,11 +143,13 @@ export const useMcpSelection = ({
   }, [normalizedProjectScopeKey, projectDefaultsVersion]);
   const hasProjectMcpDefault = !!projectMcpDefault;
 
-  const loadAvailableMcpConfigs = useCallback(async () => {
+  const loadAvailableMcpConfigs = useCallback(async (options?: { forceRefresh?: boolean }) => {
     setMcpConfigsLoading(true);
     setMcpConfigsError(null);
     try {
-      const rows = await client.getMcpConfigs();
+      const rows = await client.getMcpConfigs(undefined, {
+        forceRefresh: options?.forceRefresh === true,
+      });
       setAvailableMcpConfigs(normalizeSelectableMcpConfigs(rows));
     } catch (error) {
       setMcpConfigsError(error instanceof Error ? error.message : '加载 MCP 列表失败');

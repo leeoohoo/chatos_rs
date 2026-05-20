@@ -140,6 +140,47 @@ export const readSessionMessagesCache = (
   };
 };
 
+export const readSessionMessagesCacheFetchedAt = (
+  state: Pick<ChatState, 'sessionMessagesCache'>,
+  sessionId: string,
+): number => {
+  const cached = state.sessionMessagesCache?.[sessionId];
+  return typeof cached?.fetchedAt === 'number' && Number.isFinite(cached.fetchedAt)
+    ? cached.fetchedAt
+    : 0;
+};
+
+export const isSessionMessagesCacheFresh = (
+  state: Pick<ChatState, 'sessionMessagesCache'>,
+  sessionId: string,
+  options?: {
+    minFetchedAt?: number;
+    maxAgeMs?: number;
+    now?: number;
+  },
+): boolean => {
+  const fetchedAt = readSessionMessagesCacheFetchedAt(state, sessionId);
+  if (fetchedAt <= 0) {
+    return false;
+  }
+
+  const minFetchedAt = typeof options?.minFetchedAt === 'number' && Number.isFinite(options.minFetchedAt)
+    ? options.minFetchedAt
+    : 0;
+  if (fetchedAt < minFetchedAt) {
+    return false;
+  }
+
+  if (typeof options?.maxAgeMs !== 'number' || !Number.isFinite(options.maxAgeMs) || options.maxAgeMs <= 0) {
+    return true;
+  }
+
+  const now = typeof options?.now === 'number' && Number.isFinite(options.now)
+    ? options.now
+    : Date.now();
+  return now - fetchedAt <= options.maxAgeMs;
+};
+
 export const touchSessionMessagesCacheEntry = (
   state: SessionMessagesCacheState,
   sessionId: string,

@@ -63,6 +63,7 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
   const [values, setValues] = useState<Record<string, string>>(() => buildInitialValues(fields));
   const [singleSelection, setSingleSelection] = useState<string>(() => normalizeSingleSelection(choice));
   const [multiSelection, setMultiSelection] = useState<string[]>(() => normalizeMultiSelection(choice));
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     setValues(buildInitialValues(fields));
@@ -125,96 +126,111 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
 
   return (
     <div className="mx-3 mb-3 rounded-xl border border-border bg-card p-3 shadow-sm">
-      <div className="mb-2">
-        <div className="text-sm font-semibold text-foreground">
-          {panel.title || '需要你的输入'}
-        </div>
-        {panel.message ? (
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 text-left"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        <div>
+          <div className="text-sm font-semibold text-foreground">
+            {panel.title || '需要你的输入'}
+          </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            {panel.message}
+            {expanded ? '点击收起内容' : '内容默认折叠，点击展开'}
           </div>
-        ) : null}
-      </div>
-
-      {fields.length > 0 ? (
-        <div className="custom-scrollbar max-h-52 space-y-2 overflow-y-scroll pr-1 [scrollbar-gutter:stable]">
-          {fields.map((field) => (
-            <label key={field.key} className="flex flex-col gap-1 text-xs text-muted-foreground">
-              <span>
-                {field.label || field.key}
-                {field.required ? <span className="ml-1 text-destructive">*</span> : null}
-              </span>
-              {field.description ? (
-                <span className="text-[11px] text-muted-foreground">{field.description}</span>
-              ) : null}
-              {field.multiline ? (
-                <textarea
-                  value={values[field.key] || ''}
-                  onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                  className="min-h-[64px] rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
-                  placeholder={field.placeholder || ''}
-                  disabled={panel.submitting === true}
-                />
-              ) : (
-                <input
-                  type={field.secret ? 'password' : 'text'}
-                  value={values[field.key] || ''}
-                  onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
-                  placeholder={field.placeholder || ''}
-                  disabled={panel.submitting === true}
-                />
-              )}
-            </label>
-          ))}
         </div>
-      ) : null}
+        <span className="text-xs text-muted-foreground">{expanded ? '收起' : '展开'}</span>
+      </button>
 
-      {hasChoice ? (
-        <div className="mt-3 rounded-lg border border-border bg-background/50 p-2">
-          <div className="mb-2 text-xs font-medium text-muted-foreground">
-            请选择{isMultiple ? `（${minSelections}-${maxSelections}项）` : ''}
-          </div>
-          <div className="custom-scrollbar max-h-72 space-y-1.5 overflow-y-scroll pr-1 [scrollbar-gutter:stable]">
-            {choice!.options.map((option) => {
-              const checked = isMultiple
-                ? multiSelection.includes(option.value)
-                : singleSelection === option.value;
-              return (
-                <label key={option.value} className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
-                  <input
-                    type={isMultiple ? 'checkbox' : 'radio'}
-                    name={`ui_prompt_${panel.promptId}`}
-                    className="mt-0.5 h-4 w-4 accent-primary"
-                    checked={checked}
-                    onChange={(event) => {
-                      if (isMultiple) {
-                        setMultiSelection((prev) => {
-                          if (event.target.checked) {
-                            if (prev.includes(option.value)) {
-                              return prev;
-                            }
-                            return [...prev, option.value];
-                          }
-                          return prev.filter((item) => item !== option.value);
-                        });
-                      } else {
-                        setSingleSelection(event.target.checked ? option.value : '');
-                      }
-                    }}
-                    disabled={panel.submitting === true}
-                  />
+      {expanded ? (
+        <>
+          {panel.message ? (
+            <div className="mb-2 mt-3 text-xs text-muted-foreground">
+              {panel.message}
+            </div>
+          ) : null}
+
+          {fields.length > 0 ? (
+            <div className="custom-scrollbar max-h-52 space-y-2 overflow-y-scroll pr-1 [scrollbar-gutter:stable]">
+              {fields.map((field) => (
+                <label key={field.key} className="flex flex-col gap-1 text-xs text-muted-foreground">
                   <span>
-                    <span>{option.label || option.value}</span>
-                    {option.description ? (
-                      <span className="block text-xs text-muted-foreground">{option.description}</span>
-                    ) : null}
+                    {field.label || field.key}
+                    {field.required ? <span className="ml-1 text-destructive">*</span> : null}
                   </span>
+                  {field.description ? (
+                    <span className="text-[11px] text-muted-foreground">{field.description}</span>
+                  ) : null}
+                  {field.multiline ? (
+                    <textarea
+                      value={values[field.key] || ''}
+                      onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                      className="min-h-[64px] rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                      placeholder={field.placeholder || ''}
+                      disabled={panel.submitting === true}
+                    />
+                  ) : (
+                    <input
+                      type={field.secret ? 'password' : 'text'}
+                      value={values[field.key] || ''}
+                      onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                      className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                      placeholder={field.placeholder || ''}
+                      disabled={panel.submitting === true}
+                    />
+                  )}
                 </label>
-              );
-            })}
-          </div>
-        </div>
+              ))}
+            </div>
+          ) : null}
+
+          {hasChoice ? (
+            <div className="mt-3 rounded-lg border border-border bg-background/50 p-2">
+              <div className="mb-2 text-xs font-medium text-muted-foreground">
+                请选择{isMultiple ? `（${minSelections}-${maxSelections}项）` : ''}
+              </div>
+              <div className="custom-scrollbar max-h-72 space-y-1.5 overflow-y-scroll pr-1 [scrollbar-gutter:stable]">
+                {choice!.options.map((option) => {
+                  const checked = isMultiple
+                    ? multiSelection.includes(option.value)
+                    : singleSelection === option.value;
+                  return (
+                    <label key={option.value} className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+                      <input
+                        type={isMultiple ? 'checkbox' : 'radio'}
+                        name={`ui_prompt_${panel.promptId}`}
+                        className="mt-0.5 h-4 w-4 accent-primary"
+                        checked={checked}
+                        onChange={(event) => {
+                          if (isMultiple) {
+                            setMultiSelection((prev) => {
+                              if (event.target.checked) {
+                                if (prev.includes(option.value)) {
+                                  return prev;
+                                }
+                                return [...prev, option.value];
+                              }
+                              return prev.filter((item) => item !== option.value);
+                            });
+                          } else {
+                            setSingleSelection(event.target.checked ? option.value : '');
+                          }
+                        }}
+                        disabled={panel.submitting === true}
+                      />
+                      <span>
+                        <span>{option.label || option.value}</span>
+                        {option.description ? (
+                          <span className="block text-xs text-muted-foreground">{option.description}</span>
+                        ) : null}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {panel.error ? (

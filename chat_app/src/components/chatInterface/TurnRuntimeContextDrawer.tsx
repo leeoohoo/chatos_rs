@@ -1,5 +1,8 @@
 import React from 'react';
-import type { TurnRuntimeSnapshotLookupResponse } from '../../lib/api/client/types';
+import type {
+  TurnRuntimeSnapshotContextItem,
+  TurnRuntimeSnapshotLookupResponse,
+} from '../../lib/api/client/types';
 
 interface TurnRuntimeContextDrawerProps {
   open: boolean;
@@ -11,72 +14,32 @@ interface TurnRuntimeContextDrawerProps {
   onClose: () => void;
 }
 
-function renderValue(value?: string | null): string {
+const renderValue = (value?: string | null): string => {
   const normalized = value?.trim();
   return normalized ? normalized : '-';
-}
+};
 
-function renderBoolean(value?: boolean | null): string {
-  if (value === true) {
-    return 'true';
-  }
-  if (value === false) {
-    return 'false';
-  }
-  return '-';
-}
-
-interface RuntimeFieldProps {
-  label: string;
-  value: string;
-  tone?: 'default' | 'code';
-}
-
-function getSystemMessageCardClass(source?: string | null): string {
-  if (source === 'task_runtime_board') {
-    return 'rounded-md border border-amber-500/50 bg-amber-500/10 p-3 shadow-sm';
-  }
-  return 'rounded-md border border-border bg-background/80 p-2';
-}
-
-function getSystemMessageMetaClass(source?: string | null): string {
-  if (source === 'task_runtime_board') {
-    return 'mb-1 text-[11px] font-semibold tracking-wide text-amber-800 dark:text-amber-200';
-  }
-  return 'mb-1 text-[11px] text-muted-foreground';
-}
-
-function getPreviewItemTone(role?: string | null, type?: string | null): string {
+const getPreviewItemTone = (role?: string | null, type?: string | null): string => {
   if (type === 'tool') {
-    return 'rounded-md border border-amber-500/40 bg-amber-500/10 p-3';
+    return 'border-amber-500/40 bg-amber-500/10';
   }
   if (role === 'system') {
-    return 'rounded-md border border-sky-500/40 bg-sky-500/10 p-3';
+    return 'border-sky-500/40 bg-sky-500/10';
   }
   if (role === 'assistant') {
-    return 'rounded-md border border-border bg-background/80 p-3';
+    return 'border-border bg-background/80';
   }
-  return 'rounded-md border border-border bg-background/70 p-3';
-}
+  return 'border-border bg-background/70';
+};
 
-const RuntimeField: React.FC<RuntimeFieldProps> = ({
-  label,
-  value,
-  tone = 'default',
-}) => (
-  <div className="rounded-md border border-border bg-background/70 p-2">
-    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-    <div
-      className={
-        tone === 'code'
-          ? 'mt-1 break-all font-mono text-xs text-foreground'
-          : 'mt-1 break-words text-xs text-foreground'
-      }
-    >
-      {value}
-    </div>
-  </div>
-);
+const buildItemSummary = (item: TurnRuntimeSnapshotContextItem): string => {
+  const parts = [
+    item.role ? `role=${item.role}` : '',
+    item.type ? `type=${item.type}` : '',
+    item.source ? `source=${item.source}` : '',
+  ].filter(Boolean);
+  return parts.join(' · ') || '上下文项';
+};
 
 const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
   open,
@@ -92,29 +55,12 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
   }
 
   const snapshot = data?.snapshot || null;
-  const systemMessages = Array.isArray(snapshot?.system_messages)
-    ? snapshot?.system_messages
-    : [];
-  const tools = Array.isArray(snapshot?.tools) ? snapshot?.tools : [];
   const runtime = snapshot?.runtime || null;
   const actualPreviewItems = Array.isArray(runtime?.actual_context_items)
     ? runtime.actual_context_items
     : [];
-  const selectedCommands = Array.isArray(runtime?.selected_commands)
-    ? runtime?.selected_commands
-    : [];
-  const explicitSelectedCommands = selectedCommands.filter(
-    (item) => (item?.trigger || '').toLowerCase() === 'explicit',
-  );
-  const implicitSelectedCommands = selectedCommands.filter(
-    (item) => (item?.trigger || '').toLowerCase() === 'implicit',
-  );
-  const otherSelectedCommands = selectedCommands.filter((item) => {
-    const trigger = (item?.trigger || '').toLowerCase();
-    return trigger !== 'explicit' && trigger !== 'implicit';
-  });
-  const snapshotSource = data?.snapshot_source || 'missing';
   const status = data?.status || 'unknown';
+  const snapshotSource = data?.snapshot_source || 'missing';
 
   return (
     <div className="fixed inset-0 z-50">
@@ -136,7 +82,7 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!sessionId || loading}
                 onClick={onRefresh}
               >
@@ -164,250 +110,37 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
               <div>{`status: ${status}`}</div>
               <div>{`snapshot_source: ${snapshotSource}`}</div>
               <div>{`captured_at: ${snapshot?.captured_at || '-'}`}</div>
+              <div>{`mode: ${renderValue(runtime?.actual_context_mode)}`}</div>
+              <div>{`previous_response_id: ${renderValue(runtime?.actual_previous_response_id)}`}</div>
+              <div>{`item_count: ${actualPreviewItems.length}`}</div>
             </div>
 
             <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-950 dark:text-sky-100">
-              顶部展示的是发送 AI 请求前落到快照里的最终上下文；下半部分保留运行时配置和历史快照细节，方便核对。
+              这里只保留当前轮次最新一次发给 AI 的上下文内容。
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <div className="mb-2 text-sm font-medium text-foreground">实际发送上下文预览</div>
-                {actualPreviewItems.length === 0 ? (
-                  <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                    当前快照里还没有记录实际发送上下文
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="rounded-md border border-border bg-background/70 p-3 text-xs text-muted-foreground">
-                      <div>{`mode: ${runtime?.actual_context_mode || '-'}`}</div>
-                      <div>{`previous_response_id: ${runtime?.actual_previous_response_id || '-'}`}</div>
-                      <div>{`item_count: ${actualPreviewItems.length}`}</div>
-                    </div>
-                    <div className="space-y-2">
-                      {actualPreviewItems.map((item, index) => (
-                        <div
-                          key={`actual-preview:${index}:${item.role || '-'}:${item.type || '-'}:${item.source || '-'}`}
-                          className={getPreviewItemTone(item.role, item.type)}
-                        >
-                          <div className="mb-1 text-[11px] text-muted-foreground">
-                            {`${index + 1}. role=${item.role || '-'} · type=${item.type || '-'} · source=${item.source || '-'}`}
-                          </div>
-                          <pre className="whitespace-pre-wrap break-words text-xs text-foreground">
-{item.content}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+            {actualPreviewItems.length === 0 ? (
+              <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                当前快照里还没有记录实际发送上下文
               </div>
-
-              {snapshotSource !== 'captured' || !snapshot ? (
-                <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                  当前轮次暂无历史快照（snapshot_source=missing）
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="text-sm font-medium text-foreground">历史快照记录</div>
-                <div>
-                  <div className="mb-2 text-sm font-medium text-foreground">System 消息</div>
-                  {systemMessages.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">无 system 消息</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {systemMessages.map((item) => (
-                        <div
-                          key={`${item.id}:${item.source}`}
-                          className={getSystemMessageCardClass(item.source)}
-                        >
-                          <div className={getSystemMessageMetaClass(item.source)}>
-                            {`${item.id} · ${item.source}`}
-                          </div>
-                          {item.source === 'task_runtime_board' ? (
-                            <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-900 dark:text-amber-100">
-                              任务看板由系统动态维护。没有任务时也会显示“当前无任务”；完成任务后刷新即可看到最新状态。
-                            </div>
-                          ) : null}
-                          <pre className="whitespace-pre-wrap break-words text-xs text-foreground">
+            ) : (
+              <div className="space-y-2">
+                {actualPreviewItems.map((item, index) => (
+                  <details
+                    key={`actual-preview:${index}:${item.role || '-'}:${item.type || '-'}:${item.source || '-'}`}
+                    className={`rounded-md border p-3 ${getPreviewItemTone(item.role, item.type)}`}
+                  >
+                    <summary className="cursor-pointer list-none text-xs text-foreground">
+                      <span className="font-medium">{`${index + 1}. ${buildItemSummary(item)}`}</span>
+                      <span className="ml-2 text-muted-foreground">默认折叠，点击展开内容</span>
+                    </summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-foreground">
 {item.content}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <div className="mb-2 text-sm font-medium text-foreground">工具列表</div>
-                  {tools.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">无工具</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {tools.map((tool) => (
-                        <div key={`${tool.server_name}:${tool.name}`} className="rounded-md border border-border bg-background/80 p-2">
-                          <div className="text-xs font-medium text-foreground">{tool.name}</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {`${tool.server_type} · ${tool.server_name}`}
-                          </div>
-                          {tool.description ? (
-                            <div className="mt-1 text-xs text-muted-foreground">{tool.description}</div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <div className="mb-2 text-sm font-medium text-foreground">命令使用</div>
-                  {selectedCommands.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">本轮未命中 command</div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div>
-                        <div className="mb-1 text-xs font-medium text-foreground">显式触发（/command）</div>
-                        {explicitSelectedCommands.length === 0 ? (
-                          <div className="text-xs text-muted-foreground">无</div>
-                        ) : (
-                          <div className="space-y-2">
-                            {explicitSelectedCommands.map((item, index) => (
-                              <div
-                                key={`explicit:${item.command_ref || '-'}:${item.plugin_source}:${item.source_path}:${index}`}
-                                className="rounded-md border border-border bg-background/80 p-2"
-                              >
-                                <div className="text-xs font-medium text-foreground">
-                                  {item.command_ref || '-'}{item.name ? ` · ${item.name}` : ''}
-                                </div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                  {`${item.plugin_source} · ${item.source_path}`}
-                                </div>
-                                {item.arguments ? (
-                                  <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">
-{`args: ${item.arguments}`}
-                                  </pre>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div>
-                        <div className="mb-1 text-xs font-medium text-foreground">隐式触发（工具读取）</div>
-                        {implicitSelectedCommands.length === 0 ? (
-                          <div className="text-xs text-muted-foreground">无</div>
-                        ) : (
-                          <div className="space-y-2">
-                            {implicitSelectedCommands.map((item, index) => (
-                              <div
-                                key={`implicit:${item.command_ref || '-'}:${item.plugin_source}:${item.source_path}:${index}`}
-                                className="rounded-md border border-border bg-background/80 p-2"
-                              >
-                                <div className="text-xs font-medium text-foreground">
-                                  {item.command_ref || '-'}{item.name ? ` · ${item.name}` : ''}
-                                </div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                  {`${item.plugin_source} · ${item.source_path}`}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {otherSelectedCommands.length > 0 ? (
-                        <div>
-                          <div className="mb-1 text-xs font-medium text-foreground">其他触发</div>
-                          <div className="space-y-2">
-                            {otherSelectedCommands.map((item, index) => (
-                              <div
-                                key={`other:${item.command_ref || '-'}:${item.plugin_source}:${item.source_path}:${index}`}
-                                className="rounded-md border border-border bg-background/80 p-2"
-                              >
-                                <div className="text-xs font-medium text-foreground">
-                                  {item.command_ref || '-'}{item.name ? ` · ${item.name}` : ''}
-                                </div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                  {`${item.plugin_source} · ${item.source_path}`}
-                                </div>
-                                <div className="mt-1 text-[11px] text-muted-foreground">
-                                  {`trigger: ${item.trigger || '-'}`}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <div className="mb-2 text-sm font-medium text-foreground">运行时</div>
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <RuntimeField label="model" value={renderValue(runtime?.model)} />
-                      <RuntimeField label="provider" value={renderValue(runtime?.provider)} />
-                      <RuntimeField
-                        label="contact_agent_id"
-                        value={renderValue(runtime?.contact_agent_id)}
-                        tone="code"
-                      />
-                      <RuntimeField
-                        label="remote_connection_id"
-                        value={renderValue(runtime?.remote_connection_id)}
-                        tone="code"
-                      />
-                      <RuntimeField
-                        label="project_id"
-                        value={renderValue(runtime?.project_id)}
-                        tone="code"
-                      />
-                      <RuntimeField
-                        label="mcp_enabled"
-                        value={renderBoolean(runtime?.mcp_enabled)}
-                      />
-                    </div>
-
-                    <div className="rounded-md border border-border bg-background/80 p-3">
-                      <div className="mb-2 text-xs font-medium text-foreground">目录上下文</div>
-                      <div className="space-y-2">
-                        <RuntimeField
-                          label="本轮执行根目录（后端字段 project_root）"
-                          value={renderValue(runtime?.project_root)}
-                          tone="code"
-                        />
-                        <RuntimeField
-                          label="workspace_root"
-                          value={renderValue(runtime?.workspace_root)}
-                          tone="code"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="rounded-md border border-border bg-background/80 p-3">
-                      <div className="mb-2 text-xs font-medium text-foreground">MCP</div>
-                      {Array.isArray(runtime?.enabled_mcp_ids) && runtime.enabled_mcp_ids.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {runtime.enabled_mcp_ids.map((mcpId) => (
-                            <span
-                              key={mcpId}
-                              className="rounded-full border border-border bg-background px-2 py-1 font-mono text-[11px] text-foreground"
-                            >
-                              {mcpId}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-muted-foreground">本轮未启用任何 MCP ID</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                </div>
-              )}
-            </div>
+                    </pre>
+                  </details>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

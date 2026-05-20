@@ -44,7 +44,7 @@ import type {
 import type ApiClient from '../../client';
 
 export interface ConfigFacade {
-  getMcpConfigs(userId?: string): Promise<McpConfigResponse[]>;
+  getMcpConfigs(userId?: string, options?: { forceRefresh?: boolean }): Promise<McpConfigResponse[]>;
   createMcpConfig(data: McpConfigCreatePayload): Promise<McpConfigResponse>;
   updateMcpConfig(id: string, data: McpConfigUpdatePayload): Promise<McpConfigResponse>;
   deleteMcpConfig(id: string): Promise<{ success?: boolean }>;
@@ -104,8 +104,8 @@ export interface ConfigFacade {
 }
 
 export const configFacade: ConfigFacade & ThisType<ApiClient> = {
-  async getMcpConfigs(userId) {
-    return configsApi.getMcpConfigs(this.getRequestFn(), userId);
+  async getMcpConfigs(userId, options) {
+    return configsApi.getMcpConfigs(this.getRequestFn(), userId, options);
   },
   async createMcpConfig(data) {
     return configsApi.createMcpConfig(this.getRequestFn(), data);

@@ -298,6 +298,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         selectedModelId: state.selectedModelId,
                         selectedAgentId: state.selectedAgentId,
                         sessionAiSelectionBySession: state.sessionAiSelectionBySession,
+                        sessionChatState: state.sessionChatState,
+                        sessionStreamingMessageDrafts: state.sessionStreamingMessageDrafts,
                     }),
                 }
             )

@@ -82,6 +82,12 @@ export const useWorkbarTaskResourceState = ({
     }
 
     const turnId = typeof conversationTurnId === 'string' ? conversationTurnId.trim() : '';
+    if (!turnId && !force) {
+      setWorkbarCurrentTurnTasks([]);
+      setWorkbarError(null);
+      setWorkbarLoading(false);
+      return;
+    }
     const cached = peekWorkbarCurrentTurnCacheEntry(apiClient, sessionId, turnId || null);
     if (
       !force
@@ -109,14 +115,20 @@ export const useWorkbarTaskResourceState = ({
         const inflight = (async () => {
           let normalizedTasks: TaskWorkbarItem[] = [];
 
-          if (turnId) {
-            const tasks = await apiClient.getTaskManagerTasks(sessionId, {
-              conversationTurnId: turnId,
-              includeDone: true,
-              limit: 100,
+          if (!turnId) {
+            setWorkbarCurrentTurnCacheEntry(apiClient, sessionId, {
+              tasks: [],
+              turnId: null,
             });
-            normalizedTasks = tasks.map(normalizeWorkbarTask);
+            return normalizedTasks;
           }
+
+          const tasks = await apiClient.getTaskManagerTasks(sessionId, {
+            conversationTurnId: turnId,
+            includeDone: true,
+            limit: 100,
+          });
+          normalizedTasks = tasks.map(normalizeWorkbarTask);
 
           if (normalizedTasks.length === 0) {
             const fallbackTasks = await apiClient.getTaskManagerTasks(sessionId, {

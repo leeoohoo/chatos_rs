@@ -379,7 +379,7 @@ export interface ChatActions {
 
   // 配置操作
   updateChatConfig: (config: Partial<ChatConfig>) => Promise<void>;
-  loadMcpConfigs: () => Promise<void>;
+  loadMcpConfigs: (options?: { forceRefresh?: boolean }) => Promise<void>;
   updateMcpConfig: (config: McpConfig) => Promise<McpConfig | null>;
   deleteMcpConfig: (id: string) => Promise<void>;
   loadAiModelConfigs: (options?: { force?: boolean }) => Promise<void>;

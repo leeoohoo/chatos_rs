@@ -101,7 +101,7 @@ export interface InputAreaComposerProps {
   isProjectRequiredMcpId: (mcpId: string) => boolean;
   isRemoteRequiredMcpId: (mcpId: string) => boolean;
   sanitizedEnabledMcpIds: string[];
-  loadAvailableMcpConfigs: () => void | Promise<void>;
+  loadAvailableMcpConfigs: (options?: { forceRefresh?: boolean }) => void | Promise<void>;
   handleSelectAllMcp: () => void;
   handleToggleMcpSelection: (mcpId: string) => void;
   handleApplyMcpToolsetPreset: (presetId: string) => void;

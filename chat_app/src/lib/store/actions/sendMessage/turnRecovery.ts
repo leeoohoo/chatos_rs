@@ -43,6 +43,7 @@ type RecoverStreamingTurnBySnapshotParams = {
 };
 
 const TERMINAL_SNAPSHOT_STATUSES = new Set(['completed', 'failed', 'error', 'cancelled', 'canceled']);
+const RUNNING_SNAPSHOT_STATUSES = new Set(['running', 'in_progress', 'processing']);
 
 const normalizeSnapshotStatus = (value: unknown): string => (
   typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -227,7 +228,7 @@ const settleRecoveredStreamingState = (
   snapshotStatus: string,
 ) => {
   const terminalStatus = normalizeSnapshotStatus(snapshotStatus);
-  if (terminalStatus === 'running') {
+  if (RUNNING_SNAPSHOT_STATUSES.has(terminalStatus)) {
     const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
     state.sessionChatState[sessionId] = {
       ...prev,
@@ -281,6 +282,48 @@ const turnIdFromState = (state: ChatStoreDraft, sessionId: string): string | nul
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 };
 
+const upsertRunningStreamingDraft = (
+  state: ChatStoreDraft,
+  {
+    sessionId,
+    turnId,
+    assistantMessageId,
+    tempUserId,
+    preferredUserMessageId,
+  }: {
+    sessionId: string;
+    turnId: string;
+    assistantMessageId: string;
+    tempUserId: string | null;
+    preferredUserMessageId?: string | null;
+  },
+) => {
+  const draftAssistant = state.messages.find((message) => message.id === assistantMessageId) || null;
+  if (!draftAssistant) {
+    return;
+  }
+
+  const linkedUserId = preferredUserMessageId?.trim()
+    || draftAssistant.metadata?.historyFinalForUserMessageId
+    || draftAssistant.metadata?.historyDraftUserMessage?.id
+    || tempUserId
+    || null;
+
+  if (!state.sessionStreamingMessageDrafts) {
+    state.sessionStreamingMessageDrafts = {};
+  }
+  state.sessionStreamingMessageDrafts[sessionId] = {
+    ...draftAssistant,
+    status: 'streaming',
+    metadata: {
+      ...(draftAssistant.metadata || {}),
+      conversation_turn_id: turnId,
+      historyFinalForTurnId: turnId,
+      ...(linkedUserId ? { historyFinalForUserMessageId: linkedUserId } : {}),
+    },
+  };
+};
+
 export const recoverStreamingTurnBySnapshot = async ({
   apiClient,
   set,
@@ -321,7 +364,7 @@ export const recoverStreamingTurnBySnapshot = async ({
     !snapshot
     || snapshot.snapshot_source === 'missing'
     || TERMINAL_SNAPSHOT_STATUSES.has(snapshotStatus)
-    || snapshotStatus === 'running'
+    || RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus)
   );
   if (!shouldPullTurnMessages) {
     return {
@@ -357,6 +400,25 @@ export const recoverStreamingTurnBySnapshot = async ({
           preferredUserMessageId,
           snapshotStatus,
         });
+      });
+    } else if (RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus)) {
+      set((state) => {
+        const existingAssistantIndex = state.messages.findIndex((message) => message.id === tempAssistantMessageId);
+        if (existingAssistantIndex < 0) {
+          return;
+        }
+        upsertRunningStreamingDraft(state, {
+          sessionId,
+          turnId,
+          assistantMessageId: tempAssistantMessageId,
+          tempUserId,
+          preferredUserMessageId,
+        });
+        if (state.sessionChatState?.[sessionId]) {
+          state.sessionChatState[sessionId].activeTurnId = turnId;
+        }
+        settleRecoveredStreamingState(state, sessionId, tempAssistantMessageId, snapshotStatus);
+        recoveredLocally = true;
       });
     }
     return {
@@ -402,6 +464,20 @@ export const recoverStreamingTurnBySnapshot = async ({
       }
     }
 
+    if (RUNNING_SNAPSHOT_STATUSES.has(normalizeSnapshotStatus(snapshotStatus))) {
+      const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
+      state.sessionChatState[sessionId] = {
+        ...prev,
+        activeTurnId: turnId,
+      };
+      upsertRunningStreamingDraft(state, {
+        sessionId,
+        turnId,
+        assistantMessageId: resolvedAssistantId,
+        tempUserId,
+        preferredUserMessageId,
+      });
+    }
     settleRecoveredStreamingState(state, sessionId, resolvedAssistantId, snapshotStatus);
   });
 

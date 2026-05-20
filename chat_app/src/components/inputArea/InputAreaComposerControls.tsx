@@ -228,7 +228,7 @@ export function InputAreaComposerControls({
         isProjectRequiredMcpId={isProjectRequiredMcpId}
         isRemoteRequiredMcpId={isRemoteRequiredMcpId}
         sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-        onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs(); }}
+        onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs({ forceRefresh: true }); }}
         onSelectAllMcp={handleSelectAllMcp}
         onToggleMcpSelection={handleToggleMcpSelection}
         onApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}

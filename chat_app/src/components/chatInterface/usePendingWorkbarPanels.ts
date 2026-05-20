@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { useRealtimeConnectionState } from '../../lib/realtime/RealtimeProvider';
 
 import type {
   TaskReviewPanelState,
@@ -46,6 +47,8 @@ export const usePendingWorkbarPanels = ({
   upsertUiPromptPanel,
   removeUiPromptPanel,
 }: UsePendingWorkbarPanelsArgs) => {
+  const realtimeConnectionState = useRealtimeConnectionState();
+  const preferRealtimeSync = enabled && Boolean(sessionId) && realtimeConnectionState === 'connected';
   const pendingTaskReviewLoadSeqRef = useRef(0);
   const pendingUiPromptLoadSeqRef = useRef(0);
   const taskReviewPanelsBySessionRef = useRef(taskReviewPanelsBySession);
@@ -85,6 +88,9 @@ export const usePendingWorkbarPanels = ({
     }
 
     const cachedEntry = peekPendingTaskReviewCacheEntry(apiClient, sessionId);
+    if (preferRealtimeSync && !cachedEntry) {
+      return;
+    }
     const requestSeq = beginSessionLoadRequest(pendingTaskReviewLoadSeqRef);
     return syncPendingPanelsFromCacheOrLoad({
       cachedEntry,
@@ -98,6 +104,7 @@ export const usePendingWorkbarPanels = ({
     apiClient,
     applyTaskReviewPanels,
     enabled,
+    preferRealtimeSync,
     sessionId,
   ]);
 
@@ -107,6 +114,9 @@ export const usePendingWorkbarPanels = ({
     }
 
     const cachedEntry = peekPendingUiPromptCacheEntry(apiClient, sessionId);
+    if (preferRealtimeSync && !cachedEntry) {
+      return;
+    }
     const requestSeq = beginSessionLoadRequest(pendingUiPromptLoadSeqRef);
     return syncPendingPanelsFromCacheOrLoad({
       cachedEntry,
@@ -120,6 +130,7 @@ export const usePendingWorkbarPanels = ({
     apiClient,
     applyUiPromptPanels,
     enabled,
+    preferRealtimeSync,
     sessionId,
   ]);
 };
