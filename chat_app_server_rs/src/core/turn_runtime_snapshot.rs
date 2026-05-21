@@ -334,6 +334,9 @@ mod tests {
             selected_commands: &[],
             unavailable_builtin_tools: &[],
             builtin_mcp_prompt_debug: None,
+            actual_context_mode: None,
+            actual_previous_response_id: None,
+            actual_context_items: &[],
         });
 
         let system_messages = payload.system_messages.expect("system messages");
@@ -373,6 +376,9 @@ mod tests {
                 "reason": "agent-browser unavailable"
             })],
             builtin_mcp_prompt_debug: None,
+            actual_context_mode: None,
+            actual_previous_response_id: None,
+            actual_context_items: &[],
         });
 
         let runtime = payload.runtime.expect("runtime");
@@ -422,6 +428,9 @@ mod tests {
                 omitted_builtin_server_names: vec!["browser_tools".to_string()],
                 runtime_limitations: Some("当前运行时限制：\n- 当前不要依赖以下内置 MCP 工具：`browser_tools_browser_inspect`。".to_string()),
             }),
+            actual_context_mode: None,
+            actual_previous_response_id: None,
+            actual_context_items: &[],
         });
 
         let runtime = payload.runtime.expect("runtime");

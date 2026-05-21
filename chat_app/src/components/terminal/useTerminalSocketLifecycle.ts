@@ -4,18 +4,21 @@ import type { Terminal as XTerm } from '@xterm/xterm';
 
 import { getRealtimeConnectionStateSnapshot } from '../../lib/realtime/state';
 import type { Terminal } from '../../types';
-import { debugLog } from '../../lib/utils';
 import type { CommandHistoryParseState } from './commandHistory';
-import { createInitialCommandHistoryParseState, parseOutputChunkForCommands } from './commandHistory';
 import type { TerminalConnectionState } from './TerminalHeader';
 import type { AppendCommandsFn } from './useTerminalAppendCommands';
 import { buildWsUrl } from './themeTransport';
+import { closeWebSocketSafely } from './historyViewUtils';
 import {
-  closeWebSocketSafely,
-  countSnapshotLines,
-  TERMINAL_SNAPSHOT_INITIAL_LINES,
-  TERMINAL_SNAPSHOT_MAX_LINES,
-} from './historyViewUtils';
+  applyTerminalErrorMessage,
+  applyTerminalExitMessage,
+  applyTerminalOutputMessage,
+  applyTerminalSnapshotMessage,
+  applyTerminalSocketOpen,
+  applyTerminalStateMessage,
+  resetTerminalSocketConnectionState,
+  resetTerminalSocketSnapshotState,
+} from './terminalSocketState';
 
 interface UseTerminalSocketLifecycleParams {
   currentTerminal: Terminal | null;
@@ -79,11 +82,13 @@ export const useTerminalSocketLifecycle = ({
 
     const wsUrl = buildWsUrl(apiBaseUrl, `/terminals/${currentTerminal.id}/ws`, accessToken);
     setConnectionState('connecting');
-    inputForwardEnabledRef.current = false;
-    appliedSnapshotRef.current = '';
-    snapshotLoadingRef.current = false;
-    supportsSnapshotPagingRef.current = false;
-    snapshotRequestContextRef.current = null;
+    resetTerminalSocketSnapshotState({
+      inputForwardEnabledRef,
+      appliedSnapshotRef,
+      snapshotLoadingRef,
+      supportsSnapshotPagingRef,
+      snapshotRequestContextRef,
+    });
 
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
@@ -92,12 +97,12 @@ export const useTerminalSocketLifecycle = ({
       if (socketRef.current !== ws) {
         return;
       }
-      setConnectionState('connected');
-      const term = terminalRef.current;
-      if (term) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
-      inputForwardEnabledRef.current = true;
+      applyTerminalSocketOpen({
+        term: terminalRef.current,
+        ws,
+        inputForwardEnabledRef,
+        setConnectionState,
+      });
     };
 
     ws.onmessage = (event) => {
@@ -108,88 +113,54 @@ export const useTerminalSocketLifecycle = ({
       try {
         const payload = JSON.parse(event.data);
         if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
-          const terminalId = currentTerminal.id;
-          const requestContext = snapshotRequestContextRef.current;
-          const currentSnapshot = appliedSnapshotRef.current;
-          const nextSnapshot = payload.data;
-          const previousLineCount = countSnapshotLines(currentSnapshot);
-          const nextLineCount = countSnapshotLines(nextSnapshot);
-          const hasMoreLines = nextLineCount > previousLineCount;
-
-          if (nextSnapshot !== currentSnapshot) {
-            appliedSnapshotRef.current = nextSnapshot;
-            const term = terminalRef.current;
-            if (term) {
-              term.reset();
-              term.write(nextSnapshot);
-              const parsedSnapshot = parseOutputChunkForCommands(
-                nextSnapshot,
-                createInitialCommandHistoryParseState(),
-              );
-              outputParseStateRef.current = parsedSnapshot.nextState;
-              appendCommands(parsedSnapshot.commands, new Date().toISOString(), 'correct');
-              if (requestContext?.terminalId === terminalId && requestContext.fromScroll) {
-                term.scrollToTop();
-              }
-            }
-          }
-
-          if (requestContext?.terminalId === terminalId) {
-            snapshotVisibleLinesRef.current[terminalId] = requestContext.requestedLines;
-            if (!hasMoreLines || requestContext.requestedLines >= TERMINAL_SNAPSHOT_MAX_LINES) {
-              snapshotNoMoreLinesRef.current[terminalId] = true;
-            } else {
-              snapshotNoMoreLinesRef.current[terminalId] = false;
-            }
-          } else {
-            snapshotVisibleLinesRef.current[terminalId] = Math.max(
-              TERMINAL_SNAPSHOT_INITIAL_LINES,
-              Math.min(TERMINAL_SNAPSHOT_MAX_LINES, nextLineCount),
-            );
-            snapshotNoMoreLinesRef.current[terminalId] = false;
-          }
-          snapshotLoadingRef.current = false;
-          snapshotRequestContextRef.current = null;
+          applyTerminalSnapshotMessage({
+            terminalId: currentTerminal.id,
+            snapshot: payload.data,
+            requestContext: snapshotRequestContextRef.current,
+            term: terminalRef.current,
+            outputParseStateRef,
+            appendCommands,
+            appliedSnapshotRef,
+            snapshotVisibleLinesRef,
+            snapshotNoMoreLinesRef,
+            snapshotLoadingRef,
+            snapshotRequestContextRef,
+          });
         } else if (payload?.type === 'output') {
-          const outputData = payload.data ?? '';
-          if (replayingHistoryRef.current) {
-            pendingOutputChunksRef.current.push(outputData);
-            return;
-          }
-          if (
-            !terminalFirstOutputLoggedRef.current
-            && terminalOpenStartedAtRef.current
-            && typeof outputData === 'string'
-            && outputData.length > 0
-          ) {
-            terminalFirstOutputLoggedRef.current = true;
-            debugLog('[Perf] terminal first realtime output', {
-              terminalId: currentTerminal.id,
-              elapsedMs: Date.now() - terminalOpenStartedAtRef.current,
-            });
-          }
-          terminalRef.current?.write(outputData);
-
-          const parsed = parseOutputChunkForCommands(outputData, outputParseStateRef.current);
-          outputParseStateRef.current = parsed.nextState;
-          appendCommands(parsed.commands, new Date().toISOString(), 'correct');
+          applyTerminalOutputMessage({
+            terminalId: currentTerminal.id,
+            outputData: String(payload.data ?? ''),
+            term: terminalRef.current,
+            outputParseStateRef,
+            replayingHistoryRef,
+            pendingOutputChunksRef,
+            terminalFirstOutputLoggedRef,
+            terminalOpenStartedAtRef,
+            appendCommands,
+          });
         } else if (payload?.type === 'exit') {
-          inputForwardEnabledRef.current = false;
-          setConnectionState('disconnected');
+          applyTerminalExitMessage({
+            inputForwardEnabledRef,
+            setConnectionState,
+          });
           if (shouldFallbackRefreshTerminals()) {
             loadTerminals();
           }
         } else if (payload?.type === 'state') {
-          if (typeof payload.snapshot_paging === 'boolean') {
-            supportsSnapshotPagingRef.current = payload.snapshot_paging;
-          }
+          applyTerminalStateMessage({
+            snapshotPaging: payload.snapshot_paging,
+            supportsSnapshotPagingRef,
+          });
           if (shouldFallbackRefreshTerminals()) {
             loadTerminals();
           }
         } else if (payload?.type === 'error') {
-          setErrorMessage(payload.error || '终端发生错误');
-          inputForwardEnabledRef.current = false;
-          setConnectionState('error');
+          applyTerminalErrorMessage({
+            message: payload.error || '终端发生错误',
+            inputForwardEnabledRef,
+            setConnectionState,
+            setErrorMessage,
+          });
         }
       } catch (err) {
         void err;
@@ -200,10 +171,12 @@ export const useTerminalSocketLifecycle = ({
       if (socketRef.current !== ws) {
         return;
       }
-      inputForwardEnabledRef.current = false;
-      snapshotLoadingRef.current = false;
-      supportsSnapshotPagingRef.current = false;
-      snapshotRequestContextRef.current = null;
+      resetTerminalSocketConnectionState({
+        inputForwardEnabledRef,
+        snapshotLoadingRef,
+        supportsSnapshotPagingRef,
+        snapshotRequestContextRef,
+      });
       setErrorMessage('终端实时连接失败，请点击“重连”；如果仍无输出，可先查看右侧命令历史并刷新运行状态。');
       setConnectionState('error');
     };
@@ -212,10 +185,12 @@ export const useTerminalSocketLifecycle = ({
       if (socketRef.current !== ws) {
         return;
       }
-      inputForwardEnabledRef.current = false;
-      snapshotLoadingRef.current = false;
-      supportsSnapshotPagingRef.current = false;
-      snapshotRequestContextRef.current = null;
+      resetTerminalSocketConnectionState({
+        inputForwardEnabledRef,
+        snapshotLoadingRef,
+        supportsSnapshotPagingRef,
+        snapshotRequestContextRef,
+      });
       setConnectionState('disconnected');
       if (shouldFallbackRefreshTerminals()) {
         loadTerminals();
@@ -223,10 +198,12 @@ export const useTerminalSocketLifecycle = ({
     };
 
     return () => {
-      inputForwardEnabledRef.current = false;
-      snapshotLoadingRef.current = false;
-      supportsSnapshotPagingRef.current = false;
-      snapshotRequestContextRef.current = null;
+      resetTerminalSocketConnectionState({
+        inputForwardEnabledRef,
+        snapshotLoadingRef,
+        supportsSnapshotPagingRef,
+        snapshotRequestContextRef,
+      });
       if (socketRef.current === ws) {
         socketRef.current = null;
       }

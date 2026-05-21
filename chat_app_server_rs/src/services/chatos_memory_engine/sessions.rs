@@ -313,7 +313,7 @@ pub async fn get_chatos_turn_process_records(
 pub async fn get_chatos_message_by_id(message_id: &str) -> Result<Option<Message>, String> {
     let client = build_client()?;
     Ok(client
-        .get_record(message_id, None)
+        .get_record(message_id, None, None)
         .await?
         .map(engine_record_to_message))
 }
@@ -351,7 +351,7 @@ pub async fn upsert_chatos_message(
 
 pub async fn delete_chatos_message_by_id(message_id: &str) -> Result<bool, String> {
     let client = build_client()?;
-    client.delete_record(message_id, None).await
+    client.delete_record(message_id, None, None).await
 }
 
 pub async fn delete_all_chatos_messages(session: &Session) -> Result<i64, String> {

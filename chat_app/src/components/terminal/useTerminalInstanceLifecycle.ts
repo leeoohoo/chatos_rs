@@ -4,50 +4,38 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import type { ITheme } from '@xterm/xterm';
 
-import type { TerminalLogResponse } from '../../lib/api/client/types';
 import type { Terminal } from '../../types';
-import { normalizeTerminalLog } from '../../lib/store/helpers/terminals';
-import { debugLog } from '../../lib/utils';
 import type {
   CommandHistoryItem,
   CommandHistoryParseState,
   InputCommandParseState,
 } from './commandHistory';
-import {
-  canCommandBeUsed,
-  createInitialCommandHistoryParseState,
-  createInitialInputCommandParseState,
-  extractCommandFromTerminalBuffer,
-  mergeCommandHistory,
-  normalizeCommandForCompare,
-  normalizeLogTimestamp,
-  parseInputChunkForCommands,
-} from './commandHistory';
 import type { TerminalConnectionState, TerminalHistoryState } from './TerminalHeader';
 import type { AppendCommandsFn } from './useTerminalAppendCommands';
 import {
-  closeWebSocketSafely,
-  parseCommandHistoryFromLogs,
   TERMINAL_HISTORY_INITIAL_LIMIT,
-  TERMINAL_HISTORY_MAX_LIMIT,
-  TERMINAL_HISTORY_TAIL_ONLY_HINT,
   TERMINAL_SCROLL_TOP_LOAD_THRESHOLD,
   TERMINAL_SNAPSHOT_INITIAL_LINES,
   TERMINAL_SNAPSHOT_MAX_LINES,
   TERMINAL_SNAPSHOT_PAGE_LINES,
 } from './historyViewUtils';
-import { writeToTerminalInChunks } from './commandHistory';
-
-interface TerminalApiClient {
-  listTerminalLogs(
-    terminalId: string,
-    params?: { limit?: number; offset?: number; before?: string },
-  ): Promise<TerminalLogResponse[]>;
-}
+import {
+  cleanupTerminalInstanceSessionState,
+  resetTerminalInstanceSessionState,
+} from './terminalInstanceState';
+import {
+  createTerminalDataHandler,
+  createTerminalResizeObserverHandler,
+  createTerminalScrollHandler,
+} from './terminalLifecycleHandlers';
+import {
+  createTerminalHistoryLoadExecutor,
+  type TerminalHistoryClient,
+} from './terminalHistoryLoader';
 
 interface UseTerminalInstanceLifecycleParams {
   currentTerminal: Terminal | null;
-  client: TerminalApiClient;
+  client: TerminalHistoryClient;
   themeColors: ITheme;
   themeColorsRef: MutableRefObject<ITheme>;
   terminalRef: MutableRefObject<XTerm | null>;
@@ -146,32 +134,35 @@ export const useTerminalInstanceLifecycle = ({
       return;
     }
 
-    let cancelled = false;
+    const cancelledRef = { current: false };
 
-    inputParseStateRef.current = createInitialInputCommandParseState();
-    outputParseStateRef.current = createInitialCommandHistoryParseState();
-    const cachedHistory = commandHistoryCacheRef.current[currentTerminal.id] ?? [];
-    setCommandHistory(cachedHistory);
-    pendingOutputChunksRef.current = [];
-    historyLoadedCountRef.current = 0;
-    historyLoadedIdsRef.current = new Set();
-    historyBeforeCursorRef.current = null;
-    replayingHistoryRef.current = false;
-    setHistoryLogLimit(0);
-    setCanLoadMoreHistory(false);
-    setHistoryBusy(false);
-    setHistoryModeHint(null);
-    setHistoryState('ready');
-    setConnectionState('disconnected');
-    setErrorMessage(null);
-    inputForwardEnabledRef.current = false;
-    terminalOpenStartedAtRef.current = Date.now();
-    terminalFirstOutputLoggedRef.current = false;
-    snapshotVisibleLinesRef.current[currentTerminal.id] = TERMINAL_SNAPSHOT_INITIAL_LINES;
-    snapshotNoMoreLinesRef.current[currentTerminal.id] = false;
-    snapshotLoadingRef.current = false;
-    supportsSnapshotPagingRef.current = false;
-    snapshotRequestContextRef.current = null;
+    resetTerminalInstanceSessionState({
+      terminalId: currentTerminal.id,
+      inputForwardEnabledRef,
+      inputParseStateRef,
+      outputParseStateRef,
+      historyLoadedCountRef,
+      historyLoadedIdsRef,
+      historyBeforeCursorRef,
+      replayingHistoryRef,
+      pendingOutputChunksRef,
+      commandHistoryCacheRef,
+      terminalOpenStartedAtRef,
+      terminalFirstOutputLoggedRef,
+      snapshotVisibleLinesRef,
+      snapshotNoMoreLinesRef,
+      snapshotLoadingRef,
+      supportsSnapshotPagingRef,
+      snapshotRequestContextRef,
+      setConnectionState,
+      setHistoryState,
+      setErrorMessage,
+      setCommandHistory,
+      setHistoryLogLimit,
+      setCanLoadMoreHistory,
+      setHistoryBusy,
+      setHistoryModeHint,
+    });
 
     const term = new XTerm({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
@@ -191,222 +182,90 @@ export const useTerminalInstanceLifecycle = ({
     terminalRef.current = term;
     fitRef.current = fitAddon;
 
-    dataHandlerRef.current = term.onData((data) => {
-      if (!inputForwardEnabledRef.current) {
-        return;
-      }
+    dataHandlerRef.current = term.onData(createTerminalDataHandler({
+      term,
+      socketRef,
+      inputForwardEnabledRef,
+      inputParseStateRef,
+      appendCommands,
+    }));
 
-      const submittedCommand = (data.includes('\r') || data.includes('\n'))
-        ? extractCommandFromTerminalBuffer(term)
-        : null;
+    scrollHandlerRef.current = term.onScroll(createTerminalScrollHandler({
+      terminalId: currentTerminal.id,
+      socketRef,
+      snapshotVisibleLinesRef,
+      snapshotNoMoreLinesRef,
+      snapshotLoadingRef,
+      supportsSnapshotPagingRef,
+      snapshotRequestContextRef,
+      scrollTopLoadThreshold: TERMINAL_SCROLL_TOP_LOAD_THRESHOLD,
+      initialLines: TERMINAL_SNAPSHOT_INITIAL_LINES,
+      maxLines: TERMINAL_SNAPSHOT_MAX_LINES,
+      pageLines: TERMINAL_SNAPSHOT_PAGE_LINES,
+    }));
 
-      const parsedInput = parseInputChunkForCommands(data, inputParseStateRef.current);
-      inputParseStateRef.current = parsedInput.nextState;
-      appendCommands(parsedInput.commands, new Date().toISOString(), 'append');
-
-      const normalizedSubmittedCommand = submittedCommand
-        ? normalizeCommandForCompare(submittedCommand)
-        : '';
-      if (canCommandBeUsed(normalizedSubmittedCommand)) {
-        appendCommands([normalizedSubmittedCommand], new Date().toISOString(), 'correct');
-      }
-
-      const ws = socketRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        if (canCommandBeUsed(normalizedSubmittedCommand)) {
-          ws.send(JSON.stringify({ type: 'command', command: normalizedSubmittedCommand }));
-        }
-        ws.send(JSON.stringify({ type: 'input', data }));
-      }
-    });
-
-    scrollHandlerRef.current = term.onScroll((viewportY) => {
-      if (viewportY > TERMINAL_SCROLL_TOP_LOAD_THRESHOLD) {
-        return;
-      }
-
-      const terminalId = currentTerminal.id;
-      if (
-        !supportsSnapshotPagingRef.current
-        || snapshotLoadingRef.current
-        || snapshotNoMoreLinesRef.current[terminalId]
-      ) {
-        return;
-      }
-
-      const currentLines = snapshotVisibleLinesRef.current[terminalId] ?? TERMINAL_SNAPSHOT_INITIAL_LINES;
-      if (currentLines >= TERMINAL_SNAPSHOT_MAX_LINES) {
-        snapshotNoMoreLinesRef.current[terminalId] = true;
-        return;
-      }
-
-      const ws = socketRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
-      }
-
-      const nextLines = Math.min(TERMINAL_SNAPSHOT_MAX_LINES, currentLines + TERMINAL_SNAPSHOT_PAGE_LINES);
-      if (nextLines <= currentLines) {
-        snapshotNoMoreLinesRef.current[terminalId] = true;
-        return;
-      }
-
-      snapshotLoadingRef.current = true;
-      snapshotRequestContextRef.current = {
-        terminalId,
-        requestedLines: nextLines,
-        fromScroll: true,
-      };
-      ws.send(JSON.stringify({ type: 'snapshot', lines: nextLines }));
-    });
-
-    const resizeObserver = new ResizeObserver(() => {
-      const fit = fitRef.current;
-      if (!fit) return;
-      fit.fit();
-      const active = socketRef.current;
-      if (active && active.readyState === WebSocket.OPEN && terminalRef.current) {
-        active.send(JSON.stringify({ type: 'resize', cols: terminalRef.current.cols, rows: terminalRef.current.rows }));
-      }
-    });
+    const resizeObserver = new ResizeObserver(createTerminalResizeObserverHandler({
+      fitRef,
+      terminalRef,
+      socketRef,
+    }));
     resizeObserver.observe(containerRef.current);
     resizeObserverRef.current = resizeObserver;
 
-    const loadHistory = async (
-      limit: number,
-      mode: 'initial' | 'more',
-    ) => {
-      const requestSeq = historyLoadSeqRef.current + 1;
-      historyLoadSeqRef.current = requestSeq;
-      const isCurrentRequest = () => requestSeq === historyLoadSeqRef.current;
-
-      if (mode === 'more') {
-        setHistoryBusy(true);
-      }
-      setErrorMessage(null);
-
-      try {
-        const requestLimit = Math.max(1, Math.min(limit, TERMINAL_HISTORY_MAX_LIMIT));
-        const requestBefore = mode === 'more' ? historyBeforeCursorRef.current : null;
-        if (mode === 'more' && !requestBefore) {
-          setCanLoadMoreHistory(false);
-          setHistoryBusy(false);
-          return;
-        }
-        const logs = await client.listTerminalLogs(currentTerminal.id, {
-          limit: requestLimit,
-          ...(requestBefore ? { before: requestBefore } : {}),
-        });
-        if (cancelled || !isCurrentRequest() || terminalRef.current !== term) {
-          return;
-        }
-
-        const normalized = Array.isArray(logs) ? logs.map(normalizeTerminalLog) : [];
-        const uniqueLogs = normalized.filter((log) => {
-          if (historyLoadedIdsRef.current.has(log.id)) {
-            return false;
-          }
-          historyLoadedIdsRef.current.add(log.id);
-          return true;
-        });
-        if (uniqueLogs.length > 0) {
-          historyBeforeCursorRef.current = normalizeLogTimestamp(uniqueLogs[0].createdAt);
-          historyLoadedCountRef.current = Math.min(
-            TERMINAL_HISTORY_MAX_LIMIT,
-            historyLoadedCountRef.current + uniqueLogs.length,
-          );
-        }
-        const reachedHistoryMax = historyLoadedCountRef.current >= TERMINAL_HISTORY_MAX_LIMIT;
-        setCanLoadMoreHistory(
-          normalized.length >= requestLimit
-          && !reachedHistoryMax
-          && Boolean(historyBeforeCursorRef.current),
-        );
-        const parsedHistory = parseCommandHistoryFromLogs(uniqueLogs, commandSeqRef.current);
-        commandSeqRef.current = parsedHistory.nextSequence;
-
-        if (mode === 'initial' && terminalRef.current === term) {
-          const outputReplay = parsedHistory.outputLogs
-            .map((log) => log.content || '')
-            .join('');
-          if (outputReplay) {
-            term.reset();
-            await writeToTerminalInChunks(term, outputReplay);
-          }
-        }
-
-        inputParseStateRef.current = createInitialInputCommandParseState();
-        const cachedMergedHistory = commandHistoryCacheRef.current[currentTerminal.id] ?? [];
-        const mergedHistory = mergeCommandHistory(parsedHistory.commands, cachedMergedHistory);
-        setCommandHistory(mergedHistory);
-        commandHistoryCacheRef.current[currentTerminal.id] = mergedHistory;
-
-        if (mode === 'initial') {
-          outputParseStateRef.current = parsedHistory.outputState;
-          setHistoryModeHint(null);
-        } else if (uniqueLogs.length > 0) {
-          setHistoryModeHint(TERMINAL_HISTORY_TAIL_ONLY_HINT);
-        }
-
-        replayingHistoryRef.current = false;
-        setHistoryLogLimit(historyLoadedCountRef.current);
-        setHistoryState('ready');
-        if (mode === 'initial' && terminalOpenStartedAtRef.current) {
-          debugLog('[Perf] terminal history ready', {
-            terminalId: currentTerminal.id,
-            elapsedMs: Date.now() - terminalOpenStartedAtRef.current,
-            loadedLogs: historyLoadedCountRef.current,
-          });
-        }
-      } catch (error) {
-        if (cancelled || !isCurrentRequest()) {
-          return;
-        }
-        console.error('Failed to load terminal history:', error);
-        if (mode === 'initial') {
-          setHistoryState('error');
-          setCanLoadMoreHistory(false);
-        }
-        setErrorMessage(error instanceof Error ? error.message : '加载历史失败');
-      } finally {
-        if (cancelled || !isCurrentRequest()) {
-          return;
-        }
-        replayingHistoryRef.current = false;
-        pendingOutputChunksRef.current = [];
-        setHistoryBusy(false);
-      }
-    };
+    const loadHistory = createTerminalHistoryLoadExecutor({
+      terminalId: currentTerminal.id,
+      term,
+      client,
+      cancelledRef,
+      terminalRef,
+      historyLoadSeqRef,
+      inputParseStateRef,
+      outputParseStateRef,
+      commandSeqRef,
+      historyLoadedCountRef,
+      historyLoadedIdsRef,
+      historyBeforeCursorRef,
+      replayingHistoryRef,
+      pendingOutputChunksRef,
+      commandHistoryCacheRef,
+      terminalOpenStartedAtRef,
+      setHistoryState,
+      setErrorMessage,
+      setCommandHistory,
+      setHistoryLogLimit,
+      setCanLoadMoreHistory,
+      setHistoryBusy,
+      setHistoryModeHint,
+    });
 
     loadHistoryRef.current = loadHistory;
     void loadHistory(TERMINAL_HISTORY_INITIAL_LIMIT, 'initial');
 
     return () => {
-      cancelled = true;
-      historyLoadSeqRef.current += 1;
-      inputForwardEnabledRef.current = false;
-      loadHistoryRef.current = null;
-      replayingHistoryRef.current = false;
-      pendingOutputChunksRef.current = [];
-      snapshotLoadingRef.current = false;
-      supportsSnapshotPagingRef.current = false;
-      snapshotRequestContextRef.current = null;
-      historyLoadedCountRef.current = 0;
-      historyLoadedIdsRef.current = new Set();
-      historyBeforeCursorRef.current = null;
-      closeWebSocketSafely(socketRef.current);
-      socketRef.current = null;
-      dataHandlerRef.current?.dispose();
-      dataHandlerRef.current = null;
-      scrollHandlerRef.current?.dispose();
-      scrollHandlerRef.current = null;
-      resizeObserver.disconnect();
-      resizeObserverRef.current = null;
-      term.dispose();
-      terminalRef.current = null;
-      fitRef.current = null;
-      setHistoryState('idle');
-      setConnectionState('disconnected');
+      cancelledRef.current = true;
+      cleanupTerminalInstanceSessionState({
+        fitRef,
+        terminalRef,
+        socketRef,
+        resizeObserverRef,
+        dataHandlerRef,
+        scrollHandlerRef,
+        inputForwardEnabledRef,
+        historyLoadSeqRef,
+        historyLoadedCountRef,
+        historyLoadedIdsRef,
+        historyBeforeCursorRef,
+        replayingHistoryRef,
+        pendingOutputChunksRef,
+        loadHistoryRef,
+        snapshotLoadingRef,
+        supportsSnapshotPagingRef,
+        snapshotRequestContextRef,
+        setConnectionState,
+        setHistoryState,
+        resizeObserver,
+        term,
+      });
     };
   }, [
     appendCommands,

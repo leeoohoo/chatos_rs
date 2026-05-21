@@ -6,31 +6,17 @@ import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealti
 import { useTerminalStateRealtime } from '../../../lib/realtime/useTerminalStateRealtime';
 import type {
   Project,
-  ProjectRunInstance,
   ProjectRunState,
 } from '../../../types';
 import type { ProjectRunnerActiveTerminal } from '../../../lib/domain/projectRunner';
+import {
+  applyProjectRunnerTerminalStatePayload,
+  buildProjectRunnerActiveRun,
+  removeProjectRunnerTerminalInstance,
+  resolveProjectRunnerSelectedInstance,
+} from './projectRunnerTerminalState';
 
 const readTrimmedString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-
-const toActiveRun = (
-  instance: ProjectRunInstance | null | undefined,
-  previous?: ProjectRunnerActiveTerminal | null,
-): ProjectRunnerActiveTerminal | null => {
-  if (!instance?.terminalId) {
-    return null;
-  }
-  return {
-    terminalId: instance.terminalId,
-    terminalName: instance.terminalName || previous?.terminalName || instance.terminalId,
-    command: previous?.command || '',
-    cwd: instance.cwd || previous?.cwd || '',
-    dispatchedAt: previous?.dispatchedAt || Date.now(),
-    origin: previous?.origin || 'discovered',
-    exitCode: previous?.exitCode ?? null,
-    exitReason: previous?.exitReason ?? null,
-  };
-};
 
 interface UseProjectRunnerTerminalPollingOptions {
   client: ApiClient;
@@ -50,6 +36,7 @@ export const useProjectRunnerTerminalPolling = ({
   const [activeTerminalBusy, setActiveTerminalBusy] = useState(false);
   const activeRunRef = useRef<ProjectRunnerActiveTerminal | null>(null);
   const runStateRequestVersionRef = useRef(0);
+  const activeProjectKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     activeRunRef.current = activeRun;
@@ -76,28 +63,11 @@ export const useProjectRunnerTerminalPolling = ({
       return;
     }
 
-    setProjectRunState((prev) => {
-      if (!prev) {
-        return prev;
-      }
-      const nextInstances = (prev.instances || []).filter((item) => item.terminalId !== normalizedTerminalId);
-      const nextSelectedInstance = normalizedNextSelectedTerminalId === undefined
-        ? (nextInstances[0] || null)
-        : (normalizedNextSelectedTerminalId
-          ? nextInstances.find((item) => item.terminalId === normalizedNextSelectedTerminalId) || null
-          : null);
-      return {
-        ...prev,
-        running: nextInstances.some((item) => item.running),
-        busy: nextInstances.some((item) => item.busy),
-        status: nextInstances.some((item) => item.running) ? 'running' : (nextInstances[0]?.status || 'idle'),
-        terminalId: nextSelectedInstance?.terminalId || null,
-        terminalName: nextSelectedInstance?.terminalName || null,
-        cwd: nextSelectedInstance?.cwd || null,
-        terminal: nextSelectedInstance?.terminal || null,
-        instances: nextInstances,
-      };
-    });
+    setProjectRunState((prev) => removeProjectRunnerTerminalInstance({
+      state: prev,
+      terminalId: normalizedTerminalId,
+      nextSelectedTerminalId: normalizedNextSelectedTerminalId,
+    }).nextState);
     setSelectedRunInstanceId(normalizedNextSelectedTerminalId === undefined ? null : normalizedNextSelectedTerminalId);
     setLastExitedRun((prev) => (prev?.terminalId === normalizedTerminalId ? null : prev));
   }, []);
@@ -135,11 +105,17 @@ export const useProjectRunnerTerminalPolling = ({
   }, [client, enabled, project?.id, resetActiveRunState]);
 
   useEffect(() => {
-    if (!enabled || !project?.id) {
+    const nextProjectKey = enabled ? project?.id || null : null;
+    if (activeProjectKeyRef.current === nextProjectKey) {
       return;
     }
-    void refreshProjectActiveRun();
-  }, [enabled, project?.id, refreshProjectActiveRun]);
+
+    activeProjectKeyRef.current = nextProjectKey;
+    resetActiveRunState();
+    if (nextProjectKey) {
+      void refreshProjectActiveRun();
+    }
+  }, [enabled, project?.id, refreshProjectActiveRun, resetActiveRunState]);
 
   const projectRunInstances = useMemo(
     () => projectRunState?.instances || [],
@@ -147,16 +123,11 @@ export const useProjectRunnerTerminalPolling = ({
   );
 
   const selectedInstance = useMemo(() => {
-    if (!projectRunInstances.length) {
-      return null;
-    }
-    return projectRunInstances.find((item) => item.terminalId === selectedRunInstanceId)
-      || projectRunInstances[0]
-      || null;
+    return resolveProjectRunnerSelectedInstance(projectRunInstances, selectedRunInstanceId);
   }, [projectRunInstances, selectedRunInstanceId]);
 
   useEffect(() => {
-    setActiveRun((prev) => toActiveRun(selectedInstance, prev));
+    setActiveRun((prev) => buildProjectRunnerActiveRun(selectedInstance, prev));
     setActiveTerminalBusy(Boolean(selectedInstance?.busy));
   }, [selectedInstance]);
 
@@ -196,44 +167,11 @@ export const useProjectRunnerTerminalPolling = ({
     onStateChanged: async (payload) => {
       const nextStatus = readTrimmedString(payload.status) || 'idle';
       const nextBusy = Boolean(payload.busy);
-      setProjectRunState((prev) => {
-        if (!prev) {
-          return prev;
-        }
-        const nextInstances = (prev.instances || []).map((item) => {
-          if (item.terminalId !== selectedInstance?.terminalId) {
-            return item;
-          }
-          return {
-            ...item,
-            status: nextStatus,
-            busy: nextBusy,
-            running: nextStatus === 'running',
-            cwd: readTrimmedString(payload.cwd) || item.cwd,
-            terminal: item.terminal
-              ? {
-                ...item.terminal,
-                status: nextStatus,
-                busy: nextBusy,
-                cwd: readTrimmedString(payload.cwd) || item.terminal.cwd,
-                name: readTrimmedString(payload.terminal_name) || item.terminal.name,
-              }
-              : item.terminal,
-          };
-        });
-        const selected = nextInstances.find((item) => item.terminalId === selectedInstance?.terminalId) || null;
-        return {
-          ...prev,
-          running: nextInstances.some((item) => item.running),
-          busy: nextInstances.some((item) => item.busy),
-          status: nextInstances.some((item) => item.running) ? 'running' : (nextInstances[0]?.status || 'idle'),
-          terminalId: selected?.terminalId || prev.terminalId,
-          terminalName: selected?.terminalName || prev.terminalName,
-          cwd: selected?.cwd || prev.cwd,
-          terminal: selected?.terminal || prev.terminal,
-          instances: nextInstances,
-        };
-      });
+      setProjectRunState((prev) => applyProjectRunnerTerminalStatePayload({
+        state: prev,
+        selectedRunInstanceId: selectedInstance?.terminalId || null,
+        payload,
+      }));
       setActiveTerminalBusy(nextBusy);
       if (nextStatus === 'exited' && selectedInstance?.terminalId) {
         recordExitedRun(

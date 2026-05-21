@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 
 import type ApiClient from '../../lib/api/client';
-import type { FsEntry, Project } from '../../types';
+import type { Project } from '../../types';
 import { useProjectRunnerCatalogState } from './runState/useProjectRunnerCatalogState';
 import { useProjectRunnerCommands } from './runState/useProjectRunnerCommands';
-import { buildProjectRunResolutionSuggestions } from './runState/projectRunnerFailureDiagnostics';
+import { buildProjectRunResolutionSuggestions } from './runState/projectRunnerResolutionSuggestions';
 import { useProjectRunnerExitInspection } from './runState/useProjectRunnerExitInspection';
 import { useProjectRunnerTerminalPolling } from './runState/useProjectRunnerTerminalPolling';
 export type { ProjectRunnerActiveTerminal } from '../../lib/domain/projectRunner';
@@ -13,32 +13,13 @@ interface UseProjectExplorerRunStateParams {
   client: ApiClient;
   project: Project | null;
   enabled: boolean;
-  selectedEntry: FsEntry | null;
-  selectedPath: string | null;
-  getParentPath: (path: string | null | undefined) => string;
-  setActionError: (value: string | null) => void;
-  setActionLoading: (value: boolean) => void;
-  setActionMessage: (value: string | null) => void;
 }
 
 export const useProjectExplorerRunState = ({
   client,
   project,
   enabled,
-  selectedEntry,
-  selectedPath,
-  getParentPath,
-  setActionError,
-  setActionLoading,
-  setActionMessage,
 }: UseProjectExplorerRunStateParams) => {
-  void selectedEntry;
-  void selectedPath;
-  void getParentPath;
-  void setActionError;
-  void setActionLoading;
-  void setActionMessage;
-
   const runnerCatalog = useProjectRunnerCatalogState({ client, project, enabled });
   const runnerTerminal = useProjectRunnerTerminalPolling({ client, project, enabled });
   const runnerCommands = useProjectRunnerCommands({
@@ -68,21 +49,6 @@ export const useProjectExplorerRunState = ({
     setRunnerDiagnosis: runnerCommands.setRunnerDiagnosis,
     setRunnerMessage: runnerCommands.setRunnerMessage,
   });
-
-  const lastInitializedProjectIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const nextProjectId = project?.id || null;
-    if (!enabled || !nextProjectId || lastInitializedProjectIdRef.current === nextProjectId) {
-      return;
-    }
-    lastInitializedProjectIdRef.current = nextProjectId;
-    void runnerCatalog.loadRunCatalog('catalog');
-  }, [
-    enabled,
-    project?.id,
-    runnerCatalog.loadRunCatalog,
-  ]);
 
   const selectedRunTarget = useMemo(
     () => runnerCatalog.runTargets.find((item) => item.id === runnerCatalog.selectedRunTargetId)

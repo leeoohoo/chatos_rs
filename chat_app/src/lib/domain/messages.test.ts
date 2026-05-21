@@ -93,4 +93,25 @@ describe('domain/messages', () => {
     expect(normalizeTurnId('  turn_123  ')).toBe('turn_123');
     expect(normalizeTurnId(null)).toBe('');
   });
+
+  it('tolerates null metadata without breaking normalization', () => {
+    const rawMessages = [
+      {
+        id: 'assistant_3',
+        role: 'assistant',
+        content: 'plain content',
+        metadata: null,
+        created_at: '2026-04-23T12:00:00.000Z',
+      },
+    ] as unknown as SessionMessageResponse[];
+
+    const [message] = normalizeRawMessages(rawMessages, 'session_b');
+
+    expect(message.metadata).toMatchObject({
+      toolCalls: undefined,
+      contentSegments: [{ type: 'text', content: 'plain content' }],
+    });
+    expect(message.content).toBe('plain content');
+    expect(message.status).toBe('completed');
+  });
 });

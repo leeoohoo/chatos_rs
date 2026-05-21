@@ -4,8 +4,6 @@ mod conversation_meta;
 mod path_support;
 mod project_scope;
 
-pub use self::project_scope::{list_unconfirmed_project_changes, summarize_project_changes};
-
 #[derive(Debug, Clone)]
 pub struct ProjectScopedChangeRecord {
     pub id: String,

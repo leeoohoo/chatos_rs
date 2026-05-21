@@ -2,16 +2,15 @@ import { useCallback, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 import type ApiClient from '../../../lib/api/client';
-import { ApiRequestError } from '../../../lib/api/client/shared';
 import { readProjectRunnerDispatchTarget } from '../../../lib/domain/projectRunner';
-import { normalizeProjectRunValidationIssue } from '../../../lib/domain/projectExplorer';
 import type { ProjectRunnerActiveTerminal } from '../../../lib/domain/projectRunner';
 import type { Project, ProjectRunTarget } from '../../../types';
 import {
-  formatProjectRunValidationIssues,
-} from './projectRunnerFailureDiagnostics';
-
-const readTrimmedString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+  buildProjectRunnerSelectedTerminalId,
+  buildProjectRunnerDispatchState,
+  resolveProjectRunnerDeleteTarget,
+} from './projectRunnerCommandState';
+import { extractProjectRunnerValidationMessage } from './projectRunnerCommandErrors';
 
 interface UseProjectRunnerCommandsOptions {
   client: ApiClient;
@@ -29,21 +28,6 @@ interface UseProjectRunnerCommandsOptions {
   removeRunInstanceLocally: (terminalId: string, nextSelectedTerminalId?: string | null) => void;
   refreshProjectActiveRun: () => Promise<void>;
 }
-
-const extractRunValidationMessage = (error: unknown, fallback: string): string => {
-  if (!(error instanceof ApiRequestError) || !error.payload || typeof error.payload !== 'object') {
-    return fallback;
-  }
-  const payload = error.payload as Record<string, unknown>;
-  const rawIssues = payload.validation_issues;
-  if (!Array.isArray(rawIssues)) {
-    return fallback;
-  }
-  const issues = rawIssues
-    .map(normalizeProjectRunValidationIssue)
-    .filter((item) => item.kind && item.message);
-  return formatProjectRunValidationIssues(issues, fallback);
-};
 
 export const useProjectRunnerCommands = ({
   client,
@@ -87,19 +71,11 @@ export const useProjectRunnerCommands = ({
       terminal_id: preferredTerminalId || undefined,
     });
     const { terminalId, terminalName } = readProjectRunnerDispatchTarget(result);
+    const nextState = buildProjectRunnerDispatchState({ target, terminalId, terminalName, commandPreview });
     setLastExitedRun(null);
-    if (terminalId) {
-      selectRunInstance(terminalId);
-      setActiveRun({
-        terminalId,
-        terminalName: terminalName || terminalId,
-        cwd: target.cwd,
-        command: commandPreview || target.command,
-        dispatchedAt: Date.now(),
-        origin: 'dispatched',
-        exitCode: null,
-        exitReason: null,
-      });
+    if (nextState) {
+      selectRunInstance(nextState.terminalId);
+      setActiveRun(nextState);
       setActiveTerminalBusy(true);
       setLastExitCheckedRunKey('');
     }
@@ -128,7 +104,7 @@ export const useProjectRunnerCommands = ({
       }
       await dispatchProjectRunTarget(selectedRunTarget, '启动成功', null);
     } catch (error) {
-      setRunnerError(extractRunValidationMessage(error, error instanceof Error ? error.message : '启动失败'));
+      setRunnerError(extractProjectRunnerValidationMessage(error, error instanceof Error ? error.message : '启动失败'));
       setRunnerMessage(null);
     } finally {
       setStarting(false);
@@ -139,7 +115,7 @@ export const useProjectRunnerCommands = ({
     setStopping(true);
     setRunnerError(null);
     try {
-      const terminalId = readTrimmedString(selectedTerminalId || activeRun?.terminalId);
+      const terminalId = buildProjectRunnerSelectedTerminalId(selectedTerminalId || activeRun?.terminalId);
       if (!terminalId) {
         throw new Error('当前项目还没有独立运行终端');
       }
@@ -155,9 +131,9 @@ export const useProjectRunnerCommands = ({
       setStopping(false);
     }
   }, [
+    activeRun?.terminalId,
     client,
     selectedTerminalId,
-    activeRun?.terminalId,
     setActiveTerminalBusy,
   ]);
 
@@ -171,7 +147,7 @@ export const useProjectRunnerCommands = ({
       if (!selectedRunTarget) {
         throw new Error('未发现可运行目标');
       }
-      const terminalId = readTrimmedString(selectedTerminalId || activeRun?.terminalId);
+      const terminalId = buildProjectRunnerSelectedTerminalId(selectedTerminalId || activeRun?.terminalId);
       if (terminalId) {
         setManualControlAt(Date.now());
         await client.interruptTerminal(terminalId, { reason: 'project_run_restart' });
@@ -179,7 +155,7 @@ export const useProjectRunnerCommands = ({
       }
       await dispatchProjectRunTarget(selectedRunTarget, '重启成功', terminalId || null);
     } catch (error) {
-      setRunnerError(extractRunValidationMessage(error, error instanceof Error ? error.message : '重启失败'));
+      setRunnerError(extractProjectRunnerValidationMessage(error, error instanceof Error ? error.message : '重启失败'));
       setRunnerMessage(null);
     } finally {
       setRestarting(false);
@@ -199,16 +175,11 @@ export const useProjectRunnerCommands = ({
     setDeleting(true);
     setRunnerError(null);
     try {
-      const terminalId = readTrimmedString(selectedTerminalId || activeRun?.terminalId);
+      const terminalId = buildProjectRunnerSelectedTerminalId(selectedTerminalId || activeRun?.terminalId);
       if (!terminalId) {
         throw new Error('当前项目还没有独立运行终端');
       }
-      const currentIndex = projectRunTerminalIds.findIndex((item) => item === terminalId);
-      const nextTerminalId = currentIndex >= 0
-        ? (projectRunTerminalIds[currentIndex + 1]
-          || projectRunTerminalIds[currentIndex - 1]
-          || null)
-        : null;
+      const nextTerminalId = resolveProjectRunnerDeleteTarget(projectRunTerminalIds, terminalId);
       await client.deleteTerminal(terminalId);
       removeRunInstanceLocally(terminalId, nextTerminalId);
       selectRunInstance(nextTerminalId);
@@ -227,16 +198,16 @@ export const useProjectRunnerCommands = ({
       setDeleting(false);
     }
   }, [
-    selectedTerminalId,
     activeRun,
-    projectRunTerminalIds,
     client,
+    projectRunTerminalIds,
     removeRunInstanceLocally,
+    refreshProjectActiveRun,
     selectRunInstance,
+    selectedTerminalId,
     setActiveRun,
     setLastExitedRun,
     setActiveTerminalBusy,
-    refreshProjectActiveRun,
   ]);
 
   const resetRunnerCommandState = useCallback(() => {

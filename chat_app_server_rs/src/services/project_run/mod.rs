@@ -6,6 +6,14 @@ mod cache;
 mod dispatcher;
 #[path = "environment.rs"]
 mod environment;
+#[path = "environment_discovery.rs"]
+mod environment_discovery;
+#[path = "environment_runtime.rs"]
+mod environment_runtime;
+#[path = "environment_support.rs"]
+mod environment_support;
+#[path = "environment_validation.rs"]
+mod environment_validation;
 
 const SHELL_BUILTINS: &[&str] = &[
     "cd", "export", "unset", "alias", "unalias", "source", ".", "echo", "printf", "test", "[",
@@ -40,8 +48,10 @@ pub(crate) use self::cache::{
     clear_cached_environment_snapshot, read_cached_catalog, write_cached_catalog,
 };
 pub(crate) use self::environment::{
-    env_overrides_for_target, load_environment_selection, load_environment_snapshot,
-    refresh_environment_snapshot,
-    resolve_command_with_toolchains, save_environment_selection,
-    validate_project_run_target,
+    load_environment_selection, load_environment_snapshot, refresh_environment_snapshot,
+    save_environment_selection,
 };
+pub(crate) use self::environment_runtime::{
+    env_overrides_for_target, resolve_command_with_toolchains,
+};
+pub(crate) use self::environment_validation::validate_project_run_target;

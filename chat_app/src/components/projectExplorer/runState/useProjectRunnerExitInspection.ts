@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 
 import type { TerminalLogResponse } from '../../../lib/api/client/types';
 import type { ProjectRunnerActiveTerminal } from '../../../lib/domain/projectRunner';
-import { extractFailureReasonFromLogs } from './projectRunnerFailureDiagnostics';
+import { extractFailureReasonFromLogs } from './projectRunnerFailureReason';
+import { shouldInspectProjectRunnerExit } from './projectRunnerExitInspectionState';
 
 interface UseProjectRunnerExitInspectionOptions {
   lastExitedRun: ProjectRunnerActiveTerminal | null;
@@ -29,49 +30,50 @@ export const useProjectRunnerExitInspection = ({
   setRunnerMessage,
 }: UseProjectRunnerExitInspectionOptions) => {
   useEffect(() => {
-    if (!lastExitedRun?.terminalId) {
+    const { shouldInspect, shouldMarkChecked, runKey } = shouldInspectProjectRunnerExit({
+      lastExitedRun,
+      lastExitCheckedRunKey,
+      manualControlAt,
+    });
+    if (!runKey) {
       return;
     }
-    if (lastExitedRun.origin !== 'dispatched') {
-      return;
-    }
-
-    const runKey = `${lastExitedRun.terminalId}:${lastExitedRun.dispatchedAt}`;
-    if (runKey === lastExitCheckedRunKey) {
-      return;
-    }
-    if (manualControlAt > 0 && Date.now() - manualControlAt < 3500) {
+    if (shouldMarkChecked) {
       setLastExitCheckedRunKey(runKey);
       return;
     }
+    if (!shouldInspect) {
+      return;
+    }
+    const exitedRun = lastExitedRun as ProjectRunnerActiveTerminal;
 
     let disposed = false;
     const inspect = async () => {
       try {
-        if (lastExitedRun.exitReason === 'closed') {
+        if (exitedRun.exitReason === 'closed') {
           setRunnerDiagnosis('运行已停止');
           setRunnerError(null);
           return;
         }
-        if (lastExitedRun.exitCode === 0) {
+        if (exitedRun.exitCode === 0) {
           setRunnerDiagnosis('进程已正常退出');
           setRunnerError(null);
           return;
         }
-        const logs = await onListTerminalLogs(lastExitedRun.terminalId, { limit: 120, offset: 0 });
+        const logs = await onListTerminalLogs(exitedRun.terminalId, { limit: 120, offset: 0 });
         if (disposed) {
           return;
         }
-        const reason = extractFailureReasonFromLogs(logs || [], lastExitedRun.command);
+        const reason = extractFailureReasonFromLogs(logs || [], exitedRun.command);
         if (reason) {
           setRunnerDiagnosis(reason);
           setRunnerError(`运行失败：${reason}`);
           setRunnerMessage(null);
           return;
         }
-        if (typeof lastExitedRun.exitCode === 'number') {
-          setRunnerDiagnosis(`进程已退出，退出码 ${lastExitedRun.exitCode}`);
-          setRunnerError(`运行失败：进程已退出，退出码 ${lastExitedRun.exitCode}`);
+        if (typeof exitedRun.exitCode === 'number') {
+          setRunnerDiagnosis(`进程已退出，退出码 ${exitedRun.exitCode}`);
+          setRunnerError(`运行失败：进程已退出，退出码 ${exitedRun.exitCode}`);
           setRunnerMessage(null);
           return;
         }

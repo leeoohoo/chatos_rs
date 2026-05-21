@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "../../api/client";
 import { validateBuildPayloadInput } from "../connections/connectionFormValidation";
 import type { AuthMode, ConnectionTestResult, DbTypeDescriptor } from "../../types/models";
@@ -36,6 +36,9 @@ export function ConnectionModal({
   const [mysqlDatabasesError, setMysqlDatabasesError] = useState<string | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
+  const discoverTimerRef = useRef<number | null>(null);
+  const discoverRequestSeqRef = useRef(0);
+  const activeDiscoverSeqRef = useRef(0);
 
   const selectedDbType = useMemo(
     () => dbTypes.find((item) => item.db_type === value.dbType) || null,
@@ -91,10 +94,24 @@ export function ConnectionModal({
   }, [availableAuthModes, value.authMode]);
 
   useEffect(() => {
+    if (discoverTimerRef.current !== null) {
+      window.clearTimeout(discoverTimerRef.current);
+      discoverTimerRef.current = null;
+    }
     if (!canDiscoverDatabases) {
       return;
     }
-    void discoverMysqlDatabases();
+
+    discoverTimerRef.current = window.setTimeout(() => {
+      void discoverMysqlDatabases();
+    }, 300);
+
+    return () => {
+      if (discoverTimerRef.current !== null) {
+        window.clearTimeout(discoverTimerRef.current);
+        discoverTimerRef.current = null;
+      }
+    };
   }, [
     canDiscoverDatabases,
     value.name,
@@ -114,6 +131,10 @@ export function ConnectionModal({
   }
 
   async function discoverMysqlDatabases() {
+    const requestSeq = discoverRequestSeqRef.current + 1;
+    discoverRequestSeqRef.current = requestSeq;
+    activeDiscoverSeqRef.current = requestSeq;
+
     try {
       setMysqlDatabasesError(null);
       setLoadingMysqlDatabases(true);
@@ -123,18 +144,38 @@ export function ConnectionModal({
         database: ""
       });
       const response = await apiClient.discoverDatabases(payload, { page: 1, pageSize: 500 });
+      if (activeDiscoverSeqRef.current !== requestSeq || !open) {
+        return;
+      }
       const items = response.items.map((item) => item.name).filter((item) => item.trim() !== "");
       setMysqlDatabases(items);
       if (value.mysqlScope === "single" && value.database.trim() === "" && items.length > 0) {
         setValue((prev) => ({ ...prev, database: items[0] }));
       }
     } catch (caught) {
+      if (activeDiscoverSeqRef.current !== requestSeq || !open) {
+        return;
+      }
       setMysqlDatabases([]);
       setMysqlDatabasesError(caught instanceof Error ? caught.message : "Discover databases failed");
     } finally {
-      setLoadingMysqlDatabases(false);
+      if (activeDiscoverSeqRef.current === requestSeq && open) {
+        setLoadingMysqlDatabases(false);
+      }
     }
   }
+
+  useEffect(() => {
+    if (!open) {
+      discoverRequestSeqRef.current += 1;
+      activeDiscoverSeqRef.current = discoverRequestSeqRef.current;
+      setLoadingMysqlDatabases(false);
+      if (discoverTimerRef.current !== null) {
+        window.clearTimeout(discoverTimerRef.current);
+        discoverTimerRef.current = null;
+      }
+    }
+  }, [open]);
 
   function update<K extends keyof ConnectionEditorValue>(key: K, next: ConnectionEditorValue[K]) {
     setTestResult(null);

@@ -21,7 +21,7 @@ type NormalizedRawMessage = {
   content: string;
   createdAt: Date;
   id: string;
-  metadata: unknown;
+  metadata: UnknownRecord | null;
   reasoning: unknown;
   role: Message['role'];
   sessionId: string;
@@ -125,8 +125,8 @@ const normalizeToolCallId = (value: unknown): string => {
   return String(value).trim();
 };
 
-const extractStructuredToolResult = (metadata: unknown): unknown => {
-  const metadataRecord = asRecord(metadata);
+const extractStructuredToolResult = (metadata: UnknownRecord | null | undefined): unknown => {
+  const metadataRecord = metadata ?? null;
   return readValue(metadataRecord, 'structured_result') ?? readValue(metadataRecord, 'structuredResult');
 };
 
@@ -139,15 +139,15 @@ export const isMeaningfulReasoning = (value: unknown): value is string => {
   return !['minimal', 'low', 'medium', 'high', 'detailed'].includes(normalized);
 };
 
-const parseMessageMetadata = (metadata: unknown): unknown => {
+const parseMessageMetadata = (metadata: unknown): UnknownRecord | null => {
   if (!metadata) {
-    return undefined;
+    return null;
   }
   if (typeof metadata !== 'string') {
-    return metadata;
+    return asRecord(metadata);
   }
   try {
-    return JSON.parse(metadata);
+    return asRecord(JSON.parse(metadata));
   } catch {
     return {};
   }
@@ -275,7 +275,7 @@ export const normalizeRawMessages = (
       return;
     }
 
-    const metadataRecord = asRecord(message.metadata);
+    const metadataRecord = message.metadata;
     const isError = readValue(metadataRecord, 'isError') || readValue(metadataRecord, 'is_error') || false;
     const structuredResult = extractStructuredToolResult(message.metadata);
     toolResultsMap.set(toolCallId, {
@@ -286,7 +286,7 @@ export const normalizeRawMessages = (
 
   return parsedMessages.map((message) => {
     let toolCalls: ToolCallWithExtras[] | undefined;
-    const metadataRecord = asRecord(message.metadata);
+    const metadataRecord = message.metadata;
     const sourceToolCalls = message.topLevelToolCalls.length > 0
       ? message.topLevelToolCalls
       : normalizeToolCallsArray(

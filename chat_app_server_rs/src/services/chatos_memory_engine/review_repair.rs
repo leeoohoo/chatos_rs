@@ -92,6 +92,7 @@ pub async fn get_chatos_review_repair_job_run(
             status: None,
             tenant_id: Some(mapping.tenant_id),
             source_id: Some(CHATOS_COMPAT_SOURCE_ID.to_string()),
+            trigger_type: None,
             limit: Some(100),
         })
         .await?;
@@ -135,6 +136,7 @@ pub async fn get_chatos_review_repair_status(
             status: Some("running".to_string()),
             tenant_id: Some(mapping.tenant_id.clone()),
             source_id: Some(CHATOS_COMPAT_SOURCE_ID.to_string()),
+            trigger_type: None,
             limit: Some(10),
         })
         .await

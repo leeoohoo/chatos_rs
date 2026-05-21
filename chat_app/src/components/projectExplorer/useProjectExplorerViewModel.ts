@@ -71,12 +71,6 @@ export const useProjectExplorerViewModel = ({
     client,
     project,
     enabled: settingsTabActive,
-    selectedEntry: selection.selectedEntry,
-    selectedPath: state.selectedPath,
-    getParentPath: resolveParentPath,
-    setActionError: state.setActionError,
-    setActionLoading: state.setActionLoading,
-    setActionMessage: state.setActionMessage,
   });
 
   const codeNav = useProjectExplorerCodeNav({
