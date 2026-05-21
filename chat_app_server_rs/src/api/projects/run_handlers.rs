@@ -5,15 +5,15 @@ use std::collections::HashMap;
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::time::now_rfc3339;
-use crate::models::terminal::TerminalService;
 use crate::models::project_run::ProjectRunCatalog;
 use crate::models::project_run_environment::ProjectRunCustomToolchain;
+use crate::models::terminal::TerminalService;
 use crate::repositories::project_run_catalogs;
 use crate::services::project_run::{
     analyze_project, apply_default_target, clear_cached_environment_snapshot, dispatch_command,
     env_overrides_for_target, load_environment_selection, load_environment_snapshot,
-    read_cached_catalog, refresh_environment_snapshot, resolve_execution,
-    resolve_command_with_toolchains, save_environment_selection, validate_project_run_target,
+    read_cached_catalog, refresh_environment_snapshot, resolve_command_with_toolchains,
+    resolve_execution, save_environment_selection, validate_project_run_target,
     write_cached_catalog, RunExecutionInput,
 };
 use crate::services::terminal_manager::get_terminal_manager;
@@ -38,9 +38,7 @@ fn serialize_project_run_terminal(
 }
 
 fn normalize_custom_toolchains(
-    raw: Option<
-        HashMap<String, super::contracts::ProjectRunCustomToolchainRequest>,
-    >,
+    raw: Option<HashMap<String, super::contracts::ProjectRunCustomToolchainRequest>>,
 ) -> HashMap<String, ProjectRunCustomToolchain> {
     raw.unwrap_or_default()
         .into_iter()
@@ -58,11 +56,7 @@ fn normalize_custom_toolchains(
             let label = toolchain.label.unwrap_or_default().trim().to_string();
             Some((
                 kind.clone(),
-                ProjectRunCustomToolchain {
-                    kind,
-                    label,
-                    path,
-                },
+                ProjectRunCustomToolchain { kind, label, path },
             ))
         })
         .collect()
@@ -358,12 +352,9 @@ pub(super) async fn get_project_run_state(
             .map(|value| value.status.clone())
             .unwrap_or_else(|| "idle".to_string())
     };
-    let terminal_value = terminal
-        .as_ref()
-        .map(|value| serialize_project_run_terminal(
-            value,
-            manager.get_busy(value.id.as_str()).unwrap_or(false),
-        ));
+    let terminal_value = terminal.as_ref().map(|value| {
+        serialize_project_run_terminal(value, manager.get_busy(value.id.as_str()).unwrap_or(false))
+    });
     (
         StatusCode::OK,
         Json(json!({

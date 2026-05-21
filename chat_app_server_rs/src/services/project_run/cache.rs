@@ -2,9 +2,7 @@ use crate::models::project_run::ProjectRunCatalog;
 use crate::models::project_run_environment::{
     ProjectRunEnvironmentSelection, ProjectRunEnvironmentSnapshot,
 };
-use crate::services::project_local_cache::{
-    read_cache_json, remove_cache_file, write_cache_json,
-};
+use crate::services::project_local_cache::{read_cache_json, remove_cache_file, write_cache_json};
 
 const RUN_CATALOG_CACHE_PATH: &str = "project_run/catalog.json";
 const RUN_ENVIRONMENT_SELECTION_CACHE_PATH: &str = "project_run/environment_selection.json";

@@ -16,13 +16,13 @@ use crate::models::session::Session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::chatos_memory_engine;
 
+use super::contracts::CompactHistoryQuery;
 use super::contracts::{CreateMessageRequest, PageQuery};
 use super::history::{
     build_turn_display_messages, compact_messages_for_display, parse_bool_query_flag,
 };
 use super::history_process::find_user_index_by_turn_id;
 use super::support::list_all_session_messages;
-use super::contracts::CompactHistoryQuery;
 
 async fn load_chatos_session(conversation_id: &str) -> Result<Session, String> {
     match chatos_memory_engine::get_chatos_session(conversation_id, None).await? {
@@ -129,7 +129,9 @@ pub(super) async fn get_session_compact_history(
             let mut items: Vec<Value> = Vec::with_capacity(page.items.len() * 2);
             for turn in page.items {
                 let user_message = chatos_memory_engine::engine_record_to_message(turn.user_record);
-                items.push(serde_json::to_value(MessageOut::from(user_message)).unwrap_or(Value::Null));
+                items.push(
+                    serde_json::to_value(MessageOut::from(user_message)).unwrap_or(Value::Null),
+                );
                 if let Some(final_assistant_record) = turn.final_assistant_record {
                     let assistant_message =
                         chatos_memory_engine::engine_record_to_message(final_assistant_record);

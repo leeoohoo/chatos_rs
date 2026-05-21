@@ -9,8 +9,7 @@ use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
 use crate::services::realtime::{
     publish_project_run_instance_changed, publish_project_run_state_changed,
-    publish_terminal_list_invalidated,
-    publish_terminal_state_changed,
+    publish_terminal_list_invalidated, publish_terminal_state_changed,
 };
 
 use super::{TerminalEvent, TerminalSession};
@@ -159,14 +158,7 @@ impl TerminalsManager {
             publish_terminal_state_changed(user_id, &terminal, false, "created", None);
             if let Some(project_id) = terminal.project_id.as_deref() {
                 publish_project_run_instance_changed(
-                    user_id,
-                    project_id,
-                    &terminal,
-                    false,
-                    true,
-                    "running",
-                    "created",
-                    None,
+                    user_id, project_id, &terminal, false, true, "running", "created", None,
                 );
                 publish_project_run_state_changed(
                     user_id,
@@ -191,8 +183,13 @@ impl TerminalsManager {
             return Ok(session);
         }
         let session = self.spawn_session(terminal)?;
-        let _ = terminals::update_terminal_status(&terminal.id, Some("running".to_string()), None, None)
-            .await;
+        let _ = terminals::update_terminal_status(
+            &terminal.id,
+            Some("running".to_string()),
+            None,
+            None,
+        )
+        .await;
         if let Some(user_id) = terminal.user_id.as_deref() {
             Self::publish_list_invalidated_if_needed(terminal, "ensured_running", Some(terminal));
             publish_terminal_state_changed(
@@ -262,13 +259,20 @@ impl TerminalsManager {
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
         self.sessions.remove(id);
-        let _ = terminals::update_terminal_status(id, Some("exited".to_string()), None, Some(0)).await;
+        let _ =
+            terminals::update_terminal_status(id, Some("exited".to_string()), None, Some(0)).await;
         if publish_events {
             if let Some(terminal) = terminal {
                 if let Some(user_id) = terminal.user_id.as_deref() {
                     let mut exited_terminal = terminal.clone();
                     exited_terminal.status = "exited".to_string();
-                    publish_terminal_state_changed(user_id, &exited_terminal, false, "closed", None);
+                    publish_terminal_state_changed(
+                        user_id,
+                        &exited_terminal,
+                        false,
+                        "closed",
+                        None,
+                    );
                     Self::publish_list_invalidated_if_needed(
                         terminal,
                         "closed",
@@ -334,14 +338,14 @@ impl TerminalsManager {
     }
 
     pub async fn shutdown_all_project_run_terminals(&self) -> Result<usize, String> {
-        let terminals = crate::models::terminal::TerminalService::list_by_kind(
-            None,
-            TERMINAL_KIND_PROJECT_RUN,
-        )
-        .await?;
+        let terminals =
+            crate::models::terminal::TerminalService::list_by_kind(None, TERMINAL_KIND_PROJECT_RUN)
+                .await?;
         let mut closed = 0usize;
         for terminal in terminals {
-            let _ = self.close_internal(terminal.id.as_str(), Some(&terminal), false).await;
+            let _ = self
+                .close_internal(terminal.id.as_str(), Some(&terminal), false)
+                .await;
             let _ = TerminalLogService::create(TerminalLog::new(
                 terminal.id.clone(),
                 "signal".to_string(),
@@ -355,11 +359,9 @@ impl TerminalsManager {
     }
 
     pub async fn cleanup_stale_project_run_terminals(&self) -> Result<usize, String> {
-        let terminals = crate::models::terminal::TerminalService::list_by_kind(
-            None,
-            TERMINAL_KIND_PROJECT_RUN,
-        )
-        .await?;
+        let terminals =
+            crate::models::terminal::TerminalService::list_by_kind(None, TERMINAL_KIND_PROJECT_RUN)
+                .await?;
         let mut cleaned = 0usize;
         for terminal in terminals {
             let pid = terminal.process_id.unwrap_or(0);

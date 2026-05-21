@@ -1,7 +1,7 @@
 use tracing::{info, warn};
 
-use crate::{config::Config, core, db, services};
 use crate::services::terminal_manager::get_terminal_manager;
+use crate::{config::Config, core, db, services};
 
 pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
     if let Err(err) =

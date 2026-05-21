@@ -39,7 +39,11 @@ fn validation_base_dir(project_root: &Path, target: &ProjectRunTarget) -> PathBu
     project_root.to_path_buf()
 }
 
-fn validation_manifest_path(base_dir: &Path, target: &ProjectRunTarget, file_name: &str) -> PathBuf {
+fn validation_manifest_path(
+    base_dir: &Path,
+    target: &ProjectRunTarget,
+    file_name: &str,
+) -> PathBuf {
     target
         .manifest_path
         .as_deref()
@@ -59,11 +63,14 @@ pub(crate) fn validate_project_run_target(
     let base_dir = validation_base_dir(project_root, target);
 
     for kind in infer_required_toolchains(target) {
-        let Some(option) = selected_or_first_option(kind.as_str(), selection, options_by_kind) else {
+        let Some(option) = selected_or_first_option(kind.as_str(), selection, options_by_kind)
+        else {
             let hint = match kind.as_str() {
                 "java_home" => Some("请在项目设置里选择可用的 JDK".to_string()),
                 "mvn" => Some("请在项目设置里选择 Maven，或使用项目内 mvnw".to_string()),
-                "mvn_settings" => Some("可优先检查 ~/.m2/settings.xml 或项目内 .mvn/settings.xml".to_string()),
+                "mvn_settings" => {
+                    Some("可优先检查 ~/.m2/settings.xml 或项目内 .mvn/settings.xml".to_string())
+                }
                 "gradle" => Some("请在项目设置里选择 Gradle，或使用项目内 gradlew".to_string()),
                 "gradle_user_home" => Some("可优先检查 ~/.gradle 或项目内 .gradle".to_string()),
                 "python" => Some("请在项目设置里选择 Python 解释器".to_string()),

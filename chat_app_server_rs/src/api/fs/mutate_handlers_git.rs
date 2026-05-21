@@ -24,7 +24,10 @@ fn normalize_relative_for_gitignore(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-fn gitignore_parent_for_mode(authorized: &crate::api::fs::policy::AuthorizedPath, mode: &str) -> PathBuf {
+fn gitignore_parent_for_mode(
+    authorized: &crate::api::fs::policy::AuthorizedPath,
+    mode: &str,
+) -> PathBuf {
     match mode {
         "folder" => {
             if authorized.path.is_dir() {
@@ -111,7 +114,8 @@ fn append_unique_gitignore_line(gitignore_path: &Path, pattern: &str) -> Result<
     }
     next_content.push_str(normalized_pattern);
     next_content.push('\n');
-    fs::write(gitignore_path, next_content).map_err(|err| format!("写入 .gitignore 失败: {}", err))?;
+    fs::write(gitignore_path, next_content)
+        .map_err(|err| format!("写入 .gitignore 失败: {}", err))?;
     Ok(true)
 }
 
@@ -179,12 +183,7 @@ pub(in super::super) async fn append_gitignore_entry(
                 Json(json!({ "error": "当前路径不在 Git 仓库内，无法写入 .gitignore" })),
             )
         }
-        Err(message) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": message })),
-            )
-        }
+        Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))),
     };
     if !authorized.path.starts_with(repo_root.as_path()) {
         return (
@@ -193,14 +192,13 @@ pub(in super::super) async fn append_gitignore_entry(
         );
     }
 
-    let pattern = match gitignore_pattern(gitignore_authorized.path.as_path(), authorized.path.as_path(), mode) {
+    let pattern = match gitignore_pattern(
+        gitignore_authorized.path.as_path(),
+        authorized.path.as_path(),
+        mode,
+    ) {
         Ok(value) => value,
-        Err(message) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": message })),
-            )
-        }
+        Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))),
     };
     let gitignore_path = gitignore_authorized.path.join(".gitignore");
     let created = !gitignore_path.exists();
@@ -271,15 +269,16 @@ pub(in super::super) async fn open_path_externally(
 
     let open_result = match mode {
         "reveal" => run_open_command(&["-R", authorized.path.to_string_lossy().as_ref()]),
-        "code" => run_open_command(&["-a", "Visual Studio Code", authorized.path.to_string_lossy().as_ref()]),
+        "code" => run_open_command(&[
+            "-a",
+            "Visual Studio Code",
+            authorized.path.to_string_lossy().as_ref(),
+        ]),
         "default" => run_open_command(&[authorized.path.to_string_lossy().as_ref()]),
         _ => Err("不支持的打开方式".to_string()),
     };
     if let Err(message) = open_result {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": message })),
-        );
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": message })));
     }
 
     (
@@ -332,12 +331,7 @@ pub(in super::super) async fn discard_git_changes(
                 Json(json!({ "error": "当前路径不在 Git 仓库内，无法回滚变更" })),
             )
         }
-        Err(message) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": message })),
-            )
-        }
+        Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))),
     };
     let relative_path = match pathdiff::diff_paths(authorized.path.as_path(), repo_root.as_path()) {
         Some(value) => normalize_relative_for_gitignore(value.as_path()),
@@ -356,12 +350,7 @@ pub(in super::super) async fn discard_git_changes(
     .await
     {
         Ok(value) => value,
-        Err(message) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": message })),
-            )
-        }
+        Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))),
     };
 
     invalidate_project_symbol_indexes_for_path(authorized.path.as_path());

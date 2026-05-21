@@ -1,5 +1,5 @@
 use memory_engine_sdk::{
-    ComposeContextPolicy, CompactTurnsResponse, SdkComposeContextRequest,
+    CompactTurnsResponse, ComposeContextPolicy, SdkComposeContextRequest,
     SdkGetTurnProcessRecordsRequest, SdkListCompactTurnsRequest, SdkListThreadRecordsRequest,
     SdkListThreadSummariesRequest, SdkListThreadsRequest, SdkUpsertThreadRequest,
     TurnProcessRecordsResponse,
@@ -7,6 +7,7 @@ use memory_engine_sdk::{
 use serde_json::Value;
 
 use crate::core::chat_runtime::{contact_agent_id_from_metadata, contact_id_from_metadata};
+use crate::core::messages::message_is_hidden;
 use crate::core::time::now_rfc3339;
 use crate::models::message::Message;
 use crate::models::session::Session;
@@ -66,6 +67,7 @@ pub async fn compose_chatos_context(
             .recent_records
             .into_iter()
             .map(engine_record_to_message)
+            .filter(|message| !message_is_hidden(message))
             .collect(),
     })
 }
@@ -267,9 +269,13 @@ pub async fn list_chatos_messages(
                     "desc".to_string()
                 }),
             },
-    )
-    .await?;
-    Ok(items.into_iter().map(engine_record_to_message).collect())
+        )
+        .await?;
+    Ok(items
+        .into_iter()
+        .map(engine_record_to_message)
+        .filter(|message| !message_is_hidden(message))
+        .collect())
 }
 
 pub async fn list_chatos_compact_turns(
@@ -279,7 +285,7 @@ pub async fn list_chatos_compact_turns(
 ) -> Result<CompactTurnsResponse, String> {
     let mapping = build_thread_mapping(session)?;
     let client = build_client()?;
-    client
+    let mut page = client
         .list_compact_turns(
             mapping.thread_id.as_str(),
             &SdkListCompactTurnsRequest {
@@ -289,7 +295,22 @@ pub async fn list_chatos_compact_turns(
                 before_turn_id: before_turn_id.map(ToOwned::to_owned),
             },
         )
-        .await
+        .await?;
+
+    for index in 0..page.items.len() {
+        let turn_id = page.items[index].turn_id.clone();
+        let hidden_final = page.items[index]
+            .final_assistant_record
+            .as_ref()
+            .map(|record| message_is_hidden(&engine_record_to_message(record.clone())))
+            .unwrap_or(false);
+        if hidden_final {
+            let visible = select_visible_final_assistant_record(session, turn_id.as_str()).await?;
+            page.items[index].final_assistant_record = visible;
+        }
+    }
+
+    Ok(page)
 }
 
 pub async fn get_chatos_turn_process_records(
@@ -298,7 +319,7 @@ pub async fn get_chatos_turn_process_records(
 ) -> Result<TurnProcessRecordsResponse, String> {
     let mapping = build_thread_mapping(session)?;
     let client = build_client()?;
-    client
+    let mut resp = client
         .get_turn_process_records(
             mapping.thread_id.as_str(),
             turn_id,
@@ -307,15 +328,38 @@ pub async fn get_chatos_turn_process_records(
                 record_type: Some("message".to_string()),
             },
         )
-        .await
+        .await?;
+    resp.items
+        .retain(|record| !message_is_hidden(&engine_record_to_message(record.clone())));
+    Ok(resp)
 }
 
 pub async fn get_chatos_message_by_id(message_id: &str) -> Result<Option<Message>, String> {
     let client = build_client()?;
-    Ok(client
+    let message = client
         .get_record(message_id, None, None)
         .await?
-        .map(engine_record_to_message))
+        .map(engine_record_to_message);
+    Ok(message.filter(|message| !message_is_hidden(message)))
+}
+
+async fn select_visible_final_assistant_record(
+    session: &Session,
+    turn_id: &str,
+) -> Result<Option<memory_engine_sdk::EngineRecord>, String> {
+    let records = get_chatos_turn_process_records(session, turn_id)
+        .await?
+        .items;
+    for record in records.iter().rev() {
+        if record.role != "assistant" {
+            continue;
+        }
+        if record.content.trim().is_empty() {
+            continue;
+        }
+        return Ok(Some(record.clone()));
+    }
+    Ok(None)
 }
 
 pub async fn upsert_chatos_message(

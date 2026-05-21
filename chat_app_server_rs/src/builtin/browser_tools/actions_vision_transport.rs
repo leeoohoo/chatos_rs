@@ -228,6 +228,7 @@ async fn run_browser_vision_with_responses(
             None,
             None,
             None,
+            None,
             browser_vision_request_purpose(candidate),
         )
         .await
@@ -270,6 +271,7 @@ async fn run_browser_vision_with_chat_completions(
             false,
             Some(candidate.provider.clone()),
             candidate.thinking_level.clone(),
+            None,
             None,
             None,
             None,

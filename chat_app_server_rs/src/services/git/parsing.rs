@@ -188,7 +188,8 @@ pub(super) fn parse_name_status_z(raw: &str) -> Vec<GitDiffFile> {
             let Some(new_path) = parts.next() else {
                 break;
             };
-            if should_ignore_repo_relative_path(path) || should_ignore_repo_relative_path(new_path) {
+            if should_ignore_repo_relative_path(path) || should_ignore_repo_relative_path(new_path)
+            {
                 continue;
             }
             files.push(GitDiffFile {

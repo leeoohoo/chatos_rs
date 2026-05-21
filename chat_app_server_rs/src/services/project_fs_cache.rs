@@ -44,7 +44,10 @@ pub fn directory_cache_relative_path(directory_path: &Path, include_files: bool)
         normalize_path_string(directory_path),
         if include_files { "entries" } else { "dirs" }
     );
-    format!("{FS_CACHE_NAMESPACE}/listing-{}.json", cache_key(key.as_str()))
+    format!(
+        "{FS_CACHE_NAMESPACE}/listing-{}.json",
+        cache_key(key.as_str())
+    )
 }
 
 pub fn read_cached_directory_listing(
@@ -59,7 +62,8 @@ pub fn read_cached_directory_listing(
         return Ok(None);
     };
 
-    if cached.path != normalize_path_string(directory_path) || cached.include_files != include_files {
+    if cached.path != normalize_path_string(directory_path) || cached.include_files != include_files
+    {
         return Ok(None);
     }
     if current_directory_modified_millis(directory_path) != cached.directory_modified_unix_millis {

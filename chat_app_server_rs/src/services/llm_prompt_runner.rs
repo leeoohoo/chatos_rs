@@ -138,6 +138,7 @@ async fn run_with_chat_completions(
                 None,
                 None,
                 None,
+                None,
                 purpose,
             )
             .await
@@ -223,6 +224,7 @@ async fn run_with_responses(
                 },
                 Some(runtime.provider.clone()),
                 runtime.thinking_level.clone(),
+                None,
                 None,
                 None,
                 None,

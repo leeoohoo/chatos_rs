@@ -2,14 +2,20 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::core::tool_call::tool_calls_value_has_items;
+use crate::modules::conversation_runtime::task_board::{
+    build_hidden_task_turn_review_metadata, build_task_turn_follow_up_directive,
+    build_task_turn_follow_up_message, build_task_turn_review_retry_guidance,
+    parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
+    TaskTurnReviewOutcome,
+};
 use crate::services::ai_common::{
     build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
     handle_transient_retry, is_retryable_provider_overload_error, terminal_empty_response_error,
 };
-use tokio::time::{sleep, Duration};
-use tracing::warn;
 use crate::services::v3::ai_request_handler::StreamCallbacks;
 use crate::utils::abort_registry;
+use tokio::time::{sleep, Duration};
+use tracing::warn;
 
 use super::compat::{log_usage_snapshot, rewrite_system_messages_to_user};
 use super::execution_loop_guidance::{load_runtime_guidance_input_items, prepend_input_items};
@@ -95,6 +101,15 @@ impl AiClient {
         let max_terminal_empty_retries = 2usize;
         let max_completion_retry_retries = 5usize;
         let mut completion_retry_count = 0usize;
+        let max_task_follow_up_rounds = 3usize;
+        let mut task_follow_up_rounds = 0usize;
+        let mut task_follow_up_mode: Option<TaskTurnFollowUpMode> = None;
+        let mut task_follow_up_locale: Option<
+            crate::core::internal_context_locale::InternalContextLocale,
+        > = None;
+        let mut last_visible_completion_content: Option<String> = None;
+        let mut last_visible_completion_reasoning: Option<String> = None;
+        let mut last_visible_completion_finish_reason: Option<String> = None;
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -175,6 +190,32 @@ impl AiClient {
                         None,
                     );
                 }
+                let stream_callbacks = if matches!(
+                    task_follow_up_mode,
+                    Some(TaskTurnFollowUpMode::ReviewExecution)
+                ) {
+                    StreamCallbacks {
+                        on_chunk: None,
+                        on_thinking: None,
+                    }
+                } else {
+                    StreamCallbacks {
+                        on_chunk: callbacks.on_chunk.clone(),
+                        on_thinking: if reasoning_enabled {
+                            callbacks.on_thinking.clone()
+                        } else {
+                            None
+                        },
+                    }
+                };
+                let request_metadata = if matches!(
+                    task_follow_up_mode,
+                    Some(TaskTurnFollowUpMode::ReviewExecution)
+                ) {
+                    Some(build_hidden_task_turn_review_metadata())
+                } else {
+                    None
+                };
                 let req = self
                     .ai_request_handler
                     .handle_request(
@@ -195,20 +236,14 @@ impl AiClient {
                         request_cwd.clone(),
                         Some(temperature),
                         max_tokens,
-                        StreamCallbacks {
-                            on_chunk: callbacks.on_chunk.clone(),
-                            on_thinking: if reasoning_enabled {
-                                callbacks.on_thinking.clone()
-                            } else {
-                                None
-                            },
-                        },
+                        stream_callbacks,
                         Some(provider.clone()),
                         thinking_level.clone(),
                         session_id.clone(),
                         turn_id.clone(),
                         message_mode.clone(),
                         message_source.clone(),
+                        request_metadata,
                         purpose,
                     )
                     .await;
@@ -328,6 +363,53 @@ impl AiClient {
 
             completion_retry_count = 0;
 
+            if matches!(
+                task_follow_up_mode,
+                Some(TaskTurnFollowUpMode::ReviewExecution)
+            ) {
+                let review_locale = task_follow_up_locale
+                    .take()
+                    .unwrap_or(crate::core::internal_context_locale::InternalContextLocale::ZhCn);
+                match parse_task_turn_review_outcome(ai_response.content.as_str()) {
+                    TaskTurnReviewOutcome::Pass => {
+                        let final_content = last_visible_completion_content
+                            .clone()
+                            .unwrap_or_else(|| strip_task_turn_review_marker(ai_response.content.as_str()));
+                        let final_reasoning = last_visible_completion_reasoning
+                            .clone()
+                            .or(ai_response.reasoning.clone());
+                        let final_finish_reason = last_visible_completion_finish_reason
+                            .clone()
+                            .or(ai_response.finish_reason.clone());
+                        return Ok(build_ai_client_success_payload(
+                            final_content,
+                            final_reasoning,
+                            final_finish_reason,
+                            iteration,
+                        ));
+                    }
+                    TaskTurnReviewOutcome::NeedsMoreWork | TaskTurnReviewOutcome::Unknown => {
+                        if task_follow_up_rounds < max_task_follow_up_rounds {
+                            task_follow_up_rounds += 1;
+                            if let Some(cb) = &callbacks.on_thinking {
+                                cb("复查发现仍需处理，继续同一轮修正。".to_string());
+                            }
+                            let retry_input = build_task_turn_follow_up_message(
+                                build_task_turn_review_retry_guidance(review_locale).as_str(),
+                            );
+                            input = retry_input;
+                            previous_response_id = ai_response.response_id.clone();
+                            use_prev_id = previous_response_id.is_some();
+                            can_use_prev_id = can_use_prev_id && use_prev_id;
+                            stateless_context_items = input.as_array().cloned();
+                            task_follow_up_mode = Some(TaskTurnFollowUpMode::ContinueExecution);
+                            iteration += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
                     return Err("aborted".to_string());
@@ -396,6 +478,45 @@ impl AiClient {
                 ) {
                     return Err(err);
                 }
+
+                if let (Some(sid), Some(tid), Some(resp_id)) = (
+                    session_id.as_deref(),
+                    turn_id.as_deref(),
+                    ai_response.response_id.as_deref(),
+                ) {
+                    if task_follow_up_rounds < max_task_follow_up_rounds {
+                        if let Some(directive) = build_task_turn_follow_up_directive(sid, tid).await
+                        {
+                            last_visible_completion_content = Some(ai_response.content.clone());
+                            last_visible_completion_reasoning = ai_response.reasoning.clone();
+                            last_visible_completion_finish_reason =
+                                ai_response.finish_reason.clone();
+                            task_follow_up_rounds += 1;
+                            task_follow_up_mode = Some(directive.mode);
+                            task_follow_up_locale = Some(directive.locale);
+                            if let Some(cb) = &callbacks.on_thinking {
+                                cb(match directive.mode {
+                                    TaskTurnFollowUpMode::ContinueExecution => {
+                                        "检测到未完成任务，继续同一轮执行。".to_string()
+                                    }
+                                    TaskTurnFollowUpMode::ReviewExecution => {
+                                        "任务看起来已完成，正在同一轮复查。".to_string()
+                                    }
+                                });
+                            }
+                            let follow_up_input =
+                                build_task_turn_follow_up_message(directive.guidance.as_str());
+                            input = follow_up_input;
+                            previous_response_id = Some(resp_id.to_string());
+                            use_prev_id = true;
+                            can_use_prev_id = can_use_prev_id && use_prev_id;
+                            stateless_context_items = input.as_array().cloned();
+                            iteration += 1;
+                            continue;
+                        }
+                    }
+                }
+
                 return Ok(build_ai_client_success_payload(
                     ai_response.content,
                     ai_response.reasoning,

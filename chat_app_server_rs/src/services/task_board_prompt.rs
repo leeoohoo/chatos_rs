@@ -8,6 +8,7 @@ const STATUS_TODO: &str = "todo";
 const STATUS_DOING: &str = "doing";
 const STATUS_BLOCKED: &str = "blocked";
 const STATUS_DONE: &str = "done";
+const UNFINISHED_TASK_LIMIT: usize = 5;
 const BLOCKED_TASK_LIMIT: usize = 3;
 const COMPLETED_TASK_LIMIT: usize = 5;
 
@@ -95,6 +96,15 @@ pub fn format_task_board_prompt(tasks: &[TaskRecord], locale: InternalContextLoc
         .iter()
         .filter(|task| active_task_id.as_deref() == Some(task.id.as_str()))
         .collect::<Vec<_>>();
+    let mut unfinished_tasks = tasks
+        .iter()
+        .filter(|task| {
+            let status = normalize_status(task.status.as_str());
+            status == STATUS_TODO || status == STATUS_DOING
+        })
+        .collect::<Vec<_>>();
+    unfinished_tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    unfinished_tasks.truncate(UNFINISHED_TASK_LIMIT);
     let mut blocked_tasks = tasks
         .iter()
         .filter(|task| normalize_status(task.status.as_str()) == STATUS_BLOCKED)
@@ -115,6 +125,16 @@ pub fn format_task_board_prompt(tasks: &[TaskRecord], locale: InternalContextLoc
     } else {
         for task in current_tasks {
             append_task_line(&mut lines, task, true, locale);
+        }
+    }
+
+    lines.push("".to_string());
+    lines.push(task_board_unfinished_label(locale).to_string());
+    if unfinished_tasks.is_empty() {
+        lines.push(task_board_none(locale).to_string());
+    } else {
+        for task in unfinished_tasks {
+            append_task_line(&mut lines, task, false, locale);
         }
     }
 
@@ -387,6 +407,14 @@ fn task_board_blocked_label(locale: InternalContextLocale) -> &'static str {
     }
 }
 
+fn task_board_unfinished_label(locale: InternalContextLocale) -> &'static str {
+    if locale.is_english() {
+        "Unfinished tasks:"
+    } else {
+        "未完成任务："
+    }
+}
+
 fn task_board_completed_label(locale: InternalContextLocale) -> &'static str {
     if locale.is_english() {
         "Completed task history:"
@@ -455,6 +483,7 @@ mod tests {
         assert!(prompt.contains("当前任务看板由系统维护"));
         assert!(prompt.contains("`task_manager_complete_task`"));
         assert!(prompt.contains("当前执行任务："));
+        assert!(prompt.contains("未完成任务："));
         assert!(prompt.contains("当前阻塞任务与阻塞信息："));
         assert!(prompt.contains("已完成任务历史："));
         assert!(prompt.contains("id=task_doing <- 当前优先执行"));
@@ -535,6 +564,23 @@ mod tests {
     }
 
     #[test]
+    fn unfinished_tasks_are_listed_separately() {
+        let prompt = format_task_board_prompt(
+            &[
+                build_task("task_todo", "todo task", "todo"),
+                build_task("task_doing", "doing task", "doing"),
+                build_task("task_done", "done task", "done"),
+            ],
+            InternalContextLocale::ZhCn,
+        );
+
+        assert!(prompt.contains("未完成任务："));
+        assert!(prompt.contains("id=task_todo"));
+        assert!(prompt.contains("id=task_doing"));
+        assert!(prompt.contains("已完成任务历史："));
+    }
+
+    #[test]
     fn formats_english_task_board_prompt() {
         let prompt = format_task_board_prompt(
             &[build_task("task_doing", "doing task", "doing")],
@@ -543,6 +589,7 @@ mod tests {
 
         assert!(prompt.contains("The current task board is maintained by the system"));
         assert!(prompt.contains("Current execution task:"));
+        assert!(prompt.contains("Unfinished tasks:"));
         assert!(prompt.contains("Blocked tasks and blocker details:"));
         assert!(prompt.contains("Completed task history:"));
         assert!(prompt.contains("id=task_doing <- current priority"));

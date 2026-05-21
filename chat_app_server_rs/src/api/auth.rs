@@ -82,10 +82,9 @@ async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>)
 
     match auth_users::create_user(&user).await {
         Ok(auth_users::CreateUserResult::Created) => build_login_success_response(&user),
-        Ok(auth_users::CreateUserResult::AlreadyExists) => (
-            StatusCode::CONFLICT,
-            Json(json!({"error": "用户名已存在"})),
-        ),
+        Ok(auth_users::CreateUserResult::AlreadyExists) => {
+            (StatusCode::CONFLICT, Json(json!({"error": "用户名已存在"})))
+        }
         Err(err) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({

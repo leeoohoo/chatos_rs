@@ -13,9 +13,7 @@ use super::validation::{
     discover_child_repo_roots, discover_repo_root, parse_optional_root, parse_root,
     require_repo_root, validate_relative_paths,
 };
-use crate::services::project_local_cache::{
-    cache_key, read_cache_json, write_cache_json,
-};
+use crate::services::project_local_cache::{cache_key, read_cache_json, write_cache_json};
 
 const CHILD_REPO_DISCOVERY_LIMIT: usize = 32;
 const GIT_SUMMARY_CACHE_NAMESPACE: &str = "git";
@@ -41,15 +39,24 @@ fn git_summary_cache_path(query_root: &str, preferred_repo_root: Option<&str>) -
         query_root.trim(),
         preferred_repo_root.unwrap_or("").trim(),
     );
-    format!("{GIT_SUMMARY_CACHE_NAMESPACE}/summary-{}.json", cache_key(key.as_str()))
+    format!(
+        "{GIT_SUMMARY_CACHE_NAMESPACE}/summary-{}.json",
+        cache_key(key.as_str())
+    )
 }
 
 fn git_branches_cache_path(root: &str) -> String {
-    format!("{GIT_SUMMARY_CACHE_NAMESPACE}/branches-{}.json", cache_key(root))
+    format!(
+        "{GIT_SUMMARY_CACHE_NAMESPACE}/branches-{}.json",
+        cache_key(root)
+    )
 }
 
 fn git_status_cache_path(root: &str) -> String {
-    format!("{GIT_SUMMARY_CACHE_NAMESPACE}/status-{}.json", cache_key(root))
+    format!(
+        "{GIT_SUMMARY_CACHE_NAMESPACE}/status-{}.json",
+        cache_key(root)
+    )
 }
 
 pub async fn client_info() -> GitClientInfo {
@@ -80,12 +87,10 @@ pub async fn summary(
 ) -> Result<GitSummary, String> {
     let preferred_repo_root_text = preferred_repo_root.map(|value| value.trim().to_string());
     if !force_refresh {
-        if let Some(cached) =
-            read_cache_json::<GitSummaryCacheEntry>(
-                root,
-                git_summary_cache_path(root, preferred_repo_root_text.as_deref()).as_str(),
-            )?
-        {
+        if let Some(cached) = read_cache_json::<GitSummaryCacheEntry>(
+            root,
+            git_summary_cache_path(root, preferred_repo_root_text.as_deref()).as_str(),
+        )? {
             return Ok(cached.summary);
         }
     }
@@ -98,11 +103,8 @@ pub async fn summary(
     }
 
     let direct_repo_root = discover_repo_root(query_root.as_path()).await?;
-    let preferred_repo_root = resolve_preferred_repo_root(
-        query_root.as_path(),
-        preferred_root.as_deref(),
-    )
-    .await?;
+    let preferred_repo_root =
+        resolve_preferred_repo_root(query_root.as_path(), preferred_root.as_deref()).await?;
     let available_roots = collect_available_repo_roots(
         query_root.as_path(),
         direct_repo_root.as_deref(),

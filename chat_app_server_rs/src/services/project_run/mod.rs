@@ -41,11 +41,11 @@ pub(crate) use self::analyzer::{
     analyze_project, apply_default_target, classify_project_run_path_change,
     ProjectRunPathChangeKind,
 };
-pub(crate) use self::dispatcher::{
-    dispatch_command, resolve_execution, validate_command_preflight,
-};
 pub(crate) use self::cache::{
     clear_cached_environment_snapshot, read_cached_catalog, write_cached_catalog,
+};
+pub(crate) use self::dispatcher::{
+    dispatch_command, resolve_execution, validate_command_preflight,
 };
 pub(crate) use self::environment::{
     load_environment_selection, load_environment_snapshot, refresh_environment_snapshot,

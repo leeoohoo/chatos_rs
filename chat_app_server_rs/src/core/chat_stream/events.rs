@@ -153,10 +153,23 @@ async fn resolve_persisted_turn_messages(
     let assistant_message = messages
         .iter()
         .rev()
-        .find(|message| message.role == "assistant" && message_turn_id(message) == Some(turn_id))
+        .find(|message| {
+            message.role == "assistant"
+                && message_turn_id(message) == Some(turn_id)
+                && !message_hidden(message)
+        })
         .cloned();
 
     Some((user_message, assistant_message))
+}
+
+fn message_hidden(message: &Message) -> bool {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("hidden"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub async fn enrich_chat_result_with_persisted_messages(

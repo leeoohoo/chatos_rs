@@ -11,8 +11,8 @@ mod types;
 pub use self::active_summary::{
     try_start_chatos_active_summary, wait_for_existing_chatos_active_summary_completion,
 };
-pub use self::mapping::CHATOS_COMPAT_SOURCE_ID;
 pub use self::mappers::engine_record_to_message;
+pub use self::mapping::CHATOS_COMPAT_SOURCE_ID;
 pub use self::memories::{
     list_contact_agent_recalls, list_contact_project_memories,
     list_contact_project_memories_by_contact,

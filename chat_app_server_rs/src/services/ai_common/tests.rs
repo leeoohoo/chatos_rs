@@ -77,8 +77,8 @@ fn terminal_empty_response_error_detects_terminal_empty_payload() {
 
 #[test]
 fn build_assistant_message_metadata_skips_empty_fields() {
-    assert!(build_assistant_message_metadata(None, None, None, None).is_none());
-    assert!(build_assistant_message_metadata(None, Some("   "), None, None).is_none());
+    assert!(build_assistant_message_metadata(None, None, None, None, None).is_none());
+    assert!(build_assistant_message_metadata(None, Some("   "), None, None, None).is_none());
 }
 
 #[test]
@@ -89,6 +89,7 @@ fn build_assistant_message_metadata_keeps_response_id_and_tool_calls() {
         Some("resp_123"),
         Some("turn_123"),
         Some("completed"),
+        None,
     );
 
     assert_eq!(

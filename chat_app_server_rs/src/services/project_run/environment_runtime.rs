@@ -16,10 +16,13 @@ pub(crate) fn env_overrides_for_target(
     selection: Option<&ProjectRunEnvironmentSelection>,
     options_by_kind: &HashMap<String, Vec<ProjectRunToolchainOption>>,
 ) -> HashMap<String, String> {
-    let mut env = selection.map(|value| value.env_vars.clone()).unwrap_or_default();
+    let mut env = selection
+        .map(|value| value.env_vars.clone())
+        .unwrap_or_default();
 
     for kind in infer_required_toolchains(target) {
-        let Some(option) = selected_or_first_option(kind.as_str(), selection, options_by_kind) else {
+        let Some(option) = selected_or_first_option(kind.as_str(), selection, options_by_kind)
+        else {
             continue;
         };
 
@@ -128,8 +131,11 @@ pub(crate) fn resolve_command_with_toolchains(
     if let Some(java_home) = resolve_binary("java_home") {
         let java_bin = Path::new(java_home.as_str()).join("bin").join("java");
         if java_bin.is_file() {
-            command =
-                rewrite_command_prefix(command, "java", normalize_path(java_bin.as_path()).as_str());
+            command = rewrite_command_prefix(
+                command,
+                "java",
+                normalize_path(java_bin.as_path()).as_str(),
+            );
         }
     }
     if let Some(bin) = resolve_binary("mvn") {
@@ -196,10 +202,7 @@ mod tests {
 
     #[test]
     fn inject_maven_settings_arg_adds_flag_once() {
-        let updated = inject_maven_settings_arg(
-            "mvn test".to_string(),
-            "/tmp/settings.xml",
-        );
+        let updated = inject_maven_settings_arg("mvn test".to_string(), "/tmp/settings.xml");
         assert_eq!(updated, "mvn -s /tmp/settings.xml test");
 
         let unchanged = inject_maven_settings_arg(

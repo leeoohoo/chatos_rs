@@ -41,22 +41,8 @@ fn path_segments(path: &Path) -> Vec<String> {
 
 pub(super) fn infer_version_suffix(path: &Path) -> String {
     let generic = [
-        "bin",
-        "home",
-        "contents",
-        "current",
-        "java",
-        "mvn",
-        "gradle",
-        "cargo",
-        "rustc",
-        "go",
-        "node",
-        "npm",
-        "pnpm",
-        "yarn",
-        "python",
-        "python3",
+        "bin", "home", "contents", "current", "java", "mvn", "gradle", "cargo", "rustc", "go",
+        "node", "npm", "pnpm", "yarn", "python", "python3",
     ];
     for segment in path_segments(path).into_iter().rev() {
         let normalized = segment.to_lowercase();
@@ -171,9 +157,10 @@ pub(super) fn selected_or_first_option<'a>(
     options_by_kind: &'a HashMap<String, Vec<ProjectRunToolchainOption>>,
 ) -> Option<&'a ProjectRunToolchainOption> {
     let selected_id = selection.and_then(|value| {
-        value.selected_toolchains.get(kind).map(|id| {
-            normalized_selected_toolchain_id(kind, id.as_str(), &value.custom_toolchains)
-        })
+        value
+            .selected_toolchains
+            .get(kind)
+            .map(|id| normalized_selected_toolchain_id(kind, id.as_str(), &value.custom_toolchains))
     });
     options_by_kind.get(kind).and_then(|rows| {
         selected_id
@@ -277,7 +264,10 @@ mod tests {
 
         let path = env.get("PATH").cloned().unwrap_or_default();
         let normalized = normalize_path_entries(path.as_str());
-        assert_eq!(normalized.first().map(String::as_str), Some("/opt/homebrew/bin"));
+        assert_eq!(
+            normalized.first().map(String::as_str),
+            Some("/opt/homebrew/bin")
+        );
         assert_eq!(
             normalized,
             vec![

@@ -79,7 +79,15 @@ pub async fn discover_child_repo_roots(root: &Path, limit: usize) -> Result<Vec<
             let name = name.to_string_lossy();
             if matches!(
                 name.as_ref(),
-                ".git" | "node_modules" | "target" | "dist" | "build" | ".next" | ".nuxt" | ".turbo" | ".cache"
+                ".git"
+                    | "node_modules"
+                    | "target"
+                    | "dist"
+                    | "build"
+                    | ".next"
+                    | ".nuxt"
+                    | ".turbo"
+                    | ".cache"
             ) {
                 continue;
             }

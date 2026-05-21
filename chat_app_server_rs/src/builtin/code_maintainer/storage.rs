@@ -199,10 +199,9 @@ fn publish_project_change_summary_for_record(project_id: &str, record: &ChangeRe
             Some(conversation_id.as_str()),
             Some(path.as_str()),
         );
-        if let Some(kind) = classify_project_run_path_change(
-            path.as_str(),
-            Some(change_kind.as_str()),
-        ) {
+        if let Some(kind) =
+            classify_project_run_path_change(path.as_str(), Some(change_kind.as_str()))
+        {
             publish_project_run_catalog_updated(
                 user_id,
                 project_id.as_str(),
@@ -230,16 +229,21 @@ fn persist_project_change_summary_snapshot(
         .trim_start_matches('/')
         .to_string();
 
-    let mut snapshot = crate::services::project_local_cache::read_cache_json::<ProjectChangeSummarySnapshot>(
-        project.root_path.as_str(),
-        PROJECT_CHANGE_SUMMARY_CACHE_PATH,
-    )
-    .ok()
-    .flatten()
-    .unwrap_or_default();
+    let mut snapshot =
+        crate::services::project_local_cache::read_cache_json::<ProjectChangeSummarySnapshot>(
+            project.root_path.as_str(),
+            PROJECT_CHANGE_SUMMARY_CACHE_PATH,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
-    snapshot.file_marks.retain(|mark| mark.path != normalized_absolute_path);
-    snapshot.deleted_marks.retain(|mark| mark.path != normalized_absolute_path);
+    snapshot
+        .file_marks
+        .retain(|mark| mark.path != normalized_absolute_path);
+    snapshot
+        .deleted_marks
+        .retain(|mark| mark.path != normalized_absolute_path);
 
     let mark = ProjectChangeMark {
         path: normalized_absolute_path.clone(),
@@ -254,8 +258,12 @@ fn persist_project_change_summary_snapshot(
     } else {
         snapshot.file_marks.push(mark);
     }
-    snapshot.file_marks.sort_by(|left, right| left.path.cmp(&right.path));
-    snapshot.deleted_marks.sort_by(|left, right| left.path.cmp(&right.path));
+    snapshot
+        .file_marks
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    snapshot
+        .deleted_marks
+        .sort_by(|left, right| left.path.cmp(&right.path));
     snapshot.counts = ProjectChangeCounts {
         create: snapshot
             .file_marks

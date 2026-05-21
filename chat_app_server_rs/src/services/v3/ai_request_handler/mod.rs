@@ -70,6 +70,7 @@ impl AiRequestHandler {
         turn_id: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
+        metadata: Option<Value>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
         let payload = build_request_payload(
@@ -127,6 +128,7 @@ impl AiRequestHandler {
             persist_messages,
             message_mode,
             message_source,
+            metadata,
         )
         .await
     }
@@ -139,6 +141,7 @@ pub(super) async fn persist_assistant_response_if_needed(
     persist_messages: bool,
     message_mode: Option<String>,
     message_source: Option<String>,
+    metadata: Option<Value>,
     content: &str,
     reasoning: Option<String>,
     tool_calls: Option<Value>,
@@ -152,6 +155,7 @@ pub(super) async fn persist_assistant_response_if_needed(
         persist_messages,
         message_mode,
         message_source,
+        metadata,
         content: content.to_string(),
         reasoning,
         tool_calls,
@@ -175,18 +179,19 @@ pub(super) async fn persist_assistant_response_if_needed(
                 return Ok(());
             };
 
-            handler
-                .message_manager
-                .save_assistant_response_message(
-                    session_id,
-                    request.content.as_str(),
-                    request.reasoning,
-                    request.message_mode,
-                    request.message_source,
-                    request.tool_calls,
-                    request.response_id.as_deref(),
-                    request.turn_id.as_deref(),
-                    request.response_status.as_deref(),
+                handler
+                    .message_manager
+                    .save_assistant_response_message(
+                        session_id,
+                        request.content.as_str(),
+                        request.reasoning,
+                        request.message_mode,
+                        request.message_source,
+                        request.metadata,
+                        request.tool_calls,
+                        request.response_id.as_deref(),
+                        request.turn_id.as_deref(),
+                        request.response_status.as_deref(),
                 )
                 .await
                 .map(|_| ())

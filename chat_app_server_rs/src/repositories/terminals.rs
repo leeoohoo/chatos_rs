@@ -130,7 +130,8 @@ pub async fn get_project_run_terminal_by_project_id(
             let user_id = user_id.clone();
             let project_id = normalized_project_id.clone();
             Box::pin(async move {
-                let mut query = "SELECT * FROM terminals WHERE project_id = ? AND kind = ?".to_string();
+                let mut query =
+                    "SELECT * FROM terminals WHERE project_id = ? AND kind = ?".to_string();
                 if user_id.is_some() {
                     query.push_str(" AND user_id = ?");
                 }
@@ -174,9 +175,10 @@ pub async fn list_project_run_terminals_by_project_id(
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let items: Vec<Terminal> =
-                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.last_active_at.as_str())
-                        .await?;
+                let items: Vec<Terminal> = collect_map_sorted_desc(cursor, normalize_doc, |item| {
+                    item.last_active_at.as_str()
+                })
+                .await?;
                 Ok(items)
             })
         },

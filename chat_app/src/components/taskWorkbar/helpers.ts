@@ -26,6 +26,61 @@ export const priorityText: Record<TaskWorkbarItem['priority'], string> = {
   low: '低',
 };
 
+export const isUnfinishedTask = (task: TaskWorkbarItem): boolean => task.status === 'todo' || task.status === 'doing';
+
+export const isBlockedTask = (task: TaskWorkbarItem): boolean => task.status === 'blocked';
+
+export const isDoneTask = (task: TaskWorkbarItem): boolean => task.status === 'done';
+
+export const selectCurrentWorkbarTask = (items: TaskWorkbarItem[]): TaskWorkbarItem | null => {
+  for (const task of items) {
+    if (task.status === 'doing') {
+      return task;
+    }
+  }
+  for (const task of items) {
+    if (task.status === 'todo') {
+      return task;
+    }
+  }
+  return null;
+};
+
+export const groupWorkbarTasks = (items: TaskWorkbarItem[]) => {
+  const current: TaskWorkbarItem[] = [];
+  const unfinished: TaskWorkbarItem[] = [];
+  const blocked: TaskWorkbarItem[] = [];
+  const done: TaskWorkbarItem[] = [];
+  const currentTask = selectCurrentWorkbarTask(items);
+
+  for (const task of items) {
+    if (currentTask && task.id === currentTask.id) {
+      current.push(task);
+      continue;
+    }
+    if (isDoneTask(task)) {
+      done.push(task);
+      continue;
+    }
+    if (isBlockedTask(task)) {
+      blocked.push(task);
+      continue;
+    }
+    if (isUnfinishedTask(task)) {
+      unfinished.push(task);
+      continue;
+    }
+    current.push(task);
+  }
+
+  return {
+    blocked,
+    current,
+    done,
+    unfinished,
+  };
+};
+
 export const guidanceStatusStyles: Record<RuntimeGuidanceWorkbarItem['status'], string> = {
   queued: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
   applied: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
@@ -40,8 +95,8 @@ export const guidanceStatusText: Record<RuntimeGuidanceWorkbarItem['status'], st
 
 export const sortTasks = (items: TaskWorkbarItem[]) => {
   return [...items].sort((a, b) => {
-    const left = Date.parse(a.createdAt) || 0;
-    const right = Date.parse(b.createdAt) || 0;
+    const left = Date.parse(a.updatedAt || a.createdAt) || 0;
+    const right = Date.parse(b.updatedAt || b.createdAt) || 0;
     return right - left;
   });
 };

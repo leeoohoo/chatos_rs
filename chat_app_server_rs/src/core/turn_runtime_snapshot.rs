@@ -8,9 +8,8 @@ use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotBuiltinMcpPromptDto,
     TurnRuntimeSnapshotContextItemDto, TurnRuntimeSnapshotRuntimeDto,
-    TurnRuntimeSnapshotSelectedCommandDto,
-    TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
-    TurnRuntimeSnapshotUnavailableToolDto,
+    TurnRuntimeSnapshotSelectedCommandDto, TurnRuntimeSnapshotSystemMessageDto,
+    TurnRuntimeSnapshotToolDto, TurnRuntimeSnapshotUnavailableToolDto,
 };
 
 pub struct BuildTurnRuntimeSnapshotInput<'a> {

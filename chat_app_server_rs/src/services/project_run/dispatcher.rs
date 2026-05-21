@@ -1,5 +1,5 @@
-use std::env;
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -239,12 +239,7 @@ fn build_env_assignment_lines(env_overrides: &HashMap<String, String>) -> String
             continue;
         }
         payload.push_str(
-            format!(
-                "export {}={}\n",
-                normalized_key,
-                shell_quote_value(value),
-            )
-            .as_str(),
+            format!("export {}={}\n", normalized_key, shell_quote_value(value),).as_str(),
         );
     }
     payload
@@ -283,8 +278,7 @@ fn build_project_run_script(
     script.push_str(command.trim());
     script.push('\n');
 
-    fs::write(script_path.as_path(), script)
-        .map_err(|e| format!("写入项目运行脚本失败: {e}"))?;
+    fs::write(script_path.as_path(), script).map_err(|e| format!("写入项目运行脚本失败: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -355,13 +349,9 @@ mod tests {
     #[test]
     fn build_project_run_input_executes_temp_script_in_terminal() {
         let env = HashMap::new();
-        let payload = build_project_run_input(
-            "/tmp/demo",
-            "/tmp/demo",
-            "/usr/local/bin/npm run dev",
-            &env,
-        )
-        .expect("payload");
+        let payload =
+            build_project_run_input("/tmp/demo", "/tmp/demo", "/usr/local/bin/npm run dev", &env)
+                .expect("payload");
 
         assert!(payload.contains("cd '/tmp/demo'"));
         assert!(payload.contains(".chatos/project-run/run-"));

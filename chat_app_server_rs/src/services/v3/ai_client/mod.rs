@@ -130,6 +130,23 @@ impl AiClient {
             .load_prefixed_input_items()
             .await
     }
+
+    pub(super) fn callbacks_without_visible_stream(
+        callbacks: &AiClientCallbacks,
+    ) -> AiClientCallbacks {
+        AiClientCallbacks {
+            on_chunk: None,
+            on_thinking: None,
+            on_tools_start: callbacks.on_tools_start.clone(),
+            on_tools_stream: callbacks.on_tools_stream.clone(),
+            on_tools_end: callbacks.on_tools_end.clone(),
+            on_runtime_guidance_applied: callbacks.on_runtime_guidance_applied.clone(),
+            on_context_summarized_start: callbacks.on_context_summarized_start.clone(),
+            on_context_summarized_stream: callbacks.on_context_summarized_stream.clone(),
+            on_context_summarized_end: callbacks.on_context_summarized_end.clone(),
+            on_before_model_request: callbacks.on_before_model_request.clone(),
+        }
+    }
 }
 
 impl AiClientSettings for AiClient {

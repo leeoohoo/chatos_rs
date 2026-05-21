@@ -16,6 +16,7 @@ pub(crate) struct AssistantResponsePersistenceRequest {
     pub persist_messages: bool,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
+    pub metadata: Option<Value>,
     pub content: String,
     pub reasoning: Option<String>,
     pub tool_calls: Option<Value>,
@@ -137,6 +138,7 @@ pub(crate) fn build_assistant_message_metadata(
     response_id: Option<&str>,
     turn_id: Option<&str>,
     response_status: Option<&str>,
+    extra_metadata: Option<&Value>,
 ) -> Option<Value> {
     let mut map = serde_json::Map::new();
 
@@ -160,6 +162,11 @@ pub(crate) fn build_assistant_message_metadata(
     }
     if let Some(tool_calls) = tool_calls {
         map.insert("toolCalls".to_string(), tool_calls.clone());
+    }
+    if let Some(Value::Object(extra)) = extra_metadata {
+        for (key, value) in extra {
+            map.insert(key.clone(), value.clone());
+        }
     }
 
     if map.is_empty() {

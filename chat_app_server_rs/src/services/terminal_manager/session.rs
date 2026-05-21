@@ -9,8 +9,7 @@ use tokio::sync::broadcast;
 use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
 use crate::services::realtime::{
     publish_project_run_instance_changed, publish_project_run_state_changed,
-    publish_terminal_list_invalidated,
-    publish_terminal_state_changed,
+    publish_terminal_list_invalidated, publish_terminal_state_changed,
 };
 
 use super::directory_guard::{
@@ -186,7 +185,8 @@ impl TerminalSession {
         {
             if let Ok(master) = self.master.lock() {
                 if let Some(process_group_leader) = master.process_group_leader() {
-                    let signal_result = unsafe { libc::kill(-(process_group_leader as i32), signal) };
+                    let signal_result =
+                        unsafe { libc::kill(-(process_group_leader as i32), signal) };
                     if signal_result == 0 {
                         return Ok(());
                     }

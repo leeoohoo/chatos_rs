@@ -13,9 +13,7 @@ use crate::builtin::code_maintainer::ChangeLogStore;
 use crate::models::project::{Project, ProjectService};
 use crate::services::project_fs_cache::invalidate_directory_listing_cache_for_path;
 use crate::services::project_local_cache::is_project_runtime_relative_path;
-use crate::services::project_run::{
-    classify_project_run_path_change, ProjectRunPathChangeKind,
-};
+use crate::services::project_run::{classify_project_run_path_change, ProjectRunPathChangeKind};
 use crate::services::realtime::publish_project_run_catalog_updated;
 
 const WORKSPACE_WATCHER_SERVER_NAME: &str = "workspace_watcher";
@@ -359,10 +357,9 @@ async fn scan_project_full(project: &Project, normalized_root: String) -> Result
                     Path::new(change.path.as_str()),
                 );
 
-                if let Some(kind) = classify_project_run_path_change(
-                    change.path.as_str(),
-                    Some(change.kind),
-                ) {
+                if let Some(kind) =
+                    classify_project_run_path_change(change.path.as_str(), Some(change.kind))
+                {
                     match &project_run_change {
                         Some((ProjectRunPathChangeKind::Catalog, _)) => {}
                         Some((ProjectRunPathChangeKind::Environment, _))
@@ -506,10 +503,9 @@ fn process_workspace_changes(
             Path::new(change.path.as_str()),
         );
 
-        if let Some(kind) = classify_project_run_path_change(
-            change.path.as_str(),
-            Some(change.kind),
-        ) {
+        if let Some(kind) =
+            classify_project_run_path_change(change.path.as_str(), Some(change.kind))
+        {
             match &project_run_change {
                 Some((ProjectRunPathChangeKind::Catalog, _)) => {}
                 Some((ProjectRunPathChangeKind::Environment, _))
@@ -864,11 +860,7 @@ fn classify_dirty_path_scope(project_root: &str, dirty_paths: &[String]) -> Dirt
 
 fn collapse_dirty_paths(paths: Vec<String>) -> Vec<String> {
     let mut sorted = paths;
-    sorted.sort_by(|left, right| {
-        left.len()
-            .cmp(&right.len())
-            .then_with(|| left.cmp(right))
-    });
+    sorted.sort_by(|left, right| left.len().cmp(&right.len()).then_with(|| left.cmp(right)));
 
     let mut collapsed = Vec::new();
     for path in sorted {
@@ -895,7 +887,8 @@ fn take_scoped_previous_files(
     let keys_to_remove = files
         .keys()
         .filter_map(|path| {
-            matching_scope(path.as_str(), scope_paths).map(|scope| (path.clone(), scope.to_string()))
+            matching_scope(path.as_str(), scope_paths)
+                .map(|scope| (path.clone(), scope.to_string()))
         })
         .collect::<Vec<_>>();
 
@@ -1066,8 +1059,14 @@ mod tests {
 
     #[test]
     fn is_path_within_scope_respects_path_boundaries() {
-        assert!(is_path_within_scope("/tmp/demo/src/main.rs", "/tmp/demo/src"));
+        assert!(is_path_within_scope(
+            "/tmp/demo/src/main.rs",
+            "/tmp/demo/src"
+        ));
         assert!(is_path_within_scope("/tmp/demo/src", "/tmp/demo/src"));
-        assert!(!is_path_within_scope("/tmp/demo/src-two/file.rs", "/tmp/demo/src"));
+        assert!(!is_path_within_scope(
+            "/tmp/demo/src-two/file.rs",
+            "/tmp/demo/src"
+        ));
     }
 }

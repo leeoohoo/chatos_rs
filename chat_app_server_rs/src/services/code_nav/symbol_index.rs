@@ -383,8 +383,7 @@ fn rebuild_project_symbol_index_for_dirty_paths(
     let dirty_relative_paths = dirty_paths
         .iter()
         .filter_map(|path| {
-            pathdiff::diff_paths(path, root)
-                .map(|value| value.to_string_lossy().replace('\\', "/"))
+            pathdiff::diff_paths(path, root).map(|value| value.to_string_lossy().replace('\\', "/"))
         })
         .collect::<Vec<_>>();
     if dirty_relative_paths.is_empty() {

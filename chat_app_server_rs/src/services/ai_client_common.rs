@@ -15,7 +15,9 @@ pub struct AiClientCallbacks {
     pub on_context_summarized_start: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     pub on_context_summarized_stream: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     pub on_context_summarized_end: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_before_model_request: Option<Arc<dyn Fn(Value, Option<String>, Option<LiveRequestSnapshotContext>) + Send + Sync>>,
+    pub on_before_model_request: Option<
+        Arc<dyn Fn(Value, Option<String>, Option<LiveRequestSnapshotContext>) + Send + Sync>,
+    >,
 }
 
 impl AiClientCallbacks {

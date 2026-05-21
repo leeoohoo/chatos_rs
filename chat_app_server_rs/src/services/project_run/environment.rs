@@ -14,9 +14,7 @@ use super::cache::{
     read_cached_catalog, read_cached_environment_selection, read_cached_environment_snapshot,
     write_cached_environment_selection, write_cached_environment_snapshot,
 };
-use super::environment_discovery::{
-    collect_project_config_files, discover_toolchain_options,
-};
+use super::environment_discovery::{collect_project_config_files, discover_toolchain_options};
 use super::environment_support::{
     infer_version_suffix, normalize_string, normalized_selected_toolchain_id, resolve_user_path,
 };
@@ -29,10 +27,8 @@ fn build_environment_snapshot(
 ) -> Result<ProjectRunEnvironmentSnapshot, String> {
     let options_by_kind = discover_toolchain_options(project, selection.as_ref());
     let project_root = PathBuf::from(resolve_user_path(project.root_path.as_str()));
-    let config_files = collect_project_config_files(
-        project_root.as_path(),
-        analyzed.targets.as_slice(),
-    );
+    let config_files =
+        collect_project_config_files(project_root.as_path(), analyzed.targets.as_slice());
     let validation_issues = analyzed
         .targets
         .iter()
@@ -86,26 +82,28 @@ fn build_environment_snapshot(
 pub(crate) async fn refresh_environment_snapshot(
     project: &Project,
 ) -> Result<ProjectRunEnvironmentSnapshot, String> {
-    let selection = match project_run_environment_settings::get_by_project_id(project.id.as_str()).await? {
-        Some(selection) => {
-            let _ = write_cached_environment_selection(project.root_path.as_str(), &selection);
-            Some(selection)
-        }
-        None => read_cached_environment_selection(project.root_path.as_str())?,
-    };
-    let analyzed = match project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await? {
-        Some(cached) => cached,
-        None => read_cached_catalog(project.root_path.as_str())?.unwrap_or(ProjectRunCatalog {
-            project_id: project.id.clone(),
-            user_id: project.user_id.clone(),
-            status: "empty".to_string(),
-            default_target_id: None,
-            targets: vec![],
-            error_message: None,
-            analyzed_at: None,
-            updated_at: now_rfc3339(),
-        }),
-    };
+    let selection =
+        match project_run_environment_settings::get_by_project_id(project.id.as_str()).await? {
+            Some(selection) => {
+                let _ = write_cached_environment_selection(project.root_path.as_str(), &selection);
+                Some(selection)
+            }
+            None => read_cached_environment_selection(project.root_path.as_str())?,
+        };
+    let analyzed =
+        match project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await? {
+            Some(cached) => cached,
+            None => read_cached_catalog(project.root_path.as_str())?.unwrap_or(ProjectRunCatalog {
+                project_id: project.id.clone(),
+                user_id: project.user_id.clone(),
+                status: "empty".to_string(),
+                default_target_id: None,
+                targets: vec![],
+                error_message: None,
+                analyzed_at: None,
+                updated_at: now_rfc3339(),
+            }),
+        };
     let snapshot = build_environment_snapshot(project, selection, analyzed)?;
     let _ = write_cached_environment_snapshot(project.root_path.as_str(), &snapshot);
     Ok(snapshot)
@@ -145,7 +143,10 @@ pub(crate) async fn save_environment_selection(
                 ProjectRunCustomToolchain {
                     kind: normalized_kind,
                     label: if label.is_empty() {
-                        format!("手动指定: {}", infer_version_suffix(Path::new(path.as_str())))
+                        format!(
+                            "手动指定: {}",
+                            infer_version_suffix(Path::new(path.as_str()))
+                        )
                     } else {
                         label
                     },

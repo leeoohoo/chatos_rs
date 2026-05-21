@@ -147,8 +147,21 @@ pub fn assistant_message_has_reusable_payload(message: &Message) -> bool {
         && (message_has_text_content(message) || message_has_reasoning_content(message))
 }
 
+pub fn message_is_hidden(message: &Message) -> bool {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("hidden"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 pub fn assistant_message_response_id_candidate<'a>(message: &'a Message) -> Option<&'a str> {
     if message.role != "assistant" {
+        return None;
+    }
+
+    if message_is_hidden(message) {
         return None;
     }
 

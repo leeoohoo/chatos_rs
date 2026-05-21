@@ -6,6 +6,7 @@ export interface TaskWorkbarItem {
   priority: 'high' | 'medium' | 'low';
   conversationTurnId: string;
   createdAt: string;
+  updatedAt?: string | null;
   dueAt?: string | null;
   tags: string[];
   outcomeSummary: string;
@@ -44,4 +45,4 @@ export interface RuntimeGuidanceWorkbarItem {
   appliedAt: string | null;
 }
 
-export type HistoryFilter = 'all' | 'processed';
+export type HistoryFilter = 'all' | 'unfinished' | 'blocked' | 'processed';

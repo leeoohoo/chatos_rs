@@ -159,7 +159,13 @@ fn list_child_dirs(root: &Path) -> Vec<PathBuf> {
 }
 
 fn java_home_candidate(path: &Path) -> Option<PathBuf> {
-    if path.join("Contents").join("Home").join("bin").join("java").is_file() {
+    if path
+        .join("Contents")
+        .join("Home")
+        .join("bin")
+        .join("java")
+        .is_file()
+    {
         return Some(path.join("Contents").join("Home"));
     }
     if path.join("bin").join("java").is_file() {
@@ -213,11 +219,25 @@ fn discover_java_homes(
     for raw_root in roots {
         let root = PathBuf::from(raw_root);
         if let Some(candidate) = java_home_candidate(root.as_path()) {
-            push_option(out, seen, "java_home", candidate, "system", preferred_id.as_deref());
+            push_option(
+                out,
+                seen,
+                "java_home",
+                candidate,
+                "system",
+                preferred_id.as_deref(),
+            );
         }
         for child in list_child_dirs(root.as_path()) {
             if let Some(candidate) = java_home_candidate(child.as_path()) {
-                push_option(out, seen, "java_home", candidate, "system", preferred_id.as_deref());
+                push_option(
+                    out,
+                    seen,
+                    "java_home",
+                    candidate,
+                    "system",
+                    preferred_id.as_deref(),
+                );
                 continue;
             }
             for grandchild in list_child_dirs(child.as_path()) {
@@ -285,7 +305,10 @@ fn discover_homebrew_bins(
             let Some(name) = package_dir.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if !package_prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            if !package_prefixes
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+            {
                 continue;
             }
             discover_versioned_bin_root(out, seen, kind, package_dir.as_path(), binary_names);
@@ -300,7 +323,10 @@ fn discover_homebrew_bins(
             let Some(name) = package_dir.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if !package_prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            if !package_prefixes
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+            {
                 continue;
             }
             for binary_name in binary_names {
@@ -353,7 +379,8 @@ fn read_preview_lines(path: &Path, max_lines: usize) -> Option<String> {
 }
 
 fn first_non_empty_line(value: &str) -> Option<String> {
-    value.lines()
+    value
+        .lines()
         .map(|line| line.trim())
         .find(|line| !line.is_empty())
         .map(|line| line.to_string())
@@ -595,28 +622,103 @@ pub(super) fn collect_project_config_files(
 
     if has_node {
         candidates.extend([
-            ("package_json", "package.json", "package.json", "project-local"),
-            ("node_lockfile", "pnpm-lock.yaml", "pnpm-lock.yaml", "project-local"),
-            ("node_lockfile", "package-lock.json", "package-lock.json", "project-local"),
+            (
+                "package_json",
+                "package.json",
+                "package.json",
+                "project-local",
+            ),
+            (
+                "node_lockfile",
+                "pnpm-lock.yaml",
+                "pnpm-lock.yaml",
+                "project-local",
+            ),
+            (
+                "node_lockfile",
+                "package-lock.json",
+                "package-lock.json",
+                "project-local",
+            ),
             ("node_lockfile", "yarn.lock", "yarn.lock", "project-local"),
-            ("node_workspace", "pnpm-workspace.yaml", "pnpm-workspace.yaml", "project-local"),
-            ("node_workspace", "turbo.json", "turbo.json", "project-local"),
-            ("node_runtime_config", "vite.config.ts", "vite.config.ts", "project-local"),
-            ("node_runtime_config", "vite.config.js", "vite.config.js", "project-local"),
-            ("node_runtime_config", "next.config.js", "next.config.js", "project-local"),
-            ("node_runtime_config", "next.config.mjs", "next.config.mjs", "project-local"),
-            ("node_runtime_config", "tsconfig.json", "tsconfig.json", "project-local"),
+            (
+                "node_workspace",
+                "pnpm-workspace.yaml",
+                "pnpm-workspace.yaml",
+                "project-local",
+            ),
+            (
+                "node_workspace",
+                "turbo.json",
+                "turbo.json",
+                "project-local",
+            ),
+            (
+                "node_runtime_config",
+                "vite.config.ts",
+                "vite.config.ts",
+                "project-local",
+            ),
+            (
+                "node_runtime_config",
+                "vite.config.js",
+                "vite.config.js",
+                "project-local",
+            ),
+            (
+                "node_runtime_config",
+                "next.config.js",
+                "next.config.js",
+                "project-local",
+            ),
+            (
+                "node_runtime_config",
+                "next.config.mjs",
+                "next.config.mjs",
+                "project-local",
+            ),
+            (
+                "node_runtime_config",
+                "tsconfig.json",
+                "tsconfig.json",
+                "project-local",
+            ),
         ]);
     }
 
     if has_python {
         candidates.extend([
-            ("python_manifest", "pyproject.toml", "pyproject.toml", "project-local"),
-            ("python_manifest", "requirements.txt", "requirements.txt", "project-local"),
+            (
+                "python_manifest",
+                "pyproject.toml",
+                "pyproject.toml",
+                "project-local",
+            ),
+            (
+                "python_manifest",
+                "requirements.txt",
+                "requirements.txt",
+                "project-local",
+            ),
             ("python_manifest", "Pipfile", "Pipfile", "project-local"),
-            ("python_manifest", "poetry.lock", "poetry.lock", "project-local"),
-            ("python_runtime_config", "pytest.ini", "pytest.ini", "project-local"),
-            ("python_runtime_config", ".python-version", ".python-version", "project-local"),
+            (
+                "python_manifest",
+                "poetry.lock",
+                "poetry.lock",
+                "project-local",
+            ),
+            (
+                "python_runtime_config",
+                "pytest.ini",
+                "pytest.ini",
+                "project-local",
+            ),
+            (
+                "python_runtime_config",
+                ".python-version",
+                ".python-version",
+                "project-local",
+            ),
         ]);
     }
 
@@ -629,12 +731,42 @@ pub(super) fn collect_project_config_files(
 
     if has_rust {
         candidates.extend([
-            ("cargo_manifest", "Cargo.toml", "Cargo.toml", "project-local"),
-            ("cargo_manifest", "Cargo.lock", "Cargo.lock", "project-local"),
-            ("cargo_runtime_config", ".cargo/config.toml", ".cargo/config.toml", "project-local"),
-            ("cargo_runtime_config", ".cargo/config", ".cargo/config", "project-local"),
-            ("cargo_toolchain", "rust-toolchain.toml", "rust-toolchain.toml", "project-local"),
-            ("cargo_toolchain", "rust-toolchain", "rust-toolchain", "project-local"),
+            (
+                "cargo_manifest",
+                "Cargo.toml",
+                "Cargo.toml",
+                "project-local",
+            ),
+            (
+                "cargo_manifest",
+                "Cargo.lock",
+                "Cargo.lock",
+                "project-local",
+            ),
+            (
+                "cargo_runtime_config",
+                ".cargo/config.toml",
+                ".cargo/config.toml",
+                "project-local",
+            ),
+            (
+                "cargo_runtime_config",
+                ".cargo/config",
+                ".cargo/config",
+                "project-local",
+            ),
+            (
+                "cargo_toolchain",
+                "rust-toolchain.toml",
+                "rust-toolchain.toml",
+                "project-local",
+            ),
+            (
+                "cargo_toolchain",
+                "rust-toolchain",
+                "rust-toolchain",
+                "project-local",
+            ),
         ]);
     }
 
@@ -1011,7 +1143,8 @@ fn option_matches_hint(option: &ProjectRunToolchainOption, hints: &[String]) -> 
         option.path.to_lowercase(),
         option.version.clone().unwrap_or_default().to_lowercase()
     );
-    hints.iter()
+    hints
+        .iter()
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty())
         .any(|value| blob.contains(value.as_str()))
@@ -1224,7 +1357,8 @@ pub(super) fn discover_toolchain_options(
                 .then_with(|| right_hint.cmp(&left_hint))
                 .then_with(|| right.is_default.cmp(&left.is_default))
                 .then_with(|| {
-                    source_priority(left.source.as_str()).cmp(&source_priority(right.source.as_str()))
+                    source_priority(left.source.as_str())
+                        .cmp(&source_priority(right.source.as_str()))
                 })
                 .then_with(|| left.label.cmp(&right.label))
                 .then_with(|| left.path.cmp(&right.path))

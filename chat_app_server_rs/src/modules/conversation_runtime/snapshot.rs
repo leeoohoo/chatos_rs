@@ -7,8 +7,8 @@ use crate::core::builtin_mcp_prompt::{
     inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
     BuiltinMcpPromptBuildResult,
 };
-use crate::core::messages::join_text_lines_or_json;
 use crate::core::chat_runtime::parse_implicit_command_selections_from_tools_end;
+use crate::core::messages::join_text_lines_or_json;
 use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
@@ -41,7 +41,9 @@ pub struct LiveRequestSnapshotContext {
     pub runtime_context: ResolvedConversationRuntimeContext,
 }
 
-pub fn actual_context_items_from_v2_messages(messages: &[Value]) -> Vec<TurnRuntimeSnapshotContextItemDto> {
+pub fn actual_context_items_from_v2_messages(
+    messages: &[Value],
+) -> Vec<TurnRuntimeSnapshotContextItemDto> {
     messages
         .iter()
         .filter_map(actual_context_item_from_v2_message)
@@ -52,7 +54,8 @@ pub fn actual_context_items_from_v3_input(input: &Value) -> Vec<TurnRuntimeSnaps
     input
         .as_array()
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(actual_context_item_from_v3_input_item)
                 .collect()
         })
@@ -280,7 +283,11 @@ fn actual_context_item_from_v2_message(
 fn actual_context_item_from_v3_input_item(
     item: &Value,
 ) -> Option<TurnRuntimeSnapshotContextItemDto> {
-    let item_type = item.get("type").and_then(Value::as_str).unwrap_or("").trim();
+    let item_type = item
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     if item_type.is_empty() {
         return None;
     }
@@ -294,7 +301,9 @@ fn actual_context_item_from_v3_input_item(
             .unwrap_or("message");
         let content = item
             .get("content")
-            .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"]))
+            .map(|value| {
+                join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"])
+            })
             .unwrap_or_default();
         let trimmed = content.trim();
         if trimmed.is_empty() {
@@ -310,7 +319,11 @@ fn actual_context_item_from_v3_input_item(
 
     let content = match item_type {
         "function_call" => {
-            let name = item.get("name").and_then(Value::as_str).unwrap_or("").trim();
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
             let arguments = item
                 .get("arguments")
                 .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta"]))
@@ -319,7 +332,9 @@ fn actual_context_item_from_v3_input_item(
         }
         "function_call_output" => item
             .get("output")
-            .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"]))
+            .map(|value| {
+                join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"])
+            })
             .unwrap_or_default(),
         _ => serde_json::to_string_pretty(item).ok()?,
     };

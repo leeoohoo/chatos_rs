@@ -61,6 +61,7 @@ impl AiRequestHandler {
         turn_id: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
+        metadata: Option<Value>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
         let mut payload = json!({
@@ -122,6 +123,7 @@ impl AiRequestHandler {
             persist_messages,
             message_mode,
             message_source,
+            metadata,
         )
         .await
     }
@@ -139,6 +141,7 @@ impl AiRequestHandler {
         persist_messages: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
+        metadata: Option<Value>,
     ) -> Result<AiResponse, String> {
         let resp = send_bearer_json_request(
             &self.client,
@@ -190,6 +193,7 @@ impl AiRequestHandler {
             persist_messages,
             message_mode,
             message_source,
+            metadata,
             stream_state.full_content.as_str(),
             reasoning_opt.clone(),
             tool_calls.clone(),
@@ -214,6 +218,7 @@ async fn persist_assistant_response_if_needed(
     persist_messages: bool,
     message_mode: Option<String>,
     message_source: Option<String>,
+    metadata: Option<Value>,
     content: &str,
     reasoning: Option<String>,
     tool_calls: Option<Value>,
@@ -225,6 +230,7 @@ async fn persist_assistant_response_if_needed(
         persist_messages,
         message_mode,
         message_source,
+        metadata,
         content: content.to_string(),
         reasoning,
         tool_calls,
@@ -245,6 +251,7 @@ async fn persist_assistant_response_if_needed(
                 request.reasoning,
                 request.message_mode,
                 request.message_source,
+                request.metadata,
                 request.tool_calls,
                 None,
                 request.turn_id.as_deref(),

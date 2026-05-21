@@ -1,6 +1,4 @@
-use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,11 +15,13 @@ use tokio::sync::{Mutex, OnceCell};
 use super::{AiClient, AiClientCallbacks};
 use crate::config::Config;
 use crate::db;
+use crate::models::session::Session;
 use crate::services::task_manager::{create_tasks_for_turn, TaskDraft, TaskRecord};
 use crate::services::user_settings::AiClientSettings;
-use crate::services::v3::ai_request_handler::AiRequestHandler;
-use crate::services::v3::mcp_tool_execute::McpToolExecute;
-use crate::services::v3::message_manager::MessageManager;
+use crate::services::chatos_memory_engine::sync_chatos_session;
+use crate::services::v2::ai_request_handler::AiRequestHandler;
+use crate::services::v2::mcp_tool_execute::McpToolExecute;
+use crate::services::v2::message_manager::MessageManager;
 
 static TEST_CONFIG_INIT: Once = Once::new();
 static TEST_DB_INIT: OnceCell<()> = OnceCell::const_new();
@@ -37,7 +37,7 @@ fn unique_temp_db_path() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_nanos())
         .unwrap_or_default();
-    std::env::temp_dir().join(format!("chatos_rs_ai_client_test_{stamp}.db"))
+    std::env::temp_dir().join(format!("chatos_rs_v2_ai_client_test_{stamp}.db"))
 }
 
 async fn ensure_test_db() -> Result<(), String> {
@@ -63,7 +63,7 @@ async fn ensure_test_db() -> Result<(), String> {
 
 #[derive(Clone)]
 struct MockProviderState {
-    steps: Arc<Mutex<VecDeque<MockProviderStep>>>,
+    steps: Arc<Mutex<std::collections::VecDeque<MockProviderStep>>>,
     captured_payloads: Arc<Mutex<Vec<Value>>>,
 }
 
@@ -75,14 +75,6 @@ pub(super) struct MockProviderStep {
 }
 
 impl MockProviderStep {
-    pub(super) fn text(status: StatusCode, body: impl Into<String>) -> Self {
-        Self {
-            status,
-            content_type: "text/plain; charset=utf-8",
-            body: body.into(),
-        }
-    }
-
     pub(super) fn json(status: StatusCode, body: Value) -> Self {
         Self {
             status,
@@ -141,7 +133,7 @@ pub(super) async fn start_mock_provider(
     };
     let captured = state.captured_payloads.clone();
     let app = Router::new()
-        .route("/responses", post(mock_provider_handler))
+        .route("/chat/completions", post(mock_provider_handler))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -161,6 +153,7 @@ pub(super) fn build_test_client(base_url: String) -> AiClient {
         McpToolExecute::new(vec![], vec![], vec![]),
         message_manager,
     )
+    .expect("build test client")
 }
 
 pub(super) fn build_test_client_with_max_iterations(
@@ -207,6 +200,22 @@ pub(super) async fn setup_sqlite_task_board(
     Ok(created)
 }
 
+pub(super) async fn ensure_memory_session(session_id: &str) -> Result<(), String> {
+    ensure_test_config();
+    ensure_test_db().await?;
+    let mut session = Session::new(
+        "Task board test".to_string(),
+        None,
+        Some(json!({ "INTERNAL_CONTEXT_LOCALE": "zh-CN" })),
+        Some("test-user".to_string()),
+        None,
+    );
+    session.id = session_id.to_string();
+    session.status = "active".to_string();
+    sync_chatos_session(&session).await?;
+    Ok(())
+}
+
 pub(super) async fn set_task_status_done(
     session_id: &str,
     task_id: &str,
@@ -234,12 +243,12 @@ pub(super) fn before_request_set_task_done_on_nth_request(
     task_id: String,
     nth_request: usize,
 ) -> AiClientCallbacks {
-    let counter = Arc::new(AtomicUsize::new(0));
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter_clone = counter.clone();
     AiClientCallbacks {
         on_before_model_request: Some(Arc::new(
             move |_payload, _previous_response_id, _snapshot| {
-                let request_index = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                let request_index = counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 if request_index == nth_request {
                     let session_id = session_id.clone();
                     let task_id = task_id.clone();
@@ -260,113 +269,4 @@ pub(super) fn before_request_set_task_done_on_nth_request(
         )),
         ..AiClientCallbacks::default()
     }
-}
-
-pub(super) fn empty_callbacks() -> AiClientCallbacks {
-    AiClientCallbacks::default()
-}
-
-pub(super) fn chunk_callbacks() -> AiClientCallbacks {
-    AiClientCallbacks {
-        on_chunk: Some(Arc::new(|_chunk: String| {})),
-        ..AiClientCallbacks::default()
-    }
-}
-
-pub(super) fn demo_echo_tool() -> Value {
-    json!({
-        "type": "function",
-        "name": "demo_echo",
-        "description": "demo echo",
-        "parameters": {
-            "type": "object",
-            "properties": { "text": { "type": "string" } },
-            "required": ["text"],
-            "additionalProperties": false
-        }
-    })
-}
-
-pub(super) struct RunProcessWithToolsArgs {
-    pub input: Value,
-    pub session_id: Option<String>,
-    pub turn_id: Option<String>,
-    pub previous_response_id: Option<String>,
-    pub prompt_cache_key: Option<String>,
-    pub tools: Vec<Value>,
-    pub callbacks: AiClientCallbacks,
-    pub purpose: &'static str,
-    pub use_prev_id: bool,
-    pub can_use_prev_id: bool,
-    pub raw_input: Option<Value>,
-    pub prefixed_input_items: Vec<Value>,
-    pub history_limit: i64,
-    pub stable_prefix_mode: bool,
-    pub prefer_stateless: bool,
-    pub allow_tool_image_input: bool,
-    pub request_cwd: Option<String>,
-}
-
-impl Default for RunProcessWithToolsArgs {
-    fn default() -> Self {
-        Self {
-            input: Value::String("hello".to_string()),
-            session_id: None,
-            turn_id: None,
-            previous_response_id: None,
-            prompt_cache_key: None,
-            tools: Vec::new(),
-            callbacks: AiClientCallbacks::default(),
-            purpose: "agent",
-            use_prev_id: false,
-            can_use_prev_id: false,
-            raw_input: None,
-            prefixed_input_items: Vec::new(),
-            history_limit: 8,
-            stable_prefix_mode: false,
-            prefer_stateless: false,
-            allow_tool_image_input: true,
-            request_cwd: None,
-        }
-    }
-}
-
-pub(super) async fn run_process_with_tools(
-    client: &mut AiClient,
-    args: RunProcessWithToolsArgs,
-) -> Result<Value, String> {
-    let raw_input = args.raw_input.unwrap_or_else(|| args.input.clone());
-    client
-        .process_with_tools(
-            args.input,
-            args.previous_response_id,
-            args.prompt_cache_key,
-            args.tools,
-            args.session_id,
-            args.turn_id,
-            "gpt-4o".to_string(),
-            "gpt".to_string(),
-            None,
-            0.7,
-            None,
-            args.callbacks,
-            false,
-            None,
-            args.purpose,
-            0,
-            args.use_prev_id,
-            args.can_use_prev_id,
-            raw_input,
-            args.history_limit,
-            args.stable_prefix_mode,
-            false,
-            args.prefixed_input_items,
-            args.prefer_stateless,
-            args.allow_tool_image_input,
-            false,
-            None,
-            None,
-            args.request_cwd,
-        )
-        .await
 }

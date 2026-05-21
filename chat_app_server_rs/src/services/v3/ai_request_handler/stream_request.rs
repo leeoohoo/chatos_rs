@@ -27,6 +27,7 @@ impl AiRequestHandler {
         persist_messages: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<AiResponse, String> {
         let resp = send_bearer_json_request(
             &self.client,
@@ -128,6 +129,7 @@ impl AiRequestHandler {
             persist_messages,
             message_mode,
             message_source,
+            metadata,
             content.as_str(),
             reasoning_opt.clone(),
             tool_calls.clone(),

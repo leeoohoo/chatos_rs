@@ -271,9 +271,9 @@ impl FsPathPolicy {
             .ok_or_else(|| FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string()))?;
         Ok(AuthorizedPath {
             navigation_root: root.path.clone(),
-            project_root: self.find_project_root(path.as_path()).map(|project_root| {
-                project_root.path.clone()
-            }),
+            project_root: self
+                .find_project_root(path.as_path())
+                .map(|project_root| project_root.path.clone()),
             path,
             can_write: root.kind.can_write(),
         })

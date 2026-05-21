@@ -148,9 +148,9 @@ pub(crate) async fn handle_transient_retry(
 mod tests {
     use super::{
         classify_transient_retry, exhausted_transient_retry_message, handle_transient_retry,
-        is_response_parse_error, is_retryable_provider_overload_error,
-        is_transient_network_error, is_transient_transport_or_parse_error,
-        transient_retry_backoff_ms, transient_retry_kind_label, TransientRetryAction,
+        is_response_parse_error, is_retryable_provider_overload_error, is_transient_network_error,
+        is_transient_transport_or_parse_error, transient_retry_backoff_ms,
+        transient_retry_kind_label, TransientRetryAction,
     };
 
     #[test]

@@ -82,9 +82,12 @@ pub(super) async fn discard_paths(
     let mut stderr = Vec::new();
 
     if !tracked_paths.is_empty() {
-        let output =
-            path_command_output(repo_root, &["restore", "--staged", "--worktree"], &tracked_paths)
-                .await?;
+        let output = path_command_output(
+            repo_root,
+            &["restore", "--staged", "--worktree"],
+            &tracked_paths,
+        )
+        .await?;
         if !output.stdout.trim().is_empty() {
             stdout.push(output.stdout.trim().to_string());
         }

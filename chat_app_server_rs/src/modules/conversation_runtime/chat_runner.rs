@@ -21,7 +21,9 @@ use super::chat_execution::{
     prepare_mcp_execution_v2, prepare_mcp_execution_v3, ChatExecutionInput,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
-use super::snapshot::{sync_chat_turn_snapshot, wire_implicit_command_tracking, LiveRequestSnapshotContext};
+use super::snapshot::{
+    sync_chat_turn_snapshot, wire_implicit_command_tracking, LiveRequestSnapshotContext,
+};
 use super::turn_lifecycle::ActiveConversationTurn;
 
 pub struct PreparedChatExecution {
@@ -117,28 +119,32 @@ pub fn prepare_chat_execution(
         &mut callbacks,
         runtime_context.selected_commands_for_snapshot.clone(),
     );
-    callbacks.on_before_model_request = Some(Arc::new(move |request_input, previous_response_id, override_context| {
-        let snapshot_context = override_context.unwrap_or_else(|| live_request_snapshot.clone());
-        let mode = actual_context_mode.to_string();
-        tokio::spawn(async move {
-            let actual_request = crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
-                context_mode: Some(mode.clone()),
-                previous_response_id,
-                items: if mode == "v3" {
-                    crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input)
-                } else {
-                    crate::modules::conversation_runtime::snapshot::actual_context_items_from_v2_messages(
+    callbacks.on_before_model_request = Some(Arc::new(
+        move |request_input, previous_response_id, override_context| {
+            let snapshot_context =
+                override_context.unwrap_or_else(|| live_request_snapshot.clone());
+            let mode = actual_context_mode.to_string();
+            tokio::spawn(async move {
+                let actual_request =
+                    crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
+                        context_mode: Some(mode.clone()),
+                        previous_response_id,
+                        items: if mode == "v3" {
+                            crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input)
+                        } else {
+                            crate::modules::conversation_runtime::snapshot::actual_context_items_from_v2_messages(
                         request_input.as_array().map(|items| items.as_slice()).unwrap_or(&[]),
                     )
-                },
-            };
-            let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
-                &snapshot_context,
-                &actual_request,
-            )
-            .await;
-        });
-    }));
+                        },
+                    };
+                let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
+                    &snapshot_context,
+                    &actual_request,
+                )
+                .await;
+            });
+        },
+    ));
 
     PreparedChatExecution {
         sink,

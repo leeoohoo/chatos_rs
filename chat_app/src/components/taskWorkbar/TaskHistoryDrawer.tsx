@@ -94,6 +94,28 @@ const TaskHistoryDrawer = ({
               <button
                 type="button"
                 className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                  historyFilter === 'unfinished'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                }`}
+                onClick={() => onSetHistoryFilter('unfinished')}
+              >
+                未完成
+              </button>
+              <button
+                type="button"
+                className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                  historyFilter === 'blocked'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                }`}
+                onClick={() => onSetHistoryFilter('blocked')}
+              >
+                阻塞
+              </button>
+              <button
+                type="button"
+                className={`rounded px-2.5 py-1 text-xs transition-colors ${
                   historyFilter === 'processed'
                     ? 'bg-accent text-foreground'
                     : 'text-muted-foreground hover:bg-accent hover:text-foreground'
@@ -116,7 +138,13 @@ const TaskHistoryDrawer = ({
 
             {!historyLoading && visibleHistoryTasks.length === 0 ? (
               <div className="text-xs text-muted-foreground">
-                {historyFilter === 'processed' ? '暂无已处理待办。' : '暂无历史任务。'}
+                {historyFilter === 'processed'
+                  ? '暂无已处理待办。'
+                  : historyFilter === 'unfinished'
+                    ? '暂无未完成任务。'
+                    : historyFilter === 'blocked'
+                      ? '暂无阻塞任务。'
+                      : '暂无历史任务。'}
               </div>
             ) : null}
 

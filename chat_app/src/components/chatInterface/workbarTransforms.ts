@@ -18,6 +18,7 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
 
   const conversationTurnId = String(record.conversation_turn_id ?? record.conversationTurnId ?? '').trim();
   const createdAt = String(record.created_at ?? record.createdAt ?? '');
+  const updatedAtRaw = record.updated_at ?? record.updatedAt;
   const dueAtRaw = record.due_at ?? record.dueAt;
   const outcomeItemsCandidate = record.outcome_items ?? record.outcomeItems;
   const outcomeItemsRaw: unknown[] = Array.isArray(outcomeItemsCandidate)
@@ -36,6 +37,7 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
     priority,
     conversationTurnId,
     createdAt,
+    updatedAt: updatedAtRaw ? String(updatedAtRaw) : null,
     dueAt: dueAtRaw ? String(dueAtRaw) : null,
     tags: Array.isArray(record.tags)
       ? record.tags

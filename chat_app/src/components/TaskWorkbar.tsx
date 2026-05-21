@@ -1,6 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import {
   formatGuidanceAppliedTime,
+  isBlockedTask,
+  isDoneTask,
+  isUnfinishedTask,
+  groupWorkbarTasks,
   sortTasks,
 } from './taskWorkbar/helpers';
 import RuntimeGuidanceSection from './taskWorkbar/RuntimeGuidanceSection';
@@ -94,6 +98,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
     : uncontrolledHistoryOpen;
 
   const sortedTasks = useMemo(() => sortTasks(tasks), [tasks]);
+  const groupedTasks = useMemo(() => groupWorkbarTasks(sortedTasks), [sortedTasks]);
   const sortedHistoryTasks = useMemo(
     () => sortTasks(historyTasks.length > 0 ? historyTasks : sortedTasks),
     [historyTasks, sortedTasks]
@@ -102,9 +107,21 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
     () => sortedHistoryTasks.filter((task) => task.status === 'done'),
     [sortedHistoryTasks]
   );
-  const visibleHistoryTasks = historyFilter === 'processed'
-    ? processedHistoryTasks
-    : sortedHistoryTasks;
+  const visibleHistoryTasks = useMemo(() => {
+    if (historyFilter === 'processed') {
+      return processedHistoryTasks;
+    }
+    if (historyFilter === 'unfinished') {
+      return sortedHistoryTasks.filter(isUnfinishedTask);
+    }
+    if (historyFilter === 'blocked') {
+      return sortedHistoryTasks.filter(isBlockedTask);
+    }
+    if (historyFilter === 'all') {
+      return sortedHistoryTasks;
+    }
+    return sortedHistoryTasks.filter(isDoneTask);
+  }, [historyFilter, processedHistoryTasks, sortedHistoryTasks]);
   const runtimeGuidanceHint = useMemo(() => {
     if (runtimeGuidancePendingCount <= 0 && runtimeGuidanceAppliedCount <= 0) {
       return '';
@@ -154,6 +171,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
     return fallbackSource.filter((task) => task.conversationTurnId.trim() === latestTurnId);
   }, [currentTurnId, sortedHistoryTasks, sortedTasks]);
 
+  const currentTurnTaskGroups = useMemo(() => groupWorkbarTasks(currentTurnTasks), [currentTurnTasks]);
+  const currentTurnTaskSummary = currentTurnTaskGroups.current[0] || null;
+
   const handleOpenHistory = (filter: HistoryFilter = 'all') => {
     setHistoryFilter(filter);
     if (typeof onHistoryOpenChange === 'function') {
@@ -183,6 +203,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             <div className="min-w-0">
               <div className="text-xs font-semibold text-foreground">Workbar</div>
               <div className="text-[11px] text-muted-foreground">{`\u5f53\u524d\u8f6e\u4efb\u52a1\uff1a${currentTurnTasks.length}`}</div>
+              <div className="text-[11px] text-muted-foreground">{`当前：${currentTurnTaskGroups.current.length} · 未完成：${groupedTasks.unfinished.length} · 阻塞：${groupedTasks.blocked.length} · 已完成：${groupedTasks.done.length}`}</div>
               {runtimeGuidanceHint ? (
                 <div className="text-[11px] text-muted-foreground">{runtimeGuidanceHint}</div>
               ) : null}
@@ -271,18 +292,71 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             ) : null}
 
             {currentTurnTasks.length > 0 ? (
-              <div className="flex gap-1.5 overflow-x-auto pb-1">
-                {currentTurnTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    compact
-                    onCompleteTask={onCompleteTask}
-                    onDeleteTask={onDeleteTask}
-                    onEditTask={onEditTask}
-                    isMutating={actionLoadingTaskId === task.id}
-                  />
-                ))}
+              <div className="space-y-2">
+                <div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">当前</div>
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {currentTurnTaskSummary ? (
+                      <TaskCard
+                        key={currentTurnTaskSummary.id}
+                        task={currentTurnTaskSummary}
+                        compact
+                        onCompleteTask={onCompleteTask}
+                        onDeleteTask={onDeleteTask}
+                        onEditTask={onEditTask}
+                        isMutating={actionLoadingTaskId === currentTurnTaskSummary.id}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">未完成</div>
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {currentTurnTaskGroups.unfinished.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        compact
+                        onCompleteTask={onCompleteTask}
+                        onDeleteTask={onDeleteTask}
+                        onEditTask={onEditTask}
+                        isMutating={actionLoadingTaskId === task.id}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">阻塞</div>
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {currentTurnTaskGroups.blocked.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        compact
+                        onCompleteTask={onCompleteTask}
+                        onDeleteTask={onDeleteTask}
+                        onEditTask={onEditTask}
+                        isMutating={actionLoadingTaskId === task.id}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">已完成</div>
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {currentTurnTaskGroups.done.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        compact
+                        onCompleteTask={onCompleteTask}
+                        onDeleteTask={onDeleteTask}
+                        onEditTask={onEditTask}
+                        isMutating={actionLoadingTaskId === task.id}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             ) : null}
           </div>

@@ -111,6 +111,7 @@ impl MessageManagerCore {
         reasoning: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
+        metadata: Option<Value>,
         tool_calls: Option<Value>,
         response_id: Option<&str>,
         turn_id: Option<&str>,
@@ -121,6 +122,7 @@ impl MessageManagerCore {
             response_id,
             turn_id,
             response_status,
+            metadata.as_ref(),
         );
         self.save_assistant_message(
             session_id,

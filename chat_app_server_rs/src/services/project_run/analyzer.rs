@@ -386,7 +386,9 @@ fn detect_java_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
                     format!("{runner} bootRun"),
                     0.88,
                     None,
-                    gradle_manifest.as_ref().map(|path| path.to_string_lossy().to_string()),
+                    gradle_manifest
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().to_string()),
                     required_toolchains.clone(),
                 ),
             );
@@ -401,7 +403,9 @@ fn detect_java_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
                         format!("{runner} run -PmainClass={entrypoint}"),
                         0.9,
                         Some(entrypoint.clone()),
-                        gradle_manifest.as_ref().map(|path| path.to_string_lossy().to_string()),
+                        gradle_manifest
+                            .as_ref()
+                            .map(|path| path.to_string_lossy().to_string()),
                         required_toolchains.clone(),
                     ),
                 );
@@ -416,7 +420,9 @@ fn detect_java_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
                 format!("{runner} test"),
                 0.78,
                 None,
-                gradle_manifest.as_ref().map(|path| path.to_string_lossy().to_string()),
+                gradle_manifest
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string()),
                 required_toolchains,
             ),
         );
@@ -622,8 +628,7 @@ fn detect_java_entrypoints(dir: &Path) -> Vec<String> {
     }
 
     let package_re = Regex::new(r"(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;").ok();
-    let main_re =
-        Regex::new(r"public\s+static\s+void\s+main\s*\(\s*String(?:\[\]|\s*\.\.\.)").ok();
+    let main_re = Regex::new(r"public\s+static\s+void\s+main\s*\(\s*String(?:\[\]|\s*\.\.\.)").ok();
     let class_re = Regex::new(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)").ok();
 
     let mut out = Vec::new();
@@ -672,7 +677,11 @@ pub(super) fn detect_rust_bins(dir: &Path) -> Vec<String> {
 
     let src_bin_dir = dir.join("src").join("bin");
     if src_bin_dir.is_dir() {
-        for entry in walkdir::WalkDir::new(&src_bin_dir).max_depth(2).into_iter().flatten() {
+        for entry in walkdir::WalkDir::new(&src_bin_dir)
+            .max_depth(2)
+            .into_iter()
+            .flatten()
+        {
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -683,11 +692,7 @@ pub(super) fn detect_rust_bins(dir: &Path) -> Vec<String> {
                 Ok(value) => value,
                 Err(_) => continue,
             };
-            if relative
-                .file_name()
-                .and_then(|value| value.to_str())
-                == Some("main.rs")
-            {
+            if relative.file_name().and_then(|value| value.to_str()) == Some("main.rs") {
                 let Some(parent) = relative.parent() else {
                     continue;
                 };
@@ -755,7 +760,9 @@ pub(super) fn detect_go_entrypoints(dir: &Path) -> Vec<String> {
                 .into_iter()
                 .flatten()
                 .filter(|item| item.file_type().is_file())
-                .filter(|item| item.path().extension().and_then(|value| value.to_str()) == Some("go"))
+                .filter(|item| {
+                    item.path().extension().and_then(|value| value.to_str()) == Some("go")
+                })
                 .any(|item| {
                     fs::read_to_string(item.path())
                         .ok()

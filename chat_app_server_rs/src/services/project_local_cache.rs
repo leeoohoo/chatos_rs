@@ -38,18 +38,12 @@ pub fn project_cache_root(project_root: &str) -> PathBuf {
         .join(CACHE_DIR_NAME)
 }
 
-pub fn project_cache_file_path(
-    project_root: &str,
-    relative_path: &str,
-) -> Result<PathBuf, String> {
+pub fn project_cache_file_path(project_root: &str, relative_path: &str) -> Result<PathBuf, String> {
     let normalized_relative = normalize_cache_relative_path(relative_path)?;
     Ok(project_cache_root(project_root).join(normalized_relative))
 }
 
-pub fn read_cache_json<T>(
-    project_root: &str,
-    relative_path: &str,
-) -> Result<Option<T>, String>
+pub fn read_cache_json<T>(project_root: &str, relative_path: &str) -> Result<Option<T>, String>
 where
     T: DeserializeOwned,
 {
@@ -63,11 +57,7 @@ where
         .map_err(|err| err.to_string())
 }
 
-pub fn write_cache_json<T>(
-    project_root: &str,
-    relative_path: &str,
-    value: &T,
-) -> Result<(), String>
+pub fn write_cache_json<T>(project_root: &str, relative_path: &str, value: &T) -> Result<(), String>
 where
     T: Serialize,
 {
@@ -95,12 +85,20 @@ pub fn cache_key(value: &str) -> String {
 }
 
 pub fn is_project_local_cache_relative_path(path: &str) -> bool {
-    let normalized = path.trim().replace('\\', "/").trim_start_matches("./").to_string();
+    let normalized = path
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string();
     normalized == ".chatos/cache" || normalized.starts_with(".chatos/cache/")
 }
 
 pub fn is_project_runtime_relative_path(path: &str) -> bool {
-    let normalized = path.trim().replace('\\', "/").trim_start_matches("./").to_string();
+    let normalized = path
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string();
     normalized == ".chatos/project-run"
         || normalized.starts_with(".chatos/project-run/")
         || is_project_local_cache_relative_path(normalized.as_str())
