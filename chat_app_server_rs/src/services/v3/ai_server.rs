@@ -114,7 +114,6 @@ impl AiServer {
                     provider: Some(provider),
                     thinking_level,
                     system_prompt: None,
-                    history_limit: None,
                     purpose: Some("chat".to_string()),
                     conversation_turn_id: turn_id.clone(),
                     message_mode: options.message_mode.clone(),

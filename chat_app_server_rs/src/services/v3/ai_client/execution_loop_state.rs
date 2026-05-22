@@ -23,7 +23,6 @@ impl AiClient {
         include_tool_items: bool,
         prefixed_input_items: &[Value],
         force_text_content: bool,
-        adaptive_history_limit: i64,
         terminal_empty_retry_count: &mut usize,
         max_terminal_empty_retries: usize,
         pending_tool_calls: Option<&Vec<Value>>,
@@ -73,10 +72,6 @@ impl AiClient {
             return Ok(false);
         }
 
-        if let Some(sid) = session_id {
-            self.prev_response_id_disabled_sessions.insert(sid.clone());
-        }
-        *can_use_prev_id = false;
         *use_prev_id = false;
         *previous_response_id = None;
 
@@ -85,7 +80,6 @@ impl AiClient {
                 session_id,
                 raw_input,
                 force_text_content,
-                adaptive_history_limit,
                 stable_prefix_mode,
                 include_tool_items,
                 prefixed_input_items,
@@ -118,7 +112,6 @@ impl AiClient {
         include_tool_items: bool,
         prefixed_input_items: &[Value],
         force_text_content: bool,
-        adaptive_history_limit: i64,
         non_terminal_empty_retry_count: &mut usize,
         max_non_terminal_empty_retries: usize,
         use_prev_id: &mut bool,
@@ -166,10 +159,6 @@ impl AiClient {
                 "[AI_V3] disable previous_response_id after non-terminal empty response: session_id={}",
                 session_id.map(|value| value.as_str()).unwrap_or("n/a")
             );
-            if let Some(sid) = session_id {
-                self.prev_response_id_disabled_sessions.insert(sid.clone());
-            }
-            *can_use_prev_id = false;
             *use_prev_id = false;
             *previous_response_id = None;
             let stateless = if let Some(items) = stateless_context_items.clone() {
@@ -179,7 +168,6 @@ impl AiClient {
                     session_id,
                     raw_input,
                     force_text_content,
-                    adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
                     prefixed_input_items,
@@ -203,7 +191,6 @@ impl AiClient {
         ai_response: &AiResponse,
         session_id: Option<&String>,
         raw_input: &Value,
-        adaptive_history_limit: i64,
         stable_prefix_mode: bool,
         force_text_content: bool,
         prefixed_input_items: &[Value],
@@ -230,16 +217,10 @@ impl AiClient {
         );
         if would_use_prev_id {
             warn!(
-                "[AI_V3] tool execution completed; disable previous_response_id for next turn to force fresh memory context rebuild"
+                "[AI_V3] tool execution completed; continue with previous_response_id and incremental function_call_output items"
             );
         } else if use_prev_id && response_id.is_none() {
             warn!("[AI_V3] missing response_id for tool call; fallback to stateless input");
-        }
-        if would_use_prev_id || (use_prev_id && response_id.is_none()) {
-            if let Some(sid) = session_id {
-                self.prev_response_id_disabled_sessions.insert(sid.clone());
-            }
-            *can_use_prev_id = false;
         }
 
         let current_items = build_current_input_items(raw_input, force_text_content);
@@ -247,7 +228,6 @@ impl AiClient {
             let mut rebuilt = self
                 .build_stateless_items(
                     session_id.cloned(),
-                    adaptive_history_limit,
                     stable_prefix_mode,
                     force_text_content,
                     prefixed_input_items,
@@ -268,7 +248,6 @@ impl AiClient {
             } else {
                 self.build_stateless_items(
                     session_id.cloned(),
-                    adaptive_history_limit,
                     stable_prefix_mode,
                     force_text_content,
                     prefixed_input_items,
@@ -287,6 +266,14 @@ impl AiClient {
             local
         };
         *stateless_context_items = Some(stateless.clone());
+
+        if would_use_prev_id {
+            return (
+                Value::Array(tool_outputs.to_vec()),
+                response_id,
+                true,
+            );
+        }
 
         (Value::Array(stateless), None, false)
     }

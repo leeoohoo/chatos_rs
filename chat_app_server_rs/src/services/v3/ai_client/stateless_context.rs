@@ -19,7 +19,6 @@ impl AiClient {
         use_prev_id: bool,
         raw_input: &Value,
         force_text_content: bool,
-        history_limit: i64,
         include_tool_items: bool,
         prefixed_input_items: &[Value],
         stateless_context_items: &mut Option<Vec<Value>>,
@@ -37,7 +36,6 @@ impl AiClient {
         let rebuilt = self
             .build_stateless_items(
                 session_id.map(|value| value.to_string()),
-                history_limit,
                 stable_prefix_mode,
                 force_text_content,
                 prefixed_input_items,
@@ -55,10 +53,9 @@ impl AiClient {
             .unwrap_or(true);
         if changed {
             info!(
-                "[AI_V3] stateless context refreshed: old_items={}, new_items={}, history_limit={}",
+                "[AI_V3] stateless context refreshed: old_items={}, new_items={}",
                 previous_len,
-                rebuilt.len(),
-                history_limit
+                rebuilt.len()
             );
             *stateless_context_items = Some(rebuilt.clone());
             *input = Value::Array(rebuilt);
@@ -68,7 +65,6 @@ impl AiClient {
     pub(super) async fn build_stateless_items(
         &self,
         session_id: Option<String>,
-        _history_limit: i64,
         _stable_prefix_mode: bool,
         force_text: bool,
         prefixed_input_items: &[Value],

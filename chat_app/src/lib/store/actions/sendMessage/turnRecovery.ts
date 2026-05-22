@@ -360,11 +360,15 @@ export const recoverStreamingTurnBySnapshot = async ({
     }
   }
   const snapshotStatus = normalizeSnapshotStatus(snapshot?.status);
+  const effectiveSnapshotStatus = (
+    RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus)
+    && snapshot?.active_in_runtime === false
+  ) ? 'canceled' : snapshotStatus;
   const shouldPullTurnMessages = (
     !snapshot
     || snapshot.snapshot_source === 'missing'
-    || TERMINAL_SNAPSHOT_STATUSES.has(snapshotStatus)
-    || RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus)
+    || TERMINAL_SNAPSHOT_STATUSES.has(effectiveSnapshotStatus)
+    || RUNNING_SNAPSHOT_STATUSES.has(effectiveSnapshotStatus)
   );
   if (!shouldPullTurnMessages) {
     return {
@@ -390,7 +394,7 @@ export const recoverStreamingTurnBySnapshot = async ({
   const recoveredMessages = normalizeRawMessages(rawMessages, sessionId) as StreamingMessage[];
   if (recoveredMessages.length === 0) {
     let recoveredLocally = false;
-    if (TERMINAL_SNAPSHOT_STATUSES.has(snapshotStatus)) {
+    if (TERMINAL_SNAPSHOT_STATUSES.has(effectiveSnapshotStatus)) {
       set((state) => {
         recoveredLocally = settleLocalTerminalAssistant(state, {
           sessionId,
@@ -398,10 +402,19 @@ export const recoverStreamingTurnBySnapshot = async ({
           tempAssistantMessageId,
           tempUserId,
           preferredUserMessageId,
-          snapshotStatus,
+          snapshotStatus: effectiveSnapshotStatus,
         });
+        if (!recoveredLocally) {
+          settleRecoveredStreamingState(
+            state,
+            sessionId,
+            tempAssistantMessageId,
+            effectiveSnapshotStatus,
+          );
+          recoveredLocally = true;
+        }
       });
-    } else if (RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus)) {
+    } else if (RUNNING_SNAPSHOT_STATUSES.has(effectiveSnapshotStatus)) {
       set((state) => {
         const existingAssistantIndex = state.messages.findIndex((message) => message.id === tempAssistantMessageId);
         if (existingAssistantIndex < 0) {
@@ -417,14 +430,14 @@ export const recoverStreamingTurnBySnapshot = async ({
         if (state.sessionChatState?.[sessionId]) {
           state.sessionChatState[sessionId].activeTurnId = turnId;
         }
-        settleRecoveredStreamingState(state, sessionId, tempAssistantMessageId, snapshotStatus);
+        settleRecoveredStreamingState(state, sessionId, tempAssistantMessageId, effectiveSnapshotStatus);
         recoveredLocally = true;
       });
     }
     return {
       snapshot,
       recovered: recoveredLocally,
-      terminal: TERMINAL_SNAPSHOT_STATUSES.has(snapshotStatus),
+      terminal: TERMINAL_SNAPSHOT_STATUSES.has(effectiveSnapshotStatus),
     };
   }
 
@@ -454,7 +467,7 @@ export const recoverStreamingTurnBySnapshot = async ({
           || readDraftUserId(existingAssistant);
         state.messages[tempAssistantIndex] = {
           ...existingAssistant,
-          status: snapshotStatus === 'completed' ? 'completed' : 'error',
+          status: effectiveSnapshotStatus === 'completed' ? 'completed' : 'error',
           metadata: {
             ...(existingAssistant.metadata || {}),
             ...(linkedUserId ? { historyFinalForUserMessageId: linkedUserId } : {}),
@@ -464,7 +477,7 @@ export const recoverStreamingTurnBySnapshot = async ({
       }
     }
 
-    if (RUNNING_SNAPSHOT_STATUSES.has(normalizeSnapshotStatus(snapshotStatus))) {
+    if (RUNNING_SNAPSHOT_STATUSES.has(normalizeSnapshotStatus(effectiveSnapshotStatus))) {
       const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
       state.sessionChatState[sessionId] = {
         ...prev,
@@ -478,12 +491,12 @@ export const recoverStreamingTurnBySnapshot = async ({
         preferredUserMessageId,
       });
     }
-    settleRecoveredStreamingState(state, sessionId, resolvedAssistantId, snapshotStatus);
+    settleRecoveredStreamingState(state, sessionId, resolvedAssistantId, effectiveSnapshotStatus);
   });
 
   return {
     snapshot,
     recovered: true,
-    terminal: TERMINAL_SNAPSHOT_STATUSES.has(snapshotStatus),
+    terminal: TERMINAL_SNAPSHOT_STATUSES.has(effectiveSnapshotStatus),
   };
 };

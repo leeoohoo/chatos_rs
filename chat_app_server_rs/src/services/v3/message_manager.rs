@@ -148,41 +148,25 @@ impl MessageManager {
         )
     }
 
-    pub async fn get_last_response_id(&self, session_id: &str, limit: i64) -> Option<String> {
-        let memory_summary_limit = Some(2);
-        let (_summaries, messages) = self
-            .get_session_memory_history(session_id, Some(limit), memory_summary_limit)
-            .await;
+    pub async fn get_last_response_id(&self, session_id: &str) -> Option<String> {
+        let (_merged_summary, _summary_count, messages) =
+            self.get_memory_chat_history_context(session_id).await;
         info!(
-            "[AI_V3][prev-id] scan start: session_id={}, limit={}, message_count={}",
+            "[AI_V3][prev-id] scan start: session_id={}, message_count={}",
             session_id,
-            limit,
             messages.len()
         );
 
-        for message in messages.iter().rev() {
-            if message.role != "assistant" {
-                continue;
-            }
-
-            if !assistant_message_has_reusable_payload(message) {
-                info!(
-                    "[AI_V3][prev-id] skip assistant without reusable payload: session_id={}, message_id={}",
-                    session_id,
-                    message.id
-                );
-                continue;
-            }
-
-            if let Some(response_id) = assistant_message_response_id_candidate(message) {
-                info!(
-                    "[AI_V3][prev-id] hit metadata response_id alias: session_id={}, message_id={}, response_id={}",
-                    session_id,
-                    message.id,
-                    response_id
-                );
-                return Some(response_id.to_string());
-            }
+        if let Some((message_id, response_id)) =
+            find_last_reusable_response_id(messages.as_slice())
+        {
+            info!(
+                "[AI_V3][prev-id] hit metadata response_id alias: session_id={}, message_id={}, response_id={}",
+                session_id,
+                message_id,
+                response_id
+            );
+            return Some(response_id);
         }
 
         info!(
@@ -193,11 +177,29 @@ impl MessageManager {
     }
 }
 
+fn find_last_reusable_response_id(messages: &[Message]) -> Option<(String, String)> {
+    for message in messages.iter().rev() {
+        if message.role != "assistant" {
+            continue;
+        }
+
+        if !assistant_message_has_reusable_payload(message) {
+            continue;
+        }
+
+        if let Some(response_id) = assistant_message_response_id_candidate(message) {
+            return Some((message.id.clone(), response_id.to_string()));
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::assistant_message_response_id_candidate;
+    use super::{assistant_message_response_id_candidate, find_last_reusable_response_id};
     use crate::models::message::Message;
 
     #[test]
@@ -283,6 +285,36 @@ mod tests {
         assert_eq!(
             assistant_message_response_id_candidate(&message),
             Some("resp_reasoning")
+        );
+    }
+
+    #[test]
+    fn last_reusable_response_id_scans_full_message_list() {
+        let session_id = "session_1".to_string();
+        let mut messages = Vec::new();
+
+        for idx in 0..32 {
+            messages.push(Message::new(
+                session_id.clone(),
+                "user".to_string(),
+                format!("user-{idx}"),
+            ));
+        }
+
+        let mut assistant = Message::new(
+            session_id.clone(),
+            "assistant".to_string(),
+            "final answer".to_string(),
+        );
+        assistant.metadata = Some(json!({
+            "response_id": "resp_latest",
+            "response_status": "completed",
+        }));
+        messages.push(assistant);
+
+        assert_eq!(
+            find_last_reusable_response_id(messages.as_slice()),
+            Some((messages.last().unwrap().id.clone(), "resp_latest".to_string()))
         );
     }
 }

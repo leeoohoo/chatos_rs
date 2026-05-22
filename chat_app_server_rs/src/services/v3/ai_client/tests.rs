@@ -468,7 +468,7 @@ async fn retries_completion_failure_when_model_is_at_capacity() {
 }
 
 #[tokio::test]
-async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
+async fn tool_follow_up_reuses_previous_response_id_with_incremental_outputs() {
     let steps = vec![
         MockProviderStep::json(
             StatusCode::OK,
@@ -507,7 +507,7 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
         },
     )
     .await
-    .expect("process should recover missing tool-call context");
+    .expect("tool follow-up should reuse previous_response_id");
     server.abort();
 
     assert_eq!(
@@ -524,23 +524,21 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
             .and_then(|value| value.as_str()),
         Some("prev_resp_seed")
     );
-    assert!(requests[1].get("previous_response_id").is_none());
+    assert_eq!(
+        requests[1]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("resp_tool_1")
+    );
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str()) == Some("call_tool_1")
-            });
             let has_output = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
                     && item.get("call_id").and_then(|value| value.as_str()) == Some("call_tool_1")
             });
-            has_user && has_call && has_output
+            items.len() == 1 && has_output
         })
         .unwrap_or(false));
 }
@@ -619,6 +617,200 @@ async fn falls_back_to_stateless_when_tool_call_response_has_no_response_id() {
                         == Some("call_tool_missing_resp_id")
             });
             has_user && has_call && has_output
+        })
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn falls_back_to_stateless_when_incremental_tool_outputs_are_rejected() {
+    let steps = vec![
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_tool_prev_id_seed",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_tool_prev_id_seed",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"hello\"}"
+                }]
+            }),
+        ),
+        MockProviderStep::text(
+            StatusCode::BAD_REQUEST,
+            "No tool call found for function_call_output item",
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_tool_prev_id_recovered",
+                "status": "completed",
+                "output_text": "tool prev-id fallback success"
+            }),
+        ),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            previous_response_id: Some("prev_resp_tool_prev_id_seed".to_string()),
+            tools: vec![demo_echo_tool()],
+            callbacks: empty_callbacks(),
+            use_prev_id: true,
+            can_use_prev_id: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("rejected incremental tool outputs should fallback to stateless mode");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("tool prev-id fallback success")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        requests[1]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("resp_tool_prev_id_seed")
+    );
+    assert!(requests[2].get("previous_response_id").is_none());
+    assert!(requests[2]
+        .get("input")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+            let has_call = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_prev_id_seed")
+            });
+            let has_output = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_prev_id_seed")
+            });
+            has_user && has_call && has_output
+        })
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn reenters_previous_response_id_after_missing_tool_call_fallback() {
+    let steps = vec![
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_tool_prev_id_seed",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_tool_prev_id_seed",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"hello\"}"
+                }]
+            }),
+        ),
+        MockProviderStep::text(
+            StatusCode::BAD_REQUEST,
+            "No tool call found for function_call_output item",
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_tool_prev_id_recovered",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_tool_prev_id_recovered",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"world\"}"
+                }]
+            }),
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_tool_prev_id_final",
+                "status": "completed",
+                "output_text": "tool prev-id resumed"
+            }),
+        ),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            previous_response_id: Some("prev_resp_tool_prev_id_seed".to_string()),
+            tools: vec![demo_echo_tool()],
+            callbacks: empty_callbacks(),
+            use_prev_id: true,
+            can_use_prev_id: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("missing tool-call fallback should recover previous_response_id on later tool rounds");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("tool prev-id resumed")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(
+        requests[1]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("resp_tool_prev_id_seed")
+    );
+    assert!(requests[2].get("previous_response_id").is_none());
+    assert!(requests[2]
+        .get("input")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            let has_call = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_prev_id_seed")
+            });
+            let has_output = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_prev_id_seed")
+            });
+            has_call && has_output
+        })
+        .unwrap_or(false));
+    assert_eq!(
+        requests[3]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("resp_tool_prev_id_recovered")
+    );
+    assert!(requests[3]
+        .get("input")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            let has_output = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_prev_id_recovered")
+            });
+            items.len() == 1 && has_output
         })
         .unwrap_or(false));
 }

@@ -15,6 +15,7 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::models::session::Session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::chatos_memory_engine;
+use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 
 use super::contracts::CompactHistoryQuery;
 use super::contracts::{CreateMessageRequest, PageQuery};
@@ -29,6 +30,27 @@ async fn load_chatos_session(conversation_id: &str) -> Result<Session, String> {
         Some(session) => Ok(session),
         None => Err(format!("session not found: {conversation_id}")),
     }
+}
+
+fn annotate_runtime_activity(conversation_id: &str, value: Value) -> Value {
+    let mut value = rewrite_session_keys_to_conversation(value);
+    let active_in_runtime = value
+        .as_object()
+        .and_then(|map| map.get("turn_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|turn_id| !turn_id.is_empty())
+        .map(|turn_id| runtime_guidance_manager().is_active_turn(conversation_id, turn_id))
+        .unwrap_or(false);
+
+    if let Some(map) = value.as_object_mut() {
+        map.insert(
+            "active_in_runtime".to_string(),
+            Value::Bool(active_in_runtime),
+        );
+    }
+
+    value
 }
 
 pub(super) async fn get_session_messages(
@@ -321,7 +343,8 @@ pub(super) async fn get_session_turn_runtime_context_latest(
     match conversation_messages::get_latest_turn_runtime_snapshot(&conversation_id).await {
         Ok(payload) => (
             StatusCode::OK,
-            Json(rewrite_session_keys_to_conversation(
+            Json(annotate_runtime_activity(
+                &conversation_id,
                 serde_json::to_value(payload).unwrap_or(Value::Null),
             )),
         ),
@@ -347,7 +370,8 @@ pub(super) async fn get_session_turn_runtime_context_by_turn(
     {
         Ok(payload) => (
             StatusCode::OK,
-            Json(rewrite_session_keys_to_conversation(
+            Json(annotate_runtime_activity(
+                &conversation_id,
                 serde_json::to_value(payload).unwrap_or(Value::Null),
             )),
         ),

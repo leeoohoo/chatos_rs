@@ -16,7 +16,6 @@ impl AiClient {
         session_id: Option<&String>,
         raw_input: &Value,
         force_text_content: bool,
-        history_limit: i64,
         stable_prefix_mode: bool,
         include_tool_items: bool,
         prefixed_input_items: &[Value],
@@ -24,7 +23,6 @@ impl AiClient {
         let current_items = build_current_input_items(raw_input, force_text_content);
         self.build_stateless_items(
             session_id.cloned(),
-            history_limit,
             stable_prefix_mode,
             force_text_content,
             prefixed_input_items,
@@ -39,7 +37,6 @@ impl AiClient {
         session_id: Option<&String>,
         raw_input: &Value,
         force_text_content: bool,
-        adaptive_history_limit: i64,
         stable_prefix_mode: bool,
         include_tool_items: bool,
         prefixed_input_items: &[Value],
@@ -112,7 +109,6 @@ impl AiClient {
                 Some(&session_id),
                 raw_input,
                 force_text_content,
-                adaptive_history_limit,
                 stable_prefix_mode,
                 include_tool_items,
                 prefixed_input_items,

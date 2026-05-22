@@ -39,7 +39,6 @@ pub struct ProcessOptions {
     pub supports_responses: Option<bool>,
     pub supports_images: Option<bool>,
     pub system_prompt: Option<String>,
-    pub history_limit: Option<i64>,
     pub purpose: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub message_mode: Option<String>,
@@ -55,7 +54,6 @@ pub struct AiClient {
     mcp_tool_execute: McpToolExecute,
     message_manager: MessageManager,
     max_iterations: i64,
-    history_limit: i64,
     system_prompt: Option<String>,
     prev_response_id_disabled_sessions: HashSet<String>,
     force_text_content_sessions: HashSet<String>,
@@ -89,7 +87,6 @@ impl AiClient {
             mcp_tool_execute,
             message_manager,
             max_iterations: 25,
-            history_limit: 20,
             system_prompt: None,
             prev_response_id_disabled_sessions: HashSet::new(),
             force_text_content_sessions: HashSet::new(),
@@ -153,9 +150,6 @@ impl AiClientSettings for AiClient {
     fn apply_settings(&mut self, effective: &Value) {
         if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
             self.max_iterations = v;
-        }
-        if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) {
-            self.history_limit = v.max(0);
         }
     }
 }

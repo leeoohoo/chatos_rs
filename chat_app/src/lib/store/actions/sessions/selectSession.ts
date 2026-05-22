@@ -149,6 +149,10 @@ export function createSelectSessionActions({
             state.activePanel = 'chat';
           });
         }
+        void recoverRunningSessionState(
+          sessionId,
+          (beforeSelect.messages || []).filter((message: Message) => message?.sessionId === sessionId),
+        );
         debugLog('🔍 当前会话正在流式中，忽略重复切换请求:', sessionId);
         return;
       }
@@ -259,9 +263,7 @@ export function createSelectSessionActions({
             }
             state.isLoading = false;
           });
-          if (!stateSnapshot.sessionChatState?.[sessionId]?.isStreaming) {
-            void recoverRunningSessionState(sessionId, sessionSnapshot.messages);
-          }
+          void recoverRunningSessionState(sessionId, sessionSnapshot.messages);
           const shouldBackgroundSync = (() => {
             if (getRealtimeConnectionStateSnapshot() !== 'connected') {
               return true;
@@ -353,9 +355,7 @@ export function createSelectSessionActions({
           };
           state.hasMoreMessages = Boolean(effectiveNextBefore);
         });
-        if (!get().sessionChatState?.[sessionId]?.isStreaming) {
-          void recoverRunningSessionState(sessionId, messages);
-        }
+        void recoverRunningSessionState(sessionId, messages);
 
         if (session) {
           const { userId, projectId } = getSessionParams();

@@ -44,18 +44,8 @@ fn is_dynamic_runtime_guidance_item(item: &Value) -> bool {
     normalized.starts_with("[Runtime Guidance]") || normalized.starts_with("[Task Board Updated]")
 }
 
-pub(super) fn should_prefer_stateless_context(
-    purpose: &str,
-    supports_responses: bool,
-    history_limit: i64,
-) -> bool {
-    if supports_responses {
-        return false;
-    }
-    if purpose == "chat" {
-        return true;
-    }
-    history_limit != 0
+pub(super) fn should_prefer_stateless_context(supports_responses: bool) -> bool {
+    !supports_responses
 }
 
 pub(super) fn model_supports_prev_response_id(supports_responses: bool) -> bool {
@@ -121,14 +111,6 @@ pub(super) fn is_request_body_too_large_error(err: &str) -> bool {
         || message.contains("payload too large")
 }
 
-pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
-    if limit <= 1 {
-        return None;
-    }
-
-    Some((limit / 2).max(1))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -136,8 +118,8 @@ mod tests {
         is_request_body_too_large_error, is_response_parse_error,
         is_system_messages_not_allowed_error, is_transient_network_error,
         is_transient_transport_or_parse_error, model_supports_prev_response_id,
-        reduce_history_limit, should_disable_prev_id_for_prefixed_input_items,
-        should_prefer_stateless_context, should_use_prev_id_for_next_turn,
+        should_disable_prev_id_for_prefixed_input_items, should_prefer_stateless_context,
+        should_use_prev_id_for_next_turn,
     };
 
     #[test]
@@ -181,13 +163,13 @@ mod tests {
 
     #[test]
     fn chat_with_responses_prefers_stateful_prev_id_mode() {
-        assert!(!should_prefer_stateless_context("chat", true, 20));
+        assert!(!should_prefer_stateless_context(true));
         assert!(model_supports_prev_response_id(true));
     }
 
     #[test]
     fn chat_without_responses_keeps_stateless_mode() {
-        assert!(should_prefer_stateless_context("chat", false, 20));
+        assert!(should_prefer_stateless_context(false));
         assert!(!model_supports_prev_response_id(false));
     }
 
@@ -200,14 +182,6 @@ mod tests {
             "Your input exceeds the context window of this model"
         ));
         assert!(!is_context_length_exceeded_error("rate_limit_exceeded"));
-    }
-
-    #[test]
-    fn reduce_history_limit_halves_until_one() {
-        assert_eq!(reduce_history_limit(20), Some(10));
-        assert_eq!(reduce_history_limit(3), Some(1));
-        assert_eq!(reduce_history_limit(1), None);
-        assert_eq!(reduce_history_limit(0), None);
     }
 
     #[test]

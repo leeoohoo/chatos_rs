@@ -332,6 +332,7 @@ export interface TurnRuntimeSnapshotLookupResponse {
   turn_id?: string | null;
   status: string;
   snapshot_source: string;
+  active_in_runtime?: boolean;
   snapshot?: TurnRuntimeSnapshot | null;
 }
 

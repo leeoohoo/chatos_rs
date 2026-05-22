@@ -50,7 +50,6 @@ impl AiClient {
         use_prev_id: bool,
         can_use_prev_id: bool,
         raw_input: Value,
-        history_limit: i64,
         stable_prefix_mode: bool,
         force_text_content: bool,
         prefixed_input_items: Vec<Value>,
@@ -68,7 +67,6 @@ impl AiClient {
         let mut use_prev_id = use_prev_id;
         let mut can_use_prev_id = can_use_prev_id;
         let mut force_text_content = force_text_content;
-        let mut adaptive_history_limit = history_limit;
         let mut iteration = iteration;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
         let mut pending_tool_calls: Option<Vec<Value>> = None;
@@ -145,7 +143,6 @@ impl AiClient {
                 use_prev_id,
                 &raw_input,
                 force_text_content,
-                adaptive_history_limit,
                 include_tool_items,
                 effective_prefixed_input_items.as_slice(),
                 &mut stateless_context_items,
@@ -270,7 +267,6 @@ impl AiClient {
                                 &mut use_prev_id,
                                 &mut can_use_prev_id,
                                 &mut force_text_content,
-                                &mut adaptive_history_limit,
                                 &mut previous_response_id,
                                 &mut no_system_messages,
                                 &mut remote_active_summary_attempted,
@@ -339,7 +335,6 @@ impl AiClient {
                         pending_tool_calls.as_ref(),
                         pending_tool_outputs.as_ref(),
                         force_text_content,
-                        &mut adaptive_history_limit,
                         &mut use_prev_id,
                         &mut can_use_prev_id,
                         &mut previous_response_id,
@@ -429,7 +424,6 @@ impl AiClient {
                         include_tool_items,
                         effective_prefixed_input_items.as_slice(),
                         force_text_content,
-                        adaptive_history_limit,
                         &mut non_terminal_empty_retry_count,
                         max_non_terminal_empty_retries,
                         &mut use_prev_id,
@@ -453,7 +447,6 @@ impl AiClient {
                         include_tool_items,
                         effective_prefixed_input_items.as_slice(),
                         force_text_content,
-                        adaptive_history_limit,
                         &mut terminal_empty_retry_count,
                         max_terminal_empty_retries,
                         pending_tool_calls.as_ref(),
@@ -570,7 +563,6 @@ impl AiClient {
                     &ai_response,
                     session_id.as_ref(),
                     &raw_input,
-                    adaptive_history_limit,
                     stable_prefix_mode,
                     force_text_content,
                     effective_prefixed_input_items.as_slice(),

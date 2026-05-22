@@ -23,7 +23,6 @@ impl AiClient {
         use_prev_id: &mut bool,
         can_use_prev_id: &mut bool,
         force_text_content: &mut bool,
-        adaptive_history_limit: &mut i64,
         previous_response_id: &mut Option<String>,
         no_system_messages: &mut bool,
         remote_active_summary_attempted: &mut bool,
@@ -42,8 +41,7 @@ impl AiClient {
             return true;
         }
 
-        let request_replay =
-            replay_request_error_policy(err_msg, *use_prev_id, *adaptive_history_limit);
+        let request_replay = replay_request_error_policy(err_msg, *use_prev_id);
 
         if is_context_length_exceeded_error(err_msg)
             && self
@@ -51,7 +49,6 @@ impl AiClient {
                     session_id,
                     raw_input,
                     *force_text_content,
-                    *adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
                     prefixed_input_items,
@@ -79,7 +76,6 @@ impl AiClient {
                     session_id,
                     raw_input,
                     *force_text_content,
-                    *adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
                     prefixed_input_items,
@@ -95,13 +91,9 @@ impl AiClient {
         }
 
         if request_replay.disable_prev_id && is_missing_tool_call_error(err_msg) {
-            if let Some(sid) = session_id {
-                self.prev_response_id_disabled_sessions.insert(sid.clone());
-            }
             warn!(
                 "[AI_V3] function_call_output missing matching tool call in previous response; fallback to stateless mode"
             );
-            *can_use_prev_id = false;
             let mut stateless = if let Some(items) = stateless_context_items.clone() {
                 items
             } else {
@@ -109,7 +101,6 @@ impl AiClient {
                     session_id,
                     raw_input,
                     *force_text_content,
-                    *adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
                     prefixed_input_items,

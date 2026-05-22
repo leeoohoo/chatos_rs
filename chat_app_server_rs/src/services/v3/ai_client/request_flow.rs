@@ -25,7 +25,6 @@ impl AiClient {
         let reasoning_enabled = options.reasoning_enabled.unwrap_or(true);
         let supports_responses = options.supports_responses.unwrap_or(false);
         let system_prompt = options.system_prompt.or_else(|| self.system_prompt.clone());
-        let history_limit = options.history_limit.unwrap_or(self.history_limit);
         let purpose = options.purpose.unwrap_or_else(|| "chat".to_string());
         let message_mode = options.message_mode;
         let message_source = options.message_source;
@@ -43,29 +42,20 @@ impl AiClient {
         let stable_prefix_mode = purpose == "chat";
         let prompt_cache_key = self.build_prompt_cache_key(&purpose, session_id.as_deref());
 
-        // Responses-capable models can continue turns via previous_response_id. For legacy
-        // chat-completions style models, chat mode keeps the bounded stateless prefix behavior.
-        let prefer_stateless =
-            should_prefer_stateless_context(&purpose, supports_responses, history_limit);
+        let prefer_stateless = should_prefer_stateless_context(supports_responses);
         info!(
-            "[AI_V3][prev-id] request begin: session_id={}, purpose={}, supports_responses={}, prefer_stateless={}, history_limit={}",
+            "[AI_V3][prev-id] request begin: session_id={}, purpose={}, supports_responses={}, prefer_stateless={}",
             session_id.clone().unwrap_or_else(|| "n/a".to_string()),
             purpose,
             supports_responses,
-            prefer_stateless,
-            history_limit
+            prefer_stateless
         );
         let mut previous_response_id: Option<String> = None;
         if !prefer_stateless {
             if let Some(sid) = session_id.as_ref() {
-                let limit = if history_limit > 0 {
-                    Some(history_limit)
-                } else {
-                    None
-                };
                 previous_response_id = self
                     .message_manager
-                    .get_last_response_id(sid, limit.unwrap_or(50))
+                    .get_last_response_id(sid)
                     .await;
                 info!(
                     "[AI_V3][prev-id] fetched previous response: session_id={}, response_id={}",
@@ -115,20 +105,13 @@ impl AiClient {
             previous_response_id = None;
         }
         let use_prev_id = !prefer_stateless && previous_response_id.is_some() && can_use_prev_id;
-        let stateless_history_limit = if !use_prev_id && history_limit == 0 {
-            tracing::warn!("[AI_V3] history_limit=0 with stateless mode; fallback to 20");
-            20
-        } else {
-            history_limit
-        };
         info!(
-            "[AI_V3] context mode: session_id={}, use_prev_id={}, can_use_prev_id={}, supports_responses={}, provider={}, history_limit={}, has_prev_id={}, prev_response_id={}, stable_prefix_mode={}",
+            "[AI_V3] context mode: session_id={}, use_prev_id={}, can_use_prev_id={}, supports_responses={}, provider={}, has_prev_id={}, prev_response_id={}, stable_prefix_mode={}",
             session_id.clone().unwrap_or_else(|| "n/a".to_string()),
             use_prev_id,
             can_use_prev_id,
             supports_responses,
             provider,
-            stateless_history_limit,
             previous_response_id.is_some(),
             previous_response_id.as_deref().unwrap_or("none"),
             stable_prefix_mode
@@ -140,7 +123,6 @@ impl AiClient {
             Value::Array(
                 self.build_stateless_items(
                     session_id.clone(),
-                    stateless_history_limit,
                     stable_prefix_mode,
                     force_text_content,
                     prefixed_input_items.as_slice(),
@@ -171,7 +153,6 @@ impl AiClient {
             use_prev_id,
             can_use_prev_id,
             raw_input,
-            stateless_history_limit,
             stable_prefix_mode,
             force_text_content,
             prefixed_input_items,

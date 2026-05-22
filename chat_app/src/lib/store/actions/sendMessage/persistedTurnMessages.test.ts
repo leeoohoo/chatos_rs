@@ -221,4 +221,81 @@ describe('turnRecovery', () => {
     expect(state.sessionChatState.session_1.isStreaming).toBe(false);
     expect(state.sessionStreamingMessageDrafts.session_1).toBeNull();
   });
+
+  it('clears stale streaming state when a running snapshot is no longer active in the current backend runtime', async () => {
+    const set = vi.fn((updater: (state: ChatStoreDraft) => void) => {
+      updater(state);
+    });
+    const snapshot: TurnRuntimeSnapshotLookupResponse = {
+      conversation_id: 'session_1',
+      turn_id: 'turn_1',
+      status: 'running',
+      snapshot_source: 'runtime',
+      active_in_runtime: false,
+      snapshot: null,
+    };
+    const apiClient = {
+      getConversationTurnRuntimeContextByTurn: vi.fn().mockResolvedValue(snapshot),
+      getConversationLatestTurnRuntimeContext: vi.fn().mockResolvedValue(snapshot),
+      getConversationTurnMessagesByTurn: vi.fn().mockResolvedValue([]),
+      getConversationTurnMessages: vi.fn().mockResolvedValue([]),
+    };
+    const state = {
+      currentSessionId: 'session_1',
+      isLoading: true,
+      isStreaming: true,
+      streamingMessageId: 'temp_assistant_1',
+      messages: [
+        buildUser(),
+      ] as Message[],
+      sessionChatState: {
+        session_1: {
+          isLoading: true,
+          isStreaming: true,
+          isStopping: true,
+          streamingMessageId: 'temp_assistant_1',
+          activeTurnId: 'turn_1',
+          streamingPreviewText: 'stale draft',
+          streamingTransport: 'realtime',
+          runtimeContextRefreshNonce: 0,
+        },
+      },
+      sessionStreamingMessageDrafts: {
+        session_1: buildAssistant({
+          id: 'temp_assistant_1',
+          status: 'streaming',
+          content: 'stale draft',
+          metadata: {
+            conversation_turn_id: 'turn_1',
+            historyFinalForTurnId: 'turn_1',
+            historyFinalForUserMessageId: 'temp_user_1',
+            historyDraftUserMessage: {
+              id: 'temp_user_1',
+              content: 'hello',
+              createdAt: '2026-05-07T10:00:00.000Z',
+            },
+            contentSegments: [{ type: 'text', content: 'stale draft' }],
+            toolCalls: [],
+          },
+        }),
+      },
+    } as unknown as ChatStoreDraft;
+
+    const result = await recoverStreamingTurnBySnapshot({
+      apiClient,
+      set,
+      sessionId: 'session_1',
+      turnId: 'turn_1',
+      tempAssistantMessageId: 'temp_assistant_1',
+      tempUserId: 'temp_user_1',
+      preferredUserMessageId: 'temp_user_1',
+    });
+
+    expect(result.recovered).toBe(true);
+    expect(result.terminal).toBe(true);
+    expect(state.sessionChatState.session_1.isStreaming).toBe(false);
+    expect(state.sessionChatState.session_1.isStopping).toBe(false);
+    expect(state.sessionChatState.session_1.activeTurnId).toBeNull();
+    expect(state.sessionStreamingMessageDrafts.session_1).toBeNull();
+  });
 });

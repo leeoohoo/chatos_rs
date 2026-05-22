@@ -49,7 +49,6 @@ pub struct AiClient {
     mcp_tool_execute: McpToolExecute,
     message_manager: MessageManager,
     max_iterations: i64,
-    history_limit: i64,
     system_prompt: Option<String>,
     task_board_refresh_context: TaskBoardRefreshContextStore,
 }
@@ -69,7 +68,6 @@ impl AiClient {
             mcp_tool_execute,
             message_manager,
             max_iterations: 25,
-            history_limit: 2,
             system_prompt: None,
             task_board_refresh_context: TaskBoardRefreshContextStore::new(),
         })
@@ -691,9 +689,6 @@ impl AiClientSettings for AiClient {
     fn apply_settings(&mut self, effective: &Value) {
         if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
             self.max_iterations = v;
-        }
-        if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) {
-            self.history_limit = v.max(0);
         }
     }
 }
