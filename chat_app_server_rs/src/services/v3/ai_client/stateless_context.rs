@@ -71,6 +71,7 @@ impl AiClient {
         include_tool_items: bool,
     ) -> Vec<Value> {
         let mut items = Vec::new();
+        let mut deferred_prefixed_items = Vec::new();
         let memory_summary_count;
         let history_count;
         let mut memory_summary_used = false;
@@ -87,7 +88,13 @@ impl AiClient {
         let (merged_summary, merged_summary_count, pending_history) = context_data;
         memory_summary_count = merged_summary_count;
         if !prefixed_input_items.is_empty() {
-            items.extend(prefixed_input_items.iter().cloned());
+            for item in prefixed_input_items {
+                if is_task_board_prefixed_input_item(item) {
+                    deferred_prefixed_items.push(item.clone());
+                } else {
+                    items.push(item.clone());
+                }
+            }
         }
         if let Some(summary_text) = merged_summary {
             memory_summary_used = true;
@@ -169,6 +176,9 @@ impl AiClient {
         }
 
         splice_current_input_items(&mut items, current_input_items);
+        if !deferred_prefixed_items.is_empty() {
+            items.extend(deferred_prefixed_items);
+        }
         info!(
             "[AI_V3] stateless items built: memory_summary_used={}, summaries={}, history_messages={}, total_items={}",
             memory_summary_used,
@@ -178,6 +188,23 @@ impl AiClient {
         );
         items
     }
+}
+
+fn is_task_board_prefixed_input_item(item: &Value) -> bool {
+    if item.get("type").and_then(|value| value.as_str()) != Some("message") {
+        return false;
+    }
+    if item.get("role").and_then(|value| value.as_str()) != Some("system") {
+        return false;
+    }
+
+    item.get("content")
+        .and_then(|value| value.as_array())
+        .and_then(|parts| parts.first())
+        .and_then(|part| part.get("text"))
+        .and_then(|value| value.as_str())
+        .map(|text| text.contains("[Task Board]"))
+        .unwrap_or(false)
 }
 
 fn splice_current_input_items(items: &mut Vec<Value>, current_input_items: &[Value]) {
@@ -200,7 +227,7 @@ fn splice_current_input_items(items: &mut Vec<Value>, current_input_items: &[Val
 mod tests {
     use serde_json::json;
 
-    use super::splice_current_input_items;
+    use super::{is_task_board_prefixed_input_item, splice_current_input_items};
 
     #[test]
     fn splice_current_input_items_replaces_latest_user_in_place() {
@@ -291,5 +318,25 @@ mod tests {
             items[1].get("role").and_then(|value| value.as_str()),
             Some("user")
         );
+    }
+
+    #[test]
+    fn recognizes_task_board_prefixed_item() {
+        let item = json!({
+            "type": "message",
+            "role": "system",
+            "content": [{"type": "input_text", "text": "[Task Board]\nfoo"}]
+        });
+        assert!(is_task_board_prefixed_input_item(&item));
+    }
+
+    #[test]
+    fn ignores_non_task_board_prefixed_item() {
+        let item = json!({
+            "type": "message",
+            "role": "system",
+            "content": [{"type": "input_text", "text": "contact prompt"}]
+        });
+        assert!(!is_task_board_prefixed_input_item(&item));
     }
 }

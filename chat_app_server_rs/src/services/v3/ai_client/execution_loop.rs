@@ -5,8 +5,7 @@ use crate::core::tool_call::tool_calls_value_has_items;
 use crate::modules::conversation_runtime::task_board::{
     build_hidden_task_turn_review_metadata, build_task_turn_follow_up_directive,
     build_task_turn_follow_up_message, build_task_turn_review_retry_guidance,
-    parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
-    TaskTurnReviewOutcome,
+    parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode, TaskTurnReviewOutcome,
 };
 use crate::services::ai_common::{
     build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
@@ -18,13 +17,13 @@ use tokio::time::{sleep, Duration};
 use tracing::warn;
 
 use super::compat::{log_usage_snapshot, rewrite_system_messages_to_user};
-use super::execution_loop_guidance::{load_runtime_guidance_input_items, prepend_input_items};
+use super::execution_loop_guidance::{append_input_items, load_runtime_guidance_input_items};
 use super::execution_loop_tool_io::build_tool_output_items;
 use super::prev_context::base_url_disallows_system_messages;
 use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
 };
-use super::{AiClient, AiClientCallbacks};
+use super::{build_current_input_items, AiClient, AiClientCallbacks};
 
 impl AiClient {
     pub(super) async fn process_with_tools(
@@ -81,6 +80,7 @@ impl AiClient {
         let mut task_follow_up_locale: Option<
             crate::core::internal_context_locale::InternalContextLocale,
         > = None;
+        let mut pending_follow_up_input_items: Option<Vec<Value>> = None;
         let mut last_visible_completion_content: Option<String> = None;
         let mut last_visible_completion_reasoning: Option<String> = None;
         let mut last_visible_completion_finish_reason: Option<String> = None;
@@ -97,7 +97,7 @@ impl AiClient {
 
             info!("AI_V3 request iteration {}", iteration);
 
-            let mut effective_prefixed_input_items = self
+            let effective_prefixed_input_items = self
                 .load_runtime_prefixed_input_items()
                 .await
                 .filter(|items| !items.is_empty())
@@ -109,10 +109,8 @@ impl AiClient {
                 &callbacks,
             )
             .await;
-            if !runtime_guidance_items.is_empty() {
-                effective_prefixed_input_items.extend(runtime_guidance_items.clone());
-            }
-
+            let follow_up_input_items =
+                pending_follow_up_input_items.take().unwrap_or_default();
             self.maybe_refresh_stateless_context(
                 session_id.as_deref(),
                 stable_prefix_mode,
@@ -137,12 +135,27 @@ impl AiClient {
                 if request_attempt_guard > max_request_attempts {
                     break;
                 }
-                let request_input_source = if !runtime_guidance_items.is_empty() {
-                    prepend_input_items(
-                        &input,
-                        runtime_guidance_items.as_slice(),
-                        force_text_content,
-                    )
+                let request_input_source = if !runtime_guidance_items.is_empty()
+                    || !follow_up_input_items.is_empty()
+                {
+                    let with_follow_up = if !follow_up_input_items.is_empty() {
+                        append_input_items(
+                            &input,
+                            follow_up_input_items.as_slice(),
+                            force_text_content,
+                        )
+                    } else {
+                        input.clone()
+                    };
+                    if !runtime_guidance_items.is_empty() {
+                        append_input_items(
+                            &with_follow_up,
+                            runtime_guidance_items.as_slice(),
+                            force_text_content,
+                        )
+                    } else {
+                        with_follow_up
+                    }
                 } else {
                     input.clone()
                 };
@@ -348,8 +361,10 @@ impl AiClient {
                             let retry_input = build_task_turn_follow_up_message(
                                 build_task_turn_review_retry_guidance(review_locale).as_str(),
                             );
-                            input = retry_input;
-                            stateless_context_items = input.as_array().cloned();
+                            pending_follow_up_input_items = Some(build_current_input_items(
+                                &retry_input,
+                                force_text_content,
+                            ));
                             task_follow_up_mode = Some(TaskTurnFollowUpMode::ContinueExecution);
                             iteration += 1;
                             continue;
@@ -446,8 +461,10 @@ impl AiClient {
                             }
                             let follow_up_input =
                                 build_task_turn_follow_up_message(directive.guidance.as_str());
-                            input = follow_up_input;
-                            stateless_context_items = input.as_array().cloned();
+                            pending_follow_up_input_items = Some(build_current_input_items(
+                                &follow_up_input,
+                                force_text_content,
+                            ));
                             iteration += 1;
                             continue;
                         }

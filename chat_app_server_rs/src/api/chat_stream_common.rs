@@ -64,12 +64,12 @@ mod tests {
 
         assert_eq!(items.len(), 4);
         assert_eq!(items[0]["content"].as_str(), Some("contact prompt"));
-        assert!(items[1]["content"]
+        assert_eq!(items[1]["content"].as_str(), Some("routing prompt"));
+        assert_eq!(items[2]["content"].as_str(), Some("command prompt"));
+        assert!(items[3]["content"]
             .as_str()
             .unwrap_or_default()
             .contains("[Task Board]"));
-        assert_eq!(items[2]["content"].as_str(), Some("routing prompt"));
-        assert_eq!(items[3]["content"].as_str(), Some("command prompt"));
     }
 
     #[tokio::test]
@@ -90,13 +90,10 @@ mod tests {
             items[0]["content"][0]["text"].as_str(),
             Some("contact prompt")
         );
-        assert!(items[1]["content"][0]["text"]
+        assert_eq!(items[1]["content"][0]["text"].as_str(), Some("routing prompt"));
+        assert!(items[2]["content"][0]["text"]
             .as_str()
             .unwrap_or_default()
             .contains("[Task Board]"));
-        assert_eq!(
-            items[2]["content"][0]["text"].as_str(),
-            Some("routing prompt")
-        );
     }
 }

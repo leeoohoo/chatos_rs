@@ -5,7 +5,10 @@ use crate::services::ai_common::{
     validate_request_payload_size,
 };
 
-use super::{build_request_payload, REQUEST_BODY_LIMIT_ENV};
+use super::{
+    build_request_payload, is_prompt_cache_retention_unsupported_error, read_timeout_env_ms,
+    should_retry_without_prompt_cache_retention, AiResponse, REQUEST_BODY_LIMIT_ENV,
+};
 
 #[test]
 fn payload_precheck_accepts_small_payload() {
@@ -41,6 +44,7 @@ fn build_request_payload_includes_request_cwd_when_present() {
         Some("gpt".to_string()),
         Some("medium".to_string()),
         true,
+        true,
     );
 
     assert_eq!(
@@ -54,9 +58,59 @@ fn build_request_payload_includes_request_cwd_when_present() {
         Some("session-123")
     );
     assert_eq!(
+        payload
+            .get("prompt_cache_retention")
+            .and_then(|value| value.as_str()),
+        Some("24h")
+    );
+    assert_eq!(
         payload.get("stream").and_then(|value| value.as_bool()),
         Some(true)
     );
+}
+
+#[test]
+fn retries_when_provider_reports_prompt_cache_retention_not_supported() {
+    let attempt: Result<AiResponse, String> =
+        Err("status 400 Bad Request: Unsupported parameter: prompt_cache_retention".to_string());
+    let payload = serde_json::json!({
+        "prompt_cache_retention": "24h",
+    });
+
+    assert!(should_retry_without_prompt_cache_retention(
+        &attempt,
+        payload.as_object(),
+    ));
+}
+
+#[test]
+fn retries_when_provider_reports_unknown_parameter_wording() {
+    assert!(is_prompt_cache_retention_unsupported_error(
+        "status 400: unknown parameter `prompt_cache_retention`",
+    ));
+    assert!(is_prompt_cache_retention_unsupported_error(
+        "status 400: prompt_cache_retention is not supported by upstream",
+    ));
+    assert!(!is_prompt_cache_retention_unsupported_error(
+        "status 500: upstream timeout",
+    ));
+}
+
+#[test]
+fn read_timeout_env_ms_clamps_values() {
+    std::env::remove_var("AI_V3_TEST_TIMEOUT");
+    assert_eq!(read_timeout_env_ms("AI_V3_TEST_TIMEOUT", 12_345), 12_345);
+
+    std::env::set_var("AI_V3_TEST_TIMEOUT", "10");
+    assert_eq!(read_timeout_env_ms("AI_V3_TEST_TIMEOUT", 12_345), 1_000);
+
+    std::env::set_var("AI_V3_TEST_TIMEOUT", "9999999");
+    assert_eq!(read_timeout_env_ms("AI_V3_TEST_TIMEOUT", 12_345), 600_000);
+
+    std::env::set_var("AI_V3_TEST_TIMEOUT", "abc");
+    assert_eq!(read_timeout_env_ms("AI_V3_TEST_TIMEOUT", 12_345), 12_345);
+
+    std::env::remove_var("AI_V3_TEST_TIMEOUT");
 }
 
 #[test]
@@ -73,9 +127,11 @@ fn build_request_payload_skips_blank_prompt_cache_key() {
         Some("gpt".to_string()),
         Some("medium".to_string()),
         true,
+        true,
     );
 
     assert!(payload.get("prompt_cache_key").is_none());
+    assert!(payload.get("prompt_cache_retention").is_none());
 }
 
 #[test]
@@ -91,6 +147,7 @@ fn build_request_payload_never_includes_prev_id() {
         None,
         Some("gpt".to_string()),
         Some("medium".to_string()),
+        true,
         true,
     );
 

@@ -20,9 +20,9 @@ pub fn build_runtime_prefixed_messages(
 ) -> Option<Vec<Value>> {
     build_prefixed_messages(&[
         contact_system_prompt,
-        task_board_prompt,
         builtin_mcp_system_prompt,
         command_system_prompt,
+        task_board_prompt,
     ])
 }
 
@@ -34,9 +34,9 @@ pub fn build_runtime_prefixed_input_items(
 ) -> Option<Vec<Value>> {
     build_prefixed_input_items(&[
         contact_system_prompt,
-        task_board_prompt,
         builtin_mcp_system_prompt,
         command_system_prompt,
+        task_board_prompt,
     ])
 }
 

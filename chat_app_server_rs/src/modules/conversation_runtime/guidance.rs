@@ -204,16 +204,12 @@ pub fn format_runtime_guidance_instruction(
 ) -> String {
     if locale.is_english() {
         format!(
-            "[Runtime Guidance]\n- guidance_id: {}\n- time: {}\n- source: user guidance during running turn\n- instruction: {}\n- rule: treat this as high-priority preference unless conflicts with safety",
-            guidance_item.guidance_id,
-            guidance_item.created_at,
+            "[Runtime Guidance]\n- source: user guidance during running turn\n- instruction: {}\n- rule: treat this as high-priority preference unless conflicts with safety",
             guidance_item.content
         )
     } else {
         format!(
-            "[Runtime Guidance]\n- guidance_id: {}\n- time: {}\n- source: 用户在运行中追加的指导\n- instruction: {}\n- rule: 将其视为高优先级偏好，除非与安全要求冲突",
-            guidance_item.guidance_id,
-            guidance_item.created_at,
+            "[Runtime Guidance]\n- source: 用户在运行中追加的指导\n- instruction: {}\n- rule: 将其视为高优先级偏好，除非与安全要求冲突",
             guidance_item.content
         )
     }
@@ -279,8 +275,8 @@ mod tests {
     fn formats_runtime_guidance_instruction_with_core_fields() {
         let formatted =
             format_runtime_guidance_instruction(&sample_item(), InternalContextLocale::EnUs);
-        assert!(formatted.contains("gd_test_1"));
-        assert!(formatted.contains("2026-04-27T12:00:00Z"));
+        assert!(!formatted.contains("gd_test_1"));
+        assert!(!formatted.contains("2026-04-27T12:00:00Z"));
         assert!(formatted.contains("continue with the current task"));
         assert!(formatted.contains("high-priority preference"));
     }

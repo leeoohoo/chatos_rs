@@ -72,6 +72,19 @@ pub(super) fn prepend_input_items(
     Value::Array(merged)
 }
 
+pub(super) fn append_input_items(
+    input: &Value,
+    appended_items: &[Value],
+    force_text_content: bool,
+) -> Value {
+    if appended_items.is_empty() {
+        return input.clone();
+    }
+    let mut merged = build_current_input_items(input, force_text_content);
+    merged.extend_from_slice(appended_items);
+    Value::Array(merged)
+}
+
 pub(super) fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool {
     is_non_terminal_response_status(finish_reason)
 }
