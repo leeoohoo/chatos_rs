@@ -57,7 +57,6 @@ impl AiRequestHandler {
         input: Value,
         model: String,
         instructions: Option<String>,
-        previous_response_id: Option<String>,
         prompt_cache_key: Option<String>,
         tools: Option<Vec<Value>>,
         request_cwd: Option<String>,
@@ -77,7 +76,6 @@ impl AiRequestHandler {
             input,
             model,
             instructions,
-            previous_response_id,
             prompt_cache_key,
             tools,
             request_cwd,
@@ -204,7 +202,6 @@ fn build_request_payload(
     input: Value,
     model: String,
     instructions: Option<String>,
-    previous_response_id: Option<String>,
     prompt_cache_key: Option<String>,
     tools: Option<Vec<Value>>,
     request_cwd: Option<String>,
@@ -220,9 +217,6 @@ fn build_request_payload(
     });
     if let Some(instr) = instructions {
         payload["instructions"] = Value::String(instr);
-    }
-    if let Some(prev) = previous_response_id {
-        payload["previous_response_id"] = Value::String(prev);
     }
     if let Some(cache_key) = prompt_cache_key
         .as_deref()

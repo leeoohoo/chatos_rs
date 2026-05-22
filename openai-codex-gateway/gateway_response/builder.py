@@ -11,7 +11,6 @@ def build_non_stream_response_body(
     response_id: str,
     model_name: str,
     result: TurnResult,
-    previous_response_id: str | None,
     response_tools: list[dict[str, Any]],
     provided_tool_outputs: dict[str, list[dict[str, Any]]],
     message_id: str,
@@ -42,7 +41,6 @@ def build_non_stream_response_body(
             "output_text": "",
             "usage": result.usage,
             "error": result.error,
-            "previous_response_id": previous_response_id,
             "tools": response_tools,
             "metadata": {
                 "thread_id": result.thread_id,
@@ -83,7 +81,6 @@ def build_non_stream_response_body(
         "output_text": result.output_text,
         "usage": result.usage,
         "error": result.error,
-        "previous_response_id": previous_response_id,
         "tools": response_tools,
         "metadata": {
             "thread_id": result.thread_id,
@@ -122,7 +119,6 @@ def build_stream_response_object(
     usage: dict[str, Any] | None = None,
     error: dict[str, Any] | None = None,
     reasoning: str | None = None,
-    previous_response_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -142,8 +138,6 @@ def build_stream_response_object(
         body["error"] = error
     if reasoning is not None:
         body["reasoning"] = reasoning
-    if previous_response_id is not None:
-        body["previous_response_id"] = previous_response_id
     if metadata is not None:
         body["metadata"] = metadata
     return body

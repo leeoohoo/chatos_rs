@@ -80,7 +80,6 @@ class CodexBridge:
         model: str | None,
         reasoning_effort: str | None,
         reasoning_summary: str | None,
-        previous_response_id: str | None,
         api_key: str | None,
         request_cwd: str | None,
         request_config_overrides: dict[str, Any] | None,
@@ -102,7 +101,6 @@ class CodexBridge:
             f"model={model or 'default'}",
             f"reasoning_effort={reasoning_effort or 'default'}",
             f"reasoning_summary={reasoning_summary or 'default'}",
-            f"prev={'yes' if previous_response_id else 'no'}",
             f"cwd={request_cwd or self._cfg.cwd or 'default'}",
             f"input_items={len(input_items)}",
             f"function_tools={len(function_tools)}",
@@ -157,7 +155,6 @@ class CodexBridge:
             thread_id = resolve_thread_id(
                 client=client,
                 store=self._store,
-                previous_response_id=previous_response_id,
                 thread_session_params=thread_session_params,
                 expected_resume_fingerprint=resume_fingerprint,
             )
@@ -174,7 +171,6 @@ class CodexBridge:
                 f"turn_id={turn_id}",
                 f"effort={reasoning_effort or 'none'}",
                 f"summary={reasoning_summary or 'none'}",
-                f"prev_response={'yes' if previous_response_id else 'no'}",
             )
 
             drive_turn_notifications(
@@ -266,7 +262,6 @@ class CodexBridge:
             store=self._store,
             result=result,
             model_name=context.model_name,
-            previous_response_id=context.previous_response_id,
             response_tools=context.response_tools,
             provided_tool_outputs=provided_tool_outputs,
             created_at=int(time.time()),

@@ -23,7 +23,6 @@ class GatewayStreamMainFlowTest(unittest.TestCase):
             instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
-            previous_response_id="resp_prev",
             response_tools=[],
             reasoning_effort="high",
             reasoning_summary="concise",
@@ -93,7 +92,6 @@ class GatewayStreamMainFlowTest(unittest.TestCase):
 
         self.assertEqual(len(pre_branch_calls), 1)
         self.assertTrue(pre_branch_calls[0]["has_function_tools"])
-        self.assertEqual(pre_branch_calls[0]["previous_response_id"], "resp_prev")
 
         self.assertEqual(len(dispatch_calls), 1)
         self.assertIs(dispatch_calls[0]["callback_setup"], callback_setup)
@@ -115,7 +113,6 @@ class GatewayStreamMainFlowTest(unittest.TestCase):
             instructions=None,
             model_raw="codex-1",
             model_name="codex-1",
-            previous_response_id=None,
             response_tools=[],
             reasoning_effort=None,
             reasoning_summary=None,

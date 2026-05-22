@@ -2,6 +2,7 @@ import React from 'react';
 import type {
   TurnRuntimeSnapshotContextItem,
   TurnRuntimeSnapshotLookupResponse,
+  TurnRuntimeSnapshotSystemMessage,
 } from '../../lib/api/client/types';
 
 interface TurnRuntimeContextDrawerProps {
@@ -32,6 +33,17 @@ const getPreviewItemTone = (role?: string | null, type?: string | null): string 
   return 'border-border bg-background/70';
 };
 
+const getSystemMessageTone = (messageId?: string | null): string => {
+  const normalized = typeof messageId === 'string' ? messageId.trim() : '';
+  if (normalized === 'task_board') {
+    return 'border-emerald-500/40 bg-emerald-500/10';
+  }
+  if (normalized === 'builtin_mcp') {
+    return 'border-violet-500/30 bg-violet-500/10';
+  }
+  return 'border-sky-500/30 bg-sky-500/10';
+};
+
 const buildItemSummary = (item: TurnRuntimeSnapshotContextItem): string => {
   const parts = [
     item.role ? `role=${item.role}` : '',
@@ -39,6 +51,14 @@ const buildItemSummary = (item: TurnRuntimeSnapshotContextItem): string => {
     item.source ? `source=${item.source}` : '',
   ].filter(Boolean);
   return parts.join(' · ') || '上下文项';
+};
+
+const buildSystemMessageSummary = (item: TurnRuntimeSnapshotSystemMessage): string => {
+  const parts = [
+    item.id ? `id=${item.id}` : '',
+    item.source ? `source=${item.source}` : '',
+  ].filter(Boolean);
+  return parts.join(' · ') || '系统消息';
 };
 
 const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
@@ -56,6 +76,9 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
 
   const snapshot = data?.snapshot || null;
   const runtime = snapshot?.runtime || null;
+  const systemMessages = Array.isArray(snapshot?.system_messages)
+    ? snapshot.system_messages
+    : [];
   const actualPreviewItems = Array.isArray(runtime?.actual_context_items)
     ? runtime.actual_context_items
     : [];
@@ -111,14 +134,39 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
               <div>{`snapshot_source: ${snapshotSource}`}</div>
               <div>{`captured_at: ${snapshot?.captured_at || '-'}`}</div>
               <div>{`mode: ${renderValue(runtime?.actual_context_mode)}`}</div>
-              <div>{`previous_response_id: ${renderValue(runtime?.actual_previous_response_id)}`}</div>
-              <div>{`item_count: ${actualPreviewItems.length}`}</div>
+              <div>{`system_message_count: ${systemMessages.length}`}</div>
+              <div>{`actual_item_count: ${actualPreviewItems.length}`}</div>
             </div>
 
             <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-950 dark:text-sky-100">
-              这里只保留当前轮次最新一次发给 AI 的上下文内容。
+              上半部分是当前轮快照里保存的系统消息；下半部分是最近一次真正发给 AI 的请求内容。
             </div>
 
+            <div className="mb-2 text-xs font-medium text-foreground">系统消息快照</div>
+            {systemMessages.length === 0 ? (
+              <div className="mb-3 rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                当前快照里没有系统消息
+              </div>
+            ) : (
+              <div className="mb-4 space-y-2">
+                {systemMessages.map((item, index) => (
+                  <details
+                    key={`system-message:${item.id || '-'}:${index}`}
+                    className={`rounded-md border p-3 ${getSystemMessageTone(item.id)}`}
+                  >
+                    <summary className="cursor-pointer list-none text-xs text-foreground">
+                      <span className="font-medium">{`${index + 1}. ${buildSystemMessageSummary(item)}`}</span>
+                      <span className="ml-2 text-muted-foreground">默认折叠，点击展开内容</span>
+                    </summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-foreground">
+{item.content}
+                    </pre>
+                  </details>
+                ))}
+              </div>
+            )}
+
+            <div className="mb-2 text-xs font-medium text-foreground">最近一次实际请求内容</div>
             {actualPreviewItems.length === 0 ? (
               <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
                 当前快照里还没有记录实际发送上下文

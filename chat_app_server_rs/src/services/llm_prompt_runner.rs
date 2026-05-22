@@ -215,7 +215,6 @@ async fn run_with_responses(
                 None,
                 None,
                 None,
-                None,
                 Some(runtime.temperature),
                 max_tokens,
                 v3_handler::StreamCallbacks {

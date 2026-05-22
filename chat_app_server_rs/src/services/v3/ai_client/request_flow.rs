@@ -1,13 +1,7 @@
 use serde_json::Value;
 use tracing::info;
 
-use super::input_transform::{
-    build_current_input_items, extract_raw_input, normalize_input_for_provider,
-};
-use super::prev_context::{
-    model_supports_prev_response_id, should_disable_prev_id_for_prefixed_input_items,
-    should_prefer_stateless_context,
-};
+use super::input_transform::{build_current_input_items, extract_raw_input};
 use super::{AiClient, ProcessOptions};
 
 impl AiClient {
@@ -42,33 +36,12 @@ impl AiClient {
         let stable_prefix_mode = purpose == "chat";
         let prompt_cache_key = self.build_prompt_cache_key(&purpose, session_id.as_deref());
 
-        let prefer_stateless = should_prefer_stateless_context(supports_responses);
         info!(
-            "[AI_V3][prev-id] request begin: session_id={}, purpose={}, supports_responses={}, prefer_stateless={}",
+            "[AI_V3] stateless context mode: session_id={}, purpose={}, supports_responses={}",
             session_id.clone().unwrap_or_else(|| "n/a".to_string()),
             purpose,
-            supports_responses,
-            prefer_stateless
+            supports_responses
         );
-        let mut previous_response_id: Option<String> = None;
-        if !prefer_stateless {
-            if let Some(sid) = session_id.as_ref() {
-                previous_response_id = self
-                    .message_manager
-                    .get_last_response_id(sid)
-                    .await;
-                info!(
-                    "[AI_V3][prev-id] fetched previous response: session_id={}, response_id={}",
-                    sid,
-                    previous_response_id.as_deref().unwrap_or("none")
-                );
-            }
-        } else {
-            info!(
-                "[AI_V3][prev-id] skipped fetch because stateless mode is preferred: session_id={}",
-                session_id.clone().unwrap_or_else(|| "n/a".to_string())
-            );
-        }
 
         let raw_input = extract_raw_input(&messages);
         let force_text_content = session_id
@@ -88,54 +61,21 @@ impl AiClient {
             use_codex_gateway_mcp_passthrough
         );
 
-        let allow_prev_id = session_id
-            .as_ref()
-            .map(|s| !self.prev_response_id_disabled_sessions.contains(s))
-            .unwrap_or(true);
-        let mut can_use_prev_id =
-            allow_prev_id && model_supports_prev_response_id(supports_responses);
-        if can_use_prev_id
-            && should_disable_prev_id_for_prefixed_input_items(prefixed_input_items.as_slice())
-        {
-            info!(
-                "[AI_V3] disable previous_response_id because runtime prefixed input items are present: session_id={}",
-                session_id.clone().unwrap_or_else(|| "n/a".to_string())
-            );
-            can_use_prev_id = false;
-            previous_response_id = None;
-        }
-        let use_prev_id = !prefer_stateless && previous_response_id.is_some() && can_use_prev_id;
-        info!(
-            "[AI_V3] context mode: session_id={}, use_prev_id={}, can_use_prev_id={}, supports_responses={}, provider={}, has_prev_id={}, prev_response_id={}, stable_prefix_mode={}",
-            session_id.clone().unwrap_or_else(|| "n/a".to_string()),
-            use_prev_id,
-            can_use_prev_id,
-            supports_responses,
-            provider,
-            previous_response_id.is_some(),
-            previous_response_id.as_deref().unwrap_or("none"),
-            stable_prefix_mode
-        );
-        let initial_input = if use_prev_id {
-            normalize_input_for_provider(&raw_input, force_text_content)
-        } else {
-            let current_items = build_current_input_items(&raw_input, force_text_content);
-            Value::Array(
-                self.build_stateless_items(
-                    session_id.clone(),
-                    stable_prefix_mode,
-                    force_text_content,
-                    prefixed_input_items.as_slice(),
-                    &current_items,
-                    include_tool_items,
-                )
-                .await,
+        let current_items = build_current_input_items(&raw_input, force_text_content);
+        let initial_input = Value::Array(
+            self.build_stateless_items(
+                session_id.clone(),
+                stable_prefix_mode,
+                force_text_content,
+                prefixed_input_items.as_slice(),
+                &current_items,
+                include_tool_items,
             )
-        };
+            .await,
+        );
 
         self.process_with_tools(
             initial_input,
-            previous_response_id,
             prompt_cache_key,
             available_tools,
             session_id,
@@ -150,13 +90,10 @@ impl AiClient {
             system_prompt,
             &purpose,
             0,
-            use_prev_id,
-            can_use_prev_id,
             raw_input,
             stable_prefix_mode,
             force_text_content,
             prefixed_input_items,
-            prefer_stateless,
             false,
             false,
             message_mode,

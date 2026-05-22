@@ -17,6 +17,8 @@ use tokio::sync::{Mutex, OnceCell};
 use super::{AiClient, AiClientCallbacks};
 use crate::config::Config;
 use crate::db;
+use crate::models::session::Session;
+use crate::services::chatos_memory_engine::sync_chatos_session;
 use crate::services::task_manager::{create_tasks_for_turn, TaskDraft, TaskRecord};
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v3::ai_request_handler::AiRequestHandler;
@@ -207,6 +209,22 @@ pub(super) async fn setup_sqlite_task_board(
     Ok(created)
 }
 
+pub(super) async fn ensure_memory_session(session_id: &str) -> Result<(), String> {
+    ensure_test_config();
+    ensure_test_db().await?;
+    let mut session = Session::new(
+        "Task board test".to_string(),
+        None,
+        Some(json!({ "INTERNAL_CONTEXT_LOCALE": "zh-CN" })),
+        Some("test-user".to_string()),
+        None,
+    );
+    session.id = session_id.to_string();
+    session.status = "active".to_string();
+    sync_chatos_session(&session).await?;
+    Ok(())
+}
+
 pub(super) async fn set_task_status_done(
     session_id: &str,
     task_id: &str,
@@ -238,7 +256,7 @@ pub(super) fn before_request_set_task_done_on_nth_request(
     let counter_clone = counter.clone();
     AiClientCallbacks {
         on_before_model_request: Some(Arc::new(
-            move |_payload, _previous_response_id, _snapshot| {
+            move |_payload, _prev_id, _snapshot| {
                 let request_index = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
                 if request_index == nth_request {
                     let session_id = session_id.clone();
@@ -291,17 +309,13 @@ pub(super) struct RunProcessWithToolsArgs {
     pub input: Value,
     pub session_id: Option<String>,
     pub turn_id: Option<String>,
-    pub previous_response_id: Option<String>,
     pub prompt_cache_key: Option<String>,
     pub tools: Vec<Value>,
     pub callbacks: AiClientCallbacks,
     pub purpose: &'static str,
-    pub use_prev_id: bool,
-    pub can_use_prev_id: bool,
     pub raw_input: Option<Value>,
     pub prefixed_input_items: Vec<Value>,
     pub stable_prefix_mode: bool,
-    pub prefer_stateless: bool,
     pub allow_tool_image_input: bool,
     pub request_cwd: Option<String>,
 }
@@ -312,17 +326,13 @@ impl Default for RunProcessWithToolsArgs {
             input: Value::String("hello".to_string()),
             session_id: None,
             turn_id: None,
-            previous_response_id: None,
             prompt_cache_key: None,
             tools: Vec::new(),
             callbacks: AiClientCallbacks::default(),
             purpose: "agent",
-            use_prev_id: false,
-            can_use_prev_id: false,
             raw_input: None,
             prefixed_input_items: Vec::new(),
             stable_prefix_mode: false,
-            prefer_stateless: false,
             allow_tool_image_input: true,
             request_cwd: None,
         }
@@ -337,7 +347,6 @@ pub(super) async fn run_process_with_tools(
     client
         .process_with_tools(
             args.input,
-            args.previous_response_id,
             args.prompt_cache_key,
             args.tools,
             args.session_id,
@@ -352,13 +361,10 @@ pub(super) async fn run_process_with_tools(
             None,
             args.purpose,
             0,
-            args.use_prev_id,
-            args.can_use_prev_id,
             raw_input,
             args.stable_prefix_mode,
             false,
             args.prefixed_input_items,
-            args.prefer_stateless,
             args.allow_tool_image_input,
             false,
             None,

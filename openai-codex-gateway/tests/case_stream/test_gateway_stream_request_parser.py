@@ -18,7 +18,6 @@ class GatewayStreamRequestParserTest(unittest.TestCase):
         payload = {
             "instructions": "请总结",
             "model": "codex-1",
-            "previous_response_id": "resp_prev",
             "tools": [{"type": "function", "name": "fn1"}],
             "reasoning": {"effort": "high", "summary": "concise"},
         }
@@ -27,7 +26,6 @@ class GatewayStreamRequestParserTest(unittest.TestCase):
         self.assertEqual(ctx.instructions, "请总结")
         self.assertEqual(ctx.model_raw, "codex-1")
         self.assertEqual(ctx.model_name, "codex-1")
-        self.assertEqual(ctx.previous_response_id, "resp_prev")
         self.assertEqual(len(ctx.response_tools), 1)
         self.assertEqual(ctx.reasoning_effort, "high")
         self.assertEqual(ctx.reasoning_summary, "concise")
@@ -35,7 +33,6 @@ class GatewayStreamRequestParserTest(unittest.TestCase):
     def test_parse_stream_request_context_defaults(self) -> None:
         payload = {
             "model": 123,
-            "previous_response_id": 456,
             "tools": "not-a-list",
             "reasoning": "invalid",
         }
@@ -44,7 +41,6 @@ class GatewayStreamRequestParserTest(unittest.TestCase):
         self.assertIsNone(ctx.instructions)
         self.assertEqual(ctx.model_raw, 123)
         self.assertEqual(ctx.model_name, "codex-default")
-        self.assertIsNone(ctx.previous_response_id)
         self.assertEqual(ctx.response_tools, [])
         self.assertIsNone(ctx.reasoning_effort)
         self.assertIsNone(ctx.reasoning_summary)

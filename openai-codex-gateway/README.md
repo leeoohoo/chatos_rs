@@ -116,17 +116,15 @@ Authorization: Bearer <API_KEY>   # 可选
 
 支持流式：`"stream": true`（SSE）。
 
-支持续聊：传 `previous_response_id`，网关会把它映射到同一个 Codex thread。
-
 额外支持：
 
-- `cwd`：请求级工作目录。网关会把它传给 `thread_start/thread_resume/turn_start`，
-  用来把本轮以及后续续聊绑定到指定项目目录，而不是服务启动时的默认 `--cwd`。
+- `cwd`：请求级工作目录。网关会把它传给 `thread_start/turn_start`，
+  用来把本轮会话绑定到指定项目目录，而不是服务启动时的默认 `--cwd`。
 
 模型说明：
 
 - 可以在每次 `POST /v1/responses` 请求里传 `model`（例如 `gpt-5`）。
-- 网关会把该 `model` 透传给 codex app-server（新会话和续聊都会生效）。
+- 网关会把该 `model` 透传给 codex app-server（每轮请求都会生效）。
 - 如果不传 `model`，则使用 codex 当前默认模型（响应中会显示为 `codex-default`）。
 
 ## OpenAI Python SDK 调用示例
@@ -273,7 +271,7 @@ python openai-codex-gateway/tests/case_integration/test_function_tools_stream.py
 这个脚本会启动一个本地最小 MCP stdio server（`tests/fixtures/mcp_secret_server.py`），
 然后通过请求级 `tools` 验证网关可成功调用 MCP 工具并返回结果。
 
-完整会话验证（两轮续聊 + 每轮请求级 MCP）：
+完整会话验证（两轮请求 + 每轮请求级 MCP）：
 
 ```bash
 python openai-codex-gateway/tests/case_integration/test_mcp_tools_full_session.py
@@ -293,7 +291,7 @@ python openai-codex-gateway/tests/case_integration/test_mcp_tools_stream.py
 1. 首轮请求传 `tools: [{"type":"function", ...}]`
 2. 网关返回 `output[].type == "function_call"`（可能一次返回多个）
 3. 客户端执行每个工具调用，拼装 `function_call_output`
-4. 带上 `previous_response_id` 发下一轮，直到返回普通 `message`
+4. 把 `function_call_output` 作为下一轮 `input` 继续请求，直到返回普通 `message`
 
 说明：当前 function-call 循环已支持流式请求（`stream=true`）。
 
@@ -323,7 +321,6 @@ python openai-codex-gateway/tests/case_integration/test_mcp_tools_stream.py
 
 ```json
 {
-  "previous_response_id": "resp_xxx",
   "input": [
     {
       "type": "function_call_output",
@@ -370,10 +367,9 @@ resp1 = client.responses.create(
 
 print(resp1.id, resp1.output_text)
 
-# 2) 续聊（同会话）
+# 2) 下一轮请求
 resp2 = client.responses.create(
     model="gpt-5",
-    previous_response_id=resp1.id,
     input="继续调用 mcp__my_mcp__my_tool，返回最新结果",
     tools=[{
         "type": "mcp",

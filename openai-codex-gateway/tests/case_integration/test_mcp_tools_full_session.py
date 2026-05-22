@@ -68,7 +68,6 @@ def main() -> None:
             "继续会话。再次调用 MCP 工具 mcp__secret_mcp__get_secret，"
             "并且只输出工具返回的密钥。"
         ),
-        "previous_response_id": response_1.id,
         "tools": [build_tool(fixture_server, secret_2)],
     }
     if model:

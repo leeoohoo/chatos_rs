@@ -20,14 +20,12 @@ def setup_stream_pre_branch(
     provided_tool_outputs: dict[str, list[dict[str, Any]]],
     send_event: Callable[[dict[str, Any]], None],
     response_obj: Callable[..., dict[str, Any]],
-    previous_response_id: str | None,
     has_function_tools: bool,
     message_id_factory: Callable[[], str],
 ) -> StreamPreBranchSetup:
     emit_response_created_event(
         send_event=send_event,
         response_obj=response_obj,
-        previous_response_id=previous_response_id,
     )
     input_items = prepare_stream_input_items(
         payload,

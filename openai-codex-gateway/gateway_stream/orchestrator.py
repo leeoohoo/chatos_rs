@@ -19,7 +19,6 @@ def emit_function_tools_result(
     response_obj: Callable[..., dict[str, Any]],
     result: TurnResult,
     unresolved_calls: list[ToolCallRecord],
-    previous_response_id: str | None,
     tool_message_id: str,
     tool_chunks: list[str],
     reasoning_chunks: list[str],
@@ -71,7 +70,6 @@ def emit_function_tools_result(
             usage=result.usage,
             error=result.error,
             reasoning=reasoning_full_text if reasoning_full_text else None,
-            previous_response_id=previous_response_id,
             metadata={
                 "thread_id": result.thread_id,
                 "turn_id": result.turn_id,
@@ -100,7 +98,6 @@ def emit_function_tools_result(
         usage=result.usage,
         error=result.error,
         reasoning=reasoning_full_text if reasoning_full_text else None,
-        previous_response_id=previous_response_id,
         metadata={
             "thread_id": result.thread_id,
             "turn_id": result.turn_id,
@@ -115,7 +112,6 @@ def emit_plain_message_result(
     send_event: Callable[[dict[str, Any]], None],
     response_obj: Callable[..., dict[str, Any]],
     result: TurnResult,
-    previous_response_id: str | None,
     message_id: str,
     chunks: list[str],
     reasoning_chunks: list[str],
@@ -139,7 +135,6 @@ def emit_plain_message_result(
         usage=result.usage,
         error=result.error,
         reasoning=reasoning_full_text if reasoning_full_text else None,
-        previous_response_id=previous_response_id,
         metadata={
             "thread_id": result.thread_id,
             "turn_id": result.turn_id,

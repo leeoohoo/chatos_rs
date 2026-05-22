@@ -21,7 +21,6 @@ class GatewayStreamBootstrapBindingsTest(unittest.TestCase):
             instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
-            previous_response_id="resp_prev",
             response_tools=[],
             reasoning_effort="high",
             reasoning_summary="concise",

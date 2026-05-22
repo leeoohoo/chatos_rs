@@ -25,7 +25,6 @@ use super::task_board::build_task_board_prompt;
 #[derive(Debug, Clone, Default)]
 pub struct ActualTurnRequestContext {
     pub context_mode: Option<String>,
-    pub previous_response_id: Option<String>,
     pub items: Vec<TurnRuntimeSnapshotContextItemDto>,
 }
 
@@ -142,8 +141,6 @@ pub async fn sync_chat_turn_snapshot(
         unavailable_builtin_tools,
         builtin_mcp_prompt_debug: Some(&builtin_prompt_debug),
         actual_context_mode: effective_actual.and_then(|value| value.context_mode.as_deref()),
-        actual_previous_response_id: effective_actual
-            .and_then(|value| value.previous_response_id.as_deref()),
         actual_context_items: effective_actual
             .map(|value| value.items.as_slice())
             .unwrap_or(&[]),
@@ -235,20 +232,12 @@ fn extract_actual_request_context(
     lookup: TurnRuntimeSnapshotLookupResponseDto,
 ) -> Option<ActualTurnRequestContext> {
     let runtime = lookup.snapshot?.runtime?;
-    if runtime.actual_context_items.is_empty()
-        && runtime
-            .actual_previous_response_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
-    {
+    if runtime.actual_context_items.is_empty() {
         return None;
     }
 
     Some(ActualTurnRequestContext {
         context_mode: runtime.actual_context_mode,
-        previous_response_id: runtime.actual_previous_response_id,
         items: runtime.actual_context_items,
     })
 }

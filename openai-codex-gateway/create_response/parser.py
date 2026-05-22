@@ -18,7 +18,6 @@ class CreateResponseContext:
     instructions: str | None
     model: Any
     model_name: str
-    previous_response_id: str | None
     reasoning_effort: str | None
     reasoning_summary: str | None
     response_tools: list[dict[str, Any]]
@@ -41,12 +40,6 @@ def parse_create_response_context(
     model = payload.get("model")
     model_name = model if isinstance(model, str) and model else "codex-default"
 
-    previous_response_id_raw = payload.get("previous_response_id")
-    previous_response_id = (
-        previous_response_id_raw
-        if isinstance(previous_response_id_raw, str) and previous_response_id_raw
-        else None
-    )
     reasoning_effort, reasoning_summary = extract_reasoning_options(payload)
     response_tools_raw = payload.get("tools")
     response_tools = response_tools_raw if isinstance(response_tools_raw, list) else []
@@ -56,7 +49,6 @@ def parse_create_response_context(
         instructions=instructions,
         model=model,
         model_name=model_name,
-        previous_response_id=previous_response_id,
         reasoning_effort=reasoning_effort,
         reasoning_summary=reasoning_summary,
         response_tools=response_tools,

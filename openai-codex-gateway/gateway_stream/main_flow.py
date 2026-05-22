@@ -40,7 +40,6 @@ def run_stream_main_flow(
         provided_tool_outputs=provided_tool_outputs,
         send_event=send_event,
         response_obj=response_obj,
-        previous_response_id=stream_context.previous_response_id,
         has_function_tools=bool(function_tools),
         message_id_factory=message_id_factory,
     )

@@ -247,7 +247,7 @@ pub(super) fn before_request_set_task_done_on_nth_request(
     let counter_clone = counter.clone();
     AiClientCallbacks {
         on_before_model_request: Some(Arc::new(
-            move |_payload, _previous_response_id, _snapshot| {
+            move |_payload, _prev_id, _snapshot| {
                 let request_index = counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 if request_index == nth_request {
                     let session_id = session_id.clone();

@@ -43,7 +43,6 @@ class GatewayStreamPlainCompletionTest(unittest.TestCase):
             send_event=lambda _event: None,
             response_obj=lambda **kwargs: kwargs,
             result=result,
-            previous_response_id="resp_prev",
             message_id="msg_1",
             chunks=["h"],
             reasoning_chunks=["r"],
@@ -56,7 +55,6 @@ class GatewayStreamPlainCompletionTest(unittest.TestCase):
         self.assertEqual(kwargs["message_id"], "msg_1")
         self.assertEqual(kwargs["chunks"], ["h"])
         self.assertEqual(kwargs["reasoning_chunks"], ["r"])
-        self.assertEqual(kwargs["previous_response_id"], "resp_prev")
         self.assertIs(kwargs["result"], result)
         self.assertEqual(done_calls, 1)
 

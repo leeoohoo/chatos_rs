@@ -26,7 +26,6 @@ class GatewayStreamPreBranchSetupTest(unittest.TestCase):
             provided_tool_outputs={},
             send_event=send_event,
             response_obj=lambda **kwargs: {"id": "resp_1", **kwargs},
-            previous_response_id="resp_prev",
             has_function_tools=True,
             message_id_factory=lambda: "msg_tool",
         )
@@ -35,7 +34,6 @@ class GatewayStreamPreBranchSetupTest(unittest.TestCase):
         self.assertEqual(setup.input_items[0]["type"], "text")
         self.assertEqual(setup.input_items[0]["text"], "hello")
         self.assertEqual([event["type"] for event in events], ["response.created"])
-        self.assertEqual(events[0]["response"]["previous_response_id"], "resp_prev")
 
         setup.callback_setup.on_delta("d")
         self.assertEqual([event["type"] for event in events], [
@@ -61,7 +59,6 @@ class GatewayStreamPreBranchSetupTest(unittest.TestCase):
             provided_tool_outputs={},
             send_event=send_event,
             response_obj=lambda **kwargs: {"id": "resp_2", **kwargs},
-            previous_response_id=None,
             has_function_tools=False,
             message_id_factory=lambda: "msg_plain",
         )

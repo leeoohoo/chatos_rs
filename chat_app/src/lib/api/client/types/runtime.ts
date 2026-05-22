@@ -307,7 +307,6 @@ export interface TurnRuntimeSnapshotRuntime {
   enabled_mcp_ids?: string[];
   selected_commands?: TurnRuntimeSnapshotSelectedCommand[];
   actual_context_mode?: string | null;
-  actual_previous_response_id?: string | null;
   actual_context_items?: TurnRuntimeSnapshotContextItem[];
 }
 

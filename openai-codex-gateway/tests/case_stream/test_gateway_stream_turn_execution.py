@@ -62,7 +62,6 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
             instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
-            previous_response_id="resp_prev",
             response_tools=[],
             reasoning_effort="high",
             reasoning_summary="concise",
@@ -98,7 +97,6 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
         self.assertEqual(kwargs["model"], "codex-1")
         self.assertEqual(kwargs["reasoning_effort"], "high")
         self.assertEqual(kwargs["reasoning_summary"], "concise")
-        self.assertEqual(kwargs["previous_response_id"], "resp_prev")
         self.assertEqual(kwargs["api_key"], "k")
         self.assertEqual(kwargs["request_cwd"], "/tmp/demo")
         self.assertEqual(kwargs["request_config_overrides"], {"sandbox": "workspace-write"})
@@ -127,7 +125,6 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
             instructions=None,
             model_raw=123,
             model_name="codex-default",
-            previous_response_id=None,
             response_tools=[],
             reasoning_effort=None,
             reasoning_summary=None,
@@ -155,7 +152,6 @@ class GatewayStreamTurnExecutionTest(unittest.TestCase):
         self.assertIsNone(kwargs["model"])
         self.assertIsNone(kwargs["reasoning_effort"])
         self.assertIsNone(kwargs["reasoning_summary"])
-        self.assertIsNone(kwargs["previous_response_id"])
 
 
 if __name__ == "__main__":

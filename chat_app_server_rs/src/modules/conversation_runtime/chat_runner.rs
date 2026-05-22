@@ -120,7 +120,7 @@ pub fn prepare_chat_execution(
         runtime_context.selected_commands_for_snapshot.clone(),
     );
     callbacks.on_before_model_request = Some(Arc::new(
-        move |request_input, previous_response_id, override_context| {
+        move |request_input, _, override_context| {
             let snapshot_context =
                 override_context.unwrap_or_else(|| live_request_snapshot.clone());
             let mode = actual_context_mode.to_string();
@@ -128,7 +128,6 @@ pub fn prepare_chat_execution(
                 let actual_request =
                     crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
                         context_mode: Some(mode.clone()),
-                        previous_response_id,
                         items: if mode == "v3" {
                             crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input)
                         } else {

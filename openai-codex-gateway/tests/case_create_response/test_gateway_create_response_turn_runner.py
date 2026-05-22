@@ -46,7 +46,6 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
             instructions="请总结",
             model="codex-1",
             model_name="codex-1",
-            previous_response_id="resp_prev",
             reasoning_effort="high",
             reasoning_summary="concise",
             response_tools=[],
@@ -73,7 +72,6 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
         self.assertEqual(kwargs["model"], "codex-1")
         self.assertEqual(kwargs["reasoning_effort"], "high")
         self.assertEqual(kwargs["reasoning_summary"], "concise")
-        self.assertEqual(kwargs["previous_response_id"], "resp_prev")
         self.assertEqual(kwargs["api_key"], "k")
         self.assertEqual(kwargs["request_cwd"], "/tmp/demo")
         self.assertEqual(kwargs["request_config_overrides"], {"sandbox": "workspace-write"})
@@ -101,7 +99,6 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
             instructions=None,
             model=123,
             model_name="codex-default",
-            previous_response_id=None,
             reasoning_effort=None,
             reasoning_summary=None,
             response_tools=[],
@@ -122,7 +119,6 @@ class GatewayCreateResponseTurnRunnerTest(unittest.TestCase):
         kwargs = bridge.last_kwargs or {}
         self.assertIsNone(kwargs["instructions"])
         self.assertEqual(kwargs["model"], 123)
-        self.assertIsNone(kwargs["previous_response_id"])
         self.assertIsNone(kwargs["reasoning_effort"])
         self.assertIsNone(kwargs["reasoning_summary"])
 

@@ -1,62 +1,7 @@
-use serde_json::Value;
-
 #[cfg(test)]
 pub(super) use crate::services::ai_common::{
     is_response_parse_error, is_transient_network_error, is_transient_transport_or_parse_error,
 };
-
-pub(super) fn should_use_prev_id_for_next_turn(
-    prefer_stateless: bool,
-    can_use_prev_id: bool,
-    has_next_response_id: bool,
-) -> bool {
-    !prefer_stateless && can_use_prev_id && has_next_response_id
-}
-
-pub(super) fn should_disable_prev_id_for_prefixed_input_items(
-    prefixed_input_items: &[Value],
-) -> bool {
-    prefixed_input_items
-        .iter()
-        .any(is_dynamic_runtime_guidance_item)
-}
-
-fn is_dynamic_runtime_guidance_item(item: &Value) -> bool {
-    let text = item
-        .get("content")
-        .and_then(|value| value.as_array())
-        .and_then(|parts| {
-            parts.iter().find_map(|part| {
-                if part.get("type").and_then(|value| value.as_str()) == Some("input_text") {
-                    return part
-                        .get("text")
-                        .and_then(|value| value.as_str())
-                        .map(|value| value.to_string());
-                }
-                part.get("text")
-                    .and_then(|value| value.as_str())
-                    .map(|value| value.to_string())
-            })
-        })
-        .unwrap_or_default();
-    let normalized = text.trim();
-
-    normalized.starts_with("[Runtime Guidance]") || normalized.starts_with("[Task Board Updated]")
-}
-
-pub(super) fn should_prefer_stateless_context(supports_responses: bool) -> bool {
-    !supports_responses
-}
-
-pub(super) fn model_supports_prev_response_id(supports_responses: bool) -> bool {
-    supports_responses
-}
-
-pub(super) fn is_unsupported_previous_response_id_error(err: &str) -> bool {
-    let message = err.to_lowercase();
-    message.contains("previous_response_id")
-        && (message.contains("unsupported parameter") || message.contains("invalid parameter"))
-}
 
 pub(super) fn base_url_disallows_system_messages(base_url: &str) -> bool {
     let url = base_url.trim().to_lowercase();
@@ -117,61 +62,8 @@ mod tests {
         base_url_disallows_system_messages, is_context_length_exceeded_error,
         is_request_body_too_large_error, is_response_parse_error,
         is_system_messages_not_allowed_error, is_transient_network_error,
-        is_transient_transport_or_parse_error, model_supports_prev_response_id,
-        should_disable_prev_id_for_prefixed_input_items, should_prefer_stateless_context,
-        should_use_prev_id_for_next_turn,
+        is_transient_transport_or_parse_error,
     };
-
-    #[test]
-    fn keeps_stateless_mode_when_prefer_stateless_enabled() {
-        assert!(!should_use_prev_id_for_next_turn(true, true, true));
-        assert!(!should_use_prev_id_for_next_turn(true, true, false));
-    }
-
-    #[test]
-    fn allows_prev_id_when_stateful_and_response_id_exists() {
-        assert!(should_use_prev_id_for_next_turn(false, true, true));
-        assert!(!should_use_prev_id_for_next_turn(false, true, false));
-        assert!(!should_use_prev_id_for_next_turn(false, false, true));
-    }
-
-    #[test]
-    fn disables_prev_id_when_runtime_prefixed_items_exist() {
-        assert!(should_disable_prev_id_for_prefixed_input_items(&[
-            serde_json::json!({
-                "type": "message",
-                "role": "system",
-                "content": [{ "type": "input_text", "text": "[Runtime Guidance]\n- instruction: contact runtime" }]
-            })
-        ]));
-        assert!(should_disable_prev_id_for_prefixed_input_items(&[
-            serde_json::json!({
-                "type": "message",
-                "role": "system",
-                "content": [{ "type": "input_text", "text": "[Task Board Updated]\n- source: system task board refresh" }]
-            })
-        ]));
-        assert!(!should_disable_prev_id_for_prefixed_input_items(&[
-            serde_json::json!({
-                "type": "message",
-                "role": "system",
-                "content": [{ "type": "input_text", "text": "[Task Board]\n当前任务看板由系统维护" }]
-            })
-        ]));
-        assert!(!should_disable_prev_id_for_prefixed_input_items(&[]));
-    }
-
-    #[test]
-    fn chat_with_responses_prefers_stateful_prev_id_mode() {
-        assert!(!should_prefer_stateless_context(true));
-        assert!(model_supports_prev_response_id(true));
-    }
-
-    #[test]
-    fn chat_without_responses_keeps_stateless_mode() {
-        assert!(should_prefer_stateless_context(false));
-        assert!(!model_supports_prev_response_id(false));
-    }
 
     #[test]
     fn detects_context_window_overflow_errors() {

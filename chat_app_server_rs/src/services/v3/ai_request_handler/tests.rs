@@ -33,7 +33,6 @@ fn build_request_payload_includes_request_cwd_when_present() {
         json!([{"role":"user","content":[{"type":"input_text","text":"hello"}]}]),
         "gpt-5.3-codex".to_string(),
         Some("system".to_string()),
-        None,
         Some("session-123".to_string()),
         None,
         Some("/tmp/worktree".to_string()),
@@ -66,7 +65,6 @@ fn build_request_payload_skips_blank_prompt_cache_key() {
         json!([{"role":"user","content":[{"type":"input_text","text":"hello"}]}]),
         "gpt-5.3-codex".to_string(),
         Some("system".to_string()),
-        None,
         Some("   ".to_string()),
         None,
         None,
@@ -78,6 +76,25 @@ fn build_request_payload_skips_blank_prompt_cache_key() {
     );
 
     assert!(payload.get("prompt_cache_key").is_none());
+}
+
+#[test]
+fn build_request_payload_never_includes_prev_id() {
+    let payload = build_request_payload(
+        json!([{"role":"user","content":[{"type":"input_text","text":"hello"}]}]),
+        "gpt-5.3-codex".to_string(),
+        Some("system".to_string()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("gpt".to_string()),
+        Some("medium".to_string()),
+        true,
+    );
+
+    assert!(payload.get("prev_id").is_none());
 }
 
 #[test]

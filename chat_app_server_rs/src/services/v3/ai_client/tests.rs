@@ -3,38 +3,29 @@ use serde_json::{json, Value};
 
 use super::test_support::{
     before_request_set_task_done_on_nth_request, build_test_client,
-    build_test_client_with_max_iterations, chunk_callbacks, demo_echo_tool, empty_callbacks,
-    run_process_with_tools, setup_sqlite_task_board, start_mock_provider, MockProviderStep,
-    RunProcessWithToolsArgs,
+    build_test_client_with_max_iterations, chunk_callbacks, demo_echo_tool,
+    empty_callbacks, ensure_memory_session, run_process_with_tools, setup_sqlite_task_board,
+    start_mock_provider, MockProviderStep, RunProcessWithToolsArgs,
 };
 use crate::services::task_manager::TaskDraft;
 
 #[tokio::test]
 async fn completion_overflow_without_remote_summary_surfaces_error() {
-    let steps = vec![
-        MockProviderStep::text(
-            StatusCode::BAD_REQUEST,
-            "unsupported parameter: previous_response_id",
-        ),
-        MockProviderStep::json(
-            StatusCode::OK,
-            json!({
-                "id": "resp_failed",
-                "status": "failed",
-                "error": { "message": "context_length_exceeded: input exceeds the context window" }
-            }),
-        ),
-    ];
+    let steps = vec![MockProviderStep::json(
+        StatusCode::OK,
+        json!({
+            "id": "resp_failed",
+            "status": "failed",
+            "error": { "message": "context_length_exceeded: input exceeds the context window" }
+        }),
+    )];
     let (base_url, captured, server) = start_mock_provider(steps).await;
     let mut client = build_test_client(base_url);
 
     let err = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_1".to_string()),
             callbacks: empty_callbacks(),
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -45,17 +36,17 @@ async fn completion_overflow_without_remote_summary_surfaces_error() {
     assert!(err.contains("context_length_exceeded"), "{err}");
 
     let requests = captured.lock().await.clone();
-    assert_eq!(requests.len(), 2);
-    assert!(requests[0].get("previous_response_id").is_some());
-    assert!(requests[1].get("previous_response_id").is_none());
-    assert!(requests[1]
-        .get("input")
-        .map(|value| value.is_array())
-        .unwrap_or(false));
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].get("prev_id").is_none());
+    assert!(requests[0].get("input").is_some());
 }
 
 #[tokio::test]
-async fn stable_prefixed_items_keep_previous_response_id_reuse() {
+async fn stable_prefixed_items_use_stateless_context() {
+    ensure_memory_session("session_contact_stable")
+        .await
+        .expect("setup stable session");
+
     let steps = vec![MockProviderStep::json(
         StatusCode::OK,
         json!({
@@ -71,11 +62,8 @@ async fn stable_prefixed_items_keep_previous_response_id_reuse() {
         &mut client,
         RunProcessWithToolsArgs {
             session_id: Some("session_contact_stable".to_string()),
-            previous_response_id: Some("prev_resp_contact_stable".to_string()),
             prompt_cache_key: Some("session_contact_stable".to_string()),
             callbacks: empty_callbacks(),
-            use_prev_id: true,
-            can_use_prev_id: true,
             prefixed_input_items: vec![json!({
                 "type": "message",
                 "role": "system",
@@ -92,7 +80,7 @@ async fn stable_prefixed_items_keep_previous_response_id_reuse() {
         },
     )
     .await
-    .expect("stable prefixed items should preserve stateful request");
+    .expect("stable prefixed items should preserve stateless request");
     server.abort();
 
     assert_eq!(
@@ -102,18 +90,49 @@ async fn stable_prefixed_items_keep_previous_response_id_reuse() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_contact_stable")
-    );
+    assert!(requests[0].get("prev_id").is_none());
     assert_eq!(
         requests[0]
             .get("prompt_cache_key")
             .and_then(|value| value.as_str()),
         Some("session_contact_stable")
     );
+}
+
+#[tokio::test]
+async fn relay_domain_forces_stateless_without_prev_id() {
+    let steps = vec![MockProviderStep::json(
+        StatusCode::OK,
+        json!({
+            "id": "resp_relay_stateless",
+            "status": "completed",
+            "output_text": "relay stateless ok"
+        }),
+    )];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let relay_base_url = base_url.replacen("http://", "http://relay.nf.video@", 1);
+    let mut client = build_test_client(relay_base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            callbacks: empty_callbacks(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("relay domain should force stateless mode");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("relay stateless ok")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].get("prev_id").is_none());
+    assert!(requests[0].get("input").is_some());
 }
 
 #[tokio::test]
@@ -175,8 +194,6 @@ async fn task_follow_up_continues_same_turn_until_unfinished_tasks_finish() {
             turn_id: Some(turn_id.to_string()),
             callbacks,
             purpose: "chat",
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -191,22 +208,9 @@ async fn task_follow_up_continues_same_turn_until_unfinished_tasks_finish() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 3);
-    assert!(requests[0]
-        .get("previous_response_id")
-        .and_then(|value| value.as_str())
-        .is_none());
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_summary_1")
-    );
-    assert_eq!(
-        requests[2]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_continue_2")
-    );
+    assert!(requests
+        .iter()
+        .all(|request| request.get("prev_id").is_none()));
 }
 
 #[tokio::test]
@@ -258,8 +262,6 @@ async fn task_follow_up_reviews_same_turn_when_work_is_done() {
             turn_id: Some(turn_id.to_string()),
             callbacks: empty_callbacks(),
             purpose: "chat",
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -274,16 +276,13 @@ async fn task_follow_up_reviews_same_turn_when_work_is_done() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_summary_review")
-    );
+    assert!(requests
+        .iter()
+        .all(|request| request.get("prev_id").is_none()));
 }
 
 #[tokio::test]
-async fn runtime_guidance_items_disable_previous_response_id_reuse() {
+async fn runtime_guidance_items_keep_stateless_mode() {
     let steps = vec![MockProviderStep::json(
         StatusCode::OK,
         json!({
@@ -299,10 +298,7 @@ async fn runtime_guidance_items_disable_previous_response_id_reuse() {
         &mut client,
         RunProcessWithToolsArgs {
             session_id: Some("session_contact_runtime".to_string()),
-            previous_response_id: Some("prev_resp_contact_runtime".to_string()),
             callbacks: empty_callbacks(),
-            use_prev_id: true,
-            can_use_prev_id: true,
             prefixed_input_items: vec![json!({
                 "type": "message",
                 "role": "system",
@@ -329,7 +325,7 @@ async fn runtime_guidance_items_disable_previous_response_id_reuse() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].get("previous_response_id").is_none());
+    assert!(requests[0].get("prev_id").is_none());
 }
 
 #[tokio::test]
@@ -468,7 +464,7 @@ async fn retries_completion_failure_when_model_is_at_capacity() {
 }
 
 #[tokio::test]
-async fn tool_follow_up_reuses_previous_response_id_with_incremental_outputs() {
+async fn tool_follow_up_uses_stateless_tool_context_outputs() {
     let steps = vec![
         MockProviderStep::json(
             StatusCode::OK,
@@ -498,16 +494,13 @@ async fn tool_follow_up_reuses_previous_response_id_with_incremental_outputs() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_seed".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks: empty_callbacks(),
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
     .await
-    .expect("tool follow-up should reuse previous_response_id");
+    .expect("tool follow-up should run with stateless context");
     server.abort();
 
     assert_eq!(
@@ -517,19 +510,9 @@ async fn tool_follow_up_reuses_previous_response_id_with_incremental_outputs() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_seed")
-    );
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_tool_1")
-    );
+    assert!(requests
+        .iter()
+        .all(|request| request.get("prev_id").is_none()));
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
@@ -538,7 +521,7 @@ async fn tool_follow_up_reuses_previous_response_id_with_incremental_outputs() {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
                     && item.get("call_id").and_then(|value| value.as_str()) == Some("call_tool_1")
             });
-            items.len() == 1 && has_output
+            has_output
         })
         .unwrap_or(false));
 }
@@ -573,11 +556,8 @@ async fn falls_back_to_stateless_when_tool_call_response_has_no_response_id() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_tool_seed".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks: empty_callbacks(),
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -592,13 +572,8 @@ async fn falls_back_to_stateless_when_tool_call_response_has_no_response_id() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_tool_seed")
-    );
-    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[0].get("prev_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
@@ -656,11 +631,8 @@ async fn falls_back_to_stateless_when_incremental_tool_outputs_are_rejected() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_tool_prev_id_seed".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks: empty_callbacks(),
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -675,13 +647,8 @@ async fn falls_back_to_stateless_when_incremental_tool_outputs_are_rejected() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 3);
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_tool_prev_id_seed")
-    );
-    assert!(requests[2].get("previous_response_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
+    assert!(requests[2].get("prev_id").is_none());
     assert!(requests[2]
         .get("input")
         .and_then(|value| value.as_array())
@@ -705,7 +672,11 @@ async fn falls_back_to_stateless_when_incremental_tool_outputs_are_rejected() {
 }
 
 #[tokio::test]
-async fn reenters_previous_response_id_after_missing_tool_call_fallback() {
+async fn keeps_stateless_mode_after_missing_tool_call_fallback() {
+    ensure_memory_session("session_prev_id_missing_tool_call")
+    .await
+    .expect("setup session for prev-id disable test");
+
     let steps = vec![
         MockProviderStep::json(
             StatusCode::OK,
@@ -742,7 +713,7 @@ async fn reenters_previous_response_id_after_missing_tool_call_fallback() {
             json!({
                 "id": "resp_tool_prev_id_final",
                 "status": "completed",
-                "output_text": "tool prev-id resumed"
+                "output_text": "tool prev-id stays stateless"
             }),
         ),
     ];
@@ -752,32 +723,25 @@ async fn reenters_previous_response_id_after_missing_tool_call_fallback() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_tool_prev_id_seed".to_string()),
+            session_id: Some("session_prev_id_missing_tool_call".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks: empty_callbacks(),
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
     .await
-    .expect("missing tool-call fallback should recover previous_response_id on later tool rounds");
+    .expect("missing tool-call fallback should keep stateless mode");
     server.abort();
 
     assert_eq!(
         result.get("content").and_then(|value| value.as_str()),
-        Some("tool prev-id resumed")
+        Some("tool prev-id stays stateless")
     );
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 4);
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_tool_prev_id_seed")
-    );
-    assert!(requests[2].get("previous_response_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
+    assert!(requests[2].get("prev_id").is_none());
     assert!(requests[2]
         .get("input")
         .and_then(|value| value.as_array())
@@ -795,22 +759,25 @@ async fn reenters_previous_response_id_after_missing_tool_call_fallback() {
             has_call && has_output
         })
         .unwrap_or(false));
-    assert_eq!(
-        requests[3]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("resp_tool_prev_id_recovered")
-    );
+    assert!(requests[3].get("prev_id").is_none());
     assert!(requests[3]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
+            let has_user = items
+                .iter()
+                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+            let has_call = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_prev_id_recovered")
+            });
             let has_output = items.iter().any(|item| {
                 item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
                     && item.get("call_id").and_then(|value| value.as_str())
                         == Some("call_tool_prev_id_recovered")
             });
-            items.len() == 1 && has_output
+            has_user && has_call && has_output
         })
         .unwrap_or(false));
 }
@@ -854,11 +821,8 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_stream_seed".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks,
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -874,12 +838,7 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
 
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_stream_seed")
-    );
+    assert!(requests[0].get("prev_id").is_none());
     assert!(requests[0]
         .get("stream")
         .and_then(|value| value.as_bool())
@@ -888,7 +847,7 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
         .get("stream")
         .and_then(|value| value.as_bool())
         .unwrap_or(false));
-    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
@@ -946,11 +905,8 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_stream_failed".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks,
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -966,13 +922,8 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
 
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_stream_failed")
-    );
-    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[0].get("prev_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
@@ -1030,11 +981,8 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_stream_mix".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks,
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -1050,13 +998,8 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
 
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_stream_mix")
-    );
-    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[0].get("prev_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
@@ -1081,6 +1024,10 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
 
 #[tokio::test]
 async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
+    ensure_memory_session("session_stream_round_recovery")
+        .await
+        .expect("setup session for stream round recovery");
+
     let first_stream_events = vec![json!({
         "type": "response.completed",
         "response": {
@@ -1128,11 +1075,9 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_stream_round_seed".to_string()),
+            session_id: Some("session_stream_round_recovery".to_string()),
             tools: vec![demo_echo_tool()],
             callbacks,
-            use_prev_id: true,
-            can_use_prev_id: true,
             ..Default::default()
         },
     )
@@ -1147,34 +1092,20 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 3);
-    assert!(requests[1].get("previous_response_id").is_none());
-    assert!(requests[2].get("previous_response_id").is_none());
+    assert!(requests
+        .iter()
+        .all(|request| request.get("prev_id").is_none()));
 
     assert!(requests[1]
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let call_1 = items
-                .iter()
-                .filter(|item| {
-                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                        && item.get("call_id").and_then(|value| value.as_str())
-                            == Some("call_stream_round_1")
-                })
-                .count();
-            let output_1 = items
-                .iter()
-                .filter(|item| {
-                    item.get("type").and_then(|value| value.as_str())
-                        == Some("function_call_output")
-                        && item.get("call_id").and_then(|value| value.as_str())
-                            == Some("call_stream_round_1")
-                })
-                .count();
-            has_user && call_1 == 1 && output_1 == 1
+            let has_output_1 = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_stream_round_1")
+            });
+            has_output_1
         })
         .unwrap_or(false));
 
@@ -1182,44 +1113,12 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
         .get("input")
         .and_then(|value| value.as_array())
         .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let call_1 = items
-                .iter()
-                .filter(|item| {
-                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                        && item.get("call_id").and_then(|value| value.as_str())
-                            == Some("call_stream_round_1")
-                })
-                .count();
-            let output_1 = items
-                .iter()
-                .filter(|item| {
-                    item.get("type").and_then(|value| value.as_str())
-                        == Some("function_call_output")
-                        && item.get("call_id").and_then(|value| value.as_str())
-                            == Some("call_stream_round_1")
-                })
-                .count();
-            let call_2 = items
-                .iter()
-                .filter(|item| {
-                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                        && item.get("call_id").and_then(|value| value.as_str())
-                            == Some("call_stream_round_2")
-                })
-                .count();
-            let output_2 = items
-                .iter()
-                .filter(|item| {
-                    item.get("type").and_then(|value| value.as_str())
-                        == Some("function_call_output")
-                        && item.get("call_id").and_then(|value| value.as_str())
-                            == Some("call_stream_round_2")
-                })
-                .count();
-            has_user && call_1 == 1 && output_1 == 1 && call_2 == 1 && output_2 == 1
+            let has_output_2 = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_stream_round_2")
+            });
+            has_output_2
         })
         .unwrap_or(false));
 }
@@ -1247,9 +1146,7 @@ async fn retries_parse_errors_five_times_then_succeeds() {
         RunProcessWithToolsArgs {
             callbacks: empty_callbacks(),
             purpose: "chat",
-            can_use_prev_id: true,
             stable_prefix_mode: true,
-            prefer_stateless: true,
             ..Default::default()
         },
     )
@@ -1284,9 +1181,7 @@ async fn fails_after_five_network_retries_with_explicit_message() {
         RunProcessWithToolsArgs {
             callbacks: empty_callbacks(),
             purpose: "chat",
-            can_use_prev_id: true,
             stable_prefix_mode: true,
-            prefer_stateless: true,
             ..Default::default()
         },
     )
@@ -1326,9 +1221,7 @@ async fn retries_stream_parse_failure_and_then_succeeds() {
         RunProcessWithToolsArgs {
             callbacks,
             purpose: "chat",
-            can_use_prev_id: true,
             stable_prefix_mode: true,
-            prefer_stateless: true,
             ..Default::default()
         },
     )
@@ -1346,7 +1239,7 @@ async fn retries_stream_parse_failure_and_then_succeeds() {
 }
 
 #[tokio::test]
-async fn retries_non_terminal_empty_stream_response_and_falls_back_from_prev_id() {
+async fn retries_non_terminal_empty_stream_response_and_recovers_statelessly() {
     let first_stream_events = vec![json!({
         "type": "response.completed",
         "response": {
@@ -1374,11 +1267,8 @@ async fn retries_non_terminal_empty_stream_response_and_falls_back_from_prev_id(
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_non_terminal_seed".to_string()),
             callbacks,
             purpose: "chat",
-            use_prev_id: true,
-            can_use_prev_id: true,
             stable_prefix_mode: true,
             ..Default::default()
         },
@@ -1394,13 +1284,8 @@ async fn retries_non_terminal_empty_stream_response_and_falls_back_from_prev_id(
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_non_terminal_seed")
-    );
-    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[0].get("prev_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
     assert!(requests[1]
         .get("input")
         .map(|value| value.is_array())
@@ -1434,11 +1319,8 @@ async fn retries_terminal_empty_stream_response_and_recovers_with_stateless_retr
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_terminal_empty_seed".to_string()),
             callbacks: chunk_callbacks(),
             purpose: "chat",
-            use_prev_id: true,
-            can_use_prev_id: true,
             stable_prefix_mode: true,
             ..Default::default()
         },
@@ -1454,13 +1336,8 @@ async fn retries_terminal_empty_stream_response_and_recovers_with_stateless_retr
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[0]
-            .get("previous_response_id")
-            .and_then(|value| value.as_str()),
-        Some("prev_resp_terminal_empty_seed")
-    );
-    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[0].get("prev_id").is_none());
+    assert!(requests[1].get("prev_id").is_none());
     assert!(requests[1]
         .get("input")
         .map(|value| value.is_array())
@@ -1487,11 +1364,8 @@ async fn terminal_empty_stream_response_surfaces_error_after_retry_budget_exhaus
     let err = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            previous_response_id: Some("prev_resp_terminal_empty_budget".to_string()),
             callbacks: chunk_callbacks(),
             purpose: "chat",
-            use_prev_id: true,
-            can_use_prev_id: true,
             stable_prefix_mode: true,
             ..Default::default()
         },

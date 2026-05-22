@@ -129,7 +129,6 @@ def main() -> None:
 
         response_payload = {
             "input": outputs,
-            "previous_response_id": response.id,
             "tools": tools,
         }
         if model:

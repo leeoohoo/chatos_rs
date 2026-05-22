@@ -113,6 +113,24 @@ fn search_files_alias_maps_query_to_search_text_pattern() {
 }
 
 #[test]
+fn search_files_alias_accepts_file_path() {
+    let (service, root) = build_service(false);
+    let file_path = root.join("single.txt");
+    fs::write(&file_path, "first\nneedle line\nthird needle\n").expect("write single file");
+
+    let result = service
+        .call_tool(
+            "search_files",
+            json!({ "query": "needle", "path": "single.txt" }),
+            None,
+        )
+        .expect("search file path via alias");
+    let text = response_text(&result);
+    assert!(text.contains("\"count\": 2"));
+    assert!(text.contains("single.txt"));
+}
+
+#[test]
 fn patch_alias_maps_to_apply_patch() {
     let (service, root) = build_service(true);
     let patch_text =

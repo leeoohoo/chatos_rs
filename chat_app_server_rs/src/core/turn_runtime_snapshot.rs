@@ -34,7 +34,6 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub unavailable_builtin_tools: &'a [Value],
     pub builtin_mcp_prompt_debug: Option<&'a BuiltinMcpPromptBuildResult>,
     pub actual_context_mode: Option<&'a str>,
-    pub actual_previous_response_id: Option<&'a str>,
     pub actual_context_items: &'a [TurnRuntimeSnapshotContextItemDto],
 }
 
@@ -114,7 +113,6 @@ pub fn build_turn_runtime_snapshot_payload(
             ),
             builtin_mcp_prompt: normalize_builtin_mcp_prompt(input.builtin_mcp_prompt_debug),
             actual_context_mode: normalize_optional_text(input.actual_context_mode),
-            actual_previous_response_id: normalize_optional_text(input.actual_previous_response_id),
             actual_context_items: normalize_context_items(input.actual_context_items),
         }),
     }
@@ -334,7 +332,6 @@ mod tests {
             unavailable_builtin_tools: &[],
             builtin_mcp_prompt_debug: None,
             actual_context_mode: None,
-            actual_previous_response_id: None,
             actual_context_items: &[],
         });
 
@@ -376,7 +373,6 @@ mod tests {
             })],
             builtin_mcp_prompt_debug: None,
             actual_context_mode: None,
-            actual_previous_response_id: None,
             actual_context_items: &[],
         });
 
@@ -428,7 +424,6 @@ mod tests {
                 runtime_limitations: Some("当前运行时限制：\n- 当前不要依赖以下内置 MCP 工具：`browser_tools_browser_inspect`。".to_string()),
             }),
             actual_context_mode: None,
-            actual_previous_response_id: None,
             actual_context_items: &[],
         });
 

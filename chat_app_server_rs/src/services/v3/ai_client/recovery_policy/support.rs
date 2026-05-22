@@ -3,25 +3,18 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::super::prev_context::{
-    is_input_must_be_list_error, is_missing_tool_call_error, is_unsupported_previous_response_id_error,
+    is_input_must_be_list_error, is_missing_tool_call_error,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RequestErrorReplay {
-    pub(super) disable_prev_id: bool,
+    pub(super) rebuild_stateless_on_missing_tool_call: bool,
     pub(super) input_must_be_list: bool,
 }
 
-pub(super) fn replay_request_error_policy(
-    err_msg: &str,
-    use_prev_id: bool,
-) -> RequestErrorReplay {
-    let disable_prev_id = use_prev_id
-        && (is_unsupported_previous_response_id_error(err_msg)
-            || is_missing_tool_call_error(err_msg));
-
+pub(super) fn replay_request_error_policy(err_msg: &str) -> RequestErrorReplay {
     RequestErrorReplay {
-        disable_prev_id,
+        rebuild_stateless_on_missing_tool_call: is_missing_tool_call_error(err_msg),
         input_must_be_list: is_input_must_be_list_error(err_msg),
     }
 }
@@ -142,21 +135,34 @@ mod tests {
     }
 
     #[test]
-    fn replays_prev_id_disable_when_provider_rejects_previous_response_id() {
-        let replay =
-            replay_request_error_policy("unsupported parameter: previous_response_id", true);
-        assert!(replay.disable_prev_id);
+    fn ignores_prev_id_errors_in_stateless_mode() {
+        let replay = replay_request_error_policy("unsupported parameter: prev_id");
+        assert!(!replay.rebuild_stateless_on_missing_tool_call);
         assert!(!replay.input_must_be_list);
+    }
 
-        let no_prev_replay =
-            replay_request_error_policy("unsupported parameter: previous_response_id", false);
-        assert!(!no_prev_replay.disable_prev_id);
+    #[test]
+    fn ignores_unresumable_prev_id_errors_in_stateless_mode() {
+        let replay = replay_request_error_policy(
+            "prev_id cannot be resumed with current session parameters; retry without prev_id",
+        );
+        assert!(!replay.rebuild_stateless_on_missing_tool_call);
+        assert!(!replay.input_must_be_list);
+    }
+
+    #[test]
+    fn replays_stateless_rebuild_for_missing_tool_call() {
+        let replay = replay_request_error_policy(
+            "No tool call found for function call output in previous response",
+        );
+        assert!(replay.rebuild_stateless_on_missing_tool_call);
+        assert!(!replay.input_must_be_list);
     }
 
     #[test]
     fn replays_input_must_be_list_branch() {
-        let replay = replay_request_error_policy("Bad Request: input must be a list", false);
+        let replay = replay_request_error_policy("Bad Request: input must be a list");
         assert!(replay.input_must_be_list);
-        assert!(!replay.disable_prev_id);
+        assert!(!replay.rebuild_stateless_on_missing_tool_call);
     }
 }

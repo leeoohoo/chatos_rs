@@ -5,7 +5,6 @@ mod user_message;
 
 pub(crate) use self::assistant_response::{
     build_ai_client_success_payload, build_assistant_message_metadata, completion_failed_error,
-    extract_response_id_from_metadata, extract_response_status_from_metadata,
     is_non_terminal_response_status, persist_assistant_response_with_policy,
     should_persist_assistant_message, terminal_empty_response_error,
     AssistantResponsePersistenceRequest,

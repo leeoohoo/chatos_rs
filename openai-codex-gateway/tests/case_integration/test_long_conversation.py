@@ -75,7 +75,6 @@ def main() -> None:
         ),
     ]
 
-    previous_response_id: str | None = None
     outputs: list[tuple[str, str, str]] = []
 
     for idx, turn in enumerate(turns, start=1):
@@ -84,8 +83,6 @@ def main() -> None:
         }
         if model:
             payload["model"] = model
-        if previous_response_id:
-            payload["previous_response_id"] = previous_response_id
 
         response = client.responses.create(**payload)
         response_id = response.id
@@ -98,7 +95,6 @@ def main() -> None:
             raise RuntimeError(f"turn {idx} failed: empty output text")
 
         outputs.append((turn.label, response_id, output_text))
-        previous_response_id = response_id
 
     final_json = parse_json_like(outputs[-1][2])
 

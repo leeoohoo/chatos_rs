@@ -27,7 +27,6 @@ class GatewayStreamBranchExecutionTest(unittest.TestCase):
             instructions="请总结",
             model_raw="codex-1",
             model_name="codex-1",
-            previous_response_id="resp_prev",
             response_tools=[],
             reasoning_effort="high",
             reasoning_summary="concise",
@@ -95,14 +94,12 @@ class GatewayStreamBranchExecutionTest(unittest.TestCase):
         self.assertEqual(complete_kwargs["tool_message_id"], "msg_tool")
         self.assertEqual(complete_kwargs["tool_chunks"], ["delta_1"])
         self.assertEqual(complete_kwargs["reasoning_chunks"], ["reason_1"])
-        self.assertEqual(complete_kwargs["previous_response_id"], "resp_prev")
 
     def test_execute_plain_message_branch(self) -> None:
         stream_context = StreamRequestContext(
             instructions=None,
             model_raw="codex-1",
             model_name="codex-1",
-            previous_response_id=None,
             response_tools=[],
             reasoning_effort=None,
             reasoning_summary=None,
@@ -168,7 +165,6 @@ class GatewayStreamBranchExecutionTest(unittest.TestCase):
         self.assertEqual(complete_kwargs["message_id"], "msg_plain")
         self.assertEqual(complete_kwargs["chunks"], ["delta_1"])
         self.assertEqual(complete_kwargs["reasoning_chunks"], ["reason_1"])
-        self.assertIsNone(complete_kwargs["previous_response_id"])
 
 
 if __name__ == "__main__":

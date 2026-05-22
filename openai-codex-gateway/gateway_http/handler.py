@@ -106,7 +106,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 f"effort={request_context.reasoning_effort or 'none'}",
                 f"summary={request_context.reasoning_summary or 'none'}",
                 f"model={payload.get('model') if isinstance(payload.get('model'), str) else 'default'}",
-                f"prev_response={'yes' if isinstance(payload.get('previous_response_id'), str) and payload.get('previous_response_id') else 'no'}",
             )
 
             if request_context.stream:

@@ -19,7 +19,6 @@ def emit_response_created_event(
     *,
     send_event: Callable[[dict[str, Any]], None],
     response_obj: Callable[..., dict[str, Any]],
-    previous_response_id: str | None,
 ) -> None:
     send_event(
         {
@@ -27,7 +26,6 @@ def emit_response_created_event(
             "response": response_obj(
                 status="in_progress",
                 output=[],
-                previous_response_id=previous_response_id,
             ),
         }
     )

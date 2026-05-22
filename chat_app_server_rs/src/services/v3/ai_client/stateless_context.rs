@@ -16,7 +16,6 @@ impl AiClient {
         &self,
         session_id: Option<&str>,
         stable_prefix_mode: bool,
-        use_prev_id: bool,
         raw_input: &Value,
         force_text_content: bool,
         include_tool_items: bool,
@@ -24,7 +23,7 @@ impl AiClient {
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
     ) {
-        if !stable_prefix_mode || use_prev_id {
+        if !stable_prefix_mode {
             return;
         }
 

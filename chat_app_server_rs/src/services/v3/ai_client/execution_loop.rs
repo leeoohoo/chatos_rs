@@ -20,9 +20,7 @@ use tracing::warn;
 use super::compat::{log_usage_snapshot, rewrite_system_messages_to_user};
 use super::execution_loop_guidance::{load_runtime_guidance_input_items, prepend_input_items};
 use super::execution_loop_tool_io::build_tool_output_items;
-use super::prev_context::{
-    base_url_disallows_system_messages, should_disable_prev_id_for_prefixed_input_items,
-};
+use super::prev_context::base_url_disallows_system_messages;
 use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
 };
@@ -32,7 +30,6 @@ impl AiClient {
     pub(super) async fn process_with_tools(
         &mut self,
         input: Value,
-        previous_response_id: Option<String>,
         prompt_cache_key: Option<String>,
         tools: Vec<Value>,
         session_id: Option<String>,
@@ -47,13 +44,10 @@ impl AiClient {
         system_prompt: Option<String>,
         purpose: &str,
         iteration: i64,
-        use_prev_id: bool,
-        can_use_prev_id: bool,
         raw_input: Value,
         stable_prefix_mode: bool,
         force_text_content: bool,
         prefixed_input_items: Vec<Value>,
-        prefer_stateless: bool,
         _allow_tool_image_input: bool,
         _use_codex_gateway_mcp_passthrough: bool,
         message_mode: Option<String>,
@@ -63,9 +57,6 @@ impl AiClient {
         let include_tool_items = !tools.is_empty();
         let persist_tool_messages = purpose != "agent_builder";
         let mut input = input;
-        let mut previous_response_id = previous_response_id;
-        let mut use_prev_id = use_prev_id;
-        let mut can_use_prev_id = can_use_prev_id;
         let mut force_text_content = force_text_content;
         let mut iteration = iteration;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
@@ -76,22 +67,7 @@ impl AiClient {
                     .as_ref()
                     .map(|sid| self.no_system_message_sessions.contains(sid))
                     .unwrap_or(false);
-        if use_prev_id
-            && should_disable_prev_id_for_prefixed_input_items(prefixed_input_items.as_slice())
-        {
-            info!(
-                "[AI_V3] disable previous_response_id inside execution loop because runtime prefixed input items are present: session_id={}",
-                session_id.clone().unwrap_or_else(|| "n/a".to_string())
-            );
-            use_prev_id = false;
-            can_use_prev_id = false;
-            previous_response_id = None;
-        }
-        let mut stateless_context_items = if !use_prev_id {
-            input.as_array().cloned()
-        } else {
-            None
-        };
+        let mut stateless_context_items = input.as_array().cloned();
         let mut remote_active_summary_attempted = false;
         let mut non_terminal_empty_retry_count = 0usize;
         let max_non_terminal_empty_retries = 3usize;
@@ -140,7 +116,6 @@ impl AiClient {
             self.maybe_refresh_stateless_context(
                 session_id.as_deref(),
                 stable_prefix_mode,
-                use_prev_id,
                 &raw_input,
                 force_text_content,
                 include_tool_items,
@@ -162,7 +137,7 @@ impl AiClient {
                 if request_attempt_guard > max_request_attempts {
                     break;
                 }
-                let request_input_source = if use_prev_id && !runtime_guidance_items.is_empty() {
+                let request_input_source = if !runtime_guidance_items.is_empty() {
                     prepend_input_items(
                         &input,
                         runtime_guidance_items.as_slice(),
@@ -177,15 +152,7 @@ impl AiClient {
                     request_input_source
                 };
                 if let Some(cb) = &callbacks.on_before_model_request {
-                    cb(
-                        request_input.clone(),
-                        if use_prev_id {
-                            previous_response_id.clone()
-                        } else {
-                            None
-                        },
-                        None,
-                    );
+                    cb(request_input.clone(), None, None);
                 }
                 let stream_callbacks = if matches!(
                     task_follow_up_mode,
@@ -219,11 +186,6 @@ impl AiClient {
                         request_input,
                         model.clone(),
                         system_prompt.clone(),
-                        if use_prev_id {
-                            previous_response_id.clone()
-                        } else {
-                            None
-                        },
                         prompt_cache_key.clone(),
                         if tools.is_empty() {
                             None
@@ -264,10 +226,7 @@ impl AiClient {
                                 effective_prefixed_input_items.as_slice(),
                                 pending_tool_calls.as_ref(),
                                 pending_tool_outputs.as_ref(),
-                                &mut use_prev_id,
-                                &mut can_use_prev_id,
                                 &mut force_text_content,
-                                &mut previous_response_id,
                                 &mut no_system_messages,
                                 &mut remote_active_summary_attempted,
                                 &mut stateless_context_items,
@@ -335,9 +294,6 @@ impl AiClient {
                         pending_tool_calls.as_ref(),
                         pending_tool_outputs.as_ref(),
                         force_text_content,
-                        &mut use_prev_id,
-                        &mut can_use_prev_id,
-                        &mut previous_response_id,
                         &mut remote_active_summary_attempted,
                         &mut stateless_context_items,
                         &mut input,
@@ -393,9 +349,6 @@ impl AiClient {
                                 build_task_turn_review_retry_guidance(review_locale).as_str(),
                             );
                             input = retry_input;
-                            previous_response_id = ai_response.response_id.clone();
-                            use_prev_id = previous_response_id.is_some();
-                            can_use_prev_id = can_use_prev_id && use_prev_id;
                             stateless_context_items = input.as_array().cloned();
                             task_follow_up_mode = Some(TaskTurnFollowUpMode::ContinueExecution);
                             iteration += 1;
@@ -426,9 +379,6 @@ impl AiClient {
                         force_text_content,
                         &mut non_terminal_empty_retry_count,
                         max_non_terminal_empty_retries,
-                        &mut use_prev_id,
-                        &mut can_use_prev_id,
-                        &mut previous_response_id,
                         &mut stateless_context_items,
                         &mut input,
                         &mut iteration,
@@ -451,9 +401,6 @@ impl AiClient {
                         max_terminal_empty_retries,
                         pending_tool_calls.as_ref(),
                         pending_tool_outputs.as_ref(),
-                        &mut use_prev_id,
-                        &mut can_use_prev_id,
-                        &mut previous_response_id,
                         &mut stateless_context_items,
                         &mut input,
                         &mut iteration,
@@ -472,7 +419,7 @@ impl AiClient {
                     return Err(err);
                 }
 
-                if let (Some(sid), Some(tid), Some(resp_id)) = (
+                if let (Some(sid), Some(tid), Some(_resp_id)) = (
                     session_id.as_deref(),
                     turn_id.as_deref(),
                     ai_response.response_id.as_deref(),
@@ -500,9 +447,6 @@ impl AiClient {
                             let follow_up_input =
                                 build_task_turn_follow_up_message(directive.guidance.as_str());
                             input = follow_up_input;
-                            previous_response_id = Some(resp_id.to_string());
-                            use_prev_id = true;
-                            can_use_prev_id = can_use_prev_id && use_prev_id;
                             stateless_context_items = input.as_array().cloned();
                             iteration += 1;
                             continue;
@@ -558,7 +502,7 @@ impl AiClient {
             .persisted_results;
 
             let tool_outputs = build_tool_output_items(persisted_results.as_slice());
-            let (next_input, next_prev_id, next_use_prev_id) = self
+            let next_input = self
                 .advance_after_tool_execution(
                     &ai_response,
                     session_id.as_ref(),
@@ -567,9 +511,6 @@ impl AiClient {
                     force_text_content,
                     effective_prefixed_input_items.as_slice(),
                     include_tool_items,
-                    prefer_stateless,
-                    use_prev_id,
-                    &mut can_use_prev_id,
                     tool_call_items.as_slice(),
                     tool_outputs.as_slice(),
                     &mut stateless_context_items,
@@ -579,8 +520,6 @@ impl AiClient {
                 .await;
 
             input = next_input;
-            previous_response_id = next_prev_id;
-            use_prev_id = next_use_prev_id;
             iteration += 1;
         }
     }

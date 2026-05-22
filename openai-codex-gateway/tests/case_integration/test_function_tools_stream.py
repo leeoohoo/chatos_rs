@@ -152,7 +152,6 @@ def main() -> None:
 
     second_payload: dict[str, Any] = {
         "model": resolved_model,
-        "previous_response_id": first_response.id,
         "input": [
             *outputs,
             {

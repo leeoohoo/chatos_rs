@@ -30,7 +30,6 @@ def build_stream_envelope_setup(
         usage: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
         reasoning: str | None = None,
-        previous_response_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return build_stream_response_object(
@@ -43,7 +42,6 @@ def build_stream_envelope_setup(
             usage=usage,
             error=error,
             reasoning=reasoning,
-            previous_response_id=previous_response_id,
             metadata=metadata,
         )
 

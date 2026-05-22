@@ -49,7 +49,6 @@ class GatewayStreamLifecycleTest(unittest.TestCase):
         emit_response_created_event(
             send_event=send_event,
             response_obj=response_obj,
-            previous_response_id="resp_prev",
         )
 
         self.assertEqual(len(events), 1)
@@ -59,7 +58,6 @@ class GatewayStreamLifecycleTest(unittest.TestCase):
         if isinstance(response, dict):
             self.assertEqual(response["status"], "in_progress")
             self.assertEqual(response["output"], [])
-            self.assertEqual(response["previous_response_id"], "resp_prev")
 
     def test_persist_response_thread_mapping(self) -> None:
         store = FakeStore()

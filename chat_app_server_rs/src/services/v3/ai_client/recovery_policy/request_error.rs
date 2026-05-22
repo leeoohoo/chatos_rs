@@ -3,7 +3,7 @@ use tracing::warn;
 
 use super::super::prev_context::{
     is_context_length_exceeded_error, is_invalid_input_text_error, is_missing_tool_call_error,
-    is_system_messages_not_allowed_error, is_unsupported_previous_response_id_error,
+    is_system_messages_not_allowed_error,
 };
 use super::super::{normalize_input_to_text_value, AiClient};
 use super::support::{merge_pending_tool_items_into_stateless, replay_request_error_policy};
@@ -20,10 +20,7 @@ impl AiClient {
         prefixed_input_items: &[Value],
         pending_tool_calls: Option<&Vec<Value>>,
         pending_tool_outputs: Option<&Vec<Value>>,
-        use_prev_id: &mut bool,
-        can_use_prev_id: &mut bool,
         force_text_content: &mut bool,
-        previous_response_id: &mut Option<String>,
         no_system_messages: &mut bool,
         remote_active_summary_attempted: &mut bool,
         stateless_context_items: &mut Option<Vec<Value>>,
@@ -41,7 +38,7 @@ impl AiClient {
             return true;
         }
 
-        let request_replay = replay_request_error_policy(err_msg, *use_prev_id);
+        let request_replay = replay_request_error_policy(err_msg);
 
         if is_context_length_exceeded_error(err_msg)
             && self
@@ -59,40 +56,14 @@ impl AiClient {
                 )
                 .await
         {
-            *use_prev_id = false;
-            *can_use_prev_id = false;
-            *previous_response_id = None;
             return true;
         }
 
-        if request_replay.disable_prev_id && is_unsupported_previous_response_id_error(err_msg) {
-            if let Some(sid) = session_id {
-                self.prev_response_id_disabled_sessions.insert(sid.clone());
-            }
-            warn!("[AI_V3] previous_response_id unsupported; fallback to stateless mode");
-            *can_use_prev_id = false;
-            let stateless = self
-                .build_stateless_from_raw_input(
-                    session_id,
-                    raw_input,
-                    *force_text_content,
-                    stable_prefix_mode,
-                    include_tool_items,
-                    prefixed_input_items,
-                )
-                .await;
-            if !stateless.is_empty() {
-                *use_prev_id = false;
-                *previous_response_id = None;
-                *stateless_context_items = Some(stateless.clone());
-                *input = Value::Array(stateless);
-                return true;
-            }
-        }
-
-        if request_replay.disable_prev_id && is_missing_tool_call_error(err_msg) {
+        if request_replay.rebuild_stateless_on_missing_tool_call
+            && is_missing_tool_call_error(err_msg)
+        {
             warn!(
-                "[AI_V3] function_call_output missing matching tool call in previous response; fallback to stateless mode"
+                "[AI_V3] function_call_output missing matching tool call context; rebuild stateless input"
             );
             let mut stateless = if let Some(items) = stateless_context_items.clone() {
                 items
@@ -115,8 +86,6 @@ impl AiClient {
                 );
             }
             if !stateless.is_empty() {
-                *use_prev_id = false;
-                *previous_response_id = None;
                 *stateless_context_items = Some(stateless.clone());
                 *input = Value::Array(stateless);
                 return true;

@@ -49,7 +49,6 @@ class GatewayStreamFunctionToolsCompletionTest(unittest.TestCase):
             response_obj=lambda **kwargs: kwargs,
             result=result,
             provided_tool_outputs={"call_1": [{"type": "inputText", "text": "ok"}]},
-            previous_response_id="resp_prev",
             tool_message_id="msg_1",
             tool_chunks=["h"],
             reasoning_chunks=["r"],

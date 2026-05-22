@@ -41,7 +41,6 @@ class GatewayStreamBootstrapTest(unittest.TestCase):
 
         payload = {
             "model": "codex-mini",
-            "previous_response_id": "resp_prev",
             "tools": [{"type": "function", "name": "fn1"}],
             "reasoning": {"effort": "high", "summary": "concise"},
         }
@@ -62,7 +61,6 @@ class GatewayStreamBootstrapTest(unittest.TestCase):
 
         self.assertEqual(bootstrap.response_id, "resp_1")
         self.assertEqual(bootstrap.stream_context.model_name, "codex-mini")
-        self.assertEqual(bootstrap.stream_context.previous_response_id, "resp_prev")
 
         body = bootstrap.response_obj(status="in_progress", output=[])
         self.assertEqual(body["id"], "resp_1")

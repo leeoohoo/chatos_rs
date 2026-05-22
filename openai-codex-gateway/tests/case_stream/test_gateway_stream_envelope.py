@@ -50,14 +50,12 @@ class GatewayStreamEnvelopeTest(unittest.TestCase):
             usage={"total_tokens": 10},
             error={"message": "boom"},
             reasoning="trace",
-            previous_response_id="resp_prev",
             metadata={"thread_id": "thread_1"},
         )
 
         self.assertEqual(body["usage"]["total_tokens"], 10)
         self.assertEqual(body["error"]["message"], "boom")
         self.assertEqual(body["reasoning"], "trace")
-        self.assertEqual(body["previous_response_id"], "resp_prev")
         self.assertEqual(body["metadata"]["thread_id"], "thread_1")
 
 

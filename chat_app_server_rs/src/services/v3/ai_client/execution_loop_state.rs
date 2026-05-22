@@ -9,7 +9,6 @@ use crate::services::v3::ai_request_handler::AiResponse;
 
 use super::execution_loop_guidance::is_non_terminal_finish_reason;
 use super::input_transform::{build_current_input_items, to_message_item};
-use super::prev_context::should_use_prev_id_for_next_turn;
 use super::AiClient;
 
 impl AiClient {
@@ -27,9 +26,6 @@ impl AiClient {
         max_terminal_empty_retries: usize,
         pending_tool_calls: Option<&Vec<Value>>,
         pending_tool_outputs: Option<&Vec<Value>>,
-        use_prev_id: &mut bool,
-        can_use_prev_id: &mut bool,
-        previous_response_id: &mut Option<String>,
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
         iteration: &mut i64,
@@ -72,9 +68,6 @@ impl AiClient {
             return Ok(false);
         }
 
-        *use_prev_id = false;
-        *previous_response_id = None;
-
         let mut stateless = self
             .build_stateless_from_raw_input(
                 session_id,
@@ -114,9 +107,6 @@ impl AiClient {
         force_text_content: bool,
         non_terminal_empty_retry_count: &mut usize,
         max_non_terminal_empty_retries: usize,
-        use_prev_id: &mut bool,
-        can_use_prev_id: &mut bool,
-        previous_response_id: &mut Option<String>,
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
         iteration: &mut i64,
@@ -154,30 +144,22 @@ impl AiClient {
             ));
         }
 
-        if *use_prev_id {
-            warn!(
-                "[AI_V3] disable previous_response_id after non-terminal empty response: session_id={}",
-                session_id.map(|value| value.as_str()).unwrap_or("n/a")
-            );
-            *use_prev_id = false;
-            *previous_response_id = None;
-            let stateless = if let Some(items) = stateless_context_items.clone() {
-                items
-            } else {
-                self.build_stateless_from_raw_input(
-                    session_id,
-                    raw_input,
-                    force_text_content,
-                    stable_prefix_mode,
-                    include_tool_items,
-                    prefixed_input_items,
-                )
-                .await
-            };
-            if !stateless.is_empty() {
-                *stateless_context_items = Some(stateless.clone());
-                *input = Value::Array(stateless);
-            }
+        let stateless = if let Some(items) = stateless_context_items.clone() {
+            items
+        } else {
+            self.build_stateless_from_raw_input(
+                session_id,
+                raw_input,
+                force_text_content,
+                stable_prefix_mode,
+                include_tool_items,
+                prefixed_input_items,
+            )
+            .await
+        };
+        if !stateless.is_empty() {
+            *stateless_context_items = Some(stateless.clone());
+            *input = Value::Array(stateless);
         }
 
         let backoff_ms = 200_u64 * *non_terminal_empty_retry_count as u64;
@@ -195,33 +177,17 @@ impl AiClient {
         force_text_content: bool,
         prefixed_input_items: &[Value],
         include_tool_items: bool,
-        prefer_stateless: bool,
-        use_prev_id: bool,
-        can_use_prev_id: &mut bool,
         tool_call_items: &[Value],
         tool_outputs: &[Value],
         stateless_context_items: &mut Option<Vec<Value>>,
         pending_tool_calls: &mut Option<Vec<Value>>,
         pending_tool_outputs: &mut Option<Vec<Value>>,
-    ) -> (Value, Option<String>, bool) {
+    ) -> Value {
         *pending_tool_outputs = Some(tool_outputs.to_vec());
         *pending_tool_calls = Some(tool_call_items.to_vec());
 
         let assistant_item =
             build_assistant_response_item(ai_response.content.as_str(), force_text_content);
-        let response_id = ai_response.response_id.clone();
-        let would_use_prev_id = should_use_prev_id_for_next_turn(
-            prefer_stateless,
-            *can_use_prev_id,
-            response_id.is_some(),
-        );
-        if would_use_prev_id {
-            warn!(
-                "[AI_V3] tool execution completed; continue with previous_response_id and incremental function_call_output items"
-            );
-        } else if use_prev_id && response_id.is_none() {
-            warn!("[AI_V3] missing response_id for tool call; fallback to stateless input");
-        }
 
         let current_items = build_current_input_items(raw_input, force_text_content);
         let stateless = if session_id.is_some() {
@@ -267,15 +233,7 @@ impl AiClient {
         };
         *stateless_context_items = Some(stateless.clone());
 
-        if would_use_prev_id {
-            return (
-                Value::Array(tool_outputs.to_vec()),
-                response_id,
-                true,
-            );
-        }
-
-        (Value::Array(stateless), None, false)
+        Value::Array(stateless)
     }
 }
 

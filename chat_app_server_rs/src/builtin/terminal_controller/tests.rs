@@ -111,6 +111,17 @@ fn terminal_controller_registers_process_tools() {
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("execute_command"))
         .and_then(|tool| tool.get("inputSchema"))
         .expect("execute_command schema");
+    let execute_required = execute_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        execute_required
+            .iter()
+            .all(|value| value.as_str() != Some("path")),
+        "execute_command should not require path"
+    );
     let has_background = execute_schema
         .get("properties")
         .and_then(Value::as_object)

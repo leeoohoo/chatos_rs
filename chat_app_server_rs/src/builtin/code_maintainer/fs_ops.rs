@@ -1,7 +1,7 @@
 use super::utils::{ensure_path_inside_root, is_binary_buffer, sha256_bytes};
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
 use crate::services::workspace_search::{
-    search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_VISITS,
+    search_text as search_workspace_text, SearchMatch, TextSearchRequest, DEFAULT_MAX_VISITS,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -147,10 +147,23 @@ impl FsOps {
         max_results: Option<usize>,
     ) -> Result<Vec<SearchResult>, String> {
         let root = self.resolve_path(rel_path)?;
+        let limit = max_results.unwrap_or(self.search_limit);
+        if root.is_file() {
+            let entries = search_text_in_file(root.as_path(), self.root.as_path(), pattern, limit)?;
+            return Ok(entries
+                .into_iter()
+                .map(|entry| SearchResult {
+                    path: entry.relative_path,
+                    line: entry.line,
+                    text: entry.text,
+                })
+                .collect());
+        }
+
         let outcome = search_workspace_text(&TextSearchRequest {
             root,
             query: pattern.to_string(),
-            max_results: max_results.unwrap_or(self.search_limit),
+            max_results: limit,
             max_file_bytes: self.max_file_bytes.max(0) as u64,
             max_visits: DEFAULT_MAX_VISITS,
             case_sensitive: true,
@@ -262,6 +275,50 @@ pub struct WriteResult {
     pub path: String,
 }
 
+fn search_text_in_file(
+    file_path: &Path,
+    workspace_root: &Path,
+    pattern: &str,
+    max_results: usize,
+) -> Result<Vec<SearchMatch>, String> {
+    let query = pattern.trim();
+    if query.is_empty() {
+        return Err("搜索关键字不能为空".to_string());
+    }
+
+    let buffer = fs::read(file_path).map_err(|err| err.to_string())?;
+    if is_binary_buffer(&buffer) {
+        return Err("Binary file not supported.".to_string());
+    }
+
+    let content = std::str::from_utf8(&buffer).map_err(|err| err.to_string())?;
+    let relative_path = pathdiff::diff_paths(file_path, workspace_root)
+        .unwrap_or_else(|| file_path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let mut entries = Vec::new();
+    let limit = max_results.clamp(1, crate::services::workspace_search::MAX_RESULTS);
+
+    for (index, line) in content.split('\n').enumerate() {
+        if entries.len() >= limit {
+            break;
+        }
+        let normalized = line.trim_end_matches('\r');
+        if !normalized.contains(query) {
+            continue;
+        }
+        entries.push(SearchMatch {
+            path: file_path.to_string_lossy().to_string(),
+            relative_path: relative_path.clone(),
+            line: index + 1,
+            column: normalized.find(query).map(|offset| offset + 1).unwrap_or(1),
+            text: normalized.to_string(),
+        });
+    }
+
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::FsOps;
@@ -311,6 +368,24 @@ mod tests {
             .expect("delete with backslash path");
         assert!(deleted.deleted);
         assert!(!file_path.exists());
+
+        fs::remove_dir_all(&root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn search_text_accepts_file_path() {
+        let root = make_temp_root();
+        let file_path = root.join("notes.txt");
+        fs::write(&file_path, "alpha\nbeta alias\ngamma alias\n").expect("write search file");
+
+        let fs_ops = FsOps::new(root.clone(), true, 1024 * 1024, 1024 * 1024, 100);
+        let results = fs_ops
+            .search_text("alias", "notes.txt", Some(10))
+            .expect("search file path");
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|entry| entry.path == "notes.txt"));
+        assert_eq!(results[0].line, 2);
 
         fs::remove_dir_all(&root).expect("cleanup temp root");
     }

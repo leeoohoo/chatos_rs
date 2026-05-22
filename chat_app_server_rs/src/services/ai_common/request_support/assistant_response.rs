@@ -4,7 +4,7 @@ use serde_json::Value;
 use tracing::{error, info};
 
 use crate::core::messages::{
-    object_string_alias, optional_text_has_content, select_preferred_text, text_has_content,
+    optional_text_has_content, select_preferred_text, text_has_content,
 };
 use crate::core::tool_call::tool_calls_value_has_items;
 
@@ -213,23 +213,6 @@ pub(crate) async fn persist_assistant_response_with_policy<F, Fut>(
             request.response_status.as_deref().unwrap_or("none")
         );
     }
-}
-
-pub(crate) fn extract_response_status_from_metadata(metadata: &Value) -> Option<&str> {
-    object_string_alias(
-        metadata,
-        &[
-            "response_status",
-            "responseStatus",
-            "finish_reason",
-            "finishReason",
-            "status",
-        ],
-    )
-}
-
-pub(crate) fn extract_response_id_from_metadata(metadata: &Value) -> Option<&str> {
-    object_string_alias(metadata, &["response_id", "responseId"])
 }
 
 pub(crate) fn is_non_terminal_response_status(status: Option<&str>) -> bool {

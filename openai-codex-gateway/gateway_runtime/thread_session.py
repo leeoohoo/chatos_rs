@@ -59,47 +59,9 @@ def resolve_thread_id(
     *,
     client: Any,
     store: Any,
-    previous_response_id: str | None,
     thread_session_params: dict[str, Any],
     expected_resume_fingerprint: str,
 ) -> str:
-    expected_instructions_fingerprint = instructions_fingerprint(
-        thread_session_params.get("baseInstructions")
-        if isinstance(thread_session_params.get("baseInstructions"), str)
-        else None
-    )
-    if previous_response_id:
-        binding = (
-            store.get_thread_binding(previous_response_id)
-            if hasattr(store, "get_thread_binding")
-            else None
-        )
-        if binding is None:
-            resumed_thread = store.get_thread(previous_response_id)
-            binding = (
-                {
-                    "thread_id": resumed_thread,
-                    "instructions_fingerprint": "",
-                }
-                if resumed_thread
-                else None
-            )
-        if not binding or not binding.get("thread_id"):
-            raise ValueError(f"unknown previous_response_id: {previous_response_id}")
-        stored_resume_fingerprint = binding.get("resume_fingerprint", "")
-        stored_instructions_fingerprint = binding.get("instructions_fingerprint", "")
-        can_resume = (
-            stored_resume_fingerprint == expected_resume_fingerprint
-            if stored_resume_fingerprint
-            else stored_instructions_fingerprint == expected_instructions_fingerprint
-        )
-        if can_resume:
-            resumed = client.thread_resume(binding["thread_id"], thread_session_params)
-            return resumed.thread.id
-
-        started = client.thread_start(thread_session_params)
-        return started.thread.id
-
     started = client.thread_start(thread_session_params)
     return started.thread.id
 

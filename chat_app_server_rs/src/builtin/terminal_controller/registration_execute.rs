@@ -3,7 +3,6 @@ use serde_json::json;
 use crate::core::tool_registry::async_text_tool_handler_with_optional_string;
 
 use super::actions::actions_execute::execute_command_with_context;
-use super::context::required_trimmed_string;
 use super::{BoundContext, TerminalControllerService};
 
 impl TerminalControllerService {
@@ -18,7 +17,7 @@ impl TerminalControllerService {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Local directory path under project root."
+                        "description": "Local directory path under project root. Defaults to project root when omitted."
                     },
                     "common": {
                         "type": "string",
@@ -34,11 +33,16 @@ impl TerminalControllerService {
                         "description": "When true, return immediately and use process_poll/process_wait to track progress."
                     }
                 },
-                "additionalProperties": false,
-                "required": ["path"]
+                "additionalProperties": false
             }),
             async_text_tool_handler_with_optional_string(move |args, _conversation_id| {
-                let path = required_trimmed_string(&args, "path")?;
+                let path = args
+                    .get("path")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(".")
+                    .to_string();
                 let command = args
                     .get("common")
                     .and_then(|value| value.as_str())

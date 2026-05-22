@@ -33,7 +33,6 @@ def main() -> None:
 
     second_payload: dict[str, Any] = {
         "input": "我叫什么名字？只回复名字，不要解释。",
-        "previous_response_id": first.id,
     }
     if model:
         second_payload["model"] = model

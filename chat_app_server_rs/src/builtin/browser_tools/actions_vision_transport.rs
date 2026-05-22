@@ -218,7 +218,6 @@ async fn run_browser_vision_with_responses(
             None,
             None,
             None,
-            None,
             Some(candidate.temperature),
             Some(DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS),
             v3_ai_request_handler::StreamCallbacks::default(),

@@ -43,7 +43,6 @@ class GatewayResponseBuilderTest(unittest.TestCase):
             response_id="resp_1",
             model_name="codex-mini",
             result=result,
-            previous_response_id="resp_prev",
             response_tools=[{"type": "function"}],
             provided_tool_outputs={},
             message_id="msg_1",
@@ -81,7 +80,6 @@ class GatewayResponseBuilderTest(unittest.TestCase):
             response_id="resp_2",
             model_name="codex-default",
             result=result,
-            previous_response_id=None,
             response_tools=[],
             provided_tool_outputs={},
             message_id="msg_2",
@@ -114,7 +112,6 @@ class GatewayResponseBuilderTest(unittest.TestCase):
         self.assertNotIn("error", minimal)
         self.assertNotIn("reasoning", minimal)
         self.assertNotIn("metadata", minimal)
-        self.assertNotIn("previous_response_id", minimal)
 
         full = build_stream_response_object(
             response_id="resp_stream_2",
@@ -126,14 +123,12 @@ class GatewayResponseBuilderTest(unittest.TestCase):
             usage={"total_tokens": 10},
             error={"message": "boom"},
             reasoning="trace",
-            previous_response_id="resp_prev",
             metadata={"thread_id": "thread_3"},
         )
 
         self.assertEqual(full["usage"]["total_tokens"], 10)
         self.assertEqual(full["error"]["message"], "boom")
         self.assertEqual(full["reasoning"], "trace")
-        self.assertEqual(full["previous_response_id"], "resp_prev")
         self.assertEqual(full["metadata"]["thread_id"], "thread_3")
 
     def test_build_stream_message_item(self) -> None:

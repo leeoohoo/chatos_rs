@@ -119,7 +119,6 @@ pub struct TurnRuntimeSnapshotRuntimeDto {
     pub unavailable_builtin_tools: Vec<TurnRuntimeSnapshotUnavailableToolDto>,
     pub builtin_mcp_prompt: Option<TurnRuntimeSnapshotBuiltinMcpPromptDto>,
     pub actual_context_mode: Option<String>,
-    pub actual_previous_response_id: Option<String>,
     #[serde(default)]
     pub actual_context_items: Vec<TurnRuntimeSnapshotContextItemDto>,
 }

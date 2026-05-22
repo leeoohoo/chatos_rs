@@ -18,17 +18,14 @@ impl AiClient {
         pending_tool_calls: Option<&Vec<Value>>,
         pending_tool_outputs: Option<&Vec<Value>>,
         force_text_content: bool,
-        use_prev_id: &mut bool,
-        can_use_prev_id: &mut bool,
-        previous_response_id: &mut Option<String>,
         remote_active_summary_attempted: &mut bool,
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
         callbacks: &AiClientCallbacks,
     ) -> bool {
-        if *use_prev_id && is_missing_tool_call_error(err_msg) {
+        if is_missing_tool_call_error(err_msg) {
             warn!(
-                "[AI_V3] completion failed due to missing tool call context; fallback to stateless mode"
+                "[AI_V3] completion failed due to missing tool call context; rebuild stateless input"
             );
             let mut stateless = if let Some(items) = stateless_context_items.clone() {
                 items
@@ -51,8 +48,6 @@ impl AiClient {
                 );
             }
             if !stateless.is_empty() {
-                *use_prev_id = false;
-                *previous_response_id = None;
                 *stateless_context_items = Some(stateless.clone());
                 *input = Value::Array(stateless);
                 return true;
@@ -75,9 +70,6 @@ impl AiClient {
                 )
                 .await
         {
-            *use_prev_id = false;
-            *can_use_prev_id = false;
-            *previous_response_id = None;
             return true;
         }
 
