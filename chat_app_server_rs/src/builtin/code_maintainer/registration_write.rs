@@ -196,7 +196,24 @@ fn register_edit_file_tool(
                     after_context,
                     expected_matches,
                 },
-            )?;
+            )
+            .map_err(|err| {
+                if err.contains("old_text not found in file.") || err.contains("expected_matches mismatch") {
+                    let hint = json!({
+                        "error": err,
+                        "recovery": {
+                            "recommended_next_tools": [
+                                "read_file_raw",
+                                "read_file_range"
+                            ],
+                            "guidance": "File content likely changed. Re-read latest file content, then retry edit with tighter before_context/after_context or line range."
+                        }
+                    });
+                    serde_json::to_string(&hint).unwrap_or(err)
+                } else {
+                    err
+                }
+            })?;
 
             let updated_content = edit_result.content.clone();
             let write_result = fs_ops.write_file(path, &updated_content)?;
@@ -417,7 +434,23 @@ fn register_apply_patch_tool(
                     read_text_for_diff(&before_path, max_file_bytes).unwrap_or_else(DiffInput::omitted);
                 before_snapshots.insert(target.after_path, before_snapshot);
             }
-            let result = apply_patch(&root, patch_text, allow_writes)?;
+            let result = apply_patch(&root, patch_text, allow_writes).map_err(|err| {
+                if err.contains("Patch context not found in file.") {
+                    let hint = json!({
+                        "error": err,
+                        "recovery": {
+                            "recommended_next_tools": [
+                                "read_file_raw",
+                                "read_file_range"
+                            ],
+                            "guidance": "Patch context is stale. Re-read target files and regenerate patch with exact current lines."
+                        }
+                    });
+                    serde_json::to_string(&hint).unwrap_or(err)
+                } else {
+                    err
+                }
+            })?;
             let mut hashes = Vec::new();
 
             {

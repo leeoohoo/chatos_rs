@@ -40,6 +40,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   isLoading = false,
   isStreaming = false,
   isStopping = false,
+  streamingPhase = null,
   streamingPreviewText = '',
   hasMore = false,
   onLoadMore,
@@ -178,7 +179,11 @@ const MessageListComponent: React.FC<MessageListProps> = ({
           <div className="flex justify-start">
             <div className="w-fit min-w-[16rem] max-w-[78vw] rounded-lg border border-border bg-muted/40 px-3 py-3">
               <span className="block text-[11px] text-muted-foreground">
-                {isStopping ? t('messageList.aiStopping') : t('messageList.aiThinking')}
+                {isStopping
+                  ? t('messageList.aiStopping')
+                  : (streamingPhase === 'reviewing'
+                    ? t('messageList.aiReviewing')
+                    : t('messageList.aiThinking'))}
               </span>
               {hasPreviewSentence ? (
                 <div
@@ -224,6 +229,7 @@ const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: Messag
   && (prevProps.isLoading ?? false) === (nextProps.isLoading ?? false)
   && (prevProps.isStreaming ?? false) === (nextProps.isStreaming ?? false)
   && (prevProps.isStopping ?? false) === (nextProps.isStopping ?? false)
+  && (prevProps.streamingPhase ?? null) === (nextProps.streamingPhase ?? null)
   && (prevProps.streamingPreviewText ?? '') === (nextProps.streamingPreviewText ?? '')
   && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
   && prevProps.onLoadMore === nextProps.onLoadMore

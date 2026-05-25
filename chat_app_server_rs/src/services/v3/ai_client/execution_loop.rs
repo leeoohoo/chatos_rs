@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 use tracing::info;
 
 use crate::core::tool_call::tool_calls_value_has_items;
@@ -8,7 +8,7 @@ use crate::modules::conversation_runtime::task_board::{
     parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode, TaskTurnReviewOutcome,
 };
 use crate::services::ai_common::{
-    build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
+    attach_ai_client_success_extra, build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
     handle_transient_retry, is_retryable_provider_overload_error, terminal_empty_response_error,
 };
 use crate::services::v3::ai_request_handler::StreamCallbacks;
@@ -24,6 +24,51 @@ use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
 };
 use super::{build_current_input_items, AiClient, AiClientCallbacks};
+
+fn emit_turn_phase_event(
+    callbacks: &AiClientCallbacks,
+    phase: &'static str,
+    mode: Option<TaskTurnFollowUpMode>,
+    iteration: i64,
+) {
+    if let Some(cb) = &callbacks.on_turn_phase {
+        cb(json!({
+            "phase": phase,
+            "reason": "task_follow_up",
+            "task_follow_up_mode": mode.map(|item| match item {
+                TaskTurnFollowUpMode::ContinueExecution => "continue",
+                TaskTurnFollowUpMode::ReviewExecution => "review",
+            }),
+            "iteration": iteration
+        }));
+    }
+}
+
+fn build_review_metadata_payload(
+    attempted: bool,
+    outcome: &str,
+    rounds: usize,
+) -> Value {
+    json!({
+        "task_turn_review": {
+            "attempted": attempted,
+            "outcome": outcome,
+            "rounds": rounds
+        }
+    })
+}
+
+fn attach_review_metadata(
+    payload: Value,
+    attempted: bool,
+    outcome: &str,
+    rounds: usize,
+) -> Value {
+    attach_ai_client_success_extra(
+        payload,
+        build_review_metadata_payload(attempted, outcome, rounds),
+    )
+}
 
 impl AiClient {
     pub(super) async fn process_with_tools(
@@ -84,6 +129,8 @@ impl AiClient {
         let mut last_visible_completion_content: Option<String> = None;
         let mut last_visible_completion_reasoning: Option<String> = None;
         let mut last_visible_completion_finish_reason: Option<String> = None;
+        let mut review_attempted = false;
+        let mut review_last_outcome: Option<&'static str> = None;
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -216,6 +263,7 @@ impl AiClient {
                         message_mode.clone(),
                         message_source.clone(),
                         request_metadata,
+                        callbacks.on_before_send_model_request.clone(),
                         purpose,
                     )
                     .await;
@@ -334,7 +382,8 @@ impl AiClient {
                 let review_locale = task_follow_up_locale
                     .take()
                     .unwrap_or(crate::core::internal_context_locale::InternalContextLocale::ZhCn);
-                match parse_task_turn_review_outcome(ai_response.content.as_str()) {
+                let review_outcome = parse_task_turn_review_outcome(ai_response.content.as_str());
+                match review_outcome {
                     TaskTurnReviewOutcome::Pass => {
                         let final_content = last_visible_completion_content
                             .clone()
@@ -345,14 +394,25 @@ impl AiClient {
                         let final_finish_reason = last_visible_completion_finish_reason
                             .clone()
                             .or(ai_response.finish_reason.clone());
-                        return Ok(build_ai_client_success_payload(
-                            final_content,
-                            final_reasoning,
-                            final_finish_reason,
-                            iteration,
+                        return Ok(attach_review_metadata(
+                            build_ai_client_success_payload(
+                                final_content,
+                                final_reasoning,
+                                final_finish_reason,
+                                iteration,
+                            ),
+                            true,
+                            "pass",
+                            task_follow_up_rounds,
                         ));
                     }
                     TaskTurnReviewOutcome::NeedsMoreWork | TaskTurnReviewOutcome::Unknown => {
+                        review_attempted = true;
+                        review_last_outcome = Some(match review_outcome {
+                            TaskTurnReviewOutcome::NeedsMoreWork => "needs_more_work",
+                            TaskTurnReviewOutcome::Unknown => "unknown",
+                            TaskTurnReviewOutcome::Pass => "pass",
+                        });
                         if task_follow_up_rounds < max_task_follow_up_rounds {
                             task_follow_up_rounds += 1;
                             if let Some(cb) = &callbacks.on_thinking {
@@ -366,6 +426,12 @@ impl AiClient {
                                 force_text_content,
                             ));
                             task_follow_up_mode = Some(TaskTurnFollowUpMode::ContinueExecution);
+                            emit_turn_phase_event(
+                                &callbacks,
+                                "execution",
+                                task_follow_up_mode,
+                                iteration,
+                            );
                             iteration += 1;
                             continue;
                         }
@@ -449,6 +515,15 @@ impl AiClient {
                             task_follow_up_rounds += 1;
                             task_follow_up_mode = Some(directive.mode);
                             task_follow_up_locale = Some(directive.locale);
+                            emit_turn_phase_event(
+                                &callbacks,
+                                match directive.mode {
+                                    TaskTurnFollowUpMode::ContinueExecution => "execution",
+                                    TaskTurnFollowUpMode::ReviewExecution => "review",
+                                },
+                                task_follow_up_mode,
+                                iteration,
+                            );
                             if let Some(cb) = &callbacks.on_thinking {
                                 cb(match directive.mode {
                                     TaskTurnFollowUpMode::ContinueExecution => {
@@ -471,11 +546,16 @@ impl AiClient {
                     }
                 }
 
-                return Ok(build_ai_client_success_payload(
-                    ai_response.content,
-                    ai_response.reasoning,
-                    ai_response.finish_reason,
-                    iteration,
+                return Ok(attach_review_metadata(
+                    build_ai_client_success_payload(
+                        ai_response.content,
+                        ai_response.reasoning,
+                        ai_response.finish_reason,
+                        iteration,
+                    ),
+                    review_attempted,
+                    review_last_outcome.unwrap_or("not_attempted"),
+                    task_follow_up_rounds,
                 ));
             }
 

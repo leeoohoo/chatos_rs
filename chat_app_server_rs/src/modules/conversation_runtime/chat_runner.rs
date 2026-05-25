@@ -12,6 +12,7 @@ use crate::core::chat_stream::{
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::v2::ai_server::AiServer as AiServerV2;
 use crate::services::v3::ai_server::AiServer as AiServerV3;
+use crate::utils::abort_registry;
 use crate::utils::log_helpers::log_chat_begin;
 use crate::utils::sse::SseSender;
 
@@ -119,10 +120,11 @@ pub fn prepare_chat_execution(
         &mut callbacks,
         runtime_context.selected_commands_for_snapshot.clone(),
     );
+    let live_request_snapshot_for_context = live_request_snapshot.clone();
     callbacks.on_before_model_request = Some(Arc::new(
         move |request_input, _, override_context| {
             let snapshot_context =
-                override_context.unwrap_or_else(|| live_request_snapshot.clone());
+                override_context.unwrap_or_else(|| live_request_snapshot_for_context.clone());
             let mode = actual_context_mode.to_string();
             tokio::spawn(async move {
                 let actual_request =
@@ -135,6 +137,7 @@ pub fn prepare_chat_execution(
                         request_input.as_array().map(|items| items.as_slice()).unwrap_or(&[]),
                     )
                         },
+                        model_request_payload: None,
                     };
                 let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
                     &snapshot_context,
@@ -144,6 +147,38 @@ pub fn prepare_chat_execution(
             });
         },
     ));
+    let live_request_snapshot_for_payload = live_request_snapshot.clone();
+    callbacks.on_before_send_model_request = Some(Arc::new(move |payload| {
+        let snapshot_context = live_request_snapshot_for_payload.clone();
+        let mode = actual_context_mode.to_string();
+        tokio::spawn(async move {
+            let actual_request =
+                crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
+                    context_mode: Some(mode.clone()),
+                    items: if mode == "v3" {
+                        crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(
+                            payload
+                                .get("input")
+                                .unwrap_or(&Value::Null),
+                        )
+                    } else {
+                        crate::modules::conversation_runtime::snapshot::actual_context_items_from_v2_messages(
+                            payload
+                                .get("messages")
+                                .and_then(Value::as_array)
+                                .map(|items| items.as_slice())
+                                .unwrap_or(&[]),
+                        )
+                    },
+                    model_request_payload: Some(payload),
+                };
+            let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
+                &snapshot_context,
+                &actual_request,
+            )
+            .await;
+        });
+    }));
 
     PreparedChatExecution {
         sink,
@@ -480,15 +515,12 @@ where
     .await;
 
     let result = execute_chat.await;
+    let terminal_status = resolve_terminal_snapshot_status(config.session_id, &result);
 
     sync_execution_snapshot(
         config.session_id,
         config.turn_id,
-        if result.is_ok() {
-            "completed"
-        } else {
-            "failed"
-        },
+        terminal_status,
         config.user_message_id,
         config.model_runtime.model.as_str(),
         config.model_runtime.provider.as_str(),
@@ -499,4 +531,52 @@ where
     .await;
 
     result
+}
+
+fn resolve_terminal_snapshot_status(session_id: &str, result: &Result<Value, String>) -> &'static str {
+    if abort_registry::is_aborted(session_id)
+        || matches!(result, Err(err) if err.trim().eq_ignore_ascii_case("aborted"))
+    {
+        "cancelled"
+    } else if result.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::resolve_terminal_snapshot_status;
+    use crate::utils::abort_registry;
+
+    #[test]
+    fn resolve_terminal_snapshot_status_marks_aborted_error_as_cancelled() {
+        let status = resolve_terminal_snapshot_status("session_abort_status_err", &Err("aborted".to_string()));
+        assert_eq!(status, "cancelled");
+    }
+
+    #[test]
+    fn resolve_terminal_snapshot_status_marks_aborted_registry_as_cancelled() {
+        let session_id = "session_abort_status_registry";
+        abort_registry::clear(session_id);
+        assert!(abort_registry::abort(session_id));
+        let status = resolve_terminal_snapshot_status(session_id, &Ok(json!({"ok": true})));
+        assert_eq!(status, "cancelled");
+        abort_registry::clear(session_id);
+    }
+
+    #[test]
+    fn resolve_terminal_snapshot_status_preserves_normal_results() {
+        assert_eq!(
+            resolve_terminal_snapshot_status("session_abort_status_ok", &Ok(json!({"ok": true}))),
+            "completed"
+        );
+        assert_eq!(
+            resolve_terminal_snapshot_status("session_abort_status_fail", &Err("boom".to_string())),
+            "failed"
+        );
+    }
 }

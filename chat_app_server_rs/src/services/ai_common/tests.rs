@@ -185,6 +185,34 @@ fn build_ai_client_success_payload_preserves_response_shape() {
 }
 
 #[test]
+fn attach_ai_client_success_extra_merges_fields() {
+    let payload = build_ai_client_success_payload(
+        "hello".to_string(),
+        Some("think".to_string()),
+        Some("stop".to_string()),
+        2,
+    );
+    let merged = attach_ai_client_success_extra(
+        payload,
+        json!({
+            "task_turn_review": {
+                "attempted": true,
+                "outcome": "pass",
+                "rounds": 1
+            }
+        }),
+    );
+    assert_eq!(
+        merged
+            .get("task_turn_review")
+            .and_then(|value| value.get("outcome"))
+            .and_then(Value::as_str),
+        Some("pass")
+    );
+    assert_eq!(merged.get("content").and_then(Value::as_str), Some("hello"));
+}
+
+#[test]
 fn parsed_stream_response_is_empty_only_when_everything_is_blank() {
     assert!(parsed_stream_response_is_empty(0, " ", "\n", false));
     assert!(!parsed_stream_response_is_empty(1, "", "", false));

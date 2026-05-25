@@ -42,6 +42,7 @@ interface SummaryPaneProps {
   isLoading: boolean;
   isStreaming: boolean;
   isStopping: boolean;
+  streamingPhase?: 'thinking' | 'reviewing' | null;
   streamingPreviewText?: string;
   hasMore: boolean;
   onLoadMore: () => void;
@@ -76,6 +77,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
   isLoading,
   isStreaming,
   isStopping,
+  streamingPhase = null,
   streamingPreviewText = '',
   hasMore,
   onLoadMore,
@@ -195,6 +197,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         isLoading={isLoading}
         isStreaming={isStreaming}
         isStopping={isStopping}
+        streamingPhase={streamingPhase}
         streamingPreviewText={streamingPreviewText}
         hasMore={hasMore}
         onLoadMore={onLoadMore}

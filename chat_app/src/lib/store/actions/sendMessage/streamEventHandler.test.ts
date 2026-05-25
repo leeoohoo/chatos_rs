@@ -208,12 +208,22 @@ describe('handleStreamEvent', () => {
 
   it('falls back to complete content only when no streamed text exists', () => {
     const helpers = buildHelpers();
+    const set = vi.fn((updater) => {
+      updater({
+        currentSessionId: 'session_1',
+        sessionChatState: {
+          session_1: {
+            streamingPhase: 'reviewing',
+          },
+        },
+      });
+    });
     const result = handleStreamEvent({
       parsed: {
         type: 'complete',
         result: { content: '最终完整内容' },
       } as StreamEventPayload,
-      set: vi.fn(),
+      set,
       currentSessionId: 'session_1',
       conversationTurnId: 'turn_1',
       tempAssistantMessageId: 'assistant_1',
@@ -224,6 +234,44 @@ describe('handleStreamEvent', () => {
     expect(result.sawDone).toBe(true);
     expect(helpers.flushPendingTextToStreamingMessage).toHaveBeenCalledTimes(2);
     expect(helpers.applyCompleteContent).toHaveBeenCalledWith('最终完整内容');
+  });
+
+  it('applies reviewing phase when turn_phase review event arrives', () => {
+    const helpers = buildHelpers();
+    const state = {
+      currentSessionId: 'session_1',
+      isLoading: true,
+      isStreaming: true,
+      sessionChatState: {
+        session_1: {
+          streamingPhase: 'thinking',
+        },
+      },
+    } as {
+      currentSessionId: string;
+      isLoading: boolean;
+      isStreaming: boolean;
+      sessionChatState: Record<string, { streamingPhase: string | null }>;
+    };
+    const set = vi.fn((updater) => {
+      updater(state);
+    });
+
+    const result = handleStreamEvent({
+      parsed: {
+        type: 'turn_phase',
+        data: { phase: 'review' },
+      } as StreamEventPayload,
+      set,
+      currentSessionId: 'session_1',
+      conversationTurnId: 'turn_1',
+      tempAssistantMessageId: 'assistant_1',
+      streamedTextRef: { value: '' },
+      helpers,
+    });
+
+    expect(result.sawMeaningfulStreamData).toBe(true);
+    expect(state.sessionChatState.session_1.streamingPhase).toBe('reviewing');
   });
 
   it('does not persist unavailable tools when payload adds no new entries', () => {

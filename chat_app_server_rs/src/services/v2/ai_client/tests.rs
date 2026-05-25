@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use serde_json::{json, Value};
 
 use super::test_support::{
@@ -85,6 +87,13 @@ async fn task_follow_up_continues_same_turn_until_unfinished_tasks_finish() {
     server.abort();
 
     assert_eq!(result.get("content").and_then(Value::as_str), Some("continue work"));
+    assert_eq!(
+        result
+            .get("task_turn_review")
+            .and_then(|value| value.get("outcome"))
+            .and_then(Value::as_str),
+        Some("pass")
+    );
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 3);
@@ -136,6 +145,16 @@ async fn task_follow_up_reviews_same_turn_when_work_is_done() {
     ];
     let (base_url, captured, server) = start_mock_provider(steps).await;
     let mut client = build_test_client_with_max_iterations(base_url, 4);
+    let phase_events = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let callbacks = AiClientCallbacks {
+        on_turn_phase: Some({
+            let phase_events = phase_events.clone();
+            Arc::new(move |payload: Value| {
+                phase_events.lock().expect("lock poisoned").push(payload);
+            })
+        }),
+        ..empty_callbacks()
+    };
 
     let result = client
         .process_request(
@@ -146,7 +165,7 @@ async fn task_follow_up_reviews_same_turn_when_work_is_done() {
             0.7,
             None,
             false,
-            empty_callbacks(),
+            callbacks,
             false,
             None,
             None,
@@ -160,10 +179,32 @@ async fn task_follow_up_reviews_same_turn_when_work_is_done() {
     server.abort();
 
     assert_eq!(result.get("content").and_then(Value::as_str), Some("summary"));
+    assert_eq!(
+        result
+            .get("task_turn_review")
+            .and_then(|value| value.get("attempted"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        result
+            .get("task_turn_review")
+            .and_then(|value| value.get("outcome"))
+            .and_then(Value::as_str),
+        Some("pass")
+    );
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
     assert!(serde_json::to_string(&requests[1])
         .map(|text| text.len() > 0)
         .unwrap_or(false));
+    let phases = phase_events.lock().expect("lock poisoned").clone();
+    assert_eq!(phases.len(), 1);
+    assert_eq!(
+        phases[0]
+            .get("phase")
+            .and_then(Value::as_str),
+        Some("review")
+    );
 }

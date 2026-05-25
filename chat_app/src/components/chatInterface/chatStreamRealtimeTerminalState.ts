@@ -127,6 +127,25 @@ export const recoverMessagesAfterRealtimeTerminalEvent = async (
   return false;
 };
 
+const shouldRecoverRunningTerminalSession = async (
+  apiClient: RealtimeTerminalRecoveryApiClient,
+  context: TerminalEventContext,
+): Promise<boolean> => {
+  try {
+    const snapshot = await apiClient.getConversationTurnRuntimeContextByTurn(
+      context.sessionId,
+      context.turnId,
+    );
+    const status = typeof snapshot?.status === 'string'
+      ? snapshot.status.trim().toLowerCase()
+      : '';
+    return status === 'running' || status === 'in_progress' || status === 'processing';
+  } catch (error) {
+    console.error('Failed to inspect runtime snapshot before settling realtime terminal event:', error);
+    return false;
+  }
+};
+
 export const settleRealtimeTerminalEvent = async (
   apiClient: RealtimeTerminalRecoveryApiClient,
   set: ChatStoreSet,
@@ -135,6 +154,10 @@ export const settleRealtimeTerminalEvent = async (
   persisted: TerminalEventPersistedMessages,
   outcome: RealtimeTerminalOutcome,
 ): Promise<void> => {
+  const shouldRecoverRunning = outcome.kind === 'success'
+    ? await shouldRecoverRunningTerminalSession(apiClient, context)
+    : false;
+
   if (outcome.kind === 'success') {
     applyRealtimeTerminalMessages(set, context, persisted);
   } else {
@@ -146,6 +169,17 @@ export const settleRealtimeTerminalEvent = async (
       outcome.failureContent,
       outcome.readableError,
     );
+  }
+
+  if (shouldRecoverRunning) {
+    const latestState = getState();
+    await recoverMessagesAfterRealtimeTerminalEvent(
+      apiClient,
+      set,
+      latestState,
+      context,
+    );
+    return;
   }
 
   const latestState = getState();

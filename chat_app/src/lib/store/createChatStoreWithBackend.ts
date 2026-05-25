@@ -291,6 +291,18 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                 },
                 {
                     name: 'chat-store-with-backend',
+                    version: 2,
+                    migrate: (persistedState: unknown, version: number) => {
+                        if (!persistedState || typeof persistedState !== 'object') {
+                            return persistedState;
+                        }
+                        const nextState = {...(persistedState as Record<string, unknown>)};
+                        if (version < 2) {
+                            delete nextState.sessionChatState;
+                            delete nextState.sessionStreamingMessageDrafts;
+                        }
+                        return nextState;
+                    },
                     partialize: (state) => ({
                         theme: state.theme,
                         sidebarOpen: state.sidebarOpen,
@@ -298,8 +310,6 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         selectedModelId: state.selectedModelId,
                         selectedAgentId: state.selectedAgentId,
                         sessionAiSelectionBySession: state.sessionAiSelectionBySession,
-                        sessionChatState: state.sessionChatState,
-                        sessionStreamingMessageDrafts: state.sessionStreamingMessageDrafts,
                     }),
                 }
             )

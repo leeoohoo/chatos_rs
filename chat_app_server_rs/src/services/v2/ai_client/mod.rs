@@ -12,7 +12,7 @@ use crate::modules::conversation_runtime::guidance::{
 };
 pub use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::ai_common::{
-    build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
+    attach_ai_client_success_extra, build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
     handle_transient_retry,
 };
 use crate::services::chatos_memory_engine;
@@ -55,6 +55,43 @@ pub struct AiClient {
 
 const MAX_TASK_FOLLOW_UP_ROUNDS: usize = 3;
 const TASK_FOLLOW_UP_ROLE_METADATA_KEY: &str = "task_follow_up";
+
+fn emit_turn_phase_event(
+    callbacks: &AiClientCallbacks,
+    phase: &'static str,
+    mode: Option<TaskTurnFollowUpMode>,
+    iteration: i64,
+) {
+    if let Some(cb) = &callbacks.on_turn_phase {
+        cb(json!({
+            "phase": phase,
+            "reason": "task_follow_up",
+            "task_follow_up_mode": mode.map(|item| match item {
+                TaskTurnFollowUpMode::ContinueExecution => "continue",
+                TaskTurnFollowUpMode::ReviewExecution => "review",
+            }),
+            "iteration": iteration
+        }));
+    }
+}
+
+fn attach_review_metadata(
+    payload: Value,
+    attempted: bool,
+    outcome: &str,
+    rounds: usize,
+) -> Value {
+    attach_ai_client_success_extra(
+        payload,
+        json!({
+            "task_turn_review": {
+                "attempted": attempted,
+                "outcome": outcome,
+                "rounds": rounds
+            }
+        }),
+    )
+}
 
 impl AiClient {
     pub fn new(
@@ -191,6 +228,8 @@ impl AiClient {
         let mut last_visible_completion_content: Option<String> = None;
         let mut last_visible_completion_reasoning: Option<String> = None;
         let mut last_visible_completion_finish_reason: Option<String> = None;
+        let mut review_attempted = false;
+        let mut review_last_outcome: Option<&'static str> = None;
         loop {
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
@@ -271,6 +310,7 @@ impl AiClient {
                             task_follow_up_mode,
                             iteration,
                         ),
+                        callbacks.on_before_send_model_request.clone(),
                         purpose.as_str(),
                     )
                     .await;
@@ -338,7 +378,8 @@ impl AiClient {
                 let review_locale = task_follow_up_locale
                     .take()
                     .unwrap_or(InternalContextLocale::ZhCn);
-                match parse_task_turn_review_outcome(resp.content.as_str()) {
+                let review_outcome = parse_task_turn_review_outcome(resp.content.as_str());
+                match review_outcome {
                     TaskTurnReviewOutcome::Pass => {
                         let final_content = last_visible_completion_content
                             .clone()
@@ -349,14 +390,25 @@ impl AiClient {
                         let final_finish_reason = last_visible_completion_finish_reason
                             .clone()
                             .or(resp.finish_reason.clone());
-                        return Ok(build_ai_client_success_payload(
-                            final_content,
-                            final_reasoning,
-                            final_finish_reason,
-                            iteration,
+                        return Ok(attach_review_metadata(
+                            build_ai_client_success_payload(
+                                final_content,
+                                final_reasoning,
+                                final_finish_reason,
+                                iteration,
+                            ),
+                            true,
+                            "pass",
+                            task_follow_up_rounds,
                         ));
                     }
                     TaskTurnReviewOutcome::NeedsMoreWork | TaskTurnReviewOutcome::Unknown => {
+                        review_attempted = true;
+                        review_last_outcome = Some(match review_outcome {
+                            TaskTurnReviewOutcome::NeedsMoreWork => "needs_more_work",
+                            TaskTurnReviewOutcome::Unknown => "unknown",
+                            TaskTurnReviewOutcome::Pass => "pass",
+                        });
                         if task_follow_up_rounds < MAX_TASK_FOLLOW_UP_ROUNDS {
                             task_follow_up_rounds += 1;
                             if let Some(cb) = &callbacks.on_thinking {
@@ -369,6 +421,12 @@ impl AiClient {
                             .cloned()
                             .unwrap_or_default();
                             task_follow_up_mode = Some(TaskTurnFollowUpMode::ContinueExecution);
+                            emit_turn_phase_event(
+                                &callbacks,
+                                "execution",
+                                task_follow_up_mode,
+                                iteration,
+                            );
                             iteration += 1;
                             continue;
                         }
@@ -396,6 +454,15 @@ impl AiClient {
                             task_follow_up_rounds += 1;
                             task_follow_up_mode = Some(directive.mode);
                             task_follow_up_locale = Some(directive.locale);
+                            emit_turn_phase_event(
+                                &callbacks,
+                                match directive.mode {
+                                    TaskTurnFollowUpMode::ContinueExecution => "execution",
+                                    TaskTurnFollowUpMode::ReviewExecution => "review",
+                                },
+                                task_follow_up_mode,
+                                iteration,
+                            );
                             if let Some(cb) = &callbacks.on_thinking {
                                 cb(match directive.mode {
                                     TaskTurnFollowUpMode::ContinueExecution => {
@@ -415,11 +482,16 @@ impl AiClient {
                         }
                     }
                 }
-                return Ok(build_ai_client_success_payload(
-                    resp.content,
-                    resp.reasoning,
-                    resp.finish_reason,
-                    iteration,
+                return Ok(attach_review_metadata(
+                    build_ai_client_success_payload(
+                        resp.content,
+                        resp.reasoning,
+                        resp.finish_reason,
+                        iteration,
+                    ),
+                    review_attempted,
+                    review_last_outcome.unwrap_or("not_attempted"),
+                    task_follow_up_rounds,
                 ));
             };
 

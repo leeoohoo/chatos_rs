@@ -265,14 +265,12 @@ fn append_completed_task_line(
 }
 
 fn select_active_task_id(tasks: &[TaskRecord]) -> Option<String> {
-    for preferred_status in [STATUS_DOING, STATUS_TODO] {
-        if let Some(task) = tasks
-            .iter()
-            .rev()
-            .find(|task| normalize_status(task.status.as_str()) == preferred_status)
-        {
-            return Some(task.id.clone());
-        }
+    if let Some(task) = tasks
+        .iter()
+        .rev()
+        .find(|task| normalize_status(task.status.as_str()) == STATUS_DOING)
+    {
+        return Some(task.id.clone());
     }
     None
 }
@@ -491,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn prefers_latest_todo_over_older_todo() {
+    fn leaves_current_task_empty_when_only_todo_tasks_exist() {
         let prompt = format_task_board_prompt(
             &[
                 build_task("task_a", "todo task a", "todo"),
@@ -501,8 +499,14 @@ mod tests {
             InternalContextLocale::ZhCn,
         );
 
-        assert!(prompt.contains("id=task_b <- 当前优先执行"));
-        assert!(!prompt.contains("id=task_a <- 当前优先执行"));
+        let current_section = prompt
+            .split("未完成任务：")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        assert!(current_section.contains("当前执行任务："));
+        assert!(current_section.contains("- 当前无任务"));
+        assert!(!current_section.contains("<- 当前优先执行"));
     }
 
     #[test]

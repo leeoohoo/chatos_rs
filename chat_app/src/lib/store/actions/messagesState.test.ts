@@ -105,4 +105,47 @@ describe('mergeMessagesWithStreamingDraft', () => {
     expect(state.isStreaming).toBe(false);
     expect(state.streamingMessageId).toBeNull();
   });
+
+  it('keeps streaming state during reviewing phase even if server has a completed assistant for same turn', () => {
+    const finalAssistant = {
+      ...createMessage('assistant_final', 'summary from server', 'completed'),
+      metadata: {
+        conversation_turn_id: 'turn_1',
+        historyFinalForTurnId: 'turn_1',
+      },
+    } as Message;
+    const draft = {
+      ...createMessage('temp_assistant', 'review in progress', 'streaming'),
+      metadata: {
+        conversation_turn_id: 'turn_1',
+      },
+    } as Message;
+    const state = {
+      currentSessionId: 'session_1',
+      isLoading: true,
+      isStreaming: true,
+      streamingMessageId: 'temp_assistant',
+      sessionChatState: {
+        session_1: {
+          isLoading: true,
+          isStreaming: true,
+          isStopping: false,
+          streamingPhase: 'reviewing',
+          streamingMessageId: 'temp_assistant',
+          activeTurnId: 'turn_1',
+          streamingPreviewText: 'review in progress',
+        },
+      },
+      sessionStreamingMessageDrafts: {
+        session_1: draft,
+      },
+    } as unknown as ChatStoreShape;
+
+    const merged = mergeMessagesWithStreamingDraft(state, 'session_1', [finalAssistant]);
+
+    expect(merged.find((message) => message.id === 'temp_assistant')).toBeDefined();
+    expect(state.sessionChatState.session_1.isStreaming).toBe(true);
+    expect(state.sessionChatState.session_1.streamingPhase).toBe('reviewing');
+    expect(state.isStreaming).toBe(true);
+  });
 });

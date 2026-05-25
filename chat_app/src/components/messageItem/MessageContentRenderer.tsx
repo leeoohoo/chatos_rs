@@ -34,6 +34,29 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
   const { t } = useI18n();
   const hasContent = message.content && message.content.trim().length > 0;
   const isCurrentlyStreaming = isStreaming && isLast;
+  const reviewOutcomeRaw = typeof message.metadata?.task_turn_review === 'object'
+    ? (
+      (message.metadata?.task_turn_review as { outcome?: unknown }).outcome
+    )
+    : null;
+  const reviewOutcome = typeof reviewOutcomeRaw === 'string'
+    ? reviewOutcomeRaw.trim().toLowerCase()
+    : '';
+  const reviewOutcomeText = reviewOutcome === 'pass'
+    ? t('messageContent.reviewOutcome.pass')
+    : (
+      reviewOutcome === 'needs_more_work'
+        ? t('messageContent.reviewOutcome.needsMoreWork')
+        : (
+          reviewOutcome === 'unknown'
+            ? t('messageContent.reviewOutcome.unknown')
+            : (
+              reviewOutcome === 'not_attempted'
+                ? t('messageContent.reviewOutcome.notAttempted')
+                : ''
+            )
+        )
+    );
 
   if (renderContentSegments.length > 0) {
     if (collapseAssistantProcessByDefault) {
@@ -163,7 +186,14 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
       index += 1;
     }
 
-    return <div className="space-y-0.5">{nodes}</div>;
+    return (
+      <div className="space-y-0.5">
+        {nodes}
+        {reviewOutcomeText && (
+          <div className="text-xs text-muted-foreground">{reviewOutcomeText}</div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -185,6 +215,9 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
             toolResultById={toolResultById}
           />
         </div>
+      )}
+      {reviewOutcomeText && (
+        <div className="text-xs text-muted-foreground">{reviewOutcomeText}</div>
       )}
     </div>
   );

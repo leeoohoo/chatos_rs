@@ -255,27 +255,26 @@ pub(super) fn before_request_set_task_done_on_nth_request(
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
     AiClientCallbacks {
-        on_before_model_request: Some(Arc::new(
-            move |_payload, _prev_id, _snapshot| {
-                let request_index = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                if request_index == nth_request {
-                    let session_id = session_id.clone();
-                    let task_id = task_id.clone();
-                    let _ = std::thread::spawn(move || {
-                        if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                        {
-                            let _ = rt.block_on(async move {
-                                let _ = set_task_status_done(session_id.as_str(), task_id.as_str())
-                                    .await;
-                            });
-                        }
-                    })
-                    .join();
-                }
-            },
-        )),
+        on_before_send_model_request: Some(Arc::new(move |_payload| {
+            let request_index = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
+            if request_index == nth_request {
+                let session_id = session_id.clone();
+                let task_id = task_id.clone();
+                let _ = std::thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        let _ = rt.block_on(async move {
+                            let _ = set_task_status_done(session_id.as_str(), task_id.as_str())
+                                .await;
+                        });
+                    }
+                })
+                .join();
+            }
+        })),
+        on_before_model_request: None,
         ..AiClientCallbacks::default()
     }
 }

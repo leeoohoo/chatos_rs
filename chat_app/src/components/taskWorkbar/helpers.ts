@@ -38,11 +38,6 @@ export const selectCurrentWorkbarTask = (items: TaskWorkbarItem[]): TaskWorkbarI
       return task;
     }
   }
-  for (const task of items) {
-    if (task.status === 'todo') {
-      return task;
-    }
-  }
   return null;
 };
 

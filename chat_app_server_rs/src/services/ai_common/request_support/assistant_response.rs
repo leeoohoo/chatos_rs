@@ -40,6 +40,26 @@ pub(crate) fn build_ai_client_success_payload(
     })
 }
 
+pub(crate) fn attach_ai_client_success_extra(
+    payload: Value,
+    extra: Value,
+) -> Value {
+    let mut base = match payload {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+    if let Value::Object(extra_map) = extra {
+        for (key, value) in extra_map {
+            base.insert(key, value);
+        }
+    }
+    Value::Object(base)
+}
+
 pub(crate) fn completion_failed_error(
     finish_reason: Option<&str>,
     content: &str,

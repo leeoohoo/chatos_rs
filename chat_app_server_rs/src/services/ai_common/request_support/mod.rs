@@ -4,7 +4,7 @@ mod request_transport;
 mod user_message;
 
 pub(crate) use self::assistant_response::{
-    build_ai_client_success_payload, build_assistant_message_metadata, completion_failed_error,
+    attach_ai_client_success_extra, build_ai_client_success_payload, build_assistant_message_metadata, completion_failed_error,
     is_non_terminal_response_status, persist_assistant_response_with_policy,
     should_persist_assistant_message, terminal_empty_response_error,
     AssistantResponsePersistenceRequest,

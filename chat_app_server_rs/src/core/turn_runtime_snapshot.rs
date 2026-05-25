@@ -35,6 +35,7 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub builtin_mcp_prompt_debug: Option<&'a BuiltinMcpPromptBuildResult>,
     pub actual_context_mode: Option<&'a str>,
     pub actual_context_items: &'a [TurnRuntimeSnapshotContextItemDto],
+    pub last_model_request_payload: Option<&'a Value>,
 }
 
 pub fn build_turn_runtime_snapshot_payload(
@@ -114,6 +115,7 @@ pub fn build_turn_runtime_snapshot_payload(
             builtin_mcp_prompt: normalize_builtin_mcp_prompt(input.builtin_mcp_prompt_debug),
             actual_context_mode: normalize_optional_text(input.actual_context_mode),
             actual_context_items: normalize_context_items(input.actual_context_items),
+            last_model_request_payload: input.last_model_request_payload.cloned(),
         }),
     }
 }
@@ -140,6 +142,7 @@ fn normalize_status(status: &str) -> String {
         "running" => "running".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
+        "cancelled" | "canceled" => "cancelled".to_string(),
         _ => "unknown".to_string(),
     }
 }
@@ -333,6 +336,7 @@ mod tests {
             builtin_mcp_prompt_debug: None,
             actual_context_mode: None,
             actual_context_items: &[],
+            last_model_request_payload: None,
         });
 
         let system_messages = payload.system_messages.expect("system messages");
@@ -374,6 +378,7 @@ mod tests {
             builtin_mcp_prompt_debug: None,
             actual_context_mode: None,
             actual_context_items: &[],
+            last_model_request_payload: None,
         });
 
         let runtime = payload.runtime.expect("runtime");
@@ -425,6 +430,7 @@ mod tests {
             }),
             actual_context_mode: None,
             actual_context_items: &[],
+            last_model_request_payload: None,
         });
 
         let runtime = payload.runtime.expect("runtime");
@@ -445,5 +451,36 @@ mod tests {
         assert_eq!(builtin.omitted_section_ids, vec!["builtin_browser_tools"]);
         assert_eq!(builtin.active_builtin_server_names, vec!["task_manager"]);
         assert_eq!(builtin.omitted_builtin_server_names, vec!["browser_tools"]);
+    }
+
+    #[test]
+    fn snapshot_payload_normalizes_cancelled_status() {
+        let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: None,
+            status: "canceled",
+            base_system_prompt: None,
+            contact_system_prompt: None,
+            task_board_prompt: None,
+            builtin_mcp_system_prompt: None,
+            memory_summary_prompt: None,
+            tools: &HashMap::new(),
+            model: None,
+            provider: None,
+            contact_agent_id: None,
+            remote_connection_id: None,
+            project_id: None,
+            project_root: None,
+            workspace_root: None,
+            mcp_enabled: false,
+            enabled_mcp_ids: &[],
+            selected_commands: &[],
+            unavailable_builtin_tools: &[],
+            builtin_mcp_prompt_debug: None,
+            actual_context_mode: None,
+            actual_context_items: &[],
+            last_model_request_payload: None,
+        });
+
+        assert_eq!(payload.status.as_deref(), Some("cancelled"));
     }
 }

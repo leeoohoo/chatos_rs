@@ -20,6 +20,7 @@ export interface ChatInterfaceConversationState {
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
+  chatStreamingPhase: 'thinking' | 'reviewing' | null;
   chatStreamingPreviewText: string;
   hasMoreMessages: boolean;
   customRenderer: ComponentProps<typeof ChatConversationPane>['customRenderer'];

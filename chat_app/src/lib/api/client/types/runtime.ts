@@ -306,8 +306,24 @@ export interface TurnRuntimeSnapshotRuntime {
   mcp_enabled?: boolean | null;
   enabled_mcp_ids?: string[];
   selected_commands?: TurnRuntimeSnapshotSelectedCommand[];
+  unavailable_builtin_tools?: Array<{
+    server_name: string;
+    tool_name: string;
+    reason?: string | null;
+  }>;
+  builtin_mcp_prompt?: {
+    prompt_source_path?: string | null;
+    all_section_ids?: string[];
+    selected_section_ids?: string[];
+    omitted_section_ids?: string[];
+    requested_builtin_server_names?: string[];
+    active_builtin_server_names?: string[];
+    omitted_builtin_server_names?: string[];
+    runtime_limitations?: string | null;
+  } | null;
   actual_context_mode?: string | null;
   actual_context_items?: TurnRuntimeSnapshotContextItem[];
+  last_model_request_payload?: Record<string, unknown> | null;
 }
 
 export interface TurnRuntimeSnapshot {

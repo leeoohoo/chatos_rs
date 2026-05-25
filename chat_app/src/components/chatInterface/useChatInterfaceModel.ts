@@ -134,6 +134,7 @@ export const useChatInterfaceModel = ({
     chatIsLoading: derived.chatIsLoading,
     chatIsStreaming: derived.chatIsStreaming,
     chatIsStopping: derived.chatIsStopping,
+    chatStreamingPhase: derived.chatStreamingPhase,
     chatStreamingPreviewText: derived.chatStreamingPreviewText,
     hasMoreMessages: store.hasMoreMessages,
     customRenderer,

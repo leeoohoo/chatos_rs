@@ -231,4 +231,63 @@ describe('buildVisibleMessageState', () => {
       processMessageCount: 1,
     });
   });
+
+  it('marks process as present when turn only has hidden tool messages', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-tool-only-1',
+        metadata: {
+          conversation_turn_id: 'turn-tool-only-1',
+          historyProcess: {
+            hasProcess: false,
+            toolCallCount: 0,
+            thinkingCount: 0,
+            processMessageCount: 0,
+            userMessageId: 'user-tool-only-1',
+            turnId: 'turn-tool-only-1',
+            finalAssistantMessageId: 'assistant-final-tool-only-1',
+            expanded: false,
+            loaded: true,
+            loading: false,
+          },
+        },
+      }),
+      {
+        id: 'tool-only-1',
+        sessionId: 'session-1',
+        role: 'tool',
+        content: 'tool output only',
+        status: 'completed',
+        createdAt: new Date('2026-05-07T10:00:01.000Z'),
+        metadata: {
+          toolCallId: 'tool-call-only-1',
+          historyProcessUserMessageId: 'user-tool-only-1',
+          historyProcessTurnId: 'turn-tool-only-1',
+          hidden: true,
+        },
+      },
+      buildAssistant({
+        id: 'assistant-final-tool-only-1',
+        content: '最终回复',
+        createdAt: new Date('2026-05-07T10:00:02.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-tool-only-1',
+          historyFinalForUserMessageId: 'user-tool-only-1',
+          historyFinalForTurnId: 'turn-tool-only-1',
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-tool-only-1',
+      'assistant-final-tool-only-1',
+    ]);
+    expect(state.derivedProcessStatsByUserId.get('user-tool-only-1')).toMatchObject({
+      hasProcess: true,
+      toolCallCount: 1,
+      processMessageCount: 1,
+    });
+  });
 });

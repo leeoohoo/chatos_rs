@@ -23,6 +23,10 @@ use super::history::{
     build_turn_display_messages, compact_messages_for_display, parse_bool_query_flag,
 };
 use super::history_process::find_user_index_by_turn_id;
+use super::history_process_support::{
+    attach_user_history_process_metadata, ensure_message_turn_id,
+    strip_assistant_for_compact_history,
+};
 use super::support::list_all_session_messages;
 
 async fn load_chatos_session(conversation_id: &str) -> Result<Session, String> {
@@ -150,13 +154,30 @@ pub(super) async fn get_session_compact_history(
         Ok(page) => {
             let mut items: Vec<Value> = Vec::with_capacity(page.items.len() * 2);
             for turn in page.items {
-                let user_message = chatos_memory_engine::engine_record_to_message(turn.user_record);
+                let mut user_message = chatos_memory_engine::engine_record_to_message(turn.user_record);
+                let user_message_id = user_message.id.clone();
+                ensure_message_turn_id(&mut user_message, turn.turn_id.as_str());
+
+                let final_assistant_message_id = turn
+                    .final_assistant_record
+                    .as_ref()
+                    .map(|record| record.id.clone());
+                attach_user_history_process_metadata(
+                    &mut user_message,
+                    turn.has_process,
+                    turn.tool_call_count,
+                    turn.thinking_count,
+                    turn.process_message_count,
+                    final_assistant_message_id,
+                );
                 items.push(
                     serde_json::to_value(MessageOut::from(user_message)).unwrap_or(Value::Null),
                 );
                 if let Some(final_assistant_record) = turn.final_assistant_record {
-                    let assistant_message =
+                    let mut assistant_message =
                         chatos_memory_engine::engine_record_to_message(final_assistant_record);
+                    ensure_message_turn_id(&mut assistant_message, turn.turn_id.as_str());
+                    strip_assistant_for_compact_history(&mut assistant_message, &user_message_id);
                     items.push(
                         serde_json::to_value(MessageOut::from(assistant_message))
                             .unwrap_or(Value::Null),

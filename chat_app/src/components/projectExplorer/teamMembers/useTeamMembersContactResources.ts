@@ -3,6 +3,7 @@ import { useCallback, useMemo } from 'react';
 import { useContactSessionResolver } from '../../../features/contactSession/useContactSessionResolver';
 import {
   findLatestMatchedSession,
+  isSessionMatchedContactAndProject,
   normalizeProjectScopeId,
   resolveSessionTimestamp,
 } from '../../../features/contactSession/sessionResolver';
@@ -18,6 +19,26 @@ interface UseTeamMembersContactResourcesOptions {
   project: Project;
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
 }
+
+export const resolveProjectContactSession = ({
+  currentSession,
+  contact,
+  normalizedProjectId,
+  findProjectSessionForContact,
+}: {
+  currentSession: Session | null | undefined;
+  contact: ContactItem;
+  normalizedProjectId: string;
+  findProjectSessionForContact: (contact: ContactItem) => Session | null;
+}): Session | null => {
+  if (
+    currentSession
+    && isSessionMatchedContactAndProject(currentSession, contact, normalizedProjectId)
+  ) {
+    return currentSession;
+  }
+  return findProjectSessionForContact(contact);
+};
 
 export const useTeamMembersContactResources = ({
   project,
@@ -86,7 +107,12 @@ export const useTeamMembersContactResources = ({
         agentId: member.agentId,
         name: member.name,
       };
-      const session = findProjectSessionForContact(contact);
+      const session = resolveProjectContactSession({
+        currentSession,
+        contact,
+        normalizedProjectId,
+        findProjectSessionForContact,
+      });
       return {
         contact,
         session,
@@ -95,7 +121,7 @@ export const useTeamMembersContactResources = ({
     });
     rows.sort((a, b) => b.updatedAt - a.updatedAt);
     return rows;
-  }, [findProjectSessionForContact, projectMembers]);
+  }, [currentSession, findProjectSessionForContact, normalizedProjectId, projectMembers]);
 
   const projectContactsOptions = useMemo(() => normalizedContacts, [normalizedContacts]);
 

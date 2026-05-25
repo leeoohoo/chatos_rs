@@ -9,7 +9,7 @@ pub(crate) use self::request_support::{
     is_transient_transport_or_parse_error,
 };
 pub(crate) use self::request_support::{
-    build_abort_token, build_ai_client_success_payload, build_assistant_message_metadata,
+    attach_ai_client_success_extra, build_abort_token, build_ai_client_success_payload, build_assistant_message_metadata,
     completion_failed_error, handle_transient_retry, is_non_terminal_response_status,
     is_retryable_provider_overload_error, normalize_reasoning_effort, normalize_turn_id,
     persist_assistant_response_with_policy, persist_user_message_and_build_content_parts,

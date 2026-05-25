@@ -26,6 +26,7 @@ export type SessionChatStateMap = Record<
     isLoading?: boolean;
     isStreaming?: boolean;
     isStopping?: boolean;
+    streamingPhase?: 'thinking' | 'reviewing' | null;
   } | undefined
 >;
 

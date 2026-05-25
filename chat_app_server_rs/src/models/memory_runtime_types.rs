@@ -121,6 +121,7 @@ pub struct TurnRuntimeSnapshotRuntimeDto {
     pub actual_context_mode: Option<String>,
     #[serde(default)]
     pub actual_context_items: Vec<TurnRuntimeSnapshotContextItemDto>,
+    pub last_model_request_payload: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

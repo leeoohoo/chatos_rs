@@ -44,6 +44,7 @@ export interface MessageListProps {
   isLoading?: boolean;
   isStreaming?: boolean;
   isStopping?: boolean;
+  streamingPhase?: 'thinking' | 'reviewing' | null;
   streamingPreviewText?: string;
   hasMore?: boolean;
   onLoadMore?: () => void;

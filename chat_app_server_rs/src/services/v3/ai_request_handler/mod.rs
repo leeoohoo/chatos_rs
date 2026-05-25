@@ -101,6 +101,7 @@ impl AiRequestHandler {
         message_mode: Option<String>,
         message_source: Option<String>,
         metadata: Option<Value>,
+        on_before_send_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
         let mut payload = build_request_payload(
@@ -152,6 +153,9 @@ impl AiRequestHandler {
 
         let persist_messages = purpose != "agent_builder";
         let force_identity_encoding = purpose == "session_summary_job";
+        if let Some(cb) = on_before_send_model_request.as_ref() {
+            cb(payload.clone());
+        }
 
         let first_attempt = self
             .handle_stream_request(
@@ -179,6 +183,9 @@ impl AiRequestHandler {
                 .store(false, Ordering::Relaxed);
             if let Some(object) = payload.as_object_mut() {
                 object.remove("prompt_cache_retention");
+            }
+            if let Some(cb) = on_before_send_model_request.as_ref() {
+                cb(payload.clone());
             }
             log_request_fingerprint(
                 purpose,

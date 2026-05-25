@@ -26,6 +26,7 @@ use super::task_board::build_task_board_prompt;
 pub struct ActualTurnRequestContext {
     pub context_mode: Option<String>,
     pub items: Vec<TurnRuntimeSnapshotContextItemDto>,
+    pub model_request_payload: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,12 +101,40 @@ pub async fn sync_chat_turn_snapshot(
     context: &ResolvedConversationRuntimeContext,
     actual_request: Option<&ActualTurnRequestContext>,
 ) -> Result<(), String> {
-    let preserved_actual = if actual_request.is_none() {
+    let should_load_preserved = actual_request.is_none()
+        || actual_request
+            .map(|value| value.context_mode.is_none())
+            .unwrap_or(false)
+        || actual_request
+            .map(|value| value.items.is_empty())
+            .unwrap_or(false)
+        || actual_request
+            .map(|value| value.model_request_payload.is_none())
+            .unwrap_or(false);
+    let preserved_actual = if should_load_preserved {
         load_existing_actual_request_context(session_id, turn_id).await
     } else {
         None
     };
-    let effective_actual = actual_request.or(preserved_actual.as_ref());
+    let effective_actual_context_mode = actual_request
+        .and_then(|value| value.context_mode.as_deref())
+        .or_else(|| {
+            preserved_actual
+                .as_ref()
+                .and_then(|value| value.context_mode.as_deref())
+        });
+    let effective_actual_items = actual_request
+        .filter(|value| !value.items.is_empty())
+        .map(|value| value.items.as_slice())
+        .or_else(|| preserved_actual.as_ref().map(|value| value.items.as_slice()))
+        .unwrap_or(&[]);
+    let effective_model_request_payload = actual_request
+        .and_then(|value| value.model_request_payload.as_ref())
+        .or_else(|| {
+            preserved_actual
+                .as_ref()
+                .and_then(|value| value.model_request_payload.as_ref())
+        });
     let selected_commands = context
         .selected_commands_for_snapshot
         .lock()
@@ -140,10 +169,9 @@ pub async fn sync_chat_turn_snapshot(
         selected_commands: selected_commands.as_slice(),
         unavailable_builtin_tools,
         builtin_mcp_prompt_debug: Some(&builtin_prompt_debug),
-        actual_context_mode: effective_actual.and_then(|value| value.context_mode.as_deref()),
-        actual_context_items: effective_actual
-            .map(|value| value.items.as_slice())
-            .unwrap_or(&[]),
+        actual_context_mode: effective_actual_context_mode,
+        actual_context_items: effective_actual_items,
+        last_model_request_payload: effective_model_request_payload,
     });
     chatos_sessions::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
         .await
@@ -232,13 +260,14 @@ fn extract_actual_request_context(
     lookup: TurnRuntimeSnapshotLookupResponseDto,
 ) -> Option<ActualTurnRequestContext> {
     let runtime = lookup.snapshot?.runtime?;
-    if runtime.actual_context_items.is_empty() {
+    if runtime.actual_context_items.is_empty() && runtime.last_model_request_payload.is_none() {
         return None;
     }
 
     Some(ActualTurnRequestContext {
         context_mode: runtime.actual_context_mode,
         items: runtime.actual_context_items,
+        model_request_payload: runtime.last_model_request_payload,
     })
 }
 

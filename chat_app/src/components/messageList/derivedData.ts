@@ -315,6 +315,14 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
       return;
     }
 
+    const stats = mutableStats.get(linkedUserMessageId);
+    if (stats && parsed.role !== 'user' && !parsed.historyProcessPlaceholder) {
+      stats.processMessageCount += 1;
+      if (parsed.toolResultCallId) {
+        stats.toolCallIds.add(parsed.toolResultCallId);
+      }
+    }
+
     appendSignal(
       linkedUserMessageId,
       `P:${parsed.id}:${parsed.role}:${parsed.historyProcessPlaceholder ? '1' : '0'}`,

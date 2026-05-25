@@ -62,6 +62,7 @@ impl AiRequestHandler {
         message_mode: Option<String>,
         message_source: Option<String>,
         metadata: Option<Value>,
+        on_before_send_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
         let mut payload = json!({
@@ -110,6 +111,9 @@ impl AiRequestHandler {
 
         let persist_messages = purpose != "agent_builder";
         let force_identity_encoding = purpose == "session_summary_job";
+        if let Some(cb) = on_before_send_model_request.as_ref() {
+            cb(payload.clone());
+        }
 
         self.handle_stream_request(
             url,

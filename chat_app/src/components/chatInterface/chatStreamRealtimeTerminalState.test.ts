@@ -151,7 +151,13 @@ describe('chatStreamRealtimeTerminalState', () => {
     const state = buildState();
     const set = (updater: (draft: ChatStoreDraft) => void) => updater(state);
     const apiClient = {
-      getConversationTurnRuntimeContextByTurn: vi.fn(),
+      getConversationTurnRuntimeContextByTurn: vi.fn(async () => ({
+        conversation_id: 'session_1',
+        turn_id: 'turn_1',
+        status: 'completed',
+        snapshot_source: 'runtime',
+        snapshot: null,
+      })),
       getConversationLatestTurnRuntimeContext: vi.fn(),
       getConversationTurnMessagesByTurn: vi.fn(async () => []),
       getConversationTurnMessages: vi.fn(async () => []),
@@ -178,7 +184,65 @@ describe('chatStreamRealtimeTerminalState', () => {
     expect(state.sessionChatState.session_1.isStreaming).toBe(false);
   });
 
-  it('falls back to loadMessages when snapshot recovery cannot rebuild the terminal turn', async () => {
+  it('recovers a non-active session back to streaming when terminal event arrives but runtime snapshot is still running', async () => {
+    const state = {
+      ...buildState(),
+      currentSessionId: 'other_session',
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      loadMessages: vi.fn(async () => {}),
+    } as ChatStoreDraft;
+    const set = (updater: (draft: ChatStoreDraft) => void) => updater(state);
+    const runningSnapshot: TurnRuntimeSnapshotLookupResponse = {
+      conversation_id: 'session_1',
+      turn_id: 'turn_1',
+      status: 'running',
+      snapshot_source: 'runtime',
+      active_in_runtime: true,
+      snapshot: {
+        id: 'snapshot_1',
+        conversation_id: 'session_1',
+        user_id: 'user_1',
+        turn_id: 'turn_1',
+        status: 'running',
+        snapshot_source: 'runtime',
+        snapshot_version: 1,
+        captured_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    };
+    const apiClient = {
+      getConversationTurnRuntimeContextByTurn: vi.fn(async () => runningSnapshot),
+      getConversationLatestTurnRuntimeContext: vi.fn(async () => runningSnapshot),
+      getConversationTurnMessagesByTurn: vi.fn(async () => []),
+      getConversationTurnMessages: vi.fn(async () => []),
+    };
+
+    await settleRealtimeTerminalEvent(
+      apiClient,
+      set,
+      () => state,
+      {
+        sessionId: 'session_1',
+        turnId: 'turn_1',
+        tempAssistantMessageId: 'assistant_temp_1',
+        tempUserId: 'user_temp_1',
+      },
+      {
+        persistedUserMessage: null,
+        persistedAssistantMessage: null,
+      },
+      { kind: 'success' },
+    );
+
+    expect(state.sessionChatState.session_1.isStreaming).toBe(true);
+    expect(state.sessionChatState.session_1.activeTurnId).toBe('turn_1');
+    expect(state.sessionStreamingMessageDrafts.session_1?.id).toBe('assistant_temp_1');
+    expect(state.loadMessages).not.toHaveBeenCalled();
+  });
+
+  it('recovers from session draft without loadMessages when visible messages are empty', async () => {
     const state = {
       ...buildState(),
       messages: [],
@@ -210,7 +274,48 @@ describe('chatStreamRealtimeTerminalState', () => {
       },
     );
 
-    expect(recovered).toBe(false);
-    expect(state.loadMessages).toHaveBeenCalledWith('session_1');
+    expect(recovered).toBe(true);
+    expect(state.sessionChatState.session_1.isStreaming).toBe(false);
+    expect(state.loadMessages).not.toHaveBeenCalled();
+  });
+
+  it('settles terminal state locally when snapshot recovery has neither visible messages nor streaming draft', async () => {
+    const state = {
+      ...buildState(),
+      messages: [],
+      sessionStreamingMessageDrafts: {
+        session_1: null,
+      },
+    } as ChatStoreDraft;
+    const set = (updater: (draft: ChatStoreDraft) => void) => updater(state);
+    const terminalSnapshot: TurnRuntimeSnapshotLookupResponse = {
+      conversation_id: 'session_1',
+      turn_id: 'turn_1',
+      status: 'completed',
+      snapshot_source: 'runtime',
+      snapshot: null,
+    };
+    const apiClient = {
+      getConversationTurnRuntimeContextByTurn: vi.fn(async () => terminalSnapshot),
+      getConversationLatestTurnRuntimeContext: vi.fn(async () => terminalSnapshot),
+      getConversationTurnMessagesByTurn: vi.fn(async () => []),
+      getConversationTurnMessages: vi.fn(async () => []),
+    };
+
+    const recovered = await recoverMessagesAfterRealtimeTerminalEvent(
+      apiClient,
+      set,
+      state,
+      {
+        sessionId: 'session_1',
+        turnId: 'turn_1',
+        tempAssistantMessageId: 'assistant_temp_1',
+        tempUserId: 'user_temp_1',
+      },
+    );
+
+    expect(recovered).toBe(true);
+    expect(state.sessionChatState.session_1.isStreaming).toBe(false);
+    expect(state.loadMessages).not.toHaveBeenCalled();
   });
 });

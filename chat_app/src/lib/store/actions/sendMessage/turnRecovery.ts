@@ -261,6 +261,7 @@ const settleRecoveredStreamingState = (
       isLoading: true,
       isStreaming: true,
       isStopping: false,
+      streamingPhase: 'thinking',
       streamingMessageId: assistantMessageId,
       activeTurnId: turnIdFromState(state, sessionId) || prev.activeTurnId || null,
       streamingTransport: 'realtime',
@@ -291,6 +292,7 @@ const settleRecoveredStreamingState = (
     isLoading: false,
     isStreaming: false,
     isStopping: false,
+    streamingPhase: null,
     streamingMessageId: null,
     activeTurnId: null,
     streamingPreviewText: '',
@@ -324,7 +326,11 @@ const upsertRunningStreamingDraft = (
     preferredUserMessageId?: string | null;
   },
 ) => {
-  const draftAssistant = state.messages.find((message) => message.id === assistantMessageId) || null;
+  const draftAssistant = (
+    state.messages.find((message) => message.id === assistantMessageId)
+    || state.sessionStreamingMessageDrafts?.[sessionId]
+    || null
+  );
   if (!draftAssistant) {
     return;
   }
@@ -442,7 +448,8 @@ export const recoverStreamingTurnBySnapshot = async ({
     } else if (RUNNING_SNAPSHOT_STATUSES.has(effectiveSnapshotStatus)) {
       set((state) => {
         const existingAssistantIndex = state.messages.findIndex((message) => message.id === tempAssistantMessageId);
-        if (existingAssistantIndex < 0) {
+        const existingDraftAssistant = state.sessionStreamingMessageDrafts?.[sessionId];
+        if (existingAssistantIndex < 0 && !existingDraftAssistant) {
           return;
         }
         upsertRunningStreamingDraft(state, {

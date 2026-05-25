@@ -60,7 +60,8 @@ export const mergeMessagesWithStreamingDraft = (
     || '',
   );
   const hasPersistedTerminalMessage = Boolean(
-    activeTurnId
+    chatState.streamingPhase !== 'reviewing'
+    && activeTurnId
     && messages.some((message) => {
       if (message?.role !== 'assistant' || message?.status === 'streaming') {
         return false;
@@ -83,6 +84,7 @@ export const mergeMessagesWithStreamingDraft = (
       isLoading: false,
       isStreaming: false,
       isStopping: false,
+      streamingPhase: null,
       streamingMessageId: null,
       activeTurnId: null,
       streamingPreviewText: '',

@@ -13,6 +13,7 @@ impl Events {
     pub const CONTEXT_SUMMARIZED_STREAM: &'static str = "context_summarized_stream";
     pub const CONTEXT_SUMMARIZED_END: &'static str = "context_summarized_end";
     pub const CONTEXT_SUMMARIZED: &'static str = "context_summarized";
+    pub const TURN_PHASE: &'static str = "turn_phase";
     pub const COMPLETE: &'static str = "complete";
     pub const CANCELLED: &'static str = "cancelled";
     pub const ERROR: &'static str = "error";

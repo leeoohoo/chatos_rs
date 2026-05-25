@@ -132,6 +132,7 @@ impl AiClient {
         AiClientCallbacks {
             on_chunk: None,
             on_thinking: None,
+            on_turn_phase: callbacks.on_turn_phase.clone(),
             on_tools_start: callbacks.on_tools_start.clone(),
             on_tools_stream: callbacks.on_tools_stream.clone(),
             on_tools_end: callbacks.on_tools_end.clone(),
@@ -139,6 +140,7 @@ impl AiClient {
             on_context_summarized_start: callbacks.on_context_summarized_start.clone(),
             on_context_summarized_stream: callbacks.on_context_summarized_stream.clone(),
             on_context_summarized_end: callbacks.on_context_summarized_end.clone(),
+            on_before_send_model_request: callbacks.on_before_send_model_request.clone(),
             on_before_model_request: callbacks.on_before_model_request.clone(),
         }
     }

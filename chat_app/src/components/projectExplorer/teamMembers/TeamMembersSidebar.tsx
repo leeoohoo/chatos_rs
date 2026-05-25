@@ -90,7 +90,9 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
             const active = selectedContactId === contact.id;
             const switching = switchingContactId === contact.id;
             const chatState = session?.id ? sessionChatState?.[session.id] : undefined;
-            const isBusy = Boolean(chatState?.isLoading || chatState?.isStreaming);
+            const streamingPhase = chatState?.streamingPhase === 'reviewing'
+              ? 'reviewing'
+              : (chatState?.isLoading || chatState?.isStreaming ? 'thinking' : null);
             const runtimeSessionId = session?.id || '';
             const taskReviewCount = runtimeSessionId && Array.isArray(taskReviewPanelsBySession?.[runtimeSessionId])
               ? taskReviewPanelsBySession[runtimeSessionId]?.length || 0
@@ -173,7 +175,7 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
                     <span className="inline-flex items-center gap-2">
                       <span>{`会话: ${session?.title || '未创建'}`}</span>
                       {session?.id ? (
-                        <SessionBusyBadge busy={isBusy} />
+                        <SessionBusyBadge phase={streamingPhase} />
                       ) : null}
                       {pendingCount > 0 ? (
                         <span className="inline-flex items-center gap-1 text-blue-600">

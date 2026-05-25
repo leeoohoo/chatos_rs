@@ -398,12 +398,24 @@ export interface RealtimeChatStreamPayloadWrapper {
     timestamp?: string;
     content?: unknown;
     data?: unknown;
+    task_turn_review?: {
+      attempted?: boolean;
+      outcome?: string;
+      rounds?: number;
+      [key: string]: unknown;
+    } | null;
     success?: boolean;
     is_error?: boolean;
     code?: string;
     message?: string;
     result?: {
       content?: unknown;
+      task_turn_review?: {
+        attempted?: boolean;
+        outcome?: string;
+        rounds?: number;
+        [key: string]: unknown;
+      } | null;
       persisted_user_message?: unknown;
       persisted_user_message_id?: string | null;
       persisted_assistant_message?: unknown;

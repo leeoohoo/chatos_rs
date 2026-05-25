@@ -77,6 +77,12 @@ export interface MessageMetadata extends UnknownRecord {
   historyDraftUserMessage?: DraftUserMessageSnapshot;
   unavailableTools?: UnavailableToolInfo[];
   requestError?: string;
+  task_turn_review?: {
+    attempted?: boolean;
+    outcome?: string;
+    rounds?: number;
+    [key: string]: unknown;
+  };
 }
 
 export interface Message {

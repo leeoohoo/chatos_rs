@@ -6,6 +6,7 @@ import {
   handleCompleteEvent,
   handleDoneEvent,
   handleThinkingEvent,
+  handleTurnPhaseEvent,
 } from './streamLifecycleEvents';
 import {
   handleAppliedRuntimeGuidanceEvent,
@@ -74,6 +75,16 @@ export const handleStreamEvent = ({
     return {
       ...EMPTY_RESULT,
       sawMeaningfulStreamData: handleThinkingEvent(parsed, { helpers }),
+    };
+  }
+
+  if (parsed.type === 'turn_phase') {
+    return {
+      ...EMPTY_RESULT,
+      sawMeaningfulStreamData: handleTurnPhaseEvent(parsed, {
+        set,
+        currentSessionId,
+      }),
     };
   }
 
@@ -187,7 +198,12 @@ export const handleStreamEvent = ({
   }
 
   if (parsed.type === 'complete') {
-    handleCompleteEvent(parsed, { helpers, streamedTextRef });
+    handleCompleteEvent(parsed, {
+      set,
+      currentSessionId,
+      helpers,
+      streamedTextRef,
+    });
     return {
       ...EMPTY_RESULT,
       sawDone: true,

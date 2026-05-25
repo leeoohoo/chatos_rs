@@ -26,6 +26,7 @@ export const useConversationPaneProps = ({
   chatIsLoading: conversation.chatIsLoading,
   chatIsStreaming: conversation.chatIsStreaming,
   chatIsStopping: conversation.chatIsStopping,
+  chatStreamingPhase: conversation.chatStreamingPhase,
   chatStreamingPreviewText: conversation.chatStreamingPreviewText,
   hasMoreMessages: conversation.hasMoreMessages,
   onLoadMore: actions.handleLoadMore,

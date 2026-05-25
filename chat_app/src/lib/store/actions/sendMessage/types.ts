@@ -43,6 +43,12 @@ export interface StreamingMessageMetadata extends Record<string, unknown> {
   historyFinalForTurnId?: string;
   historyDraftUserMessage?: DraftUserMessageSnapshot;
   requestError?: string;
+  task_turn_review?: {
+    attempted?: boolean;
+    outcome?: string;
+    rounds?: number;
+    [key: string]: unknown;
+  };
 }
 
 export type StreamingMessage = Message;
@@ -101,8 +107,20 @@ export interface StreamEventPayload {
   type?: string;
   content?: unknown;
   data?: unknown;
+  task_turn_review?: {
+    attempted?: boolean;
+    outcome?: string;
+    rounds?: number;
+    [key: string]: unknown;
+  } | null;
   result?: {
     content?: unknown;
+    task_turn_review?: {
+      attempted?: boolean;
+      outcome?: string;
+      rounds?: number;
+      [key: string]: unknown;
+    } | null;
     persisted_user_message?: unknown;
     persisted_user_message_id?: string | null;
     persisted_assistant_message?: unknown;
@@ -114,6 +132,10 @@ export interface StreamEventPayload {
   code?: string;
   message?: string;
   [key: string]: unknown;
+}
+
+export interface TurnPhaseEventData {
+  phase?: unknown;
 }
 
 export interface RawToolFunctionPayload {

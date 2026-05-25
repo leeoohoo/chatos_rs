@@ -86,6 +86,7 @@ export const useChatInterfaceDerivedState = ({
     chatIsLoading: currentChatState?.isLoading ?? false,
     chatIsStreaming: currentChatState?.isStreaming ?? false,
     chatIsStopping: currentChatState?.isStopping ?? false,
+    chatStreamingPhase: currentChatState?.streamingPhase ?? null,
     chatStreamingPreviewText: currentChatState?.streamingPreviewText || '',
     runtimeContextRefreshNonce: currentChatState?.runtimeContextRefreshNonce || 0,
   };

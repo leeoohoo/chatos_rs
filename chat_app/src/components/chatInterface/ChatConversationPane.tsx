@@ -32,6 +32,7 @@ interface ChatConversationPaneProps {
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
+  chatStreamingPhase: 'thinking' | 'reviewing' | null;
   chatStreamingPreviewText: string;
   hasMoreMessages: boolean;
   onLoadMore: () => void;
@@ -127,6 +128,7 @@ interface ChatMessagesPaneProps {
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
+  chatStreamingPhase: 'thinking' | 'reviewing' | null;
   chatStreamingPreviewText: string;
   hasMoreMessages: boolean;
   onLoadMore: () => void;
@@ -156,6 +158,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   chatIsLoading,
   chatIsStreaming,
   chatIsStopping,
+  chatStreamingPhase,
   chatStreamingPreviewText,
   hasMoreMessages,
   onLoadMore,
@@ -213,6 +216,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
         isLoading={chatIsLoading}
         isStreaming={chatIsStreaming}
         isStopping={chatIsStopping}
+        streamingPhase={chatStreamingPhase}
         streamingPreviewText={chatStreamingPreviewText}
         hasMore={hasMoreMessages}
         onLoadMore={onLoadMore}
@@ -236,6 +240,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
       isLoading={chatIsLoading}
       isStreaming={chatIsStreaming}
       isStopping={chatIsStopping}
+      streamingPhase={chatStreamingPhase}
       streamingPreviewText={chatStreamingPreviewText}
       hasMore={hasMoreMessages}
       onLoadMore={onLoadMore}
@@ -259,6 +264,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   chatIsLoading,
   chatIsStreaming,
   chatIsStopping,
+  chatStreamingPhase,
   chatStreamingPreviewText,
   hasMoreMessages,
   onLoadMore,
@@ -356,6 +362,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           chatIsLoading={chatIsLoading}
           chatIsStreaming={chatIsStreaming}
           chatIsStopping={chatIsStopping}
+          chatStreamingPhase={chatStreamingPhase}
           chatStreamingPreviewText={chatStreamingPreviewText}
           hasMoreMessages={hasMoreMessages}
           onLoadMore={onLoadMore}

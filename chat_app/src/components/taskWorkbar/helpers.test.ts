@@ -43,7 +43,7 @@ describe('taskWorkbar helpers', () => {
     expect(groups.unfinished.map((task) => task.id)).toEqual(['todo_new', 'doing_old']);
   });
 
-  it('falls back to the latest todo task when no doing task exists', () => {
+  it('keeps current task empty when no doing task exists', () => {
     const items = [
       buildTask('todo_latest', 'todo', '2026-05-21T10:03:00Z'),
       buildTask('todo_old', 'todo', '2026-05-21T10:00:00Z'),
@@ -53,9 +53,9 @@ describe('taskWorkbar helpers', () => {
     const current = selectCurrentWorkbarTask(items);
     const groups = groupWorkbarTasks(items);
 
-    expect(current?.id).toBe('todo_latest');
-    expect(groups.current.map((task) => task.id)).toEqual(['todo_latest']);
-    expect(groups.unfinished.map((task) => task.id)).toEqual(['todo_old']);
+    expect(current).toBeNull();
+    expect(groups.current).toEqual([]);
+    expect(groups.unfinished.map((task) => task.id)).toEqual(['todo_latest', 'todo_old']);
     expect(groups.blocked.map((task) => task.id)).toEqual(['blocked_1']);
   });
 });

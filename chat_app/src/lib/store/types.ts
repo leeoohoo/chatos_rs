@@ -129,6 +129,7 @@ export interface SessionChatState {
   isLoading: boolean;
   isStreaming: boolean;
   isStopping: boolean;
+  streamingPhase?: 'thinking' | 'reviewing' | null;
   streamingMessageId: string | null;
   activeTurnId: string | null;
   streamingPreviewText: string;

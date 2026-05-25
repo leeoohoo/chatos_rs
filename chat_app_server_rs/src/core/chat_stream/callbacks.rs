@@ -49,6 +49,23 @@ pub fn build_v2_callbacks(sink: &ChatEventSink, session_id: &str) -> StreamCallb
         );
     };
 
+    let sink_turn_phase = sink.clone();
+    let sid_turn_phase = sid.clone();
+    let on_turn_phase = move |payload: Value| {
+        if abort_registry::is_aborted(&sid_turn_phase) {
+            return;
+        }
+        sink_turn_phase.send_json_event(
+            "chat.turn.phase",
+            Events::TURN_PHASE,
+            json!({
+                "type": Events::TURN_PHASE,
+                "timestamp": crate::core::time::now_rfc3339(),
+                "data": payload
+            }),
+        );
+    };
+
     let sink_tools_start = sink.clone();
     let sid_tools_start = sid.clone();
     let on_tools_start = move |tool_calls: Value| {
@@ -147,6 +164,7 @@ pub fn build_v2_callbacks(sink: &ChatEventSink, session_id: &str) -> StreamCallb
     let callbacks = V2AiClientCallbacks {
         on_chunk: Some(Arc::new(on_chunk)),
         on_thinking: Some(Arc::new(on_thinking)),
+        on_turn_phase: Some(Arc::new(on_turn_phase)),
         on_tools_start: Some(Arc::new(on_tools_start)),
         on_tools_stream: Some(Arc::new(on_tools_stream)),
         on_tools_end: Some(Arc::new(on_tools_end)),
@@ -154,6 +172,7 @@ pub fn build_v2_callbacks(sink: &ChatEventSink, session_id: &str) -> StreamCallb
         on_context_summarized_start: Some(Arc::new(on_sum_start)),
         on_context_summarized_stream: Some(Arc::new(on_sum_stream)),
         on_context_summarized_end: Some(Arc::new(on_sum_end)),
+        on_before_send_model_request: None,
         on_before_model_request: None,
     };
 
@@ -204,6 +223,23 @@ pub fn build_v3_callbacks(
             json!({ "type": Events::THINKING, "timestamp": crate::core::time::now_rfc3339(), "content": chunk }),
         );
     };
+
+    let sink_turn_phase = sink.clone();
+    let sid_turn_phase = session_id.to_string();
+    let on_turn_phase = Arc::new(move |payload: Value| {
+        if abort_registry::is_aborted(&sid_turn_phase) {
+            return;
+        }
+        sink_turn_phase.send_json_event(
+            "chat.turn.phase",
+            Events::TURN_PHASE,
+            json!({
+                "type": Events::TURN_PHASE,
+                "timestamp": crate::core::time::now_rfc3339(),
+                "data": payload
+            }),
+        );
+    }) as Arc<dyn Fn(Value) + Send + Sync>;
 
     let on_tools_start = if enable_tools {
         let sink_tools_start = sink.clone();
@@ -315,6 +351,7 @@ pub fn build_v3_callbacks(
     let callbacks = V3AiClientCallbacks {
         on_chunk: Some(Arc::new(on_chunk)),
         on_thinking: Some(Arc::new(on_thinking)),
+        on_turn_phase: Some(on_turn_phase),
         on_tools_start,
         on_tools_stream,
         on_tools_end,
@@ -322,6 +359,7 @@ pub fn build_v3_callbacks(
         on_context_summarized_start: Some(on_sum_start),
         on_context_summarized_stream: Some(on_sum_stream),
         on_context_summarized_end: Some(on_sum_end),
+        on_before_send_model_request: None,
         on_before_model_request: None,
     };
 

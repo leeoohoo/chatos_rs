@@ -12,6 +12,7 @@ type SessionChatStateMap = Record<
   {
     isLoading?: boolean;
     isStreaming?: boolean;
+    streamingPhase?: 'thinking' | 'reviewing' | null;
   }
 >;
 
@@ -152,8 +153,10 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         ) : (
                           (() => {
                             const chatState = sessionChatState?.[runtimeSessionId];
-                            const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
-                            return <SessionBusyBadge busy={isBusy} />;
+                            const phase = chatState?.streamingPhase === 'reviewing'
+                              ? 'reviewing'
+                              : ((chatState?.isLoading || chatState?.isStreaming) ? 'thinking' : null);
+                            return <SessionBusyBadge phase={phase} />;
                           })()
                         )}
                         {(() => {
