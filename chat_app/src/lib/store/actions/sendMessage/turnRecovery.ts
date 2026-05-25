@@ -44,10 +44,36 @@ type RecoverStreamingTurnBySnapshotParams = {
 
 const TERMINAL_SNAPSHOT_STATUSES = new Set(['completed', 'failed', 'error', 'cancelled', 'canceled']);
 const RUNNING_SNAPSHOT_STATUSES = new Set(['running', 'in_progress', 'processing']);
+const INACTIVE_RUNNING_SNAPSHOT_CANCEL_GRACE_MS = 10 * 60 * 1000;
 
 const normalizeSnapshotStatus = (value: unknown): string => (
   typeof value === 'string' ? value.trim().toLowerCase() : ''
 );
+
+const readSnapshotUpdatedAtMs = (
+  snapshot: TurnRuntimeSnapshotLookupResponse | null | undefined,
+): number => {
+  const candidate = snapshot?.snapshot?.updated_at || snapshot?.snapshot?.captured_at || '';
+  if (typeof candidate !== 'string' || candidate.trim().length === 0) {
+    return 0;
+  }
+  const parsed = Date.parse(candidate);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const shouldTreatInactiveRunningSnapshotAsTerminal = (
+  snapshotStatus: string,
+  snapshot: TurnRuntimeSnapshotLookupResponse | null,
+): boolean => {
+  if (!RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus) || snapshot?.active_in_runtime !== false) {
+    return false;
+  }
+  const updatedAtMs = readSnapshotUpdatedAtMs(snapshot);
+  if (updatedAtMs <= 0) {
+    return false;
+  }
+  return (Date.now() - updatedAtMs) >= INACTIVE_RUNNING_SNAPSHOT_CANCEL_GRACE_MS;
+};
 
 const isUserMessage = (message: StreamingMessage): boolean => message.role === 'user';
 const isAssistantMessage = (message: StreamingMessage): boolean => message.role === 'assistant';
@@ -361,8 +387,7 @@ export const recoverStreamingTurnBySnapshot = async ({
   }
   const snapshotStatus = normalizeSnapshotStatus(snapshot?.status);
   const effectiveSnapshotStatus = (
-    RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus)
-    && snapshot?.active_in_runtime === false
+    shouldTreatInactiveRunningSnapshotAsTerminal(snapshotStatus, snapshot)
   ) ? 'canceled' : snapshotStatus;
   const shouldPullTurnMessages = (
     !snapshot

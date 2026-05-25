@@ -57,6 +57,64 @@ const buildUser = (overrides: Partial<Message> = {}): Message => ({
   ...overrides,
 });
 
+const buildStreamingRecoveryState = (): ChatStoreDraft => ({
+  currentSessionId: 'session_1',
+  isLoading: true,
+  isStreaming: true,
+  streamingMessageId: 'temp_assistant_1',
+  messages: [
+    buildUser(),
+    buildAssistant({
+      id: 'temp_assistant_1',
+      status: 'streaming',
+      content: 'stale draft',
+      metadata: {
+        conversation_turn_id: 'turn_1',
+        historyFinalForTurnId: 'turn_1',
+        historyFinalForUserMessageId: 'temp_user_1',
+        historyDraftUserMessage: {
+          id: 'temp_user_1',
+          content: 'hello',
+          createdAt: '2026-05-07T10:00:00.000Z',
+        },
+        contentSegments: [{ type: 'text', content: 'stale draft' }],
+        toolCalls: [],
+      },
+    }),
+  ] as Message[],
+  sessionChatState: {
+    session_1: {
+      isLoading: true,
+      isStreaming: true,
+      isStopping: true,
+      streamingMessageId: 'temp_assistant_1',
+      activeTurnId: 'turn_1',
+      streamingPreviewText: 'stale draft',
+      streamingTransport: 'realtime',
+      runtimeContextRefreshNonce: 0,
+    },
+  },
+  sessionStreamingMessageDrafts: {
+    session_1: buildAssistant({
+      id: 'temp_assistant_1',
+      status: 'streaming',
+      content: 'stale draft',
+      metadata: {
+        conversation_turn_id: 'turn_1',
+        historyFinalForTurnId: 'turn_1',
+        historyFinalForUserMessageId: 'temp_user_1',
+        historyDraftUserMessage: {
+          id: 'temp_user_1',
+          content: 'hello',
+          createdAt: '2026-05-07T10:00:00.000Z',
+        },
+        contentSegments: [{ type: 'text', content: 'stale draft' }],
+        toolCalls: [],
+      },
+    }),
+  },
+}) as unknown as ChatStoreDraft;
+
 describe('persistedTurnMessages', () => {
   it('skips whole-session reload when a local terminal assistant already safely closes the turn', () => {
     const tempAssistant = buildAssistant({
@@ -222,17 +280,28 @@ describe('turnRecovery', () => {
     expect(state.sessionStreamingMessageDrafts.session_1).toBeNull();
   });
 
-  it('clears stale streaming state when a running snapshot is no longer active in the current backend runtime', async () => {
+  it('keeps streaming state when a running snapshot is inactive but still fresh', async () => {
     const set = vi.fn((updater: (state: ChatStoreDraft) => void) => {
       updater(state);
     });
+    const nowIso = new Date().toISOString();
     const snapshot: TurnRuntimeSnapshotLookupResponse = {
       conversation_id: 'session_1',
       turn_id: 'turn_1',
       status: 'running',
       snapshot_source: 'runtime',
       active_in_runtime: false,
-      snapshot: null,
+      snapshot: {
+        id: 'snapshot_1',
+        conversation_id: 'session_1',
+        user_id: 'user_1',
+        turn_id: 'turn_1',
+        status: 'running',
+        snapshot_source: 'runtime',
+        snapshot_version: 1,
+        captured_at: nowIso,
+        updated_at: nowIso,
+      },
     };
     const apiClient = {
       getConversationTurnRuntimeContextByTurn: vi.fn().mockResolvedValue(snapshot),
@@ -240,46 +309,56 @@ describe('turnRecovery', () => {
       getConversationTurnMessagesByTurn: vi.fn().mockResolvedValue([]),
       getConversationTurnMessages: vi.fn().mockResolvedValue([]),
     };
-    const state = {
-      currentSessionId: 'session_1',
-      isLoading: true,
-      isStreaming: true,
-      streamingMessageId: 'temp_assistant_1',
-      messages: [
-        buildUser(),
-      ] as Message[],
-      sessionChatState: {
-        session_1: {
-          isLoading: true,
-          isStreaming: true,
-          isStopping: true,
-          streamingMessageId: 'temp_assistant_1',
-          activeTurnId: 'turn_1',
-          streamingPreviewText: 'stale draft',
-          streamingTransport: 'realtime',
-          runtimeContextRefreshNonce: 0,
-        },
+    const state = buildStreamingRecoveryState();
+
+    const result = await recoverStreamingTurnBySnapshot({
+      apiClient,
+      set,
+      sessionId: 'session_1',
+      turnId: 'turn_1',
+      tempAssistantMessageId: 'temp_assistant_1',
+      tempUserId: 'temp_user_1',
+      preferredUserMessageId: 'temp_user_1',
+    });
+
+    expect(result.recovered).toBe(true);
+    expect(result.terminal).toBe(false);
+    expect(state.sessionChatState.session_1.isStreaming).toBe(true);
+    expect(state.sessionChatState.session_1.isStopping).toBe(false);
+    expect(state.sessionChatState.session_1.activeTurnId).toBe('turn_1');
+    expect(state.sessionStreamingMessageDrafts.session_1?.id).toBe('temp_assistant_1');
+  });
+
+  it('clears stale streaming state when a running snapshot is inactive for a long time', async () => {
+    const set = vi.fn((updater: (state: ChatStoreDraft) => void) => {
+      updater(state);
+    });
+    const staleUpdatedAtIso = new Date(Date.now() - (11 * 60 * 1000)).toISOString();
+    const snapshot: TurnRuntimeSnapshotLookupResponse = {
+      conversation_id: 'session_1',
+      turn_id: 'turn_1',
+      status: 'running',
+      snapshot_source: 'runtime',
+      active_in_runtime: false,
+      snapshot: {
+        id: 'snapshot_2',
+        conversation_id: 'session_1',
+        user_id: 'user_1',
+        turn_id: 'turn_1',
+        status: 'running',
+        snapshot_source: 'runtime',
+        snapshot_version: 1,
+        captured_at: staleUpdatedAtIso,
+        updated_at: staleUpdatedAtIso,
       },
-      sessionStreamingMessageDrafts: {
-        session_1: buildAssistant({
-          id: 'temp_assistant_1',
-          status: 'streaming',
-          content: 'stale draft',
-          metadata: {
-            conversation_turn_id: 'turn_1',
-            historyFinalForTurnId: 'turn_1',
-            historyFinalForUserMessageId: 'temp_user_1',
-            historyDraftUserMessage: {
-              id: 'temp_user_1',
-              content: 'hello',
-              createdAt: '2026-05-07T10:00:00.000Z',
-            },
-            contentSegments: [{ type: 'text', content: 'stale draft' }],
-            toolCalls: [],
-          },
-        }),
-      },
-    } as unknown as ChatStoreDraft;
+    };
+    const apiClient = {
+      getConversationTurnRuntimeContextByTurn: vi.fn().mockResolvedValue(snapshot),
+      getConversationLatestTurnRuntimeContext: vi.fn().mockResolvedValue(snapshot),
+      getConversationTurnMessagesByTurn: vi.fn().mockResolvedValue([]),
+      getConversationTurnMessages: vi.fn().mockResolvedValue([]),
+    };
+    const state = buildStreamingRecoveryState();
 
     const result = await recoverStreamingTurnBySnapshot({
       apiClient,
