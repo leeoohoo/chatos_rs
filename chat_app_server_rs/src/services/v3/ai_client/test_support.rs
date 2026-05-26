@@ -27,6 +27,9 @@ use crate::services::v3::message_manager::MessageManager;
 
 static TEST_CONFIG_INIT: Once = Once::new();
 static TEST_DB_INIT: OnceCell<()> = OnceCell::const_new();
+const TEST_SESSION_TITLE: &str = "Task board test";
+const TEST_SQLITE_USER_ID: &str = "test-user";
+const TEST_MEMORY_ENGINE_USER_ID: &str = "codex-ai-client-test-user";
 
 fn ensure_test_config() {
     TEST_CONFIG_INIT.call_once(|| {
@@ -174,6 +177,14 @@ pub(super) fn build_test_client_with_max_iterations(
     client
 }
 
+pub(super) fn unique_session_id(prefix: &str) -> String {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    format!("{prefix}_{stamp}")
+}
+
 pub(super) async fn setup_sqlite_task_board(
     session_id: &str,
     turn_id: &str,
@@ -186,16 +197,20 @@ pub(super) async fn setup_sqlite_task_board(
         .sqlite_pool()
         .ok_or_else(|| "test database is not sqlite".to_string())?;
     let now = crate::core::time::now_rfc3339();
-    let metadata = json!({ "INTERNAL_CONTEXT_LOCALE": "zh-CN" }).to_string();
+    let metadata = json!({
+        "INTERNAL_CONTEXT_LOCALE": "zh-CN",
+        "test_fixture": "ai_client_task_board"
+    })
+    .to_string();
 
     sqlx::query(
         "INSERT INTO sessions (id, title, description, metadata, user_id, project_id, status, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, metadata = excluded.metadata, user_id = excluded.user_id, project_id = excluded.project_id, status = excluded.status, archived_at = excluded.archived_at, created_at = excluded.created_at, updated_at = excluded.updated_at",
     )
     .bind(session_id)
-    .bind("Task board test")
+    .bind(TEST_SESSION_TITLE)
     .bind(None::<String>)
     .bind(metadata)
-    .bind(Some("test-user"))
+    .bind(Some(TEST_SQLITE_USER_ID))
     .bind(None::<String>)
     .bind("active")
     .bind(None::<String>)
@@ -213,10 +228,13 @@ pub(super) async fn ensure_memory_session(session_id: &str) -> Result<(), String
     ensure_test_config();
     ensure_test_db().await?;
     let mut session = Session::new(
-        "Task board test".to_string(),
+        TEST_SESSION_TITLE.to_string(),
         None,
-        Some(json!({ "INTERNAL_CONTEXT_LOCALE": "zh-CN" })),
-        Some("test-user".to_string()),
+        Some(json!({
+            "INTERNAL_CONTEXT_LOCALE": "zh-CN",
+            "test_fixture": "ai_client_memory_engine"
+        })),
+        Some(TEST_MEMORY_ENGINE_USER_ID.to_string()),
         None,
     );
     session.id = session_id.to_string();

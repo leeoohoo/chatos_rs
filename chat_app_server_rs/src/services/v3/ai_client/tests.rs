@@ -8,7 +8,7 @@ use super::test_support::{
     before_request_set_task_done_on_nth_request, build_test_client,
     build_test_client_with_max_iterations, chunk_callbacks, demo_echo_tool,
     empty_callbacks, ensure_memory_session, run_process_with_tools, setup_sqlite_task_board,
-    start_mock_provider, MockProviderStep, RunProcessWithToolsArgs,
+    start_mock_provider, unique_session_id, MockProviderStep, RunProcessWithToolsArgs,
 };
 use crate::services::task_manager::TaskDraft;
 
@@ -46,7 +46,8 @@ async fn completion_overflow_without_remote_summary_surfaces_error() {
 
 #[tokio::test]
 async fn stable_prefixed_items_use_stateless_context() {
-    ensure_memory_session("session_contact_stable")
+    let session_id = unique_session_id("session_contact_stable");
+    ensure_memory_session(session_id.as_str())
         .await
         .expect("setup stable session");
 
@@ -64,8 +65,8 @@ async fn stable_prefixed_items_use_stateless_context() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            session_id: Some("session_contact_stable".to_string()),
-            prompt_cache_key: Some("session_contact_stable".to_string()),
+            session_id: Some(session_id.clone()),
+            prompt_cache_key: Some(session_id.clone()),
             callbacks: empty_callbacks(),
             prefixed_input_items: vec![json!({
                 "type": "message",
@@ -98,7 +99,7 @@ async fn stable_prefixed_items_use_stateless_context() {
         requests[0]
             .get("prompt_cache_key")
             .and_then(|value| value.as_str()),
-        Some("session_contact_stable")
+        Some(session_id.as_str())
     );
 }
 
@@ -715,9 +716,10 @@ async fn falls_back_to_stateless_when_incremental_tool_outputs_are_rejected() {
 
 #[tokio::test]
 async fn keeps_stateless_mode_after_missing_tool_call_fallback() {
-    ensure_memory_session("session_prev_id_missing_tool_call")
-    .await
-    .expect("setup session for prev-id disable test");
+    let session_id = unique_session_id("session_prev_id_missing_tool_call");
+    ensure_memory_session(session_id.as_str())
+        .await
+        .expect("setup session for prev-id disable test");
 
     let steps = vec![
         MockProviderStep::json(
@@ -765,7 +767,7 @@ async fn keeps_stateless_mode_after_missing_tool_call_fallback() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            session_id: Some("session_prev_id_missing_tool_call".to_string()),
+            session_id: Some(session_id),
             tools: vec![demo_echo_tool()],
             callbacks: empty_callbacks(),
             ..Default::default()
@@ -1066,7 +1068,8 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
 
 #[tokio::test]
 async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
-    ensure_memory_session("session_stream_round_recovery")
+    let session_id = unique_session_id("session_stream_round_recovery");
+    ensure_memory_session(session_id.as_str())
         .await
         .expect("setup session for stream round recovery");
 
@@ -1117,7 +1120,7 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
     let result = run_process_with_tools(
         &mut client,
         RunProcessWithToolsArgs {
-            session_id: Some("session_stream_round_recovery".to_string()),
+            session_id: Some(session_id),
             tools: vec![demo_echo_tool()],
             callbacks,
             ..Default::default()
