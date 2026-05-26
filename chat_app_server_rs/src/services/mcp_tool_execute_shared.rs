@@ -2,14 +2,13 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback, ToolSchemaFormat};
+use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
 use crate::services::mcp_execution_core::McpExecutorCore;
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
 #[derive(Clone)]
 pub(crate) struct SharedMcpToolExecute {
     core: McpExecutorCore,
-    schema_format: ToolSchemaFormat,
 }
 
 impl SharedMcpToolExecute {
@@ -17,11 +16,9 @@ impl SharedMcpToolExecute {
         mcp_servers: Vec<McpHttpServer>,
         stdio_mcp_servers: Vec<McpStdioServer>,
         builtin_mcp_servers: Vec<McpBuiltinServer>,
-        schema_format: ToolSchemaFormat,
     ) -> Self {
         Self {
             core: McpExecutorCore::new(mcp_servers, stdio_mcp_servers, builtin_mcp_servers),
-            schema_format,
         }
     }
 
@@ -30,14 +27,11 @@ impl SharedMcpToolExecute {
     }
 
     pub(crate) async fn build_tools(&mut self) -> Result<(), String> {
-        self.core.build_tools(self.schema_format).await
+        self.core.build_tools().await
     }
 
-    pub(crate) fn build_builtin_only(
-        &mut self,
-        schema_format: ToolSchemaFormat,
-    ) -> Result<(), String> {
-        self.core.build_builtin_only(schema_format)
+    pub(crate) fn build_builtin_only(&mut self) -> Result<(), String> {
+        self.core.build_builtin_only()
     }
 
     pub(crate) fn available_tools(&self) -> Vec<Value> {
@@ -90,12 +84,10 @@ pub(crate) mod test_support {
     use serde_json::json;
 
     use super::SharedMcpToolExecute;
-    use crate::core::mcp_tools::ToolSchemaFormat;
     use crate::services::builtin_mcp::BuiltinMcpKind;
     use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
     pub(crate) async fn build_skill_reader_executor(
-        schema_format: ToolSchemaFormat,
         builtin_only: bool,
     ) -> SharedMcpToolExecute {
         let mut exec = SharedMcpToolExecute::new(
@@ -114,11 +106,9 @@ pub(crate) mod test_support {
                 max_write_bytes: 0,
                 search_limit: 0,
             }],
-            schema_format,
         );
         if builtin_only {
-            exec.build_builtin_only(schema_format)
-                .expect("init builtin tools");
+            exec.build_builtin_only().expect("init builtin tools");
         } else {
             exec.init().await.expect("init builtin tools");
         }

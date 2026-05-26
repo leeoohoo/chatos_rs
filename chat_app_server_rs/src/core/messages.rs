@@ -1,5 +1,5 @@
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::core::tool_call::extract_message_tool_calls;
 use crate::models::message::Message;
@@ -77,13 +77,6 @@ pub fn build_message(session_id: String, fields: NewMessageFields, default_role:
     message
 }
 
-pub fn build_assistant_role_message(content: Value) -> Value {
-    json!({
-        "role": "assistant",
-        "content": content
-    })
-}
-
 pub fn ensure_message_metadata_object(
     message: &mut Message,
 ) -> &mut serde_json::Map<String, Value> {
@@ -95,18 +88,6 @@ pub fn ensure_message_metadata_object(
         Some(Value::Object(ref mut map)) => map,
         _ => unreachable!("metadata should be object"),
     }
-}
-
-pub fn build_assistant_message_with_parts(
-    content: Value,
-    reasoning: Option<&str>,
-    preserve_empty_reasoning: bool,
-    tool_calls: Option<Value>,
-) -> Value {
-    let mut message = build_assistant_role_message(content);
-    attach_reasoning_content(&mut message, reasoning, preserve_empty_reasoning);
-    attach_message_tool_calls(&mut message, tool_calls);
-    message
 }
 
 pub fn text_has_content(value: &str) -> bool {
@@ -153,27 +134,6 @@ pub fn select_preferred_text<'a>(content: &'a str, reasoning: Option<&'a str>) -
     }
 
     reasoning.filter(|value| text_has_content(value))
-}
-
-pub fn attach_message_tool_calls(message: &mut Value, tool_calls: Option<Value>) {
-    if let Some(tool_calls) = tool_calls.filter(|value| !value.is_null()) {
-        message["tool_calls"] = tool_calls;
-    }
-}
-
-pub fn attach_reasoning_content(
-    message: &mut Value,
-    reasoning: Option<&str>,
-    include_when_empty: bool,
-) {
-    if include_when_empty {
-        message["reasoning_content"] = Value::String(reasoning.unwrap_or_default().to_string());
-        return;
-    }
-
-    if let Some(value) = reasoning.filter(|value| !value.trim().is_empty()) {
-        message["reasoning_content"] = Value::String(value.to_string());
-    }
 }
 
 pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message, String> {
@@ -281,12 +241,11 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        attach_message_tool_calls, attach_reasoning_content, build_assistant_message_with_parts,
-        build_assistant_role_message, ensure_message_metadata_object,
-        extract_message_tool_calls_for_display, extract_non_empty_text_value, flatten_text_value,
-        is_session_summary_message, join_text_lines_or_json, message_metadata_string_alias,
-        message_turn_id, object_string_alias, optional_text_has_content, owned_non_empty_text,
-        select_preferred_text, text_has_content, text_value_or_json,
+        ensure_message_metadata_object, extract_message_tool_calls_for_display,
+        extract_non_empty_text_value, flatten_text_value, is_session_summary_message,
+        join_text_lines_or_json, message_metadata_string_alias, message_turn_id,
+        object_string_alias, optional_text_has_content, owned_non_empty_text, select_preferred_text,
+        text_has_content, text_value_or_json,
     };
     use crate::models::message::Message;
 
@@ -342,83 +301,6 @@ mod tests {
         assert_eq!(
             join_text_lines_or_json(&value, &["text"]),
             "alpha\n{\"other\":1}\nomega"
-        );
-    }
-
-    #[test]
-    fn builds_assistant_message_and_attaches_optional_fields() {
-        let mut message = build_assistant_role_message(Value::Null);
-        attach_reasoning_content(&mut message, Some("think"), false);
-        attach_message_tool_calls(
-            &mut message,
-            Some(json!([{
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "demo", "arguments": "{}"}
-            }])),
-        );
-
-        assert_eq!(
-            message.get("role").and_then(|value| value.as_str()),
-            Some("assistant")
-        );
-        assert_eq!(message.get("content"), Some(&Value::Null));
-        assert_eq!(
-            message
-                .get("reasoning_content")
-                .and_then(|value| value.as_str()),
-            Some("think")
-        );
-        assert_eq!(
-            message
-                .get("tool_calls")
-                .and_then(|value| value.as_array())
-                .map(|items| items.len()),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn attach_reasoning_content_can_preserve_empty_reasoning() {
-        let mut message = build_assistant_role_message(Value::Null);
-        attach_reasoning_content(&mut message, None, true);
-        assert_eq!(
-            message
-                .get("reasoning_content")
-                .and_then(|value| value.as_str()),
-            Some("")
-        );
-    }
-
-    #[test]
-    fn builds_assistant_message_with_shared_optional_parts() {
-        let message = build_assistant_message_with_parts(
-            Value::String("hello".to_string()),
-            Some("think"),
-            true,
-            Some(json!([{
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "demo", "arguments": "{}"}
-            }])),
-        );
-
-        assert_eq!(
-            message.get("content").and_then(|value| value.as_str()),
-            Some("hello")
-        );
-        assert_eq!(
-            message
-                .get("reasoning_content")
-                .and_then(|value| value.as_str()),
-            Some("think")
-        );
-        assert_eq!(
-            message
-                .get("tool_calls")
-                .and_then(|value| value.as_array())
-                .map(|items| items.len()),
-            Some(1)
         );
     }
 

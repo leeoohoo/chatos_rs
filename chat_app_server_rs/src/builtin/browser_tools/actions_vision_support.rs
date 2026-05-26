@@ -39,14 +39,12 @@ pub(super) struct BrowserVisionCandidate {
     pub(super) temperature: f64,
     pub(super) api_key: String,
     pub(super) base_url: String,
-    pub(super) supports_responses: bool,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct BrowserVisionRunResult {
     pub(super) analysis: String,
     pub(super) transport: &'static str,
-    pub(super) transport_fallback_used: bool,
 }
 
 pub(super) fn build_browser_vision_prompt(question: &str) -> String {
@@ -105,10 +103,6 @@ pub(super) fn browser_vision_candidate_from_model_cfg(
         temperature: runtime.temperature,
         api_key: runtime.api_key,
         base_url: runtime.base_url,
-        supports_responses: model_cfg
-            .get("supports_responses")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false),
     })
 }
 
@@ -133,7 +127,6 @@ pub(super) fn default_browser_vision_candidate(
         temperature: 0.7,
         api_key: cfg.openai_api_key.clone(),
         base_url: cfg.openai_base_url.clone(),
-        supports_responses: true,
     })
 }
 

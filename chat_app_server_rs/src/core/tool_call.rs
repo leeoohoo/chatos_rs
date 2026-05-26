@@ -65,14 +65,6 @@ pub fn build_function_call_output_item(call_id: &str, output: &str) -> Value {
     })
 }
 
-pub fn build_tool_role_message(tool_call_id: &str, content: &str) -> Value {
-    json!({
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": content
-    })
-}
-
 pub fn merge_indexed_tool_call_parts(
     tool_calls_map: &mut BTreeMap<usize, Value>,
     index: usize,
@@ -316,12 +308,12 @@ mod tests {
 
     use super::{
         build_function_call_item, build_function_call_output_item, build_function_tool_call,
-        build_tool_role_message, clone_tool_call_arguments, collect_ordered_tool_calls,
-        extract_message_tool_calls, extract_message_tool_calls_from_value, extract_tool_call_id,
-        extract_tool_call_name, join_stream_text, merge_indexed_tool_call_parts,
-        merge_tool_call_arguments_piece, merge_tool_call_name_piece, message_has_tool_calls,
-        parse_tool_calls_value, remember_tool_call_index, resolve_tool_call_index,
-        tool_call_arguments_text, tool_calls_value_has_items,
+        clone_tool_call_arguments, collect_ordered_tool_calls, extract_message_tool_calls,
+        extract_message_tool_calls_from_value, extract_tool_call_id, extract_tool_call_name,
+        join_stream_text, merge_indexed_tool_call_parts, merge_tool_call_arguments_piece,
+        merge_tool_call_name_piece, message_has_tool_calls, parse_tool_calls_value,
+        remember_tool_call_index, resolve_tool_call_index, tool_call_arguments_text,
+        tool_calls_value_has_items,
     };
 
     #[test]
@@ -366,14 +358,6 @@ mod tests {
                 "type": "function_call_output",
                 "call_id": "call_1",
                 "output": "done"
-            })
-        );
-        assert_eq!(
-            build_tool_role_message("call_1", "done"),
-            json!({
-                "role": "tool",
-                "tool_call_id": "call_1",
-                "content": "done"
             })
         );
     }

@@ -676,9 +676,8 @@ describe('ToolCallRenderer summaries', () => {
               prompt_source: 'contact_agent',
               provider: 'gpt',
               model: 'gpt-4o',
-              transport: 'chat_completions',
+              transport: 'responses',
               fallback_used: true,
-              transport_fallback_used: true,
             },
           },
         })}
@@ -690,7 +689,7 @@ describe('ToolCallRenderer summaries', () => {
     expect(screen.queryByText('Vision summary')).not.toBeInTheDocument();
     expect(screen.getByText('Vision analysis')).toBeInTheDocument();
     expect(screen.getByText('The page shows a pricing table.')).toBeInTheDocument();
-    expect(screen.queryByText('chat_completions')).not.toBeInTheDocument();
+    expect(screen.queryByText('responses')).not.toBeInTheDocument();
   });
 
   it('renders research summary card from nested research payload', () => {

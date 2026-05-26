@@ -7,7 +7,6 @@ use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
-use crate::services::v2::mcp_tool_execute::McpToolExecute as V2McpToolExecute;
 use crate::services::v3::mcp_tool_execute::McpToolExecute as V3McpToolExecute;
 
 use super::snapshot::build_builtin_mcp_debug_payload;
@@ -40,33 +39,6 @@ pub struct RuntimeMcpToolsPanel {
 pub struct RuntimeMcpStatusPanel {
     pub servers: RuntimeMcpServerCounts,
     pub builtin_mcp_prompt_debug: Value,
-}
-
-pub async fn build_v2_agent_tools_panel(user_id: &str) -> Result<RuntimeMcpToolsPanel, String> {
-    let runtime_context = load_runtime_mcp_debug_context(Some(user_id.to_string())).await;
-    let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle;
-    let server_counts = RuntimeMcpServerCounts {
-        http: http_servers.len(),
-        stdio: stdio_servers.len(),
-        builtin: builtin_servers.len(),
-    };
-    let mut exec = V2McpToolExecute::new(
-        http_servers.clone(),
-        stdio_servers.clone(),
-        builtin_servers.clone(),
-    );
-    exec.init().await?;
-
-    let tools = exec.get_available_tools();
-    let unavailable_tools = exec.get_unavailable_tools();
-    Ok(build_runtime_mcp_tools_panel(
-        builtin_servers.as_slice(),
-        exec.tool_metadata(),
-        tools,
-        unavailable_tools,
-        server_counts,
-        runtime_context.locale,
-    ))
 }
 
 pub async fn build_v3_agent_tools_panel(user_id: &str) -> Result<RuntimeMcpToolsPanel, String> {

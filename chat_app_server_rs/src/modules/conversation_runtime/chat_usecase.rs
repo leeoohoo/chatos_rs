@@ -8,101 +8,14 @@ use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
-use super::chat_execution::{init_ai_server_v2, init_ai_server_v3};
+use super::chat_execution::init_ai_server_v3;
 use super::chat_runner::{
-    build_chat_event_sink, run_bootstrapped_chat_v2, run_bootstrapped_chat_v3,
-    BootstrappedChatV2Input, BootstrappedChatV3Input,
+    build_chat_event_sink, run_bootstrapped_chat_v3, BootstrappedChatV3Input,
 };
-
-pub struct RunChatV2UsecaseInput {
-    pub sender: Option<SseSender>,
-    pub req: ChatStreamRequest,
-    pub always_send_done: bool,
-    pub rename_session: bool,
-    pub respect_model_flags: bool,
-}
 
 pub struct RunChatV3UsecaseInput {
     pub sender: Option<SseSender>,
     pub req: ChatStreamRequest,
-}
-
-pub async fn run_chat_v2_usecase(input: RunChatV2UsecaseInput) {
-    let RunChatV2UsecaseInput {
-        sender,
-        req,
-        always_send_done,
-        rename_session,
-        respect_model_flags,
-    } = input;
-    let session_id = req.conversation_id.clone().unwrap_or_default();
-    let content = req.content.clone().unwrap_or_default();
-    let initial_turn_id = normalize_turn_id(req.turn_id.as_deref());
-    let initial_sink = build_chat_event_sink(
-        sender.clone(),
-        req.user_id.clone(),
-        &session_id,
-        initial_turn_id,
-        req.project_id.clone(),
-        None,
-    );
-    if let Err(err) = Config::try_get() {
-        send_error_event(
-            &initial_sink,
-            format!("服务配置未初始化: {err}").as_str(),
-            None,
-        );
-        initial_sink.send_done();
-        return;
-    }
-
-    send_start_event(&initial_sink, &session_id);
-    maybe_spawn_session_title_rename(rename_session, &session_id, &content, 30);
-
-    let model_runtime = match resolve_chat_model_runtime(&req, "gpt-4", respect_model_flags).await {
-        Ok(runtime) => runtime,
-        Err(err) => {
-            send_error_event(
-                &initial_sink,
-                format!("解析模型配置失败: {err}").as_str(),
-                None,
-            );
-            initial_sink.send_done();
-            return;
-        }
-    };
-
-    let ai_server = match init_ai_server_v2(&model_runtime) {
-        Ok(ai_server) => ai_server,
-        Err(err) => {
-            send_error_event(
-                &initial_sink,
-                format!("初始化 AI 服务失败: {err}").as_str(),
-                None,
-            );
-            initial_sink.send_done();
-            return;
-        }
-    };
-    let bootstrap = load_common_chat_bootstrap(build_common_bootstrap_input(
-        &req,
-        &session_id,
-        &content,
-        &model_runtime,
-    ))
-    .await;
-    run_bootstrapped_chat_v2(BootstrappedChatV2Input {
-        sender: sender.clone(),
-        user_id: req.user_id.clone(),
-        project_id: req.project_id.clone(),
-        session_id: &session_id,
-        content: &content,
-        model_runtime: &model_runtime,
-        ai_server,
-        bootstrap,
-        always_send_done,
-    })
-    .await;
 }
 
 pub async fn run_chat_v3_usecase(input: RunChatV3UsecaseInput) {

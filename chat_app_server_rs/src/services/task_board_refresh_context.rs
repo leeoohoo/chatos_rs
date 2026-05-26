@@ -1,8 +1,7 @@
 use serde_json::Value;
 
 use crate::modules::conversation_runtime::task_board::{
-    build_runtime_context, load_prefixed_input_items, load_prefixed_messages,
-    TaskBoardRuntimeContext,
+    build_runtime_context, load_prefixed_input_items, TaskBoardRuntimeContext,
 };
 
 use std::sync::{Arc, Mutex};
@@ -40,11 +39,6 @@ impl TaskBoardRefreshContextStore {
 
     pub(crate) fn snapshot(&self) -> Option<TaskBoardRuntimeContext> {
         self.inner.lock().ok().and_then(|slot| slot.clone())
-    }
-
-    pub(crate) async fn load_prefixed_messages(&self) -> Option<Vec<Value>> {
-        let context = self.snapshot()?;
-        load_prefixed_messages(&context).await
     }
 
     pub(crate) async fn load_prefixed_input_items(&self) -> Option<Vec<Value>> {

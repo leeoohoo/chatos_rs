@@ -10,9 +10,7 @@ pub(crate) use self::validation::validate_chat_stream_request;
 mod tests {
     use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
     use crate::core::internal_context_locale::InternalContextLocale;
-    use crate::modules::conversation_runtime::task_board::{
-        build_runtime_prefixed_input_items_for_turn, build_runtime_prefixed_messages_for_turn,
-    };
+    use crate::modules::conversation_runtime::task_board::build_runtime_prefixed_input_items_for_turn;
     use crate::services::builtin_mcp::BuiltinMcpKind;
     use crate::services::mcp_loader::McpBuiltinServer;
 
@@ -47,29 +45,6 @@ mod tests {
         assert!(prompt.contains("`browser_tools_browser_research`"));
         assert!(prompt.contains("`web_tools_web_research`"));
         assert!(prompt.contains("不要把纯页内问题直接升级成公网搜索"));
-    }
-
-    #[tokio::test]
-    async fn build_prefixed_messages_keeps_all_non_empty_prompts_in_order() {
-        let items = build_runtime_prefixed_messages_for_turn(
-            "session_test",
-            Some("turn_test"),
-            InternalContextLocale::ZhCn,
-            Some("contact prompt"),
-            Some("routing prompt"),
-            Some("command prompt"),
-        )
-        .await
-        .expect("messages");
-
-        assert_eq!(items.len(), 4);
-        assert_eq!(items[0]["content"].as_str(), Some("contact prompt"));
-        assert_eq!(items[1]["content"].as_str(), Some("routing prompt"));
-        assert_eq!(items[2]["content"].as_str(), Some("command prompt"));
-        assert!(items[3]["content"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("[Task Board]"));
     }
 
     #[tokio::test]

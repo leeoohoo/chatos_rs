@@ -16,16 +16,20 @@ import { createRemoteConnectionActions } from './actions/remoteConnections';
 import { createMessageActions } from './actions/messages';
 import { createRuntimeGuidanceActions } from './actions/runtimeGuidance';
 import { createStreamingActions } from './actions/streaming';
+import { createRuntimePanelActions } from './actions/runtimePanels';
 import { createAgentActions } from './actions/agents';
 import { createSystemContextActions } from './actions/systemContexts';
 import { createUiActions } from './actions/ui';
+import { configurationInitialState } from './slices/configurationSlice';
+import { conversationRuntimeInitialState } from './slices/conversationRuntimeSlice';
+import { remoteExecutionInitialState } from './slices/remoteExecutionSlice';
+import { sessionInitialState } from './slices/sessionSlice';
+import { uiInitialState } from './slices/uiSlice';
+import { workspaceInitialState } from './slices/workspaceSlice';
 import type {
   ChatActions,
   ChatState,
-  ChatStoreDraft,
   ChatStoreConfig,
-  TaskReviewPanelState,
-  UiPromptPanelState,
 } from './types';
 
 export type { ChatActions, ChatState, ChatStoreConfig } from './types';
@@ -57,63 +61,12 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     });
 
                     return {
-                    // 初始状态
-                    sessions: [],
-                    currentSessionId: null,
-                    currentSession: null,
-                    contacts: [],
-                    projects: [],
-                    currentProjectId: null,
-                    currentProject: null,
-                    activePanel: 'chat',
-                    terminals: [],
-                    currentTerminalId: null,
-                    currentTerminal: null,
-                    remoteConnections: [],
-                    currentRemoteConnectionId: null,
-                    currentRemoteConnection: null,
-                    messages: [],
-                    isLoading: false,
-                    isStreaming: false,
-                    streamingMessageId: null,
-                    hasMoreMessages: true,
-                    sessionChatState: {},
-                    sessionMessagePaginationState: {},
-                    sessionMessagesCache: {},
-                    sessionMessagesCacheOrder: [],
-                    sessionRuntimeGuidanceState: {},
-                    sessionStreamingMessageDrafts: {},
-                    sessionTurnProcessCache: {},
-                    turnProcessViewer: {
-                        open: false,
-                        sessionId: null,
-                        userMessageId: null,
-                        turnId: null,
-                    },
-                    taskReviewPanel: null,
-                    taskReviewPanelsBySession: {},
-                    uiPromptPanel: null,
-                    uiPromptPanelsBySession: {},
-                    sidebarOpen: true,
-                    theme: 'light',
-                    chatConfig: {
-                        model: 'gpt-4',
-                        temperature: 0.7,
-                        systemPrompt: '',
-                        enableMcp: true,
-                        reasoningEnabled: false,
-                    },
-                    mcpConfigs: [],
-                    aiModelConfigs: [],
-                    selectedModelId: null,
-                    agents: [],
-                    selectedAgentId: null,
-                    sessionAiSelectionBySession: {},
-                    systemContexts: [],
-                    activeSystemContext: null,
-                    applications: [],
-                    selectedApplicationId: null,
-                    error: null,
+                    ...sessionInitialState,
+                    ...workspaceInitialState,
+                    ...remoteExecutionInitialState,
+                    ...conversationRuntimeInitialState,
+                    ...uiInitialState,
+                    ...configurationInitialState,
 
                     // 会话/项目/消息/流式/UI 操作（拆分到独立模块）
                     ...createContactActions({ set, get, client, getUserIdParam }),
@@ -122,141 +75,10 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createTerminalActions({ set, get, client, getUserIdParam }),
                     ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
-                    openTurnProcessViewer: (sessionId, userMessageId, options) => {
-                        const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-                        const normalizedUserMessageId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
-                        const normalizedTurnId = typeof options?.turnId === 'string'
-                            ? options.turnId.trim()
-                            : '';
-                        if (!normalizedSessionId || !normalizedUserMessageId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            state.turnProcessViewer = {
-                                open: true,
-                                sessionId: normalizedSessionId,
-                                userMessageId: normalizedUserMessageId,
-                                turnId: normalizedTurnId || null,
-                            };
-                        });
-                    },
-                    closeTurnProcessViewer: () => {
-                        set((state: ChatStoreDraft) => {
-                            state.turnProcessViewer = {
-                                open: false,
-                                sessionId: null,
-                                userMessageId: null,
-                                turnId: null,
-                            };
-                        });
-                    },
+                    ...createRuntimePanelActions({ set }),
                     ...createRuntimeGuidanceActions({ set, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
                     ...createStreamingActions({ set, get, client }),
-                    setTaskReviewPanel: (panel: ChatState['taskReviewPanel']) => {
-                        set((state: ChatStoreDraft) => {
-                            state.taskReviewPanel = panel;
-                        });
-                    },
-                    upsertTaskReviewPanel: (panel: TaskReviewPanelState) => {
-                        if (!panel || !panel.reviewId || !panel.sessionId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const sessionId = panel.sessionId;
-                            const panels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
-                                ? state.taskReviewPanelsBySession[sessionId]
-                                : [];
-                            const index = panels.findIndex((item) => item.reviewId === panel.reviewId);
-                            if (index >= 0) {
-                                panels[index] = panel;
-                            } else {
-                                panels.push(panel);
-                            }
-                            state.taskReviewPanelsBySession[sessionId] = panels;
-                            if (state.currentSessionId === sessionId) {
-                                state.taskReviewPanel = panels[0] || panel;
-                            }
-                        });
-                    },
-                    removeTaskReviewPanel: (reviewId: string, sessionId?: string) => {
-                        if (!reviewId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const candidates = sessionId
-                                ? [sessionId]
-                                : Object.keys(state.taskReviewPanelsBySession || {});
-                            for (const sid of candidates) {
-                                const panels = state.taskReviewPanelsBySession?.[sid];
-                                if (!Array.isArray(panels) || panels.length === 0) {
-                                    continue;
-                                }
-                                const nextPanels = panels.filter((item) => item.reviewId !== reviewId);
-                                if (nextPanels.length > 0) {
-                                    state.taskReviewPanelsBySession[sid] = nextPanels;
-                                } else {
-                                    delete state.taskReviewPanelsBySession[sid];
-                                }
-                                if (state.currentSessionId === sid) {
-                                    state.taskReviewPanel = nextPanels[0] || null;
-                                }
-                                break;
-                            }
-                        });
-                    },
-                    setUiPromptPanel: (panel: ChatState['uiPromptPanel']) => {
-                        set((state: ChatStoreDraft) => {
-                            state.uiPromptPanel = panel;
-                        });
-                    },
-                    upsertUiPromptPanel: (panel: UiPromptPanelState) => {
-                        if (!panel || !panel.promptId || !panel.sessionId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const sessionId = panel.sessionId;
-                            const panels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
-                                ? state.uiPromptPanelsBySession[sessionId]
-                                : [];
-                            const index = panels.findIndex((item) => item.promptId === panel.promptId);
-                            if (index >= 0) {
-                                panels[index] = panel;
-                            } else {
-                                panels.push(panel);
-                            }
-                            state.uiPromptPanelsBySession[sessionId] = panels;
-                            if (state.currentSessionId === sessionId) {
-                                state.uiPromptPanel = panels[0] || panel;
-                            }
-                        });
-                    },
-                    removeUiPromptPanel: (promptId: string, sessionId?: string) => {
-                        if (!promptId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const candidates = sessionId
-                                ? [sessionId]
-                                : Object.keys(state.uiPromptPanelsBySession || {});
-                            for (const sid of candidates) {
-                                const panels = state.uiPromptPanelsBySession?.[sid];
-                                if (!Array.isArray(panels) || panels.length === 0) {
-                                    continue;
-                                }
-                                const nextPanels = panels.filter((item) => item.promptId !== promptId);
-                                if (nextPanels.length > 0) {
-                                    state.uiPromptPanelsBySession[sid] = nextPanels;
-                                } else {
-                                    delete state.uiPromptPanelsBySession[sid];
-                                }
-                                if (state.currentSessionId === sid) {
-                                    state.uiPromptPanel = nextPanels[0] || null;
-                                }
-                                break;
-                            }
-                        });
-                    },
                     ...createUiActions({ set }),
 
                     // 配置操作（拆分到独立模块）

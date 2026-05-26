@@ -101,7 +101,7 @@ export interface RuntimeFacade {
   register(data: RegisterPayload): Promise<AuthResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
-  stopChat(conversationId: string, options?: { useResponses?: boolean }): Promise<StopChatResponse>;
+  stopChat(conversationId: string): Promise<StopChatResponse>;
   getUserSettings(userId?: string): Promise<UserSettingsResponse>;
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<UserSettingsResponse>;
 }
@@ -209,8 +209,8 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async getMe() {
     return accountApi.getMe(this.getRequestFn());
   },
-  async stopChat(conversationId, options) {
-    return streamApi.stopChat(this.getRequestFn(), conversationId, options);
+  async stopChat(conversationId) {
+    return streamApi.stopChat(this.getRequestFn(), conversationId);
   },
   async getUserSettings(userId) {
     return accountApi.getUserSettings(this.getRequestFn(), userId);

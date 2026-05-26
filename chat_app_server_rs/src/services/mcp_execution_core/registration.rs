@@ -5,7 +5,7 @@ use tracing::warn;
 
 use crate::core::mcp_tools::{
     build_builtin_tool_service, build_function_tool_schema, parse_tool_definition,
-    BuiltinToolService, ToolInfo, ToolSchemaFormat,
+    BuiltinToolService, ToolInfo,
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
@@ -13,7 +13,6 @@ pub(crate) async fn register_tools_from_http(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,
     server: &McpHttpServer,
-    schema_format: ToolSchemaFormat,
 ) -> Result<(), String> {
     let discovered_tools = crate::core::mcp_tools::list_tools_http(&server.url).await?;
     for tool in discovered_tools {
@@ -25,7 +24,6 @@ pub(crate) async fn register_tools_from_http(
             Some(server.url.clone()),
             None,
             tool,
-            schema_format,
         );
     }
     Ok(())
@@ -35,7 +33,6 @@ pub(crate) async fn register_tools_from_stdio(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,
     server: &McpStdioServer,
-    schema_format: ToolSchemaFormat,
 ) -> Result<(), String> {
     let discovered_tools = crate::core::mcp_tools::list_tools_stdio(server).await?;
     for tool in discovered_tools {
@@ -47,7 +44,6 @@ pub(crate) async fn register_tools_from_stdio(
             None,
             Some(server.clone()),
             tool,
-            schema_format,
         );
     }
     Ok(())
@@ -59,7 +55,6 @@ pub(crate) fn register_tools_from_builtin(
     unavailable_tools: &mut Vec<Value>,
     builtin_services: &mut HashMap<String, BuiltinToolService>,
     server: &McpBuiltinServer,
-    schema_format: ToolSchemaFormat,
 ) -> Result<(), String> {
     let service = build_builtin_tool_service(server)?;
     let discovered_tools = service.list_tools();
@@ -88,7 +83,6 @@ pub(crate) fn register_tools_from_builtin(
             None,
             None,
             tool,
-            schema_format,
         );
     }
 
@@ -160,7 +154,6 @@ fn register_tool(
     server_url: Option<String>,
     server_config: Option<McpStdioServer>,
     tool: Value,
-    schema_format: ToolSchemaFormat,
 ) {
     let Some(definition) = parse_tool_definition(&tool) else {
         return;
@@ -171,7 +164,6 @@ fn register_tool(
         &prefixed_name,
         &definition.description,
         &definition.parameters,
-        schema_format,
     ));
 
     tool_metadata.insert(

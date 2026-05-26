@@ -7,7 +7,7 @@ use crate::models::memory_runtime_types::{
 };
 use crate::services::chatos_sessions;
 use crate::services::task_board_prompt::{
-    build_runtime_prefixed_input_items, build_runtime_prefixed_messages, format_task_board_prompt,
+    build_runtime_prefixed_input_items, format_task_board_prompt,
 };
 use crate::services::task_manager::list_tasks_for_context;
 use crate::services::text_normalization::normalize_optional_text_ref;
@@ -237,18 +237,6 @@ pub fn build_runtime_context(
     })
 }
 
-pub async fn load_prefixed_messages(context: &TaskBoardRuntimeContext) -> Option<Vec<Value>> {
-    build_runtime_prefixed_messages_for_turn(
-        &context.session_id,
-        context.turn_id.as_deref(),
-        context.locale,
-        context.contact_system_prompt.as_deref(),
-        context.builtin_mcp_system_prompt.as_deref(),
-        context.command_system_prompt.as_deref(),
-    )
-    .await
-}
-
 pub async fn load_prefixed_input_items(context: &TaskBoardRuntimeContext) -> Option<Vec<Value>> {
     build_runtime_prefixed_input_items_for_turn(
         &context.session_id,
@@ -259,23 +247,6 @@ pub async fn load_prefixed_input_items(context: &TaskBoardRuntimeContext) -> Opt
         context.command_system_prompt.as_deref(),
     )
     .await
-}
-
-pub async fn build_runtime_prefixed_messages_for_turn(
-    session_id: &str,
-    turn_id: Option<&str>,
-    locale: InternalContextLocale,
-    contact_system_prompt: Option<&str>,
-    builtin_mcp_system_prompt: Option<&str>,
-    command_system_prompt: Option<&str>,
-) -> Option<Vec<Value>> {
-    let task_board_prompt = build_task_board_prompt(session_id, turn_id, locale).await;
-    build_runtime_prefixed_messages(
-        task_board_prompt.as_deref(),
-        contact_system_prompt,
-        builtin_mcp_system_prompt,
-        command_system_prompt,
-    )
 }
 
 pub async fn build_runtime_prefixed_input_items_for_turn(

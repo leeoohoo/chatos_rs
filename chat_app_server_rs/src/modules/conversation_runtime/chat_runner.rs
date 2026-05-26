@@ -6,11 +6,10 @@ use tracing::warn;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::chat_stream::{
-    build_v2_callbacks, build_v3_callbacks, enrich_chat_result_with_persisted_messages,
-    handle_chat_result, send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
+    build_v3_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
+    send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::services::ai_client_common::AiClientCallbacks;
-use crate::services::v2::ai_server::AiServer as AiServerV2;
 use crate::services::v3::ai_server::AiServer as AiServerV3;
 use crate::utils::abort_registry;
 use crate::utils::log_helpers::log_chat_begin;
@@ -18,8 +17,7 @@ use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    build_chat_options_v2, build_chat_options_v3, configure_ai_server_v2, configure_ai_server_v3,
-    prepare_mcp_execution_v2, prepare_mcp_execution_v3, ChatExecutionInput,
+    build_chat_options_v3, configure_ai_server_v3, prepare_mcp_execution_v3, ChatExecutionInput,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::snapshot::{
@@ -59,18 +57,6 @@ pub fn build_live_request_snapshot_context(
         unavailable_builtin_tools: config.unavailable_tools.to_vec(),
         runtime_context: config.runtime_context.clone(),
     }
-}
-
-pub struct BootstrappedChatV2Input<'a> {
-    pub sender: Option<SseSender>,
-    pub user_id: Option<String>,
-    pub project_id: Option<String>,
-    pub session_id: &'a str,
-    pub content: &'a str,
-    pub model_runtime: &'a ResolvedChatModelConfig,
-    pub ai_server: AiServerV2,
-    pub bootstrap: CommonChatBootstrap,
-    pub always_send_done: bool,
 }
 
 pub struct BootstrappedChatV3Input<'a> {
@@ -130,13 +116,7 @@ pub fn prepare_chat_execution(
                 let actual_request =
                     crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
                         context_mode: Some(mode.clone()),
-                        items: if mode == "v3" {
-                            crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input)
-                        } else {
-                            crate::modules::conversation_runtime::snapshot::actual_context_items_from_v2_messages(
-                        request_input.as_array().map(|items| items.as_slice()).unwrap_or(&[]),
-                    )
-                        },
+                        items: crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input),
                         model_request_payload: None,
                     };
                 let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
@@ -155,21 +135,11 @@ pub fn prepare_chat_execution(
             let actual_request =
                 crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
                     context_mode: Some(mode.clone()),
-                    items: if mode == "v3" {
-                        crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(
-                            payload
-                                .get("input")
-                                .unwrap_or(&Value::Null),
-                        )
-                    } else {
-                        crate::modules::conversation_runtime::snapshot::actual_context_items_from_v2_messages(
-                            payload
-                                .get("messages")
-                                .and_then(Value::as_array)
-                                .map(|items| items.as_slice())
-                                .unwrap_or(&[]),
-                        )
-                    },
+                    items: crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(
+                        payload
+                            .get("input")
+                            .unwrap_or(&Value::Null),
+                    ),
                     model_request_payload: Some(payload),
                 };
             let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
@@ -187,112 +157,6 @@ pub fn prepare_chat_execution(
         streamed_content,
         mcp_tool_metadata,
     }
-}
-
-pub async fn run_bootstrapped_chat_v2(input: BootstrappedChatV2Input<'_>) {
-    let BootstrappedChatV2Input {
-        sender,
-        user_id,
-        project_id,
-        session_id,
-        content,
-        model_runtime,
-        ai_server,
-        bootstrap,
-        always_send_done,
-    } = input;
-    let CommonChatBootstrap {
-        effective_settings,
-        mut runtime_context,
-        attachments,
-        user_message_id,
-        resolved_turn_id,
-        max_tokens,
-    } = bootstrap;
-
-    let use_tools = runtime_context.use_tools;
-    let prepared_mcp =
-        prepare_mcp_execution_v2(session_id, resolved_turn_id.as_str(), &mut runtime_context).await;
-    let sink = build_chat_event_sink(
-        sender,
-        user_id,
-        session_id,
-        Some(resolved_turn_id.clone()),
-        project_id,
-        Some(user_message_id.clone()),
-    );
-    let callback_bundle = build_v2_callbacks(&sink, session_id);
-    let prepared = prepare_chat_execution(
-        sink,
-        prepared_mcp.unavailable_tools.as_slice(),
-        prepared_mcp.tool_metadata.clone(),
-        &runtime_context,
-        callback_bundle.callbacks.clone(),
-        callback_bundle.chunk_sent.clone(),
-        callback_bundle.streamed_content.clone(),
-        build_live_request_snapshot_context(&ChatLifecycleConfig {
-            session_id,
-            turn_id: resolved_turn_id.as_str(),
-            user_message_id: user_message_id.as_str(),
-            model_runtime,
-            use_tools,
-            unavailable_tools: prepared_mcp.unavailable_tools.as_slice(),
-            runtime_context: &runtime_context,
-            tool_metadata: &prepared_mcp.tool_metadata,
-        }),
-        "v2",
-    );
-    let mut ai_server = ai_server;
-    configure_ai_server_v2(
-        &mut ai_server,
-        session_id,
-        resolved_turn_id.as_str(),
-        &runtime_context,
-        &effective_settings,
-        prepared_mcp.executor,
-    );
-    let unavailable_tools = prepared_mcp.unavailable_tools.clone();
-    let chat_options = build_chat_options_v2(
-        model_runtime,
-        prepared_mcp.prefixed_messages,
-        ChatExecutionInput {
-            use_tools,
-            max_tokens,
-            attachments,
-            callbacks: prepared.callbacks.clone(),
-            turn_id: resolved_turn_id.clone(),
-            user_message_id: user_message_id.clone(),
-            message_source: model_runtime.model.clone(),
-        },
-    );
-    let result = run_chat_lifecycle(
-        ChatLifecycleConfig {
-            session_id,
-            turn_id: resolved_turn_id.as_str(),
-            user_message_id: user_message_id.as_str(),
-            model_runtime,
-            use_tools,
-            unavailable_tools: unavailable_tools.as_slice(),
-            runtime_context: &runtime_context,
-            tool_metadata: &prepared.mcp_tool_metadata,
-        },
-        ai_server.chat(session_id, content, chat_options),
-    )
-    .await;
-
-    finalize_chat_result(
-        &prepared.sink,
-        session_id,
-        resolved_turn_id.as_str(),
-        user_message_id.as_str(),
-        &prepared.chunk_sent,
-        &prepared.streamed_content,
-        result,
-        always_send_done,
-        || crate::utils::log_helpers::log_chat_cancelled(session_id),
-        |err| crate::utils::log_helpers::log_chat_error(err),
-    )
-    .await;
 }
 
 pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
@@ -350,7 +214,7 @@ pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
             runtime_context: &runtime_context,
             tool_metadata: &prepared_mcp.tool_metadata,
         }),
-        "v3",
+        "responses",
     );
     let mut ai_server = ai_server;
     configure_ai_server_v3(

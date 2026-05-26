@@ -41,15 +41,6 @@ pub struct LiveRequestSnapshotContext {
     pub runtime_context: ResolvedConversationRuntimeContext,
 }
 
-pub fn actual_context_items_from_v2_messages(
-    messages: &[Value],
-) -> Vec<TurnRuntimeSnapshotContextItemDto> {
-    messages
-        .iter()
-        .filter_map(actual_context_item_from_v2_message)
-        .collect()
-}
-
 pub fn actual_context_items_from_v3_input(input: &Value) -> Vec<TurnRuntimeSnapshotContextItemDto> {
     input
         .as_array()
@@ -268,33 +259,6 @@ fn extract_actual_request_context(
         context_mode: runtime.actual_context_mode,
         items: runtime.actual_context_items,
         model_request_payload: runtime.last_model_request_payload,
-    })
-}
-
-fn actual_context_item_from_v2_message(
-    message: &Value,
-) -> Option<TurnRuntimeSnapshotContextItemDto> {
-    let role = message.get("role").and_then(Value::as_str)?.trim();
-    if role.is_empty() {
-        return None;
-    }
-    let content = message
-        .get("content")
-        .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta"]))
-        .unwrap_or_default();
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(TurnRuntimeSnapshotContextItemDto {
-        role: Some(role.to_string()),
-        item_type: Some(if role == "tool" {
-            "tool".to_string()
-        } else {
-            "message".to_string()
-        }),
-        source: Some("request".to_string()),
-        content: trimmed.to_string(),
     })
 }
 

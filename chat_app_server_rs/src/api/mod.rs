@@ -30,7 +30,6 @@ pub mod agents;
 pub mod applications;
 pub mod auth;
 pub(crate) mod chat_stream_common;
-pub mod chat_v2;
 pub mod chat_v3;
 pub mod code_nav;
 pub mod configs;

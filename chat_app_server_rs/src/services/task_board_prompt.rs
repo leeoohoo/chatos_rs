@@ -12,20 +12,6 @@ const UNFINISHED_TASK_LIMIT: usize = 5;
 const BLOCKED_TASK_LIMIT: usize = 3;
 const COMPLETED_TASK_LIMIT: usize = 5;
 
-pub fn build_runtime_prefixed_messages(
-    task_board_prompt: Option<&str>,
-    contact_system_prompt: Option<&str>,
-    builtin_mcp_system_prompt: Option<&str>,
-    command_system_prompt: Option<&str>,
-) -> Option<Vec<Value>> {
-    build_prefixed_messages(&[
-        contact_system_prompt,
-        builtin_mcp_system_prompt,
-        command_system_prompt,
-        task_board_prompt,
-    ])
-}
-
 pub fn build_runtime_prefixed_input_items(
     task_board_prompt: Option<&str>,
     contact_system_prompt: Option<&str>,
@@ -346,24 +332,6 @@ fn display_blocker_needs(task: &TaskRecord, locale: InternalContextLocale) -> St
     }
     let separator = if locale.is_english() { "; " } else { "；" };
     compact_text(task.blocker_needs.join(separator).as_str(), 180)
-}
-
-fn build_prefixed_messages(system_prompts: &[Option<&str>]) -> Option<Vec<Value>> {
-    let mut prefixed_messages_items = Vec::new();
-    for prompt in system_prompts
-        .iter()
-        .filter_map(|item| normalize_optional_text(*item))
-    {
-        prefixed_messages_items.push(json!({
-            "role": "system",
-            "content": prompt,
-        }));
-    }
-    if prefixed_messages_items.is_empty() {
-        None
-    } else {
-        Some(prefixed_messages_items)
-    }
 }
 
 fn build_prefixed_input_items(system_prompts: &[Option<&str>]) -> Option<Vec<Value>> {

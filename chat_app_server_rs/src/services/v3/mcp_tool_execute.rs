@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::core::mcp_tools::{ToolResultCallback, ToolSchemaFormat};
+use crate::core::mcp_tools::ToolResultCallback;
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 use crate::services::mcp_tool_execute_shared::SharedMcpToolExecute;
 
@@ -22,7 +22,6 @@ impl McpToolExecute {
                 mcp_servers,
                 stdio_mcp_servers,
                 builtin_mcp_servers,
-                ToolSchemaFormat::ResponsesStrict,
             ),
         }
     }
@@ -32,8 +31,7 @@ impl McpToolExecute {
     }
 
     pub async fn init_builtin_only(&mut self) -> Result<(), String> {
-        self.shared
-            .build_builtin_only(ToolSchemaFormat::ResponsesStrict)
+        self.shared.build_builtin_only()
     }
 
     pub async fn build_tools(&mut self) -> Result<(), String> {
@@ -92,7 +90,6 @@ impl McpToolExecute {
 #[cfg(test)]
 mod tests {
     use super::McpToolExecute;
-    use crate::core::mcp_tools::ToolSchemaFormat;
     use crate::services::builtin_mcp::BuiltinMcpKind;
     use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
     use crate::services::mcp_tool_execute_shared::test_support::{
@@ -105,8 +102,7 @@ mod tests {
 
     async fn build_skill_reader_executor() -> McpToolExecute {
         McpToolExecute {
-            shared: build_shared_skill_reader_executor(ToolSchemaFormat::ResponsesStrict, true)
-                .await,
+            shared: build_shared_skill_reader_executor(true).await,
         }
     }
 

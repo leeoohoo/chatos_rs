@@ -44,7 +44,6 @@ use crate::api;
 pub fn routes() -> Router {
     Router::new()
         .merge(api::agents::router())
-        .merge(api::chat_v2::router())
         .merge(api::chat_v3::router())
         .merge(api::messages::router())
         .merge(api::realtime::router())

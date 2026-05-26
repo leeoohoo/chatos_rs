@@ -45,8 +45,7 @@ export const sendChatCommand = async (
   reasoningEnabled?: boolean,
   options?: StreamChatOptions,
 ): Promise<StreamChatCommandResponse> => {
-  const useResponses = modelConfig?.supports_responses === true;
-  const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/send`;
+  const url = `${context.baseUrl}/agent_v3/chat/send`;
   const hasRemoteConnectionId = Boolean(
     options && Object.prototype.hasOwnProperty.call(options, 'remoteConnectionId'),
   );
@@ -110,11 +109,8 @@ export const sendChatCommand = async (
 export const stopChat = (
   request: ApiRequestFn,
   conversationId: string,
-  options?: { useResponses?: boolean }
 ): Promise<StopChatResponse> => {
-  const useResponses = options?.useResponses === true;
-  const path = useResponses ? '/agent_v3/chat/stop' : '/chat/stop';
-  return request<StopChatResponse>(path, {
+  return request<StopChatResponse>('/agent_v3/chat/stop', {
     method: 'POST',
     body: JSON.stringify({
       conversation_id: conversationId,

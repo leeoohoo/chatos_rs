@@ -43,7 +43,6 @@ pub mod terminal_manager;
 pub(crate) mod text_normalization;
 pub mod ui_prompt_manager;
 pub mod user_settings;
-pub mod v2;
 pub mod v3;
 pub mod workspace_realtime_watcher;
 pub mod workspace_search;

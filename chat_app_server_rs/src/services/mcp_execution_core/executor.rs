@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback, ToolSchemaFormat};
+use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
 use super::{
@@ -32,26 +32,19 @@ impl McpExecutorCore {
         }
     }
 
-    pub(crate) async fn build_tools(
-        &mut self,
-        schema_format: ToolSchemaFormat,
-    ) -> Result<(), String> {
+    pub(crate) async fn build_tools(&mut self) -> Result<(), String> {
         self.state
             .build_all(
                 self.mcp_servers.as_slice(),
                 self.stdio_mcp_servers.as_slice(),
                 self.builtin_mcp_servers.as_slice(),
-                schema_format,
             )
             .await
     }
 
-    pub(crate) fn build_builtin_only(
-        &mut self,
-        schema_format: ToolSchemaFormat,
-    ) -> Result<(), String> {
+    pub(crate) fn build_builtin_only(&mut self) -> Result<(), String> {
         self.state
-            .build_builtin_only(self.builtin_mcp_servers.as_slice(), schema_format)
+            .build_builtin_only(self.builtin_mcp_servers.as_slice())
     }
 
     pub(crate) fn available_tools(&self) -> Vec<Value> {

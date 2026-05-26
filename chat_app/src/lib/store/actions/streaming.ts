@@ -208,18 +208,7 @@ export function createStreamingActions({ set, get, client }: Deps) {
       });
 
       try {
-        const {
-          selectedModelId,
-          aiModelConfigs,
-          sessionAiSelectionBySession,
-        } = get();
-        const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
-        const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
-        const activeModel = effectiveSelectedModelId
-          ? aiModelConfigs.find((model) => model.id === effectiveSelectedModelId)
-          : null;
-        const useResponses = activeModel?.supports_responses === true;
-        await client.stopChat(currentSessionId, { useResponses });
+        await client.stopChat(currentSessionId);
         const recoveryContext = buildStopRecoveryContext(get(), currentSessionId);
         if (recoveryContext) {
           scheduleStopRecovery(recoveryContext);

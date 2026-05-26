@@ -58,9 +58,3 @@ pub struct ParsedToolDefinition {
     pub description: String,
     pub parameters: Value,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolSchemaFormat {
-    LegacyChatCompletions,
-    ResponsesStrict,
-}

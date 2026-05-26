@@ -6,12 +6,9 @@ use uuid::Uuid;
 
 use crate::builtin::browser_tools::context;
 
-use self::transport::run_browser_vision_candidate;
+use self::transport::{run_browser_vision_candidate, BROWSER_VISION_TRANSPORT};
 #[allow(unused_imports)]
-pub(super) use self::transport::{
-    build_browser_vision_chat_messages, build_browser_vision_responses_input,
-    preferred_browser_vision_transport, BrowserVisionTransport,
-};
+pub(super) use self::transport::build_browser_vision_responses_input;
 use super::actions_shared::{fail_json, is_success, normalize_inline_text, run_browser_command};
 #[allow(unused_imports)]
 pub(super) use super::actions_vision_support::ai_model_config_to_runtime_value;
@@ -83,7 +80,6 @@ pub(super) async fn browser_vision_with_context(
                 "provider": output.provider,
                 "transport": output.transport,
                 "fallback_used": output.fallback_used,
-                "transport_fallback_used": output.transport_fallback_used,
                 "attempts": output.attempts,
                 "warnings": output.warnings,
             }),
@@ -133,7 +129,6 @@ struct BrowserVisionOutput {
     provider: String,
     transport: String,
     fallback_used: bool,
-    transport_fallback_used: bool,
     attempts: Vec<Value>,
     warnings: Vec<String>,
 }
@@ -186,7 +181,6 @@ async fn analyze_screenshot_with_best_available_runtime(
                     "provider": attempt_provider,
                     "model": attempt_model,
                     "transport": run_result.transport,
-                    "transport_fallback_used": run_result.transport_fallback_used,
                     "status": "success"
                 }));
                 return Ok(BrowserVisionOutput {
@@ -198,7 +192,6 @@ async fn analyze_screenshot_with_best_available_runtime(
                     provider: candidate.provider,
                     transport: run_result.transport.to_string(),
                     fallback_used: index > 0,
-                    transport_fallback_used: run_result.transport_fallback_used,
                     attempts,
                     warnings,
                 });
@@ -212,7 +205,7 @@ async fn analyze_screenshot_with_best_available_runtime(
                     "prompt_source": candidate.prompt_source,
                     "provider": attempt_provider,
                     "model": attempt_model,
-                    "transport": preferred_browser_vision_transport(&candidate).as_str(),
+                    "transport": BROWSER_VISION_TRANSPORT,
                     "status": "error",
                     "error": normalize_inline_text(err.as_str(), 220)
                 }));

@@ -2,8 +2,6 @@ use serde_json::{json, Value};
 
 use crate::core::messages::select_preferred_text;
 use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
-use crate::services::v2::ai_request_handler as v2_handler;
-use crate::services::v2::message_manager as v2_message_manager;
 use crate::services::v3::ai_request_handler as v3_handler;
 use crate::services::v3::message_manager as v3_message_manager;
 
@@ -15,7 +13,6 @@ pub struct PromptRunnerRuntime {
     pub temperature: f64,
     pub api_key: String,
     pub base_url: String,
-    pub supports_responses: bool,
 }
 
 impl PromptRunnerRuntime {
@@ -43,7 +40,6 @@ impl PromptRunnerRuntime {
             temperature: resolved.temperature,
             api_key: resolved.api_key,
             base_url: resolved.base_url,
-            supports_responses: resolved.supports_responses,
         })
     }
 }
@@ -62,11 +58,7 @@ pub async fn run_text_prompt_with_runtime(
         return Err("未配置可用的 Base URL".to_string());
     }
 
-    let content = if runtime.supports_responses {
-        run_with_responses(runtime, system_prompt, user_prompt, max_tokens, purpose).await?
-    } else {
-        run_with_chat_completions(runtime, system_prompt, user_prompt, max_tokens, purpose).await?
-    };
+    let content = run_with_responses(runtime, system_prompt, user_prompt, max_tokens, purpose).await?;
 
     let text = content.trim().to_string();
     if text.is_empty() {
@@ -94,79 +86,6 @@ pub async fn run_text_prompt_with_model_config(
     )
     .await?;
     run_text_prompt_with_runtime(&runtime, system_prompt, user_prompt, max_tokens, purpose).await
-}
-
-async fn run_with_chat_completions(
-    runtime: &PromptRunnerRuntime,
-    system_prompt: &str,
-    user_prompt: &str,
-    max_tokens: Option<i64>,
-    purpose: &str,
-) -> Result<String, String> {
-    let handler = v2_handler::AiRequestHandler::new(
-        runtime.api_key.clone(),
-        runtime.base_url.clone(),
-        v2_message_manager::MessageManager::new(),
-    );
-
-    let mut no_system_messages = base_url_disallows_system_messages(&runtime.base_url);
-    let max_attempts = if purpose == "session_summary_job" {
-        5
-    } else {
-        4
-    };
-    let mut last_transport_error: Option<String> = None;
-
-    for attempt in 0..max_attempts {
-        let messages = build_chat_prompt_messages(system_prompt, user_prompt, no_system_messages);
-
-        match handler
-            .handle_request(
-                messages,
-                None,
-                runtime.model.clone(),
-                Some(runtime.temperature),
-                max_tokens,
-                v2_handler::StreamCallbacks {
-                    on_chunk: None,
-                    on_thinking: None,
-                },
-                false,
-                Some(runtime.provider.clone()),
-                runtime.thinking_level.clone(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                purpose,
-            )
-            .await
-        {
-            Ok(response) => {
-                return Ok(select_response_text(response.content, response.reasoning));
-            }
-            Err(err) => {
-                let transport_retryable = should_retry_transport_error(&err);
-                if !no_system_messages && is_system_messages_not_allowed_error(&err) {
-                    no_system_messages = true;
-                    continue;
-                }
-                if attempt + 1 < max_attempts && transport_retryable {
-                    last_transport_error = Some(err.clone());
-                    continue;
-                }
-                return Err(err);
-            }
-        }
-    }
-
-    if let Some(err) = last_transport_error {
-        return Err(err);
-    }
-
-    Err("AI 请求失败：系统消息兼容重试后仍失败".to_string())
 }
 
 async fn run_with_responses(
@@ -261,30 +180,6 @@ async fn run_with_responses(
     }
 
     Err("AI 请求失败：responses 兼容重试后仍失败".to_string())
-}
-
-fn build_chat_prompt_messages(
-    system_prompt: &str,
-    user_prompt: &str,
-    no_system_messages: bool,
-) -> Vec<Value> {
-    if !no_system_messages {
-        return vec![
-            json!({"role": "system", "content": system_prompt}),
-            json!({"role": "user", "content": user_prompt}),
-        ];
-    }
-
-    let mut messages = Vec::new();
-    let normalized_system = system_prompt.trim();
-    if !normalized_system.is_empty() {
-        messages.push(json!({
-            "role": "user",
-            "content": format!("【系统上下文】\n{}", normalized_system)
-        }));
-    }
-    messages.push(json!({"role": "user", "content": user_prompt}));
-    messages
 }
 
 fn base_url_disallows_system_messages(base_url: &str) -> bool {

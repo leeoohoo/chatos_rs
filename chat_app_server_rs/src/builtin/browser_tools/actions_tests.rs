@@ -10,11 +10,10 @@ use super::actions_shared::{
     build_browser_inspect_summary, has_meaningful_page_signal, mark_page_state_available,
 };
 use super::actions_vision::{
-    ai_model_config_to_runtime_value, build_browser_vision_chat_messages,
-    build_browser_vision_responses_input, build_browser_vision_unavailable_message,
-    preferred_browser_vision_transport, BrowserVisionTransport,
+    ai_model_config_to_runtime_value, build_browser_vision_responses_input,
+    build_browser_vision_unavailable_message,
 };
-use super::actions_vision_support::{model_cfg_supports_browser_vision, BrowserVisionCandidate};
+use super::actions_vision_support::model_cfg_supports_browser_vision;
 use crate::builtin::browser_page_insights::is_meaningful_browser_url;
 use crate::builtin::web_tools::provider::ExtractedPage;
 use crate::models::ai_model_config::AiModelConfig;
@@ -66,7 +65,7 @@ fn browser_inspect_summary_mentions_snapshot_console_and_vision() {
             "enabled": true,
             "mode": "user_model",
             "model": "gpt-4o",
-            "transport": "chat_completions"
+            "transport": "responses"
         }
     });
 
@@ -76,7 +75,7 @@ fn browser_inspect_summary_mentions_snapshot_console_and_vision() {
     assert!(summary.contains("Visible refs in snapshot: 18."));
     assert!(summary.contains("Console summary: 3 message(s), 1 JavaScript error(s)."));
     assert!(summary.contains(
-        "Vision answered the inspection question via user_model / gpt-4o over chat_completions."
+        "Vision answered the inspection question via user_model / gpt-4o over responses."
     ));
 }
 
@@ -379,68 +378,5 @@ fn browser_vision_responses_input_uses_input_image_parts() {
     assert_eq!(
         content[1].get("image_url").and_then(|v| v.as_str()),
         Some("data:image/png;base64,abc")
-    );
-}
-
-#[test]
-fn browser_vision_chat_messages_use_chat_multimodal_shape() {
-    let messages = build_browser_vision_chat_messages(
-        "What is on the page?",
-        "data:image/png;base64,abc",
-        Some("You are a helpful analyst."),
-        false,
-    );
-
-    assert_eq!(messages.len(), 2);
-    assert_eq!(
-        messages[0].get("role").and_then(|v| v.as_str()),
-        Some("system")
-    );
-    assert_eq!(
-        messages[1].get("role").and_then(|v| v.as_str()),
-        Some("user")
-    );
-
-    let content = messages[1]
-        .get("content")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap();
-    assert_eq!(
-        content[0].get("type").and_then(|v| v.as_str()),
-        Some("text")
-    );
-    assert_eq!(
-        content[1].get("type").and_then(|v| v.as_str()),
-        Some("image_url")
-    );
-    assert_eq!(
-        content[1]
-            .get("image_url")
-            .and_then(|value| value.get("url"))
-            .and_then(|v| v.as_str()),
-        Some("data:image/png;base64,abc")
-    );
-}
-
-#[test]
-fn browser_vision_transport_prefers_responses_when_supported() {
-    let candidate = BrowserVisionCandidate {
-        mode: "user_model",
-        prompt_source: "generic",
-        contact_agent_id: None,
-        instructions: None,
-        model: "gpt-4o".to_string(),
-        provider: "gpt".to_string(),
-        thinking_level: None,
-        temperature: 0.7,
-        api_key: "key".to_string(),
-        base_url: "https://api.openai.com/v1".to_string(),
-        supports_responses: true,
-    };
-
-    assert_eq!(
-        preferred_browser_vision_transport(&candidate),
-        BrowserVisionTransport::Responses
     );
 }
