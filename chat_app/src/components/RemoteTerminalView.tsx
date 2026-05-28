@@ -46,6 +46,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const paletteRef = useRef(getThemeColors(actualTheme));
   const skippedStrictModeProbeRef = useRef(false);
   const pendingVerificationCodeRef = useRef<string | null>(null);
+  const terminalErrorHandledRef = useRef(false);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -152,6 +153,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       pendingVerificationCodeRef.current = null;
       lastConnectionIdRef.current = null;
       lastSnapshotRef.current = '';
+      terminalErrorHandledRef.current = false;
       return;
     }
 
@@ -177,6 +179,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setVerificationPrompt('');
       setVerificationCode('');
       pendingVerificationCodeRef.current = null;
+      terminalErrorHandledRef.current = false;
     }
 
     const verificationCodeForAttempt = pendingVerificationCodeRef.current;
@@ -188,6 +191,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
     );
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
+    terminalErrorHandledRef.current = false;
     setConnectionState('connecting');
     setErrorMessage(null);
 
@@ -239,14 +243,15 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
           return;
         }
         if (payload?.type === 'error') {
+          terminalErrorHandledRef.current = true;
+          setConnectionState('error');
+          setBusy(false);
           if (payload?.code === 'second_factor_required') {
             pendingVerificationCodeRef.current = null;
             setVerificationPrompt(
               typeof payload?.challenge_prompt === 'string' ? payload.challenge_prompt : '',
             );
             setVerificationOpen(true);
-            setConnectionState('error');
-            setBusy(false);
             setErrorMessage(
               verificationCodeForAttempt
                 ? t('remote.common.needsVerificationRetry')
@@ -264,6 +269,9 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
 
     ws.onerror = () => {
       if (socketRef.current !== ws) return;
+      if (terminalErrorHandledRef.current) {
+        return;
+      }
       setConnectionState('error');
       setBusy(false);
       setErrorMessage(t('remote.terminal.connectionError'));
@@ -271,7 +279,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
 
     ws.onclose = () => {
       if (socketRef.current !== ws) return;
-      setConnectionState('disconnected');
+      setConnectionState((prev) => (terminalErrorHandledRef.current ? prev : 'disconnected'));
       setBusy(false);
     };
 

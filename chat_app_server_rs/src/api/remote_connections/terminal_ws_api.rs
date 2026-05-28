@@ -19,6 +19,19 @@ use super::{
     RemoteTerminalEvent, RemoteTerminalWsQuery, WsInput, WsOutput,
 };
 
+pub(super) async fn send_startup_error_and_shutdown(
+    outbound_tx: mpsc::UnboundedSender<Message>,
+    payload: String,
+    challenge_task: tokio::task::JoinHandle<()>,
+    forward_task: tokio::task::JoinHandle<()>,
+) {
+    let _ = outbound_tx.send(Message::Text(payload));
+    challenge_task.abort();
+    let _ = challenge_task.await;
+    drop(outbound_tx);
+    let _ = forward_task.await;
+}
+
 pub(super) async fn remote_terminal_ws(
     auth: AuthUser,
     Path(id): Path<String>,
@@ -120,26 +133,26 @@ async fn handle_remote_terminal_socket(
                             error = err.as_str(),
                             "Remote terminal startup failed"
                         );
-                        let _ = outbound_tx.send(Message::Text(
+                        send_startup_error_and_shutdown(
+                            outbound_tx,
                             serde_json::to_string(&ws_error_output(err)).unwrap_or_default(),
-                        ));
-                        challenge_task.abort();
-                        forward_task.abort();
-                        let _ = challenge_task.await;
-                        let _ = forward_task.await;
+                            challenge_task,
+                            forward_task,
+                        )
+                        .await;
                         return;
                     }
                     Err(err) => {
-                        let _ = outbound_tx.send(Message::Text(
+                        send_startup_error_and_shutdown(
+                            outbound_tx,
                             serde_json::to_string(&ws_error_output(format!(
                                 "remote terminal startup task failed: {err}"
                             )))
                             .unwrap_or_default(),
-                        ));
-                        challenge_task.abort();
-                        forward_task.abort();
-                        let _ = challenge_task.await;
-                        let _ = forward_task.await;
+                            challenge_task,
+                            forward_task,
+                        )
+                        .await;
                         return;
                     }
                 };
