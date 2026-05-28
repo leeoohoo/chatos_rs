@@ -8,6 +8,7 @@ const MESSAGE_WINDOW_MIN_SIZE = 20;
 const MESSAGE_WINDOW_MAX_SIZE = 72;
 const MESSAGE_WINDOW_OVERSCAN_ROWS = 6;
 const MESSAGE_WINDOW_THRESHOLD_EXTRA = 8;
+const SESSION_INITIAL_BOTTOM_LOCK_FRAMES = 10;
 
 interface UseMessageListWindowingParams {
   sessionId?: string | null;
@@ -31,8 +32,10 @@ export const useMessageListWindowing = ({
   const streamEndScrollRafRef = useRef<number | null>(null);
   const streamEndSettleRafRef = useRef<number | null>(null);
   const autoScrollRafRef = useRef<number | null>(null);
+  const sessionBottomLockRafRef = useRef<number | null>(null);
   const prevIsStreamingRef = useRef<boolean>(isStreaming);
   const pendingSessionInitialScrollRef = useRef<boolean>(true);
+  const pendingSessionBottomLockFramesRef = useRef<number>(0);
   const expandingWindowRef = useRef(false);
   const prevVisibleCountRef = useRef(0);
 
@@ -62,9 +65,14 @@ export const useMessageListWindowing = ({
 
   useEffect(() => {
     pendingSessionInitialScrollRef.current = true;
+    pendingSessionBottomLockFramesRef.current = SESSION_INITIAL_BOTTOM_LOCK_FRAMES;
     if (initialScrollRafRef.current !== null) {
       cancelAnimationFrame(initialScrollRafRef.current);
       initialScrollRafRef.current = null;
+    }
+    if (sessionBottomLockRafRef.current !== null) {
+      cancelAnimationFrame(sessionBottomLockRafRef.current);
+      sessionBottomLockRafRef.current = null;
     }
     setIsAtBottom(true);
     setAutoScroll(false);
@@ -231,6 +239,27 @@ export const useMessageListWindowing = ({
     });
   }, [scrollToBottom]);
 
+  const scheduleSessionBottomLock = useCallback(() => {
+    if (pendingSessionBottomLockFramesRef.current <= 0) {
+      return;
+    }
+    if (sessionBottomLockRafRef.current !== null) {
+      return;
+    }
+    sessionBottomLockRafRef.current = requestAnimationFrame(() => {
+      sessionBottomLockRafRef.current = null;
+      if (pendingSessionBottomLockFramesRef.current <= 0) {
+        return;
+      }
+      scrollToBottom(false);
+      setIsAtBottom(true);
+      pendingSessionBottomLockFramesRef.current -= 1;
+      if (pendingSessionBottomLockFramesRef.current > 0) {
+        scheduleSessionBottomLock();
+      }
+    });
+  }, [scrollToBottom]);
+
   const scheduleStreamEndBottomLock = useCallback((frames = 8) => {
     cancelPendingStreamEndScroll();
     if (frames <= 0) {
@@ -289,6 +318,21 @@ export const useMessageListWindowing = ({
       scheduleAutoScrollToBottom();
     }
   }, [visibleMessages, isStreaming, autoScroll, scheduleAutoScrollToBottom]);
+
+  useEffect(() => {
+    if (pendingSessionInitialScrollRef.current) {
+      return;
+    }
+    if (pendingSessionBottomLockFramesRef.current <= 0) {
+      return;
+    }
+    scheduleSessionBottomLock();
+  }, [
+    sessionId,
+    visibleMessages.length,
+    viewportHeight,
+    scheduleSessionBottomLock,
+  ]);
 
   useEffect(() => {
     const wasStreaming = prevIsStreamingRef.current;
@@ -370,6 +414,10 @@ export const useMessageListWindowing = ({
       if (autoScrollRafRef.current !== null) {
         cancelAnimationFrame(autoScrollRafRef.current);
         autoScrollRafRef.current = null;
+      }
+      if (sessionBottomLockRafRef.current !== null) {
+        cancelAnimationFrame(sessionBottomLockRafRef.current);
+        sessionBottomLockRafRef.current = null;
       }
       expandingWindowRef.current = false;
     };

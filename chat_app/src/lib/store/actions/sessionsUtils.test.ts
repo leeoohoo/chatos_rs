@@ -4,9 +4,11 @@ import type { Message } from '../../../types';
 import type { ChatStoreShape, SessionMessagesSnapshot } from '../types';
 import {
   SESSION_MESSAGES_CACHE_MAX_ENTRIES,
+  SESSION_MESSAGES_INITIAL_PAGE_SIZE,
   deleteSessionMessagesCacheEntry,
   readSessionMessagesCache,
   touchSessionMessagesCacheEntry,
+  trimCompactHistorySnapshotToRecent,
   writeSessionMessagesCache,
 } from './sessionsUtils';
 
@@ -111,5 +113,47 @@ describe('sessionMessagesCache', () => {
     expect(readSessionMessagesCache(state, 'session_1')).toBeNull();
     expect(state.sessionMessagesCacheOrder).toEqual(['session_2']);
     expect(state.sessionMessagesCache.session_1).toBeUndefined();
+  });
+
+  it('trims a cached snapshot to the most recent compact-history page', () => {
+    const sessionId = 'session_1';
+    const messages: Message[] = [];
+    for (let index = 1; index <= SESSION_MESSAGES_INITIAL_PAGE_SIZE + 5; index += 1) {
+      messages.push({
+        id: `user_${index}`,
+        sessionId,
+        role: 'user',
+        content: `user_${index}`,
+        status: 'completed',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        metadata: {
+          conversation_turn_id: `turn_${index}`,
+        },
+      });
+      messages.push({
+        id: `assistant_${index}`,
+        sessionId,
+        role: 'assistant',
+        content: `assistant_${index}`,
+        status: 'completed',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        metadata: {
+          conversation_turn_id: `turn_${index}`,
+          historyFinalForUserMessageId: `user_${index}`,
+          historyFinalForTurnId: `turn_${index}`,
+        },
+      });
+    }
+
+    const trimmed = trimCompactHistorySnapshotToRecent({
+      messages,
+      nextBefore: 'turn_1',
+      loaded: true,
+    });
+
+    expect(trimmed?.messages[0]?.id).toBe('user_6');
+    expect(trimmed?.messages[trimmed.messages.length - 1]?.id).toBe(`assistant_${SESSION_MESSAGES_INITIAL_PAGE_SIZE + 5}`);
+    expect(trimmed?.messages).toHaveLength(SESSION_MESSAGES_INITIAL_PAGE_SIZE * 2);
+    expect(trimmed?.nextBefore).toBe('turn_6');
   });
 });

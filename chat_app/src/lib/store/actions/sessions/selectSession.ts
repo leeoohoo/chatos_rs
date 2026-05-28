@@ -17,7 +17,9 @@ import {
   readVisibleSessionMessagesSnapshot,
   resolveSessionTimestamp,
   resolveSessionProjectScopeId,
+  SESSION_MESSAGES_INITIAL_PAGE_SIZE,
   touchSessionMessagesCacheEntry,
+  trimCompactHistorySnapshotToRecent,
   writeSessionMessagesCache,
 } from '../sessionsUtils';
 import { applySelectSessionState } from '../sessionsSelectHelpers';
@@ -161,7 +163,10 @@ export function createSelectSessionActions({
         const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
         const visibleSnapshot = readVisibleSessionMessagesSnapshot(get(), sessionId);
         const cachedPage = readSessionMessagesCache(get(), sessionId);
-        const sessionSnapshot = visibleSnapshot ?? cachedPage;
+        const sessionSnapshot = trimCompactHistorySnapshotToRecent(
+          visibleSnapshot ?? cachedPage,
+          SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+        );
         const hasImmediateSnapshot = Boolean(existingSession && sessionSnapshot);
 
         set((state: ChatStoreDraft) => {
@@ -289,7 +294,10 @@ export function createSelectSessionActions({
 
         const [session, messageResult] = await Promise.all([
           existingSession ? Promise.resolve(existingSession) : fetchSession(client, sessionId),
-          fetchSessionMessages(client, sessionId, { limit: 50, before: null }),
+          fetchSessionMessages(client, sessionId, {
+            limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+            before: null,
+          }),
         ]);
         const mergedSnapshot = mergeLatestCompactHistorySnapshot(
           messageResult.messages,

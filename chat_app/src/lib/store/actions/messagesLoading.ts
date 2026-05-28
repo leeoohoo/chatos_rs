@@ -14,6 +14,7 @@ import {
   mergeLatestCompactHistorySnapshot,
   readSessionMessagesCache,
   readVisibleSessionMessagesSnapshot,
+  SESSION_MESSAGES_INITIAL_PAGE_SIZE,
   writeSessionMessagesCache,
 } from './sessionsUtils';
 
@@ -95,7 +96,10 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           state.error = null;
         });
 
-        const result = await fetchSessionMessages(client, sessionId, { limit: 50, before: null });
+        const result = await fetchSessionMessages(client, sessionId, {
+          limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+          before: null,
+        });
         applySessionMessagesSnapshot(sessionId, result, {
           updateVisibleMessages: true,
           settleGlobalLoading: true,
@@ -121,7 +125,10 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
       }
       const request = (async () => {
         try {
-          const result = await fetchSessionMessages(client, normalizedSessionId, { limit: 50, before: null });
+          const result = await fetchSessionMessages(client, normalizedSessionId, {
+            limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+            before: null,
+          });
           applySessionMessagesSnapshot(normalizedSessionId, result, {
             updateVisibleMessages: false,
             settleGlobalLoading: false,
@@ -150,7 +157,10 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           });
           return;
         }
-        const result = await fetchSessionMessages(client, sessionId, { limit: 50, before });
+        const result = await fetchSessionMessages(client, sessionId, {
+          limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+          before,
+        });
         const page = result.messages;
         let mergedSnapshotMessages = extractCompactHistoryMessages(current.messages);
         set((state) => {

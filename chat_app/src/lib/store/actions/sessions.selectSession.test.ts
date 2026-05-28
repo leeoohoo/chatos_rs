@@ -10,6 +10,7 @@ import {
   mergeLatestCompactHistorySnapshot,
   readSessionMessagesCache,
   readVisibleSessionMessagesSnapshot,
+  SESSION_MESSAGES_INITIAL_PAGE_SIZE,
   writeSessionMessagesCache,
 } from './sessionsUtils';
 import { setRealtimeConnectionStateSnapshot } from '../../realtime/state';
@@ -550,6 +551,95 @@ describe('selectSession', () => {
       loaded: true,
     });
     expect(readSessionMessagesCache(state, 'session_1')?.messages.map((message) => message.id)).toEqual(['msg_older', 'msg_latest']);
+  });
+
+  it('restores only the most recent cached compact-history page when revisiting a session', async () => {
+    const state = {
+      sessions: [createSession('session_1')],
+      currentSessionId: null,
+      currentSession: null,
+      activePanel: 'chat',
+      messages: [],
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      hasMoreMessages: true,
+      error: null,
+      selectedModelId: null,
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionChatState: {},
+      sessionMessagePaginationState: {},
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    const backgroundSync = installBackgroundSyncSpy(state);
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    const cachedMessages: Message[] = [];
+    for (let index = 1; index <= SESSION_MESSAGES_INITIAL_PAGE_SIZE + 5; index += 1) {
+      cachedMessages.push({
+        id: `user_${index}`,
+        sessionId: 'session_1',
+        role: 'user',
+        content: `user_${index}`,
+        status: 'completed',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        metadata: {
+          conversation_turn_id: `turn_${index}`,
+        },
+      });
+      cachedMessages.push({
+        id: `assistant_${index}`,
+        sessionId: 'session_1',
+        role: 'assistant',
+        content: `assistant_${index}`,
+        status: 'completed',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        metadata: {
+          conversation_turn_id: `turn_${index}`,
+          historyFinalForUserMessageId: `user_${index}`,
+          historyFinalForTurnId: `turn_${index}`,
+        },
+      });
+    }
+
+    writeSessionMessagesCache(state, 'session_1', {
+      messages: cachedMessages,
+      nextBefore: 'turn_1',
+      loaded: true,
+    });
+
+    vi.mocked(fetchSession).mockImplementation(async (_client, sessionId) => createSession(sessionId));
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: cachedMessages.slice(-2),
+      hasMore: true,
+      nextBefore: `turn_${SESSION_MESSAGES_INITIAL_PAGE_SIZE + 4}`,
+    });
+
+    const actions = createSelectSessionActions({
+      set,
+      get,
+      client: {} as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '' }),
+    });
+
+    await actions.selectSession('session_1');
+    await backgroundSync.mock.results[0]?.value;
+
+    expect(state.messages[0]?.id).toBe('user_6');
+    expect(state.messages).toHaveLength(SESSION_MESSAGES_INITIAL_PAGE_SIZE * 2);
+    expect(state.hasMoreMessages).toBe(true);
+    expect(state.sessionMessagePaginationState.session_1).toEqual({
+      nextBefore: 'turn_6',
+      loaded: true,
+    });
   });
 
   it('touches cached session history so an active cache hit becomes most recently used', async () => {

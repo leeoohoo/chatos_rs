@@ -10,6 +10,7 @@ interface Props { onClose: () => void }
 
 interface UserSettingsForm {
   MAX_ITERATIONS?: number | string;
+  TASK_FOLLOW_UP_MAX_ROUNDS?: number | string;
   LOG_LEVEL?: string;
   CHAT_MAX_TOKENS?: number | string | null;
   INTERNAL_CONTEXT_LOCALE?: string;
@@ -19,6 +20,7 @@ interface UserSettingsForm {
 
 interface UserSettingsPayload {
   MAX_ITERATIONS: number;
+  TASK_FOLLOW_UP_MAX_ROUNDS: number;
   LOG_LEVEL: string;
   CHAT_MAX_TOKENS: number | null;
   INTERNAL_CONTEXT_LOCALE: string;
@@ -107,6 +109,7 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
       const nextUiLocale = String(settings.UI_LOCALE || locale || 'zh-CN') === 'en-US' ? 'en-US' : 'zh-CN';
       const userSettingsPayload: UserSettingsPayload = {
         MAX_ITERATIONS: Number(settings.MAX_ITERATIONS || 0),
+        TASK_FOLLOW_UP_MAX_ROUNDS: Number(settings.TASK_FOLLOW_UP_MAX_ROUNDS || 0),
         LOG_LEVEL: String(settings.LOG_LEVEL || 'info'),
         CHAT_MAX_TOKENS: settings.CHAT_MAX_TOKENS === '' || settings.CHAT_MAX_TOKENS === null || settings.CHAT_MAX_TOKENS === undefined
           ? null
@@ -169,6 +172,11 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                     <label className="text-xs text-muted-foreground">{t('settings.maxIterations')}</label>
                     <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('MAX_ITERATIONS')} />
                     <p className="text-[11px] text-muted-foreground mt-1">{t('settings.maxIterationsHelp')}</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">{t('settings.taskFollowUpMaxRounds')}</label>
+                    <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('TASK_FOLLOW_UP_MAX_ROUNDS')} />
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.taskFollowUpMaxRoundsHelp')}</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground">{t('settings.logLevel')}</label>

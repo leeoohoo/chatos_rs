@@ -24,6 +24,7 @@ import type {
 } from '../types';
 
 export const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
+export const SESSION_MESSAGES_INITIAL_PAGE_SIZE = 20;
 
 export const createPerfMeasureStopper = (measureName: string): (() => number | null) => {
   if (typeof performance === 'undefined' || typeof performance.mark !== 'function' || typeof performance.measure !== 'function') {
@@ -246,6 +247,25 @@ const normalizeSnapshotCursor = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
+const countCompactHistoryUnits = (messages: Message[]): number => {
+  let units = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (!message) {
+      continue;
+    }
+    if (message.role === 'user') {
+      units += 1;
+      continue;
+    }
+    const linkedUserMessageId = normalizeSnapshotCursor(message.metadata?.historyFinalForUserMessageId);
+    if (!linkedUserMessageId) {
+      units += 1;
+    }
+  }
+  return units;
+};
+
 const readMessageTurnCursor = (message: Message): string => (
   normalizeSnapshotCursor(
     message?.metadata?.conversation_turn_id
@@ -254,6 +274,76 @@ const readMessageTurnCursor = (message: Message): string => (
     || message?.id,
   )
 );
+
+export const trimCompactHistorySnapshotToRecent = (
+  snapshot: SessionMessagesSnapshot | null | undefined,
+  pageSize: number = SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+): SessionMessagesSnapshot | null => {
+  if (!snapshot) {
+    return null;
+  }
+
+  const requestedUnits = Number.isFinite(pageSize) ? Math.max(1, Math.floor(pageSize)) : SESSION_MESSAGES_INITIAL_PAGE_SIZE;
+  const { messages } = snapshot;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return {
+      messages: [],
+      nextBefore: snapshot.nextBefore ?? null,
+      loaded: snapshot.loaded,
+    };
+  }
+
+  if (countCompactHistoryUnits(messages) <= requestedUnits) {
+    return {
+      messages: cloneStreamingMessageDraft(messages),
+      nextBefore: snapshot.nextBefore ?? null,
+      loaded: snapshot.loaded,
+    };
+  }
+
+  let units = 0;
+  let startIndex = messages.length;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message) {
+      continue;
+    }
+
+    let contributesUnit = false;
+    if (message.role === 'user') {
+      contributesUnit = true;
+    } else {
+      const linkedUserMessageId = normalizeSnapshotCursor(message.metadata?.historyFinalForUserMessageId);
+      contributesUnit = !linkedUserMessageId;
+    }
+
+    if (contributesUnit) {
+      units += 1;
+    }
+    startIndex = index;
+    if (units >= requestedUnits) {
+      break;
+    }
+  }
+
+  if (startIndex <= 0) {
+    return {
+      messages: cloneStreamingMessageDraft(messages),
+      nextBefore: snapshot.nextBefore ?? null,
+      loaded: snapshot.loaded,
+    };
+  }
+
+  const trimmedMessages = messages.slice(startIndex);
+  const nextBefore = readMessageTurnCursor(trimmedMessages[0] as Message) || snapshot.nextBefore || null;
+
+  return {
+    messages: cloneStreamingMessageDraft(trimmedMessages),
+    nextBefore,
+    loaded: snapshot.loaded,
+  };
+};
 
 const matchesSnapshotCursor = (message: Message, cursor: string): boolean => {
   if (message?.role !== 'user') {

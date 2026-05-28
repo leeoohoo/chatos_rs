@@ -9,6 +9,7 @@ import type {
 import { createMessageLoadingActions } from './messagesLoading';
 import {
   readSessionMessagesCache,
+  SESSION_MESSAGES_INITIAL_PAGE_SIZE,
   writeSessionMessagesCache,
 } from './sessionsUtils';
 
@@ -343,5 +344,65 @@ describe('syncSessionMessagesInBackground', () => {
       loaded: true,
     });
     expect(readCache(state, 'session_2')?.messages.map((message) => message.id)).toEqual(['older', 'newest']);
+  });
+
+  it('uses the smaller initial compact-history page size for first load and load-more', async () => {
+    vi.mocked(fetchSessionMessages).mockClear();
+    const state = {
+      currentSessionId: 'session_2',
+      messages: [],
+      hasMoreMessages: true,
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      error: null,
+      sessionChatState: {},
+      sessionMessagePaginationState: {
+        session_2: {
+          nextBefore: 'turn_older',
+          loaded: true,
+        },
+      },
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [createMessage('latest', 'latest')],
+      hasMore: false,
+      nextBefore: null,
+    });
+
+    const actions = createMessageLoadingActions({
+      set,
+      get,
+      client: {} as never,
+    });
+
+    await actions.loadMessages('session_2');
+    state.sessionMessagePaginationState.session_2 = {
+      nextBefore: 'turn_older',
+      loaded: true,
+    };
+    await actions.loadMoreMessages('session_2');
+
+    expect(vi.mocked(fetchSessionMessages).mock.calls).toEqual([
+      [
+        {} as never,
+        'session_2',
+        { limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE, before: null },
+      ],
+      [
+        {} as never,
+        'session_2',
+        { limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE, before: 'turn_older' },
+      ],
+    ]);
   });
 });
