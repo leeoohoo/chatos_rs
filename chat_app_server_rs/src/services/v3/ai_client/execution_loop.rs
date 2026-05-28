@@ -5,11 +5,13 @@ use crate::core::tool_call::tool_calls_value_has_items;
 use crate::modules::conversation_runtime::task_board::{
     build_hidden_task_turn_review_metadata, build_task_turn_follow_up_directive,
     build_task_turn_follow_up_message, build_task_turn_review_retry_guidance,
-    parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode, TaskTurnReviewOutcome,
+    parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
+    TaskTurnReviewOutcome,
 };
 use crate::services::ai_common::{
-    attach_ai_client_success_extra, build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
-    handle_transient_retry, is_retryable_provider_overload_error, terminal_empty_response_error,
+    attach_ai_client_success_extra, build_ai_client_success_payload, completion_failed_error,
+    execute_tool_lifecycle, handle_transient_retry, is_retryable_provider_overload_error,
+    terminal_empty_response_error,
 };
 use crate::services::v3::ai_request_handler::StreamCallbacks;
 use crate::utils::abort_registry;
@@ -44,11 +46,7 @@ fn emit_turn_phase_event(
     }
 }
 
-fn build_review_metadata_payload(
-    attempted: bool,
-    outcome: &str,
-    rounds: usize,
-) -> Value {
+fn build_review_metadata_payload(attempted: bool, outcome: &str, rounds: usize) -> Value {
     json!({
         "task_turn_review": {
             "attempted": attempted,
@@ -58,12 +56,7 @@ fn build_review_metadata_payload(
     })
 }
 
-fn attach_review_metadata(
-    payload: Value,
-    attempted: bool,
-    outcome: &str,
-    rounds: usize,
-) -> Value {
+fn attach_review_metadata(payload: Value, attempted: bool, outcome: &str, rounds: usize) -> Value {
     attach_ai_client_success_extra(
         payload,
         build_review_metadata_payload(attempted, outcome, rounds),
@@ -119,7 +112,7 @@ impl AiClient {
         let max_terminal_empty_retries = 2usize;
         let max_completion_retry_retries = 5usize;
         let mut completion_retry_count = 0usize;
-        let max_task_follow_up_rounds = 3usize;
+        let max_task_follow_up_rounds = self.task_follow_up_max_rounds;
         let mut task_follow_up_rounds = 0usize;
         let mut task_follow_up_mode: Option<TaskTurnFollowUpMode> = None;
         let mut task_follow_up_locale: Option<
@@ -156,8 +149,7 @@ impl AiClient {
                 &callbacks,
             )
             .await;
-            let follow_up_input_items =
-                pending_follow_up_input_items.take().unwrap_or_default();
+            let follow_up_input_items = pending_follow_up_input_items.take().unwrap_or_default();
             self.maybe_refresh_stateless_context(
                 session_id.as_deref(),
                 stable_prefix_mode,
@@ -182,30 +174,29 @@ impl AiClient {
                 if request_attempt_guard > max_request_attempts {
                     break;
                 }
-                let request_input_source = if !runtime_guidance_items.is_empty()
-                    || !follow_up_input_items.is_empty()
-                {
-                    let with_follow_up = if !follow_up_input_items.is_empty() {
-                        append_input_items(
-                            &input,
-                            follow_up_input_items.as_slice(),
-                            force_text_content,
-                        )
+                let request_input_source =
+                    if !runtime_guidance_items.is_empty() || !follow_up_input_items.is_empty() {
+                        let with_follow_up = if !follow_up_input_items.is_empty() {
+                            append_input_items(
+                                &input,
+                                follow_up_input_items.as_slice(),
+                                force_text_content,
+                            )
+                        } else {
+                            input.clone()
+                        };
+                        if !runtime_guidance_items.is_empty() {
+                            append_input_items(
+                                &with_follow_up,
+                                runtime_guidance_items.as_slice(),
+                                force_text_content,
+                            )
+                        } else {
+                            with_follow_up
+                        }
                     } else {
                         input.clone()
                     };
-                    if !runtime_guidance_items.is_empty() {
-                        append_input_items(
-                            &with_follow_up,
-                            runtime_guidance_items.as_slice(),
-                            force_text_content,
-                        )
-                    } else {
-                        with_follow_up
-                    }
-                } else {
-                    input.clone()
-                };
                 let request_input = if no_system_messages {
                     rewrite_system_messages_to_user(&request_input_source, force_text_content)
                 } else {
@@ -385,9 +376,10 @@ impl AiClient {
                 let review_outcome = parse_task_turn_review_outcome(ai_response.content.as_str());
                 match review_outcome {
                     TaskTurnReviewOutcome::Pass => {
-                        let final_content = last_visible_completion_content
-                            .clone()
-                            .unwrap_or_else(|| strip_task_turn_review_marker(ai_response.content.as_str()));
+                        let final_content =
+                            last_visible_completion_content.clone().unwrap_or_else(|| {
+                                strip_task_turn_review_marker(ai_response.content.as_str())
+                            });
                         let final_reasoning = last_visible_completion_reasoning
                             .clone()
                             .or(ai_response.reasoning.clone());
@@ -421,10 +413,8 @@ impl AiClient {
                             let retry_input = build_task_turn_follow_up_message(
                                 build_task_turn_review_retry_guidance(review_locale).as_str(),
                             );
-                            pending_follow_up_input_items = Some(build_current_input_items(
-                                &retry_input,
-                                force_text_content,
-                            ));
+                            pending_follow_up_input_items =
+                                Some(build_current_input_items(&retry_input, force_text_content));
                             task_follow_up_mode = Some(TaskTurnFollowUpMode::ContinueExecution);
                             emit_turn_phase_event(
                                 &callbacks,

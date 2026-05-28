@@ -54,6 +54,7 @@ pub struct AiClient {
     mcp_tool_execute: McpToolExecute,
     message_manager: MessageManager,
     max_iterations: i64,
+    task_follow_up_max_rounds: usize,
     system_prompt: Option<String>,
     force_text_content_sessions: HashSet<String>,
     no_system_message_sessions: HashSet<String>,
@@ -86,6 +87,7 @@ impl AiClient {
             mcp_tool_execute,
             message_manager,
             max_iterations: 25,
+            task_follow_up_max_rounds: 3,
             system_prompt: None,
             force_text_content_sessions: HashSet::new(),
             no_system_message_sessions: HashSet::new(),
@@ -150,6 +152,12 @@ impl AiClientSettings for AiClient {
     fn apply_settings(&mut self, effective: &Value) {
         if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
             self.max_iterations = v;
+        }
+        if let Some(v) = effective
+            .get("TASK_FOLLOW_UP_MAX_ROUNDS")
+            .and_then(|v| v.as_i64())
+        {
+            self.task_follow_up_max_rounds = v.max(0) as usize;
         }
     }
 }

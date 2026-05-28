@@ -3,14 +3,15 @@ use std::sync::{Arc, Mutex};
 use axum::http::StatusCode;
 use serde_json::{json, Value};
 
-use crate::services::v3::ai_client::AiClientCallbacks;
 use super::test_support::{
     before_request_set_task_done_on_nth_request, build_test_client,
-    build_test_client_with_max_iterations, chunk_callbacks, demo_echo_tool,
-    empty_callbacks, ensure_memory_session, run_process_with_tools, setup_sqlite_task_board,
-    start_mock_provider, unique_session_id, MockProviderStep, RunProcessWithToolsArgs,
+    build_test_client_with_max_iterations, chunk_callbacks, demo_echo_tool, empty_callbacks,
+    ensure_memory_session, run_process_with_tools, setup_sqlite_task_board, start_mock_provider,
+    unique_session_id, MockProviderStep, RunProcessWithToolsArgs,
 };
 use crate::services::task_manager::TaskDraft;
+use crate::services::user_settings::AiClientSettings;
+use crate::services::v3::ai_client::AiClientCallbacks;
 
 #[tokio::test]
 async fn completion_overflow_without_remote_summary_surfaces_error() {
@@ -317,11 +318,82 @@ async fn task_follow_up_reviews_same_turn_when_work_is_done() {
     let phases = phase_events.lock().expect("lock poisoned").clone();
     assert_eq!(phases.len(), 1);
     assert_eq!(
-        phases[0]
-            .get("phase")
-            .and_then(|value| value.as_str()),
+        phases[0].get("phase").and_then(|value| value.as_str()),
         Some("review")
     );
+}
+
+#[tokio::test]
+async fn task_follow_up_max_rounds_comes_from_runtime_settings() {
+    let session_id = "session_task_follow_up_runtime_setting";
+    let turn_id = "turn_task_follow_up_runtime_setting";
+    let tasks = vec![TaskDraft {
+        title: "Still unfinished".to_string(),
+        details: "runtime setting should cap follow-ups".to_string(),
+        priority: "medium".to_string(),
+        status: "doing".to_string(),
+        tags: vec![],
+        due_at: None,
+        outcome_summary: String::new(),
+        outcome_items: vec![],
+        resume_hint: String::new(),
+        blocker_reason: String::new(),
+        blocker_needs: vec![],
+        blocker_kind: String::new(),
+    }];
+    setup_sqlite_task_board(session_id, turn_id, tasks)
+        .await
+        .expect("setup board");
+    let steps = vec![
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_summary_before_follow_up",
+                "status": "completed",
+                "output_text": "first summary"
+            }),
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_summary_after_one_follow_up",
+                "status": "completed",
+                "output_text": "second summary"
+            }),
+        ),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client_with_max_iterations(base_url, 4);
+    client.apply_settings(&json!({ "TASK_FOLLOW_UP_MAX_ROUNDS": 1 }));
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            session_id: Some(session_id.to_string()),
+            turn_id: Some(turn_id.to_string()),
+            callbacks: empty_callbacks(),
+            purpose: "chat",
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("follow-up cap should come from runtime settings");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("second summary")
+    );
+    assert_eq!(
+        result
+            .get("task_turn_review")
+            .and_then(|value| value.get("rounds"))
+            .and_then(|value| value.as_u64()),
+        Some(1)
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
 }
 
 #[tokio::test]

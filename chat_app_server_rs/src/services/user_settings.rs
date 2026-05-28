@@ -6,6 +6,7 @@ use crate::repositories::user_settings as repo;
 
 pub const USER_SETTING_KEYS: &[&str] = &[
     "MAX_ITERATIONS",
+    "TASK_FOLLOW_UP_MAX_ROUNDS",
     "LOG_LEVEL",
     "HISTORY_LIMIT",
     "CHAT_MAX_TOKENS",
@@ -18,9 +19,11 @@ fn coerce(value: &Value, key: &str) -> Value {
         return Value::Null;
     }
     match key {
-        "MAX_ITERATIONS" | "HISTORY_LIMIT" | "CHAT_MAX_TOKENS" => parse_js_int_value(value)
-            .map(|n| Value::Number(serde_json::Number::from(n)))
-            .unwrap_or(Value::Null),
+        "MAX_ITERATIONS" | "TASK_FOLLOW_UP_MAX_ROUNDS" | "HISTORY_LIMIT" | "CHAT_MAX_TOKENS" => {
+            parse_js_int_value(value)
+                .map(|n| Value::Number(serde_json::Number::from(n)))
+                .unwrap_or(Value::Null)
+        }
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
         "INTERNAL_CONTEXT_LOCALE" => Value::String(
             value
@@ -48,6 +51,10 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(25);
+    let task_follow_up_max_rounds = std::env::var("TASK_FOLLOW_UP_MAX_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(3);
     let history_limit = std::env::var("HISTORY_LIMIT")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
@@ -61,6 +68,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
 
     Ok(json!({
         "MAX_ITERATIONS": max_iterations,
+        "TASK_FOLLOW_UP_MAX_ROUNDS": task_follow_up_max_rounds,
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,
         "CHAT_MAX_TOKENS": chat_max_tokens,

@@ -256,6 +256,25 @@ export interface RuntimeGuidanceSubmitPayload {
   projectId?: string | null;
 }
 
+export interface AgentV3ToolDefinition {
+  name: string;
+  description?: string | null;
+  parameters?: Record<string, unknown> | null;
+  server_name?: string | null;
+  display_group?: string | null;
+}
+
+export interface AgentV3ToolsResponse {
+  tools?: AgentV3ToolDefinition[];
+  unavailable_tools?: Array<{
+    server_name?: string | null;
+    tool_name?: string | null;
+    reason?: string | null;
+  }>;
+  owner?: string | null;
+  service?: string | null;
+}
+
 export interface RuntimeGuidanceSubmitResponse {
   success: boolean;
   guidance_id?: string;

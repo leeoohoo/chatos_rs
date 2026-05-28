@@ -3,6 +3,7 @@ import * as notepadApi from '../notepad';
 import * as streamApi from '../stream';
 import * as summaryApi from '../summary';
 import * as tasksApi from '../tasks';
+import { buildQuery } from '../shared';
 import type {
   AuthResponse,
   MeResponse,
@@ -20,6 +21,7 @@ import type {
   RegisterPayload,
   RuntimeGuidanceSubmitPayload,
   RuntimeGuidanceSubmitResponse,
+  AgentV3ToolsResponse,
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
@@ -48,6 +50,16 @@ export interface RuntimeFacade {
     reasoningEnabled?: boolean,
     options?: StreamChatOptions,
   ): Promise<StreamChatCommandResponse>;
+  getAgentV3Tools(options?: {
+    conversationId?: string | null;
+    mcpEnabled?: boolean;
+    enabledMcpIds?: string[];
+    projectId?: string | null;
+    projectRoot?: string | null;
+    contactAgentId?: string | null;
+    skillsEnabled?: boolean;
+    selectedSkillIds?: string[];
+  }): Promise<AgentV3ToolsResponse>;
   submitRuntimeGuidance(payload: RuntimeGuidanceSubmitPayload): Promise<RuntimeGuidanceSubmitResponse>;
   getTaskManagerTasks(
     conversationId: string,
@@ -118,6 +130,23 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
       reasoningEnabled,
       options,
     );
+  },
+  async getAgentV3Tools(options) {
+    const query = buildQuery({
+      conversation_id: options?.conversationId,
+      mcp_enabled: typeof options?.mcpEnabled === 'boolean' ? options.mcpEnabled : undefined,
+      enabled_mcp_ids: Array.isArray(options?.enabledMcpIds)
+        ? options.enabledMcpIds.join(',')
+        : undefined,
+      project_id: options?.projectId,
+      project_root: options?.projectRoot,
+      contact_agent_id: options?.contactAgentId,
+      skills_enabled: typeof options?.skillsEnabled === 'boolean' ? options.skillsEnabled : undefined,
+      selected_skill_ids: Array.isArray(options?.selectedSkillIds) && options?.selectedSkillIds.length > 0
+        ? options?.selectedSkillIds.join(',')
+        : undefined,
+    });
+    return this.getRequestFn()<AgentV3ToolsResponse>(`/agent_v3/tools${query}`);
   },
   async submitRuntimeGuidance(payload) {
     return streamApi.submitRuntimeGuidance(this.getRequestFn(), payload);

@@ -65,6 +65,7 @@ export interface TurnProcessViewerState {
 }
 
 export interface InputAreaProps {
+  conversationId?: string | null;
   onSend: SendMessageHandler;
   onGuide?: GuideMessageHandler;
   onStop?: () => void;
