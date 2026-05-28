@@ -18,6 +18,8 @@ export interface SessionCreatePayload {
 
 export interface SessionSelectOptions {
   keepActivePanel?: boolean;
+  initialPageSize?: number;
+  skipBackgroundSync?: boolean;
 }
 
 export interface SessionCreateOptions {

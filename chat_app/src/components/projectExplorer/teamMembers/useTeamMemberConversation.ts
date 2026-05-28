@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { isSessionMatchedContactAndProject } from '../../../features/contactSession/sessionResolver';
 import type { Session, AiModelConfig, Message } from '../../../types';
-import type { SendMessageRuntimeOptions } from '../../../lib/store/types';
+import type { SendMessageRuntimeOptions, SessionSelectOptions } from '../../../lib/store/types';
 import type { ContactItem, ProjectContactRow, SessionChatStateMap } from './types';
 
 interface UseTeamMemberConversationParams {
@@ -26,7 +26,7 @@ interface UseTeamMemberConversationParams {
   ) => Promise<void>;
   cancelPendingSessionSummariesLoad: () => void;
   ensureContactSession: (contact: ContactItem) => Promise<string | null>;
-  selectSession: (sessionId: string, options?: { keepActivePanel?: boolean }) => Promise<void>;
+  selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<void>;
   sendMessage: (
     content: string,
     attachments?: File[],
@@ -173,7 +173,11 @@ export const useTeamMemberConversation = ({
       }
       setSelectedSessionId(sessionId);
       if (sessionId && currentSession?.id !== sessionId) {
-        await selectSession(sessionId, { keepActivePanel: true });
+        await selectSession(sessionId, {
+          keepActivePanel: true,
+          initialPageSize: 1,
+          skipBackgroundSync: true,
+        });
       }
       if (latestContactSwitchSeqRef.current !== requestSeq) {
         return;
@@ -286,7 +290,11 @@ export const useTeamMemberConversation = ({
       }
       setSelectedSessionId(sessionId);
       if (currentSession?.id !== sessionId) {
-        await selectSession(sessionId, { keepActivePanel: true });
+        await selectSession(sessionId, {
+          keepActivePanel: true,
+          initialPageSize: 1,
+          skipBackgroundSync: true,
+        });
       }
       await sendMessage(content, attachments, {
         mcpEnabled: runtimeOptions?.mcpEnabled,
@@ -328,7 +336,11 @@ export const useTeamMemberConversation = ({
       }
       setSelectedSessionId(sessionId);
       if (currentSession?.id !== sessionId) {
-        await selectSession(sessionId, { keepActivePanel: true });
+        await selectSession(sessionId, {
+          keepActivePanel: true,
+          initialPageSize: 1,
+          skipBackgroundSync: true,
+        });
       }
       if (latestSummaryOpenSeqRef.current !== requestSeq) {
         return;

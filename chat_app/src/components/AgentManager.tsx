@@ -2,28 +2,21 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 import { useI18n } from '../i18n/I18nProvider';
 import { apiClient } from '../lib/api/client';
-import { normalizeRawMessages } from '../lib/domain/messages';
-import { normalizeProject } from '../lib/domain/projects';
-import { normalizeSession } from '../lib/domain/sessions';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AgentConfig } from '../types';
-import AgentConversationPanel from './agentManager/AgentConversationPanel';
 import { useDialogService } from './ui/DialogProvider';
 import AgentAiCreateDialog from './agentManager/AgentAiCreateDialog';
 import AgentList from './agentManager/AgentList';
 import AgentManagerForm from './agentManager/AgentManagerForm';
 import {
-  buildGroupedConversationSessions,
   canSubmitAgentForm,
   canSubmitAiCreateAgentForm,
   getDefaultAgentAiCreateFormData,
   getDefaultAgentFormData,
-  normalizeProjectId,
   toAgentFormData,
 } from './agentManager/helpers';
 import type {
   AgentAiCreateFormData,
-  AgentConversationState,
   AgentFormData,
   AgentManagerProps,
 } from './agentManager/types';
@@ -55,18 +48,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   const [aiCreateForm, setAiCreateForm] = useState<AgentAiCreateFormData>(getDefaultAgentAiCreateFormData());
   const [skillPlugins, setSkillPlugins] = useState<Awaited<ReturnType<typeof apiClient.listSkillPlugins>>>([]);
   const [skills, setSkills] = useState<Awaited<ReturnType<typeof apiClient.listSkills>>>([]);
-  const [conversationState, setConversationState] = useState<AgentConversationState>({
-    open: false,
-    loading: false,
-    agent: null,
-    sessions: [],
-    groupedSessions: [],
-    selectedSessionId: null,
-    messages: [],
-    messagesLoading: false,
-    projectNames: {},
-  });
-
   useEffect(() => {
     const currentWindow = window as AgentManagerWindow;
     const last = currentWindow.__agentManagerInitAt__ || 0;
@@ -191,116 +172,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     }
   };
 
-  const loadConversationMessages = async (sessionId: string) => {
-    const normalizedSessionId = sessionId.trim();
-    if (!normalizedSessionId) {
-      setConversationState((current) => ({
-        ...current,
-        selectedSessionId: null,
-        messages: [],
-        messagesLoading: false,
-      }));
-      return;
-    }
-
-    setConversationState((current) => ({
-      ...current,
-      selectedSessionId: normalizedSessionId,
-      messagesLoading: true,
-    }));
-
-    try {
-      const rawMessages = await apiClient.getConversationMessages(normalizedSessionId, {
-        limit: 200,
-        offset: 0,
-      });
-      const messages = normalizeRawMessages(rawMessages, normalizedSessionId);
-      setConversationState((current) => ({
-        ...current,
-        selectedSessionId: normalizedSessionId,
-        messages,
-        messagesLoading: false,
-      }));
-    } catch (error) {
-      console.error('Failed to load agent conversation messages:', error);
-      setConversationState((current) => ({
-        ...current,
-        selectedSessionId: normalizedSessionId,
-        messages: [],
-        messagesLoading: false,
-      }));
-    }
-  };
-
-  const openConversationPanel = async (agent: AgentConfig) => {
-    setConversationState({
-      open: true,
-      loading: true,
-      agent,
-      sessions: [],
-      groupedSessions: [],
-      selectedSessionId: null,
-      messages: [],
-      messagesLoading: false,
-      projectNames: {},
-    });
-
-    try {
-      const [rawSessions, rawProjects] = await Promise.all([
-        apiClient.getAgentSessions(agent.id, undefined, { limit: 120, offset: 0 }),
-        apiClient.listProjects(),
-      ]);
-
-      const sessions = rawSessions.map((item) => normalizeSession(item));
-      const projectNames = rawProjects
-        .map((project) => normalizeProject(project))
-        .reduce<Record<string, string>>((acc, project) => {
-          const projectId = normalizeProjectId(project.id);
-          const projectName = project.name?.trim();
-          if (projectName) {
-            acc[projectId] = projectName;
-          }
-          return acc;
-        }, {});
-      projectNames['0'] = projectNames['0'] || t('agentManager.session.unassignedProject');
-
-      const groupedSessions = buildGroupedConversationSessions(sessions, projectNames, t);
-      setConversationState({
-        open: true,
-        loading: false,
-        agent,
-        sessions,
-        groupedSessions,
-        selectedSessionId: null,
-        messages: [],
-        messagesLoading: false,
-        projectNames,
-      });
-
-      if (groupedSessions[0]?.session?.id) {
-        await loadConversationMessages(groupedSessions[0].session.id);
-      }
-    } catch (error) {
-      console.error('Failed to load agent sessions:', error);
-      await alert({
-        title: t('agentManager.loadFailedTitle'),
-        message: error instanceof Error ? error.message : t('agentManager.loadFailedMessage'),
-        type: 'danger',
-      });
-      setConversationState({
-        open: false,
-        loading: false,
-        agent: null,
-        sessions: [],
-        groupedSessions: [],
-        selectedSessionId: null,
-        messages: [],
-        messagesLoading: false,
-        projectNames: {},
-      });
-    }
-  };
-
   return (
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={onClose} />
@@ -348,7 +219,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
               setShowForm(true);
             }}
             onDelete={handleDelete}
-            onInspectSessions={openConversationPanel}
           />
         </div>
       </div>
@@ -364,24 +234,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
           setShowAiCreate(false);
         }}
         onSubmit={handleAiCreate}
-      />
-
-      <AgentConversationPanel
-        state={conversationState}
-        onClose={() => {
-          setConversationState({
-            open: false,
-            loading: false,
-            agent: null,
-            sessions: [],
-            groupedSessions: [],
-            selectedSessionId: null,
-            messages: [],
-            messagesLoading: false,
-            projectNames: {},
-          });
-        }}
-        onSelectSession={loadConversationMessages}
       />
     </>
   );

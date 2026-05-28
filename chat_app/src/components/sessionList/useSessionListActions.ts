@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { deriveNameFromPath } from './helpers';
-import type { ChatState } from '../../lib/store/types';
+import type { ChatState, SessionSelectOptions } from '../../lib/store/types';
 import type { Project, RemoteConnection, Session, Terminal } from '../../types';
 import type { ContactItem } from './types';
 
@@ -14,7 +14,7 @@ interface SessionListActionsParams {
   remoteConnections: RemoteConnection[];
   currentRemoteConnection: RemoteConnection | null;
   ensureSessionForContact: (contact: ContactItem) => Promise<string | null>;
-  selectSession: (sessionId: string) => Promise<void>;
+  selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<void>;
   setActivePanel: (panel: ActivePanel) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
   onOpenSessionRuntimeContext?: (sessionId: string) => void;
@@ -90,7 +90,10 @@ export const useSessionListActions = ({
           return null;
         }
         if (currentSession?.id !== ensuredSessionId) {
-          await selectSession(ensuredSessionId);
+          await selectSession(ensuredSessionId, {
+            initialPageSize: 1,
+            skipBackgroundSync: true,
+          });
         } else {
           setActivePanel('chat');
         }

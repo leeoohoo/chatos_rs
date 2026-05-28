@@ -3,6 +3,7 @@ import type { AgentConfig, Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
 import { CONTACT_CHAT_PROJECT_ID } from './useContactSessionListState';
 import type { ContactItem } from './types';
+import type { SessionSelectOptions } from '../../lib/store/types';
 
 interface UseContactSessionCreatorOptions {
   agents: AgentConfig[];
@@ -11,7 +12,7 @@ interface UseContactSessionCreatorOptions {
   createContact: (agentId: string, name?: string) => Promise<ContactItem>;
   ensureSessionForContact: (contact: ContactItem) => Promise<string | null>;
   updateSession: (sessionId: string, patch: Partial<Session>) => Promise<unknown>;
-  selectSession: (sessionId: string) => Promise<unknown>;
+  selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<unknown>;
 }
 
 interface UseContactSessionCreatorResult {
@@ -92,7 +93,10 @@ export const useContactSessionCreator = ({
         });
         await updateSession(ensuredSessionId, { metadata } as Partial<Session>);
         if (currentSessionId !== ensuredSessionId) {
-          await selectSession(ensuredSessionId);
+          await selectSession(ensuredSessionId, {
+            initialPageSize: 1,
+            skipBackgroundSync: true,
+          });
         }
       }
 

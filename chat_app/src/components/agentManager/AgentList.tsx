@@ -5,10 +5,9 @@ interface AgentListProps {
   agents: AgentConfig[];
   onEdit: (agent: AgentConfig) => void;
   onDelete: (agentId: string) => Promise<void>;
-  onInspectSessions: (agent: AgentConfig) => Promise<void>;
 }
 
-const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListProps) => {
+const AgentList = ({ agents, onEdit, onDelete }: AgentListProps) => {
   const { t } = useI18n();
   if (!agents.length) {
     return (
@@ -55,19 +54,6 @@ const AgentList = ({ agents, onEdit, onDelete, onInspectSessions }: AgentListPro
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => {
-                  void onInspectSessions(agent);
-                }}
-                disabled={agent.ui_status === 'creating'}
-                className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
-                  agent.ui_status === 'creating'
-                    ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
-                    : 'bg-muted hover:bg-accent'
-                }`}
-              >
-                {t('agentManager.list.inspectSessions')}
-              </button>
               <button
                 onClick={() => onEdit(agent)}
                 disabled={agent.ui_status === 'creating'}

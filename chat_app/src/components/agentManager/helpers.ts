@@ -1,9 +1,5 @@
 import type { AgentConfig } from '../../types';
 import type { AgentAiCreateFormData, AgentFormData } from './types';
-export {
-  buildGroupedConversationSessions,
-  normalizeProjectId,
-} from './sessionHelpers';
 
 export const getDefaultAgentFormData = (): AgentFormData => ({
   name: '',

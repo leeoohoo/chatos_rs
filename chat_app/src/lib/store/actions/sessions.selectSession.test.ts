@@ -802,4 +802,64 @@ describe('selectSession', () => {
 
     expect(fetchSessionMessages).toHaveBeenCalledTimes(1);
   });
+
+  it('uses the requested initial page size and can skip background sync', async () => {
+    const state = {
+      sessions: [createSession('session_1')],
+      currentSessionId: null,
+      currentSession: null,
+      activePanel: 'chat',
+      messages: [],
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      hasMoreMessages: true,
+      error: null,
+      selectedModelId: null,
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionChatState: {},
+      sessionMessagePaginationState: {},
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    const backgroundSync = installBackgroundSyncSpy(state);
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSession).mockImplementation(async (_client, sessionId) => (
+      createSession(sessionId)
+    ));
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [createMessage('session_1', 'msg_1', 'latest page', {
+        conversation_turn_id: 'turn_1',
+      })],
+      hasMore: true,
+      nextBefore: 'turn_1',
+    });
+
+    const actions = createSelectSessionActions({
+      set,
+      get,
+      client: {} as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '' }),
+    });
+
+    await actions.selectSession('session_1', {
+      initialPageSize: 1,
+      skipBackgroundSync: true,
+    });
+
+    expect(vi.mocked(fetchSessionMessages).mock.calls[0]).toEqual([
+      {} as never,
+      'session_1',
+      { limit: 1, before: null },
+    ]);
+    expect(backgroundSync).not.toHaveBeenCalled();
+  });
 });

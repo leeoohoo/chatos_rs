@@ -1,22 +1,4 @@
-import type { AgentConfig, AiModelConfig, Message, Session } from '../../types';
-
-export interface AgentConversationGroup {
-  projectId: string;
-  projectName: string;
-  session: Session;
-}
-
-export interface AgentConversationState {
-  open: boolean;
-  loading: boolean;
-  agent: AgentConfig | null;
-  sessions: Session[];
-  groupedSessions: AgentConversationGroup[];
-  selectedSessionId: string | null;
-  messages: Message[];
-  messagesLoading: boolean;
-  projectNames: Record<string, string>;
-}
+import type { AgentConfig, AiModelConfig } from '../../types';
 
 export interface AgentManagerProps {
   onClose: () => void;

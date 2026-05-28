@@ -83,8 +83,14 @@ export const useMessageListWindowing = ({
       return;
     }
 
-    if (visibleMessages.length === 0 && !isLoading && !hasMore) {
+    const hasRenderableMessages = visibleMessages.length > 0;
+
+    if (!hasRenderableMessages && !isLoading && !hasMore) {
       pendingSessionInitialScrollRef.current = false;
+      return;
+    }
+
+    if (!hasRenderableMessages) {
       return;
     }
 

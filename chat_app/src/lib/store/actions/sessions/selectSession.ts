@@ -143,6 +143,9 @@ export function createSelectSessionActions({
       const stopPerfMeasure = createPerfMeasureStopper(`store.selectSession.${sessionId}.${selectStartedAt}`);
       const beforeSelect = get();
       const previousSessionId = beforeSelect.currentSessionId;
+      const requestedInitialPageSize = Number.isFinite(options.initialPageSize)
+        ? Math.max(1, Math.floor(options.initialPageSize as number))
+        : SESSION_MESSAGES_INITIAL_PAGE_SIZE;
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
         // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
@@ -165,7 +168,7 @@ export function createSelectSessionActions({
         const cachedPage = readSessionMessagesCache(get(), sessionId);
         const sessionSnapshot = trimCompactHistorySnapshotToRecent(
           visibleSnapshot ?? cachedPage,
-          SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+          requestedInitialPageSize,
         );
         const hasImmediateSnapshot = Boolean(existingSession && sessionSnapshot);
 
@@ -270,6 +273,9 @@ export function createSelectSessionActions({
           });
           void recoverRunningSessionState(sessionId, sessionSnapshot.messages);
           const shouldBackgroundSync = (() => {
+            if (options.skipBackgroundSync) {
+              return false;
+            }
             if (getRealtimeConnectionStateSnapshot() !== 'connected') {
               return true;
             }
@@ -295,7 +301,7 @@ export function createSelectSessionActions({
         const [session, messageResult] = await Promise.all([
           existingSession ? Promise.resolve(existingSession) : fetchSession(client, sessionId),
           fetchSessionMessages(client, sessionId, {
-            limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+            limit: requestedInitialPageSize,
             before: null,
           }),
         ]);
