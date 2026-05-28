@@ -2,6 +2,10 @@ import React from 'react';
 
 import { cn } from '../../../lib/utils';
 import SessionBusyBadge from '../../chat/SessionBusyBadge';
+import {
+  countPendingSessionPanels,
+  resolveSessionBusyPhase,
+} from '../../chat/sessionBusyState';
 import type {
   ContactItem,
   ProjectContactRow,
@@ -90,17 +94,21 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
             const active = selectedContactId === contact.id;
             const switching = switchingContactId === contact.id;
             const chatState = session?.id ? sessionChatState?.[session.id] : undefined;
-            const streamingPhase = chatState?.streamingPhase === 'reviewing'
-              ? 'reviewing'
-              : (chatState?.isLoading || chatState?.isStreaming ? 'thinking' : null);
             const runtimeSessionId = session?.id || '';
-            const taskReviewCount = runtimeSessionId && Array.isArray(taskReviewPanelsBySession?.[runtimeSessionId])
-              ? taskReviewPanelsBySession[runtimeSessionId]?.length || 0
-              : 0;
-            const uiPromptCount = runtimeSessionId && Array.isArray(uiPromptPanelsBySession?.[runtimeSessionId])
-              ? uiPromptPanelsBySession[runtimeSessionId]?.length || 0
-              : 0;
-            const pendingCount = taskReviewCount + uiPromptCount;
+            const {
+              taskReviewCount,
+              uiPromptCount,
+              pendingCount,
+            } = countPendingSessionPanels({
+              sessionId: runtimeSessionId,
+              taskReviewPanelsBySession,
+              uiPromptPanelsBySession,
+            });
+            const streamingPhase = resolveSessionBusyPhase({
+              chatState,
+              pendingTaskReviewCount: taskReviewCount,
+              pendingUiPromptCount: uiPromptCount,
+            });
             return (
               <div
                 key={contact.id}

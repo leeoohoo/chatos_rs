@@ -4,6 +4,10 @@ import type { Session } from '../../../types';
 import type { TaskReviewPanelState, UiPromptPanelState } from '../../../lib/store/types';
 import { ChatIcon, DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
 import SessionBusyBadge from '../../chat/SessionBusyBadge';
+import {
+  countPendingSessionPanels,
+  resolveSessionBusyPhase,
+} from '../../chat/sessionBusyState';
 
 type SessionStatus = 'active' | 'archiving' | 'archived';
 
@@ -153,9 +157,19 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         ) : (
                           (() => {
                             const chatState = sessionChatState?.[runtimeSessionId];
-                            const phase = chatState?.streamingPhase === 'reviewing'
-                              ? 'reviewing'
-                              : ((chatState?.isLoading || chatState?.isStreaming) ? 'thinking' : null);
+                            const {
+                              taskReviewCount,
+                              uiPromptCount,
+                            } = countPendingSessionPanels({
+                              sessionId: runtimeSessionId,
+                              taskReviewPanelsBySession,
+                              uiPromptPanelsBySession,
+                            });
+                            const phase = resolveSessionBusyPhase({
+                              chatState,
+                              pendingTaskReviewCount: taskReviewCount,
+                              pendingUiPromptCount: uiPromptCount,
+                            });
                             return <SessionBusyBadge phase={phase} />;
                           })()
                         )}
@@ -163,13 +177,11 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           if (isArchivedSession) {
                             return null;
                           }
-                          const taskReviewCount = Array.isArray(taskReviewPanelsBySession?.[runtimeSessionId])
-                            ? taskReviewPanelsBySession[runtimeSessionId].length
-                            : 0;
-                          const uiPromptCount = Array.isArray(uiPromptPanelsBySession?.[runtimeSessionId])
-                            ? uiPromptPanelsBySession[runtimeSessionId].length
-                            : 0;
-                          const pendingCount = taskReviewCount + uiPromptCount;
+                          const { pendingCount } = countPendingSessionPanels({
+                            sessionId: runtimeSessionId,
+                            taskReviewPanelsBySession,
+                            uiPromptPanelsBySession,
+                          });
                           if (pendingCount <= 0) {
                             return null;
                           }

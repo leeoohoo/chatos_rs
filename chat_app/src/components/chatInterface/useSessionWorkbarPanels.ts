@@ -6,6 +6,7 @@ import type {
   UiPromptPanelState,
 } from '../../lib/store/types';
 import { useRealtimeConnectionState } from '../../lib/realtime/RealtimeProvider';
+import { useChatStoreContext } from '../../lib/store/ChatStoreContext';
 import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
 import {
   pickFirstSessionPanel,
@@ -44,6 +45,7 @@ export const useSessionWorkbarPanels = ({
   loadUiPromptHistory,
   markUiPromptHistoryStale,
 }: UseSessionWorkbarPanelsArgs) => {
+  const chatStore = useChatStoreContext();
   const sessionId = session?.id || null;
   const realtimeConnectionState = useRealtimeConnectionState();
   const preferRealtimeSync = enabled
@@ -56,6 +58,14 @@ export const useSessionWorkbarPanels = ({
     markTaskRealtimeMutationHandled,
     consumeRecentTaskRealtimeMutation,
   } = useTaskRealtimeMutationGuard();
+  const chatStoreSet = useMemo(() => (
+    (fn: Parameters<import('../../lib/store/types').ChatStoreSet>[0]) => {
+      chatStore.setState((state) => {
+        fn(state);
+      });
+    }
+  ), [chatStore]);
+  const getChatStoreState = useCallback(() => chatStore.getState(), [chatStore]);
 
   const activeTaskReviewPanel = useMemo(
     () => pickFirstSessionPanel<TaskReviewPanelState>(taskReviewPanelsBySession, sessionId),
@@ -172,6 +182,8 @@ export const useSessionWorkbarPanels = ({
     activeTaskReviewPanel,
     activeUiPromptPanel,
     apiClient,
+    chatStoreSet,
+    getChatStoreState,
     preferRealtimeSync,
     taskHistoryOpen,
     uiPromptHistoryOpen,

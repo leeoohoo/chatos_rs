@@ -2,10 +2,13 @@ import { useCallback } from 'react';
 
 import type { TaskReviewDraft } from '../../lib/store/types';
 import type { TaskReviewPanelActionsArgs } from './panelActionTypes';
+import { recoverPendingPanelConversation } from './pendingPanelRecovery';
 
 export const useTaskReviewPanelActions = ({
   activeTaskReviewPanel,
   apiClient,
+  chatStoreSet,
+  getChatStoreState,
   preferRealtimeSync = false,
   taskHistoryOpen = false,
   upsertTaskReviewPanel,
@@ -45,6 +48,15 @@ export const useTaskReviewPanelActions = ({
         activeTaskReviewPanel.sessionId,
       );
       removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
+      if (chatStoreSet && getChatStoreState) {
+        void recoverPendingPanelConversation({
+          apiClient,
+          getState: getChatStoreState,
+          set: chatStoreSet,
+          sessionId: activeTaskReviewPanel.sessionId,
+          conversationTurnId: activeTaskReviewPanel.conversationTurnId,
+        });
+      }
       if (!preferRealtimeSync) {
         await loadCurrentTurnWorkbarTasks(
           activeTaskReviewPanel.sessionId,
@@ -68,6 +80,8 @@ export const useTaskReviewPanelActions = ({
   }, [
     activeTaskReviewPanel,
     apiClient,
+    chatStoreSet,
+    getChatStoreState,
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
     markHistoryWorkbarTasksStale,
@@ -100,6 +114,15 @@ export const useTaskReviewPanelActions = ({
         activeTaskReviewPanel.sessionId,
       );
       removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
+      if (chatStoreSet && getChatStoreState) {
+        void recoverPendingPanelConversation({
+          apiClient,
+          getState: getChatStoreState,
+          set: chatStoreSet,
+          sessionId: activeTaskReviewPanel.sessionId,
+          conversationTurnId: activeTaskReviewPanel.conversationTurnId,
+        });
+      }
       if (!preferRealtimeSync) {
         await loadCurrentTurnWorkbarTasks(
           activeTaskReviewPanel.sessionId,
@@ -123,6 +146,8 @@ export const useTaskReviewPanelActions = ({
   }, [
     activeTaskReviewPanel,
     apiClient,
+    chatStoreSet,
+    getChatStoreState,
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
     markHistoryWorkbarTasksStale,

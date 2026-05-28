@@ -69,4 +69,33 @@ describe('SessionSection status badge', () => {
 
     expect(screen.getByText('Reviewing')).toBeInTheDocument();
   });
+
+  it('renders thinking badge when pending runtime panels exist without streaming flags', () => {
+    window.localStorage.setItem('chat_ui_locale', 'en-US');
+
+    render(
+      <I18nProvider>
+        <SessionSection
+          {...baseProps}
+          sessionChatState={{
+            'session-1': {
+              isLoading: false,
+              isStreaming: false,
+              streamingPhase: null,
+            },
+          }}
+          taskReviewPanelsBySession={{
+            'session-1': [{
+              reviewId: 'review-1',
+              sessionId: 'session-1',
+              conversationTurnId: 'turn-1',
+              drafts: [],
+            }],
+          }}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText('Thinking')).toBeInTheDocument();
+  });
 });

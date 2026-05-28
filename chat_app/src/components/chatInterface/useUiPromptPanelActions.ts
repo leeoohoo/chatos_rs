@@ -2,10 +2,13 @@ import { useCallback } from 'react';
 
 import type { UiPromptResponsePayload } from '../../lib/store/types';
 import type { UiPromptPanelActionsArgs } from './panelActionTypes';
+import { recoverPendingPanelConversation } from './pendingPanelRecovery';
 
 export const useUiPromptPanelActions = ({
   activeUiPromptPanel,
   apiClient,
+  chatStoreSet,
+  getChatStoreState,
   preferRealtimeSync = false,
   uiPromptHistoryOpen = false,
   upsertUiPromptPanel,
@@ -33,6 +36,15 @@ export const useUiPromptPanelActions = ({
         activeUiPromptPanel.sessionId,
       );
       removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+      if (chatStoreSet && getChatStoreState) {
+        void recoverPendingPanelConversation({
+          apiClient,
+          getState: getChatStoreState,
+          set: chatStoreSet,
+          sessionId: activeUiPromptPanel.sessionId,
+          conversationTurnId: activeUiPromptPanel.conversationTurnId,
+        });
+      }
       if (!preferRealtimeSync) {
         if (uiPromptHistoryOpen) {
           await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
@@ -51,6 +63,8 @@ export const useUiPromptPanelActions = ({
   }, [
     activeUiPromptPanel,
     apiClient,
+    chatStoreSet,
+    getChatStoreState,
     loadUiPromptHistory,
     markUiPromptHistoryStale,
     preferRealtimeSync,
@@ -82,6 +96,15 @@ export const useUiPromptPanelActions = ({
         activeUiPromptPanel.sessionId,
       );
       removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+      if (chatStoreSet && getChatStoreState) {
+        void recoverPendingPanelConversation({
+          apiClient,
+          getState: getChatStoreState,
+          set: chatStoreSet,
+          sessionId: activeUiPromptPanel.sessionId,
+          conversationTurnId: activeUiPromptPanel.conversationTurnId,
+        });
+      }
       if (!preferRealtimeSync) {
         if (uiPromptHistoryOpen) {
           await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
@@ -100,6 +123,8 @@ export const useUiPromptPanelActions = ({
   }, [
     activeUiPromptPanel,
     apiClient,
+    chatStoreSet,
+    getChatStoreState,
     loadUiPromptHistory,
     markUiPromptHistoryStale,
     preferRealtimeSync,
