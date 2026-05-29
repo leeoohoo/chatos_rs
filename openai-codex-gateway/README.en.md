@@ -30,6 +30,11 @@ This gateway normalizes API access so compatibility is preserved while backend i
 - `GET /v1/models`
 - `POST /v1/responses`
 
+## Current Request Model
+- The gateway currently supports stateless requests only.
+- `previous_response_id`, `previousResponseId`, and `prev_id` are not supported.
+- Clients must resend the full `input` plus the full `tools` / MCP declarations on every request.
+
 ## Code Layout
 - `server.py`: gateway entrypoint (stdlib HTTP server)
 - `gateway_base/`: shared base utilities (logging, policy, types, traceback helpers)

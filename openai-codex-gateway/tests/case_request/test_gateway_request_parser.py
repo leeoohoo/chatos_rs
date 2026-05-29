@@ -100,6 +100,18 @@ class GatewayRequestParserTest(unittest.TestCase):
         self.assertEqual(ctx.provided_tool_outputs, {})
         self.assertEqual((ctx.request_config_overrides or {}).get("mcp_servers"), {})
 
+    def test_parse_responses_request_rejects_previous_response_id(self) -> None:
+        for field_name in ("previous_response_id", "previousResponseId", "prev_id"):
+            with self.subTest(field_name=field_name):
+                with self.assertRaisesRegex(ValueError, field_name):
+                    parse_responses_request(
+                        {
+                            "input": "hello",
+                            field_name: "resp_123",
+                        },
+                        authorization_header=None,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

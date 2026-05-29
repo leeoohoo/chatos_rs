@@ -116,6 +116,12 @@ Authorization: Bearer <API_KEY>   # 可选
 
 支持流式：`"stream": true`（SSE）。
 
+重要限制：
+
+- 本 gateway 目前只支持无状态（stateless）请求。
+- 不支持 `previous_response_id` / `previousResponseId` / `prev_id` 续聊语义。
+- 每次请求都需要重新发送本轮所需的完整 `input`，以及完整的 `tools` / MCP 声明。
+
 额外支持：
 
 - `cwd`：请求级工作目录。网关会把它传给 `thread_start/turn_start`，

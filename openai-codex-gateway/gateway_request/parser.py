@@ -27,11 +27,24 @@ class ResponsesRequestContext:
     reasoning_raw: Any
 
 
+def ensure_stateless_request(payload: dict[str, Any]) -> None:
+    for field_name in ("previous_response_id", "previousResponseId", "prev_id"):
+        if field_name not in payload:
+            continue
+        if payload.get(field_name) is None:
+            continue
+        raise ValueError(
+            f"`{field_name}` is not supported by this gateway; "
+            "resend the full `input` and `tools` on every request"
+        )
+
+
 def parse_responses_request(
     payload: dict[str, Any],
     *,
     authorization_header: str | None,
 ) -> ResponsesRequestContext:
+    ensure_stateless_request(payload)
     request_cwd = extract_request_cwd(payload)
     request_config_overrides = extract_request_config_overrides(payload)
     function_tools = extract_function_tools(payload)
