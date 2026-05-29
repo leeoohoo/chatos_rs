@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { highlightCodeBlock, highlightCodeBlockAuto } from '../../../lib/tools/highlight';
 import { cn } from '../../../lib/utils';
@@ -32,15 +32,15 @@ interface ProjectPreviewTextContentProps {
   onSaveDraft: () => Promise<boolean>;
 }
 
-const highlightSelectedFile = (selectedFile: FsReadResult): string => {
-  const language = getHighlightLanguage(selectedFile.name);
+const highlightTextContent = (filename: string, content: string): string => {
+  const language = getHighlightLanguage(filename);
   try {
     if (language) {
-      return highlightCodeBlock(selectedFile.content, language).value;
+      return highlightCodeBlock(content, language).value;
     }
-    return highlightCodeBlockAuto(selectedFile.content).value;
+    return highlightCodeBlockAuto(content).value;
   } catch {
-    return escapeHtml(selectedFile.content);
+    return escapeHtml(content);
   }
 };
 
@@ -96,7 +96,15 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
 }) => {
   const lineRefMap = useRef<Record<number, HTMLDivElement | null>>({});
   const renderedFilePathRef = useRef<string | null>(null);
+  const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorBackdropRef = useRef<HTMLDivElement | null>(null);
+  const editorLineNumbersRef = useRef<HTMLDivElement | null>(null);
   const selectedFilePath = selectedFile.path || null;
+  const editorTextRenderStyle = useMemo<React.CSSProperties>(() => ({
+    fontVariantLigatures: 'none',
+    fontFeatureSettings: '"liga" 0, "calt" 0',
+    WebkitFontSmoothing: 'auto',
+  }), []);
 
   if (renderedFilePathRef.current !== selectedFilePath) {
     lineRefMap.current = {};
@@ -104,7 +112,7 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
   }
 
   useEffect(() => {
-    if (selectedFile.isBinary || !targetLine || targetLine < 1) {
+    if (isEditing || selectedFile.isBinary || !targetLine || targetLine < 1) {
       return;
     }
 
@@ -131,14 +139,35 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
     };
   }, [selectedFile, selectedFilePath, targetLine, targetLineRevision]);
 
+  const syncEditorScrollOffsets = useCallback((scrollTop: number, scrollLeft: number) => {
+    if (editorBackdropRef.current) {
+      editorBackdropRef.current.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px)`;
+    }
+    if (editorLineNumbersRef.current) {
+      editorLineNumbersRef.current.style.transform = `translateY(${-scrollTop}px)`;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isEditing) {
+      return;
+    }
+    if (editorTextareaRef.current) {
+      editorTextareaRef.current.scrollTop = 0;
+      editorTextareaRef.current.scrollLeft = 0;
+    }
+    syncEditorScrollOffsets(0, 0);
+  }, [isEditing, selectedFilePath, syncEditorScrollOffsets]);
+
   const activeSearchQuery = searchQuery.trim();
+  const displayedContent = isEditing ? draftContent : selectedFile.content;
   const rawLines = useMemo(
-    () => (isEditing ? draftContent : selectedFile.content).split(/\r?\n/),
-    [draftContent, isEditing, selectedFile.content],
+    () => displayedContent.split(/\r?\n/),
+    [displayedContent],
   );
   const highlightedLines = useMemo(
-    () => highlightSelectedFile(selectedFile).split(/\r?\n/),
-    [selectedFile],
+    () => highlightTextContent(selectedFile.name, displayedContent).split(/\r?\n/),
+    [displayedContent, selectedFile.name],
   );
   const fileSearchHitsByLine = useMemo(
     () => buildFileSearchHitsByLine({
@@ -163,19 +192,60 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
             {saveError}
           </div>
         )}
-        <textarea
-          value={draftContent}
-          onChange={(event) => onDraftContentChange(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-              event.preventDefault();
-              void onSaveDraft();
-            }
-          }}
-          spellCheck={false}
-          disabled={savingFile}
-          className="h-full w-full resize-none border-0 bg-background px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-70"
-        />
+        <div className="flex min-h-0 flex-1 text-sm">
+          <div className="shrink-0 overflow-hidden border-r border-border bg-muted/40 text-right text-muted-foreground">
+            <div ref={editorLineNumbersRef} className="py-4 pl-2 pr-3">
+              {rawLines.map((_, idx) => (
+                <div key={idx} className="leading-5">
+                  {idx + 1}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="relative min-w-0 flex-1 overflow-hidden bg-background">
+            <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+              <div
+                ref={editorBackdropRef}
+                className="min-w-max py-4 pl-3 pr-4 font-mono text-sm leading-5 text-[#24292f] dark:text-[#c9d1d9]"
+                style={editorTextRenderStyle}
+              >
+                {highlightedLines.map((line, idx) => (
+                  <div
+                    key={idx}
+                    className="whitespace-pre"
+                    dangerouslySetInnerHTML={{ __html: line || '&nbsp;' }}
+                  />
+                ))}
+              </div>
+            </div>
+            <textarea
+              ref={editorTextareaRef}
+              value={draftContent}
+              onChange={(event) => onDraftContentChange(event.target.value)}
+              onScroll={(event) => {
+                syncEditorScrollOffsets(
+                  event.currentTarget.scrollTop,
+                  event.currentTarget.scrollLeft,
+                );
+              }}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+                  event.preventDefault();
+                  void onSaveDraft();
+                }
+              }}
+              wrap="off"
+              spellCheck={false}
+              disabled={savingFile}
+              className="relative z-10 h-full w-full resize-none overflow-auto border-0 bg-transparent px-3 py-4 font-mono text-sm leading-5 text-transparent outline-none disabled:cursor-not-allowed"
+              style={{
+                ...editorTextRenderStyle,
+                caretColor: 'hsl(var(--foreground))',
+                WebkitTextFillColor: 'transparent',
+              }}
+            />
+          </div>
+        </div>
       </div>
     );
   }
