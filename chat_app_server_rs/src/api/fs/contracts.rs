@@ -41,6 +41,12 @@ pub(super) struct FsCreateFileRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct FsWriteFileRequest {
+    pub(super) path: Option<String>,
+    pub(super) content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct FsDeleteRequest {
     pub(super) path: Option<String>,
     pub(super) recursive: Option<bool>,

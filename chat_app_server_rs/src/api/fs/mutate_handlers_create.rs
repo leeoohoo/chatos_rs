@@ -12,7 +12,7 @@ use crate::services::workspace_realtime_watcher::{
     note_workspace_path_changed, suppress_logged_path,
 };
 
-use super::super::contracts::{FsCreateFileRequest, FsMkdirRequest};
+use super::super::contracts::{FsCreateFileRequest, FsMkdirRequest, FsWriteFileRequest};
 use super::super::helpers::is_valid_entry_name;
 use super::super::policy::FsPathPolicy;
 use super::policy_error_tuple;
@@ -224,6 +224,92 @@ pub(in super::super) async fn create_file(
             "name": name,
             "size": size,
             "created": true
+        })),
+    )
+}
+
+const MAX_WRITE_BYTES: usize = 2 * 1024 * 1024;
+
+pub(in super::super) async fn write_file(
+    auth: AuthUser,
+    Json(req): Json<FsWriteFileRequest>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match FsPathPolicy::for_user(&auth).await {
+        Ok(value) => value,
+        Err(err) => return policy_error_tuple(err),
+    };
+    let raw = req
+        .path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let Some(raw) = raw else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "文件路径不能为空" })),
+        );
+    };
+    let Some(content) = req.content else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "文件内容不能为空" })),
+        );
+    };
+    if content.len() > MAX_WRITE_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({
+                "error": "文件内容过大，无法保存",
+                "size": content.len(),
+                "limit": MAX_WRITE_BYTES,
+            })),
+        );
+    }
+
+    let authorized =
+        match policy.authorize_existing_file(raw.as_str(), "路径不存在", "路径不是文件") {
+            Ok(value) => value,
+            Err(err) => return policy_error_tuple(err),
+        };
+    if let Err(err) = policy.require_write(&authorized) {
+        return policy_error_tuple(err);
+    }
+
+    if let Err(err) = fs::write(&authorized.path, content.as_bytes()) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": err.to_string() })),
+        );
+    }
+
+    let meta = match fs::metadata(&authorized.path) {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err.to_string() })),
+            )
+        }
+    };
+    invalidate_project_symbol_indexes_for_path(authorized.path.as_path());
+    if let Some(project_root) = authorized.project_root.as_ref() {
+        let _ = invalidate_directory_listing_cache_for_path(
+            project_root.to_string_lossy().as_ref(),
+            authorized.path.as_path(),
+        );
+    }
+    let target_path = authorized.path.to_string_lossy().to_string();
+    suppress_logged_path(target_path.as_str());
+    note_workspace_path_changed(target_path.as_str());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "path": target_path,
+            "name": authorized.path.file_name().and_then(|value| value.to_str()).unwrap_or(""),
+            "size": meta.len(),
+            "modified_at": meta.modified().ok().and_then(super::super::helpers::format_system_time),
         })),
     )
 }

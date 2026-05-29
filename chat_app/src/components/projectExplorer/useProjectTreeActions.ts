@@ -26,6 +26,8 @@ export const useProjectTreeActions = ({
   setActionLoading,
   setActionError,
   setActionMessage,
+  setSavingFile,
+  setSaveError,
   setMoveConflict,
   openFile,
 }: UseProjectTreeActionsOptions) => {
@@ -47,6 +49,8 @@ export const useProjectTreeActions = ({
     setActionError,
     setActionLoading,
     setActionMessage,
+    setSavingFile,
+    setSaveError,
     setMoveConflict,
     openFile,
   });

@@ -182,6 +182,7 @@ export interface FsReadResult {
   size: number;
   contentType: string;
   isBinary: boolean;
+  writable?: boolean | null;
   modifiedAt?: string | null;
   content: string;
 }

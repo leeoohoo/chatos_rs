@@ -47,6 +47,8 @@ export const buildWorkspaceActionsParams = ({
     setActionLoading: state.setActionLoading,
     setActionError: state.setActionError,
     setActionMessage: state.setActionMessage,
+    setSavingFile: state.setSavingFile,
+    setSaveError: state.setSaveError,
     setMoveConflict: state.setMoveConflict,
     openFile: selection.openFile,
   },
@@ -154,6 +156,8 @@ export const buildWorkspaceViewModelParams = (
     loadingFile: state.loadingFile,
     error: state.error,
     selectedFile: state.selectedFile,
+    savingFile: state.savingFile,
+    saveError: state.saveError,
   },
   codeNav: {
     navCapabilities: codeNav.navCapabilities,
@@ -267,5 +271,6 @@ export const buildWorkspaceViewModelParams = (
     handleOpenPathInDefaultProgram: async (entry) => actions.handleOpenExternally(entry, 'default'),
     handleRevealInFinder: async (entry) => actions.handleOpenExternally(entry, 'reveal'),
     handleOpenInCode: async (entry) => actions.handleOpenExternally(entry, 'code'),
+    handleSaveFile: actions.handleSaveFile,
   },
 });

@@ -3,6 +3,7 @@ import { useProjectTreeContextActions } from './useProjectTreeContextActions';
 import { useProjectTreeDeleteAction } from './useProjectTreeDeleteAction';
 import { useProjectTreeDownloadAction } from './useProjectTreeDownloadAction';
 import { useProjectTreeRefreshAction } from './useProjectTreeRefreshAction';
+import { useProjectTreeSaveFileAction } from './useProjectTreeSaveFileAction';
 import type { UseProjectTreeActionsOptions } from './projectTreeActionTypes';
 
 type UseProjectTreeMutationActionsOptions = Pick<
@@ -24,6 +25,8 @@ type UseProjectTreeMutationActionsOptions = Pick<
   | 'setActionLoading'
   | 'setActionError'
   | 'setActionMessage'
+  | 'setSavingFile'
+  | 'setSaveError'
   | 'setMoveConflict'
   | 'openFile'
 >;
@@ -34,6 +37,7 @@ export const useProjectTreeMutationActions = (options: UseProjectTreeMutationAct
   const deleteAction = useProjectTreeDeleteAction(options);
   const downloadAction = useProjectTreeDownloadAction(options);
   const refreshAction = useProjectTreeRefreshAction(options);
+  const saveFileAction = useProjectTreeSaveFileAction(options);
 
   return {
     ...createActions,
@@ -41,5 +45,6 @@ export const useProjectTreeMutationActions = (options: UseProjectTreeMutationAct
     ...deleteAction,
     ...downloadAction,
     ...refreshAction,
+    ...saveFileAction,
   };
 };

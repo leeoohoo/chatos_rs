@@ -59,6 +59,8 @@ export interface ProjectExplorerWorkspacePreviewState {
   loadingFile: boolean;
   error: string | null;
   selectedFile: FsReadResult | null;
+  savingFile: boolean;
+  saveError: string | null;
 }
 
 export interface ProjectExplorerWorkspaceCodeNavState {
@@ -175,6 +177,7 @@ export interface ProjectExplorerWorkspaceInteractions {
   handleOpenPathInDefaultProgram: (entry: FsEntry) => Promise<boolean>;
   handleRevealInFinder: (entry: FsEntry) => Promise<boolean>;
   handleOpenInCode: (entry: FsEntry) => Promise<boolean>;
+  handleSaveFile: (path: string, content: string) => Promise<boolean>;
 }
 
 export interface ProjectExplorerWorkspaceViewParams {

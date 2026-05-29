@@ -20,6 +20,8 @@ export interface ProjectPreviewPaneProps {
   selectedEntry: FsEntry | null;
   loadingFile: boolean;
   error: string | null;
+  saveError: string | null;
+  savingFile: boolean;
   searchQuery: string;
   searchCaseSensitive: boolean;
   searchWholeWord: boolean;
@@ -55,4 +57,5 @@ export interface ProjectPreviewPaneProps {
   onActivateSearchHit: (hit: ProjectSearchHit) => void;
   onOpenNavLocation: (location: CodeNavLocation) => void;
   onOpenDocumentSymbol: (line: number) => void;
+  onSaveFile: (path: string, content: string) => Promise<boolean>;
 }

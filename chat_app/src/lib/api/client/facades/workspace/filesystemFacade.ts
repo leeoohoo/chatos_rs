@@ -26,6 +26,7 @@ export interface WorkspaceFilesystemFacade {
   readFsFile(path: string): Promise<FsReadFileResponse>;
   createFsDirectory(parentPath: string, name: string): Promise<FsMutationResponse>;
   createFsFile(parentPath: string, name: string, content?: string): Promise<FsMutationResponse>;
+  writeFsFile(path: string, content: string): Promise<FsMutationResponse>;
   deleteFsEntry(path: string, recursive?: boolean): Promise<FsMutationResponse>;
   moveFsEntry(sourcePath: string, targetParentPath: string, options?: FsMoveOptions): Promise<FsMoveResponse>;
   appendFsGitignore(path: string, mode: 'file' | 'folder' | 'extension'): Promise<FsAppendGitignoreResponse>;
@@ -55,6 +56,9 @@ export const workspaceFilesystemFacade: WorkspaceFilesystemFacade & ThisType<Api
   },
   async createFsFile(parentPath, name, content = '') {
     return workspaceApi.createFsFile(this.getRequestFn(), parentPath, name, content);
+  },
+  async writeFsFile(path, content) {
+    return workspaceApi.writeFsFile(this.getRequestFn(), path, content);
   },
   async deleteFsEntry(path, recursive = false) {
     return workspaceApi.deleteFsEntry(this.getRequestFn(), path, recursive);

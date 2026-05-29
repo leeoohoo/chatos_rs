@@ -96,6 +96,7 @@ pub(in super::super) async fn read_file(
             "size": size,
             "content_type": content_type,
             "is_binary": is_binary,
+            "writable": path.can_write,
             "modified_at": modified_at,
             "content": content
         })),

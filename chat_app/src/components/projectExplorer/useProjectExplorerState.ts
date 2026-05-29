@@ -23,6 +23,8 @@ export const useProjectExplorerState = (projectId?: string | null) => {
   const [selectedFile, setSelectedFile] = useState<FsReadResult | null>(null);
   const [loadingFile, setLoadingFile] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savingFile, setSavingFile] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -65,6 +67,10 @@ export const useProjectExplorerState = (projectId?: string | null) => {
     setLoadingFile,
     error,
     setError,
+    savingFile,
+    setSavingFile,
+    saveError,
+    setSaveError,
     actionMessage,
     setActionMessage,
     actionError,

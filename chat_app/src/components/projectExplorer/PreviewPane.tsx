@@ -12,6 +12,8 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   selectedEntry,
   loadingFile,
   error,
+  saveError,
+  savingFile,
   searchQuery,
   searchCaseSensitive,
   searchWholeWord,
@@ -47,13 +49,21 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   onActivateSearchHit,
   onOpenNavLocation,
   onOpenDocumentSymbol,
+  onSaveFile,
 }) => {
   const { t } = useI18n();
   const [documentSymbolsExpanded, setDocumentSymbolsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState('');
 
   useEffect(() => {
     setDocumentSymbolsExpanded(false);
   }, [selectedFile?.path]);
+
+  useEffect(() => {
+    setIsEditing(false);
+    setDraftContent(selectedFile?.isBinary ? '' : (selectedFile?.content || ''));
+  }, [selectedFile?.content, selectedFile?.isBinary, selectedFile?.path]);
 
   const displayedToken = selectedToken || navResult?.token || null;
   const activeSearchQuery = searchQuery.trim();
@@ -73,16 +83,44 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
     return t('projectExplorer.preview.nav.default');
   }, [navRequestKind, navResult, t]);
   const documentSymbolCount = documentSymbols?.symbols?.length || 0;
+  const canEdit = Boolean(selectedFile && !selectedFile.isBinary && selectedFile.writable !== false);
+  const hasUnsavedChanges = canEdit && selectedFile ? draftContent !== selectedFile.content : false;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <ProjectPreviewHeader
         selectedFile={selectedFile}
         selectedPath={selectedPath}
+        isEditing={isEditing}
+        canEdit={canEdit}
+        hasUnsavedChanges={hasUnsavedChanges}
+        savingFile={savingFile}
+        onStartEditing={() => {
+          if (!canEdit || !selectedFile) {
+            return;
+          }
+          setDraftContent(selectedFile.content);
+          setIsEditing(true);
+        }}
+        onCancelEditing={() => {
+          setDraftContent(selectedFile?.content || '');
+          setIsEditing(false);
+        }}
+        onSaveEditing={() => {
+          if (!selectedFile || !canEdit) {
+            return;
+          }
+          void (async () => {
+            const ok = await onSaveFile(selectedFile.path, draftContent);
+            if (ok) {
+              setIsEditing(false);
+            }
+          })();
+        }}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {selectedFile && !selectedFile.isBinary && (
+        {selectedFile && !selectedFile.isBinary && !isEditing && (
           <ProjectPreviewNavigation
             displayedToken={displayedToken}
             activeSearchQuery={activeSearchQuery}
@@ -137,6 +175,10 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               selectedPath={selectedPath}
               selectedEntry={selectedEntry}
               loadingFile={loadingFile}
+              saveError={saveError}
+              savingFile={savingFile}
+              isEditing={isEditing}
+              draftContent={draftContent}
               targetLine={targetLine}
               targetLineRevision={targetLineRevision}
               searchQuery={searchQuery}
@@ -146,6 +188,17 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               activeSearchHitId={activeSearchHitId}
               onActivateSearchHit={onActivateSearchHit}
               onTokenSelection={onTokenSelection}
+              onDraftContentChange={setDraftContent}
+              onSaveDraft={async () => {
+                if (!selectedFile || !canEdit) {
+                  return false;
+                }
+                const ok = await onSaveFile(selectedFile.path, draftContent);
+                if (ok) {
+                  setIsEditing(false);
+                }
+                return ok;
+              }}
             />
           )}
         </div>

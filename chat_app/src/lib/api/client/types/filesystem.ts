@@ -30,6 +30,7 @@ export interface FsReadFileResponse {
   contentType?: string;
   is_binary?: boolean;
   isBinary?: boolean;
+  writable?: boolean | null;
   modified_at?: string | null;
   modifiedAt?: string | null;
   content?: string;

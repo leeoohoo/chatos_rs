@@ -97,6 +97,8 @@ export const useProjectExplorerWorkspaceView = ({
     selectedEntry: tree.selectedEntry,
     loadingFile: preview.loadingFile,
     error: preview.error,
+    saveError: preview.saveError,
+    savingFile: preview.savingFile,
     searchQuery: search.searchQuery,
     searchCaseSensitive: search.searchCaseSensitive,
     searchWholeWord: search.searchWholeWord,
@@ -132,6 +134,7 @@ export const useProjectExplorerWorkspaceView = ({
     handleOpenNavLocation: interactions.handleOpenNavLocation,
     goBackFromNav: interactions.goBackFromNav,
     handleOpenDocumentSymbol: interactions.handleOpenDocumentSymbol,
+    handleSaveFile: interactions.handleSaveFile,
   });
 
   const projectSettingsProps: ProjectRunSettingsViewProps = {

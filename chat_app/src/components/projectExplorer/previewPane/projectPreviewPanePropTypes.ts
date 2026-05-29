@@ -14,6 +14,8 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   selectedEntry: FsEntry | null;
   loadingFile: boolean;
   error: string | null;
+  saveError: string | null;
+  savingFile: boolean;
   searchQuery: string;
   searchCaseSensitive: boolean;
   searchWholeWord: boolean;
@@ -49,4 +51,5 @@ export interface UseProjectExplorerPreviewPanePropsParams {
   handleActivateSearchHit: (hit: ProjectSearchHit) => void;
   handleOpenNavLocation: React.ComponentProps<typeof ProjectPreviewPane>['onOpenNavLocation'];
   handleOpenDocumentSymbol: (line: number) => void;
+  handleSaveFile: (path: string, content: string) => Promise<boolean>;
 }

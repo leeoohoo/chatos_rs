@@ -15,6 +15,10 @@ import { usePreviewTextTokenSelection } from './usePreviewTextTokenSelection';
 interface ProjectPreviewTextContentProps {
   selectedFile: FsReadResult;
   selectedPath: string | null;
+  isEditing: boolean;
+  draftContent: string;
+  saveError: string | null;
+  savingFile: boolean;
   targetLine: number | null;
   targetLineRevision: number;
   searchQuery: string;
@@ -24,6 +28,8 @@ interface ProjectPreviewTextContentProps {
   activeSearchHitId: string | null;
   onActivateSearchHit: (hit: ProjectSearchHit) => void;
   onTokenSelection: (selection: PreviewTokenSelection | null) => void;
+  onDraftContentChange: (value: string) => void;
+  onSaveDraft: () => Promise<boolean>;
 }
 
 const highlightSelectedFile = (selectedFile: FsReadResult): string => {
@@ -72,6 +78,10 @@ const buildFileSearchHitsByLine = ({
 export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps> = ({
   selectedFile,
   selectedPath,
+  isEditing,
+  draftContent,
+  saveError,
+  savingFile,
   targetLine,
   targetLineRevision,
   searchQuery,
@@ -81,6 +91,8 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
   activeSearchHitId,
   onActivateSearchHit,
   onTokenSelection,
+  onDraftContentChange,
+  onSaveDraft,
 }) => {
   const lineRefMap = useRef<Record<number, HTMLDivElement | null>>({});
   const renderedFilePathRef = useRef<string | null>(null);
@@ -121,8 +133,8 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
 
   const activeSearchQuery = searchQuery.trim();
   const rawLines = useMemo(
-    () => selectedFile.content.split(/\r?\n/),
-    [selectedFile.content],
+    () => (isEditing ? draftContent : selectedFile.content).split(/\r?\n/),
+    [draftContent, isEditing, selectedFile.content],
   );
   const highlightedLines = useMemo(
     () => highlightSelectedFile(selectedFile).split(/\r?\n/),
@@ -142,6 +154,31 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
     rawLines,
     onTokenSelection,
   });
+
+  if (isEditing) {
+    return (
+      <div className="flex h-full flex-col bg-muted/30">
+        {saveError && (
+          <div className="border-b border-border bg-destructive/5 px-4 py-2 text-xs text-destructive">
+            {saveError}
+          </div>
+        )}
+        <textarea
+          value={draftContent}
+          onChange={(event) => onDraftContentChange(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+              event.preventDefault();
+              void onSaveDraft();
+            }
+          }}
+          spellCheck={false}
+          disabled={savingFile}
+          className="h-full w-full resize-none border-0 bg-background px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-70"
+        />
+      </div>
+    );
+  }
 
   const renderSearchHighlightedLine = (
     lineText: string,

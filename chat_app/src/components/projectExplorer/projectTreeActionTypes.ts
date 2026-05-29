@@ -11,8 +11,10 @@ import type { FsEntry, FsReadResult } from '../../types';
 import type { MoveConflictState } from './Overlays';
 
 export interface ProjectTreeActionsClient {
+  readFsFile(path: string): Promise<import('../../lib/api/client/types').FsReadFileResponse>;
   createFsDirectory(parentPath: string, name: string): Promise<FsMutationResponse>;
   createFsFile(parentPath: string, name: string, content?: string): Promise<FsMutationResponse>;
+  writeFsFile(path: string, content: string): Promise<FsMutationResponse>;
   deleteFsEntry(path: string, recursive?: boolean): Promise<FsMutationResponse>;
   downloadFsEntry(path: string): Promise<{ blob: Blob; filename: string; contentType: string }>;
   moveFsEntry(
@@ -48,6 +50,8 @@ export interface UseProjectTreeActionsOptions {
   setActionLoading: Dispatch<SetStateAction<boolean>>;
   setActionError: Dispatch<SetStateAction<string | null>>;
   setActionMessage: Dispatch<SetStateAction<string | null>>;
+  setSavingFile: Dispatch<SetStateAction<boolean>>;
+  setSaveError: Dispatch<SetStateAction<string | null>>;
   setMoveConflict: Dispatch<SetStateAction<MoveConflictState | null>>;
   openFile: (entry: FsEntry) => Promise<void>;
 }

@@ -90,6 +90,20 @@ export const createFsFile = (
   });
 };
 
+export const writeFsFile = (
+  request: ApiRequestFn,
+  path: string,
+  content: string,
+): Promise<FsMutationResponse> => {
+  return request<FsMutationResponse>('/fs/write', {
+    method: 'POST',
+    body: JSON.stringify({
+      path,
+      content,
+    }),
+  });
+};
+
 export const deleteFsEntry = (
   request: ApiRequestFn,
   path: string,

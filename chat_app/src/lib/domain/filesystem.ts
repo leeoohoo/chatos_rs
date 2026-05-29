@@ -43,6 +43,7 @@ export const normalizeFsReadResult = (raw: FsReadFileResponse | unknown): FsRead
     size: readNumberFirst(record, ['size']),
     contentType: readStringFirst(record, ['content_type', 'contentType'], 'application/octet-stream'),
     isBinary: readBooleanFirst(record, ['is_binary', 'isBinary']),
+    writable: (readFirst(record, ['writable']) ?? null) as FsReadResult['writable'],
     modifiedAt: (readFirst(record, ['modified_at', 'modifiedAt']) ?? null) as FsReadResult['modifiedAt'],
     content: readStringFirst(record, ['content']),
   };
