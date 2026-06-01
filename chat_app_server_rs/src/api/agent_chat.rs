@@ -49,7 +49,7 @@ async fn agent_chat_send(
     let conversation_id = req.conversation_id.clone().unwrap_or_default();
     let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
 
-    abort_registry::reset(&conversation_id);
+    abort_registry::reset_turn(&conversation_id, accepted_turn_id.as_deref());
     access_token_scope::spawn_with_current_access_token(stream_chat(None, req));
 
     Ok((
@@ -92,20 +92,22 @@ async fn reset_conversation(
 
 async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
     let conversation_id = extract_conversation_scope_id(&req).unwrap_or_default();
+    let turn_id = normalize_turn_id(req.get("turn_id").and_then(Value::as_str));
     if conversation_id.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"success": false, "message": "缺少 conversation_id"})),
         );
     }
-    let ok = abort_registry::abort(conversation_id.as_str());
+    let ok = abort_registry::abort_turn(conversation_id.as_str(), turn_id.as_deref());
     if ok {
         return (
             StatusCode::OK,
             Json(json!({
                 "success": true,
                 "message": "停止中",
-                "conversation_id": conversation_id
+                "conversation_id": conversation_id,
+                "turn_id": turn_id,
             })),
         );
     }
@@ -113,8 +115,13 @@ async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
         StatusCode::OK,
         Json(json!({
             "success": false,
-            "message": "未找到可停止的对话线程或已停止",
-            "conversation_id": conversation_id
+            "message": if turn_id.is_some() {
+                "当前轮次已切换，停止请求已忽略"
+            } else {
+                "未找到可停止的对话线程或已停止"
+            },
+            "conversation_id": conversation_id,
+            "turn_id": turn_id,
         })),
     )
 }

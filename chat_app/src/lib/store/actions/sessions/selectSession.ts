@@ -143,6 +143,14 @@ export function createSelectSessionActions({
       const stopPerfMeasure = createPerfMeasureStopper(`store.selectSession.${sessionId}.${selectStartedAt}`);
       const beforeSelect = get();
       const previousSessionId = beforeSelect.currentSessionId;
+      if (previousSessionId && previousSessionId !== sessionId) {
+        const previousVisibleSnapshot = readVisibleSessionMessagesSnapshot(beforeSelect, previousSessionId);
+        if (previousVisibleSnapshot) {
+          set((state: ChatStoreDraft) => {
+            writeSessionMessagesCache(state, previousSessionId, previousVisibleSnapshot);
+          });
+        }
+      }
       const requestedInitialPageSize = Number.isFinite(options.initialPageSize)
         ? Math.max(1, Math.floor(options.initialPageSize as number))
         : SESSION_MESSAGES_INITIAL_PAGE_SIZE;

@@ -78,6 +78,18 @@ const shouldTreatInactiveRunningSnapshotAsTerminal = (
 const isUserMessage = (message: StreamingMessage): boolean => message.role === 'user';
 const isAssistantMessage = (message: StreamingMessage): boolean => message.role === 'assistant';
 
+const readMessageTurnId = (message: StreamingMessage | null | undefined): string => {
+  const value = (
+    message?.metadata?.historyFinalForTurnId
+    || message?.metadata?.conversation_turn_id
+    || message?.metadata?.conversationTurnId
+    || message?.metadata?.historyProcessTurnId
+    || message?.metadata?.historyProcess?.turnId
+    || ''
+  );
+  return typeof value === 'string' ? value.trim() : '';
+};
+
 const readLinkedUserId = (message: StreamingMessage | null | undefined): string => {
   const value = message?.metadata?.historyFinalForUserMessageId;
   return typeof value === 'string' ? value.trim() : '';
@@ -232,6 +244,28 @@ const upsertRecoveredTurnMessages = (
         ...message,
       };
       return;
+    }
+
+    if (isUserMessage(message)) {
+      const recoveredTurnId = readMessageTurnId(message);
+      const existingUserIndex = state.messages.findIndex((item) => {
+        if (item?.role !== 'user') {
+          return false;
+        }
+        const existingTurnId = readMessageTurnId(item as StreamingMessage);
+        return Boolean(recoveredTurnId && existingTurnId === recoveredTurnId);
+      });
+      if (existingUserIndex >= 0) {
+        state.messages[existingUserIndex] = {
+          ...state.messages[existingUserIndex],
+          ...message,
+          metadata: {
+            ...(state.messages[existingUserIndex]?.metadata || {}),
+            ...(message.metadata || {}),
+          },
+        };
+        return;
+      }
     }
 
     const insertBeforeFinalAssistantIndex = recoveredAssistant && message.id !== recoveredAssistant.id

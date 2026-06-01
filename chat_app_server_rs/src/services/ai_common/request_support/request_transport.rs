@@ -24,12 +24,15 @@ pub(crate) fn truncate_log(value: &str, max_len: usize) -> String {
     out
 }
 
-pub(crate) fn build_abort_token(session_id: Option<&str>) -> Option<CancellationToken> {
+pub(crate) fn build_abort_token(
+    session_id: Option<&str>,
+    turn_id: Option<&str>,
+) -> Option<CancellationToken> {
     let session_id = session_id
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     let token = CancellationToken::new();
-    abort_registry::set_controller(session_id, token.clone());
+    abort_registry::set_controller(session_id, turn_id, token.clone());
     Some(token)
 }
 

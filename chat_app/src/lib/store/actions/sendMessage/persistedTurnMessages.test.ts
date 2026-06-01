@@ -377,4 +377,66 @@ describe('turnRecovery', () => {
     expect(state.sessionChatState.session_1.activeTurnId).toBeNull();
     expect(state.sessionStreamingMessageDrafts.session_1).toBeNull();
   });
+
+  it('replaces the optimistic user message instead of appending a duplicate persisted user message', async () => {
+    const set = vi.fn((updater: (state: ChatStoreDraft) => void) => {
+      updater(state);
+    });
+    const snapshot: TurnRuntimeSnapshotLookupResponse = {
+      conversation_id: 'session_1',
+      turn_id: 'turn_1',
+      status: 'completed',
+      snapshot_source: 'runtime',
+      snapshot: null,
+    };
+    const apiClient = {
+      getConversationTurnRuntimeContextByTurn: vi.fn().mockResolvedValue(snapshot),
+      getConversationLatestTurnRuntimeContext: vi.fn().mockResolvedValue(snapshot),
+      getConversationTurnMessagesByTurn: vi.fn().mockResolvedValue([
+        {
+          id: 'user_1',
+          conversation_id: 'session_1',
+          session_id: 'session_1',
+          role: 'user',
+          content: 'hello',
+          status: 'completed',
+          created_at: '2026-05-07T10:00:00.000Z',
+          metadata: {
+            conversation_turn_id: 'turn_1',
+          },
+        },
+        {
+          id: 'assistant_1',
+          conversation_id: 'session_1',
+          session_id: 'session_1',
+          role: 'assistant',
+          content: 'final answer',
+          status: 'completed',
+          created_at: '2026-05-07T10:00:01.000Z',
+          metadata: {
+            conversation_turn_id: 'turn_1',
+            historyFinalForTurnId: 'turn_1',
+            historyFinalForUserMessageId: 'user_1',
+          },
+        },
+      ]),
+      getConversationTurnMessages: vi.fn().mockResolvedValue([]),
+    };
+    const state = buildStreamingRecoveryState();
+
+    const result = await recoverStreamingTurnBySnapshot({
+      apiClient,
+      set,
+      sessionId: 'session_1',
+      turnId: 'turn_1',
+      tempAssistantMessageId: 'temp_assistant_1',
+      tempUserId: 'temp_user_1',
+      preferredUserMessageId: 'temp_user_1',
+    });
+
+    expect(result.recovered).toBe(true);
+    expect(state.messages.filter((message) => message.role === 'user')).toHaveLength(1);
+    expect(state.messages.find((message) => message.role === 'user')?.id).toBe('user_1');
+    expect(state.messages.map((message) => message.id)).toEqual(['user_1', 'assistant_1']);
+  });
 });

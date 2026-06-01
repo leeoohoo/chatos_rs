@@ -40,4 +40,6 @@ export interface UserSettingsUpdatePayload {
 export interface StopChatResponse {
   success?: boolean;
   message?: string;
+  conversation_id?: string;
+  turn_id?: string | null;
 }

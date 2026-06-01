@@ -207,9 +207,11 @@ export function createStreamingActions({ set, get, client }: Deps) {
         }
       });
 
+      const stopContext = buildStopRecoveryContext(get(), currentSessionId);
+
       try {
-        await client.stopChat(currentSessionId);
-        const recoveryContext = buildStopRecoveryContext(get(), currentSessionId);
+        await client.stopChat(currentSessionId, stopContext?.turnId || null);
+        const recoveryContext = stopContext || buildStopRecoveryContext(get(), currentSessionId);
         if (recoveryContext) {
           scheduleStopRecovery(recoveryContext);
         }

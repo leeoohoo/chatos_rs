@@ -10,6 +10,23 @@ use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
 
 #[test]
+fn build_abort_token_only_cancels_matching_turn() {
+    let session_id = "build_abort_token_turn_match";
+    abort_registry::clear(session_id);
+
+    let token = build_abort_token(Some(session_id), Some("turn_new")).expect("token");
+    assert!(!token.is_cancelled());
+
+    assert!(!abort_registry::abort_turn(session_id, Some("turn_old")));
+    assert!(!token.is_cancelled());
+
+    assert!(abort_registry::abort_turn(session_id, Some("turn_new")));
+    assert!(token.is_cancelled());
+
+    abort_registry::clear(session_id);
+}
+
+#[test]
 fn normalize_turn_id_trims_and_filters_empty_values() {
     assert_eq!(
         normalize_turn_id(Some("  turn-1 ")),

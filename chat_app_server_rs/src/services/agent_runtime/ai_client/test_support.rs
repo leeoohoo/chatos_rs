@@ -147,6 +147,7 @@ pub(super) async fn start_mock_provider(
     let captured = state.captured_payloads.clone();
     let app = Router::new()
         .route("/responses", post(mock_provider_handler))
+        .route("/chat/completions", post(mock_provider_handler))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

@@ -109,11 +109,13 @@ export const sendChatCommand = async (
 export const stopChat = (
   request: ApiRequestFn,
   conversationId: string,
+  turnId?: string | null,
 ): Promise<StopChatResponse> => {
   return request<StopChatResponse>('/agent/chat/stop', {
     method: 'POST',
     body: JSON.stringify({
       conversation_id: conversationId,
+      ...(typeof turnId === 'string' && turnId.trim() ? { turn_id: turnId.trim() } : {}),
     }),
   });
 };

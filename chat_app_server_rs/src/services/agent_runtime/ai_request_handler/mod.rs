@@ -177,7 +177,7 @@ impl AiRequestHandler {
                 format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
             }
         };
-        let token = build_abort_token(session_id.as_deref());
+        let token = build_abort_token(session_id.as_deref(), turn_id.as_deref());
 
         info!(
             "{} request start: purpose={}, transport={}, model={}, stream={}, baseURL={}, session={}, tools={}, cwd={}",

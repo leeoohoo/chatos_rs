@@ -475,6 +475,82 @@ describe('selectSession', () => {
     });
   });
 
+  it('writes the current visible session snapshot back to cache before switching away', async () => {
+    const state = {
+      sessions: [createSession('session_1'), createSession('session_2')],
+      currentSessionId: 'session_1',
+      currentSession: createSession('session_1'),
+      activePanel: 'chat',
+      messages: [createMessage('session_1', 'msg_latest', 'latest visible message')],
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      hasMoreMessages: false,
+      error: null,
+      selectedModelId: null,
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionChatState: {
+        session_1: {
+          isLoading: false,
+          isStreaming: false,
+          isStopping: false,
+          streamingMessageId: null,
+          activeTurnId: null,
+          streamingPreviewText: '',
+          streamingTransport: null,
+          runtimeContextRefreshNonce: 0,
+        },
+      },
+      sessionMessagePaginationState: {
+        session_1: {
+          nextBefore: null,
+          loaded: true,
+        },
+      },
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    installBackgroundSyncSpy(state);
+
+    writeSessionMessagesCache(state, 'session_1', {
+      messages: [createMessage('session_1', 'msg_stale', 'stale cached message')],
+      nextBefore: null,
+      loaded: true,
+    });
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSession).mockImplementation(async (_client, sessionId) => (
+      createSession(sessionId)
+    ));
+    vi.mocked(fetchSessionMessages).mockImplementation(async (_client, sessionId) => ({
+      messages: [createMessage(sessionId, `msg_${sessionId}`, `network ${sessionId}`)],
+      hasMore: false,
+      nextBefore: null,
+    }));
+
+    const actions = createSelectSessionActions({
+      set,
+      get,
+      client: {} as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '' }),
+    });
+
+    await actions.selectSession('session_2', { skipBackgroundSync: true });
+
+    expect(readSessionMessagesCache(state, 'session_1')?.messages.map((message) => message.id)).toEqual(['msg_latest']);
+
+    await actions.selectSession('session_1', { skipBackgroundSync: true });
+
+    expect(state.messages.map((message) => message.id)).toEqual(['msg_latest']);
+  });
+
   it('preserves already loaded older history from cache when selecting the session again', async () => {
     const state = {
       sessions: [createSession('session_1')],

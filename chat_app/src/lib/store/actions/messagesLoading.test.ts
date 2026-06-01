@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { produce } from 'immer';
 
 import type { Message } from '../../../types';
 import type {
@@ -404,5 +405,56 @@ describe('syncSessionMessagesInBackground', () => {
         { limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE, before: 'turn_older' },
       ],
     ]);
+  });
+
+  it('does not leak revoked immer proxies when caching older loaded messages', async () => {
+    const existing = createMessage('existing', 'already loaded', 'completed', {
+      conversation_turn_id: 'turn_existing',
+    });
+    const older = createMessage('older', 'older message', 'completed', {
+      conversation_turn_id: 'turn_older',
+    });
+    let state = {
+      currentSessionId: 'session_2',
+      messages: [existing],
+      hasMoreMessages: true,
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      error: null,
+      sessionChatState: {},
+      sessionMessagePaginationState: {
+        session_2: {
+          nextBefore: 'turn_older',
+          loaded: true,
+        },
+      },
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+      sessionStreamingMessageDrafts: {},
+      sessionTurnProcessCache: {},
+    } as unknown as ChatStoreShape;
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      state = produce(state, (draft) => {
+        updater(draft as unknown as ChatStoreDraft);
+      }) as unknown as ChatStoreShape;
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [older],
+      hasMore: false,
+      nextBefore: null,
+    });
+
+    const actions = createMessageLoadingActions({
+      set,
+      get,
+      client: {} as never,
+    });
+
+    await expect(actions.loadMoreMessages('session_2')).resolves.toBeUndefined();
+
+    expect(readCache(state, 'session_2')?.messages.map((message) => message.id)).toEqual(['older', 'existing']);
   });
 });

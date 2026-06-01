@@ -306,7 +306,7 @@ describe('createStreamingActions abort recovery', () => {
     await vi.advanceTimersByTimeAsync(4000);
     await vi.runAllTimersAsync();
 
-    expect(client.stopChat).toHaveBeenCalledWith('session_1');
+    expect(client.stopChat).toHaveBeenCalledWith('session_1', 'turn_1');
     expect(client.getConversationTurnRuntimeContextByTurn).toHaveBeenCalledWith('session_1', 'turn_1');
     expect(state.sessionChatState.session_1.isStopping).toBe(false);
     expect(state.sessionChatState.session_1.isStreaming).toBe(false);

@@ -15,6 +15,7 @@ import {
   readSessionMessagesCache,
   readVisibleSessionMessagesSnapshot,
   SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+  cloneStreamingMessageDraft,
   writeSessionMessagesCache,
 } from './sessionsUtils';
 
@@ -172,7 +173,7 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           const existingIds = new Set(state.messages.map((message) => message.id));
           const older = page.filter((message) => !existingIds.has(message.id));
           const merged = [...older, ...state.messages];
-          mergedSnapshotMessages = extractCompactHistoryMessages(merged);
+          mergedSnapshotMessages = cloneStreamingMessageDraft(extractCompactHistoryMessages(merged));
 
           state.messages = merged;
           writePaginationState(state.sessionMessagePaginationState, sessionId, result, true);
