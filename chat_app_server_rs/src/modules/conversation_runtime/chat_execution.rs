@@ -3,8 +3,8 @@ use serde_json::Value;
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::services::user_settings::apply_settings_to_ai_client;
-use crate::services::v3::ai_server::{AiServer as AiServerV3, ChatOptions as ChatOptionsV3};
-use crate::services::v3::mcp_tool_execute::McpToolExecute as McpToolExecuteV3;
+use crate::services::agent_runtime::ai_server::{AiServer as AgentAiServer, ChatOptions as AgentChatOptions};
+use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute as AgentMcpToolExecute;
 use crate::utils::attachments::Attachment;
 
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
@@ -12,8 +12,8 @@ use super::task_board::{
     build_runtime_context, load_prefixed_input_items, TaskBoardRuntimeContext,
 };
 
-pub struct PreparedMcpExecutionV3 {
-    pub executor: McpToolExecuteV3,
+pub struct PreparedMcpExecution {
+    pub executor: AgentMcpToolExecute,
     pub unavailable_tools: Vec<Value>,
     pub prefixed_input_items: Vec<Value>,
     pub tool_metadata: ToolMetadataMap,
@@ -29,24 +29,24 @@ pub struct ChatExecutionInput {
     pub message_source: String,
 }
 
-pub fn init_ai_server_v3(model_runtime: &ResolvedChatModelConfig) -> AiServerV3 {
-    AiServerV3::new(
+pub fn init_agent_ai_server(model_runtime: &ResolvedChatModelConfig) -> AgentAiServer {
+    AgentAiServer::new(
         model_runtime.api_key.clone(),
         model_runtime.base_url.clone(),
         model_runtime.model.clone(),
         model_runtime.temperature,
-        McpToolExecuteV3::new(Vec::new(), Vec::new(), Vec::new()),
+        AgentMcpToolExecute::new(Vec::new(), Vec::new(), Vec::new()),
     )
 }
 
-pub async fn prepare_mcp_execution_v3(
+pub async fn prepare_mcp_execution(
     session_id: &str,
     turn_id: &str,
     runtime_context: &mut ResolvedConversationRuntimeContext,
     use_codex_gateway_mcp_passthrough: bool,
-) -> PreparedMcpExecutionV3 {
+) -> PreparedMcpExecution {
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
-    let mut executor = McpToolExecuteV3::new(http_servers, stdio_servers, builtin_servers.clone());
+    let mut executor = AgentMcpToolExecute::new(http_servers, stdio_servers, builtin_servers.clone());
     if runtime_context.use_tools {
         let _ = if use_codex_gateway_mcp_passthrough {
             executor.init_builtin_only().await
@@ -73,7 +73,7 @@ pub async fn prepare_mcp_execution_v3(
     };
     let tool_metadata = executor.tool_metadata().clone();
 
-    PreparedMcpExecutionV3 {
+    PreparedMcpExecution {
         executor,
         unavailable_tools,
         prefixed_input_items,
@@ -96,13 +96,13 @@ pub fn build_task_board_runtime_context(
     )
 }
 
-pub fn configure_ai_server_v3(
-    ai_server: &mut AiServerV3,
+pub fn configure_agent_ai_server(
+    ai_server: &mut AgentAiServer,
     session_id: &str,
     turn_id: &str,
     runtime_context: &ResolvedConversationRuntimeContext,
     effective_settings: &Value,
-    executor: McpToolExecuteV3,
+    executor: AgentMcpToolExecute,
 ) {
     if runtime_context.base_system_prompt.is_some() {
         ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
@@ -125,13 +125,13 @@ pub fn configure_ai_server_v3(
     apply_settings_to_ai_client(&mut ai_server.ai_client, effective_settings);
 }
 
-pub fn build_chat_options_v3(
+pub fn build_agent_chat_options(
     model_runtime: &ResolvedChatModelConfig,
     runtime_context: &ResolvedConversationRuntimeContext,
     prefixed_input_items: Vec<Value>,
     input: ChatExecutionInput,
-) -> ChatOptionsV3 {
-    ChatOptionsV3 {
+) -> AgentChatOptions {
+    AgentChatOptions {
         model: Some(model_runtime.model.clone()),
         provider: Some(model_runtime.provider.clone()),
         thinking_level: model_runtime.thinking_level.clone(),

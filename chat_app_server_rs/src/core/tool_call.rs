@@ -232,6 +232,7 @@ pub fn extract_message_tool_calls(
     Vec::new()
 }
 
+#[cfg(test)]
 pub fn extract_message_tool_calls_from_value(message: &Value) -> Vec<Value> {
     extract_message_tool_calls(message.get("tool_calls"), message.get("metadata"))
 }
@@ -243,6 +244,7 @@ pub fn tool_calls_value_has_items(tool_calls: Option<&Value>) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 pub fn message_has_tool_calls(message: &Value) -> bool {
     !extract_message_tool_calls_from_value(message).is_empty()
 }

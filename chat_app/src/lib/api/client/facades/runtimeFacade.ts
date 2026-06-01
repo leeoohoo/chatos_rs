@@ -21,7 +21,7 @@ import type {
   RegisterPayload,
   RuntimeGuidanceSubmitPayload,
   RuntimeGuidanceSubmitResponse,
-  AgentV3ToolsResponse,
+  AgentToolsResponse,
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
@@ -50,7 +50,7 @@ export interface RuntimeFacade {
     reasoningEnabled?: boolean,
     options?: StreamChatOptions,
   ): Promise<StreamChatCommandResponse>;
-  getAgentV3Tools(options?: {
+  getAgentTools(options?: {
     conversationId?: string | null;
     mcpEnabled?: boolean;
     enabledMcpIds?: string[];
@@ -59,7 +59,7 @@ export interface RuntimeFacade {
     contactAgentId?: string | null;
     skillsEnabled?: boolean;
     selectedSkillIds?: string[];
-  }): Promise<AgentV3ToolsResponse>;
+  }): Promise<AgentToolsResponse>;
   submitRuntimeGuidance(payload: RuntimeGuidanceSubmitPayload): Promise<RuntimeGuidanceSubmitResponse>;
   getTaskManagerTasks(
     conversationId: string,
@@ -131,7 +131,7 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
       options,
     );
   },
-  async getAgentV3Tools(options) {
+  async getAgentTools(options) {
     const query = buildQuery({
       conversation_id: options?.conversationId,
       mcp_enabled: typeof options?.mcpEnabled === 'boolean' ? options.mcpEnabled : undefined,
@@ -146,7 +146,7 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
         ? options?.selectedSkillIds.join(',')
         : undefined,
     });
-    return this.getRequestFn()<AgentV3ToolsResponse>(`/agent_v3/tools${query}`);
+    return this.getRequestFn()<AgentToolsResponse>(`/agent/tools${query}`);
   },
   async submitRuntimeGuidance(payload) {
     return streamApi.submitRuntimeGuidance(this.getRequestFn(), payload);

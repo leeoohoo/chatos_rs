@@ -4,18 +4,18 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::core::chat_stream::ChatEventSink;
-use crate::services::v3::ai_client::AiClientCallbacks as V3AiClientCallbacks;
+use crate::services::agent_runtime::ai_client::AiClientCallbacks as AgentAiClientCallbacks;
 use crate::utils::abort_registry;
 use crate::utils::events::Events;
 
 use super::text::join_stream_text;
-use super::StreamCallbacksV3;
+use super::ChatStreamCallbacks;
 
-pub fn build_v3_callbacks(
+pub fn build_chat_stream_callbacks(
     sink: &ChatEventSink,
     session_id: &str,
     enable_tools: bool,
-) -> StreamCallbacksV3 {
+) -> ChatStreamCallbacks {
     let sid = session_id.to_string();
     let chunk_sent = Arc::new(AtomicBool::new(false));
     let streamed_content = Arc::new(Mutex::new(String::new()));
@@ -176,7 +176,7 @@ pub fn build_v3_callbacks(
         );
     }) as Arc<dyn Fn(Value) + Send + Sync>;
 
-    let callbacks = V3AiClientCallbacks {
+    let callbacks = AgentAiClientCallbacks {
         on_chunk: Some(Arc::new(on_chunk)),
         on_thinking: Some(Arc::new(on_thinking)),
         on_turn_phase: Some(on_turn_phase),
@@ -191,7 +191,7 @@ pub fn build_v3_callbacks(
         on_before_model_request: None,
     };
 
-    StreamCallbacksV3 {
+    ChatStreamCallbacks {
         callbacks,
         chunk_sent,
         streamed_content,

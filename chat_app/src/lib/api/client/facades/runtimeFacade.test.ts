@@ -2,14 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { runtimeFacade } from './runtimeFacade';
 
-describe('runtimeFacade.getAgentV3Tools', () => {
+describe('runtimeFacade.getAgentTools', () => {
   it('passes conversation id through to the tools query', async () => {
     const request = vi.fn().mockResolvedValue({ data: [] });
     const context = {
       getRequestFn: () => request,
     };
 
-    await runtimeFacade.getAgentV3Tools.call(context as never, {
+    await runtimeFacade.getAgentTools.call(context as never, {
       conversationId: 'conv-123',
       mcpEnabled: false,
       enabledMcpIds: ['builtin_notepad', 'builtin_task_manager'],
@@ -21,7 +21,7 @@ describe('runtimeFacade.getAgentV3Tools', () => {
     });
 
     expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls[0][0]).toContain('/agent_v3/tools?');
+    expect(request.mock.calls[0][0]).toContain('/agent/tools?');
     expect(request.mock.calls[0][0]).toContain('conversation_id=conv-123');
     expect(request.mock.calls[0][0]).toContain('mcp_enabled=false');
     expect(request.mock.calls[0][0]).toContain('enabled_mcp_ids=builtin_notepad%2Cbuiltin_task_manager');

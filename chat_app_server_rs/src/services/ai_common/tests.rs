@@ -462,7 +462,6 @@ async fn execute_tool_lifecycle_runs_callbacks_and_persists_results() {
     .await
     .expect("tool execution should succeed");
 
-    assert_eq!(outcome.tool_results.len(), 1);
     assert_eq!(outcome.persisted_results.len(), 1);
     assert_eq!(started.lock().expect("lock poisoned").len(), 1);
     assert_eq!(ended.lock().expect("lock poisoned").len(), 1);

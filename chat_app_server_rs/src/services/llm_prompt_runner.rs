@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 
 use crate::core::messages::select_preferred_text;
 use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
-use crate::services::v3::ai_request_handler as v3_handler;
-use crate::services::v3::message_manager as v3_message_manager;
+use crate::services::agent_runtime::ai_request_handler as runtime_handler;
+use crate::services::agent_runtime::message_manager as runtime_message_manager;
 
 #[derive(Debug, Clone)]
 pub struct PromptRunnerRuntime {
@@ -11,6 +11,7 @@ pub struct PromptRunnerRuntime {
     pub provider: String,
     pub thinking_level: Option<String>,
     pub temperature: f64,
+    pub supports_responses: bool,
     pub api_key: String,
     pub base_url: String,
 }
@@ -38,6 +39,7 @@ impl PromptRunnerRuntime {
             provider: resolved.provider,
             thinking_level: resolved.thinking_level,
             temperature: resolved.temperature,
+            supports_responses: resolved.supports_responses,
             api_key: resolved.api_key,
             base_url: resolved.base_url,
         })
@@ -95,10 +97,10 @@ async fn run_with_responses(
     max_tokens: Option<i64>,
     purpose: &str,
 ) -> Result<String, String> {
-    let handler = v3_handler::AiRequestHandler::new(
+    let handler = runtime_handler::AiRequestHandler::new(
         runtime.api_key.clone(),
         runtime.base_url.clone(),
-        v3_message_manager::MessageManager::new(),
+        runtime_message_manager::MessageManager::new(),
     );
 
     let mut no_system_messages = base_url_disallows_system_messages(&runtime.base_url);
@@ -130,6 +132,7 @@ async fn run_with_responses(
         match handler
             .handle_request(
                 input,
+                runtime.supports_responses,
                 runtime.model.clone(),
                 instructions,
                 None,
@@ -137,7 +140,7 @@ async fn run_with_responses(
                 None,
                 Some(runtime.temperature),
                 max_tokens,
-                v3_handler::StreamCallbacks {
+                runtime_handler::StreamCallbacks {
                     on_chunk: None,
                     on_thinking: None,
                 },

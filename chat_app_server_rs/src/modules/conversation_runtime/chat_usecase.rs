@@ -8,18 +8,18 @@ use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
-use super::chat_execution::init_ai_server_v3;
+use super::chat_execution::init_agent_ai_server;
 use super::chat_runner::{
-    build_chat_event_sink, run_bootstrapped_chat_v3, BootstrappedChatV3Input,
+    build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput,
 };
 
-pub struct RunChatV3UsecaseInput {
+pub struct RunChatUsecaseInput {
     pub sender: Option<SseSender>,
     pub req: ChatStreamRequest,
 }
 
-pub async fn run_chat_v3_usecase(input: RunChatV3UsecaseInput) {
-    let RunChatV3UsecaseInput { sender, req } = input;
+pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
+    let RunChatUsecaseInput { sender, req } = input;
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let initial_turn_id = normalize_turn_id(req.turn_id.as_deref());
@@ -56,13 +56,7 @@ pub async fn run_chat_v3_usecase(input: RunChatV3UsecaseInput) {
             return;
         }
     };
-    if !model_runtime.supports_responses {
-        send_error_event(&initial_sink, "当前模型未启用 Responses API", None);
-        initial_sink.send_done();
-        return;
-    }
-
-    let ai_server = init_ai_server_v3(&model_runtime);
+    let ai_server = init_agent_ai_server(&model_runtime);
     let bootstrap = load_common_chat_bootstrap(build_common_bootstrap_input(
         &req,
         &session_id,
@@ -70,7 +64,7 @@ pub async fn run_chat_v3_usecase(input: RunChatV3UsecaseInput) {
         &model_runtime,
     ))
     .await;
-    run_bootstrapped_chat_v3(BootstrappedChatV3Input {
+    run_bootstrapped_chat(BootstrappedChatInput {
         sender: sender.clone(),
         user_id: req.user_id.clone(),
         project_id: req.project_id.clone(),

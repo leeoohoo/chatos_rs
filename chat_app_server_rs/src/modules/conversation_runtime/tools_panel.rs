@@ -7,7 +7,7 @@ use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
-use crate::services::v3::mcp_tool_execute::McpToolExecute as V3McpToolExecute;
+use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute as AgentMcpToolExecute;
 
 use super::snapshot::build_builtin_mcp_debug_payload;
 use super::user_context::load_runtime_user_context;
@@ -41,7 +41,7 @@ pub struct RuntimeMcpStatusPanel {
     pub builtin_mcp_prompt_debug: Value,
 }
 
-pub async fn build_v3_agent_tools_panel(user_id: &str) -> Result<RuntimeMcpToolsPanel, String> {
+pub async fn build_agent_tools_panel(user_id: &str) -> Result<RuntimeMcpToolsPanel, String> {
     let runtime_context = load_runtime_mcp_debug_context(Some(user_id.to_string())).await;
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle;
     let server_counts = RuntimeMcpServerCounts {
@@ -49,7 +49,7 @@ pub async fn build_v3_agent_tools_panel(user_id: &str) -> Result<RuntimeMcpTools
         stdio: stdio_servers.len(),
         builtin: builtin_servers.len(),
     };
-    let mut exec = V3McpToolExecute::new(
+    let mut exec = AgentMcpToolExecute::new(
         http_servers.clone(),
         stdio_servers.clone(),
         builtin_servers.clone(),

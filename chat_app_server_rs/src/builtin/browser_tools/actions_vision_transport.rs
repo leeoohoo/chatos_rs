@@ -1,8 +1,8 @@
 use serde_json::{json, Value};
 
 use crate::core::messages::select_preferred_text;
-use crate::services::v3::ai_request_handler as v3_ai_request_handler;
-use crate::services::v3::message_manager as v3_message_manager;
+use crate::services::agent_runtime::ai_request_handler as runtime_ai_request_handler;
+use crate::services::agent_runtime::message_manager as runtime_message_manager;
 
 use super::super::actions_vision_support::{BrowserVisionCandidate, BrowserVisionRunResult};
 use super::super::DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS;
@@ -64,10 +64,10 @@ async fn run_browser_vision_with_responses(
     image_data_url: &str,
     candidate: &BrowserVisionCandidate,
 ) -> Result<String, String> {
-    let handler = v3_ai_request_handler::AiRequestHandler::new(
+    let handler = runtime_ai_request_handler::AiRequestHandler::new(
         candidate.api_key.clone(),
         candidate.base_url.clone(),
-        v3_message_manager::MessageManager::new(),
+        runtime_message_manager::MessageManager::new(),
     );
     let no_system_messages =
         browser_vision_base_url_disallows_system_messages(candidate.base_url.as_str());
@@ -80,6 +80,7 @@ async fn run_browser_vision_with_responses(
     let response = handler
         .handle_request(
             input,
+            true,
             candidate.model.clone(),
             if no_system_messages {
                 None
@@ -91,7 +92,7 @@ async fn run_browser_vision_with_responses(
             None,
             Some(candidate.temperature),
             Some(DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS),
-            v3_ai_request_handler::StreamCallbacks::default(),
+            runtime_ai_request_handler::StreamCallbacks::default(),
             Some(candidate.provider.clone()),
             candidate.thinking_level.clone(),
             None,

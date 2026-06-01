@@ -256,7 +256,7 @@ export interface RuntimeGuidanceSubmitPayload {
   projectId?: string | null;
 }
 
-export interface AgentV3ToolDefinition {
+export interface AgentToolDefinition {
   name: string;
   description?: string | null;
   parameters?: Record<string, unknown> | null;
@@ -264,8 +264,8 @@ export interface AgentV3ToolDefinition {
   display_group?: string | null;
 }
 
-export interface AgentV3ToolsResponse {
-  tools?: AgentV3ToolDefinition[];
+export interface AgentToolsResponse {
+  tools?: AgentToolDefinition[];
   unavailable_tools?: Array<{
     server_name?: string | null;
     tool_name?: string | null;

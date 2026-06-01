@@ -16,7 +16,6 @@ pub(crate) const EMPTY_STREAM_RESPONSE_PARSE_ERROR: &str =
     "stream response parse failed: no valid SSE events parsed from provider";
 
 pub(crate) struct ToolExecutionOutcome {
-    pub tool_results: Vec<ToolResult>,
     pub persisted_results: Vec<ToolResult>,
 }
 
@@ -334,8 +333,5 @@ where
         persist(persisted_results.clone()).await;
     }
 
-    Ok(ToolExecutionOutcome {
-        tool_results,
-        persisted_results,
-    })
+    Ok(ToolExecutionOutcome { persisted_results })
 }

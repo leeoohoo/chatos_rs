@@ -6,18 +6,19 @@ use tracing::warn;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::chat_stream::{
-    build_v3_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
+    build_chat_stream_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
     send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::services::ai_client_common::AiClientCallbacks;
-use crate::services::v3::ai_server::AiServer as AiServerV3;
+use crate::services::agent_runtime::ai_server::AiServer as AgentAiServer;
 use crate::utils::abort_registry;
 use crate::utils::log_helpers::log_chat_begin;
 use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    build_chat_options_v3, configure_ai_server_v3, prepare_mcp_execution_v3, ChatExecutionInput,
+    build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution,
+    ChatExecutionInput,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::snapshot::{
@@ -59,14 +60,14 @@ pub fn build_live_request_snapshot_context(
     }
 }
 
-pub struct BootstrappedChatV3Input<'a> {
+pub struct BootstrappedChatInput<'a> {
     pub sender: Option<SseSender>,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
     pub session_id: &'a str,
     pub content: &'a str,
     pub model_runtime: &'a ResolvedChatModelConfig,
-    pub ai_server: AiServerV3,
+    pub ai_server: AgentAiServer,
     pub bootstrap: CommonChatBootstrap,
 }
 
@@ -159,8 +160,8 @@ pub fn prepare_chat_execution(
     }
 }
 
-pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
-    let BootstrappedChatV3Input {
+pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
+    let BootstrappedChatInput {
         sender,
         user_id,
         project_id,
@@ -180,7 +181,7 @@ pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
     } = bootstrap;
 
     let use_tools = runtime_context.use_tools;
-    let prepared_mcp = prepare_mcp_execution_v3(
+    let prepared_mcp = prepare_mcp_execution(
         session_id,
         resolved_turn_id.as_str(),
         &mut runtime_context,
@@ -195,7 +196,7 @@ pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
         project_id,
         Some(user_message_id.clone()),
     );
-    let callback_bundle = build_v3_callbacks(&sink, session_id, true);
+    let callback_bundle = build_chat_stream_callbacks(&sink, session_id, true);
     let prepared = prepare_chat_execution(
         sink,
         prepared_mcp.unavailable_tools.as_slice(),
@@ -217,7 +218,7 @@ pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
         "responses",
     );
     let mut ai_server = ai_server;
-    configure_ai_server_v3(
+    configure_agent_ai_server(
         &mut ai_server,
         session_id,
         resolved_turn_id.as_str(),
@@ -226,7 +227,7 @@ pub async fn run_bootstrapped_chat_v3(input: BootstrappedChatV3Input<'_>) {
         prepared_mcp.executor,
     );
     let unavailable_tools = prepared_mcp.unavailable_tools.clone();
-    let chat_options = build_chat_options_v3(
+    let chat_options = build_agent_chat_options(
         model_runtime,
         &runtime_context,
         prepared_mcp.prefixed_input_items,

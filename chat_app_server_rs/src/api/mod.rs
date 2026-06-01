@@ -27,10 +27,10 @@ static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
 pub mod agents;
+pub mod agent_chat;
 pub mod applications;
 pub mod auth;
 pub(crate) mod chat_stream_common;
-pub mod chat_v3;
 pub mod code_nav;
 pub mod configs;
 pub mod contacts;
@@ -156,7 +156,7 @@ async fn root() -> axum::Json<serde_json::Value> {
             "auth_login": "/api/auth/login",
             "sessions": "/api/sessions",
             "messages": "/api/messages",
-            "chat_v3_send": "/api/agent_v3/chat/send",
+            "chat_send": "/api/agent/chat/send",
             "realtime_ws": "/api/realtime/ws",
             "fs_list": "/api/fs/list",
             "git_status": "/api/git/status"
