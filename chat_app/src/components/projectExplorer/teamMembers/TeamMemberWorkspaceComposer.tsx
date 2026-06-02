@@ -18,6 +18,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'reasoningEnabled'
   | 'mcpEnabled'
   | 'enabledMcpIds'
+  | 'autoCreateTask'
   | 'availableRemoteConnections'
   | 'currentRemoteConnectionId'
   | 'onRemoteConnectionChange'
@@ -28,6 +29,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'onReasoningToggle'
   | 'onMcpEnabledChange'
   | 'onEnabledMcpIdsChange'
+  | 'onAutoCreateTaskChange'
   | 'mergedCurrentTurnTasks'
   | 'workbarHistoryTasks'
   | 'taskHistoryOpen'
@@ -81,6 +83,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   reasoningEnabled,
   mcpEnabled,
   enabledMcpIds,
+  autoCreateTask,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
@@ -91,6 +94,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   onReasoningToggle,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  onAutoCreateTaskChange,
   mergedCurrentTurnTasks,
   workbarHistoryTasks,
   taskHistoryOpen,
@@ -193,8 +197,10 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       onRemoteConnectionChange={onRemoteConnectionChange}
       mcpEnabled={mcpEnabled}
       enabledMcpIds={enabledMcpIds}
+      autoCreateTask={autoCreateTask}
       onMcpEnabledChange={onMcpEnabledChange}
       onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+      onAutoCreateTaskChange={onAutoCreateTaskChange}
       runtimeGuidancePendingCount={runtimeGuidancePendingCount}
       runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
       runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}

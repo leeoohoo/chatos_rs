@@ -52,8 +52,10 @@ export const InputArea: React.FC<InputAreaProps> = ({
   showWorkspaceRootPicker = false,
   mcpEnabled = true,
   enabledMcpIds = [],
+  autoCreateTask = false,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  onAutoCreateTaskChange,
 }) => {
   const {
     isGuidingMode,
@@ -166,8 +168,10 @@ export const InputArea: React.FC<InputAreaProps> = ({
     currentAgent,
     mcpEnabled,
     enabledMcpIds,
+    autoCreateTask,
     onMcpEnabledChange,
     onEnabledMcpIdsChange,
+    onAutoCreateTaskChange,
   });
 
   return (
@@ -202,7 +206,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
           availableRemoteConnections={availableRemoteConnections}
           onRemoteConnectionChange={onRemoteConnectionChange}
           mcpEnabled={mcpEnabled}
+          autoCreateTask={autoCreateTask}
           onMcpEnabledChange={onMcpEnabledChange}
+          onAutoCreateTaskChange={onAutoCreateTaskChange}
           reasoningSupported={reasoningSupported}
           reasoningEnabled={reasoningEnabled}
           onReasoningToggle={onReasoningToggle}

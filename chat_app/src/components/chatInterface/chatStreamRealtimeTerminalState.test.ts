@@ -114,6 +114,41 @@ describe('chatStreamRealtimeTerminalState', () => {
     expect(state.sessionStreamingMessageDrafts.session_1).toBeNull();
   });
 
+  it('replaces the optimistic assistant draft with the persisted terminal assistant message', () => {
+    const state = buildState();
+    const set = (updater: (draft: ChatStoreDraft) => void) => updater(state);
+
+    applyRealtimeTerminalMessages(set, {
+      sessionId: 'session_1',
+      turnId: 'turn_1',
+      tempAssistantMessageId: 'assistant_temp_1',
+      tempUserId: 'user_temp_1',
+    }, {
+      persistedUserMessage: {
+        ...buildUser(),
+        id: 'user_1',
+      },
+      persistedAssistantMessage: {
+        ...buildAssistant({
+          id: 'assistant_1',
+          content: 'final answer',
+          status: 'completed',
+          metadata: {
+            conversation_turn_id: 'turn_1',
+            historyFinalForTurnId: 'turn_1',
+            historyFinalForUserMessageId: 'user_1',
+            contentSegments: [{ type: 'text', content: 'final answer' }],
+          },
+        }),
+      },
+    });
+
+    expect(state.messages.some((message) => message.id === 'assistant_temp_1')).toBe(false);
+    expect(state.messages.find((message) => message.id === 'assistant_1')?.content).toBe('final answer');
+    expect(state.messages.find((message) => message.id === 'assistant_1')?.status).toBe('completed');
+    expect(state.sessionChatState.session_1.isStreaming).toBe(false);
+  });
+
   it('applies terminal failure state and marks assistant as error', () => {
     const state = buildState();
     const set = (updater: (draft: ChatStoreDraft) => void) => updater(state);

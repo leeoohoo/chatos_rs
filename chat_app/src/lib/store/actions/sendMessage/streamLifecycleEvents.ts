@@ -20,6 +20,11 @@ interface StreamThinkingContext {
   helpers: StreamingMessageStateHelpers;
 }
 
+interface StreamDoneContext {
+  helpers: StreamingMessageStateHelpers;
+  streamedTextRef: { value: string };
+}
+
 interface StreamTurnPhaseContext {
   set: ChatStoreSet;
   currentSessionId: string;
@@ -40,6 +45,21 @@ interface StreamCompleteContext {
 const asTextContent = (value: unknown): string => (
   typeof value === 'string' ? value : ''
 );
+
+const resolveTerminalText = (
+  streamedText: string,
+  finalContent: unknown,
+): string => {
+  if (typeof streamedText === 'string' && streamedText.trim().length > 0) {
+    return streamedText;
+  }
+
+  if (typeof finalContent === 'string' && finalContent.length > 0) {
+    return finalContent;
+  }
+
+  return '';
+};
 
 export const syncStreamingPreviewText = (
   set: ChatStoreSet,
@@ -164,9 +184,14 @@ export const handleCancelledEvent = (
 };
 
 export const handleDoneEvent = (
-  context: StreamThinkingContext,
+  context: StreamDoneContext,
 ): void => {
   context.helpers.flushPendingTextToStreamingMessage();
+
+  const terminalText = resolveTerminalText(context.streamedTextRef.value, null);
+  if (terminalText) {
+    context.helpers.applyCompleteContent(terminalText);
+  }
 };
 
 export const handleCompleteEvent = (
@@ -198,11 +223,10 @@ export const handleCompleteEvent = (
     });
   }
 
-  const hasStreamedText = typeof context.streamedTextRef.value === 'string'
-    && context.streamedTextRef.value.trim().length > 0;
   const finalContent = parsed?.result?.content;
-  if (!hasStreamedText && typeof finalContent === 'string' && finalContent.length > 0) {
-    context.helpers.applyCompleteContent(finalContent);
+  const terminalText = resolveTerminalText(context.streamedTextRef.value, finalContent);
+  if (terminalText) {
+    context.helpers.applyCompleteContent(terminalText);
     return true;
   }
   return false;

@@ -39,6 +39,7 @@ export const buildChatRequestLogPayload = ({
   projectRoot,
   mcpEnabled,
   enabledMcpIds,
+  autoCreateTask,
   skillsEnabled,
   selectedSkillIds,
 }: {
@@ -56,6 +57,7 @@ export const buildChatRequestLogPayload = ({
   projectRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  autoCreateTask: boolean;
   skillsEnabled: boolean;
   selectedSkillIds: string[];
 }): StreamChatLogPayload => ({
@@ -81,6 +83,7 @@ export const buildChatRequestLogPayload = ({
   project_root: projectRoot,
   mcp_enabled: mcpEnabled,
   enabled_mcp_ids: enabledMcpIds,
+  auto_create_task: autoCreateTask,
   skills_enabled: skillsEnabled,
   selected_skill_ids: selectedSkillIds,
 });
@@ -93,6 +96,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectRoot,
   mcpEnabled,
   enabledMcpIds,
+  autoCreateTask,
   skillsEnabled,
   selectedSkillIds,
 }: {
@@ -103,6 +107,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  autoCreateTask: boolean;
   skillsEnabled: boolean;
   selectedSkillIds: string[];
 }): StreamChatRuntimeOptions => ({
@@ -113,6 +118,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectRoot,
   mcpEnabled,
   enabledMcpIds,
+  autoCreateTask,
   skillsEnabled,
   selectedSkillIds,
 });

@@ -25,6 +25,7 @@ use self::review_flow::handle_add_task;
 pub struct TaskManagerOptions {
     pub server_name: String,
     pub review_timeout_ms: u64,
+    pub auto_create_task: bool,
 }
 
 #[derive(Clone)]
@@ -32,6 +33,7 @@ pub struct TaskManagerService {
     registry: ToolRegistry<ToolHandler>,
     default_conversation_id: String,
     default_turn_id: String,
+    auto_create_task: bool,
 }
 
 type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Send + Sync>;
@@ -39,6 +41,7 @@ type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Se
 pub(super) struct ToolContext<'a> {
     conversation_id: &'a str,
     conversation_turn_id: &'a str,
+    auto_create_task: bool,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 }
 
@@ -48,12 +51,14 @@ impl TaskManagerService {
             registry: ToolRegistry::new(),
             default_conversation_id: format!("conversation_{}", Uuid::new_v4().simple()),
             default_turn_id: format!("turn_{}", Uuid::new_v4().simple()),
+            auto_create_task: opts.auto_create_task,
         };
 
         let add_timeout = opts.review_timeout_ms.max(10_000);
+        let auto_create_task = opts.auto_create_task;
         let server_name = opts.server_name;
 
-        service.register_add_task(add_timeout, server_name.as_str());
+        service.register_add_task(add_timeout, server_name.as_str(), auto_create_task);
         service.register_list_tasks();
         service.register_update_task();
         service.register_complete_task();
@@ -89,6 +94,7 @@ impl TaskManagerService {
         let ctx = ToolContext {
             conversation_id: conversation,
             conversation_turn_id: turn,
+            auto_create_task: self.auto_create_task,
             on_stream_chunk,
         };
         (tool.handler)(args, &ctx)
@@ -105,12 +111,19 @@ impl TaskManagerService {
             .register_tool(name, description, input_schema, handler);
     }
 
-    fn register_add_task(&mut self, add_timeout: u64, server_name: &str) {
+    fn register_add_task(&mut self, add_timeout: u64, server_name: &str, auto_create_task: bool) {
+        let description = if auto_create_task {
+            format!(
+                "Create one or more tasks for the current conversation turn. Task drafts will be persisted automatically without user confirmation (server: {server_name})."
+            )
+        } else {
+            format!(
+                "Create one or more tasks for the current conversation turn. The task list must be confirmed by the user before persistence (server: {server_name})."
+            )
+        };
         self.register_tool(
             "add_task",
-            &format!(
-                "Create one or more tasks for the current conversation turn. The task list must be confirmed by the user before persistence (server: {server_name})."
-            ),
+            &description,
             json!({
                 "type": "object",
                 "properties": {

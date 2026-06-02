@@ -84,8 +84,10 @@ interface ChatComposerPanelProps {
   showWorkspaceRootPicker?: boolean;
   mcpEnabled: boolean;
   enabledMcpIds?: string[];
+  autoCreateTask?: boolean;
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
+  onAutoCreateTaskChange: (enabled: boolean) => void;
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
   runtimeGuidanceLastAppliedAt?: string | null;
@@ -156,8 +158,10 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   showWorkspaceRootPicker = false,
   mcpEnabled,
   enabledMcpIds,
+  autoCreateTask = false,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  onAutoCreateTaskChange,
   runtimeGuidancePendingCount = 0,
   runtimeGuidanceAppliedCount = 0,
   runtimeGuidanceLastAppliedAt = null,
@@ -246,8 +250,10 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       showWorkspaceRootPicker={showWorkspaceRootPicker}
       mcpEnabled={mcpEnabled}
       enabledMcpIds={enabledMcpIds}
+      autoCreateTask={autoCreateTask}
       onMcpEnabledChange={onMcpEnabledChange}
       onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+      onAutoCreateTaskChange={onAutoCreateTaskChange}
     />
   </div>
   );

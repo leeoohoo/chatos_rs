@@ -5,6 +5,7 @@ export interface SessionRuntimeMetadata {
   selectedModelId: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  autoCreateTask: boolean;
   projectId: string | null;
   projectRoot: string | null;
   workspaceRoot: string | null;
@@ -57,6 +58,19 @@ const parseSessionMetadata = (metadata: unknown): MetadataRecord => {
   return {};
 };
 
+const getSessionMetadataSource = (metadata: unknown): MetadataRecord => {
+  const meta = parseSessionMetadata(metadata);
+  const source = asMetadataRecord(meta.source_metadata);
+  return Object.keys(source).length > 0 ? source : meta;
+};
+
+const getMutableSessionMetadataSource = (metadata: MetadataRecord): MetadataRecord => {
+  const source = asMetadataRecord(metadata.source_metadata);
+  return Object.keys(source).length > 0
+    ? { ...source }
+    : { ...metadata };
+};
+
 const readUiChatSelectionModelId = (metadata: MetadataRecord): string | null => {
   const uiChatSelection = asMetadataRecord(metadata.ui_chat_selection);
   if (!uiChatSelection || typeof uiChatSelection !== 'object' || Array.isArray(uiChatSelection)) {
@@ -76,7 +90,7 @@ const readUiChatSelectionAgentId = (metadata: MetadataRecord): string | null => 
 export const readSessionRuntimeFromMetadata = (
   metadata: unknown,
 ): SessionRuntimeMetadata | null => {
-  const meta = parseSessionMetadata(metadata);
+  const meta = getSessionMetadataSource(metadata);
   const runtime = asMetadataRecord(meta.chat_runtime);
   const contact = asMetadataRecord(meta.contact);
   const uiContact = asMetadataRecord(meta.ui_contact);
@@ -112,6 +126,8 @@ export const readSessionRuntimeFromMetadata = (
   const mcpEnabledRaw = runtime.mcp_enabled ?? runtime.mcpEnabled;
   const mcpEnabled = typeof mcpEnabledRaw === 'boolean' ? mcpEnabledRaw : true;
   const enabledMcpIds = normalizeIdArray(runtime.enabled_mcp_ids ?? runtime.enabledMcpIds);
+  const autoCreateTaskRaw = runtime.auto_create_task ?? runtime.autoCreateTask;
+  const autoCreateTask = typeof autoCreateTaskRaw === 'boolean' ? autoCreateTaskRaw : false;
 
   if (
     !selectedModelId
@@ -123,6 +139,7 @@ export const readSessionRuntimeFromMetadata = (
     && !workspaceRoot
     && enabledMcpIds.length === 0
     && mcpEnabled
+    && !autoCreateTask
   ) {
     return null;
   }
@@ -134,6 +151,7 @@ export const readSessionRuntimeFromMetadata = (
     selectedModelId,
     mcpEnabled,
     enabledMcpIds,
+    autoCreateTask,
     projectId,
     projectRoot,
     workspaceRoot,
@@ -145,6 +163,7 @@ export const mergeSessionRuntimeIntoMetadata = (
   runtime: Partial<SessionRuntimeMetadata>,
 ): MetadataRecord => {
   const next = parseSessionMetadata(metadata);
+  const source = getMutableSessionMetadataSource(next);
   const existingRuntime = readSessionRuntimeFromMetadata(next);
 
   const hasOwn = (key: keyof SessionRuntimeMetadata): boolean => (
@@ -177,30 +196,40 @@ export const mergeSessionRuntimeIntoMetadata = (
   const enabledMcpIds = runtime.enabledMcpIds
     ? normalizeIdArray(runtime.enabledMcpIds)
     : (existingRuntime?.enabledMcpIds ?? []);
+  const autoCreateTask = typeof runtime.autoCreateTask === 'boolean'
+    ? runtime.autoCreateTask
+    : (existingRuntime?.autoCreateTask ?? false);
 
-  next.chat_runtime = {
+  source.chat_runtime = {
     selected_model_id: selectedModelId,
     contact_agent_id: contactAgentId,
     remote_connection_id: remoteConnectionId,
     mcp_enabled: mcpEnabled,
     enabled_mcp_ids: enabledMcpIds,
+    auto_create_task: autoCreateTask,
     project_id: projectId,
     project_root: projectRoot,
     workspace_root: workspaceRoot,
   };
-  next.contact = {
+  source.contact = {
     type: 'memory_agent',
     agent_id: contactAgentId,
     contact_id: contactId,
   };
-  next.ui_chat_selection = {
+  source.ui_chat_selection = {
     selected_model_id: selectedModelId,
     selected_agent_id: contactAgentId,
   };
-  next.ui_contact = {
+  source.ui_contact = {
     type: 'memory_agent',
     agent_id: contactAgentId,
     contact_id: contactId,
   };
+
+  if (Object.keys(asMetadataRecord(next.source_metadata)).length > 0) {
+    next.source_metadata = source;
+  } else {
+    Object.assign(next, source);
+  }
   return next;
 };

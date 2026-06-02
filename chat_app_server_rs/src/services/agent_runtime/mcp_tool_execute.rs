@@ -131,6 +131,7 @@ mod tests {
                 project_id: Some("project_1".to_string()),
                 remote_connection_id: None,
                 contact_agent_id: Some("agent_1".to_string()),
+                auto_create_task: false,
                 allow_writes: false,
                 max_file_bytes: 0,
                 max_write_bytes: 0,

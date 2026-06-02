@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { LazyMarkdownRenderer } from '../../LazyMarkdownRenderer';
 import { highlightCodeBlock, highlightCodeBlockAuto } from '../../../lib/tools/highlight';
 import { cn } from '../../../lib/utils';
 import type { FsReadResult, ProjectSearchHit } from '../../../types';
@@ -7,6 +8,7 @@ import {
   buildProjectSearchHitId,
   escapeHtml,
   getHighlightLanguage,
+  isMarkdownFile,
   splitTextByQuery,
 } from '../utils';
 import type { PreviewTokenSelection } from './previewPaneTypes';
@@ -161,13 +163,18 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
 
   const activeSearchQuery = searchQuery.trim();
   const displayedContent = isEditing ? draftContent : selectedFile.content;
+  const renderMarkdownPreview = !isEditing && isMarkdownFile(selectedFile.name, selectedFile.contentType);
   const rawLines = useMemo(
     () => displayedContent.split(/\r?\n/),
     [displayedContent],
   );
   const highlightedLines = useMemo(
-    () => highlightTextContent(selectedFile.name, displayedContent).split(/\r?\n/),
-    [displayedContent, selectedFile.name],
+    () => (
+      renderMarkdownPreview
+        ? []
+        : highlightTextContent(selectedFile.name, displayedContent).split(/\r?\n/)
+    ),
+    [displayedContent, renderMarkdownPreview, selectedFile.name],
   );
   const fileSearchHitsByLine = useMemo(
     () => buildFileSearchHitsByLine({
@@ -245,6 +252,16 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
               }}
             />
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (renderMarkdownPreview) {
+    return (
+      <div className="h-full overflow-auto bg-muted/30">
+        <div className="min-h-full px-4 py-4 text-sm">
+          <LazyMarkdownRenderer content={selectedFile.content} className="not-prose" />
         </div>
       </div>
     );

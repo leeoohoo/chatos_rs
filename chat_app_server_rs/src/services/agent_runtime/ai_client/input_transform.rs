@@ -107,32 +107,24 @@ pub(super) fn to_message_item_with_reasoning(
     reasoning: Option<&str>,
     force_text_content: bool,
 ) -> Value {
+    let content_text = content_parts_to_text(content);
     if force_text_content {
         return json!({
             "role": role,
-            "content": content_parts_to_text(content),
+            "content": assistant_visible_text(content_text.as_str(), reasoning),
             "type": "message"
         });
     }
 
     if role == "assistant" {
-        let mut content_items = Vec::new();
-        if let Some(reasoning_text) = reasoning
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            content_items.push(json!({
-                "type": "reasoning",
-                "text": reasoning_text
-            }));
-        }
-        content_items.push(json!({
-            "type": "output_text",
-            "text": content_parts_to_text(content)
-        }));
+        // Responses API message content rejects `type: "reasoning"` in input history.
+        // Preserve assistant context using visible text only.
         return json!({
             "role": role,
-            "content": content_items,
+            "content": vec![json!({
+                "type": "output_text",
+                "text": assistant_visible_text(content_text.as_str(), reasoning)
+            })],
             "type": "message"
         });
     }
@@ -143,9 +135,22 @@ pub(super) fn to_message_item_with_reasoning(
 
     json!({
         "role": role,
-        "content": to_input_text_content(content_parts_to_text(content)),
+        "content": to_input_text_content(content_text),
         "type": "message"
     })
+}
+
+fn assistant_visible_text(content_text: &str, reasoning: Option<&str>) -> String {
+    let content_text = content_text.trim();
+    if !content_text.is_empty() {
+        return content_text.to_string();
+    }
+
+    reasoning
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn to_input_text_content(text: String) -> Value {
@@ -260,9 +265,12 @@ pub(super) fn build_current_input_items(raw_input: &Value, force_text: bool) -> 
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{json, Value};
 
-    use super::{content_parts_to_text, convert_parts_to_response_input};
+    use super::{
+        assistant_visible_text, content_parts_to_text, convert_parts_to_response_input,
+        to_message_item_with_reasoning,
+    };
 
     #[test]
     fn content_parts_to_text_preserves_image_placeholders_and_text_fallback() {
@@ -300,5 +308,31 @@ mod tests {
                 ]
             }])
         );
+    }
+
+    #[test]
+    fn assistant_messages_do_not_emit_reasoning_content_items() {
+        let item = to_message_item_with_reasoning(
+            "assistant",
+            &Value::String("Visible answer".to_string()),
+            Some("Internal chain of thought"),
+            false,
+        );
+
+        assert_eq!(
+            item,
+            json!({
+                "role": "assistant",
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Visible answer"}]
+            })
+        );
+    }
+
+    #[test]
+    fn assistant_visible_text_uses_reasoning_only_as_fallback() {
+        assert_eq!(assistant_visible_text("answer", Some("trace")), "answer");
+        assert_eq!(assistant_visible_text("   ", Some("trace")), "trace");
+        assert_eq!(assistant_visible_text("   ", Some("   ")), "");
     }
 }

@@ -28,7 +28,9 @@ export function InputAreaComposerControls({
   availableRemoteConnections,
   onRemoteConnectionChange,
   mcpEnabled,
+  autoCreateTask,
   onMcpEnabledChange,
+  onAutoCreateTaskChange,
   reasoningSupported,
   reasoningEnabled,
   onReasoningToggle,
@@ -235,6 +237,22 @@ export function InputAreaComposerControls({
         onSaveProjectMcpDefault={handleSaveProjectMcpDefault}
         onApplyProjectMcpDefault={handleApplyProjectMcpDefault}
       />
+
+      <button
+        type="button"
+        onClick={() => onAutoCreateTaskChange?.(!autoCreateTask)}
+        disabled={disabled || isStreaming || isStopping}
+        className={cn(
+          'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
+          autoCreateTask
+            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+            : 'bg-muted text-muted-foreground hover:text-foreground',
+          (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
+        )}
+        title={autoCreateTask ? '自动建任务已开启' : '自动建任务已关闭'}
+      >
+        任务自动建 {autoCreateTask ? '开' : '关'}
+      </button>
 
       {reasoningSupported && (
         <button

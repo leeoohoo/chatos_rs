@@ -115,6 +115,8 @@ export const useConversationPaneProps = ({
   enabledMcpIds: conversation.composerEnabledMcpIds,
   onMcpEnabledChange: actions.handleComposerMcpEnabledChange,
   onEnabledMcpIdsChange: actions.handleComposerEnabledMcpIdsChange,
+  autoCreateTask: conversation.composerAutoCreateTask,
+  onAutoCreateTaskChange: actions.handleComposerAutoCreateTaskChange,
   runtimeGuidancePendingCount: conversation.runtimeGuidancePendingCount,
   runtimeGuidanceAppliedCount: conversation.runtimeGuidanceAppliedCount,
   runtimeGuidanceLastAppliedAt: conversation.runtimeGuidanceLastAppliedAt,

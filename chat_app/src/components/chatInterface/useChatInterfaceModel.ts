@@ -174,6 +174,7 @@ export const useChatInterfaceModel = ({
     remoteConnections: store.remoteConnections || [],
     composerMcpEnabled: runtimeSettings.mcpEnabled,
     composerEnabledMcpIds: runtimeSettings.enabledMcpIds,
+    composerAutoCreateTask: runtimeSettings.autoCreateTask,
     turnProcessViewer: store.turnProcessViewer,
     turnProcessCacheBySession: store.sessionTurnProcessCache || {},
     apiClient: store.apiClient,
@@ -220,6 +221,7 @@ export const useChatInterfaceModel = ({
     handleComposerRemoteConnectionChange: controller.handleComposerRemoteConnectionChange,
     handleComposerMcpEnabledChange: runtimeSettings.setMcpEnabled,
     handleComposerEnabledMcpIdsChange: runtimeSettings.setEnabledMcpIds,
+    handleComposerAutoCreateTaskChange: runtimeSettings.setAutoCreateTask,
     closeTurnProcessViewer: store.closeTurnProcessViewer,
   };
 

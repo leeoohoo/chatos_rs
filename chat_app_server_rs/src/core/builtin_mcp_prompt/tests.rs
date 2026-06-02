@@ -23,6 +23,7 @@ fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
         project_id: None,
         remote_connection_id: None,
         contact_agent_id: None,
+        auto_create_task: false,
         allow_writes: false,
         max_file_bytes: 0,
         max_write_bytes: 0,

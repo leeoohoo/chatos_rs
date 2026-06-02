@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
+import { isMarkdownFile } from './utils';
 import { ProjectPreviewFileContent } from './previewPane/ProjectPreviewFileContent';
 import { ProjectPreviewHeader } from './previewPane/ProjectPreviewHeader';
 import { ProjectPreviewNavigation } from './previewPane/ProjectPreviewNavigation';
@@ -85,6 +86,12 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   const documentSymbolCount = documentSymbols?.symbols?.length || 0;
   const canEdit = Boolean(selectedFile && !selectedFile.isBinary && selectedFile.writable !== false);
   const hasUnsavedChanges = canEdit && selectedFile ? draftContent !== selectedFile.content : false;
+  const isMarkdownPreview = Boolean(
+    selectedFile
+    && !selectedFile.isBinary
+    && !isEditing
+    && isMarkdownFile(selectedFile.name, selectedFile.contentType),
+  );
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -120,7 +127,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {selectedFile && !selectedFile.isBinary && !isEditing && (
+        {selectedFile && !selectedFile.isBinary && !isEditing && !isMarkdownPreview && (
           <ProjectPreviewNavigation
             displayedToken={displayedToken}
             activeSearchQuery={activeSearchQuery}

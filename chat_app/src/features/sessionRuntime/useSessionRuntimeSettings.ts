@@ -25,9 +25,11 @@ interface UseSessionRuntimeSettingsResult {
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   workspaceRoot: string | null;
+  autoCreateTask: boolean;
   setMcpEnabled: (enabled: boolean) => void;
   setEnabledMcpIds: (ids: string[]) => void;
   setWorkspaceRoot: (path: string | null) => void;
+  setAutoCreateTask: (enabled: boolean) => void;
 }
 
 const EMPTY_MCP_ID_LIST: string[] = [];
@@ -51,16 +53,19 @@ export const useSessionRuntimeSettings = ({
   const [mcpEnabled, setMcpEnabledState] = useState<boolean>(defaultMcpEnabled);
   const [enabledMcpIds, setEnabledMcpIdsState] = useState<string[]>(normalizedDefaultMcpIds);
   const [workspaceRoot, setWorkspaceRootState] = useState<string | null>(normalizedDefaultWorkspaceRoot);
+  const [autoCreateTask, setAutoCreateTaskState] = useState<boolean>(false);
 
   useEffect(() => {
     const runtime = readSessionRuntimeFromMetadata(session?.metadata);
     const nextEnabled = runtime?.mcpEnabled ?? defaultMcpEnabled;
     const nextMcpIds = normalizeIdList(runtime?.enabledMcpIds ?? normalizedDefaultMcpIds);
     const nextWorkspaceRoot = normalizeNullableText(runtime?.workspaceRoot ?? normalizedDefaultWorkspaceRoot);
+    const nextAutoCreateTask = runtime?.autoCreateTask === true;
 
     setMcpEnabledState((prev) => (prev === nextEnabled ? prev : nextEnabled));
     setEnabledMcpIdsState((prev) => (isSameStringArray(prev, nextMcpIds) ? prev : nextMcpIds));
     setWorkspaceRootState((prev) => (prev === nextWorkspaceRoot ? prev : nextWorkspaceRoot));
+    setAutoCreateTaskState((prev) => (prev === nextAutoCreateTask ? prev : nextAutoCreateTask));
   }, [
     defaultMcpEnabled,
     normalizedDefaultMcpIds,
@@ -73,6 +78,7 @@ export const useSessionRuntimeSettings = ({
     mcpEnabled?: boolean;
     enabledMcpIds?: string[];
     workspaceRoot?: string | null;
+    autoCreateTask?: boolean;
   }) => {
     if (!session?.id || !updateSession) {
       return;
@@ -81,17 +87,22 @@ export const useSessionRuntimeSettings = ({
     const currentEnabled = runtime?.mcpEnabled ?? defaultMcpEnabled;
     const currentMcpIds = normalizeIdList(runtime?.enabledMcpIds ?? normalizedDefaultMcpIds);
     const currentWorkspaceRoot = runtime?.workspaceRoot ?? normalizedDefaultWorkspaceRoot;
+    const currentAutoCreateTask = runtime?.autoCreateTask === true;
 
     const nextEnabled = typeof patch.mcpEnabled === 'boolean' ? patch.mcpEnabled : currentEnabled;
     const nextMcpIds = patch.enabledMcpIds ? normalizeIdList(patch.enabledMcpIds) : currentMcpIds;
     const nextWorkspaceRoot = patch.workspaceRoot !== undefined
       ? normalizeNullableText(patch.workspaceRoot)
       : currentWorkspaceRoot;
+    const nextAutoCreateTask = typeof patch.autoCreateTask === 'boolean'
+      ? patch.autoCreateTask
+      : currentAutoCreateTask;
 
     if (
       currentEnabled === nextEnabled
       && isSameStringArray(currentMcpIds, nextMcpIds)
       && currentWorkspaceRoot === nextWorkspaceRoot
+      && currentAutoCreateTask === nextAutoCreateTask
     ) {
       return;
     }
@@ -100,6 +111,7 @@ export const useSessionRuntimeSettings = ({
       mcpEnabled: nextEnabled,
       enabledMcpIds: nextMcpIds,
       workspaceRoot: nextWorkspaceRoot,
+      autoCreateTask: nextAutoCreateTask,
     });
     void updateSession(session.id, { metadata } as Partial<Session>);
   }, [
@@ -116,8 +128,9 @@ export const useSessionRuntimeSettings = ({
       mcpEnabled: enabled,
       enabledMcpIds,
       workspaceRoot,
+      autoCreateTask,
     });
-  }, [enabledMcpIds, persistRuntimePatch, workspaceRoot]);
+  }, [autoCreateTask, enabledMcpIds, persistRuntimePatch, workspaceRoot]);
 
   const setEnabledMcpIds = useCallback((ids: string[]) => {
     const normalized = normalizeIdList(ids);
@@ -126,8 +139,9 @@ export const useSessionRuntimeSettings = ({
       mcpEnabled,
       enabledMcpIds: normalized,
       workspaceRoot,
+      autoCreateTask,
     });
-  }, [mcpEnabled, persistRuntimePatch, workspaceRoot]);
+  }, [autoCreateTask, mcpEnabled, persistRuntimePatch, workspaceRoot]);
 
   const setWorkspaceRoot = useCallback((path: string | null) => {
     const normalized = normalizeNullableText(path);
@@ -136,15 +150,28 @@ export const useSessionRuntimeSettings = ({
       mcpEnabled,
       enabledMcpIds,
       workspaceRoot: normalized,
+      autoCreateTask,
     });
-  }, [enabledMcpIds, mcpEnabled, persistRuntimePatch]);
+  }, [autoCreateTask, enabledMcpIds, mcpEnabled, persistRuntimePatch]);
+
+  const setAutoCreateTask = useCallback((enabled: boolean) => {
+    setAutoCreateTaskState((prev) => (prev === enabled ? prev : enabled));
+    persistRuntimePatch({
+      mcpEnabled,
+      enabledMcpIds,
+      workspaceRoot,
+      autoCreateTask: enabled,
+    });
+  }, [enabledMcpIds, mcpEnabled, persistRuntimePatch, workspaceRoot]);
 
   return {
     mcpEnabled,
     enabledMcpIds,
     workspaceRoot,
+    autoCreateTask,
     setMcpEnabled,
     setEnabledMcpIds,
     setWorkspaceRoot,
+    setAutoCreateTask,
   };
 };

@@ -47,8 +47,9 @@ export const applyRealtimeTerminalMessages = (
   persisted: TerminalEventPersistedMessages,
 ) => {
   set((state) => {
-    reconcilePersistedTurnMessages(
+    const { resolvedAssistantMessageId } = reconcilePersistedTurnMessages(
       state,
+      context.sessionId,
       context.tempAssistantMessageId,
       context.tempUserId,
       persisted.persistedUserMessage,
@@ -56,7 +57,7 @@ export const applyRealtimeTerminalMessages = (
     );
     finalizeStreamingSessionState(state, {
       sessionId: context.sessionId,
-      assistantMessageId: context.tempAssistantMessageId,
+      assistantMessageId: resolvedAssistantMessageId,
       sawDone: true,
     });
   });
@@ -71,8 +72,9 @@ export const applyRealtimeTerminalFailure = (
   readableError: string,
 ) => {
   set((state) => {
-    reconcilePersistedTurnMessages(
+    const { resolvedAssistantMessageId } = reconcilePersistedTurnMessages(
       state,
+      context.sessionId,
       context.tempAssistantMessageId,
       context.tempUserId,
       persisted.persistedUserMessage,
@@ -80,7 +82,7 @@ export const applyRealtimeTerminalFailure = (
     );
     failSendMessageState(state, {
       sessionId: context.sessionId,
-      tempAssistantId: context.tempAssistantMessageId,
+      tempAssistantId: resolvedAssistantMessageId,
       tempAssistantMessage,
       failureContent,
       readableError,

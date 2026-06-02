@@ -7,6 +7,7 @@ export interface SendMessageRuntimeOptions {
   workspaceRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
+  autoCreateTask?: boolean;
   skillsEnabled?: boolean;
   selectedSkillIds?: string[];
 }

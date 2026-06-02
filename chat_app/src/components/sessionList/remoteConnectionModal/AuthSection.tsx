@@ -3,6 +3,7 @@ import type {
   KeyFilePickerTarget,
   RemoteAuthType,
 } from '../helpers';
+import { PasswordField } from './PasswordField';
 
 interface AuthSectionProps {
   remoteAuthType: RemoteAuthType;
@@ -56,12 +57,11 @@ export const AuthSection: FC<AuthSectionProps> = ({
     {remoteAuthType === 'password' ? (
       <div className="col-span-2">
         <label className="text-sm text-muted-foreground">密码</label>
-        <input
-          type="password"
+        <PasswordField
           value={remotePassword}
-          onChange={(e) => onRemotePasswordChange(e.target.value)}
-          className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          onChange={onRemotePasswordChange}
           placeholder="请输入 SSH 登录密码"
+          autoComplete="current-password"
         />
       </div>
     ) : (

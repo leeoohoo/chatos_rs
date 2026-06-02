@@ -111,6 +111,8 @@ interface ChatConversationPaneProps {
   enabledMcpIds: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
+  autoCreateTask: boolean;
+  onAutoCreateTaskChange: (enabled: boolean) => void;
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
   runtimeGuidanceLastAppliedAt?: string | null;
@@ -343,6 +345,8 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   enabledMcpIds,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  autoCreateTask,
+  onAutoCreateTaskChange,
   runtimeGuidancePendingCount = 0,
   runtimeGuidanceAppliedCount = 0,
   runtimeGuidanceLastAppliedAt = null,
@@ -447,8 +451,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           showWorkspaceRootPicker={true}
           mcpEnabled={mcpEnabled}
           enabledMcpIds={enabledMcpIds}
+          autoCreateTask={autoCreateTask}
           onMcpEnabledChange={onMcpEnabledChange}
           onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+          onAutoCreateTaskChange={onAutoCreateTaskChange}
           runtimeGuidancePendingCount={runtimeGuidancePendingCount}
           runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
           runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}

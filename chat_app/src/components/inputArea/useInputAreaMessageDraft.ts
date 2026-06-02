@@ -17,6 +17,7 @@ interface UseInputAreaMessageDraftOptions {
   isGuidingMode: boolean;
   maxLength: number;
   mcpEnabled: boolean;
+  autoCreateTask: boolean;
   normalizedWorkspaceRoot: string | null;
   onGuide?: InputAreaProps['onGuide'];
   onSend: InputAreaProps['onSend'];
@@ -36,6 +37,7 @@ export const useInputAreaMessageDraft = ({
   isGuidingMode,
   maxLength,
   mcpEnabled,
+  autoCreateTask,
   normalizedWorkspaceRoot,
   onGuide,
   onSend,
@@ -106,6 +108,7 @@ export const useInputAreaMessageDraft = ({
     onSend(trimmedMessage, attachments, {
       mcpEnabled,
       enabledMcpIds: sanitizedEnabledMcpIds,
+      autoCreateTask,
       remoteConnectionId: currentRemoteConnectionId,
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
@@ -121,6 +124,7 @@ export const useInputAreaMessageDraft = ({
     effectiveAllowAttachments,
     isGuidingMode,
     mcpEnabled,
+    autoCreateTask,
     message,
     normalizedWorkspaceRoot,
     onGuide,

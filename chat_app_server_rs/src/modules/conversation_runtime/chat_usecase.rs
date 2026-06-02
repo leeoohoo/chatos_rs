@@ -93,6 +93,7 @@ fn build_common_bootstrap_input(
         remote_connection_id: req.remote_connection_id.clone(),
         mcp_enabled: req.mcp_enabled,
         enabled_mcp_ids: req.enabled_mcp_ids.clone(),
+        auto_create_task: req.auto_create_task,
         skills_enabled: req.skills_enabled,
         selected_skill_ids: req.selected_skill_ids.clone(),
         turn_id: req.turn_id.clone(),

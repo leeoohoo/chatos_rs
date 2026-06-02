@@ -36,7 +36,9 @@ export interface InputAreaComposerProps {
   availableRemoteConnections: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   mcpEnabled: boolean;
+  autoCreateTask: boolean;
   onMcpEnabledChange?: (enabled: boolean) => void;
+  onAutoCreateTaskChange?: (enabled: boolean) => void;
   reasoningSupported: boolean;
   reasoningEnabled: boolean;
   onReasoningToggle?: (enabled: boolean) => void;

@@ -20,7 +20,10 @@ import {
   splitTextByQuery as splitDomainTextByQuery,
   type TextMatchSegment,
 } from '../../lib/domain/projectExplorerText';
-import { getHighlightLanguage as getDomainHighlightLanguage } from '../../lib/domain/projectExplorerPreview';
+import {
+  getHighlightLanguage as getDomainHighlightLanguage,
+  isMarkdownFile as isDomainMarkdownFile,
+} from '../../lib/domain/projectExplorerPreview';
 export {
   normalizeProjectRunCatalog,
   normalizeProjectRunTarget,
@@ -57,6 +60,10 @@ export const splitTextByQuery = (
 
 export const getHighlightLanguage = (filename: string): string | null => (
   getDomainHighlightLanguage(filename)
+);
+
+export const isMarkdownFile = (filename: string, contentType?: string | null): boolean => (
+  isDomainMarkdownFile(filename, contentType)
 );
 
 export const escapeHtml = (value: string) => escapeDomainHtml(value);

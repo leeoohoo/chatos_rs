@@ -9,6 +9,7 @@ interface SessionRuntimeLike {
   workspaceRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
+  autoCreateTask?: boolean;
 }
 
 interface RuntimeResolutionResult {
@@ -20,6 +21,7 @@ interface RuntimeResolutionResult {
   effectiveExecutionRoot: string | null;
   effectiveMcpEnabled: boolean;
   effectiveEnabledMcpIds: string[];
+  effectiveAutoCreateTask: boolean;
 }
 
 export const resolveRuntimeConfig = (
@@ -75,6 +77,9 @@ export const resolveRuntimeConfig = (
   const effectiveEnabledMcpIds = Array.isArray(runtimeOptions?.enabledMcpIds)
     ? runtimeOptions.enabledMcpIds
     : (sessionRuntime?.enabledMcpIds ?? []);
+  const effectiveAutoCreateTask = typeof runtimeOptions?.autoCreateTask === 'boolean'
+    ? runtimeOptions.autoCreateTask
+    : (sessionRuntime?.autoCreateTask === true);
 
   return {
     effectiveContactAgentId,
@@ -85,6 +90,7 @@ export const resolveRuntimeConfig = (
     effectiveExecutionRoot,
     effectiveMcpEnabled,
     effectiveEnabledMcpIds,
+    effectiveAutoCreateTask,
   };
 };
 

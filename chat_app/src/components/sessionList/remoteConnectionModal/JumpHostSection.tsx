@@ -4,6 +4,7 @@ import type {
   JumpHostMode,
   KeyFilePickerTarget,
 } from '../helpers';
+import { PasswordField } from './PasswordField';
 
 interface JumpHostSectionProps {
   editingRemoteConnectionId: string | null;
@@ -214,12 +215,11 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
               </div>
               <div className="col-span-2">
                 <label className="text-sm text-muted-foreground">跳板机密码（可选）</label>
-                <input
-                  type="password"
+                <PasswordField
                   value={remoteJumpPassword}
-                  onChange={(e) => onRemoteJumpPasswordChange(e.target.value)}
-                  className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  onChange={onRemoteJumpPasswordChange}
                   placeholder="留空则尝试私钥或已有 SSH Agent"
+                  autoComplete="current-password"
                 />
               </div>
             </div>

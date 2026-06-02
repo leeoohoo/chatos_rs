@@ -189,7 +189,10 @@ export const handleStreamEvent = ({
   }
 
   if (parsed.type === 'done') {
-    handleDoneEvent({ helpers });
+    handleDoneEvent({
+      helpers,
+      streamedTextRef,
+    });
     debugLog('✅ 收到完成信号');
     return {
       ...EMPTY_RESULT,

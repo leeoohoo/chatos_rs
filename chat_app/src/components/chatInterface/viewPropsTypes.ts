@@ -60,6 +60,7 @@ export interface ChatInterfaceConversationState {
   remoteConnections: RemoteConnection[];
   composerMcpEnabled: boolean;
   composerEnabledMcpIds: string[];
+  composerAutoCreateTask: boolean;
   turnProcessViewer: {
     open: boolean;
     sessionId: string | null;
@@ -104,6 +105,7 @@ export interface ChatInterfaceConversationActions {
   handleComposerRemoteConnectionChange: (connectionId: string | null) => void;
   handleComposerMcpEnabledChange: (enabled: boolean) => void;
   handleComposerEnabledMcpIdsChange: (ids: string[]) => void;
+  handleComposerAutoCreateTaskChange: (enabled: boolean) => void;
   closeTurnProcessViewer: () => void;
 }
 

@@ -156,6 +156,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = TaskManagerService::new(TaskManagerOptions {
                 server_name: server.name.clone(),
                 review_timeout_ms: crate::services::task_manager::REVIEW_TIMEOUT_MS_DEFAULT,
+                auto_create_task: server.auto_create_task,
             })?;
             Ok(BuiltinToolService::TaskManager(service))
         }

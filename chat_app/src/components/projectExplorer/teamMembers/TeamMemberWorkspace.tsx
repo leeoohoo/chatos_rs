@@ -29,6 +29,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   reasoningEnabled,
   mcpEnabled,
   enabledMcpIds,
+  autoCreateTask,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
@@ -52,6 +53,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onReasoningToggle,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  onAutoCreateTaskChange,
   mergedCurrentTurnTasks,
   workbarHistoryTasks,
   taskHistoryOpen,
@@ -139,6 +141,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         reasoningEnabled={reasoningEnabled}
         mcpEnabled={mcpEnabled}
         enabledMcpIds={enabledMcpIds}
+        autoCreateTask={autoCreateTask}
         availableRemoteConnections={availableRemoteConnections}
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
@@ -149,6 +152,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         onReasoningToggle={onReasoningToggle}
         onMcpEnabledChange={onMcpEnabledChange}
         onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+        onAutoCreateTaskChange={onAutoCreateTaskChange}
         mergedCurrentTurnTasks={mergedCurrentTurnTasks}
         workbarHistoryTasks={workbarHistoryTasks}
         taskHistoryOpen={taskHistoryOpen}

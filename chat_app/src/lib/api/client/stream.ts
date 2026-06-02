@@ -72,6 +72,7 @@ export const sendChatCommand = async (
       project_root: options?.projectRoot || undefined,
       mcp_enabled: options?.mcpEnabled,
       enabled_mcp_ids: options?.enabledMcpIds || [],
+      auto_create_task: options?.autoCreateTask,
       skills_enabled: options?.skillsEnabled === true,
       selected_skill_ids: options?.selectedSkillIds || [],
       model_config_id: modelConfig.id,

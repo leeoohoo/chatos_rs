@@ -36,8 +36,10 @@ type UseInputAreaControllerParams = Pick<
   | 'currentAgent'
   | 'mcpEnabled'
   | 'enabledMcpIds'
+  | 'autoCreateTask'
   | 'onMcpEnabledChange'
   | 'onEnabledMcpIdsChange'
+  | 'onAutoCreateTaskChange'
 >;
 
 const DEFAULT_SUPPORTED_FILE_TYPES = [
@@ -70,6 +72,7 @@ export function useInputAreaController({
   currentAgent = null,
   mcpEnabled = true,
   enabledMcpIds = [],
+  autoCreateTask = false,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
 }: UseInputAreaControllerParams) {
@@ -288,6 +291,7 @@ export function useInputAreaController({
     effectiveAllowAttachments,
     isGuidingMode,
     mcpEnabled,
+    autoCreateTask,
     maxLength,
     normalizedWorkspaceRoot,
     onGuide,

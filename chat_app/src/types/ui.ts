@@ -98,8 +98,10 @@ export interface InputAreaProps {
   showWorkspaceRootPicker?: boolean;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
+  autoCreateTask?: boolean;
   onMcpEnabledChange?: (enabled: boolean) => void;
   onEnabledMcpIdsChange?: (ids: string[]) => void;
+  onAutoCreateTaskChange?: (enabled: boolean) => void;
 }
 
 export interface SessionListProps {

@@ -110,6 +110,7 @@ export function createSendMessageHandler({
       effectiveExecutionRoot,
       effectiveMcpEnabled,
       effectiveEnabledMcpIds,
+      effectiveAutoCreateTask,
     } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsWithContactFallback);
     const effectiveSkillsEnabled = runtimeOptionsWithContactFallback.skillsEnabled === true;
     const effectiveSelectedSkillIds = Array.isArray(runtimeOptionsWithContactFallback.selectedSkillIds)
@@ -131,6 +132,7 @@ export function createSendMessageHandler({
       workspaceRoot: effectiveWorkspaceRoot,
       mcpEnabled: effectiveMcpEnabled,
       enabledMcpIds: effectiveEnabledMcpIds,
+      autoCreateTask: effectiveAutoCreateTask,
     });
     set((state) => {
       applySessionRuntimeMetadata(state, currentSessionId, runtimeMetadata);
@@ -216,6 +218,7 @@ export function createSendMessageHandler({
         projectRoot: effectiveExecutionRoot,
         mcpEnabled: effectiveMcpEnabled,
         enabledMcpIds: effectiveEnabledMcpIds,
+        autoCreateTask: effectiveAutoCreateTask,
         skillsEnabled: effectiveSkillsEnabled,
         selectedSkillIds: effectiveSelectedSkillIds,
       });
@@ -230,6 +233,7 @@ export function createSendMessageHandler({
         projectRoot: effectiveExecutionRoot,
         mcpEnabled: effectiveMcpEnabled,
         enabledMcpIds: effectiveEnabledMcpIds,
+        autoCreateTask: effectiveAutoCreateTask,
         skillsEnabled: effectiveSkillsEnabled,
         selectedSkillIds: effectiveSelectedSkillIds,
       });

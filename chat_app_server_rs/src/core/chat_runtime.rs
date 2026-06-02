@@ -221,6 +221,30 @@ mod tests {
         assert_eq!(runtime.remote_connection_id.as_deref(), Some("conn_1"));
         assert_eq!(runtime.mcp_enabled, Some(true));
         assert_eq!(runtime.enabled_mcp_ids, vec!["alpha", "beta"]);
+        assert_eq!(runtime.auto_create_task, None);
+    }
+
+    #[test]
+    fn resolves_auto_create_task_from_metadata_aliases() {
+        let metadata = json!({
+            "chat_runtime": {
+                "autoCreateTask": true
+            }
+        });
+        assert_eq!(
+            ChatRuntimeMetadata::from_metadata(Some(&metadata)).auto_create_task,
+            Some(true)
+        );
+
+        let metadata = json!({
+            "chat_runtime": {
+                "auto_create_task": false
+            }
+        });
+        assert_eq!(
+            ChatRuntimeMetadata::from_metadata(Some(&metadata)).auto_create_task,
+            Some(false)
+        );
     }
 
     #[test]

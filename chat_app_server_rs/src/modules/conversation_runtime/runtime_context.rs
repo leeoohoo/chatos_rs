@@ -33,6 +33,7 @@ pub struct ConversationRuntimeRequest {
     pub remote_connection_id: Option<String>,
     pub mcp_enabled: Option<bool>,
     pub enabled_mcp_ids: Option<Vec<String>>,
+    pub auto_create_task: Option<bool>,
     pub skills_enabled: Option<bool>,
     pub selected_skill_ids: Option<Vec<String>>,
 }
@@ -189,6 +190,10 @@ pub async fn resolve_runtime_context(
         .mcp_enabled
         .or(runtime_metadata.mcp_enabled)
         .unwrap_or(true);
+    let auto_create_task = req
+        .auto_create_task
+        .or(runtime_metadata.auto_create_task)
+        .unwrap_or(false);
 
     let (http_servers, stdio_servers, mut builtin_servers) = if mcp_enabled {
         load_mcp_servers_by_selection(
@@ -233,6 +238,7 @@ pub async fn resolve_runtime_context(
     }
     for server in &mut builtin_servers {
         server.remote_connection_id = default_remote_connection_id.clone();
+        server.auto_create_task = auto_create_task;
     }
 
     let builtin_mcp_system_prompt =

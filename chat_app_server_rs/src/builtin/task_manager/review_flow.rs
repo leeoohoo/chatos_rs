@@ -23,6 +23,24 @@ pub(super) fn handle_add_task(
         return Err("tasks is required".to_string());
     }
 
+    if ctx.auto_create_task {
+        let tasks = block_on_result(create_tasks_for_turn(
+            ctx.conversation_id,
+            ctx.conversation_turn_id,
+            draft_tasks,
+        ))?;
+        emit_task_board_updated_event(ctx);
+        return Ok(text_result(json!({
+            "confirmed": true,
+            "cancelled": false,
+            "auto_created": true,
+            "created_count": tasks.len(),
+            "tasks": tasks,
+            "conversation_id": ctx.conversation_id,
+            "conversation_turn_id": ctx.conversation_turn_id,
+        })));
+    }
+
     let timeout_ms = default_timeout_ms;
 
     let (review_payload, receiver) = block_on_result(create_task_review(

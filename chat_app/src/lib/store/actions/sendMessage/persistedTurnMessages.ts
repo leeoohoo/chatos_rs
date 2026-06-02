@@ -5,6 +5,7 @@ import {
 import type { SessionMessageResponse } from '../../../api/client/types';
 import type { ChatStoreDraft } from '../../types';
 import type { StreamingMessage } from './types';
+import { cloneStreamingMessageDraft } from './streamText';
 
 const readTrimmedId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
@@ -306,12 +307,17 @@ export const normalizePersistedMessage = (
 
 export const reconcilePersistedTurnMessages = (
   state: ChatStoreDraft,
+  sessionId: string,
   tempAssistantMessageId: string,
   tempUserId: string | null,
   persistedUserMessage: StreamingMessage | null,
   persistedAssistantMessage: StreamingMessage | null,
-): boolean => {
+): {
+  applied: boolean;
+  resolvedAssistantMessageId: string;
+} => {
   let applied = false;
+  let resolvedAssistantMessageId = tempAssistantMessageId;
 
   if (persistedUserMessage && tempUserId) {
     const userIndex = state.messages.findIndex((message) => message.id === tempUserId);
@@ -334,29 +340,56 @@ export const reconcilePersistedTurnMessages = (
 
   if (persistedAssistantMessage) {
     const assistantIndex = state.messages.findIndex((message) => message.id === tempAssistantMessageId);
-    if (assistantIndex >= 0) {
-      const existingAssistant = state.messages[assistantIndex];
-      const existingMeta = existingAssistant?.metadata || {};
-      const persistedMeta = persistedAssistantMessage.metadata || {};
-      state.messages[assistantIndex] = {
-        ...existingAssistant,
-        ...persistedAssistantMessage,
-        metadata: {
-          ...existingMeta,
-          ...persistedMeta,
-          historyFinalForUserMessageId: persistedUserMessage?.id
-            || persistedMeta.historyFinalForUserMessageId
-            || existingMeta.historyFinalForUserMessageId,
-          historyDraftUserMessage: existingMeta.historyDraftUserMessage,
-        },
-      };
-      patchUserHistoryProcessFinalAssistantId(state, {
-        assistantMessageId: persistedAssistantMessage.id,
-        persistedUserMessageId: persistedUserMessage?.id || null,
-        tempUserId,
-      });
+    const persistedAssistantIndex = state.messages.findIndex((message) => (
+      message.id === persistedAssistantMessage.id
+    ));
+    const targetIndex = persistedAssistantIndex >= 0
+      ? persistedAssistantIndex
+      : assistantIndex;
+    const existingAssistant = targetIndex >= 0
+      ? state.messages[targetIndex]
+      : null;
+    const existingMeta = existingAssistant?.metadata || {};
+    const persistedMeta = persistedAssistantMessage.metadata || {};
+    const mergedAssistantMessage: StreamingMessage = {
+      ...(existingAssistant || {}),
+      ...persistedAssistantMessage,
+      metadata: {
+        ...existingMeta,
+        ...persistedMeta,
+        historyFinalForUserMessageId: persistedUserMessage?.id
+          || persistedMeta.historyFinalForUserMessageId
+          || existingMeta.historyFinalForUserMessageId,
+        historyDraftUserMessage: existingMeta.historyDraftUserMessage,
+      },
+    };
+
+    if (targetIndex >= 0) {
+      state.messages[targetIndex] = mergedAssistantMessage;
+      if (
+        tempAssistantMessageId
+        && tempAssistantMessageId !== mergedAssistantMessage.id
+      ) {
+        state.messages = state.messages.filter((message, index) => (
+          index === targetIndex || message.id !== tempAssistantMessageId
+        ));
+      }
+      applied = true;
+    } else if (state.currentSessionId === sessionId) {
+      state.messages.push(mergedAssistantMessage);
       applied = true;
     }
+
+    if (state.sessionStreamingMessageDrafts) {
+      state.sessionStreamingMessageDrafts[sessionId] = cloneStreamingMessageDraft(mergedAssistantMessage);
+    }
+
+    patchUserHistoryProcessFinalAssistantId(state, {
+      assistantMessageId: mergedAssistantMessage.id,
+      persistedUserMessageId: persistedUserMessage?.id || null,
+      tempUserId,
+    });
+    resolvedAssistantMessageId = mergedAssistantMessage.id;
   }
 
   if (persistedUserMessage && !persistedAssistantMessage) {
@@ -376,7 +409,10 @@ export const reconcilePersistedTurnMessages = (
     }
   }
 
-  return applied;
+  return {
+    applied,
+    resolvedAssistantMessageId,
+  };
 };
 
 export const shouldReloadMessagesAfterCompletion = (

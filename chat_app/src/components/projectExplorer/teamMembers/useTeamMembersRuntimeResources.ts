@@ -72,8 +72,10 @@ export const useTeamMembersRuntimeResources = ({
   const {
     mcpEnabled: composerMcpEnabled,
     enabledMcpIds: composerEnabledMcpIds,
+    autoCreateTask: composerAutoCreateTask,
     setMcpEnabled: handleComposerMcpEnabledChange,
     setEnabledMcpIds: handleComposerEnabledMcpIdsChange,
+    setAutoCreateTask: handleComposerAutoCreateTaskChange,
   } = useSessionRuntimeSettings({
     session: runtimeSourceSession,
     updateSession,
@@ -287,8 +289,10 @@ export const useTeamMembersRuntimeResources = ({
     composer: {
       composerMcpEnabled,
       composerEnabledMcpIds,
+      composerAutoCreateTask,
       handleComposerMcpEnabledChange,
       handleComposerEnabledMcpIdsChange,
+      handleComposerAutoCreateTaskChange,
       handleComposerRemoteConnectionChange,
       handleRuntimeGuidanceSend,
       remoteConnections,

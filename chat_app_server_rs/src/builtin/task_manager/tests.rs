@@ -27,6 +27,7 @@ fn add_task_schema_is_strict_and_compatible() {
     let service = TaskManagerService::new(TaskManagerOptions {
         server_name: "task_manager".to_string(),
         review_timeout_ms: 120_000,
+        auto_create_task: false,
     })
     .expect("task manager service should initialize");
 
@@ -94,6 +95,7 @@ fn task_manager_tools_include_mutations() {
     let service = TaskManagerService::new(TaskManagerOptions {
         server_name: "task_manager".to_string(),
         review_timeout_ms: 120_000,
+        auto_create_task: false,
     })
     .expect("task manager service should initialize");
 
@@ -113,6 +115,7 @@ fn update_task_schema_changes_is_string() {
     let service = TaskManagerService::new(TaskManagerOptions {
         server_name: "task_manager".to_string(),
         review_timeout_ms: 120_000,
+        auto_create_task: false,
     })
     .expect("task manager service should initialize");
 
@@ -133,4 +136,36 @@ fn update_task_schema_changes_is_string() {
         .and_then(|changes| changes.get("type"))
         .and_then(Value::as_str);
     assert_eq!(changes_type, Some("string"));
+}
+
+#[test]
+fn add_task_description_mentions_confirmation_behavior() {
+    let manual_service = TaskManagerService::new(TaskManagerOptions {
+        server_name: "task_manager".to_string(),
+        review_timeout_ms: 120_000,
+        auto_create_task: false,
+    })
+    .expect("task manager service should initialize");
+    let auto_service = TaskManagerService::new(TaskManagerOptions {
+        server_name: "task_manager".to_string(),
+        review_timeout_ms: 120_000,
+        auto_create_task: true,
+    })
+    .expect("task manager service should initialize");
+
+    let manual_description = manual_service
+        .list_tools()
+        .into_iter()
+        .find(|tool| tool.get("name").and_then(Value::as_str) == Some("add_task"))
+        .and_then(|tool| tool.get("description").and_then(Value::as_str).map(str::to_string))
+        .expect("manual add_task description");
+    let auto_description = auto_service
+        .list_tools()
+        .into_iter()
+        .find(|tool| tool.get("name").and_then(Value::as_str) == Some("add_task"))
+        .and_then(|tool| tool.get("description").and_then(Value::as_str).map(str::to_string))
+        .expect("auto add_task description");
+
+    assert!(manual_description.contains("confirmed by the user"));
+    assert!(auto_description.contains("persisted automatically"));
 }

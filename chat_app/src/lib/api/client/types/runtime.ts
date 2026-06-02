@@ -184,6 +184,7 @@ export interface StreamChatOptions {
   projectRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
+  autoCreateTask?: boolean;
   skillsEnabled?: boolean;
   selectedSkillIds?: string[];
 }

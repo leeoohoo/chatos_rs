@@ -18,6 +18,7 @@ pub(crate) struct ChatStreamRequest {
     pub remote_connection_id: Option<String>,
     pub mcp_enabled: Option<bool>,
     pub enabled_mcp_ids: Option<Vec<String>>,
+    pub auto_create_task: Option<bool>,
     pub skills_enabled: Option<bool>,
     pub selected_skill_ids: Option<Vec<String>>,
 }

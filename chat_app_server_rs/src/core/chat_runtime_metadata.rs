@@ -12,6 +12,7 @@ pub struct ChatRuntimeMetadata {
     pub mcp_enabled: Option<bool>,
     #[serde(default)]
     pub enabled_mcp_ids: Vec<String>,
+    pub auto_create_task: Option<bool>,
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -163,6 +164,13 @@ impl ChatRuntimeMetadata {
                 &[
                     &["chat_runtime", "enabled_mcp_ids"],
                     &["chat_runtime", "enabledMcpIds"],
+                ],
+            ),
+            auto_create_task: metadata_bool_aliases(
+                metadata,
+                &[
+                    &["chat_runtime", "auto_create_task"],
+                    &["chat_runtime", "autoCreateTask"],
                 ],
             ),
         }

@@ -42,6 +42,7 @@ export interface TeamMemberWorkspaceProps {
   reasoningEnabled: boolean;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  autoCreateTask: boolean;
   availableRemoteConnections: RemoteConnection[];
   currentRemoteConnectionId: string | null;
   onRemoteConnectionChange: (connectionId: string | null) => void;
@@ -69,6 +70,7 @@ export interface TeamMemberWorkspaceProps {
   onReasoningToggle: (enabled: boolean) => void;
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
+  onAutoCreateTaskChange: (enabled: boolean) => void;
   mergedCurrentTurnTasks: TaskWorkbarItem[];
   workbarHistoryTasks: TaskWorkbarItem[];
   taskHistoryOpen?: boolean;

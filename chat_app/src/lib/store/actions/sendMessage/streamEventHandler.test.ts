@@ -203,7 +203,7 @@ describe('handleStreamEvent', () => {
 
     expect(result.sawDone).toBe(true);
     expect(helpers.flushPendingTextToStreamingMessage).toHaveBeenCalledTimes(2);
-    expect(helpers.applyCompleteContent).not.toHaveBeenCalled();
+    expect(helpers.applyCompleteContent).toHaveBeenCalledWith('已经收到的流式正文');
   });
 
   it('falls back to complete content only when no streamed text exists', () => {
@@ -234,6 +234,26 @@ describe('handleStreamEvent', () => {
     expect(result.sawDone).toBe(true);
     expect(helpers.flushPendingTextToStreamingMessage).toHaveBeenCalledTimes(2);
     expect(helpers.applyCompleteContent).toHaveBeenCalledWith('最终完整内容');
+  });
+
+  it('commits streamed preview text into the final assistant message on done events', () => {
+    const helpers = buildHelpers();
+
+    const result = handleStreamEvent({
+      parsed: {
+        type: 'done',
+      } as StreamEventPayload,
+      set: vi.fn(),
+      currentSessionId: 'session_1',
+      conversationTurnId: 'turn_1',
+      tempAssistantMessageId: 'assistant_1',
+      streamedTextRef: { value: '最终结论正文' },
+      helpers,
+    });
+
+    expect(result.sawDone).toBe(true);
+    expect(helpers.flushPendingTextToStreamingMessage).toHaveBeenCalledTimes(2);
+    expect(helpers.applyCompleteContent).toHaveBeenCalledWith('最终结论正文');
   });
 
   it('applies reviewing phase when turn_phase review event arrives', () => {
