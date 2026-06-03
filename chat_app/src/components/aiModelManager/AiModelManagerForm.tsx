@@ -4,38 +4,27 @@ import {
   AI_MODEL_THINKING_LEVELS,
   applyProviderChange,
 } from './helpers';
-import { PlusIcon } from './icons';
 import type { AiModelManagerFormProps } from './types';
 
 const AiModelManagerForm = ({
-  showAddForm,
   editingConfig,
   formData,
-  onCreate,
+  showTitle = true,
   onSubmit,
   onCancel,
   onFormDataChange,
 }: AiModelManagerFormProps) => {
   const { t } = useI18n();
-  if (!showAddForm) {
-    return (
-      <button
-        onClick={onCreate}
-        className="w-full mb-6 p-4 border-2 border-dashed border-border rounded-lg hover:border-blue-500 transition-colors flex items-center justify-center space-x-2 text-muted-foreground hover:text-blue-600"
-      >
-        <PlusIcon />
-        <span>{t('aiModelManager.form.createButton')}</span>
-      </button>
-    );
-  }
 
   return (
-    <form onSubmit={onSubmit} className="mb-6 p-4 bg-muted rounded-lg">
-      <h3 className="text-lg font-medium text-foreground mb-4">
-        {editingConfig ? t('aiModelManager.form.title.edit') : t('aiModelManager.form.title.create')}
-      </h3>
+    <form onSubmit={onSubmit} className="space-y-4">
+      {showTitle ? (
+        <h3 className="text-lg font-medium text-foreground">
+          {editingConfig ? t('aiModelManager.form.title.edit') : t('aiModelManager.form.title.create')}
+        </h3>
+      ) : null}
 
-      <div className="space-y-4">
+      <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
         <div>
           <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.name')}</label>
           <input
@@ -44,6 +33,7 @@ const AiModelManagerForm = ({
             onChange={(event) => onFormDataChange({ name: event.target.value })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
             placeholder={t('aiModelManager.form.namePlaceholder')}
+            autoFocus
             required
           />
         </div>
@@ -195,19 +185,19 @@ const AiModelManagerForm = ({
         </div>
       </div>
 
-      <div className="flex space-x-3 mt-6">
-        <button
-          type="submit"
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {editingConfig ? t('aiModelManager.form.submitEdit') : t('aiModelManager.form.submitCreate')}
-        </button>
+      <div className="flex items-center justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="rounded-lg bg-muted px-3 py-2 text-sm transition-colors hover:bg-accent"
         >
           {t('common.cancel')}
+        </button>
+        <button
+          type="submit"
+          className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          {editingConfig ? t('aiModelManager.form.submitEdit') : t('aiModelManager.form.submitCreate')}
         </button>
       </div>
     </form>

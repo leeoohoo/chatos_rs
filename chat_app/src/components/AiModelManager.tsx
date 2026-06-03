@@ -4,6 +4,7 @@ import { useI18n } from '../i18n/I18nProvider';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AiModelConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
+import ManagerFormDialog from './ui/ManagerFormDialog';
 import AiModelList from './aiModelManager/AiModelList';
 import AiModelManagerForm from './aiModelManager/AiModelManagerForm';
 import {
@@ -26,7 +27,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
   const storeData = externalStore ? externalStore() : internalStoreData;
 
   const { aiModelConfigs, loadAiModelConfigs, updateAiModelConfig, deleteAiModelConfig } = storeData;
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<AiModelConfig | null>(null);
   const [formData, setFormData] = useState<AiModelFormData>(getDefaultAiModelFormData());
   const { confirm } = useDialogService();
@@ -45,7 +46,13 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
   const resetForm = () => {
     setFormData(getDefaultAiModelFormData());
     setEditingConfig(null);
-    setShowAddForm(false);
+    setIsFormDialogOpen(false);
+  };
+
+  const openCreateDialog = () => {
+    setEditingConfig(null);
+    setFormData(getDefaultAiModelFormData());
+    setIsFormDialogOpen(true);
   };
 
   const handleAddServer = async (e: React.FormEvent) => {
@@ -73,7 +80,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
   const startEdit = (config: AiModelConfig) => {
     setEditingConfig(config);
     setFormData(toAiModelFormData(config));
-    setShowAddForm(true);
+    setIsFormDialogOpen(true);
   };
 
   const handleDeleteServer = async (id: string) => {
@@ -128,15 +135,13 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
         </div>
 
         <div className="p-6 overflow-y-auto overflow-x-hidden max-h-[calc(80vh-120px)]">
-          <AiModelManagerForm
-            showAddForm={showAddForm}
-            editingConfig={editingConfig}
-            formData={formData}
-            onCreate={() => setShowAddForm(true)}
-            onSubmit={editingConfig ? handleEditServer : handleAddServer}
-            onCancel={resetForm}
-            onFormDataChange={handleFormDataChange}
-          />
+          <button
+            type="button"
+            onClick={openCreateDialog}
+            className="mb-6 flex w-full items-center justify-center rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition-colors hover:border-blue-500 hover:text-blue-600"
+          >
+            {t('aiModelManager.form.createButton')}
+          </button>
 
           <div className="space-y-3">
             <AiModelList
@@ -148,6 +153,22 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
           </div>
         </div>
       </div>
+
+      <ManagerFormDialog
+        open={isFormDialogOpen}
+        title={editingConfig ? t('aiModelManager.form.title.edit') : t('aiModelManager.form.title.create')}
+        widthClassName="max-w-2xl"
+        onClose={resetForm}
+      >
+        <AiModelManagerForm
+          editingConfig={editingConfig}
+          formData={formData}
+          showTitle={false}
+          onSubmit={editingConfig ? handleEditServer : handleAddServer}
+          onCancel={resetForm}
+          onFormDataChange={handleFormDataChange}
+        />
+      </ManagerFormDialog>
 
     </div>
   );

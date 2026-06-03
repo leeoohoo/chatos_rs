@@ -68,6 +68,7 @@ const AiModelList = ({
 
           <div className="flex items-center space-x-2 shrink-0">
             <button
+              type="button"
               onClick={() => void onToggleEnabled(config)}
               className={`px-3 py-1 text-xs rounded-full transition-colors ${
                 config.enabled
@@ -79,17 +80,21 @@ const AiModelList = ({
             </button>
 
             <button
+              type="button"
               onClick={() => onEdit(config)}
               className="p-2 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 rounded transition-colors"
               title={t('aiModelManager.action.edit')}
+              aria-label={t('aiModelManager.action.edit')}
             >
               <PencilIcon />
             </button>
 
             <button
+              type="button"
               onClick={() => void onDelete(config.id)}
               className="p-2 text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900 rounded transition-colors"
               title={t('aiModelManager.action.delete')}
+              aria-label={t('aiModelManager.action.delete')}
             >
               <TrashIcon />
             </button>

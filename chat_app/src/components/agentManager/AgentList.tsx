@@ -55,6 +55,7 @@ const AgentList = ({ agents, onEdit, onDelete }: AgentListProps) => {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
+                type="button"
                 onClick={() => onEdit(agent)}
                 disabled={agent.ui_status === 'creating'}
                 className={`px-2.5 py-1.5 text-xs rounded-md transition-colors ${
@@ -66,6 +67,7 @@ const AgentList = ({ agents, onEdit, onDelete }: AgentListProps) => {
                 {t('aiModelManager.action.edit')}
               </button>
               <button
+                type="button"
                 onClick={() => {
                   void onDelete(agent.id);
                 }}

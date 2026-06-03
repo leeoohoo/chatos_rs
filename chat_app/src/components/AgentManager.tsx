@@ -6,6 +6,7 @@ import { useApiClient } from '../lib/api/ApiClientContext';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AgentConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
+import ManagerFormDialog from './ui/ManagerFormDialog';
 import AgentAiCreateDialog from './agentManager/AgentAiCreateDialog';
 import AgentList from './agentManager/AgentList';
 import AgentManagerForm from './agentManager/AgentManagerForm';
@@ -43,7 +44,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   } = storeData;
   const { confirm, alert } = useDialogService();
 
-  const [showForm, setShowForm] = useState(false);
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [formData, setFormData] = useState<AgentFormData>(getDefaultAgentFormData());
   const [showAiCreate, setShowAiCreate] = useState(false);
@@ -87,9 +88,15 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   }, [formData.pluginSources, skills]);
 
   const resetForm = () => {
-    setShowForm(false);
+    setIsFormDialogOpen(false);
     setEditingAgentId(null);
     setFormData(getDefaultAgentFormData());
+  };
+
+  const openCreateDialog = () => {
+    setEditingAgentId(null);
+    setFormData(getDefaultAgentFormData());
+    setIsFormDialogOpen(true);
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -193,37 +200,54 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          <AgentManagerForm
-            showForm={showForm}
-            editingAgentId={editingAgentId}
-            formData={formData}
-            pluginOptions={pluginOptions}
-            skillOptions={skillOptions}
-            onToggleForm={() => {
-              setShowForm((current) => !current);
-              if (showForm) {
-                resetForm();
-              }
-            }}
-            onSubmit={handleSubmit}
-            onCancel={resetForm}
-            onFormDataChange={(patch) => {
-              setFormData((current) => ({ ...current, ...patch }));
-            }}
-            onOpenAiCreate={() => setShowAiCreate(true)}
-          />
+          <div className="flex items-center gap-2 pb-2">
+            <button
+              type="button"
+              onClick={openCreateDialog}
+              className="px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+            >
+              {t('agentManager.action.create')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAiCreate(true)}
+              className="px-3 py-2 text-sm rounded-lg bg-muted hover:bg-accent transition-colors"
+            >
+              {t('agentManager.action.aiCreate')}
+            </button>
+          </div>
 
           <AgentList
             agents={agents || []}
             onEdit={(agent) => {
               setEditingAgentId(agent.id);
               setFormData(toAgentFormData(agent));
-              setShowForm(true);
+              setIsFormDialogOpen(true);
             }}
             onDelete={handleDelete}
           />
         </div>
       </div>
+
+      <ManagerFormDialog
+        open={isFormDialogOpen}
+        title={editingAgentId ? t('agentManager.form.titleEdit') : t('agentManager.form.titleCreate')}
+        widthClassName="max-w-4xl"
+        onClose={resetForm}
+      >
+        <AgentManagerForm
+          editingAgentId={editingAgentId}
+          formData={formData}
+          pluginOptions={pluginOptions}
+          skillOptions={skillOptions}
+          showTitle={false}
+          onSubmit={handleSubmit}
+          onCancel={resetForm}
+          onFormDataChange={(patch) => {
+            setFormData((current) => ({ ...current, ...patch }));
+          }}
+        />
+      </ManagerFormDialog>
 
       <AgentAiCreateDialog
         open={showAiCreate}

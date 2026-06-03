@@ -3,13 +3,12 @@ import DynamicConfigFields from './DynamicConfigFields';
 import type { McpManagerFormProps } from './types';
 
 const McpManagerForm = ({
-  showAddForm,
   editingConfig,
   formData,
   dynamicConfig,
   configLoading,
   configError,
-  onCreate,
+  showTitle = true,
   onSubmit,
   onCancel,
   onFormDataChange,
@@ -17,24 +16,16 @@ const McpManagerForm = ({
   onDynamicConfigChange,
 }: McpManagerFormProps) => {
   const { t } = useI18n();
-  if (!showAddForm) {
-    return (
-      <button
-        onClick={onCreate}
-        className="w-full mb-6 p-4 border-2 border-dashed border-border rounded-lg hover:border-blue-500 transition-colors flex items-center justify-center space-x-2 text-muted-foreground hover:text-blue-600"
-      >
-        <span>+ {t('mcpManager.form.createButton')}</span>
-      </button>
-    );
-  }
 
   return (
-    <form onSubmit={onSubmit} className="mb-6 p-4 bg-muted rounded-lg">
-      <h3 className="text-lg font-medium text-foreground mb-4">
-        {editingConfig ? t('mcpManager.form.title.edit') : t('mcpManager.form.title.create')}
-      </h3>
+    <form onSubmit={onSubmit} className="space-y-4">
+      {showTitle ? (
+        <h3 className="text-lg font-medium text-foreground">
+          {editingConfig ? t('mcpManager.form.title.edit') : t('mcpManager.form.title.create')}
+        </h3>
+      ) : null}
 
-      <div className="space-y-4">
+      <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
         <div>
           <label className="block text-sm font-medium text-foreground mb-2">{t('mcpManager.form.name')}</label>
           <input
@@ -43,6 +34,7 @@ const McpManagerForm = ({
             onChange={(event) => onFormDataChange({ name: event.target.value })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
             placeholder={t('mcpManager.form.namePlaceholder')}
+            autoFocus
             required
           />
         </div>
@@ -131,19 +123,19 @@ const McpManagerForm = ({
         )}
       </div>
 
-      <div className="flex space-x-3 mt-6">
-        <button
-          type="submit"
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {editingConfig ? t('mcpManager.form.submitEdit') : t('mcpManager.form.submitCreate')}
-        </button>
+      <div className="flex items-center justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="rounded-lg bg-muted px-3 py-2 text-sm transition-colors hover:bg-accent"
         >
           {t('common.cancel')}
+        </button>
+        <button
+          type="submit"
+          className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          {editingConfig ? t('mcpManager.form.submitEdit') : t('mcpManager.form.submitCreate')}
         </button>
       </div>
     </form>

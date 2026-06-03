@@ -5,6 +5,7 @@ import { useApiClient } from '../lib/api/ApiClientContext';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { McpConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
+import ManagerFormDialog from './ui/ManagerFormDialog';
 import {
   getDefaultMcpFormData,
   getMcpConfigArgsInput,
@@ -33,7 +34,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const { mcpConfigs, updateMcpConfig, deleteMcpConfig, loadMcpConfigs } = storeData;
   const { confirm } = useDialogService();
 
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<McpConfig | null>(null);
   const [formData, setFormData] = useState<McpFormData>(getDefaultMcpFormData());
 
@@ -55,10 +56,19 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const resetForm = () => {
     setFormData(getDefaultMcpFormData());
     setEditingConfig(null);
-    setShowAddForm(false);
+    setIsFormDialogOpen(false);
     setDynamicConfig({});
     setConfigError(null);
     setConfigLoading(false);
+  };
+
+  const openCreateDialog = () => {
+    setEditingConfig(null);
+    setFormData(getDefaultMcpFormData());
+    setDynamicConfig({});
+    setConfigError(null);
+    setConfigLoading(false);
+    setIsFormDialogOpen(true);
   };
 
   const handleAddServer = async (e: React.FormEvent) => {
@@ -117,7 +127,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
       cwd: config.cwd || '',
       argsInput: getMcpConfigArgsInput(config),
     });
-    setShowAddForm(true);
+    setIsFormDialogOpen(true);
     setDynamicConfig(normalizeDynamicConfig(config.config));
     setConfigError(null);
     setConfigLoading(false);
@@ -208,20 +218,13 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto overflow-x-hidden">
-          <McpManagerForm
-            showAddForm={showAddForm}
-            editingConfig={editingConfig}
-            formData={formData}
-            dynamicConfig={dynamicConfig}
-            configLoading={configLoading}
-            configError={configError}
-            onCreate={() => setShowAddForm(true)}
-            onSubmit={editingConfig ? handleEditServer : handleAddServer}
-            onCancel={resetForm}
-            onFormDataChange={handleFormDataChange}
-            onFetchDynamicConfig={handleFetchDynamicConfig}
-            onDynamicConfigChange={handleDynamicConfigChange}
-          />
+          <button
+            type="button"
+            onClick={openCreateDialog}
+            className="mb-6 flex w-full items-center justify-center rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition-colors hover:border-blue-500 hover:text-blue-600"
+          >
+            + {t('mcpManager.form.createButton')}
+          </button>
 
           <div className="space-y-3">
             <McpServerList
@@ -232,6 +235,27 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
           </div>
         </div>
       </div>
+
+      <ManagerFormDialog
+        open={isFormDialogOpen}
+        title={editingConfig ? t('mcpManager.form.title.edit') : t('mcpManager.form.title.create')}
+        widthClassName="max-w-2xl"
+        onClose={resetForm}
+      >
+        <McpManagerForm
+          editingConfig={editingConfig}
+          formData={formData}
+          dynamicConfig={dynamicConfig}
+          configLoading={configLoading}
+          configError={configError}
+          showTitle={false}
+          onSubmit={editingConfig ? handleEditServer : handleAddServer}
+          onCancel={resetForm}
+          onFormDataChange={handleFormDataChange}
+          onFetchDynamicConfig={handleFetchDynamicConfig}
+          onDynamicConfigChange={handleDynamicConfigChange}
+        />
+      </ManagerFormDialog>
     </>
   );
 };

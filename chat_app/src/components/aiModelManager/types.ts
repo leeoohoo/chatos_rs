@@ -31,10 +31,9 @@ export interface AiModelFormData {
 }
 
 export interface AiModelManagerFormProps {
-  showAddForm: boolean;
   editingConfig: AiModelConfig | null;
   formData: AiModelFormData;
-  onCreate: () => void;
+  showTitle?: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCancel: () => void;
   onFormDataChange: (patch: Partial<AiModelFormData>) => void;

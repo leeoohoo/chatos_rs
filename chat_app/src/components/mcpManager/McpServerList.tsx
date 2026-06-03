@@ -59,22 +59,26 @@ const McpServerList = ({ mcpConfigs, onEdit, onDelete }: McpServerListProps) => 
 
             <div className="flex items-center space-x-2 shrink-0">
               <button
+                type="button"
                 onClick={() => onEdit(config)}
                 disabled={isReadonly}
                 className={`p-2 text-muted-foreground transition-colors ${
                   isReadonly ? 'opacity-50 cursor-not-allowed' : 'hover:text-blue-600'
                 }`}
                 title={t('mcpManager.action.edit')}
+                aria-label={t('mcpManager.action.edit')}
               >
                 <EditIcon />
               </button>
               <button
+                type="button"
                 onClick={() => onDelete(config.id)}
                 disabled={isReadonly}
                 className={`p-2 text-muted-foreground transition-colors ${
                   isReadonly ? 'opacity-50 cursor-not-allowed' : 'hover:text-red-600'
                 }`}
                 title={t('mcpManager.action.delete')}
+                aria-label={t('mcpManager.action.delete')}
               >
                 <TrashIcon />
               </button>
