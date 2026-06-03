@@ -7,6 +7,39 @@ import { ProjectPreviewHeader } from './previewPane/ProjectPreviewHeader';
 import { ProjectPreviewNavigation } from './previewPane/ProjectPreviewNavigation';
 import type { ProjectPreviewPaneProps } from './previewPane/previewPaneTypes';
 
+const fallbackCopyText = (value: string): boolean => {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand('copy');
+  } finally {
+    document.body.removeChild(textarea);
+  }
+};
+
+const copyTextToClipboard = async (value: string): Promise<void> => {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  if (!fallbackCopyText(value)) {
+    throw new Error('Clipboard API is unavailable');
+  }
+};
+
 export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   selectedFile,
   selectedPath,
@@ -56,6 +89,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   const [documentSymbolsExpanded, setDocumentSymbolsExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState('');
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   useEffect(() => {
     setDocumentSymbolsExpanded(false);
@@ -64,7 +98,26 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   useEffect(() => {
     setIsEditing(false);
     setDraftContent(selectedFile?.isBinary ? '' : (selectedFile?.content || ''));
+    setCopyStatus('idle');
   }, [selectedFile?.content, selectedFile?.isBinary, selectedFile?.path]);
+
+  useEffect(() => {
+    setCopyStatus('idle');
+  }, [isEditing]);
+
+  useEffect(() => {
+    if (copyStatus === 'idle') {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCopyStatus('idle');
+    }, 1600);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [copyStatus]);
 
   const displayedToken = selectedToken || navResult?.token || null;
   const activeSearchQuery = searchQuery.trim();
@@ -85,6 +138,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   }, [navRequestKind, navResult, t]);
   const documentSymbolCount = documentSymbols?.symbols?.length || 0;
   const canEdit = Boolean(selectedFile && !selectedFile.isBinary && selectedFile.writable !== false);
+  const canCopyCurrentContent = Boolean(selectedFile && !selectedFile.isBinary);
   const hasUnsavedChanges = canEdit && selectedFile ? draftContent !== selectedFile.content : false;
   const isMarkdownPreview = Boolean(
     selectedFile
@@ -92,16 +146,35 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
     && !isEditing
     && isMarkdownFile(selectedFile.name, selectedFile.contentType),
   );
+  const currentCopyText = canCopyCurrentContent
+    ? (isEditing ? draftContent : (selectedFile?.content || ''))
+    : '';
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <ProjectPreviewHeader
         selectedFile={selectedFile}
         selectedPath={selectedPath}
+        canCopyCurrentContent={canCopyCurrentContent}
+        copyStatus={copyStatus}
         isEditing={isEditing}
         canEdit={canEdit}
         hasUnsavedChanges={hasUnsavedChanges}
         savingFile={savingFile}
+        onCopyCurrentContent={() => {
+          if (!canCopyCurrentContent) {
+            return;
+          }
+
+          void (async () => {
+            try {
+              await copyTextToClipboard(currentCopyText);
+              setCopyStatus('success');
+            } catch {
+              setCopyStatus('error');
+            }
+          })();
+        }}
         onStartEditing={() => {
           if (!canEdit || !selectedFile) {
             return;

@@ -7,10 +7,13 @@ import type { FsReadResult } from '../../../types';
 interface ProjectPreviewHeaderProps {
   selectedFile: FsReadResult | null;
   selectedPath: string | null;
+  canCopyCurrentContent?: boolean;
+  copyStatus?: 'idle' | 'success' | 'error';
   isEditing?: boolean;
   canEdit?: boolean;
   hasUnsavedChanges?: boolean;
   savingFile?: boolean;
+  onCopyCurrentContent?: () => void;
   onStartEditing?: () => void;
   onCancelEditing?: () => void;
   onSaveEditing?: () => void;
@@ -19,15 +22,24 @@ interface ProjectPreviewHeaderProps {
 export const ProjectPreviewHeader: React.FC<ProjectPreviewHeaderProps> = ({
   selectedFile,
   selectedPath,
+  canCopyCurrentContent = false,
+  copyStatus = 'idle',
   isEditing = false,
   canEdit = false,
   hasUnsavedChanges = false,
   savingFile = false,
+  onCopyCurrentContent,
   onStartEditing,
   onCancelEditing,
   onSaveEditing,
 }) => {
   const { t } = useI18n();
+  const copyLabel = copyStatus === 'success'
+    ? t('projectExplorer.preview.header.copied')
+    : copyStatus === 'error'
+      ? t('projectExplorer.preview.header.copyFailed')
+      : t('projectExplorer.preview.header.copy');
+
   return (
     <div className="border-b border-border bg-card px-4 py-3">
       <div className="flex items-start justify-between gap-3">
@@ -46,8 +58,24 @@ export const ProjectPreviewHeader: React.FC<ProjectPreviewHeaderProps> = ({
             )}
           </div>
         </div>
-        {canEdit && (
+        {(canCopyCurrentContent || canEdit) && (
           <div className="flex shrink-0 items-center gap-2">
+            {canCopyCurrentContent ? (
+              <button
+                type="button"
+                onClick={onCopyCurrentContent}
+                className={[
+                  'rounded border px-2.5 py-1 text-xs transition-colors',
+                  copyStatus === 'success'
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : copyStatus === 'error'
+                      ? 'border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                      : 'border-border hover:bg-accent',
+                ].join(' ')}
+              >
+                {copyLabel}
+              </button>
+            ) : null}
             {isEditing ? (
               <>
                 <button
