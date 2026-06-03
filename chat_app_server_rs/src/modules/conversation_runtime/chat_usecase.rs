@@ -10,6 +10,7 @@ use crate::utils::sse::SseSender;
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_execution::init_agent_ai_server;
 use super::chat_runner::{build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput};
+use super::guidance;
 
 pub struct RunChatUsecaseInput {
     pub sender: Option<SseSender>,
@@ -25,7 +26,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         sender.clone(),
         req.user_id.clone(),
         &session_id,
-        initial_turn_id,
+        initial_turn_id.clone(),
         req.project_id.clone(),
         None,
     );
@@ -36,6 +37,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
             None,
         );
         initial_sink.send_done();
+        close_initial_turn(&session_id, initial_turn_id.as_deref());
         return;
     }
 
@@ -51,6 +53,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
                 None,
             );
             initial_sink.send_done();
+            close_initial_turn(&session_id, initial_turn_id.as_deref());
             return;
         }
     };
@@ -73,6 +76,12 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         bootstrap,
     })
     .await;
+}
+
+fn close_initial_turn(session_id: &str, turn_id: Option<&str>) {
+    if let Some(turn_id) = turn_id {
+        guidance::close_active_turn(session_id, turn_id);
+    }
 }
 
 fn build_common_bootstrap_input(

@@ -19,6 +19,7 @@ use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
+use crate::modules::conversation_runtime::guidance;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::access_token_scope;
 use crate::services::ai_common::normalize_turn_id;
@@ -50,6 +51,9 @@ async fn agent_chat_send(
     let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
 
     abort_registry::reset_turn(&conversation_id, accepted_turn_id.as_deref());
+    if let Some(turn_id) = accepted_turn_id.as_deref() {
+        guidance::register_active_turn(&conversation_id, turn_id);
+    }
     access_token_scope::spawn_with_current_access_token(stream_chat(None, req));
 
     Ok((
