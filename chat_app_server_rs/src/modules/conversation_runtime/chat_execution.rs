@@ -2,9 +2,11 @@ use serde_json::Value;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
-use crate::services::user_settings::apply_settings_to_ai_client;
-use crate::services::agent_runtime::ai_server::{AiServer as AgentAiServer, ChatOptions as AgentChatOptions};
+use crate::services::agent_runtime::ai_server::{
+    AiServer as AgentAiServer, ChatOptions as AgentChatOptions,
+};
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute as AgentMcpToolExecute;
+use crate::services::user_settings::apply_settings_to_ai_client;
 use crate::utils::attachments::Attachment;
 
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
@@ -46,7 +48,8 @@ pub async fn prepare_mcp_execution(
     use_codex_gateway_mcp_passthrough: bool,
 ) -> PreparedMcpExecution {
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
-    let mut executor = AgentMcpToolExecute::new(http_servers, stdio_servers, builtin_servers.clone());
+    let mut executor =
+        AgentMcpToolExecute::new(http_servers, stdio_servers, builtin_servers.clone());
     if runtime_context.use_tools {
         let _ = if use_codex_gateway_mcp_passthrough {
             executor.init_builtin_only().await

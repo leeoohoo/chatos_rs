@@ -9,9 +9,9 @@ use super::test_support::{
     ensure_memory_session, run_process_with_tools, setup_sqlite_task_board, start_mock_provider,
     unique_session_id, MockProviderStep, RunProcessWithToolsArgs,
 };
+use crate::services::agent_runtime::ai_client::AiClientCallbacks;
 use crate::services::task_manager::TaskDraft;
 use crate::services::user_settings::AiClientSettings;
-use crate::services::agent_runtime::ai_client::AiClientCallbacks;
 
 #[tokio::test]
 async fn completion_overflow_without_remote_summary_surfaces_error() {
@@ -572,6 +572,51 @@ async fn retries_completion_failure_when_model_is_at_capacity() {
     assert_eq!(
         result.get("content").and_then(|value| value.as_str()),
         Some("retry after capacity success")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+}
+
+#[tokio::test]
+async fn retries_stream_request_when_provider_rate_limits() {
+    let steps = vec![
+        MockProviderStep::json(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({
+                "error": {
+                    "message": "Rate limit exceeded",
+                    "type": "bad_response_status_code",
+                    "code": "bad_response_status_code"
+                }
+            }),
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_after_rate_limit",
+                "status": "completed",
+                "output_text": "retry after rate limit success"
+            }),
+        ),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            callbacks: empty_callbacks(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("rate limit should retry");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("retry after rate limit success")
     );
 
     let requests = captured.lock().await.clone();
@@ -1566,7 +1611,9 @@ async fn session_can_switch_from_responses_to_chat_completions() {
     second_server.abort();
 
     assert_eq!(
-        second_result.get("content").and_then(|value| value.as_str()),
+        second_result
+            .get("content")
+            .and_then(|value| value.as_str()),
         Some("chat follow-up")
     );
 
@@ -1658,7 +1705,9 @@ async fn session_can_switch_from_chat_completions_to_responses() {
     second_server.abort();
 
     assert_eq!(
-        second_result.get("content").and_then(|value| value.as_str()),
+        second_result
+            .get("content")
+            .and_then(|value| value.as_str()),
         Some("responses follow-up")
     );
 

@@ -2,9 +2,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use super::super::prev_context::{
-    is_input_must_be_list_error, is_missing_tool_call_error,
-};
+use super::super::prev_context::{is_input_must_be_list_error, is_missing_tool_call_error};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RequestErrorReplay {

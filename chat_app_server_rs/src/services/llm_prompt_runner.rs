@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
 use crate::core::messages::select_preferred_text;
-use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::services::agent_runtime::ai_request_handler as runtime_handler;
 use crate::services::agent_runtime::message_manager as runtime_message_manager;
+use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 
 #[derive(Debug, Clone)]
 pub struct PromptRunnerRuntime {
@@ -60,7 +60,8 @@ pub async fn run_text_prompt_with_runtime(
         return Err("未配置可用的 Base URL".to_string());
     }
 
-    let content = run_with_responses(runtime, system_prompt, user_prompt, max_tokens, purpose).await?;
+    let content =
+        run_with_responses(runtime, system_prompt, user_prompt, max_tokens, purpose).await?;
 
     let text = content.trim().to_string();
     if text.is_empty() {

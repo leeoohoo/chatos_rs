@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 use crate::core::messages::message_turn_id;
 use crate::models::message::Message;
+use crate::services::ai_common::classify_user_facing_ai_error;
 use crate::services::chatos_sessions;
 use crate::services::realtime::publish_chat_stream_event;
 use crate::utils::abort_registry;
@@ -253,25 +254,42 @@ pub fn send_cancelled_event(sink: &ChatEventSink, result: Option<&Value>) {
     );
 }
 
-pub fn send_error_event(sink: &ChatEventSink, error: &str, result: Option<&Value>) {
+pub(super) fn build_error_event_payload(error: &str, result: Option<&Value>) -> Value {
+    let (message, code, detail) = match classify_user_facing_ai_error(error) {
+        Some((code, message)) => (message, Some(code.to_string()), Some(error.to_string())),
+        None => (error.to_string(), None, None),
+    };
     let mut payload = serde_json::Map::new();
     payload.insert("type".to_string(), Value::String(Events::ERROR.to_string()));
     payload.insert(
         "timestamp".to_string(),
         Value::String(crate::core::time::now_rfc3339()),
     );
-    payload.insert("message".to_string(), Value::String(error.to_string()));
+    payload.insert("message".to_string(), Value::String(message.clone()));
+    if let Some(code) = code.clone() {
+        payload.insert("code".to_string(), Value::String(code));
+    }
     payload.insert(
         "data".to_string(),
         json!({
-            "error": error,
-            "message": error
+            "error": message,
+            "message": message,
+            "code": code,
+            "detail": detail
         }),
     );
     if let Some(result) = result {
         payload.insert("result".to_string(), result.clone());
     }
-    sink.send_json_event("chat.turn.failed", Events::ERROR, Value::Object(payload));
+    Value::Object(payload)
+}
+
+pub fn send_error_event(sink: &ChatEventSink, error: &str, result: Option<&Value>) {
+    sink.send_json_event(
+        "chat.turn.failed",
+        Events::ERROR,
+        build_error_event_payload(error, result),
+    );
 }
 
 pub async fn handle_chat_result(

@@ -341,8 +341,14 @@ fn build_chat_completions_payload_groups_tool_calls_before_tool_outputs() {
             .map(|items| items.len()),
         Some(2)
     );
-    assert_eq!(messages[1].get("role").and_then(|value| value.as_str()), Some("tool"));
-    assert_eq!(messages[2].get("role").and_then(|value| value.as_str()), Some("tool"));
+    assert_eq!(
+        messages[1].get("role").and_then(|value| value.as_str()),
+        Some("tool")
+    );
+    assert_eq!(
+        messages[2].get("role").and_then(|value| value.as_str()),
+        Some("tool")
+    );
 }
 
 #[test]
@@ -381,7 +387,10 @@ fn read_timeout_env_ms_clamps_values() {
     assert_eq!(read_timeout_env_ms("AI_AGENT_TEST_TIMEOUT", 12_345), 1_000);
 
     std::env::set_var("AI_AGENT_TEST_TIMEOUT", "9999999");
-    assert_eq!(read_timeout_env_ms("AI_AGENT_TEST_TIMEOUT", 12_345), 600_000);
+    assert_eq!(
+        read_timeout_env_ms("AI_AGENT_TEST_TIMEOUT", 12_345),
+        600_000
+    );
 
     std::env::set_var("AI_AGENT_TEST_TIMEOUT", "abc");
     assert_eq!(read_timeout_env_ms("AI_AGENT_TEST_TIMEOUT", 12_345), 12_345);

@@ -9,8 +9,8 @@ use crate::services::ai_common::{
     build_user_content_parts, build_user_message_metadata, normalize_turn_id,
 };
 use crate::services::runtime_guidance_manager::{runtime_guidance_manager, DEFAULT_DRAIN_LIMIT};
-use crate::utils::attachments::{parse_attachments, Attachment};
 use crate::utils::abort_registry;
+use crate::utils::attachments::{parse_attachments, Attachment};
 
 use super::messages::{self, CreateUserMessageInput};
 use super::session_scope::{normalize_optional_text, normalize_project_scope};
@@ -469,7 +469,9 @@ mod tests {
         )
         .await;
 
-        let parts = payload.as_array().expect("guidance content should be array");
+        let parts = payload
+            .as_array()
+            .expect("guidance content should be array");
         assert!(parts.iter().any(|part| {
             part.get("text")
                 .and_then(|value| value.as_str())

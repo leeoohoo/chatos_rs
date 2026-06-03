@@ -2,7 +2,9 @@ use serde_json::{json, Value};
 
 use crate::core::messages::{extract_non_empty_text_value, flatten_text_value};
 
-pub(in crate::services::agent_runtime::ai_request_handler) fn extract_output_text(response: &Value) -> String {
+pub(in crate::services::agent_runtime::ai_request_handler) fn extract_output_text(
+    response: &Value,
+) -> String {
     if let Some(text) = response
         .get("output_text")
         .and_then(extract_text_delta)

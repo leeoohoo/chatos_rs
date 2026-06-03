@@ -12,12 +12,12 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tracing::{error, info, warn};
 
+use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{
     build_abort_token, normalize_reasoning_effort, persist_assistant_response_with_policy,
     should_persist_assistant_message, validate_request_payload_size, AiStreamCallbacks,
     AssistantResponsePersistenceRequest,
 };
-use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::utils::model_config::is_gpt_provider;
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";
@@ -89,9 +89,7 @@ impl AiRequestHandler {
         );
         info!(
             "{} http client timeout config: connect_timeout_ms={}, read_timeout_ms={}",
-            AGENT_RUNTIME_LOG_PREFIX,
-            connect_timeout_ms,
-            read_timeout_ms
+            AGENT_RUNTIME_LOG_PREFIX, connect_timeout_ms, read_timeout_ms
         );
 
         Self {
@@ -163,8 +161,7 @@ impl AiRequestHandler {
         if let Err(err) = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV) {
             error!(
                 "{} request payload rejected before send: purpose={}, detail={}",
-                AGENT_RUNTIME_LOG_PREFIX,
-                purpose, err
+                AGENT_RUNTIME_LOG_PREFIX, purpose, err
             );
             return Err(err);
         }
@@ -355,11 +352,7 @@ fn read_timeout_env_ms(key: &str, default_ms: u64) -> u64 {
     read_timeout_env_ms_with_fallback(key, None, default_ms)
 }
 
-fn read_timeout_env_ms_with_fallback(
-    key: &str,
-    legacy_key: Option<&str>,
-    default_ms: u64,
-) -> u64 {
+fn read_timeout_env_ms_with_fallback(key: &str, legacy_key: Option<&str>, default_ms: u64) -> u64 {
     let parsed = std::env::var(key)
         .ok()
         .or_else(|| legacy_key.and_then(|legacy| std::env::var(legacy).ok()))
@@ -413,19 +406,19 @@ pub(super) async fn persist_assistant_response_if_needed(
                 return Ok(());
             };
 
-                handler
-                    .message_manager
-                    .save_assistant_response_message(
-                        session_id,
-                        request.content.as_str(),
-                        request.reasoning,
-                        request.message_mode,
-                        request.message_source,
-                        request.metadata,
-                        request.tool_calls,
-                        request.response_id.as_deref(),
-                        request.turn_id.as_deref(),
-                        request.response_status.as_deref(),
+            handler
+                .message_manager
+                .save_assistant_response_message(
+                    session_id,
+                    request.content.as_str(),
+                    request.reasoning,
+                    request.message_mode,
+                    request.message_source,
+                    request.metadata,
+                    request.tool_calls,
+                    request.response_id.as_deref(),
+                    request.turn_id.as_deref(),
+                    request.response_status.as_deref(),
                 )
                 .await
                 .map(|_| ())
@@ -495,8 +488,7 @@ fn build_responses_request_payload(
         has_prompt_cache_key = true;
     }
     if has_prompt_cache_key && include_prompt_cache_retention {
-        payload["prompt_cache_retention"] =
-            Value::String(CHAT_PROMPT_CACHE_RETENTION.to_string());
+        payload["prompt_cache_retention"] = Value::String(CHAT_PROMPT_CACHE_RETENTION.to_string());
     }
     if let Some(t) = tools {
         if !t.is_empty() {
@@ -562,11 +554,8 @@ fn build_chat_completions_request_payload(
     });
     if let Some(t) = tools {
         if !t.is_empty() {
-            payload["tools"] = Value::Array(
-                t.into_iter()
-                    .map(chat_completion_tool_definition)
-                    .collect(),
-            );
+            payload["tools"] =
+                Value::Array(t.into_iter().map(chat_completion_tool_definition).collect());
             payload["tool_choice"] = Value::String("auto".to_string());
         }
     }
@@ -617,8 +606,7 @@ fn response_items_to_chat_messages(items: Vec<Value>) -> Vec<Value> {
                 if role == "assistant" {
                     let mut tool_calls = Vec::new();
                     while index < items.len()
-                        && items[index].get("type").and_then(Value::as_str)
-                            == Some("function_call")
+                        && items[index].get("type").and_then(Value::as_str) == Some("function_call")
                     {
                         tool_calls.push(chat_function_call_item_to_tool_call(&items[index]));
                         index += 1;
@@ -661,10 +649,7 @@ fn response_items_to_chat_messages(items: Vec<Value>) -> Vec<Value> {
 }
 
 fn response_message_item_to_chat_message(item: &Value) -> Option<Value> {
-    let role = item
-        .get("role")
-        .and_then(Value::as_str)
-        .unwrap_or("user");
+    let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
     let content = item
         .get("content")
         .map(chat_message_content_to_value)
@@ -825,11 +810,7 @@ fn chat_function_call_item_to_tool_call(item: &Value) -> Value {
 }
 
 fn chat_completion_tool_definition(tool: Value) -> Value {
-    if tool
-        .get("function")
-        .and_then(Value::as_object)
-        .is_some()
-    {
+    if tool.get("function").and_then(Value::as_object).is_some() {
         return tool;
     }
 
@@ -890,7 +871,14 @@ fn chat_content_part_to_value(part: &Value) -> Option<Value> {
         "input_image" => {
             let image_url = part
                 .get("image_url")
-                .and_then(|value| value.as_str().map(|inner| inner.to_string()).or_else(|| value.get("url").and_then(Value::as_str).map(|inner| inner.to_string())))
+                .and_then(|value| {
+                    value.as_str().map(|inner| inner.to_string()).or_else(|| {
+                        value
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .map(|inner| inner.to_string())
+                    })
+                })
                 .unwrap_or_default();
             if image_url.is_empty() {
                 None
@@ -907,7 +895,14 @@ fn chat_content_part_to_value(part: &Value) -> Option<Value> {
         "image_url" => {
             let image_url = part
                 .get("image_url")
-                .and_then(|value| value.as_str().map(|inner| inner.to_string()).or_else(|| value.get("url").and_then(Value::as_str).map(|inner| inner.to_string())))
+                .and_then(|value| {
+                    value.as_str().map(|inner| inner.to_string()).or_else(|| {
+                        value
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .map(|inner| inner.to_string())
+                    })
+                })
                 .unwrap_or_default();
             if image_url.is_empty() {
                 None
@@ -936,7 +931,10 @@ fn chat_content_part_to_value(part: &Value) -> Option<Value> {
 }
 
 fn chat_message_content_to_text(content: &Value) -> String {
-    crate::core::messages::join_text_lines_or_json(content, &["text", "value", "content", "delta", "output_text", "output"])
+    crate::core::messages::join_text_lines_or_json(
+        content,
+        &["text", "value", "content", "delta", "output_text", "output"],
+    )
 }
 
 fn log_request_fingerprint(

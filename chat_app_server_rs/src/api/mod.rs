@@ -17,9 +17,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, info_span};
 
 use crate::config::Config;
-use crate::core::auth::{
-    access_token_from_headers, resolve_auth_user_from_token, AuthHeaderError,
-};
+use crate::core::auth::{access_token_from_headers, resolve_auth_user_from_token, AuthHeaderError};
 use crate::core::websocket_ticket::{consume_websocket_ticket, WebSocketTicketRecord};
 use crate::modules;
 use crate::services::access_token_scope;
@@ -27,8 +25,8 @@ use crate::services::access_token_scope;
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
-pub mod agents;
 pub mod agent_chat;
+pub mod agents;
 pub mod applications;
 pub mod auth;
 pub(crate) mod chat_stream_common;
@@ -251,8 +249,8 @@ async fn require_auth(
     // 在中间件只解析一次 token，并把登录用户注入 request extensions。
     let (access_token, auth_user) = match access_token_from_headers(req.headers()) {
         Ok(token) => {
-            let auth_user = resolve_auth_user_from_token(token.as_str())
-                .map_err(|err| err.into_response())?;
+            let auth_user =
+                resolve_auth_user_from_token(token.as_str()).map_err(|err| err.into_response())?;
             (token, auth_user)
         }
         // Browser WebSocket cannot set Authorization headers directly.
@@ -304,9 +302,7 @@ fn is_websocket_upgrade(req: &Request<Body>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth,
-    };
+    use super::{sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth};
     use crate::core::auth::{AuthHeaderError, AuthUser};
     use crate::core::websocket_ticket::issue_websocket_ticket;
     use axum::body::Body;
@@ -342,9 +338,8 @@ mod tests {
     fn websocket_auth_from_query_accepts_ws_ticket() {
         let ticket =
             issue_websocket_ticket("access_token_1", &auth_user()).expect("issue websocket ticket");
-        let request = websocket_request(
-            format!("/api/realtime/ws?ws_ticket={}", ticket.ticket).as_str(),
-        );
+        let request =
+            websocket_request(format!("/api/realtime/ws?ws_ticket={}", ticket.ticket).as_str());
 
         let result = websocket_auth_from_query(&request).expect("resolve websocket auth");
         match result {

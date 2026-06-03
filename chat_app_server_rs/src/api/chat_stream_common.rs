@@ -66,7 +66,10 @@ mod tests {
             items[0]["content"][0]["text"].as_str(),
             Some("contact prompt")
         );
-        assert_eq!(items[1]["content"][0]["text"].as_str(), Some("routing prompt"));
+        assert_eq!(
+            items[1]["content"][0]["text"].as_str(),
+            Some("routing prompt")
+        );
         assert!(items[2]["content"][0]["text"]
             .as_str()
             .unwrap_or_default()

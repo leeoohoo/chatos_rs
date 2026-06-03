@@ -318,22 +318,24 @@ mod tests {
     #[test]
     fn parse_tool_args_accepts_nested_json_string() {
         let nested = serde_json::to_string("{\"title\":\"demo\"}").expect("escape nested json");
-        let value = parse_tool_args(serde_json::Value::String(nested))
-            .expect("nested json should parse");
+        let value =
+            parse_tool_args(serde_json::Value::String(nested)).expect("nested json should parse");
         assert_eq!(value, json!({"title": "demo"}));
     }
 
     #[test]
     fn parse_tool_args_accepts_markdown_fenced_json() {
         let raw = "```json\n{\"title\":\"demo\"}\n```".to_string();
-        let value = parse_tool_args(serde_json::Value::String(raw)).expect("fenced json should parse");
+        let value =
+            parse_tool_args(serde_json::Value::String(raw)).expect("fenced json should parse");
         assert_eq!(value, json!({"title": "demo"}));
     }
 
     #[test]
     fn parse_tool_args_accepts_trailing_commas() {
         let raw = "{\"tasks\":[{\"title\":\"a\",},],}".to_string();
-        let value = parse_tool_args(serde_json::Value::String(raw)).expect("json with trailing commas should parse");
+        let value = parse_tool_args(serde_json::Value::String(raw))
+            .expect("json with trailing commas should parse");
         assert_eq!(value, json!({"tasks": [{"title": "a"}]}));
     }
 }

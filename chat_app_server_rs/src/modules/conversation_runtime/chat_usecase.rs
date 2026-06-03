@@ -9,9 +9,7 @@ use crate::utils::sse::SseSender;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_execution::init_agent_ai_server;
-use super::chat_runner::{
-    build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput,
-};
+use super::chat_runner::{build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput};
 
 pub struct RunChatUsecaseInput {
     pub sender: Option<SseSender>,

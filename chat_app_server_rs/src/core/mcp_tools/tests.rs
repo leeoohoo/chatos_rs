@@ -24,10 +24,7 @@ fn build_function_tool_schema_matches_responses_shape() {
         schema.get("type").and_then(|v| v.as_str()),
         Some("function")
     );
-    assert_eq!(
-        schema.get("name").and_then(|v| v.as_str()),
-        Some("search")
-    );
+    assert_eq!(schema.get("name").and_then(|v| v.as_str()), Some("search"));
     assert!(schema.get("function").is_none());
     assert_eq!(
         schema

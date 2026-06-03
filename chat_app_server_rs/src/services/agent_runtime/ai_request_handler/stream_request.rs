@@ -203,7 +203,10 @@ impl AiRequestHandler {
             let err = read_error_response_text(resp)
                 .await
                 .unwrap_or_else(|inner| format!("status {}: {}", status, inner));
-            error!("[Agent Runtime] chat-completions stream request failed: {}", err);
+            error!(
+                "[Agent Runtime] chat-completions stream request failed: {}",
+                err
+            );
             return Err(err);
         }
 
@@ -218,11 +221,8 @@ impl AiRequestHandler {
 
         consume_sse_stream(stream, token.clone(), |event| {
             parsed_event_count += 1;
-            let payload = apply_chat_completions_stream_event(
-                &mut stream_state,
-                &event,
-                reasoning_enabled,
-            );
+            let payload =
+                apply_chat_completions_stream_event(&mut stream_state, &event, reasoning_enabled);
             emit_stream_callbacks(&callbacks, payload.chunk, payload.thinking);
         })
         .await?;
@@ -335,10 +335,8 @@ fn apply_chat_message_delta(
         .and_then(|value| extract_chat_text(value))
         .unwrap_or_default();
     if !content.is_empty() {
-        state.full_content = crate::core::tool_call::join_stream_text(
-            state.full_content.as_str(),
-            content.as_str(),
-        );
+        state.full_content =
+            crate::core::tool_call::join_stream_text(state.full_content.as_str(), content.as_str());
         state.sent_any_chunk = true;
         payload.chunk = Some(content);
     }

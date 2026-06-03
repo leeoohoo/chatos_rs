@@ -492,9 +492,10 @@ fn is_done_status(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_runtime_context, classify_task_turn_follow_up, parse_task_turn_review_outcome,
-        strip_task_turn_review_marker, upsert_task_board_system_messages,
-        build_hidden_task_turn_review_metadata, TaskTurnFollowUpMode, TaskTurnReviewOutcome,
+        build_hidden_task_turn_review_metadata, build_runtime_context,
+        classify_task_turn_follow_up, parse_task_turn_review_outcome,
+        strip_task_turn_review_marker, upsert_task_board_system_messages, TaskTurnFollowUpMode,
+        TaskTurnReviewOutcome,
     };
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::models::memory_runtime_types::TurnRuntimeSnapshotSystemMessageDto;

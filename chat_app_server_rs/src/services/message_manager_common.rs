@@ -241,7 +241,6 @@ impl MessageManagerCore {
             }
         }
     }
-
 }
 
 async fn try_get_memory_chat_history_context_from_memory_engine(

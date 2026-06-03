@@ -294,7 +294,10 @@ mod tests {
         });
 
         assert!(value.get("api_key").is_none());
-        assert_eq!(value.get("has_api_key").and_then(|item| item.as_bool()), Some(true));
+        assert_eq!(
+            value.get("has_api_key").and_then(|item| item.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]

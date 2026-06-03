@@ -57,11 +57,7 @@ fn upsert_runtime_health_check(
         .insert(check.name.clone(), check);
 }
 
-pub fn mark_runtime_check_ok(
-    name: &str,
-    required_for_ready: bool,
-    message: impl Into<String>,
-) {
+pub fn mark_runtime_check_ok(name: &str, required_for_ready: bool, message: impl Into<String>) {
     upsert_runtime_health_check(
         name,
         required_for_ready,
@@ -70,11 +66,7 @@ pub fn mark_runtime_check_ok(
     );
 }
 
-pub fn mark_runtime_check_warn(
-    name: &str,
-    required_for_ready: bool,
-    message: impl Into<String>,
-) {
+pub fn mark_runtime_check_warn(name: &str, required_for_ready: bool, message: impl Into<String>) {
     upsert_runtime_health_check(
         name,
         required_for_ready,
@@ -93,9 +85,9 @@ pub fn snapshot_runtime_health() -> RuntimeHealthSnapshot {
         .iter()
         .filter(|check| check.status == RuntimeHealthCheckStatus::Warn)
         .count();
-    let ready = checks.iter().all(|check| {
-        !(check.required_for_ready && check.status == RuntimeHealthCheckStatus::Warn)
-    });
+    let ready = checks
+        .iter()
+        .all(|check| !(check.required_for_ready && check.status == RuntimeHealthCheckStatus::Warn));
 
     RuntimeHealthSnapshot {
         status: if degraded_check_count > 0 {

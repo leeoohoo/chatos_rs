@@ -117,7 +117,11 @@ pub async fn sync_chat_turn_snapshot(
     let effective_actual_items = actual_request
         .filter(|value| !value.items.is_empty())
         .map(|value| value.items.as_slice())
-        .or_else(|| preserved_actual.as_ref().map(|value| value.items.as_slice()))
+        .or_else(|| {
+            preserved_actual
+                .as_ref()
+                .map(|value| value.items.as_slice())
+        })
         .unwrap_or(&[]);
     let effective_model_request_payload = actual_request
         .and_then(|value| value.model_request_payload.as_ref())

@@ -49,9 +49,7 @@ pub fn abort_turn(session_id: &str, turn_id: Option<&str>) -> bool {
     if session_id.is_empty() {
         return false;
     }
-    let normalized_turn_id = turn_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    let normalized_turn_id = turn_id.map(str::trim).filter(|value| !value.is_empty());
     let mut map = ABORT_REGISTRY.lock();
     if let Some(entry) = map.get_mut(session_id) {
         if let Some(target_turn_id) = normalized_turn_id {

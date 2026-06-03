@@ -391,7 +391,11 @@ pub async fn backfill_ai_model_config_secret_storage(
 
                 while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
                     report.total_count += 1;
-                    let id = doc.get_str("id").ok().map(str::to_string).unwrap_or_default();
+                    let id = doc
+                        .get_str("id")
+                        .ok()
+                        .map(str::to_string)
+                        .unwrap_or_default();
                     let api_key = doc.get_str("api_key").ok().map(str::to_string);
                     let Some(api_key) = api_key else {
                         report.empty_count += 1;
@@ -406,8 +410,7 @@ pub async fn backfill_ai_model_config_secret_storage(
                         continue;
                     }
 
-                    let encrypted = encrypt_optional_secret(Some(api_key))?
-                        .unwrap_or_default();
+                    let encrypted = encrypt_optional_secret(Some(api_key))?.unwrap_or_default();
                     collection
                         .update_one(
                             doc! { "id": id },
@@ -448,8 +451,7 @@ pub async fn backfill_ai_model_config_secret_storage(
                         continue;
                     }
 
-                    let encrypted = encrypt_optional_secret(Some(api_key))?
-                        .unwrap_or_default();
+                    let encrypted = encrypt_optional_secret(Some(api_key))?.unwrap_or_default();
                     sqlx::query("UPDATE ai_model_configs SET api_key = ? WHERE id = ?")
                         .bind(encrypted)
                         .bind(id)

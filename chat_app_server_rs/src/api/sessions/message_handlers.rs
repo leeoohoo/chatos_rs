@@ -154,7 +154,8 @@ pub(super) async fn get_session_compact_history(
         Ok(page) => {
             let mut items: Vec<Value> = Vec::with_capacity(page.items.len() * 2);
             for turn in page.items {
-                let mut user_message = chatos_memory_engine::engine_record_to_message(turn.user_record);
+                let mut user_message =
+                    chatos_memory_engine::engine_record_to_message(turn.user_record);
                 let user_message_id = user_message.id.clone();
                 ensure_message_turn_id(&mut user_message, turn.turn_id.as_str());
 

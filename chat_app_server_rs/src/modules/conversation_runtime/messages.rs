@@ -1,6 +1,6 @@
+use crate::core::messages::message_is_hidden;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotLookupResponseDto;
 use crate::models::message::Message;
-use crate::core::messages::message_is_hidden;
 use crate::services::chatos_sessions;
 use serde_json::Value;
 
@@ -53,7 +53,11 @@ pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String>
         }
 
         offset += batch_len as i64;
-        all_messages.extend(batch.into_iter().filter(|message| !message_is_hidden(message)));
+        all_messages.extend(
+            batch
+                .into_iter()
+                .filter(|message| !message_is_hidden(message)),
+        );
 
         if batch_len < FULL_SESSION_MESSAGES_PAGE_SIZE as usize {
             break;

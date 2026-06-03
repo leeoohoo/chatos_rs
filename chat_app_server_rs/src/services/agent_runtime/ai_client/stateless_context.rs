@@ -4,9 +4,7 @@ use serde_json::Value;
 use tracing::info;
 
 use super::compat::cap_tool_output_for_input;
-use super::{
-    build_current_input_items, to_message_item, to_message_item_with_reasoning, AiClient,
-};
+use super::{build_current_input_items, to_message_item, to_message_item_with_reasoning, AiClient};
 use crate::core::messages::is_session_summary_message;
 use crate::core::tool_call::{
     build_function_call_item, build_function_call_output_item, extract_message_tool_calls,

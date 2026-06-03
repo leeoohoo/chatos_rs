@@ -30,14 +30,16 @@ pub(super) fn load_runtime_guidance_input_items(
         let mut items = Vec::with_capacity(drained.len());
         for drained_item in drained {
             let locale = resolve_runtime_guidance_locale(&drained_item.guidance_item).await;
-            items.push(build_runtime_guidance_input_item(
-                &drained_item.guidance_item,
-                locale,
-                force_text_content,
-                model_name.as_str(),
-                supports_images,
-            )
-            .await);
+            items.push(
+                build_runtime_guidance_input_item(
+                    &drained_item.guidance_item,
+                    locale,
+                    force_text_content,
+                    model_name.as_str(),
+                    supports_images,
+                )
+                .await,
+            );
             if let Some(applied_item) = drained_item.applied_item {
                 if let Some(cb) = &callbacks.on_runtime_guidance_applied {
                     cb(build_runtime_guidance_applied_event(
@@ -60,13 +62,9 @@ async fn build_runtime_guidance_input_item(
     model_name: &str,
     supports_images: Option<bool>,
 ) -> Value {
-    let content = build_runtime_guidance_message_content(
-        guidance_item,
-        locale,
-        model_name,
-        supports_images,
-    )
-    .await;
+    let content =
+        build_runtime_guidance_message_content(guidance_item, locale, model_name, supports_images)
+            .await;
     to_message_item("system", &content, force_text_content)
 }
 

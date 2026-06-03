@@ -8,12 +8,12 @@ use crate::modules::conversation_runtime::task_board::{
     parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
     TaskTurnReviewOutcome,
 };
+use crate::services::agent_runtime::ai_request_handler::StreamCallbacks;
 use crate::services::ai_common::{
     attach_ai_client_success_extra, build_ai_client_success_payload, completion_failed_error,
-    execute_tool_lifecycle, handle_transient_retry, is_retryable_provider_overload_error,
+    execute_tool_lifecycle, handle_transient_retry, is_retryable_provider_backpressure_error,
     terminal_empty_response_error,
 };
-use crate::services::agent_runtime::ai_request_handler::StreamCallbacks;
 use crate::utils::abort_registry;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
@@ -325,13 +325,13 @@ impl AiClient {
                 ai_response.reasoning.as_deref(),
                 ai_response.provider_error.as_ref(),
             ) {
-                if is_retryable_provider_overload_error(err.as_str())
+                if is_retryable_provider_backpressure_error(err.as_str())
                     && completion_retry_count < max_completion_retry_retries
                 {
                     completion_retry_count += 1;
                     let backoff_ms = 150_u64 * completion_retry_count as u64;
                     warn!(
-                        "[Agent Runtime] completion failed with retryable provider overload; retry {}/{} after {}ms: {}",
+                        "[Agent Runtime] completion failed with retryable provider backpressure; retry {}/{} after {}ms: {}",
                         completion_retry_count,
                         max_completion_retry_retries,
                         backoff_ms,
@@ -360,9 +360,9 @@ impl AiClient {
                 {
                     continue;
                 }
-                if is_retryable_provider_overload_error(err.as_str()) {
+                if is_retryable_provider_backpressure_error(err.as_str()) {
                     return Err(format!(
-                        "AI 请求失败：上游暂时过载，已重试 {} 次，最后错误：{}",
+                        "AI 请求失败：上游限流或过载，已重试 {} 次，最后错误：{}",
                         max_completion_retry_retries, err
                     ));
                 }

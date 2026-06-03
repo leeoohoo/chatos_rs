@@ -18,11 +18,7 @@ impl McpToolExecute {
         builtin_mcp_servers: Vec<McpBuiltinServer>,
     ) -> Self {
         Self {
-            shared: SharedMcpToolExecute::new(
-                mcp_servers,
-                stdio_mcp_servers,
-                builtin_mcp_servers,
-            ),
+            shared: SharedMcpToolExecute::new(mcp_servers, stdio_mcp_servers, builtin_mcp_servers),
         }
     }
 

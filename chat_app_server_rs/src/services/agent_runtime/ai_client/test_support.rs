@@ -18,12 +18,12 @@ use super::{AiClient, AiClientCallbacks};
 use crate::config::Config;
 use crate::db;
 use crate::models::session::Session;
-use crate::services::chatos_memory_engine::sync_chatos_session;
-use crate::services::task_manager::{create_tasks_for_turn, TaskDraft, TaskRecord};
-use crate::services::user_settings::AiClientSettings;
 use crate::services::agent_runtime::ai_request_handler::AiRequestHandler;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
+use crate::services::chatos_memory_engine::sync_chatos_session;
+use crate::services::task_manager::{create_tasks_for_turn, TaskDraft, TaskRecord};
+use crate::services::user_settings::AiClientSettings;
 
 static TEST_CONFIG_INIT: Once = Once::new();
 static TEST_DB_INIT: OnceCell<()> = OnceCell::const_new();
@@ -244,10 +244,7 @@ pub(super) async fn ensure_memory_session(session_id: &str) -> Result<(), String
     Ok(())
 }
 
-pub(super) async fn set_task_status_done(
-    session_id: &str,
-    task_id: &str,
-) -> Result<(), String> {
+pub(super) async fn set_task_status_done(session_id: &str, task_id: &str) -> Result<(), String> {
     let db = db::get_db().await?;
     let pool = db
         .sqlite_pool()
@@ -285,8 +282,8 @@ pub(super) fn before_request_set_task_done_on_nth_request(
                         .build()
                     {
                         let _ = rt.block_on(async move {
-                            let _ = set_task_status_done(session_id.as_str(), task_id.as_str())
-                                .await;
+                            let _ =
+                                set_task_status_done(session_id.as_str(), task_id.as_str()).await;
                         });
                     }
                 })

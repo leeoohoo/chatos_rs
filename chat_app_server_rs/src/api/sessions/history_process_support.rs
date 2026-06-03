@@ -333,7 +333,11 @@ mod tests {
     use crate::models::message::Message;
 
     fn build_message(role: &str, content: &str) -> Message {
-        Message::new("session-1".to_string(), role.to_string(), content.to_string())
+        Message::new(
+            "session-1".to_string(),
+            role.to_string(),
+            content.to_string(),
+        )
     }
 
     #[test]
@@ -376,14 +380,7 @@ mod tests {
 
         ensure_message_turn_id(&mut user, "turn-9");
         ensure_message_turn_id(&mut assistant, "turn-9");
-        attach_user_history_process_metadata(
-            &mut user,
-            true,
-            3,
-            2,
-            4,
-            Some(assistant.id.clone()),
-        );
+        attach_user_history_process_metadata(&mut user, true, 3, 2, 4, Some(assistant.id.clone()));
         strip_assistant_for_compact_history(&mut assistant, &user.id);
 
         let history_process = user
@@ -391,7 +388,12 @@ mod tests {
             .as_ref()
             .and_then(|value| value.get("historyProcess"))
             .expect("historyProcess");
-        assert_eq!(history_process.get("hasProcess").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(
+            history_process
+                .get("hasProcess")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
         assert_eq!(
             history_process
                 .get("toolCallCount")
@@ -417,7 +419,9 @@ mod tests {
             Some("assistant-1")
         );
         assert_eq!(
-            history_process.get("turnId").and_then(|value| value.as_str()),
+            history_process
+                .get("turnId")
+                .and_then(|value| value.as_str()),
             Some("turn-9")
         );
 

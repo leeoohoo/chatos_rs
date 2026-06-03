@@ -267,7 +267,8 @@ pub(in super::super) async fn write_file(
     }
 
     let authorized =
-        match policy.authorize_existing_file(raw.as_str(), "路径不存在", "路径不是文件") {
+        match policy.authorize_existing_file(raw.as_str(), "路径不存在", "路径不是文件")
+        {
             Ok(value) => value,
             Err(err) => return policy_error_tuple(err),
         };

@@ -6,9 +6,9 @@ use uuid::Uuid;
 
 use crate::builtin::browser_tools::context;
 
-use self::transport::{run_browser_vision_candidate, BROWSER_VISION_TRANSPORT};
 #[allow(unused_imports)]
 pub(super) use self::transport::build_browser_vision_responses_input;
+use self::transport::{run_browser_vision_candidate, BROWSER_VISION_TRANSPORT};
 use super::actions_shared::{fail_json, is_success, normalize_inline_text, run_browser_command};
 #[allow(unused_imports)]
 pub(super) use super::actions_vision_support::ai_model_config_to_runtime_value;

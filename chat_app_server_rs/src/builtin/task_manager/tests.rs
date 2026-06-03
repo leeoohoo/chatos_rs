@@ -157,13 +157,21 @@ fn add_task_description_mentions_confirmation_behavior() {
         .list_tools()
         .into_iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("add_task"))
-        .and_then(|tool| tool.get("description").and_then(Value::as_str).map(str::to_string))
+        .and_then(|tool| {
+            tool.get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .expect("manual add_task description");
     let auto_description = auto_service
         .list_tools()
         .into_iter()
         .find(|tool| tool.get("name").and_then(Value::as_str) == Some("add_task"))
-        .and_then(|tool| tool.get("description").and_then(Value::as_str).map(str::to_string))
+        .and_then(|tool| {
+            tool.get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .expect("auto add_task description");
 
     assert!(manual_description.contains("confirmed by the user"));

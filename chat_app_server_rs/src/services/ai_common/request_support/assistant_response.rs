@@ -3,9 +3,7 @@ use std::future::Future;
 use serde_json::Value;
 use tracing::{error, info};
 
-use crate::core::messages::{
-    optional_text_has_content, select_preferred_text, text_has_content,
-};
+use crate::core::messages::{optional_text_has_content, select_preferred_text, text_has_content};
 use crate::core::tool_call::tool_calls_value_has_items;
 
 use super::request_transport::truncate_log;
@@ -40,10 +38,7 @@ pub(crate) fn build_ai_client_success_payload(
     })
 }
 
-pub(crate) fn attach_ai_client_success_extra(
-    payload: Value,
-    extra: Value,
-) -> Value {
+pub(crate) fn attach_ai_client_success_extra(payload: Value, extra: Value) -> Value {
     let mut base = match payload {
         Value::Object(map) => map,
         other => {

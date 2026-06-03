@@ -1,5 +1,5 @@
-use axum::http::StatusCode;
 use axum::extract::ws::Message;
+use axum::http::StatusCode;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -123,6 +123,8 @@ async fn startup_error_shutdown_flushes_error_message_before_exit() {
     )
     .await;
 
-    let messages = done_rx.await.expect("forward task should flush queued messages");
+    let messages = done_rx
+        .await
+        .expect("forward task should flush queued messages");
     assert_eq!(messages, vec![Message::Text("startup failed".to_string())]);
 }

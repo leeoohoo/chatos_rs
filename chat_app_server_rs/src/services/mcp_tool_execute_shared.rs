@@ -87,9 +87,7 @@ pub(crate) mod test_support {
     use crate::services::builtin_mcp::BuiltinMcpKind;
     use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
-    pub(crate) async fn build_skill_reader_executor(
-        builtin_only: bool,
-    ) -> SharedMcpToolExecute {
+    pub(crate) async fn build_skill_reader_executor(builtin_only: bool) -> SharedMcpToolExecute {
         let mut exec = SharedMcpToolExecute::new(
             Vec::<McpHttpServer>::new(),
             Vec::<McpStdioServer>::new(),

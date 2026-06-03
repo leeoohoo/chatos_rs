@@ -244,8 +244,8 @@ mod tests {
         ensure_message_metadata_object, extract_message_tool_calls_for_display,
         extract_non_empty_text_value, flatten_text_value, is_session_summary_message,
         join_text_lines_or_json, message_metadata_string_alias, message_turn_id,
-        object_string_alias, optional_text_has_content, owned_non_empty_text, select_preferred_text,
-        text_has_content, text_value_or_json,
+        object_string_alias, optional_text_has_content, owned_non_empty_text,
+        select_preferred_text, text_has_content, text_value_or_json,
     };
     use crate::models::message::Message;
 

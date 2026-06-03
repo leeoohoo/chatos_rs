@@ -9,16 +9,15 @@ use crate::core::chat_stream::{
     build_chat_stream_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
     send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
-use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::agent_runtime::ai_server::AiServer as AgentAiServer;
+use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
 use crate::utils::log_helpers::log_chat_begin;
 use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution,
-    ChatExecutionInput,
+    build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution, ChatExecutionInput,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::snapshot::{
@@ -398,7 +397,10 @@ where
     result
 }
 
-fn resolve_terminal_snapshot_status(session_id: &str, result: &Result<Value, String>) -> &'static str {
+fn resolve_terminal_snapshot_status(
+    session_id: &str,
+    result: &Result<Value, String>,
+) -> &'static str {
     if abort_registry::is_aborted(session_id)
         || matches!(result, Err(err) if err.trim().eq_ignore_ascii_case("aborted"))
     {
@@ -419,7 +421,10 @@ mod tests {
 
     #[test]
     fn resolve_terminal_snapshot_status_marks_aborted_error_as_cancelled() {
-        let status = resolve_terminal_snapshot_status("session_abort_status_err", &Err("aborted".to_string()));
+        let status = resolve_terminal_snapshot_status(
+            "session_abort_status_err",
+            &Err("aborted".to_string()),
+        );
         assert_eq!(status, "cancelled");
     }
 

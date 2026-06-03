@@ -26,11 +26,7 @@ pub fn parse_tool_definition(tool: &Value) -> Option<ParsedToolDefinition> {
     })
 }
 
-pub fn build_function_tool_schema(
-    name: &str,
-    description: &str,
-    parameters: &Value,
-) -> Value {
+pub fn build_function_tool_schema(name: &str, description: &str, parameters: &Value) -> Value {
     json!({
         "type": "function",
         "name": name,

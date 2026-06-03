@@ -1,6 +1,8 @@
 use tokio::time::{sleep, Duration};
 use tracing::warn;
 
+const RATE_LIMITED_ERROR_CODE: &str = "RATE_LIMITED";
+
 pub(crate) fn is_response_parse_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("invalid json response")
@@ -31,7 +33,7 @@ pub(crate) fn is_transient_network_error(err: &str) -> bool {
         || message.contains("status 522")
         || message.contains("status 523")
         || message.contains("status 524")
-        || is_retryable_provider_overload_error(err)
+        || is_retryable_provider_backpressure_error(err)
 }
 
 pub(crate) fn is_retryable_provider_overload_error(err: &str) -> bool {
@@ -44,6 +46,43 @@ pub(crate) fn is_retryable_provider_overload_error(err: &str) -> bool {
         || message.contains("selected model is at capacity")
         || message.contains("model is at capacity")
         || (message.contains("at capacity") && message.contains("try a different model"))
+}
+
+fn is_non_retryable_quota_error(message: &str) -> bool {
+    message.contains("insufficient_quota")
+        || message.contains("exceeded your current quota")
+        || message.contains("billing")
+        || message.contains("credit balance")
+}
+
+pub(crate) fn is_rate_limited_provider_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    if is_non_retryable_quota_error(message.as_str()) {
+        return false;
+    }
+
+    message.contains("rate limit exceeded")
+        || message.contains("rate limit reached")
+        || message.contains("rate_limit_exceeded")
+        || message.contains("too many requests")
+        || message.contains("requests rate limit")
+        || (message.contains("status 429") && message.contains("try again later"))
+}
+
+pub(crate) fn is_retryable_provider_backpressure_error(err: &str) -> bool {
+    is_rate_limited_provider_error(err) || is_retryable_provider_overload_error(err)
+}
+
+pub(crate) fn classify_user_facing_ai_error(err: &str) -> Option<(&'static str, String)> {
+    if is_rate_limited_provider_error(err) {
+        return Some((
+            RATE_LIMITED_ERROR_CODE,
+            "请求过于频繁，触发了上游模型接口限流。请稍后再试；如果连续出现，可减少上下文、减少并发请求或切换模型。"
+                .to_string(),
+        ));
+    }
+
+    None
 }
 
 pub(crate) fn is_transient_transport_or_parse_error(err: &str) -> bool {
@@ -64,6 +103,8 @@ pub(crate) enum TransientRetryAction {
 pub(crate) fn transient_retry_kind_label(err: &str) -> &'static str {
     if is_response_parse_error(err) {
         "响应解析异常"
+    } else if is_rate_limited_provider_error(err) {
+        "上游限流"
     } else if is_retryable_provider_overload_error(err) {
         "上游暂时过载"
     } else {
@@ -71,8 +112,12 @@ pub(crate) fn transient_retry_kind_label(err: &str) -> &'static str {
     }
 }
 
-pub(crate) fn transient_retry_backoff_ms(retry_count: usize) -> u64 {
-    150_u64 * retry_count as u64
+pub(crate) fn transient_retry_backoff_ms(err: &str, retry_count: usize) -> u64 {
+    if is_rate_limited_provider_error(err) {
+        1000_u64 * retry_count as u64
+    } else {
+        150_u64 * retry_count as u64
+    }
 }
 
 pub(crate) fn exhausted_transient_retry_message(
@@ -101,7 +146,7 @@ pub(crate) fn classify_transient_retry(
         return Some(TransientRetryAction::Retry {
             retry_kind,
             next_retry_count,
-            backoff_ms: transient_retry_backoff_ms(next_retry_count),
+            backoff_ms: transient_retry_backoff_ms(err, next_retry_count),
         });
     }
 
@@ -147,10 +192,11 @@ pub(crate) async fn handle_transient_retry(
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_transient_retry, exhausted_transient_retry_message, handle_transient_retry,
-        is_response_parse_error, is_retryable_provider_overload_error, is_transient_network_error,
-        is_transient_transport_or_parse_error, transient_retry_backoff_ms,
-        transient_retry_kind_label, TransientRetryAction,
+        classify_transient_retry, classify_user_facing_ai_error, exhausted_transient_retry_message,
+        handle_transient_retry, is_rate_limited_provider_error, is_response_parse_error,
+        is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
+        is_transient_network_error, is_transient_transport_or_parse_error,
+        transient_retry_backoff_ms, transient_retry_kind_label, TransientRetryAction,
     };
 
     #[test]
@@ -181,6 +227,9 @@ mod tests {
         assert!(is_transient_network_error(
             "ai response failed: finish_reason=failed; provider_error=message=Selected model is at capacity. Please try a different model."
         ));
+        assert!(is_transient_network_error(
+            "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}"
+        ));
         assert!(!is_transient_network_error("status 401: invalid api key"));
     }
 
@@ -197,6 +246,29 @@ mod tests {
         ));
         assert!(!is_retryable_provider_overload_error(
             "status 400: invalid_request_error"
+        ));
+    }
+
+    #[test]
+    fn detects_retryable_provider_rate_limit_errors() {
+        assert!(is_rate_limited_provider_error(
+            "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\",\"type\":\"bad_response_status_code\",\"code\":\"bad_response_status_code\"}}"
+        ));
+        assert!(is_rate_limited_provider_error(
+            "{\"error\":{\"message\":\"Requests rate limit exceeded\"}}"
+        ));
+        assert!(!is_rate_limited_provider_error(
+            "status 429 Too Many Requests: {\"error\":{\"message\":\"You exceeded your current quota\",\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\"}}"
+        ));
+    }
+
+    #[test]
+    fn combines_backpressure_detection() {
+        assert!(is_retryable_provider_backpressure_error(
+            "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}"
+        ));
+        assert!(is_retryable_provider_backpressure_error(
+            "provider_error=code=server_is_overloaded"
         ));
     }
 
@@ -229,7 +301,23 @@ mod tests {
             ),
             "上游暂时过载"
         );
-        assert_eq!(transient_retry_backoff_ms(3), 450);
+        assert_eq!(
+            transient_retry_kind_label(
+                "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}"
+            ),
+            "上游限流"
+        );
+        assert_eq!(
+            transient_retry_backoff_ms("status 503: service unavailable", 3),
+            450
+        );
+        assert_eq!(
+            transient_retry_backoff_ms(
+                "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}",
+                3
+            ),
+            3000
+        );
     }
 
     #[test]
@@ -298,5 +386,16 @@ mod tests {
 
         assert!(err.contains("已重试 5 次"));
         assert_eq!(retry_count, 5);
+    }
+
+    #[test]
+    fn builds_user_facing_rate_limit_error() {
+        let classified = classify_user_facing_ai_error(
+            "status 429 Too Many Requests: {\"error\":{\"message\":\"Rate limit exceeded\"}}",
+        )
+        .expect("rate limit should map to user facing error");
+
+        assert_eq!(classified.0, "RATE_LIMITED");
+        assert!(classified.1.contains("上游模型接口限流"));
     }
 }

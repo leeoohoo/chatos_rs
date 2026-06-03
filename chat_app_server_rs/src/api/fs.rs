@@ -15,8 +15,7 @@ mod search;
 
 use self::mutate_handlers::{
     append_gitignore_entry, create_dir, create_file, delete_entry, discard_git_changes, move_entry,
-    open_path_externally,
-    write_file,
+    open_path_externally, write_file,
 };
 use self::query_handlers::{
     download_entry, list_dirs, list_entries, read_file, search_content, search_entries,

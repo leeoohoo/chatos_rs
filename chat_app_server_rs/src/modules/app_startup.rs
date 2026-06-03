@@ -71,10 +71,7 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
                 true,
                 format!(
                     "source_id={} source_type={} status={} sdk_enabled={}",
-                    report.source_id,
-                    report.source_type,
-                    report.status,
-                    report.sdk_enabled
+                    report.source_id, report.source_type, report.status, report.sdk_enabled
                 ),
             );
         }
