@@ -3,7 +3,12 @@ import { ChatInterface } from './components/ChatInterface';
 import { AuthPanel } from './components/AuthPanel';
 import { useTheme } from './hooks/useTheme';
 import { ChatStoreProvider } from './lib/store/ChatStoreContext';
-import { useAuthStore } from './lib/auth/authStore';
+import type ApiClient from './lib/api/client';
+import { ApiClientProvider } from './lib/api/ApiClientContext';
+import {
+  AuthStoreProvider,
+  useAuthStoreFromContext,
+} from './lib/auth/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DialogProvider } from './components/ui/DialogProvider';
 import { RealtimeProvider } from './lib/realtime/RealtimeProvider';
@@ -12,11 +17,12 @@ import './styles/index.css';
 
 interface AppProps {
   projectId?: string;
+  apiClient?: ApiClient;
 }
 
-function AppShell({ projectId }: AppProps = {}) {
+function AppShell({ projectId, apiClient }: AppProps = {}) {
   const { actualTheme } = useTheme();
-  const { user, initialized, bootstrap, accessToken } = useAuthStore();
+  const { user, initialized, bootstrap, accessToken } = useAuthStoreFromContext();
   const { t } = useI18n();
 
   // 确保主题正确应用
@@ -45,7 +51,11 @@ function AppShell({ projectId }: AppProps = {}) {
     <ErrorBoundary>
       <RealtimeProvider accessToken={accessToken}>
         <DialogProvider>
-          <ChatStoreProvider userId={user.id} projectId={projectId}>
+          <ChatStoreProvider
+            userId={user.id}
+            projectId={projectId}
+            customApiClient={apiClient}
+          >
             <div className="App">
               <ChatInterface />
             </div>
@@ -56,11 +66,15 @@ function AppShell({ projectId }: AppProps = {}) {
   );
 }
 
-function App({ projectId }: AppProps = {}) {
+function App({ projectId, apiClient }: AppProps = {}) {
   return (
-    <I18nProvider>
-      <AppShell projectId={projectId} />
-    </I18nProvider>
+    <ApiClientProvider client={apiClient}>
+      <AuthStoreProvider customApiClient={apiClient}>
+        <I18nProvider>
+          <AppShell projectId={projectId} apiClient={apiClient} />
+        </I18nProvider>
+      </AuthStoreProvider>
+    </ApiClientProvider>
   );
 }
 

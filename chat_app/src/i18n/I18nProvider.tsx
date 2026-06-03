@@ -1,8 +1,8 @@
 import React from 'react';
 
 import type { UserSettingsResponse } from '../lib/api/client/types/auth';
-import { apiClient } from '../lib/api/client';
-import { useAuthStore } from '../lib/auth/authStore';
+import { useOptionalApiClient } from '../lib/api/ApiClientContext';
+import { useOptionalAuthStoreSelector } from '../lib/auth/authStore';
 import { UI_MESSAGES, type UiLocale } from './messages';
 
 const UI_LOCALE_STORAGE_KEY = 'chat_ui_locale';
@@ -84,8 +84,9 @@ const defaultI18nContext: I18nContextValue = {
 const I18nContext = React.createContext<I18nContextValue>(defaultI18nContext);
 
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const userId = useAuthStore((state) => state.user?.id);
-  const initialized = useAuthStore((state) => state.initialized);
+  const apiClient = useOptionalApiClient();
+  const userId = useOptionalAuthStoreSelector((state) => state.user?.id) || null;
+  const initialized = useOptionalAuthStoreSelector((state) => state.initialized) === true;
   const [locale, setLocaleState] = React.useState<UiLocale>(() => readStoredLocale());
 
   const setLocale = React.useCallback((nextLocale: UiLocale) => {
@@ -95,7 +96,7 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   React.useEffect(() => {
-    if (!initialized || !userId) {
+    if (!apiClient || !initialized || !userId) {
       return;
     }
 
@@ -117,7 +118,7 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       cancelled = true;
     };
-  }, [initialized, userId]);
+  }, [apiClient, initialized, userId]);
 
   React.useEffect(() => {
     if (typeof document !== 'undefined') {

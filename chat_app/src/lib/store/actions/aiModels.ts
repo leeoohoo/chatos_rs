@@ -1,6 +1,7 @@
 import type { AiModelConfig } from '../../../types';
 import type {
   AiModelConfigCreatePayload,
+  AiModelConfigUpdatePayload,
 } from '../../api/client/types';
 import type ApiClient from '../../api/client';
 import { normalizeAiModelConfig } from '../../domain/configs';
@@ -89,19 +90,23 @@ export function createAiModelActions({ set, get, client }: Deps) {
         });
       }
     },
-    updateAiModelConfig: async (config: AiModelConfig) => {
+    updateAiModelConfig: async (
+      config: AiModelConfig,
+      options?: { clearApiKey?: boolean },
+    ) => {
       try {
         const existingConfig = get().aiModelConfigs.find((item) => item.id === config.id);
         const method = existingConfig ? 'update' : 'create';
         const provider = config.provider || 'gpt';
         const thinking_level = provider === 'gpt' ? (config.thinking_level || undefined) : undefined;
+        const trimmedApiKey = config.api_key.trim();
         const apiData: AiModelConfigCreatePayload = {
           id: config.id || generateId(),
           name: config.name,
           provider,
           model: config.model_name,
           thinking_level,
-          api_key: config.api_key,
+          api_key: trimmedApiKey,
           base_url: config.base_url,
           enabled: config.enabled,
           supports_images: config.supports_images === true,
@@ -109,7 +114,25 @@ export function createAiModelActions({ set, get, client }: Deps) {
           supports_responses: config.supports_responses === true,
         };
         if (method === 'update') {
-          await client.updateAiModelConfig(config.id!, apiData);
+          const updateData: AiModelConfigUpdatePayload = {
+            id: apiData.id,
+            name: apiData.name,
+            provider: apiData.provider,
+            model: apiData.model,
+            thinking_level: apiData.thinking_level,
+            base_url: apiData.base_url,
+            enabled: apiData.enabled,
+            supports_images: apiData.supports_images,
+            supports_reasoning: apiData.supports_reasoning,
+            supports_responses: apiData.supports_responses,
+          };
+          if (trimmedApiKey) {
+            updateData.api_key = trimmedApiKey;
+          }
+          if (options?.clearApiKey) {
+            updateData.clear_api_key = true;
+          }
+          await client.updateAiModelConfig(config.id!, updateData);
         } else {
           await client.createAiModelConfig(apiData);
         }

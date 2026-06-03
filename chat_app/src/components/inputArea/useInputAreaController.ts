@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { useDialogService } from '../ui/DialogProvider';
-import { apiClient as globalApiClient } from '../../lib/api/client';
-import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { InputAreaProps } from '../../types';
 import { useAttachmentsInput } from './useAttachmentsInput';
 import { useDismissiblePopover } from './useDismissiblePopover';
@@ -77,12 +76,11 @@ export function useInputAreaController({
   onEnabledMcpIdsChange,
 }: UseInputAreaControllerParams) {
   const isGuidingMode = isStreaming && !isStopping;
-  const effectiveAllowAttachments = allowAttachments && !isGuidingMode;
+  const effectiveAllowAttachments = allowAttachments;
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const client = useApiClient();
   const { alert } = useDialogService();
 
   const {
@@ -256,13 +254,6 @@ export function useInputAreaController({
     projectFilePickerOpen,
     () => setProjectFilePickerOpen(false),
   );
-
-  useEffect(() => {
-    if (!isGuidingMode || attachments.length === 0) {
-      return;
-    }
-    clearAttachments();
-  }, [attachments.length, clearAttachments, isGuidingMode]);
 
   const requireModelSelection = useCallback(() => {
     if (showModelSelector && !selectedModelId) {

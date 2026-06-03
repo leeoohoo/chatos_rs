@@ -7,10 +7,10 @@ import {
   resolveRemoteConnectionErrorMessage,
   resolveRemoteTerminalWsErrorMessage,
 } from '../lib/api/remoteConnectionErrors';
+import { useApiClient } from '../lib/api/ApiClientContext';
 import RemoteVerificationModal from './remote/RemoteVerificationModal';
-import { useChatStoreSelector, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
-import { apiClient as globalApiClient } from '../lib/api/client';
-import { useAuthStore } from '../lib/auth/authStore';
+import { useChatStoreSelector } from '../lib/store/ChatStoreContext';
+import { useAuthStoreSelector } from '../lib/auth/authStore';
 import { useTheme } from '../hooks/useTheme';
 import { cn } from '../lib/utils';
 import { RemoteTerminalHeader } from './remoteTerminal/RemoteTerminalHeader';
@@ -32,9 +32,8 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const { t } = useI18n();
   const currentRemoteConnection = useChatStoreSelector((state) => state.currentRemoteConnection);
   const openRemoteSftp = useChatStoreSelector((state) => state.openRemoteSftp);
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = apiClientFromContext || globalApiClient;
-  const { accessToken } = useAuthStore();
+  const client = useApiClient();
+  const accessToken = useAuthStoreSelector((state) => state.accessToken);
   const { actualTheme } = useTheme();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -183,17 +182,13 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
     }
 
     const verificationCodeForAttempt = pendingVerificationCodeRef.current;
-    const wsUrl = buildWsUrl(
-      apiBaseUrl,
-      `/remote-connections/${currentRemoteConnection.id}/ws`,
-      accessToken,
-      verificationCodeForAttempt,
-    );
-    const ws = new WebSocket(wsUrl);
-    socketRef.current = ws;
     terminalErrorHandledRef.current = false;
     setConnectionState('connecting');
     setErrorMessage(null);
+    setBusy(false);
+
+    let disposed = false;
+    let ws: WebSocket | null = null;
 
     const clearVerificationCodeForAttempt = () => {
       if (
@@ -205,85 +200,114 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       }
     };
 
-    ws.onopen = () => {
-      if (socketRef.current !== ws) return;
-      setConnectionState('connected');
-      if (terminalRef.current) {
-        ws.send(JSON.stringify({
-          type: 'resize',
-          cols: terminalRef.current.cols,
-          rows: terminalRef.current.rows,
-        }));
-      }
-      term.focus();
-    };
-
-    ws.onmessage = (event) => {
-      if (socketRef.current !== ws) return;
+    void (async () => {
       try {
-        const payload = JSON.parse(event.data as string);
-        if (payload?.type === 'output' && typeof payload.data === 'string') {
-          clearVerificationCodeForAttempt();
-          terminalRef.current?.write(payload.data);
+        const webSocketTicket = await client.issueWebSocketTicket();
+        if (disposed) {
           return;
         }
-        if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
-          clearVerificationCodeForAttempt();
-          if (payload.data === lastSnapshotRef.current) {
+        const wsUrl = buildWsUrl(
+          apiBaseUrl,
+          `/remote-connections/${currentRemoteConnection.id}/ws`,
+          webSocketTicket,
+        );
+        const socket = new WebSocket(wsUrl);
+        ws = socket;
+        socketRef.current = socket;
+
+        socket.onopen = () => {
+          if (socketRef.current !== socket) return;
+          setConnectionState('connected');
+          if (verificationCodeForAttempt) {
+            socket.send(JSON.stringify({ type: 'verification', code: verificationCodeForAttempt }));
+          }
+          if (terminalRef.current) {
+            socket.send(JSON.stringify({
+              type: 'resize',
+              cols: terminalRef.current.cols,
+              rows: terminalRef.current.rows,
+            }));
+          }
+          term.focus();
+        };
+
+        socket.onmessage = (event) => {
+          if (socketRef.current !== socket) return;
+          try {
+            const payload = JSON.parse(event.data as string);
+            if (payload?.type === 'output' && typeof payload.data === 'string') {
+              clearVerificationCodeForAttempt();
+              terminalRef.current?.write(payload.data);
+              return;
+            }
+            if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+              clearVerificationCodeForAttempt();
+              if (payload.data === lastSnapshotRef.current) {
+                return;
+              }
+              lastSnapshotRef.current = payload.data;
+              terminalRef.current?.reset();
+              terminalRef.current?.write(payload.data);
+              return;
+            }
+            if (payload?.type === 'state') {
+              clearVerificationCodeForAttempt();
+              setBusy(Boolean(payload.busy));
+              return;
+            }
+            if (payload?.type === 'error') {
+              terminalErrorHandledRef.current = true;
+              setConnectionState('error');
+              setBusy(false);
+              if (payload?.code === 'second_factor_required') {
+                pendingVerificationCodeRef.current = null;
+                setVerificationPrompt(
+                  typeof payload?.challenge_prompt === 'string' ? payload.challenge_prompt : '',
+                );
+                setVerificationOpen(true);
+                setErrorMessage(
+                  verificationCodeForAttempt
+                    ? t('remote.common.needsVerificationRetry')
+                    : t('remote.common.needsVerification'),
+                );
+                return;
+              }
+              setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, t('remote.terminal.wsError')));
+              return;
+            }
+          } catch {
+            // ignore parse errors to keep terminal usable
+          }
+        };
+
+        socket.onerror = () => {
+          if (socketRef.current !== socket) return;
+          if (terminalErrorHandledRef.current) {
             return;
           }
-          lastSnapshotRef.current = payload.data;
-          terminalRef.current?.reset();
-          terminalRef.current?.write(payload.data);
-          return;
-        }
-        if (payload?.type === 'state') {
-          clearVerificationCodeForAttempt();
-          setBusy(Boolean(payload.busy));
-          return;
-        }
-        if (payload?.type === 'error') {
-          terminalErrorHandledRef.current = true;
           setConnectionState('error');
           setBusy(false);
-          if (payload?.code === 'second_factor_required') {
-            pendingVerificationCodeRef.current = null;
-            setVerificationPrompt(
-              typeof payload?.challenge_prompt === 'string' ? payload.challenge_prompt : '',
-            );
-            setVerificationOpen(true);
-            setErrorMessage(
-              verificationCodeForAttempt
-                ? t('remote.common.needsVerificationRetry')
-                : t('remote.common.needsVerification'),
-            );
-            return;
-          }
-          setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, t('remote.terminal.wsError')));
+          setErrorMessage(t('remote.terminal.connectionError'));
+        };
+
+        socket.onclose = () => {
+          if (socketRef.current !== socket) return;
+          setConnectionState((prev) => (terminalErrorHandledRef.current ? prev : 'disconnected'));
+          setBusy(false);
+        };
+      } catch (error) {
+        if (disposed) {
           return;
         }
-      } catch {
-        // ignore parse errors to keep terminal usable
+        terminalErrorHandledRef.current = true;
+        setConnectionState('error');
+        setBusy(false);
+        setErrorMessage(resolveRemoteConnectionErrorMessage(error, t('remote.terminal.connectionError')));
       }
-    };
-
-    ws.onerror = () => {
-      if (socketRef.current !== ws) return;
-      if (terminalErrorHandledRef.current) {
-        return;
-      }
-      setConnectionState('error');
-      setBusy(false);
-      setErrorMessage(t('remote.terminal.connectionError'));
-    };
-
-    ws.onclose = () => {
-      if (socketRef.current !== ws) return;
-      setConnectionState((prev) => (terminalErrorHandledRef.current ? prev : 'disconnected'));
-      setBusy(false);
-    };
+    })();
 
     return () => {
+      disposed = true;
       if (socketRef.current === ws) {
         socketRef.current = null;
       }

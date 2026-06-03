@@ -64,7 +64,7 @@ export interface TeamMemberWorkspaceProps {
     attachments?: File[],
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => void | Promise<void>;
-  onGuide: (content: string) => void | Promise<void>;
+  onGuide: (content: string, attachments?: File[]) => void | Promise<void>;
   onStop: () => void;
   onModelChange: (modelId: string | null) => void;
   onReasoningToggle: (enabled: boolean) => void;

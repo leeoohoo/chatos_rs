@@ -47,7 +47,39 @@ fn normalize_thinking_level_input(
     Ok(Some(normalized))
 }
 
-fn to_response_value(cfg: &AiModelConfig, include_secret_fields: bool) -> Value {
+fn normalize_optional_input(value: Option<String>) -> Option<String> {
+    value
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+}
+
+fn resolve_api_key_input(
+    req: &AiModelConfigRequest,
+    existing_api_key: Option<String>,
+    require_api_key: bool,
+) -> Result<Option<String>, String> {
+    let provided_api_key = normalize_optional_input(req.api_key.clone());
+    let clear_api_key = req.clear_api_key.unwrap_or(false);
+    let resolved_api_key = if clear_api_key {
+        None
+    } else {
+        provided_api_key.or(existing_api_key)
+    };
+
+    if require_api_key
+        && resolved_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        return Err("api_key 为必填项".to_string());
+    }
+
+    Ok(resolved_api_key)
+}
+
+fn to_response_value(cfg: &AiModelConfig) -> Value {
     json!({
         "id": cfg.id,
         "name": cfg.name,
@@ -55,7 +87,11 @@ fn to_response_value(cfg: &AiModelConfig, include_secret_fields: bool) -> Value 
         "model": cfg.model,
         "model_name": cfg.model,
         "thinking_level": cfg.thinking_level,
-        "api_key": if include_secret_fields { cfg.api_key.clone() } else { None::<String> },
+        "has_api_key": cfg.has_api_key
+            || cfg.api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()),
         "base_url": cfg.base_url,
         "enabled": cfg.enabled,
         "supports_images": cfg.supports_images,
@@ -70,24 +106,24 @@ fn build_model_config(
     user_id: String,
     id: String,
     req: AiModelConfigRequest,
+    existing_api_key: Option<String>,
+    require_api_key: bool,
 ) -> Result<AiModelConfig, String> {
-    let Some(name) = req
-        .name
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(name) = normalize_optional_input(req.name.clone()) else {
         return Err("name 为必填项".to_string());
     };
-    let Some(model) = req
-        .model
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(model) = normalize_optional_input(req.model.clone()) else {
         return Err("model 为必填项".to_string());
     };
 
-    let provider = normalize_provider_input(req.provider)?;
-    let thinking_level = normalize_thinking_level_input(provider.as_str(), req.thinking_level)?;
+    let provider = normalize_provider_input(req.provider.clone())?;
+    let thinking_level =
+        normalize_thinking_level_input(provider.as_str(), req.thinking_level.clone())?;
+    let api_key = resolve_api_key_input(&req, existing_api_key, require_api_key)?;
+    let has_api_key = api_key
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
 
     Ok(AiModelConfig {
         id,
@@ -95,14 +131,9 @@ fn build_model_config(
         name,
         provider,
         model,
-        base_url: req
-            .base_url
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-        api_key: req
-            .api_key
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
+        base_url: normalize_optional_input(req.base_url),
+        api_key,
+        has_api_key,
         enabled: req.enabled.unwrap_or(true),
         thinking_level,
         supports_images: req.supports_images.unwrap_or(false),
@@ -132,7 +163,7 @@ pub(super) async fn list_ai_model_configs(
         Ok(items) => {
             let out = items
                 .into_iter()
-                .map(|item| to_response_value(&item, true))
+                .map(|item| to_response_value(&item))
                 .collect::<Vec<_>>();
             (StatusCode::OK, Json(Value::Array(out)))
         }
@@ -153,13 +184,13 @@ pub(super) async fn create_ai_model_config(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let config = match build_model_config(auth.user_id.clone(), id, req) {
+    let config = match build_model_config(auth.user_id.clone(), id, req, None, true) {
         Ok(config) => config,
         Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))),
     };
 
     match ai_model_configs::create_ai_model_config(&config).await {
-        Ok(item) => (StatusCode::CREATED, Json(to_response_value(&item, true))),
+        Ok(item) => (StatusCode::CREATED, Json(to_response_value(&item))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "创建 AI 模型配置失败", "detail": err})),
@@ -176,7 +207,13 @@ pub(super) async fn update_ai_model_config(
         Ok(item) => item,
         Err(err) => return map_ai_model_config_access_error(err),
     };
-    let config = match build_model_config(auth.user_id.clone(), existing.id.clone(), req) {
+    let config = match build_model_config(
+        auth.user_id.clone(),
+        existing.id.clone(),
+        req,
+        existing.api_key.clone(),
+        false,
+    ) {
         Ok(mut config) => {
             config.created_at = existing.created_at;
             config.updated_at = crate::core::time::now_rfc3339();
@@ -186,7 +223,7 @@ pub(super) async fn update_ai_model_config(
     };
 
     match ai_model_configs::update_ai_model_config(config_id.as_str(), &config).await {
-        Ok(()) => (StatusCode::OK, Json(to_response_value(&config, true))),
+        Ok(()) => (StatusCode::OK, Json(to_response_value(&config))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "更新 AI 模型配置失败", "detail": err})),
@@ -210,5 +247,100 @@ pub(super) async fn delete_ai_model_config(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "删除 AI 模型配置失败", "detail": err})),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_model_config, to_response_value};
+    use crate::api::configs::AiModelConfigRequest;
+    use crate::models::ai_model_config::AiModelConfig;
+
+    fn sample_request() -> AiModelConfigRequest {
+        AiModelConfigRequest {
+            id: None,
+            name: Some("Model".to_string()),
+            provider: Some("gpt".to_string()),
+            model: Some("gpt-4o".to_string()),
+            thinking_level: Some("medium".to_string()),
+            api_key: None,
+            clear_api_key: None,
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            enabled: Some(true),
+            supports_images: Some(true),
+            supports_reasoning: Some(true),
+            supports_responses: Some(true),
+        }
+    }
+
+    #[test]
+    fn response_hides_plaintext_api_key() {
+        let value = to_response_value(&AiModelConfig {
+            id: "cfg_1".to_string(),
+            user_id: Some("user_1".to_string()),
+            name: "Model".to_string(),
+            provider: "gpt".to_string(),
+            model: "gpt-4o".to_string(),
+            thinking_level: Some("medium".to_string()),
+            api_key: Some("secret".to_string()),
+            has_api_key: true,
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            enabled: true,
+            supports_images: true,
+            supports_reasoning: true,
+            supports_responses: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        });
+
+        assert!(value.get("api_key").is_none());
+        assert_eq!(value.get("has_api_key").and_then(|item| item.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn update_preserves_existing_api_key_when_request_leaves_it_blank() {
+        let config = build_model_config(
+            "user_1".to_string(),
+            "cfg_1".to_string(),
+            sample_request(),
+            Some("stored-secret".to_string()),
+            false,
+        )
+        .expect("config should build");
+
+        assert_eq!(config.api_key.as_deref(), Some("stored-secret"));
+        assert!(config.has_api_key);
+    }
+
+    #[test]
+    fn create_requires_api_key() {
+        let err = build_model_config(
+            "user_1".to_string(),
+            "cfg_1".to_string(),
+            sample_request(),
+            None,
+            true,
+        )
+        .expect_err("create should reject missing api key");
+
+        assert!(err.contains("api_key"));
+    }
+
+    #[test]
+    fn clear_api_key_removes_stored_secret_on_update() {
+        let mut request = sample_request();
+        request.clear_api_key = Some(true);
+
+        let config = build_model_config(
+            "user_1".to_string(),
+            "cfg_1".to_string(),
+            request,
+            Some("stored-secret".to_string()),
+            false,
+        )
+        .expect("config should build");
+
+        assert_eq!(config.api_key, None);
+        assert!(!config.has_api_key);
     }
 }

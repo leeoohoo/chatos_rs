@@ -10,6 +10,8 @@ pub struct AiModelConfig {
     pub model: String,
     pub thinking_level: Option<String>,
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub has_api_key: bool,
     pub base_url: Option<String>,
     pub enabled: bool,
     pub supports_images: bool,
@@ -52,6 +54,7 @@ impl AiModelConfigRow {
             model: self.model,
             thinking_level: self.thinking_level,
             api_key: self.api_key,
+            has_api_key: false,
             base_url: self.base_url,
             enabled: self.enabled == 1,
             supports_images: self.supports_images == 1,

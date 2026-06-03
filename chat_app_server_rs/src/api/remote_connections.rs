@@ -29,8 +29,8 @@ pub(crate) use self::connectivity::{
     run_remote_connectivity_test, run_ssh_command, run_ssh_command_with_verification,
 };
 use self::contracts::{
-    CreateRemoteConnectionRequest, RemoteConnectionQuery, RemoteTerminalWsQuery,
-    SftpTransferStatus, UpdateRemoteConnectionRequest, WsInput, WsOutput,
+    CreateRemoteConnectionRequest, RemoteConnectionQuery, SftpTransferStatus,
+    UpdateRemoteConnectionRequest, WsInput, WsOutput,
 };
 use self::error_support::{
     error_payload, internal_error_response, remote_connectivity_error_response, ws_error_output,

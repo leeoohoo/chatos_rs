@@ -22,7 +22,10 @@ import {
 
 interface UseTerminalSocketLifecycleParams {
   currentTerminal: Terminal | null;
-  apiBaseUrl: string;
+  client: {
+    getBaseUrl(): string;
+    issueWebSocketTicket(): Promise<string>;
+  };
   accessToken?: string | null;
   connectSeq: number;
   loadTerminals: () => void | Promise<unknown>;
@@ -55,7 +58,7 @@ const shouldFallbackRefreshTerminals = (): boolean => (
 
 export const useTerminalSocketLifecycle = ({
   currentTerminal,
-  apiBaseUrl,
+  client,
   accessToken,
   connectSeq,
   loadTerminals,
@@ -79,8 +82,11 @@ export const useTerminalSocketLifecycle = ({
 }: UseTerminalSocketLifecycleParams) => {
   useEffect(() => {
     if (!currentTerminal) return;
+    if (!(accessToken || '').trim()) {
+      setConnectionState('disconnected');
+      return;
+    }
 
-    const wsUrl = buildWsUrl(apiBaseUrl, `/terminals/${currentTerminal.id}/ws`, accessToken);
     setConnectionState('connecting');
     resetTerminalSocketSnapshotState({
       inputForwardEnabledRef,
@@ -90,114 +96,145 @@ export const useTerminalSocketLifecycle = ({
       snapshotRequestContextRef,
     });
 
-    const ws = new WebSocket(wsUrl);
-    socketRef.current = ws;
+    let disposed = false;
+    let ws: WebSocket | null = null;
 
-    ws.onopen = () => {
-      if (socketRef.current !== ws) {
-        return;
-      }
-      applyTerminalSocketOpen({
-        term: terminalRef.current,
-        ws,
-        inputForwardEnabledRef,
-        setConnectionState,
-      });
-    };
-
-    ws.onmessage = (event) => {
-      if (socketRef.current !== ws) {
-        return;
-      }
-
+    void (async () => {
       try {
-        const payload = JSON.parse(event.data);
-        if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
-          applyTerminalSnapshotMessage({
-            terminalId: currentTerminal.id,
-            snapshot: payload.data,
-            requestContext: snapshotRequestContextRef.current,
+        const webSocketTicket = await client.issueWebSocketTicket();
+        if (disposed) {
+          return;
+        }
+        const wsUrl = buildWsUrl(
+          client.getBaseUrl(),
+          `/terminals/${currentTerminal.id}/ws`,
+          webSocketTicket,
+        );
+        const socket = new WebSocket(wsUrl);
+        ws = socket;
+        socketRef.current = socket;
+
+        socket.onopen = () => {
+          if (socketRef.current !== socket) {
+            return;
+          }
+          applyTerminalSocketOpen({
             term: terminalRef.current,
-            outputParseStateRef,
-            appendCommands,
-            appliedSnapshotRef,
-            snapshotVisibleLinesRef,
-            snapshotNoMoreLinesRef,
+            ws: socket,
+            inputForwardEnabledRef,
+            setConnectionState,
+          });
+        };
+
+        socket.onmessage = (event) => {
+          if (socketRef.current !== socket) {
+            return;
+          }
+
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+              applyTerminalSnapshotMessage({
+                terminalId: currentTerminal.id,
+                snapshot: payload.data,
+                requestContext: snapshotRequestContextRef.current,
+                term: terminalRef.current,
+                outputParseStateRef,
+                appendCommands,
+                appliedSnapshotRef,
+                snapshotVisibleLinesRef,
+                snapshotNoMoreLinesRef,
+                snapshotLoadingRef,
+                snapshotRequestContextRef,
+              });
+            } else if (payload?.type === 'output') {
+              applyTerminalOutputMessage({
+                terminalId: currentTerminal.id,
+                outputData: String(payload.data ?? ''),
+                term: terminalRef.current,
+                outputParseStateRef,
+                replayingHistoryRef,
+                pendingOutputChunksRef,
+                terminalFirstOutputLoggedRef,
+                terminalOpenStartedAtRef,
+                appendCommands,
+              });
+            } else if (payload?.type === 'exit') {
+              applyTerminalExitMessage({
+                inputForwardEnabledRef,
+                setConnectionState,
+              });
+              if (shouldFallbackRefreshTerminals()) {
+                loadTerminals();
+              }
+            } else if (payload?.type === 'state') {
+              applyTerminalStateMessage({
+                snapshotPaging: payload.snapshot_paging,
+                supportsSnapshotPagingRef,
+              });
+              if (shouldFallbackRefreshTerminals()) {
+                loadTerminals();
+              }
+            } else if (payload?.type === 'error') {
+              applyTerminalErrorMessage({
+                message: payload.error || '终端发生错误',
+                inputForwardEnabledRef,
+                setConnectionState,
+                setErrorMessage,
+              });
+            }
+          } catch (err) {
+            void err;
+          }
+        };
+
+        socket.onerror = () => {
+          if (socketRef.current !== socket) {
+            return;
+          }
+          resetTerminalSocketConnectionState({
+            inputForwardEnabledRef,
             snapshotLoadingRef,
+            supportsSnapshotPagingRef,
             snapshotRequestContextRef,
           });
-        } else if (payload?.type === 'output') {
-          applyTerminalOutputMessage({
-            terminalId: currentTerminal.id,
-            outputData: String(payload.data ?? ''),
-            term: terminalRef.current,
-            outputParseStateRef,
-            replayingHistoryRef,
-            pendingOutputChunksRef,
-            terminalFirstOutputLoggedRef,
-            terminalOpenStartedAtRef,
-            appendCommands,
-          });
-        } else if (payload?.type === 'exit') {
-          applyTerminalExitMessage({
-            inputForwardEnabledRef,
-            setConnectionState,
-          });
-          if (shouldFallbackRefreshTerminals()) {
-            loadTerminals();
+          setErrorMessage('终端实时连接失败，请点击“重连”；如果仍无输出，可先查看右侧命令历史并刷新运行状态。');
+          setConnectionState('error');
+        };
+
+        socket.onclose = () => {
+          if (socketRef.current !== socket) {
+            return;
           }
-        } else if (payload?.type === 'state') {
-          applyTerminalStateMessage({
-            snapshotPaging: payload.snapshot_paging,
+          resetTerminalSocketConnectionState({
+            inputForwardEnabledRef,
+            snapshotLoadingRef,
             supportsSnapshotPagingRef,
+            snapshotRequestContextRef,
           });
+          setConnectionState('disconnected');
           if (shouldFallbackRefreshTerminals()) {
             loadTerminals();
           }
-        } else if (payload?.type === 'error') {
-          applyTerminalErrorMessage({
-            message: payload.error || '终端发生错误',
-            inputForwardEnabledRef,
-            setConnectionState,
-            setErrorMessage,
-          });
+        };
+      } catch (error) {
+        if (disposed) {
+          return;
         }
-      } catch (err) {
-        void err;
+        resetTerminalSocketConnectionState({
+          inputForwardEnabledRef,
+          snapshotLoadingRef,
+          supportsSnapshotPagingRef,
+          snapshotRequestContextRef,
+        });
+        console.error('Failed to issue terminal websocket ticket:', error);
+        setErrorMessage('终端实时连接鉴权失败，请刷新登录状态后重试。');
+        setConnectionState('error');
       }
-    };
-
-    ws.onerror = () => {
-      if (socketRef.current !== ws) {
-        return;
-      }
-      resetTerminalSocketConnectionState({
-        inputForwardEnabledRef,
-        snapshotLoadingRef,
-        supportsSnapshotPagingRef,
-        snapshotRequestContextRef,
-      });
-      setErrorMessage('终端实时连接失败，请点击“重连”；如果仍无输出，可先查看右侧命令历史并刷新运行状态。');
-      setConnectionState('error');
-    };
-
-    ws.onclose = () => {
-      if (socketRef.current !== ws) {
-        return;
-      }
-      resetTerminalSocketConnectionState({
-        inputForwardEnabledRef,
-        snapshotLoadingRef,
-        supportsSnapshotPagingRef,
-        snapshotRequestContextRef,
-      });
-      setConnectionState('disconnected');
-      if (shouldFallbackRefreshTerminals()) {
-        loadTerminals();
-      }
-    };
+    })();
 
     return () => {
+      disposed = true;
       resetTerminalSocketConnectionState({
         inputForwardEnabledRef,
         snapshotLoadingRef,
@@ -211,9 +248,9 @@ export const useTerminalSocketLifecycle = ({
     };
   }, [
     accessToken,
-    apiBaseUrl,
     appendCommands,
     appliedSnapshotRef,
+    client,
     connectSeq,
     currentTerminal?.id,
     inputForwardEnabledRef,

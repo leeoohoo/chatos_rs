@@ -11,6 +11,7 @@ pub fn public_routes() -> Router {
 
 pub fn protected_routes() -> Router {
     Router::new()
+        .merge(api::auth::protected_router())
         .nest("/api/applications", api::applications::router())
         .merge(api::configs::router())
         .merge(api::contacts::router())

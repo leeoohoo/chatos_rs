@@ -255,6 +255,7 @@ export interface RuntimeGuidanceSubmitPayload {
   turnId: string;
   content: string;
   projectId?: string | null;
+  attachments?: StreamChatAttachmentPayload[];
 }
 
 export interface AgentToolDefinition {

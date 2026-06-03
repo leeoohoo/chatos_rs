@@ -64,7 +64,9 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
       return;
     }
 
-    await updateAiModelConfig(buildAiModelConfig(formData, editingConfig));
+    await updateAiModelConfig(buildAiModelConfig(formData, editingConfig), {
+      clearApiKey: formData.clear_api_key,
+    });
     resetForm();
   };
 

@@ -82,11 +82,36 @@ const AiModelManagerForm = ({
           <input
             type="password"
             value={formData.api_key}
-            onChange={(event) => onFormDataChange({ api_key: event.target.value })}
+            onChange={(event) => onFormDataChange({
+              api_key: event.target.value,
+              clear_api_key: false,
+            })}
+            disabled={editingConfig !== null && formData.clear_api_key}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder={t('aiModelManager.form.apiKeyPlaceholder')}
-            required
+            placeholder={editingConfig
+              ? t('aiModelManager.form.apiKeyPlaceholderEdit')
+              : t('aiModelManager.form.apiKeyPlaceholder')}
+            required={editingConfig === null}
           />
+          {editingConfig && formData.has_stored_api_key ? (
+            <div className="mt-2 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t('aiModelManager.form.apiKeyHintKeep')}
+              </p>
+              <label className="flex items-center text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={formData.clear_api_key}
+                  onChange={(event) => onFormDataChange({
+                    clear_api_key: event.target.checked,
+                    api_key: event.target.checked ? '' : formData.api_key,
+                  })}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <span className="ml-2">{t('aiModelManager.form.clearSavedApiKey')}</span>
+              </label>
+            </div>
+          ) : null}
         </div>
 
         <div>

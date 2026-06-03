@@ -18,4 +18,7 @@ export type SendMessageHandler = (
   runtimeOptions?: SendMessageRuntimeOptions,
 ) => void | Promise<void>;
 
-export type GuideMessageHandler = (content: string) => void | Promise<void>;
+export type GuideMessageHandler = (
+  content: string,
+  attachments?: File[],
+) => void | Promise<void>;

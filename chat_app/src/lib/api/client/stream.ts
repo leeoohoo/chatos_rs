@@ -132,6 +132,7 @@ export const submitRuntimeGuidance = (
       turn_id: payload.turnId,
       content: payload.content,
       project_id: payload.projectId,
+      attachments: payload.attachments || [],
     }),
   });
 };

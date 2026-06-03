@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useI18n } from '../i18n/I18nProvider';
-import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
-import { apiClient as globalApiClient } from '../lib/api/client';
+import { useApiClient } from '../lib/api/ApiClientContext';
+import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { cn } from '../lib/utils';
 import RemoteVerificationModal from './remote/RemoteVerificationModal';
 import { LocalBrowserPane, RemoteBrowserPane } from './remoteSftp/SftpBrowsers';
@@ -27,8 +27,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     currentRemoteConnection,
     selectRemoteConnection,
   } = useChatStoreFromContext();
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const client = useApiClient();
   const { confirm, prompt } = useDialogService();
   const currentRemoteConnectionId = currentRemoteConnection?.id ?? null;
   const currentRemoteDefaultPath = currentRemoteConnection?.defaultRemotePath || '.';

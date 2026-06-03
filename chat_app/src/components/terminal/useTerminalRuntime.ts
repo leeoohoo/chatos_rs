@@ -16,6 +16,7 @@ import { useTerminalViewState } from './useTerminalViewState';
 
 interface TerminalApiClient {
   getBaseUrl(): string;
+  issueWebSocketTicket(): Promise<string>;
   listTerminalLogs(
     terminalId: string,
     params?: { limit?: number; offset?: number; before?: string },
@@ -52,7 +53,6 @@ export const useTerminalRuntime = ({
   actualTheme,
 }: UseTerminalRuntimeParams): UseTerminalRuntimeResult => {
   const state = useTerminalViewState(actualTheme);
-  const apiBaseUrl = client.getBaseUrl();
 
   const appendCommands = useTerminalAppendCommands({
     currentTerminalId: currentTerminal?.id ?? null,
@@ -105,7 +105,7 @@ export const useTerminalRuntime = ({
 
   useTerminalSocketLifecycle({
     currentTerminal,
-    apiBaseUrl,
+    client,
     accessToken,
     connectSeq: state.connectSeq,
     loadTerminals,

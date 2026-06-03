@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { useI18n } from '../i18n/I18nProvider';
-import { apiClient } from '../lib/api/client';
+import type ApiClient from '../lib/api/client';
+import { useApiClient } from '../lib/api/ApiClientContext';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AgentConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
@@ -27,6 +28,7 @@ type AgentManagerWindow = Window & {
 
 const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalStore }) => {
   const { t } = useI18n();
+  const apiClient = useApiClient();
   const internalStoreData = useChatStoreResolved();
   const storeData = externalStore ? externalStore() : internalStoreData;
   const {
@@ -46,8 +48,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   const [formData, setFormData] = useState<AgentFormData>(getDefaultAgentFormData());
   const [showAiCreate, setShowAiCreate] = useState(false);
   const [aiCreateForm, setAiCreateForm] = useState<AgentAiCreateFormData>(getDefaultAgentAiCreateFormData());
-  const [skillPlugins, setSkillPlugins] = useState<Awaited<ReturnType<typeof apiClient.listSkillPlugins>>>([]);
-  const [skills, setSkills] = useState<Awaited<ReturnType<typeof apiClient.listSkills>>>([]);
+  const [skillPlugins, setSkillPlugins] = useState<Awaited<ReturnType<ApiClient['listSkillPlugins']>>>([]);
+  const [skills, setSkills] = useState<Awaited<ReturnType<ApiClient['listSkills']>>>([]);
   useEffect(() => {
     const currentWindow = window as AgentManagerWindow;
     const last = currentWindow.__agentManagerInitAt__ || 0;
@@ -64,7 +66,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     ]).catch((error) => {
       console.error('Failed to load agent manager resources:', error);
     });
-  }, [loadAgents, loadAiModelConfigs]);
+  }, [apiClient, loadAgents, loadAiModelConfigs]);
 
   const pluginOptions = useMemo(
     () => skillPlugins.map((plugin) => ({

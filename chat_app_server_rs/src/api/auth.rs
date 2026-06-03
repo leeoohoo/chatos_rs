@@ -1,11 +1,12 @@
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::{routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::config::Config;
-use crate::core::auth::{build_auth_token, AuthUser};
+use crate::core::auth::{access_token_from_headers, build_auth_token, AuthUser};
 use crate::core::time::now_rfc3339;
+use crate::core::websocket_ticket::issue_websocket_ticket;
 use crate::repositories::auth_users;
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +32,10 @@ pub fn router() -> Router {
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
         .route("/api/auth/me", axum::routing::get(me))
+}
+
+pub fn protected_router() -> Router {
+    Router::new().route("/api/auth/ws-ticket", post(issue_ws_ticket))
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {
@@ -148,6 +153,24 @@ async fn me(auth: AuthUser) -> (StatusCode, Json<Value>) {
             "user": user_public_value(auth.user_id.as_str(), auth.role.as_str())
         })),
     )
+}
+
+async fn issue_ws_ticket(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    let access_token = match access_token_from_headers(&headers) {
+        Ok(token) => token,
+        Err(err) => return err.into_response(),
+    };
+    match issue_websocket_ticket(access_token.as_str(), &auth) {
+        Ok(ticket) => (
+            StatusCode::OK,
+            Json(json!({
+                "ticket": ticket.ticket,
+                "expires_in": ticket.expires_in,
+                "expires_at": ticket.expires_at,
+            })),
+        ),
+        Err(err) => err.into_response(),
+    }
 }
 
 fn user_public_value(user_id: &str, role: &str) -> Value {

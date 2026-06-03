@@ -1,7 +1,6 @@
 import { useCallback } from 'react';
 
-import { apiClient as globalApiClient } from '../../lib/api/client';
-import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { Project } from '../../types';
 import { useProjectExplorerCodeNav } from './useProjectExplorerCodeNav';
 import { useProjectExplorerDataLoading } from './useProjectExplorerDataLoading';
@@ -20,8 +19,7 @@ interface UseProjectExplorerViewModelParams {
 export const useProjectExplorerViewModel = ({
   project,
 }: UseProjectExplorerViewModelParams) => {
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = apiClientFromContext || globalApiClient;
+  const client = useApiClient();
 
   const state = useProjectExplorerState(project?.id);
   const filesTabActive = state.workspaceTab === 'files';

@@ -66,6 +66,7 @@ export interface AiModelConfigUpdatePayload {
   model_name?: string;
   thinking_level?: string;
   api_key?: string;
+  clear_api_key?: boolean;
   base_url?: string;
   enabled?: boolean;
   supports_images?: boolean;
@@ -81,6 +82,7 @@ export interface AiModelConfigResponse {
   model_name?: string;
   thinking_level?: string;
   api_key?: string;
+  has_api_key?: boolean;
   base_url?: string;
   enabled?: boolean;
   supports_images?: boolean;

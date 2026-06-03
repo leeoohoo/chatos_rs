@@ -6,11 +6,6 @@ pub(super) struct RemoteConnectionQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct RemoteTerminalWsQuery {
-    pub(super) verification_code: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct CreateRemoteConnectionRequest {
     pub(super) name: Option<String>,
     pub(super) host: Option<String>,

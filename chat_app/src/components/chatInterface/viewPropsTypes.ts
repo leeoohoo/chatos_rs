@@ -96,7 +96,7 @@ export interface ChatInterfaceConversationActions {
   handleTaskReviewConfirm: ComponentProps<typeof ChatConversationPane>['onTaskReviewConfirm'];
   handleTaskReviewCancel: ComponentProps<typeof ChatConversationPane>['onTaskReviewCancel'];
   handleMessageSend: ComponentProps<typeof ChatConversationPane>['onSend'];
-  handleRuntimeGuidanceSend: (content: string) => void;
+  handleRuntimeGuidanceSend: (content: string, attachments?: File[]) => void;
   abortCurrentConversation: () => void;
   updateReasoningEnabled: (enabled: boolean) => void;
   setSelectedModel: (modelId: string | null) => void;

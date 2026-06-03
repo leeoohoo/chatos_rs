@@ -1,5 +1,5 @@
 import React from 'react';
-import { useChatStore } from '../lib/store';
+import type { ChatStore as SessionListStoreHook } from '../lib/store/createChatStoreWithBackend';
 import { cn } from '../lib/utils';
 import { SessionListDialogs } from './sessionList/SessionListDialogs';
 import {
@@ -20,7 +20,7 @@ interface SessionListProps {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   className?: string;
-  store?: typeof useChatStore;
+  store?: SessionListStoreHook;
   onSelectSession?: (sessionId: string) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
   onOpenSessionRuntimeContext?: (sessionId: string) => void;

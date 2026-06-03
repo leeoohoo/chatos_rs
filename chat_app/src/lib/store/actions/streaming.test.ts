@@ -109,6 +109,7 @@ const createStreamingState = (): ChatStoreShape => ({
       provider: 'openai',
       base_url: 'https://api.openai.com/v1',
       api_key: 'test-key',
+      has_api_key: true,
       model_name: 'gpt-4.1',
       supports_responses: true,
       supports_images: false,

@@ -40,7 +40,12 @@ interface UseChatInterfaceControllerParams {
   ) => Promise<void>;
   submitRuntimeGuidance: (
     content: string,
-    options: { conversationId: string; turnId: string; projectId?: string | null },
+    options: {
+      attachments?: File[];
+      conversationId: string;
+      turnId: string;
+      projectId?: string | null;
+    },
   ) => Promise<unknown>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
   openTurnProcessViewer: (
@@ -228,7 +233,7 @@ export const useChatInterfaceController = ({
     void selectRemoteConnection(connectionId, { activatePanel: false });
   }, [selectRemoteConnection]);
 
-  const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
+  const handleRuntimeGuidanceSend = useCallback(async (content: string, attachments?: File[]) => {
     const sessionId = currentSession?.id;
     const projectId = currentSession?.projectId || currentSession?.project_id || null;
     const turnId = (
@@ -240,7 +245,12 @@ export const useChatInterfaceController = ({
       return;
     }
     try {
-      await submitRuntimeGuidance(content, { conversationId: sessionId, turnId, projectId });
+      await submitRuntimeGuidance(content, {
+        attachments,
+        conversationId: sessionId,
+        turnId,
+        projectId,
+      });
     } catch (error) {
       console.error('Failed to submit runtime guidance:', error);
     }

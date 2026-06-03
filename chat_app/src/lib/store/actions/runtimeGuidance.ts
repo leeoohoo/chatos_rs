@@ -1,5 +1,9 @@
 import type ApiClient from '../../api/client';
 import {
+  assertPayloadWithinTransportBudget,
+  prepareAttachmentsForStreaming,
+} from './sendMessage/attachments';
+import {
   queueOptimisticRuntimeGuidance,
   reconcileSubmittedRuntimeGuidance,
   rollbackRuntimeGuidanceSubmission,
@@ -23,7 +27,12 @@ export function createRuntimeGuidanceActions({
   return {
     submitRuntimeGuidance: async (
       content: string,
-      options: { conversationId: string; turnId: string; projectId?: string | null },
+      options: {
+        attachments?: File[];
+        conversationId: string;
+        turnId: string;
+        projectId?: string | null;
+      },
     ) => {
       const conversationId = String(options?.conversationId || '').trim();
       const turnId = String(options?.turnId || '').trim();
@@ -31,13 +40,28 @@ export function createRuntimeGuidanceActions({
       const projectId = typeof options?.projectId === 'string'
         ? options.projectId.trim()
         : '';
+      const attachments = Array.isArray(options?.attachments) ? options.attachments : [];
 
-      if (!conversationId || !turnId || !trimmedContent) {
+      if (!conversationId || !turnId || (!trimmedContent && attachments.length === 0)) {
         throw new Error('缺少运行时引导参数');
       }
 
       const guidanceAt = new Date().toISOString();
       const optimisticGuidanceId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const {
+        previewAttachments,
+        apiAttachments,
+      } = await prepareAttachmentsForStreaming(attachments, true, {
+        dropImagesWhenUnsupported: false,
+      });
+      const requestPayload = {
+        conversation_id: conversationId,
+        turn_id: turnId,
+        content: trimmedContent,
+        project_id: projectId || undefined,
+        attachments: apiAttachments,
+      };
+      assertPayloadWithinTransportBudget(requestPayload);
 
       set((state) => {
         queueOptimisticRuntimeGuidance(state, {
@@ -46,6 +70,7 @@ export function createRuntimeGuidanceActions({
           guidanceId: optimisticGuidanceId,
           content: trimmedContent,
           guidanceAt,
+          previewAttachments,
         });
       });
 
@@ -55,6 +80,7 @@ export function createRuntimeGuidanceActions({
           turnId,
           content: trimmedContent,
           projectId: projectId || undefined,
+          attachments: apiAttachments,
         });
 
         set((state) => {
@@ -72,6 +98,7 @@ export function createRuntimeGuidanceActions({
             guidanceAt,
             status: typeof response?.status === 'string' ? response.status : null,
             pendingCount: pendingFromResponse,
+            previewAttachments,
           });
 
           if (state.currentSessionId === conversationId && Array.isArray(state.messages)) {

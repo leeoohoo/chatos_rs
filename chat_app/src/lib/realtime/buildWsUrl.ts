@@ -1,4 +1,4 @@
-export const buildWsUrl = (baseUrl: string, path: string, accessToken?: string | null) => {
+export const buildWsUrl = (baseUrl: string, path: string, webSocketTicket?: string | null) => {
   const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   const cleanedPath = path.startsWith('/') ? path : `/${path}`;
   const rawUrl = (cleanedBase.startsWith('http://') || cleanedBase.startsWith('https://'))
@@ -9,9 +9,9 @@ export const buildWsUrl = (baseUrl: string, path: string, accessToken?: string |
         return `${wsProtocol}//${host}${cleanedBase}${cleanedPath}`;
       })();
   const wsUrl = new URL(rawUrl);
-  const token = (accessToken || '').trim();
-  if (token) {
-    wsUrl.searchParams.set('access_token', token);
+  const ticket = (webSocketTicket || '').trim();
+  if (ticket) {
+    wsUrl.searchParams.set('ws_ticket', ticket);
   }
   return wsUrl.toString();
 };

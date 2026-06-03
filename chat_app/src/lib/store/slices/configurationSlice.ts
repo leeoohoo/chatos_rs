@@ -52,7 +52,10 @@ export interface ConfigurationSliceActions {
   updateMcpConfig: (config: McpConfig) => Promise<McpConfig | null>;
   deleteMcpConfig: (id: string) => Promise<void>;
   loadAiModelConfigs: (options?: { force?: boolean }) => Promise<void>;
-  updateAiModelConfig: (config: AiModelConfig) => Promise<void>;
+  updateAiModelConfig: (
+    config: AiModelConfig,
+    options?: { clearApiKey?: boolean },
+  ) => Promise<void>;
   deleteAiModelConfig: (id: string) => Promise<void>;
   setSelectedModel: (modelId: string | null) => void;
   loadAgents: (options?: { force?: boolean }) => Promise<void>;

@@ -51,8 +51,12 @@ pub fn encrypt_secret(plain_text: &str) -> Result<String, String> {
     ))
 }
 
+pub fn is_secret_encrypted(value: &str) -> bool {
+    value.starts_with(SECRET_PREFIX)
+}
+
 pub fn decrypt_secret(value: &str) -> Result<String, String> {
-    if !value.starts_with(SECRET_PREFIX) {
+    if !is_secret_encrypted(value) {
         return Ok(value.to_string());
     }
     let payload = &value[SECRET_PREFIX.len()..];

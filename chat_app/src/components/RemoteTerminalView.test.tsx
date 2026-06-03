@@ -76,6 +76,8 @@ vi.mock('../lib/api/client', async () => {
       getBaseUrl: () => client.getBaseUrl(),
       setAccessToken: (token?: string | null) => client.setAccessToken(token),
       getAccessToken: () => client.getAccessToken(),
+      issueWebSocketTicket: vi.fn(async () => 'ws_ticket_1'),
+      disconnectRemoteTerminal: vi.fn(async () => ({ success: true })),
       getUserSettings: vi.fn(async () => ({ settings: { UI_LOCALE: 'zh-CN' } })),
     },
   };
@@ -89,13 +91,32 @@ vi.mock('../lib/store/ChatStoreContext', () => ({
     currentRemoteConnection: mockConnection,
     openRemoteSftp,
   }),
-  useChatApiClientFromContext: () => ({
-    getBaseUrl: () => '/api',
-    disconnectRemoteTerminal,
-  }),
 }));
 
 vi.mock('../lib/auth/authStore', () => ({
+  useAuthStoreFromContext: () => ({
+    accessToken: 'token_1',
+    user: { id: 'user_1', username: 'user_1' },
+    initialized: true,
+  }),
+  useOptionalAuthStoreSelector: (selector: (state: {
+    accessToken: string | null;
+    user: { id: string; username: string } | null;
+    initialized: boolean;
+  }) => unknown) => selector({
+    accessToken: 'token_1',
+    user: { id: 'user_1', username: 'user_1' },
+    initialized: true,
+  }),
+  useAuthStoreSelector: (selector: (state: {
+    accessToken: string | null;
+    user: { id: string; username: string } | null;
+    initialized: boolean;
+  }) => unknown) => selector({
+    accessToken: 'token_1',
+    user: { id: 'user_1', username: 'user_1' },
+    initialized: true,
+  }),
   useAuthStore: (selector?: (state: {
     accessToken: string | null;
     user: { id: string; username: string } | null;
@@ -192,6 +213,8 @@ describe('RemoteTerminalView', () => {
     });
 
     const ws = sockets[0];
+    expect(ws.url).toContain('ws_ticket=ws_ticket_1');
+    expect(ws.url).not.toContain('access_token=');
     ws.emitOpen();
     ws.emitMessage({
       type: 'error',

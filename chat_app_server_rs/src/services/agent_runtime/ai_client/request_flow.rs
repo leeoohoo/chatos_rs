@@ -18,6 +18,7 @@ impl AiClient {
         let max_tokens = options.max_tokens;
         let reasoning_enabled = options.reasoning_enabled.unwrap_or(true);
         let supports_responses = options.supports_responses.unwrap_or(false);
+        let supports_images = options.supports_images;
         let system_prompt = options.system_prompt.or_else(|| self.system_prompt.clone());
         let purpose = options.purpose.unwrap_or_else(|| "chat".to_string());
         let message_mode = options.message_mode;
@@ -100,6 +101,7 @@ impl AiClient {
             message_source,
             request_cwd,
             supports_responses,
+            supports_images,
         )
         .await
     }

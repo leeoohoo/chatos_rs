@@ -16,6 +16,7 @@ pub(super) struct RuntimeGuidanceRequest {
     pub(super) turn_id: Option<String>,
     pub(super) content: Option<String>,
     pub(super) project_id: Option<String>,
+    pub(super) attachments: Option<Vec<Value>>,
 }
 
 pub(super) async fn submit_runtime_guidance(
@@ -29,6 +30,7 @@ pub(super) async fn submit_runtime_guidance(
             turn_id: req.turn_id,
             content: req.content,
             project_id: req.project_id,
+            attachments: req.attachments,
         },
     )
     .await
@@ -48,7 +50,7 @@ pub(super) async fn submit_runtime_guidance(
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "success": false,
-                "error": "conversation_id / turn_id / content 不能为空",
+                "error": "conversation_id / turn_id 不能为空，且 content / attachments 至少要提供一项",
                 "code": "invalid_runtime_guidance_payload",
             })),
         ),

@@ -38,7 +38,7 @@ struct McpConfigRequest {
     app_ids: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct AiModelConfigRequest {
     id: Option<String>,
     name: Option<String>,
@@ -46,6 +46,7 @@ struct AiModelConfigRequest {
     model: Option<String>,
     thinking_level: Option<String>,
     api_key: Option<String>,
+    clear_api_key: Option<bool>,
     base_url: Option<String>,
     enabled: Option<bool>,
     supports_images: Option<bool>,

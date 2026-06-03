@@ -1,8 +1,6 @@
 import { shallow } from 'zustand/shallow';
 
-import { useChatStore } from '../../lib/store';
-
-type SessionListStoreHook = typeof useChatStore;
+import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 
 export const useSessionListStoreState = (storeToUse: SessionListStoreHook) => {
   return storeToUse((state) => ({

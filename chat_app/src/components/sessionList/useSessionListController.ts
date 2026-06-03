@@ -1,11 +1,9 @@
 import { useMemo, useState } from 'react';
 
-import { apiClient as globalApiClient } from '../../lib/api/client';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
-  useChatApiClientFromContext,
   useOptionalChatStoreContext,
 } from '../../lib/store/ChatStoreContext';
-import { useChatStore } from '../../lib/store';
 import { useDialogService } from '../ui/DialogProvider';
 import {
   useContactSessionCreator,
@@ -26,6 +24,7 @@ import { useContactsRealtime } from '../../lib/realtime/useContactsRealtime';
 import { useProjectsRealtime } from '../../lib/realtime/useProjectsRealtime';
 import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnectionsRealtime';
 import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
+import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 import type { ContactItem } from './types';
 
 const CONTACT_CREATE_LIKE_REASONS = new Set(['contact_created', 'contact_upserted']);
@@ -41,7 +40,7 @@ const TERMINAL_UPDATE_LIKE_REASONS = new Set(['updated']);
 const TERMINAL_REFRESH_LIKE_REASONS = new Set(['closed']);
 
 interface SessionListControllerParams {
-  store?: typeof useChatStore;
+  store?: SessionListStoreHook;
   activeSummarySessionId?: string | null;
   onOpenSessionSummary?: (sessionId: string) => void;
   onOpenSessionRuntimeContext?: (sessionId: string) => void;
@@ -56,7 +55,10 @@ export const useSessionListController = ({
   isCollapsed,
 }: SessionListControllerParams) => {
   const contextStoreHook = useOptionalChatStoreContext();
-  const storeToUse = store || contextStoreHook || useChatStore;
+  const storeToUse = store || contextStoreHook;
+  if (!storeToUse) {
+    throw new Error('useSessionListController requires ChatStoreProvider or an explicit store');
+  }
 
   const {
     sessions,
@@ -131,8 +133,7 @@ export const useSessionListController = ({
   const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
 
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = apiClientFromContext || globalApiClient;
+  const apiClient = useApiClient();
   const { confirm, alert } = useDialogService();
 
   const remoteForm = useRemoteConnectionForm({

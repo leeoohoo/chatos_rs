@@ -1,11 +1,11 @@
 import React from 'react';
-import { useAuthStore } from '@/lib/auth/authStore';
+import { useAuthStoreFromContext } from '@/lib/auth/authStore';
 import { useI18n } from '../i18n/I18nProvider';
 
 type AuthMode = 'login' | 'register';
 
 export function AuthPanel() {
-  const { login, register, loading, error, clearError } = useAuthStore();
+  const { login, register, loading, error, clearError } = useAuthStoreFromContext();
   const { t } = useI18n();
   const [mode, setMode] = React.useState<AuthMode>('login');
   const [username, setUsername] = React.useState('');

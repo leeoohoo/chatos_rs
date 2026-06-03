@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 import { useI18n } from '../i18n/I18nProvider';
-import { apiClient } from '../lib/api/client';
+import { useApiClient } from '../lib/api/ApiClientContext';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { McpConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
@@ -26,6 +26,7 @@ type McpManagerWindow = Window & {
 
 const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }) => {
   const { t } = useI18n();
+  const apiClient = useApiClient();
   const internalStoreData = useChatStoreResolved();
   const storeData = externalStore ? externalStore() : internalStoreData;
 

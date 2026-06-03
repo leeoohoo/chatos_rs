@@ -1,8 +1,7 @@
 import React from 'react';
 
-import { useAuthStore } from '../../lib/auth/authStore';
-import { apiClient } from '../../lib/api/client';
-import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
+import { useApiClient } from '../../lib/api/ApiClientContext';
+import { useAuthStoreSelector } from '../../lib/auth/authStore';
 import { useTheme } from '../../hooks/useTheme';
 import type {
   ProjectRunEnvironment,
@@ -385,10 +384,9 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   onRunnerDelete,
   onRefreshRunnerState,
 }) => {
-  const apiClientFromContext = useChatApiClientFromContext();
-  const accessToken = useAuthStore((state) => state.accessToken);
+  const terminalClient = useApiClient();
+  const accessToken = useAuthStoreSelector((state) => state.accessToken);
   const { actualTheme } = useTheme();
-  const terminalClient = apiClientFromContext ?? apiClient;
   const selectedTarget = runTargets.find((target) => target.id === selectedRunTargetId) || runTargets[0] || null;
   const selectedTargetConfigKinds = resolveConfigKindsForTarget(selectedTarget);
   const selectedConfigFiles = configFiles.filter((file) => (

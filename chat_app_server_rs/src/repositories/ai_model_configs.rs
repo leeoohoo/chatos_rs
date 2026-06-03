@@ -1,11 +1,22 @@
+use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
+use sqlx::Row;
 
 use crate::core::mongo_cursor::collect_map_sorted_desc;
+use crate::core::secrets::{decrypt_optional_secret, encrypt_optional_secret, is_secret_encrypted};
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::db::{self, Database};
 use crate::models::ai_model_config::{AiModelConfig, AiModelConfigRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 use crate::utils::model_config::normalize_provider;
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AiModelConfigSecretBackfillReport {
+    pub total_count: usize,
+    pub migrated_count: usize,
+    pub skipped_encrypted_count: usize,
+    pub empty_count: usize,
+}
 
 fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
     let provider_raw = doc.get_str("provider").unwrap_or("openai").to_string();
@@ -18,6 +29,7 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
         model: doc.get_str("model").ok()?.to_string(),
         thinking_level: doc.get_str("thinking_level").ok().map(|s| s.to_string()),
         api_key: doc.get_str("api_key").ok().map(|s| s.to_string()),
+        has_api_key: false,
         base_url: doc.get_str("base_url").ok().map(|s| s.to_string()),
         enabled: doc.get_bool("enabled").unwrap_or(true),
         supports_images: doc.get_bool("supports_images").unwrap_or(false),
@@ -26,6 +38,38 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
     })
+}
+
+fn decrypt_optional_secret_lossy(value: Option<String>) -> Option<String> {
+    let fallback = value.clone();
+    decrypt_optional_secret(value).unwrap_or(fallback)
+}
+
+fn decrypt_model_for_read(mut config: AiModelConfig) -> AiModelConfig {
+    config.has_api_key = config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    config.api_key = decrypt_optional_secret_lossy(config.api_key);
+    config
+}
+
+fn encrypt_model_for_storage(mut config: AiModelConfig) -> Result<AiModelConfig, String> {
+    config.api_key = encrypt_optional_secret(config.api_key)?;
+    config.has_api_key = config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    Ok(config)
+}
+
+fn needs_secret_backfill(value: Option<&str>) -> bool {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| !is_secret_encrypted(value))
 }
 
 async fn has_legacy_ai_model_configs_storage() -> Result<bool, String> {
@@ -69,7 +113,10 @@ pub async fn list_ai_model_configs(user_id: Option<&str>) -> Result<Vec<AiModelC
                     .map_err(|e| e.to_string())?;
                 let items: Vec<AiModelConfig> =
                     collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
-                        .await?;
+                        .await?
+                        .into_iter()
+                        .map(decrypt_model_for_read)
+                        .collect();
                 Ok(items)
             })
         },
@@ -86,7 +133,10 @@ pub async fn list_ai_model_configs(user_id: Option<&str>) -> Result<Vec<AiModelC
                     sql = sql.bind(user_id);
                 }
                 let rows = sql.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(|r| r.to_model()).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| decrypt_model_for_read(row.to_model()))
+                    .collect())
             })
         },
     )
@@ -103,7 +153,9 @@ pub async fn get_ai_model_config_by_id(id: &str) -> Result<Option<AiModelConfig>
                     .find_one(doc! { "id": id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(doc.and_then(|d| normalize_doc(&d)))
+                Ok(doc
+                    .and_then(|document| normalize_doc(&document))
+                    .map(decrypt_model_for_read))
             })
         },
         |pool| {
@@ -116,7 +168,7 @@ pub async fn get_ai_model_config_by_id(id: &str) -> Result<Option<AiModelConfig>
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(row.map(|r| r.to_model()))
+                Ok(row.map(|record| decrypt_model_for_read(record.to_model())))
             })
         },
     )
@@ -127,8 +179,9 @@ pub async fn create_ai_model_config(config: &AiModelConfig) -> Result<AiModelCon
     let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
-    let config_mongo = config.clone();
-    let config_sqlite = config.clone();
+    let config_plain = config.clone();
+    let config_mongo = encrypt_model_for_storage(config.clone())?;
+    let config_sqlite = encrypt_model_for_storage(config.clone())?;
     with_db(
         |db| {
             let doc = to_doc(doc_from_pairs(vec![
@@ -170,11 +223,7 @@ pub async fn create_ai_model_config(config: &AiModelConfig) -> Result<AiModelCon
                     .insert_one(doc, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                Ok(AiModelConfig {
-                    created_at: now_mongo.clone(),
-                    updated_at: now_mongo,
-                    ..config_mongo
-                })
+                Ok(())
             })
         },
         |pool| {
@@ -199,23 +248,30 @@ pub async fn create_ai_model_config(config: &AiModelConfig) -> Result<AiModelCon
                 .execute(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                Ok(AiModelConfig {
-                    created_at: now_sqlite.clone(),
-                    updated_at: now_sqlite,
-                    ..config_sqlite
-                })
+                Ok(())
             })
         },
     )
-    .await
+    .await?;
+
+    Ok(AiModelConfig {
+        created_at: now.clone(),
+        updated_at: now,
+        has_api_key: config_plain
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        ..config_plain
+    })
 }
 
 pub async fn update_ai_model_config(id: &str, config: &AiModelConfig) -> Result<(), String> {
     let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
-    let config_mongo = config.clone();
-    let config_sqlite = config.clone();
+    let config_mongo = encrypt_model_for_storage(config.clone())?;
+    let config_sqlite = encrypt_model_for_storage(config.clone())?;
     with_db(
         |db| {
             let id = id.to_string();
@@ -311,6 +367,99 @@ pub async fn delete_ai_model_config(id: &str) -> Result<(), String> {
                     .await
                     .map_err(|e| e.to_string())?;
                 Ok(())
+            })
+        },
+    )
+    .await
+}
+
+pub async fn backfill_ai_model_config_secret_storage(
+) -> Result<AiModelConfigSecretBackfillReport, String> {
+    if !has_legacy_ai_model_configs_storage().await? {
+        return Ok(AiModelConfigSecretBackfillReport::default());
+    }
+
+    with_db(
+        |db| {
+            Box::pin(async move {
+                let collection = db.collection::<Document>("ai_model_configs");
+                let mut cursor = collection
+                    .find(Document::new(), None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut report = AiModelConfigSecretBackfillReport::default();
+
+                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
+                    report.total_count += 1;
+                    let id = doc.get_str("id").ok().map(str::to_string).unwrap_or_default();
+                    let api_key = doc.get_str("api_key").ok().map(str::to_string);
+                    let Some(api_key) = api_key else {
+                        report.empty_count += 1;
+                        continue;
+                    };
+                    if api_key.trim().is_empty() {
+                        report.empty_count += 1;
+                        continue;
+                    }
+                    if !needs_secret_backfill(Some(api_key.as_str())) {
+                        report.skipped_encrypted_count += 1;
+                        continue;
+                    }
+
+                    let encrypted = encrypt_optional_secret(Some(api_key))?
+                        .unwrap_or_default();
+                    collection
+                        .update_one(
+                            doc! { "id": id },
+                            doc! { "$set": { "api_key": encrypted } },
+                            None,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    report.migrated_count += 1;
+                }
+
+                Ok(report)
+            })
+        },
+        |pool| {
+            Box::pin(async move {
+                let rows = sqlx::query("SELECT id, api_key FROM ai_model_configs")
+                    .fetch_all(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut report = AiModelConfigSecretBackfillReport::default();
+
+                for row in rows {
+                    report.total_count += 1;
+                    let id: String = row.try_get("id").map_err(|e| e.to_string())?;
+                    let api_key: Option<String> =
+                        row.try_get("api_key").map_err(|e| e.to_string())?;
+                    let Some(api_key) = api_key else {
+                        report.empty_count += 1;
+                        continue;
+                    };
+                    if api_key.trim().is_empty() {
+                        report.empty_count += 1;
+                        continue;
+                    }
+                    if !needs_secret_backfill(Some(api_key.as_str())) {
+                        report.skipped_encrypted_count += 1;
+                        continue;
+                    }
+
+                    let encrypted = encrypt_optional_secret(Some(api_key))?
+                        .unwrap_or_default();
+                    sqlx::query("UPDATE ai_model_configs SET api_key = ? WHERE id = ?")
+                        .bind(encrypted)
+                        .bind(id)
+                        .execute(pool)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    report.migrated_count += 1;
+                }
+
+                Ok(report)
             })
         },
     )

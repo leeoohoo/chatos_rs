@@ -5,8 +5,11 @@ use crate::core::auth::AuthUser;
 use crate::core::chat_runtime::project_id_from_metadata;
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::session_access::{ensure_owned_session, SessionAccessError};
-use crate::services::ai_common::normalize_turn_id;
+use crate::services::ai_common::{
+    build_user_content_parts, build_user_message_metadata, normalize_turn_id,
+};
 use crate::services::runtime_guidance_manager::{runtime_guidance_manager, DEFAULT_DRAIN_LIMIT};
+use crate::utils::attachments::{parse_attachments, Attachment};
 use crate::utils::abort_registry;
 
 use super::messages::{self, CreateUserMessageInput};
@@ -23,6 +26,7 @@ pub struct SubmitRuntimeGuidanceInput {
     pub turn_id: Option<String>,
     pub content: Option<String>,
     pub project_id: Option<String>,
+    pub attachments: Option<Vec<Value>>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,7 +73,16 @@ pub fn enqueue_runtime_guidance(
     turn_id: &str,
     content: &str,
 ) -> Result<RuntimeGuidanceItem, EnqueueGuidanceError> {
-    runtime_guidance_manager().enqueue_guidance(session_id, turn_id, content)
+    enqueue_runtime_guidance_with_attachments(session_id, turn_id, content, Vec::new())
+}
+
+pub fn enqueue_runtime_guidance_with_attachments(
+    session_id: &str,
+    turn_id: &str,
+    content: &str,
+    attachments: Vec<Attachment>,
+) -> Result<RuntimeGuidanceItem, EnqueueGuidanceError> {
+    runtime_guidance_manager().enqueue_guidance(session_id, turn_id, content, attachments)
 }
 
 pub async fn submit_runtime_guidance(
@@ -81,8 +94,12 @@ pub async fn submit_runtime_guidance(
     let turn_id = normalize_turn_id(input.turn_id.as_deref()).unwrap_or_default();
     let content = normalize_optional_text(input.content.as_deref()).unwrap_or_default();
     let requested_project_id = normalize_optional_text(input.project_id.as_deref());
+    let attachments = normalize_runtime_guidance_attachments(input.attachments.as_deref());
 
-    if conversation_id.is_empty() || turn_id.is_empty() || content.is_empty() {
+    if conversation_id.is_empty()
+        || turn_id.is_empty()
+        || (content.is_empty() && attachments.is_empty())
+    {
         return Err(SubmitRuntimeGuidanceError::InvalidPayload);
     }
     if content.chars().count() > CONTENT_MAX_LEN {
@@ -111,33 +128,42 @@ pub async fn submit_runtime_guidance(
         return Err(SubmitRuntimeGuidanceError::TurnNotRunning);
     }
 
-    let guidance_item =
-        enqueue_runtime_guidance(conversation_id.as_str(), turn_id.as_str(), content.as_str())
-            .map_err(|err| match err {
-                EnqueueGuidanceError::TurnNotRunning => SubmitRuntimeGuidanceError::TurnNotRunning,
-            })?;
+    let display_content = build_runtime_guidance_display_content(content.as_str(), &attachments);
+    let guidance_item = enqueue_runtime_guidance_with_attachments(
+        conversation_id.as_str(),
+        turn_id.as_str(),
+        content.as_str(),
+        attachments.clone(),
+    )
+    .map_err(|err| match err {
+        EnqueueGuidanceError::TurnNotRunning => SubmitRuntimeGuidanceError::TurnNotRunning,
+    })?;
 
     let pending_count =
         runtime_guidance_manager().pending_count(conversation_id.as_str(), turn_id.as_str());
     let guidance_id = guidance_item.guidance_id.clone();
 
-    let metadata = json!({
-        "conversation_turn_id": turn_id,
-        "hidden": true,
-        "runtime_guidance": {
+    let mut metadata = match build_user_message_metadata(&attachments, Some(turn_id.as_str())) {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+    metadata.insert("hidden".to_string(), Value::Bool(true));
+    metadata.insert(
+        "runtime_guidance".to_string(),
+        json!({
             "guidance_id": guidance_item.guidance_id,
             "status": "queued",
             "created_at": guidance_item.created_at,
-        }
-    });
+        }),
+    );
     if let Err(err) = messages::create_user_message(
         conversation_id.as_str(),
         CreateUserMessageInput {
-            content: content.clone(),
+            content: display_content,
             message_id: Some(guidance_id.clone()),
             message_mode: Some("runtime_guidance".to_string()),
             message_source: Some("runtime_guidance".to_string()),
-            metadata: Some(metadata),
+            metadata: Some(Value::Object(metadata)),
         },
     )
     .await
@@ -215,6 +241,45 @@ pub fn format_runtime_guidance_instruction(
     }
 }
 
+pub async fn build_runtime_guidance_message_content(
+    guidance_item: &RuntimeGuidanceItem,
+    locale: InternalContextLocale,
+    model_name: &str,
+    supports_images: Option<bool>,
+) -> Value {
+    if guidance_item.attachments.is_empty() {
+        return Value::String(format_runtime_guidance_instruction(guidance_item, locale));
+    }
+
+    let mut parts = vec![json!({
+        "type": "text",
+        "text": format_runtime_guidance_attachment_prelude(locale),
+    })];
+    let guidance_parts = build_user_content_parts(
+        model_name,
+        guidance_item.content.as_str(),
+        guidance_item.attachments.as_slice(),
+        supports_images,
+    )
+    .await;
+
+    match guidance_parts {
+        Value::String(text) => {
+            if !text.trim().is_empty() {
+                parts.push(json!({ "type": "text", "text": text }));
+            }
+        }
+        Value::Array(items) => parts.extend(items),
+        other => {
+            if !other.is_null() {
+                parts.push(json!({ "type": "text", "text": other.to_string() }));
+            }
+        }
+    }
+
+    Value::Array(parts)
+}
+
 pub fn build_runtime_guidance_applied_event(
     applied_item: &RuntimeGuidanceItem,
     pending_count: usize,
@@ -232,6 +297,69 @@ pub fn build_runtime_guidance_applied_event(
         payload["conversation_id"] = Value::String(applied_item.session_id.clone());
     }
     payload
+}
+
+fn normalize_runtime_guidance_attachments(raw: Option<&[Value]>) -> Vec<Attachment> {
+    raw.map(parse_attachments)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(is_meaningful_runtime_guidance_attachment)
+        .collect()
+}
+
+fn is_meaningful_runtime_guidance_attachment(attachment: &Attachment) -> bool {
+    attachment
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+        || attachment
+            .mime_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+        || attachment
+            .data_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+        || attachment
+            .text
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+}
+
+fn build_runtime_guidance_display_content(content: &str, attachments: &[Attachment]) -> String {
+    let trimmed = content.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    if attachments.is_empty() {
+        return String::new();
+    }
+    if attachments.len() == 1 {
+        return format!(
+            "[Runtime Guidance Attachment] {}",
+            attachments[0].name.as_deref().unwrap_or("attachment")
+        );
+    }
+    format!(
+        "[Runtime Guidance Attachments] {} attachments",
+        attachments.len()
+    )
+}
+
+fn format_runtime_guidance_attachment_prelude(locale: InternalContextLocale) -> String {
+    if locale.is_english() {
+        "[Runtime Guidance]\n- source: user guidance during running turn\n- rule: treat the following text and attachments as a high-priority preference unless conflicts with safety".to_string()
+    } else {
+        "[Runtime Guidance]\n- source: 用户在运行中追加的指导\n- rule: 将下面的文本和附件视为高优先级偏好，除非与安全要求冲突".to_string()
+    }
 }
 
 async fn load_owned_session(
@@ -254,9 +382,13 @@ async fn load_owned_session(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_runtime_guidance_applied_event, format_runtime_guidance_instruction};
+    use super::{
+        build_runtime_guidance_applied_event, build_runtime_guidance_message_content,
+        format_runtime_guidance_instruction,
+    };
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::services::runtime_guidance_manager::{RuntimeGuidanceItem, RuntimeGuidanceStatus};
+    use crate::utils::attachments::Attachment;
 
     fn sample_item() -> RuntimeGuidanceItem {
         RuntimeGuidanceItem {
@@ -264,6 +396,7 @@ mod tests {
             session_id: "session-1".to_string(),
             turn_id: "turn-1".to_string(),
             content: "continue with the current task".to_string(),
+            attachments: Vec::new(),
             status: RuntimeGuidanceStatus::Applied,
             created_at: "2026-04-27T12:00:00Z".to_string(),
             applied_at: Some("2026-04-27T12:00:05Z".to_string()),
@@ -314,5 +447,40 @@ mod tests {
             payload.get("guidance_id").and_then(|value| value.as_str()),
             Some("gd_test_1")
         );
+    }
+
+    #[tokio::test]
+    async fn builds_guidance_message_content_with_attachments() {
+        let mut item = sample_item();
+        item.content = String::new();
+        item.attachments = vec![Attachment {
+            name: Some("diagram.png".to_string()),
+            mime_type: Some("image/png".to_string()),
+            size: Some(32),
+            data_url: Some("data:image/png;base64,Zm9v".to_string()),
+            ..Attachment::default()
+        }];
+
+        let payload = build_runtime_guidance_message_content(
+            &item,
+            InternalContextLocale::ZhCn,
+            "gpt-4o-mini",
+            Some(false),
+        )
+        .await;
+
+        let parts = payload.as_array().expect("guidance content should be array");
+        assert!(parts.iter().any(|part| {
+            part.get("text")
+                .and_then(|value| value.as_str())
+                .map(|text| text.contains("高优先级偏好"))
+                .unwrap_or(false)
+        }));
+        assert!(parts.iter().any(|part| {
+            part.get("text")
+                .and_then(|value| value.as_str())
+                .map(|text| text.contains("model does not support images"))
+                .unwrap_or(false)
+        }));
     }
 }

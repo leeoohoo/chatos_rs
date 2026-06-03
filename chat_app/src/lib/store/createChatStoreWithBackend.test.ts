@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createChatStoreWithBackend } from './createChatStoreWithBackend';
+import {
+  LEGACY_CHAT_STORE_PERSIST_KEY,
+  resolveChatStorePersistKey,
+} from './persistence';
 
 type PersistCapableStore = ReturnType<typeof createChatStoreWithBackend> & {
   persist?: {
@@ -37,7 +41,10 @@ describe('createChatStoreWithBackend persistence', () => {
   });
 
   it('does not persist streaming runtime state into localStorage', () => {
-    const store = createChatStoreWithBackend({} as never) as PersistCapableStore;
+    const persistKey = resolveChatStorePersistKey('user_1');
+    const store = createChatStoreWithBackend({} as never, {
+      userId: 'user_1',
+    }) as PersistCapableStore;
 
     store.setState({
       theme: 'dark',
@@ -86,7 +93,7 @@ describe('createChatStoreWithBackend persistence', () => {
     });
 
     const persistedCalls = localStorageMock.setItem.mock.calls
-      .filter(([key]) => key === 'chat-store-with-backend');
+      .filter(([key]) => key === persistKey);
     const persistedRaw = persistedCalls[persistedCalls.length - 1]?.[1];
     expect(typeof persistedRaw).toBe('string');
 
@@ -106,9 +113,10 @@ describe('createChatStoreWithBackend persistence', () => {
     expect(persisted.state.sessionStreamingMessageDrafts).toBeUndefined();
   });
 
-  it('migrates legacy persisted runtime state away during rehydrate', async () => {
+  it('migrates legacy persisted runtime state into the user-scoped store during rehydrate', async () => {
+    const persistKey = resolveChatStorePersistKey('user_1');
     localStorageMock.setItem(
-      'chat-store-with-backend',
+      LEGACY_CHAT_STORE_PERSIST_KEY,
       JSON.stringify({
         state: {
           theme: 'dark',
@@ -150,7 +158,9 @@ describe('createChatStoreWithBackend persistence', () => {
       }),
     );
 
-    const store = createChatStoreWithBackend({} as never) as PersistCapableStore;
+    const store = createChatStoreWithBackend({} as never, {
+      userId: 'user_1',
+    }) as PersistCapableStore;
     await store.persist?.rehydrate?.();
 
     expect(store.getState().theme).toBe('dark');
@@ -165,10 +175,11 @@ describe('createChatStoreWithBackend persistence', () => {
     expect(store.getState().sessionStreamingMessageDrafts).toEqual({});
 
     const persisted = JSON.parse(
-      String(localStorageMock.getItem('chat-store-with-backend')),
+      String(localStorageMock.getItem(persistKey)),
     );
     expect(persisted.version).toBe(2);
     expect(persisted.state.sessionChatState).toBeUndefined();
     expect(persisted.state.sessionStreamingMessageDrafts).toBeUndefined();
+    expect(localStorageMock.getItem(LEGACY_CHAT_STORE_PERSIST_KEY)).toBeNull();
   });
 });

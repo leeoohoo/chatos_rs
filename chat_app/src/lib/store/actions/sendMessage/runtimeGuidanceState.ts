@@ -4,6 +4,7 @@ import type {
   RuntimeGuidanceItem,
   SessionRuntimeGuidanceState,
 } from '../../types';
+import type { PreviewAttachment } from './types';
 
 const MAX_RUNTIME_GUIDANCE_ITEMS = 20;
 
@@ -31,6 +32,18 @@ const createRuntimeGuidanceItem = ({
   createdAt,
   appliedAt,
 });
+
+const buildRuntimeGuidanceFallbackContent = (
+  previewAttachments: PreviewAttachment[],
+): string => {
+  if (!Array.isArray(previewAttachments) || previewAttachments.length === 0) {
+    return '';
+  }
+  if (previewAttachments.length === 1) {
+    return `[运行时引导附件] ${previewAttachments[0].name}`;
+  }
+  return `[运行时引导附件] ${previewAttachments.length} 个附件`;
+};
 
 const asRecord = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object'
@@ -136,16 +149,19 @@ export const queueOptimisticRuntimeGuidance = (
     guidanceId,
     content,
     guidanceAt,
+    previewAttachments,
   }: {
     sessionId: string;
     turnId: string;
     guidanceId: string;
     content: string;
     guidanceAt: string;
+    previewAttachments: PreviewAttachment[];
   },
 ) => {
   const prev = ensureSessionRuntimeGuidanceState(state, sessionId);
   const prevItems = Array.isArray(prev.items) ? prev.items : [];
+  const normalizedContent = content || buildRuntimeGuidanceFallbackContent(previewAttachments);
 
   state.sessionRuntimeGuidanceState[sessionId] = {
     ...prev,
@@ -155,7 +171,7 @@ export const queueOptimisticRuntimeGuidance = (
       createRuntimeGuidanceItem({
         guidanceId,
         turnId,
-        content,
+        content: normalizedContent,
         status: 'queued',
         createdAt: guidanceAt,
         appliedAt: null,
@@ -177,13 +193,14 @@ export const queueOptimisticRuntimeGuidance = (
     id: guidanceId,
     sessionId,
     role: 'user',
-    content,
+    content: normalizedContent,
     status: 'completed',
     createdAt: new Date(guidanceAt),
     metadata: {
       conversation_turn_id: turnId,
       message_mode: 'runtime_guidance',
       message_source: 'runtime_guidance',
+      ...(previewAttachments.length > 0 ? { attachments: previewAttachments } : {}),
       runtime_guidance: {
         guidance_id: guidanceId,
         status: 'queued',
@@ -204,6 +221,7 @@ export const reconcileSubmittedRuntimeGuidance = (
     guidanceAt,
     status,
     pendingCount,
+    previewAttachments,
   }: {
     sessionId: string;
     turnId: string;
@@ -213,6 +231,7 @@ export const reconcileSubmittedRuntimeGuidance = (
     guidanceAt: string;
     status?: string | null;
     pendingCount?: number | null;
+    previewAttachments: PreviewAttachment[];
   },
 ) => {
   const prev = ensureSessionRuntimeGuidanceState(state, sessionId);
@@ -221,6 +240,7 @@ export const reconcileSubmittedRuntimeGuidance = (
     ? 'applied'
     : (status === 'dropped' ? 'dropped' : 'queued');
   const prevItems = Array.isArray(prev.items) ? [...prev.items] : [];
+  const normalizedContent = content || buildRuntimeGuidanceFallbackContent(previewAttachments);
   const existingIndex = prevItems.findIndex(
     (item) => item.guidanceId === optimisticGuidanceId || item.guidanceId === guidanceId,
   );
@@ -230,14 +250,14 @@ export const reconcileSubmittedRuntimeGuidance = (
       ...prevItems[existingIndex],
       guidanceId,
       turnId,
-      content: prevItems[existingIndex]?.content || content,
+      content: prevItems[existingIndex]?.content || normalizedContent,
       status: nextStatus,
     };
   } else {
     prevItems.unshift(createRuntimeGuidanceItem({
       guidanceId,
       turnId,
-      content,
+      content: normalizedContent,
       status: nextStatus,
       createdAt: guidanceAt,
       appliedAt: null,

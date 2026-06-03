@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-import { apiClient } from '../api/client';
+import { useApiClientContext } from '../api/ApiClientContext';
 import { RealtimeClient } from './client';
 import {
   getRealtimeConnectionStateSnapshot,
@@ -45,9 +45,13 @@ export const RealtimeProvider: React.FC<RealtimeProviderProps> = ({
   children,
   accessToken,
 }) => {
+  const apiClient = useApiClientContext();
   const clientRef = useRef<RealtimeClient | null>(null);
   if (!clientRef.current) {
-    clientRef.current = new RealtimeClient(apiClient.getBaseUrl());
+    clientRef.current = new RealtimeClient(
+      apiClient.getBaseUrl(),
+      () => apiClient.issueWebSocketTicket(),
+    );
   }
 
   const client = clientRef.current;
@@ -60,7 +64,11 @@ export const RealtimeProvider: React.FC<RealtimeProviderProps> = ({
 
   useEffect(() => {
     client.setBaseUrl(apiClient.getBaseUrl());
-  }, [client]);
+  }, [apiClient, client]);
+
+  useEffect(() => {
+    client.setWebSocketTicketFactory(() => apiClient.issueWebSocketTicket());
+  }, [apiClient, client]);
 
   useEffect(() => {
     client.setAccessToken(accessToken);

@@ -183,6 +183,7 @@ export interface ConversationRuntimeSliceActions {
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => Promise<void>;
   submitRuntimeGuidance: (content: string, options: {
+    attachments?: File[];
     conversationId: string;
     turnId: string;
     projectId?: string | null;

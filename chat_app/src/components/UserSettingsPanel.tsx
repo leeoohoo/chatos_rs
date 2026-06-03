@@ -1,9 +1,8 @@
 import React from 'react';
 import {
-  useChatApiClientFromContext,
   useChatRuntimeEnv,
 } from '../lib/store/ChatStoreContext';
-import { apiClient as globalApiClient } from '../lib/api/client';
+import { useApiClient } from '../lib/api/ApiClientContext';
 import { useI18n } from '../i18n/I18nProvider';
 
 interface Props { onClose: () => void }
@@ -49,8 +48,7 @@ const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
 };
 
 const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
-  const clientFromContext = useChatApiClientFromContext();
-  const client = clientFromContext || globalApiClient;
+  const client = useApiClient();
   const { userId } = useChatRuntimeEnv();
   const { locale, setLocale, t } = useI18n();
 

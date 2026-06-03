@@ -17,6 +17,7 @@ interface EmbeddedTerminalViewProps {
   loadTerminals?: () => void | Promise<unknown>;
   client: {
     getBaseUrl(): string;
+    issueWebSocketTicket(): Promise<string>;
     listTerminalLogs(
       terminalId: string,
       params?: { limit?: number; offset?: number; before?: string },

@@ -1,7 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import {immer} from 'zustand/middleware/immer';
 import {persist} from 'zustand/middleware';
-import {apiClient} from '../api/client';
 import type ApiClient from '../api/client';
 import {createSendMessageHandler} from './actions/sendMessage';
 import { createApplicationActions } from './actions/applications';
@@ -26,6 +25,10 @@ import { remoteExecutionInitialState } from './slices/remoteExecutionSlice';
 import { sessionInitialState } from './slices/sessionSlice';
 import { uiInitialState } from './slices/uiSlice';
 import { workspaceInitialState } from './slices/workspaceSlice';
+import {
+  primeScopedChatStoreStateFromLegacy,
+  resolveChatStorePersistKey,
+} from './persistence';
 import type {
   ChatActions,
   ChatState,
@@ -36,17 +39,19 @@ export type { ChatActions, ChatState, ChatStoreConfig } from './types';
 
 /**
  * 创建聊天store的工厂函数（使用后端API版本）
- * @param customApiClient 自定义的API客户端实例，如果不提供则使用默认的apiClient
+ * @param customApiClient 自定义的API客户端实例
  * @param config 自定义配置，包含userId和projectId
  * @returns 聊天store hook
  */
-export function createChatStoreWithBackend(customApiClient?: ApiClient, config?: ChatStoreConfig) {
-    const client = customApiClient || apiClient;
+export function createChatStoreWithBackend(customApiClient: ApiClient, config?: ChatStoreConfig) {
+    const client = customApiClient;
     const customUserId = config?.userId;
     const customProjectId = config?.projectId;
     
     // 用户 ID 由登录态注入；缺失时不再回退到硬编码默认值
     const userId = customUserId || '';
+    const persistKey = resolveChatStorePersistKey(userId);
+    primeScopedChatStoreStateFromLegacy(userId);
     
     // 获取userId的统一函数
     const getUserIdParam = () => userId;
@@ -112,7 +117,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                 };
                 },
                 {
-                    name: 'chat-store-with-backend',
+                    name: persistKey,
                     version: 2,
                     migrate: (persistedState: unknown, version: number) => {
                         if (!persistedState || typeof persistedState !== 'object') {

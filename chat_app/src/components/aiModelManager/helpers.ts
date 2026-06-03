@@ -20,6 +20,8 @@ const DEFAULT_FORM_DATA: AiModelFormData = {
   provider: 'gpt',
   base_url: '',
   api_key: '',
+  has_stored_api_key: false,
+  clear_api_key: false,
   model_name: '',
   thinking_level: '',
   enabled: true,
@@ -45,7 +47,9 @@ export const toAiModelFormData = (config: AiModelConfig): AiModelFormData => ({
   name: config.name,
   provider: config.provider || 'gpt',
   base_url: config.base_url,
-  api_key: config.api_key,
+  api_key: '',
+  has_stored_api_key: config.has_api_key || Boolean(config.api_key.trim()),
+  clear_api_key: false,
   model_name: config.model_name,
   thinking_level: config.thinking_level || '',
   enabled: config.enabled,
@@ -61,13 +65,18 @@ export const buildAiModelConfig = (
   const normalizedThinking = formData.provider === 'gpt' && formData.thinking_level.trim()
     ? formData.thinking_level.trim()
     : undefined;
+  const apiKey = formData.clear_api_key ? '' : formData.api_key.trim();
+  const hasApiKey = formData.clear_api_key
+    ? false
+    : Boolean(apiKey || current?.has_api_key || formData.has_stored_api_key);
 
   return {
     id: current?.id || generateId(),
     name: formData.name.trim(),
     provider: formData.provider,
     base_url: formData.base_url.trim(),
-    api_key: formData.api_key.trim(),
+    api_key: apiKey,
+    has_api_key: hasApiKey,
     model_name: formData.model_name.trim(),
     thinking_level: normalizedThinking,
     enabled: formData.enabled,

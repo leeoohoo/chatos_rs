@@ -42,6 +42,7 @@ export interface AiModelConfig {
   provider: string;
   base_url: string;
   api_key: string;
+  has_api_key: boolean;
   model_name: string;
   thinking_level?: string;
   enabled: boolean;

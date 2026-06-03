@@ -1,10 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type React from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
-import { apiClient as globalApiClient } from '../../lib/api/client';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import { useNotepadRealtime } from '../../lib/realtime/useNotepadRealtime';
-import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
 import type { ContextMenuState } from './NotepadContextMenu';
 import type { NotepadViewMode } from './NotepadEditor';
 import { useNotepadPanelEffects } from './useNotepadPanelEffects';
@@ -74,8 +73,7 @@ export const useNotepadPanelController = ({
   isOpen,
 }: UseNotepadPanelControllerParams): UseNotepadPanelControllerResult => {
   const { t } = useI18n();
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const apiClient = useApiClient();
   const { confirm, prompt } = useDialogService();
 
   const [selectedFolder, setSelectedFolder] = useState('');

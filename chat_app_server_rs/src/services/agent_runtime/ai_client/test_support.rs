@@ -391,6 +391,7 @@ pub(super) async fn run_process_with_tools(
             None,
             args.request_cwd,
             args.supports_responses,
+            Some(true),
         )
         .await
 }

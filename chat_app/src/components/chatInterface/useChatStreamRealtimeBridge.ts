@@ -7,13 +7,12 @@ import {
   useRealtimeTopics,
 } from '../../lib/realtime/RealtimeProvider';
 import { useConversationChatStreamRealtime } from '../../lib/realtime/useConversationChatStreamRealtime';
-import { apiClient as globalApiClient } from '../../lib/api/client';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
   shouldRecoverStreamingSessionAfterDisconnect,
 } from '../../lib/store/actions/sendMessage/persistedTurnMessages';
 import { recoverStreamingTurnBySnapshot } from '../../lib/store/actions/sendMessage/turnRecovery';
 import {
-  useChatApiClientFromContext,
   useChatStoreContext,
   useChatStoreSelector,
 } from '../../lib/store/ChatStoreContext';
@@ -33,8 +32,7 @@ const DISCONNECT_RECOVERY_GRACE_MS = 1800;
 
 export const useChatStreamRealtimeBridge = () => {
   const store = useChatStoreContext();
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = apiClientFromContext || globalApiClient;
+  const apiClient = useApiClient();
   const realtimeConnectionState = useRealtimeConnectionState();
   const activeStreamingSessionIds = useChatStoreSelector((state) => (
     collectActiveStreamingSessionIds(state.sessionChatState)

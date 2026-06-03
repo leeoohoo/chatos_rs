@@ -7,7 +7,10 @@ export interface AiModelManagerProps {
   store?: () => {
     aiModelConfigs: AiModelConfig[];
     loadAiModelConfigs: () => Promise<void>;
-    updateAiModelConfig: (config: AiModelConfig) => Promise<void>;
+    updateAiModelConfig: (
+      config: AiModelConfig,
+      options?: { clearApiKey?: boolean },
+    ) => Promise<void>;
     deleteAiModelConfig: (id: string) => Promise<void>;
   };
 }
@@ -17,6 +20,8 @@ export interface AiModelFormData {
   provider: string;
   base_url: string;
   api_key: string;
+  has_stored_api_key: boolean;
+  clear_api_key: boolean;
   model_name: string;
   thinking_level: string;
   enabled: boolean;

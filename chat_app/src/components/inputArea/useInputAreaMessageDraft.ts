@@ -87,10 +87,10 @@ export const useInputAreaMessageDraft = ({
     }
 
     if (isGuidingMode) {
-      if (!trimmedMessage) {
+      if (!trimmedMessage && attachments.length === 0) {
         return;
       }
-      onGuide?.(trimmedMessage);
+      onGuide?.(trimmedMessage, attachments);
       resetComposer();
       return;
     }
@@ -150,6 +150,6 @@ export const useInputAreaMessageDraft = ({
     handleInputChange,
     handleKeyDown,
     handleSend,
-    canSend: Boolean(message.trim() || (!isGuidingMode && attachments.length > 0)),
+    canSend: Boolean(message.trim() || attachments.length > 0),
   };
 };

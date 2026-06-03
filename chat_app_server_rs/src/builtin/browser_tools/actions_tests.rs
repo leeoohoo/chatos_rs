@@ -313,6 +313,7 @@ fn ai_model_config_to_runtime_value_uses_model_name_field() {
         model: "gpt-4o-mini".to_string(),
         thinking_level: Some("medium".to_string()),
         api_key: Some("key".to_string()),
+        has_api_key: true,
         base_url: Some("https://api.openai.com/v1".to_string()),
         user_id: Some("user_1".to_string()),
         enabled: true,

@@ -126,7 +126,7 @@ export const useTeamMembersRuntimeResources = ({
     setSelectedContactId: conversation.setSelectedContactId,
   });
 
-  const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
+  const handleRuntimeGuidanceSend = useCallback(async (content: string, attachments?: File[]) => {
     if (!conversation.selectedProjectSession) {
       return;
     }
@@ -142,6 +142,7 @@ export const useTeamMembersRuntimeResources = ({
     }
     try {
       await submitRuntimeGuidance(content, {
+        attachments,
         conversationId: sessionId,
         turnId,
         projectId: normalizedProjectId,

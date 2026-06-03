@@ -24,5 +24,6 @@ pub(crate) use self::request_transport::{
     send_bearer_json_request, validate_request_payload_size,
 };
 pub(crate) use self::user_message::{
-    normalize_turn_id, persist_user_message_and_build_content_parts,
+    build_user_content_parts, build_user_message_metadata, normalize_turn_id,
+    persist_user_message_and_build_content_parts,
 };

@@ -26,6 +26,12 @@ export interface MeResponse {
   role?: string;
 }
 
+export interface WebSocketTicketResponse {
+  ticket?: string;
+  expires_in?: number;
+  expires_at?: string;
+}
+
 export interface UserSettingsResponse {
   user_id?: string;
   settings?: Record<string, unknown>;

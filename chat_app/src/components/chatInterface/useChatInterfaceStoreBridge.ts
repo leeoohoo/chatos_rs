@@ -1,10 +1,8 @@
-import { useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
 
-import { apiClient as globalApiClient } from '../../lib/api/client';
-import { useAuthStore } from '../../lib/auth/authStore';
+import { useApiClient } from '../../lib/api/ApiClientContext';
+import { useAuthStoreFromContext } from '../../lib/auth/authStore';
 import {
-  useChatApiClientFromContext,
   useChatStoreSelector,
 } from '../../lib/store/ChatStoreContext';
 
@@ -61,9 +59,8 @@ export const useChatInterfaceStoreBridge = () => {
     removeUiPromptPanel: state.removeUiPromptPanel,
   }), shallow);
 
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
-  const auth = useAuthStore();
+  const apiClient = useApiClient();
+  const auth = useAuthStoreFromContext();
 
   return {
     ...store,

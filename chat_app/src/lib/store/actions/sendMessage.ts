@@ -6,7 +6,10 @@ import {
   waitForRealtimeConnectedSnapshot,
 } from '../../realtime/state';
 import { debugLog } from '@/lib/utils';
-import { prepareAttachmentsForStreaming } from './sendMessage/attachments';
+import {
+  assertPayloadWithinTransportBudget,
+  prepareAttachmentsForStreaming,
+} from './sendMessage/attachments';
 import { createInternalId } from './sendMessage/internalId';
 import {
   createDraftAssistantMessage,
@@ -237,6 +240,33 @@ export function createSendMessageHandler({
         skillsEnabled: effectiveSkillsEnabled,
         selectedSkillIds: effectiveSelectedSkillIds,
       });
+      const userId = getUserIdParam();
+      assertPayloadWithinTransportBudget({
+        conversation_id: currentSessionId,
+        content,
+        user_id: userId,
+        attachments: apiAttachments || [],
+        reasoning_enabled: reasoningEnabled,
+        turn_id: streamRuntimeOptions.turnId,
+        contact_agent_id: streamRuntimeOptions.contactAgentId || undefined,
+        remote_connection_id: Object.prototype.hasOwnProperty.call(
+          streamRuntimeOptions,
+          'remoteConnectionId',
+        )
+          ? (streamRuntimeOptions.remoteConnectionId ?? null)
+          : undefined,
+        project_id: streamRuntimeOptions.projectId || undefined,
+        project_root: streamRuntimeOptions.projectRoot || undefined,
+        mcp_enabled: streamRuntimeOptions.mcpEnabled,
+        enabled_mcp_ids: streamRuntimeOptions.enabledMcpIds || [],
+        auto_create_task: streamRuntimeOptions.autoCreateTask,
+        skills_enabled: streamRuntimeOptions.skillsEnabled === true,
+        selected_skill_ids: streamRuntimeOptions.selectedSkillIds || [],
+        model_config_id: selectedModel.id,
+        ai_model_config: {
+          temperature: 0.7,
+        },
+      });
       let preferRealtimeStream = getRealtimeConnectionStateSnapshot() === 'connected';
       if (!preferRealtimeStream) {
         preferRealtimeStream = await waitForRealtimeConnectedSnapshot(REALTIME_STREAM_CONNECT_GRACE_MS);
@@ -257,7 +287,7 @@ export function createSendMessageHandler({
         currentSessionId,
         content,
         selectedModel,
-        getUserIdParam(),
+        userId,
         apiAttachments,
         reasoningEnabled,
         streamRuntimeOptions,

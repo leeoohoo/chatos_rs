@@ -91,6 +91,7 @@ impl AiClient {
         message_source: Option<String>,
         request_cwd: Option<String>,
         supports_responses: bool,
+        supports_images: Option<bool>,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
         let persist_tool_messages = purpose != "agent_builder";
@@ -147,6 +148,8 @@ impl AiClient {
                 session_id.as_deref(),
                 turn_id.as_deref(),
                 force_text_content,
+                model.as_str(),
+                supports_images,
                 &callbacks,
             )
             .await;
