@@ -444,6 +444,115 @@ async fn runtime_guidance_items_keep_stateless_mode() {
 }
 
 #[tokio::test]
+async fn runtime_guidance_attachment_parts_are_responses_compatible() {
+    let session_id = unique_session_id("session_runtime_guidance_attachment");
+    let turn_id = "turn_runtime_guidance_attachment";
+    ensure_memory_session(session_id.as_str())
+        .await
+        .expect("setup runtime guidance session");
+
+    crate::modules::conversation_runtime::guidance::register_active_turn(
+        session_id.as_str(),
+        turn_id,
+    );
+    crate::modules::conversation_runtime::guidance::enqueue_runtime_guidance_with_attachments(
+        session_id.as_str(),
+        turn_id,
+        "please inspect this image",
+        vec![crate::utils::attachments::Attachment {
+            name: Some("diagram.png".to_string()),
+            mime_type: Some("image/png".to_string()),
+            size: Some(32),
+            data_url: Some("data:image/png;base64,Zm9v".to_string()),
+            ..crate::utils::attachments::Attachment::default()
+        }],
+    )
+    .expect("runtime guidance should enqueue");
+
+    let steps = vec![MockProviderStep::json(
+        StatusCode::OK,
+        json!({
+            "id": "resp_runtime_guidance_attachment",
+            "status": "completed",
+            "output_text": "runtime guidance ok"
+        }),
+    )];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            session_id: Some(session_id.clone()),
+            turn_id: Some(turn_id.to_string()),
+            callbacks: empty_callbacks(),
+            purpose: "chat",
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("runtime guidance request should succeed");
+    crate::modules::conversation_runtime::guidance::close_active_turn(session_id.as_str(), turn_id);
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("runtime guidance ok")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 1);
+    let input = requests[0]
+        .get("input")
+        .and_then(|value| value.as_array())
+        .expect("request input should be item array");
+    let guidance_item = input
+        .iter()
+        .find(|item| {
+            item.get("role").and_then(|value| value.as_str()) == Some("system")
+                && item
+                    .get("content")
+                    .and_then(|value| value.as_array())
+                    .map(|parts| {
+                        parts.iter().any(|part| {
+                            part.get("text")
+                                .and_then(|value| value.as_str())
+                                .map(|text| text.contains("Runtime Guidance"))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false)
+        })
+        .expect("runtime guidance message should be appended");
+    let content_parts = guidance_item
+        .get("content")
+        .and_then(|value| value.as_array())
+        .expect("runtime guidance content should be parts");
+    assert!(content_parts.iter().all(|part| {
+        !matches!(
+            part.get("type").and_then(|value| value.as_str()),
+            Some("text" | "image_url")
+        )
+    }));
+    assert!(content_parts.iter().any(|part| {
+        part.get("type").and_then(|value| value.as_str()) == Some("input_text")
+            && part
+                .get("text")
+                .and_then(|value| value.as_str())
+                .map(|text| text.contains("please inspect this image"))
+                .unwrap_or(false)
+    }));
+    assert!(content_parts.iter().any(|part| {
+        part.get("type").and_then(|value| value.as_str()) == Some("input_image")
+            && part
+                .get("image_url")
+                .and_then(|value| value.as_str())
+                .map(|url| url == "data:image/png;base64,Zm9v")
+                .unwrap_or(false)
+    }));
+}
+
+#[tokio::test]
 async fn recovers_input_must_be_list_and_retries_with_list_payload() {
     let steps = vec![
         MockProviderStep::text(StatusCode::BAD_REQUEST, "input must be a list"),

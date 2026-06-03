@@ -6,9 +6,6 @@ mod tests;
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-use uuid::Uuid;
-
 use crate::core::async_bridge::{block_on_option, block_on_result};
 use crate::core::mcp_tools::ToolStreamChunkCallback;
 use crate::core::tool_io::text_result;
@@ -17,6 +14,7 @@ use crate::modules::conversation_runtime::task_board::refresh_task_board_runtime
 use crate::services::task_manager::{
     complete_task_by_id, delete_task_by_id, list_tasks_for_context, update_task_by_id,
 };
+use serde_json::{json, Value};
 
 use self::parsing::{parse_update_patch, required_string_arg, trimmed_non_empty};
 use self::review_flow::handle_add_task;
@@ -31,8 +29,6 @@ pub struct TaskManagerOptions {
 #[derive(Clone)]
 pub struct TaskManagerService {
     registry: ToolRegistry<ToolHandler>,
-    default_conversation_id: String,
-    default_turn_id: String,
     auto_create_task: bool,
 }
 
@@ -49,8 +45,6 @@ impl TaskManagerService {
     pub fn new(opts: TaskManagerOptions) -> Result<Self, String> {
         let mut service = Self {
             registry: ToolRegistry::new(),
-            default_conversation_id: format!("conversation_{}", Uuid::new_v4().simple()),
-            default_turn_id: format!("turn_{}", Uuid::new_v4().simple()),
             auto_create_task: opts.auto_create_task,
         };
 
@@ -86,10 +80,10 @@ impl TaskManagerService {
 
         let conversation = conversation_id
             .and_then(trimmed_non_empty)
-            .unwrap_or(self.default_conversation_id.as_str());
+            .ok_or_else(|| "task_manager requires an active conversation_id".to_string())?;
         let turn = conversation_turn_id
             .and_then(trimmed_non_empty)
-            .unwrap_or(self.default_turn_id.as_str());
+            .ok_or_else(|| "task_manager requires an active conversation_turn_id".to_string())?;
 
         let ctx = ToolContext {
             conversation_id: conversation,

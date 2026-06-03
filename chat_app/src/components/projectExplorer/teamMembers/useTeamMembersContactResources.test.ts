@@ -90,4 +90,48 @@ describe('resolveProjectContactSession', () => {
 
     expect(resolved?.id).toBe('project-1-session');
   });
+
+  it('does not reuse the current session for a different contact sharing the same agent', () => {
+    const contact = {
+      ...buildContact(),
+      id: 'contact-2',
+    };
+    const currentSession = buildSession({
+      id: 'contact-1-session',
+      metadata: {
+        chat_runtime: {
+          project_id: 'project-1',
+          contact_agent_id: 'agent-1',
+        },
+        contact: {
+          type: 'memory_agent',
+          contact_id: 'contact-1',
+          agent_id: 'agent-1',
+        },
+      },
+    });
+    const lookupSession = buildSession({
+      id: 'contact-2-session',
+      metadata: {
+        chat_runtime: {
+          project_id: 'project-1',
+          contact_agent_id: 'agent-1',
+        },
+        contact: {
+          type: 'memory_agent',
+          contact_id: 'contact-2',
+          agent_id: 'agent-1',
+        },
+      },
+    });
+
+    const resolved = resolveProjectContactSession({
+      currentSession,
+      contact,
+      normalizedProjectId: 'project-1',
+      findProjectSessionForContact: () => lookupSession,
+    });
+
+    expect(resolved?.id).toBe('contact-2-session');
+  });
 });

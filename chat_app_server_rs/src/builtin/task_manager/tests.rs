@@ -111,6 +111,26 @@ fn task_manager_tools_include_mutations() {
 }
 
 #[test]
+fn task_manager_requires_explicit_conversation_context() {
+    let service = TaskManagerService::new(TaskManagerOptions {
+        server_name: "task_manager".to_string(),
+        review_timeout_ms: 120_000,
+        auto_create_task: false,
+    })
+    .expect("task manager service should initialize");
+
+    let missing_conversation = service
+        .call_tool("list_tasks", json!({}), None, Some("turn_1"), None)
+        .expect_err("task manager must not fall back to a shared conversation");
+    assert!(missing_conversation.contains("conversation_id"));
+
+    let missing_turn = service
+        .call_tool("list_tasks", json!({}), Some("session_1"), None, None)
+        .expect_err("task manager must not fall back to a shared turn");
+    assert!(missing_turn.contains("conversation_turn_id"));
+}
+
+#[test]
 fn update_task_schema_changes_is_string() {
     let service = TaskManagerService::new(TaskManagerOptions {
         server_name: "task_manager".to_string(),

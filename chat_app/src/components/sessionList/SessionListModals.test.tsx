@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
+import { DirPickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
 
 describe('SessionList modals', () => {
@@ -48,6 +49,51 @@ describe('SessionList modals', () => {
 
     expect(screen.getByRole('dialog', { name: '新增终端' })).toBeInTheDocument();
     expect(screen.getByDisplayValue('/Users/demo/project-a')).toBeInTheDocument();
+  });
+
+  it('layers the directory picker above the project creation dialog', () => {
+    render(
+      <>
+        <CreateProjectModal
+          isOpen
+          projectRoot=""
+          projectError={null}
+          onClose={vi.fn()}
+          onProjectRootChange={vi.fn()}
+          onOpenPicker={vi.fn()}
+          onCreate={vi.fn()}
+        />
+        <DirPickerDialog
+          isOpen
+          target="project"
+          currentPath="/Users/demo"
+          parentPath="/Users"
+          writable
+          loading={false}
+          items={[]}
+          error={null}
+          showHiddenDirs={false}
+          createModalOpen={false}
+          newFolderName=""
+          creatingFolder={false}
+          onClose={vi.fn()}
+          onBack={vi.fn()}
+          onChooseCurrent={vi.fn()}
+          onOpenCreateModal={vi.fn()}
+          onToggleHiddenDirs={vi.fn()}
+          onOpenEntry={vi.fn()}
+          onCreateModalClose={vi.fn()}
+          onNewFolderNameChange={vi.fn()}
+          onCreateDir={vi.fn()}
+        />
+      </>,
+    );
+
+    const projectDialogLayer = screen.getByRole('dialog', { name: '新增项目' }).parentElement;
+    const pickerLayer = screen.getByText('选择项目目录').closest('.fixed');
+
+    expect(projectDialogLayer).toHaveClass('z-[70]');
+    expect(pickerLayer).toHaveClass('z-[80]');
   });
 
   it('renders contact creation dialog with selectable agents', () => {

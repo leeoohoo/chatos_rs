@@ -42,7 +42,7 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
       <div className="relative bg-card border border-border rounded-lg shadow-xl w-[680px] max-h-[82vh] p-6 flex flex-col">
         <div className="flex items-center justify-between mb-3">
@@ -172,7 +172,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
   const canCreateHere = canCreate && writable;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
       <div className="relative bg-card border border-border rounded-lg shadow-xl w-[640px] max-h-[80vh] p-6 flex flex-col">
         <div className="flex items-center justify-between mb-3">

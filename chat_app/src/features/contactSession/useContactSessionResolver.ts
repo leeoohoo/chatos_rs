@@ -220,12 +220,13 @@ export const useContactSessionResolver = ({
     const currentContactId = resolveContactIdFromSession(currentSession);
     const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
     const currentSessionProjectId = resolveSessionProjectScopeId(currentSession);
+    const normalizedContactId = typeof contact.id === 'string' ? contact.id.trim() : '';
+    const normalizedContactAgentId = typeof contact.agentId === 'string' ? contact.agentId.trim() : '';
     if (
       currentSession?.id
-      && (
-        (currentContactId && currentContactId === contact.id)
-        || (currentContactAgentId && currentContactAgentId === contact.agentId)
-      )
+      && (normalizedContactId
+        ? currentContactId === normalizedContactId
+        : Boolean(normalizedContactAgentId && currentContactAgentId === normalizedContactAgentId))
       && currentSessionProjectId === normalizedProjectId
     ) {
       sessionCacheRef.current[cacheKey] = currentSession.id;

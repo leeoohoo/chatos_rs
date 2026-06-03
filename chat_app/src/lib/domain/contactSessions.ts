@@ -113,9 +113,6 @@ export const matchSessionContactProjectScope = (
   let sameContact = false;
   if (contactId) {
     sameContact = identity.contactId === contactId;
-    if (!sameContact && contactAgentId) {
-      sameContact = identity.contactAgentId === contactAgentId;
-    }
   } else if (contactAgentId) {
     sameContact = identity.contactAgentId === contactAgentId;
   }
@@ -162,10 +159,14 @@ export const splitSessionsByMappedContacts = (
   missingContacts: MemoryContact[];
 } => {
   const contactsById = new Map(contacts.map((item) => [item.id, item]));
-  const contactsByAgentId = new Map(contacts.map((item) => [item.agent_id, item]));
+  const contactsByAgentId = new Map<string, MemoryContact[]>();
+  for (const contact of contacts) {
+    const existing = contactsByAgentId.get(contact.agent_id) || [];
+    existing.push(contact);
+    contactsByAgentId.set(contact.agent_id, existing);
+  }
 
   const mappedContactIds = new Set<string>();
-  const mappedContactAgentIds = new Set<string>();
   const matchedSessions = sessions.filter((session) => {
     if (!isSessionActive(session)) {
       return false;
@@ -173,19 +174,14 @@ export const splitSessionsByMappedContacts = (
     const identity = resolveSessionContactIdentity(session);
     if (identity.contactId && contactsById.has(identity.contactId)) {
       mappedContactIds.add(identity.contactId);
-      const mappedContact = contactsById.get(identity.contactId);
-      if (mappedContact) {
-        mappedContactAgentIds.add(mappedContact.agent_id);
-      }
       return true;
     }
-    if (identity.contactAgentId && contactsByAgentId.has(identity.contactAgentId)) {
-      mappedContactAgentIds.add(identity.contactAgentId);
-      const mappedContact = contactsByAgentId.get(identity.contactAgentId);
-      if (mappedContact) {
-        mappedContactIds.add(mappedContact.id);
+    if (identity.contactAgentId) {
+      const mappedContacts = contactsByAgentId.get(identity.contactAgentId) || [];
+      if (mappedContacts.length === 1) {
+        mappedContactIds.add(mappedContacts[0].id);
+        return true;
       }
-      return true;
     }
     return false;
   });
@@ -194,7 +190,7 @@ export const splitSessionsByMappedContacts = (
     if (mappedContactIds.has(contact.id)) {
       return false;
     }
-    return !mappedContactAgentIds.has(contact.agent_id);
+    return true;
   });
 
   return {

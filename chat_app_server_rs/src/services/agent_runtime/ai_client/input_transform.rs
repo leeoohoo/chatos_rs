@@ -27,69 +27,10 @@ fn convert_parts_to_response_input(content: &Value) -> Value {
         return Value::String(text.to_string());
     }
 
-    if let Some(parts) = content.as_array() {
-        let mut content_list = Vec::new();
-
-        for part in parts {
-            if let Some(part_type) = part.get("type").and_then(|value| value.as_str()) {
-                if part_type == "input_text" {
-                    if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
-                        content_list.push(json!({"type": "input_text", "text": text}));
-                        continue;
-                    }
-                }
-
-                if part_type == "input_image" {
-                    let image_url = part.get("image_url").cloned().unwrap_or(Value::Null);
-                    let file_id = part.get("file_id").cloned().unwrap_or(Value::Null);
-                    let detail = part
-                        .get("detail")
-                        .cloned()
-                        .unwrap_or(Value::String("auto".to_string()));
-                    content_list.push(json!({
-                        "type": "input_image",
-                        "image_url": image_url,
-                        "file_id": file_id,
-                        "detail": detail
-                    }));
-                    continue;
-                }
-
-                if part_type == "text" {
-                    if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
-                        content_list.push(json!({"type": "input_text", "text": text}));
-                        continue;
-                    }
-                }
-
-                if part_type == "image_url" {
-                    let url = image_part_locator(part);
-                    content_list.push(json!({
-                        "type": "input_image",
-                        "image_url": url,
-                        "detail": part
-                            .get("detail")
-                            .cloned()
-                            .unwrap_or(Value::String("auto".to_string()))
-                    }));
-                    continue;
-                }
-            }
-
-            if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
-                content_list.push(json!({"type": "input_text", "text": text}));
-                continue;
-            }
-
-            content_list.push(json!({
-                "type": "input_text",
-                "text": text_value_or_json(part, &["text", "value", "content", "delta"])
-            }));
-        }
-
+    if content.as_array().is_some() {
         return Value::Array(vec![json!({
             "role": "user",
-            "content": content_list,
+            "content": normalize_response_content_parts(content),
             "type": "message"
         })]);
     }
@@ -130,7 +71,11 @@ pub(super) fn to_message_item_with_reasoning(
     }
 
     if content.is_array() {
-        return json!({"role": role, "content": content.clone(), "type": "message"});
+        return json!({
+            "role": role,
+            "content": normalize_response_content_parts(content),
+            "type": "message"
+        });
     }
 
     json!({
@@ -155,6 +100,86 @@ fn assistant_visible_text(content_text: &str, reasoning: Option<&str>) -> String
 
 fn to_input_text_content(text: String) -> Value {
     Value::Array(vec![json!({"type": "input_text", "text": text})])
+}
+
+fn normalize_response_content_parts(content: &Value) -> Value {
+    let Some(parts) = content.as_array() else {
+        return to_input_text_content(content_parts_to_text(content));
+    };
+
+    Value::Array(parts.iter().map(normalize_response_content_part).collect())
+}
+
+fn normalize_response_content_part(part: &Value) -> Value {
+    let Some(part_type) = part.get("type").and_then(|value| value.as_str()) else {
+        return json!({
+            "type": "input_text",
+            "text": text_value_or_json(part, &["text", "value", "content", "delta"])
+        });
+    };
+
+    match part_type {
+        "input_text" | "output_text" | "text" => json!({
+            "type": "input_text",
+            "text": part
+                .get("text")
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| text_value_or_json(part, &["text", "value", "content", "delta"]))
+        }),
+        "input_image" => normalize_input_image_part(part),
+        "image_url" => normalize_image_url_part(part),
+        "refusal" | "summary_text" | "input_file" | "computer_screenshot" => part.clone(),
+        _ => json!({
+            "type": "input_text",
+            "text": text_value_or_json(part, &["text", "value", "content", "delta"])
+        }),
+    }
+}
+
+fn normalize_input_image_part(part: &Value) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("type".to_string(), Value::String("input_image".to_string()));
+    if let Some(image_url) = response_image_url_value(part) {
+        map.insert("image_url".to_string(), Value::String(image_url));
+    }
+    if let Some(file_id) = part
+        .get("file_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        map.insert("file_id".to_string(), Value::String(file_id.to_string()));
+    }
+    if let Some(detail) = part.get("detail").cloned() {
+        map.insert("detail".to_string(), detail);
+    }
+    Value::Object(map)
+}
+
+fn normalize_image_url_part(part: &Value) -> Value {
+    json!({
+        "type": "input_image",
+        "image_url": response_image_url_value(part).unwrap_or_default(),
+        "detail": part
+            .get("detail")
+            .cloned()
+            .unwrap_or(Value::String("auto".to_string()))
+    })
+}
+
+fn response_image_url_value(part: &Value) -> Option<String> {
+    part.get("image_url")
+        .and_then(|value| {
+            value.as_str().map(str::to_string).or_else(|| {
+                value
+                    .get("url")
+                    .and_then(|inner| inner.as_str())
+                    .map(str::to_string)
+            })
+        })
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn image_part_locator(part: &Value) -> &str {
@@ -269,7 +294,7 @@ mod tests {
 
     use super::{
         assistant_visible_text, content_parts_to_text, convert_parts_to_response_input,
-        to_message_item_with_reasoning,
+        to_message_item, to_message_item_with_reasoning,
     };
 
     #[test]
@@ -325,6 +350,28 @@ mod tests {
                 "role": "assistant",
                 "type": "message",
                 "content": [{"type": "output_text", "text": "Visible answer"}]
+            })
+        );
+    }
+
+    #[test]
+    fn to_message_item_normalizes_legacy_content_parts_for_responses() {
+        let content = json!([
+            {"type": "text", "text": "runtime guidance"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,Zm9v"}, "detail": "high"}
+        ]);
+
+        let item = to_message_item("system", &content, false);
+
+        assert_eq!(
+            item,
+            json!({
+                "role": "system",
+                "type": "message",
+                "content": [
+                    {"type": "input_text", "text": "runtime guidance"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,Zm9v", "detail": "high"}
+                ]
             })
         );
     }
