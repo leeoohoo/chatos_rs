@@ -13,6 +13,7 @@ pub mod project_run_environment_settings;
 pub mod projects;
 pub mod remote_connections;
 pub mod session_mcp_servers;
+pub mod session_runtime_settings;
 pub mod system_contexts;
 pub mod terminal_logs;
 pub mod terminals;

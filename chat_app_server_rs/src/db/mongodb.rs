@@ -74,6 +74,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "mcp_config_applications",
         "system_context_applications",
         "session_mcp_servers",
+        "session_runtime_settings",
         "user_settings",
     ];
     let existing = db
@@ -128,6 +129,29 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                         .unique(true)
                         .build(),
                 )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("session_runtime_settings")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("session_runtime_settings")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "user_id": 1, "updated_at": -1 })
                 .build(),
             None,
         )

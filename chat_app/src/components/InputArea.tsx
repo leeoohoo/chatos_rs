@@ -36,8 +36,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
   onReasoningToggle,
   showModelSelector = false,
   selectedModelId = null,
+  selectedModelName = null,
+  selectedThinkingLevel = null,
   availableModels = [],
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   availableProjects = [],
   selectedProjectId = null,
   onProjectChange,
@@ -114,6 +119,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleSaveProjectMcpDefault,
     handleApplyProjectMcpDefault,
     enabledModels,
+    selectedModelName: resolvedSelectedModelName,
+    selectedThinkingLevel: resolvedSelectedThinkingLevel,
+    handleModelChange,
+    handleModelNameChange,
+    handleThinkingLevelChange,
+    handleModelRuntimeChange,
     currentAgentForSkills,
     skillsEnabled,
     setSkillsEnabled,
@@ -127,6 +138,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
     showProjectFilePicker,
     workspaceRootDisplayName,
     currentAiLabel,
+    effectiveModelName,
+    effectiveThinkingLevel,
     projectFilePickerOpen,
     projectFileParent,
     projectFileFilter,
@@ -157,6 +170,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
     supportedFileTypes,
     showModelSelector,
     selectedModelId,
+    selectedModelName,
+    selectedThinkingLevel,
+    onModelChange,
+    onModelNameChange,
+    onThinkingLevelChange,
+    onModelRuntimeChange,
     availableModels,
     availableProjects,
     selectedProjectId,
@@ -195,7 +214,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
           effectiveAllowAttachments={effectiveAllowAttachments}
           showModelSelector={showModelSelector}
           selectedModelId={selectedModelId}
-          onModelChange={onModelChange}
+          selectedModelName={resolvedSelectedModelName}
+          selectedThinkingLevel={resolvedSelectedThinkingLevel}
+          onModelChange={handleModelChange}
+          onModelNameChange={handleModelNameChange}
+          onThinkingLevelChange={handleThinkingLevelChange}
+          onModelRuntimeChange={handleModelRuntimeChange}
           availableProjects={availableProjects}
           selectedProjectId={selectedProjectId}
           onProjectChange={onProjectChange}
@@ -227,6 +251,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
           pickerOpen={pickerOpen}
           hasAiOptions={hasAiOptions}
           currentAiLabel={currentAiLabel}
+          effectiveModelName={effectiveModelName}
+          effectiveThinkingLevel={effectiveThinkingLevel}
           enabledModels={enabledModels}
           projectForFilePicker={projectForFilePicker}
           showProjectFilePicker={showProjectFilePicker}

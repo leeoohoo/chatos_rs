@@ -41,23 +41,24 @@ export const useChatInterfaceModel = ({
 
   useChatStreamRealtimeBridge();
 
+  const runtimeSettings = useSessionRuntimeSettings({
+    session: store.currentSession,
+    updateSession: store.updateSession,
+  });
+  const effectiveSelectedModelId = runtimeSettings.selectedModelId;
+
   const derived = useChatInterfaceDerivedState({
     currentSession: store.currentSession,
     contacts: store.contacts,
     agents: store.agents,
     selectedAgentId: store.selectedAgentId,
-    selectedModelId: store.selectedModelId,
+    selectedModelId: effectiveSelectedModelId,
     aiModelConfigs: store.aiModelConfigs,
     activePanel: store.activePanel,
     currentProject: store.currentProject,
     currentTerminal: store.currentTerminal,
     currentRemoteConnection: store.currentRemoteConnection,
     sessionChatState: store.sessionChatState || {},
-  });
-
-  const runtimeSettings = useSessionRuntimeSettings({
-    session: store.currentSession,
-    updateSession: store.updateSession,
   });
 
   const resources = useChatInterfaceSessionResources({
@@ -164,7 +165,9 @@ export const useChatInterfaceModel = ({
     supportedFileTypes: derived.supportedFileTypes,
     supportsReasoning: derived.supportsReasoning,
     reasoningEnabled: store.chatConfig?.reasoningEnabled === true,
-    selectedModelId: store.selectedModelId,
+    selectedModelId: effectiveSelectedModelId,
+    selectedModelName: runtimeSettings.selectedModelName,
+    selectedThinkingLevel: runtimeSettings.selectedThinkingLevel,
     currentAgent: derived.currentAgent,
     aiModelConfigs: store.aiModelConfigs,
     composerAvailableProjects: resources.composerAvailableProjects,
@@ -215,7 +218,10 @@ export const useChatInterfaceModel = ({
     handleRuntimeGuidanceSend: controller.handleRuntimeGuidanceSend,
     abortCurrentConversation: store.abortCurrentConversation,
     updateReasoningEnabled: (enabled: boolean) => store.updateChatConfig({ reasoningEnabled: enabled }),
-    setSelectedModel: store.setSelectedModel,
+    setSelectedModel: runtimeSettings.setSelectedModelId,
+    setSelectedModelName: runtimeSettings.setSelectedModelName,
+    setSelectedThinkingLevel: runtimeSettings.setSelectedThinkingLevel,
+    setModelRuntimeSelection: runtimeSettings.setModelRuntimeSelection,
     handleComposerProjectChange: resources.handleComposerProjectChange,
     handleComposerWorkspaceRootChange: runtimeSettings.setWorkspaceRoot,
     handleComposerRemoteConnectionChange: controller.handleComposerRemoteConnectionChange,

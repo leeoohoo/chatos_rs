@@ -78,6 +78,8 @@ export const sendChatCommand = async (
       model_config_id: modelConfig.id,
       ai_model_config: {
         temperature: modelConfig.temperature || 0.7,
+        model_name: modelConfig.model_name,
+        thinking_level: modelConfig.thinking_level || null,
       },
     }),
   });

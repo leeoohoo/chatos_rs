@@ -89,8 +89,17 @@ interface ChatConversationPaneProps {
   reasoningEnabled: boolean;
   onReasoningToggle: (enabled: boolean) => void;
   selectedModelId: string | null;
+  selectedModelName?: string | null;
+  selectedThinkingLevel?: string | null;
   availableModels: ChatComposerPanelProps['availableModels'];
   onModelChange: (modelId: string | null) => void;
+  onModelNameChange?: (modelName: string | null) => void;
+  onThinkingLevelChange?: (level: string | null) => void;
+  onModelRuntimeChange?: (selection: {
+    selectedModelId?: string | null;
+    selectedModelName?: string | null;
+    selectedThinkingLevel?: string | null;
+  }) => void;
   availableProjects: Project[];
   currentProject: Project | null;
   onProjectChange: (projectId: string | null) => void;
@@ -323,8 +332,13 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   reasoningEnabled,
   onReasoningToggle,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   availableModels,
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   availableProjects,
   currentProject,
   onProjectChange,
@@ -430,8 +444,13 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           reasoningEnabled={reasoningEnabled}
           onReasoningToggle={onReasoningToggle}
           selectedModelId={selectedModelId}
+          selectedModelName={selectedModelName}
+          selectedThinkingLevel={selectedThinkingLevel}
           availableModels={availableModels}
           onModelChange={onModelChange}
+          onModelNameChange={onModelNameChange}
+          onThinkingLevelChange={onThinkingLevelChange}
+          onModelRuntimeChange={onModelRuntimeChange}
           availableProjects={availableProjects}
           currentProject={currentProject}
           selectedProjectId={null}

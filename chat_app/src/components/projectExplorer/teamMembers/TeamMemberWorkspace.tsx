@@ -24,6 +24,8 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   chatIsStreaming,
   chatIsStopping,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   aiModelConfigs,
   supportsReasoning,
   reasoningEnabled,
@@ -50,6 +52,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onGuide,
   onStop,
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   onReasoningToggle,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
@@ -136,6 +141,8 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         chatIsStreaming={chatIsStreaming}
         chatIsStopping={chatIsStopping}
         selectedModelId={selectedModelId}
+        selectedModelName={selectedModelName}
+        selectedThinkingLevel={selectedThinkingLevel}
         aiModelConfigs={aiModelConfigs}
         supportsReasoning={supportsReasoning}
         reasoningEnabled={reasoningEnabled}
@@ -149,6 +156,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         onGuide={onGuide}
         onStop={onStop}
         onModelChange={onModelChange}
+        onModelNameChange={onModelNameChange}
+        onThinkingLevelChange={onThinkingLevelChange}
+        onModelRuntimeChange={onModelRuntimeChange}
         onReasoningToggle={onReasoningToggle}
         onMcpEnabledChange={onMcpEnabledChange}
         onEnabledMcpIdsChange={onEnabledMcpIdsChange}

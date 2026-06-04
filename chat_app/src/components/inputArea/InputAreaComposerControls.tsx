@@ -17,7 +17,12 @@ export function InputAreaComposerControls({
   effectiveAllowAttachments,
   showModelSelector,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   availableProjects,
   selectedProjectId,
   onProjectChange,
@@ -43,6 +48,8 @@ export function InputAreaComposerControls({
   pickerOpen,
   hasAiOptions,
   currentAiLabel,
+  effectiveModelName,
+  effectiveThinkingLevel,
   enabledModels,
   projectForFilePicker,
   showProjectFilePicker,
@@ -111,11 +118,18 @@ export function InputAreaComposerControls({
         pickerRef={pickerRef}
         disabled={disabled}
         currentAiLabel={currentAiLabel}
+        effectiveModelName={effectiveModelName}
+        effectiveThinkingLevel={effectiveThinkingLevel}
         pickerOpen={pickerOpen}
         setPickerOpen={setPickerOpen}
         enabledModels={enabledModels}
         selectedModelId={selectedModelId}
+        selectedModelName={selectedModelName}
+        selectedThinkingLevel={selectedThinkingLevel}
         onModelChange={onModelChange}
+        onModelNameChange={onModelNameChange}
+        onThinkingLevelChange={onThinkingLevelChange}
+        onModelRuntimeChange={onModelRuntimeChange}
       />
 
       {effectiveAllowAttachments && (

@@ -13,6 +13,8 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'chatIsStreaming'
   | 'chatIsStopping'
   | 'selectedModelId'
+  | 'selectedModelName'
+  | 'selectedThinkingLevel'
   | 'aiModelConfigs'
   | 'supportsReasoning'
   | 'reasoningEnabled'
@@ -26,6 +28,9 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'onGuide'
   | 'onStop'
   | 'onModelChange'
+  | 'onModelNameChange'
+  | 'onThinkingLevelChange'
+  | 'onModelRuntimeChange'
   | 'onReasoningToggle'
   | 'onMcpEnabledChange'
   | 'onEnabledMcpIdsChange'
@@ -78,6 +83,8 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   chatIsStreaming,
   chatIsStopping,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   aiModelConfigs,
   supportsReasoning,
   reasoningEnabled,
@@ -91,6 +98,9 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   onGuide,
   onStop,
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   onReasoningToggle,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
@@ -182,8 +192,13 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       reasoningEnabled={reasoningEnabled}
       onReasoningToggle={onReasoningToggle}
       selectedModelId={selectedModelId}
+      selectedModelName={selectedModelName}
+      selectedThinkingLevel={selectedThinkingLevel}
       availableModels={aiModelConfigs}
       onModelChange={onModelChange}
+      onModelNameChange={onModelNameChange}
+      onThinkingLevelChange={onThinkingLevelChange}
+      onModelRuntimeChange={onModelRuntimeChange}
       availableProjects={[project]}
       currentProject={project}
       selectedProjectId={project.id}

@@ -60,7 +60,13 @@ fn merge_safe_request_overrides(base: &mut Value, request_model_cfg: &Value) {
         return;
     };
 
-    for key in ["temperature", "system_prompt", "use_active_system_context"] {
+    for key in [
+        "temperature",
+        "system_prompt",
+        "use_active_system_context",
+        "model_name",
+        "thinking_level",
+    ] {
         if let Some(value) = request_map.get(key) {
             base_map.insert(key.to_string(), value.clone());
         }

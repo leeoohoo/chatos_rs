@@ -287,6 +287,40 @@ fn build_chat_completions_payload_preserves_assistant_reasoning_content() {
 }
 
 #[test]
+fn build_chat_completions_payload_omits_temperature_for_deepseek_thinking() {
+    let payload = build_chat_completions_request_payload(
+        json!([{
+            "type": "message",
+            "role": "user",
+            "content": [{"type":"input_text","text":"hello"}]
+        }]),
+        "deepseek-reasoner".to_string(),
+        None,
+        None,
+        Some(0.7),
+        None,
+        Some("deepseek".to_string()),
+        Some("max".to_string()),
+        true,
+    );
+
+    assert_eq!(payload.get("temperature"), None);
+    assert_eq!(
+        payload
+            .get("reasoning_effort")
+            .and_then(|value| value.as_str()),
+        Some("max")
+    );
+    assert_eq!(
+        payload
+            .get("thinking")
+            .and_then(|value| value.get("type"))
+            .and_then(|value| value.as_str()),
+        Some("enabled")
+    );
+}
+
+#[test]
 fn build_chat_completions_payload_groups_tool_calls_before_tool_outputs() {
     let payload = build_chat_completions_request_payload(
         json!([

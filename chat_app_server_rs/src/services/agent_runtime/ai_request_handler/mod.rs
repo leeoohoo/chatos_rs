@@ -18,7 +18,7 @@ use crate::services::ai_common::{
     should_persist_assistant_message, validate_request_payload_size, AiStreamCallbacks,
     AssistantResponsePersistenceRequest,
 };
-use crate::utils::model_config::is_gpt_provider;
+use crate::utils::model_config::{is_gpt_provider, normalize_provider, thinking_mode_for_provider};
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";
 const REQUEST_BODY_LIMIT_ENV: &str = "AI_AGENT_REQUEST_BODY_MAX_BYTES";
@@ -559,8 +559,10 @@ fn build_chat_completions_request_payload(
             payload["tool_choice"] = Value::String("auto".to_string());
         }
     }
-    if let Some(t) = temperature {
-        payload["temperature"] = json!(t);
+    if should_send_chat_completions_temperature(provider.as_deref(), thinking_level.as_deref()) {
+        if let Some(t) = temperature {
+            payload["temperature"] = json!(t);
+        }
     }
     if let Some(max) = max_output_tokens {
         payload["max_tokens"] = json!(max);
@@ -569,11 +571,23 @@ fn build_chat_completions_request_payload(
     {
         payload["reasoning_effort"] = Value::String(level);
     }
+    if let Some(mode) = thinking_mode_for_provider(provider.as_deref(), thinking_level.as_deref()) {
+        payload["thinking"] = json!({ "type": mode });
+    }
     if stream {
         payload["stream"] = Value::Bool(true);
         payload["stream_options"] = json!({"include_usage": true});
     }
     payload
+}
+
+fn should_send_chat_completions_temperature(
+    provider: Option<&str>,
+    thinking_level: Option<&str>,
+) -> bool {
+    let provider = normalize_provider(provider.unwrap_or("gpt"));
+    let thinking_mode = thinking_mode_for_provider(Some(provider.as_str()), thinking_level);
+    !(provider == "deepseek" && thinking_mode == Some("enabled"))
 }
 
 fn input_to_chat_completions_messages(input: Value) -> Vec<Value> {

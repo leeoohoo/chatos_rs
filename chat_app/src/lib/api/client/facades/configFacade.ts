@@ -7,6 +7,7 @@ import type {
   AiModelConfigCreatePayload,
   AiModelConfigResponse,
   AiModelConfigUpdatePayload,
+  AiProviderModelsResponse,
   ActiveSystemContextResponse,
   ApplicationCreatePayload,
   ApplicationResponse,
@@ -52,6 +53,7 @@ export interface ConfigFacade {
   createAiModelConfig(data: AiModelConfigCreatePayload): Promise<AiModelConfigResponse>;
   updateAiModelConfig(id: string, data: AiModelConfigUpdatePayload): Promise<AiModelConfigResponse>;
   deleteAiModelConfig(id: string): Promise<{ success?: boolean }>;
+  getAiProviderModels(id: string, options?: { refresh?: boolean }): Promise<AiProviderModelsResponse>;
   getSystemContexts(userId: string): Promise<SystemContextResponse[]>;
   getActiveSystemContext(userId: string): Promise<ActiveSystemContextResponse>;
   createSystemContext(data: SystemContextCreatePayload): Promise<SystemContextResponse>;
@@ -127,6 +129,9 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
   },
   async deleteAiModelConfig(id) {
     return configsApi.deleteAiModelConfig(this.getRequestFn(), id);
+  },
+  async getAiProviderModels(id, options) {
+    return configsApi.getAiProviderModels(this.getRequestFn(), id, options);
   },
   async getSystemContexts(userId) {
     return configsApi.getSystemContexts(this.getRequestFn(), userId);

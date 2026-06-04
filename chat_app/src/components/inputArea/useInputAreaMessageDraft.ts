@@ -24,7 +24,10 @@ interface UseInputAreaMessageDraftOptions {
   requireModelSelection: () => boolean;
   sanitizedEnabledMcpIds: string[];
   selectedRuntimeProject: Project | null;
+  selectedModelId: string | null;
   selectedSkillIds: string[];
+  effectiveModelName: string | null;
+  effectiveThinkingLevel: string | null;
   skillsEnabled: boolean;
 }
 
@@ -44,7 +47,10 @@ export const useInputAreaMessageDraft = ({
   requireModelSelection,
   sanitizedEnabledMcpIds,
   selectedRuntimeProject,
+  selectedModelId,
   selectedSkillIds,
+  effectiveModelName,
+  effectiveThinkingLevel,
   skillsEnabled,
 }: UseInputAreaMessageDraftOptions) => {
   const [message, setMessage] = useState('');
@@ -109,6 +115,9 @@ export const useInputAreaMessageDraft = ({
       mcpEnabled,
       enabledMcpIds: sanitizedEnabledMcpIds,
       autoCreateTask,
+      modelConfigId: selectedModelId,
+      modelName: effectiveModelName,
+      thinkingLevel: effectiveThinkingLevel,
       remoteConnectionId: currentRemoteConnectionId,
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
@@ -133,7 +142,10 @@ export const useInputAreaMessageDraft = ({
     resetComposer,
     sanitizedEnabledMcpIds,
     selectedRuntimeProject,
+    selectedModelId,
     selectedSkillIds,
+    effectiveModelName,
+    effectiveThinkingLevel,
     skillsEnabled,
   ]);
 

@@ -87,6 +87,10 @@ pub fn router() -> Router {
             get(ai_model::list_ai_model_configs).post(ai_model::create_ai_model_config),
         )
         .route(
+            "/api/ai-model-configs/:config_id/models",
+            get(ai_model::list_ai_provider_models),
+        )
+        .route(
             "/api/ai-model-configs/:config_id",
             put(ai_model::update_ai_model_config).delete(ai_model::delete_ai_model_config),
         )

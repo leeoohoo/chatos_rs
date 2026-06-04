@@ -25,7 +25,16 @@ export interface InputAreaComposerProps {
   effectiveAllowAttachments: boolean;
   showModelSelector: boolean;
   selectedModelId: string | null;
+  selectedModelName: string | null;
+  selectedThinkingLevel: string | null;
   onModelChange?: (modelId: string | null) => void;
+  onModelNameChange?: (modelName: string | null) => void;
+  onThinkingLevelChange?: (level: string | null) => void;
+  onModelRuntimeChange?: (selection: {
+    selectedModelId?: string | null;
+    selectedModelName?: string | null;
+    selectedThinkingLevel?: string | null;
+  }) => void;
   availableProjects: Project[];
   selectedProjectId: string | null;
   onProjectChange?: (projectId: string | null) => void;
@@ -57,6 +66,8 @@ export interface InputAreaComposerProps {
   pickerOpen: boolean;
   hasAiOptions: boolean;
   currentAiLabel: string;
+  effectiveModelName: string | null;
+  effectiveThinkingLevel: string | null;
   enabledModels: AiModelConfig[];
   projectForFilePicker: Project | null;
   showProjectFilePicker: boolean;

@@ -306,6 +306,21 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
             FOREIGN KEY (mcp_config_id) REFERENCES mcp_configs(id)
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS session_runtime_settings (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            selected_model_id TEXT,
+            selected_model_name TEXT,
+            selected_thinking_level TEXT,
+            remote_connection_id TEXT,
+            workspace_root TEXT,
+            mcp_enabled INTEGER NOT NULL DEFAULT 1,
+            enabled_mcp_ids TEXT NOT NULL DEFAULT '[]',
+            auto_create_task INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS user_settings (
             user_id TEXT PRIMARY KEY,
             settings TEXT,
@@ -496,6 +511,8 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_created_at ON terminal_logs(terminal_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_created_at ON terminal_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_mcp_servers_session_id ON session_mcp_servers(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_session_runtime_settings_user_id ON session_runtime_settings(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_session_runtime_settings_updated_at ON session_runtime_settings(updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_profiles_mcp_config_id ON mcp_config_profiles(mcp_config_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_applications_mcp_config_id ON mcp_config_applications(mcp_config_id)",
         "CREATE INDEX IF NOT EXISTS idx_system_context_applications_context_id ON system_context_applications(system_context_id)",

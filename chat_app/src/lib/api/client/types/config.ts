@@ -94,6 +94,27 @@ export interface AiModelConfigResponse {
   updatedAt?: string;
 }
 
+export interface AiProviderModelOptionResponse {
+  id: string;
+  owned_by?: string | null;
+  context_length?: number | null;
+  supports_images?: boolean;
+  supports_video?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+  raw?: unknown;
+}
+
+export interface AiProviderModelsResponse {
+  provider_config_id: string;
+  provider: string;
+  base_url: string;
+  source: 'live' | 'cache' | 'fallback' | string;
+  fetched_at?: string | null;
+  models: AiProviderModelOptionResponse[];
+  error?: string | null;
+}
+
 export interface SystemContextCreatePayload {
   name: string;
   content: string;

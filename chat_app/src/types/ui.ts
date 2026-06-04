@@ -81,8 +81,17 @@ export interface InputAreaProps {
   onReasoningToggle?: (enabled: boolean) => void;
   showModelSelector?: boolean;
   selectedModelId?: string | null;
+  selectedModelName?: string | null;
+  selectedThinkingLevel?: string | null;
   availableModels?: AiModelConfig[];
   onModelChange?: (modelId: string | null) => void;
+  onModelNameChange?: (modelName: string | null) => void;
+  onThinkingLevelChange?: (level: string | null) => void;
+  onModelRuntimeChange?: (selection: {
+    selectedModelId?: string | null;
+    selectedModelName?: string | null;
+    selectedThinkingLevel?: string | null;
+  }) => void;
   availableProjects?: Project[];
   currentProject?: Project | null;
   selectedProjectId?: string | null;

@@ -12,6 +12,32 @@ export interface SessionUpdatePayload {
   metadata?: Record<string, unknown> | string | null;
 }
 
+export interface SessionRuntimeSettingsResponse {
+  session_id: string;
+  user_id: string;
+  selected_model_id?: string | null;
+  selected_model_name?: string | null;
+  selected_thinking_level?: string | null;
+  remote_connection_id?: string | null;
+  workspace_root?: string | null;
+  mcp_enabled: boolean;
+  enabled_mcp_ids: string[];
+  auto_create_task: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SessionRuntimeSettingsPayload {
+  selected_model_id?: string | null;
+  selected_model_name?: string | null;
+  selected_thinking_level?: string | null;
+  remote_connection_id?: string | null;
+  workspace_root?: string | null;
+  mcp_enabled?: boolean;
+  enabled_mcp_ids?: string[];
+  auto_create_task?: boolean;
+}
+
 export interface SessionResponse {
   id: string;
   title: string;

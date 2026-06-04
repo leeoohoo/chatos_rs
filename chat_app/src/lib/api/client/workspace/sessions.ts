@@ -6,6 +6,8 @@ import type {
   DeleteSuccessResponse,
   SessionMessageResponse,
   SessionResponse,
+  SessionRuntimeSettingsPayload,
+  SessionRuntimeSettingsResponse,
   TurnRuntimeSnapshotLookupResponse,
 } from '../types';
 import type { ApiRequestFn, SessionPaging } from './common';
@@ -58,6 +60,29 @@ export const updateSession = (
     method: 'PUT',
     body: JSON.stringify(data),
   });
+};
+
+export const getConversationRuntimeSettings = (
+  request: ApiRequestFn,
+  conversationId: string,
+): Promise<SessionRuntimeSettingsResponse> => {
+  return request<SessionRuntimeSettingsResponse>(
+    `/conversations/${conversationId}/runtime-settings`,
+  );
+};
+
+export const updateConversationRuntimeSettings = (
+  request: ApiRequestFn,
+  conversationId: string,
+  data: SessionRuntimeSettingsPayload,
+): Promise<SessionRuntimeSettingsResponse> => {
+  return request<SessionRuntimeSettingsResponse>(
+    `/conversations/${conversationId}/runtime-settings`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    },
+  );
 };
 
 export const deleteSession = (request: ApiRequestFn, id: string): Promise<DeleteSuccessResponse> => {

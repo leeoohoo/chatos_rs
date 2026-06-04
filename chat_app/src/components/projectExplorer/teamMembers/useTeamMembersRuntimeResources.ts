@@ -26,7 +26,6 @@ export const useTeamMembersRuntimeResources = ({
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false);
   const {
     apiClient,
-    currentSession,
     sessions,
     remoteConnections,
     currentRemoteConnection,
@@ -68,16 +67,22 @@ export const useTeamMembersRuntimeResources = ({
     }
     return sessionChatState?.[conversation.selectedProjectSession.id]?.runtimeContextRefreshNonce || 0;
   }, [conversation.selectedProjectSession?.id, sessionChatState]);
-  const runtimeSourceSession = conversation.selectedProjectSession || currentSession;
   const {
+    selectedModelId: composerSelectedModelId,
+    selectedModelName: composerSelectedModelName,
+    selectedThinkingLevel: composerSelectedThinkingLevel,
     mcpEnabled: composerMcpEnabled,
     enabledMcpIds: composerEnabledMcpIds,
     autoCreateTask: composerAutoCreateTask,
+    setSelectedModelId: handleComposerSelectedModelChange,
+    setSelectedModelName: handleComposerSelectedModelNameChange,
+    setSelectedThinkingLevel: handleComposerSelectedThinkingLevelChange,
+    setModelRuntimeSelection: handleComposerModelRuntimeSelectionChange,
     setMcpEnabled: handleComposerMcpEnabledChange,
     setEnabledMcpIds: handleComposerEnabledMcpIdsChange,
     setAutoCreateTask: handleComposerAutoCreateTaskChange,
   } = useSessionRuntimeSettings({
-    session: runtimeSourceSession,
+    session: conversation.selectedProjectSession,
     updateSession,
   });
 
@@ -288,9 +293,16 @@ export const useTeamMembersRuntimeResources = ({
 
   return {
     composer: {
+      composerSelectedModelId,
+      composerSelectedModelName,
+      composerSelectedThinkingLevel,
       composerMcpEnabled,
       composerEnabledMcpIds,
       composerAutoCreateTask,
+      handleComposerSelectedModelChange,
+      handleComposerSelectedModelNameChange,
+      handleComposerSelectedThinkingLevelChange,
+      handleComposerModelRuntimeSelectionChange,
       handleComposerMcpEnabledChange,
       handleComposerEnabledMcpIdsChange,
       handleComposerAutoCreateTaskChange,

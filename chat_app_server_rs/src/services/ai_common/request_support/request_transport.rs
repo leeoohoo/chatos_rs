@@ -10,8 +10,7 @@ pub(crate) fn normalize_reasoning_effort(
     provider: Option<&str>,
     level: Option<&str>,
 ) -> Option<String> {
-    let provider = provider.unwrap_or("gpt");
-    crate::utils::model_config::normalize_thinking_level(provider, level).unwrap_or_default()
+    crate::utils::model_config::reasoning_effort_for_provider(provider, level)
 }
 
 pub(crate) fn truncate_log(value: &str, max_len: usize) -> String {

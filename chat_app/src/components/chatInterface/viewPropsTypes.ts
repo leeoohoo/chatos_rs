@@ -51,6 +51,8 @@ export interface ChatInterfaceConversationState {
   supportsReasoning: boolean;
   reasoningEnabled: boolean;
   selectedModelId: string | null;
+  selectedModelName: string | null;
+  selectedThinkingLevel: string | null;
   currentAgent: AgentConfig | null;
   aiModelConfigs: ComponentProps<typeof ChatConversationPane>['availableModels'];
   composerAvailableProjects: Project[];
@@ -100,6 +102,13 @@ export interface ChatInterfaceConversationActions {
   abortCurrentConversation: () => void;
   updateReasoningEnabled: (enabled: boolean) => void;
   setSelectedModel: (modelId: string | null) => void;
+  setSelectedModelName: (modelName: string | null) => void;
+  setSelectedThinkingLevel: (level: string | null) => void;
+  setModelRuntimeSelection: (selection: {
+    selectedModelId?: string | null;
+    selectedModelName?: string | null;
+    selectedThinkingLevel?: string | null;
+  }) => void;
   handleComposerProjectChange: (projectId: string | null) => void;
   handleComposerWorkspaceRootChange: (path: string | null) => void;
   handleComposerRemoteConnectionChange: (connectionId: string | null) => void;

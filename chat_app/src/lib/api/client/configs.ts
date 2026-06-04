@@ -3,6 +3,7 @@ import { debugLog } from '@/lib/utils';
 import { buildQuery } from './shared';
 import type {
   ActiveSystemContextResponse,
+  AiProviderModelsResponse,
   AiModelConfigResponse,
   AiModelConfigUpdatePayload,
   ApplicationResponse,
@@ -167,6 +168,15 @@ export const deleteAiModelConfig = (request: ApiRequestFn, id: string): Promise<
   return request<{ success?: boolean }>(`/ai-model-configs/${id}`, {
     method: 'DELETE',
   });
+};
+
+export const getAiProviderModels = (
+  request: ApiRequestFn,
+  id: string,
+  options?: { refresh?: boolean },
+): Promise<AiProviderModelsResponse> => {
+  const query = buildQuery({ refresh: options?.refresh ? 'true' : undefined });
+  return request<AiProviderModelsResponse>(`/ai-model-configs/${id}/models${query}`);
 };
 
 export const getSystemContexts = (request: ApiRequestFn, userId: string): Promise<SystemContextResponse[]> => {

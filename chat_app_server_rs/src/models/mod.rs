@@ -16,6 +16,7 @@ pub mod project_run_environment;
 pub mod remote_connection;
 pub mod session;
 pub mod session_mcp_server;
+pub mod session_runtime_settings;
 pub mod session_summary_v2;
 pub mod system_context;
 pub mod terminal;

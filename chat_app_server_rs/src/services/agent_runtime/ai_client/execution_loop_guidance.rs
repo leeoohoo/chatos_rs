@@ -7,7 +7,9 @@ use crate::modules::conversation_runtime::guidance::{
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::ai_common::is_non_terminal_response_status;
 
-use super::input_transform::{build_current_input_items, to_message_item};
+use super::input_transform::{
+    build_current_input_items, normalize_input_for_provider, to_message_item,
+};
 
 pub(super) fn load_runtime_guidance_input_items(
     session_id: Option<&str>,
@@ -65,7 +67,37 @@ async fn build_runtime_guidance_input_item(
     let content =
         build_runtime_guidance_message_content(guidance_item, locale, model_name, supports_images)
             .await;
-    to_message_item("system", &content, force_text_content)
+    let role = if content_has_image_part(&content) {
+        "user"
+    } else {
+        "system"
+    };
+    to_message_item(role, &content, force_text_content)
+}
+
+fn content_has_image_part(content: &Value) -> bool {
+    content
+        .as_array()
+        .map(|parts| {
+            parts.iter().any(|part| {
+                matches!(
+                    part.get("type").and_then(|value| value.as_str()),
+                    Some("image_url" | "input_image")
+                )
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn normalize_explicit_input_items(items: &[Value], force_text_content: bool) -> Vec<Value> {
+    if !force_text_content {
+        return items.to_vec();
+    }
+
+    normalize_input_for_provider(&Value::Array(items.to_vec()), true)
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| items.to_vec())
 }
 
 pub(super) fn prepend_input_items(
@@ -76,7 +108,7 @@ pub(super) fn prepend_input_items(
     if prefixed_items.is_empty() {
         return input.clone();
     }
-    let mut merged = prefixed_items.to_vec();
+    let mut merged = normalize_explicit_input_items(prefixed_items, force_text_content);
     merged.extend(build_current_input_items(input, force_text_content));
     Value::Array(merged)
 }
@@ -90,10 +122,111 @@ pub(super) fn append_input_items(
         return input.clone();
     }
     let mut merged = build_current_input_items(input, force_text_content);
-    merged.extend_from_slice(appended_items);
+    merged.extend(normalize_explicit_input_items(
+        appended_items,
+        force_text_content,
+    ));
     Value::Array(merged)
 }
 
 pub(super) fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool {
     is_non_terminal_response_status(finish_reason)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::{append_input_items, build_runtime_guidance_input_item};
+    use crate::core::internal_context_locale::InternalContextLocale;
+    use crate::services::runtime_guidance_manager::{RuntimeGuidanceItem, RuntimeGuidanceStatus};
+    use crate::utils::attachments::Attachment;
+
+    fn sample_guidance_item(attachments: Vec<Attachment>) -> RuntimeGuidanceItem {
+        RuntimeGuidanceItem {
+            guidance_id: "gd_test_1".to_string(),
+            session_id: "session-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            content: "please inspect this screenshot".to_string(),
+            attachments,
+            status: RuntimeGuidanceStatus::Queued,
+            created_at: "2026-06-04T02:51:05Z".to_string(),
+            applied_at: None,
+            dropped_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn image_guidance_uses_user_role() {
+        let item = sample_guidance_item(vec![Attachment {
+            name: Some("screenshot.png".to_string()),
+            mime_type: Some("image/png".to_string()),
+            size: Some(32),
+            data_url: Some("data:image/png;base64,Zm9v".to_string()),
+            r#type: Some("image".to_string()),
+            ..Attachment::default()
+        }]);
+
+        let payload = build_runtime_guidance_input_item(
+            &item,
+            InternalContextLocale::ZhCn,
+            false,
+            "gpt-4o",
+            Some(true),
+        )
+        .await;
+
+        assert_eq!(
+            payload.get("role").and_then(|value| value.as_str()),
+            Some("user")
+        );
+        let content = payload
+            .get("content")
+            .and_then(|value| value.as_array())
+            .expect("guidance content should be response content parts");
+        assert!(content
+            .iter()
+            .any(|part| part.get("type").and_then(|value| value.as_str()) == Some("input_image")));
+    }
+
+    #[tokio::test]
+    async fn text_guidance_stays_system_role() {
+        let item = sample_guidance_item(Vec::new());
+
+        let payload = build_runtime_guidance_input_item(
+            &item,
+            InternalContextLocale::ZhCn,
+            false,
+            "gpt-4o",
+            Some(true),
+        )
+        .await;
+
+        assert_eq!(
+            payload.get("role").and_then(|value| value.as_str()),
+            Some("system")
+        );
+    }
+
+    #[test]
+    fn append_input_items_force_text_normalizes_appended_messages() {
+        let appended = json!({
+            "role": "user",
+            "type": "message",
+            "content": [
+                {"type": "input_text", "text": "runtime guidance"},
+                {"type": "input_image", "image_url": "data:image/png;base64,Zm9v"}
+            ]
+        });
+
+        let payload = append_input_items(&Value::String("current".to_string()), &[appended], true);
+        let items = payload.as_array().expect("input should be a message list");
+        let appended_content = items[1]
+            .get("content")
+            .and_then(|value| value.as_str())
+            .expect("force text should convert appended message content to string");
+
+        assert!(appended_content.contains("runtime guidance"));
+        assert!(appended_content.contains("[image:data:image/png;base64,Zm9v]"));
+    }
 }

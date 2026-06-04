@@ -3,6 +3,8 @@ export interface SessionRuntimeMetadata {
   contactId: string | null;
   remoteConnectionId: string | null;
   selectedModelId: string | null;
+  selectedModelName: string | null;
+  selectedThinkingLevel: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   autoCreateTask: boolean;
@@ -98,6 +100,12 @@ export const readSessionRuntimeFromMetadata = (
   const selectedModelId = normalizeId(
     runtime.selected_model_id ?? runtime.selectedModelId,
   ) || readUiChatSelectionModelId(meta);
+  const selectedModelName = normalizeId(
+    runtime.selected_model_name ?? runtime.selectedModelName,
+  );
+  const selectedThinkingLevel = normalizeId(
+    runtime.selected_thinking_level ?? runtime.selectedThinkingLevel,
+  );
 
   const contactAgentId = normalizeId(
     contact.agent_id
@@ -131,6 +139,8 @@ export const readSessionRuntimeFromMetadata = (
 
   if (
     !selectedModelId
+    && !selectedModelName
+    && !selectedThinkingLevel
     && !contactAgentId
     && !contactId
     && !remoteConnectionId
@@ -149,6 +159,8 @@ export const readSessionRuntimeFromMetadata = (
     contactId,
     remoteConnectionId,
     selectedModelId,
+    selectedModelName,
+    selectedThinkingLevel,
     mcpEnabled,
     enabledMcpIds,
     autoCreateTask,
@@ -171,6 +183,14 @@ export const mergeSessionRuntimeIntoMetadata = (
   );
   const selectedModelId = normalizeId(
     hasOwn('selectedModelId') ? runtime.selectedModelId : existingRuntime?.selectedModelId,
+  );
+  const selectedModelName = normalizeId(
+    hasOwn('selectedModelName') ? runtime.selectedModelName : existingRuntime?.selectedModelName,
+  );
+  const selectedThinkingLevel = normalizeId(
+    hasOwn('selectedThinkingLevel')
+      ? runtime.selectedThinkingLevel
+      : existingRuntime?.selectedThinkingLevel,
   );
   const contactAgentId = normalizeId(
     hasOwn('contactAgentId') ? runtime.contactAgentId : existingRuntime?.contactAgentId,
@@ -202,6 +222,8 @@ export const mergeSessionRuntimeIntoMetadata = (
 
   source.chat_runtime = {
     selected_model_id: selectedModelId,
+    selected_model_name: selectedModelName,
+    selected_thinking_level: selectedThinkingLevel,
     contact_agent_id: contactAgentId,
     remote_connection_id: remoteConnectionId,
     mcp_enabled: mcpEnabled,
@@ -218,6 +240,8 @@ export const mergeSessionRuntimeIntoMetadata = (
   };
   source.ui_chat_selection = {
     selected_model_id: selectedModelId,
+    selected_model_name: selectedModelName,
+    selected_thinking_level: selectedThinkingLevel,
     selected_agent_id: contactAgentId,
   };
   source.ui_contact = {

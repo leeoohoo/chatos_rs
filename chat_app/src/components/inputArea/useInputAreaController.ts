@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useDialogService } from '../ui/DialogProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
@@ -24,6 +24,12 @@ type UseInputAreaControllerParams = Pick<
   | 'supportedFileTypes'
   | 'showModelSelector'
   | 'selectedModelId'
+  | 'selectedModelName'
+  | 'selectedThinkingLevel'
+  | 'onModelChange'
+  | 'onModelNameChange'
+  | 'onThinkingLevelChange'
+  | 'onModelRuntimeChange'
   | 'availableModels'
   | 'availableProjects'
   | 'selectedProjectId'
@@ -60,6 +66,12 @@ export function useInputAreaController({
   supportedFileTypes = DEFAULT_SUPPORTED_FILE_TYPES,
   showModelSelector = false,
   selectedModelId = null,
+  selectedModelName = null,
+  selectedThinkingLevel = null,
+  onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   availableModels = [],
   availableProjects = [],
   selectedProjectId = null,
@@ -82,6 +94,108 @@ export function useInputAreaController({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const client = useApiClient();
   const { alert } = useDialogService();
+  const normalizeNullableText = useCallback((value: string | null | undefined) => {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    return normalized.length > 0 ? normalized : null;
+  }, []);
+  const [localSelectedModelName, setLocalSelectedModelName] = useState<string | null>(
+    () => normalizeNullableText(selectedModelName),
+  );
+  const [localSelectedThinkingLevel, setLocalSelectedThinkingLevel] = useState<string | null>(
+    () => normalizeNullableText(selectedThinkingLevel),
+  );
+
+  useEffect(() => {
+    setLocalSelectedModelName(normalizeNullableText(selectedModelName));
+    setLocalSelectedThinkingLevel(normalizeNullableText(selectedThinkingLevel));
+  }, [normalizeNullableText, selectedModelName, selectedThinkingLevel]);
+
+  const handleModelRuntimeChange = useCallback((selection: {
+    selectedModelId?: string | null;
+    selectedModelName?: string | null;
+    selectedThinkingLevel?: string | null;
+  }) => {
+    const hasModelId = Object.prototype.hasOwnProperty.call(selection, 'selectedModelId');
+    const hasModelName = Object.prototype.hasOwnProperty.call(selection, 'selectedModelName');
+    const hasThinkingLevel = Object.prototype.hasOwnProperty.call(selection, 'selectedThinkingLevel');
+    const nextModelId = hasModelId
+      ? normalizeNullableText(selection.selectedModelId)
+      : selectedModelId;
+    const nextModelName = hasModelName
+      ? normalizeNullableText(selection.selectedModelName)
+      : localSelectedModelName;
+    const nextThinkingLevel = hasThinkingLevel
+      ? normalizeNullableText(selection.selectedThinkingLevel)
+      : localSelectedThinkingLevel;
+
+    setLocalSelectedModelName((prev) => (prev === nextModelName ? prev : nextModelName));
+    setLocalSelectedThinkingLevel((prev) => (
+      prev === nextThinkingLevel ? prev : nextThinkingLevel
+    ));
+
+    if (onModelRuntimeChange) {
+      onModelRuntimeChange({
+        selectedModelId: nextModelId,
+        selectedModelName: nextModelName,
+        selectedThinkingLevel: nextThinkingLevel,
+      });
+      return;
+    }
+    if (hasModelId) {
+      onModelChange?.(nextModelId);
+    }
+    if (hasModelName) {
+      onModelNameChange?.(nextModelName);
+    }
+    if (hasThinkingLevel) {
+      onThinkingLevelChange?.(nextThinkingLevel);
+    }
+  }, [
+    localSelectedModelName,
+    localSelectedThinkingLevel,
+    normalizeNullableText,
+    onModelChange,
+    onModelNameChange,
+    onModelRuntimeChange,
+    onThinkingLevelChange,
+    selectedModelId,
+  ]);
+
+  const handleModelNameChange = useCallback((modelName: string | null) => {
+    const normalized = normalizeNullableText(modelName);
+    setLocalSelectedModelName((prev) => (prev === normalized ? prev : normalized));
+    handleModelRuntimeChange({
+      selectedModelName: normalized,
+    });
+  }, [handleModelRuntimeChange, normalizeNullableText]);
+
+  const handleThinkingLevelChange = useCallback((level: string | null) => {
+    const normalized = normalizeNullableText(level);
+    setLocalSelectedThinkingLevel((prev) => (prev === normalized ? prev : normalized));
+    handleModelRuntimeChange({
+      selectedThinkingLevel: normalized,
+    });
+  }, [handleModelRuntimeChange, normalizeNullableText]);
+
+  const handleModelChange = useCallback((modelId: string | null) => {
+    const normalizedModelId = normalizeNullableText(modelId);
+    const nextModel = normalizedModelId
+      ? (availableModels || []).find((model) => model.id === normalizedModelId) || null
+      : null;
+    const nextModelName = normalizeNullableText(nextModel?.model_name);
+    const nextThinkingLevel = normalizeNullableText(nextModel?.thinking_level);
+    setLocalSelectedModelName(nextModelName);
+    setLocalSelectedThinkingLevel(nextThinkingLevel);
+    handleModelRuntimeChange({
+      selectedModelId: normalizedModelId,
+      selectedModelName: nextModelName,
+      selectedThinkingLevel: nextThinkingLevel,
+    });
+  }, [
+    availableModels,
+    handleModelRuntimeChange,
+    normalizeNullableText,
+  ]);
 
   const {
     currentAgentForSkills,
@@ -127,10 +241,14 @@ export function useInputAreaController({
     showProjectFilePicker,
     workspaceRootDisplayName,
     currentAiLabel,
+    effectiveModelName,
+    effectiveThinkingLevel,
   } = useInputAreaContextModel({
     availableModels,
     availableProjects,
     selectedModelId,
+    selectedModelName: localSelectedModelName,
+    selectedThinkingLevel: localSelectedThinkingLevel,
     selectedProjectId,
     workspaceRoot,
     isGuidingMode,
@@ -289,8 +407,11 @@ export function useInputAreaController({
     onSend,
     requireModelSelection,
     sanitizedEnabledMcpIds,
+    selectedModelId,
     selectedSkillIds,
     selectedRuntimeProject,
+    effectiveModelName,
+    effectiveThinkingLevel,
     skillsEnabled,
   });
 
@@ -361,11 +482,19 @@ export function useInputAreaController({
     handleClearSelectedSkills,
     selectedModel,
     enabledModels,
+    selectedModelName: localSelectedModelName,
+    selectedThinkingLevel: localSelectedThinkingLevel,
+    handleModelChange,
+    handleModelNameChange,
+    handleThinkingLevelChange,
+    handleModelRuntimeChange,
     hasAiOptions,
     projectForFilePicker,
     showProjectFilePicker,
     workspaceRootDisplayName,
     currentAiLabel,
+    effectiveModelName,
+    effectiveThinkingLevel,
     projectFilePickerOpen,
     projectFileParent,
     projectFileFilter,

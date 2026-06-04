@@ -85,7 +85,10 @@ export function createSendMessageHandler({
     }
 
     const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
-    const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
+    const requestedModelConfigId = typeof runtimeOptions?.modelConfigId === 'string'
+      ? runtimeOptions.modelConfigId.trim()
+      : '';
+    const effectiveSelectedModelId = requestedModelConfigId || sessionAiSelection?.selectedModelId || selectedModelId;
     const sessionRuntime = readSessionRuntimeFromMetadata(currentSession?.metadata);
     const fallbackContactAgentId = (
       typeof runtimeOptions?.contactAgentId === 'string'
@@ -107,6 +110,8 @@ export function createSendMessageHandler({
     const {
       effectiveContactAgentId,
       effectiveRemoteConnectionId,
+      effectiveModelName,
+      effectiveThinkingLevel,
       effectiveProjectId,
       effectiveProjectRoot,
       effectiveWorkspaceRoot,
@@ -125,9 +130,16 @@ export function createSendMessageHandler({
       effectiveSelectedModelId,
       aiModelConfigs,
     );
+    const selectedModelForRequest = {
+      ...selectedModel,
+      model_name: effectiveModelName || selectedModel.model_name,
+      thinking_level: effectiveThinkingLevel || selectedModel.thinking_level,
+    };
 
     const runtimeMetadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
       selectedModelId: selectedModel?.id || null,
+      selectedModelName: selectedModelForRequest.model_name || null,
+      selectedThinkingLevel: selectedModelForRequest.thinking_level || null,
       contactAgentId: effectiveContactAgentId,
       remoteConnectionId: effectiveRemoteConnectionId,
       projectId: effectiveProjectId,
@@ -157,7 +169,7 @@ export function createSendMessageHandler({
       const {
         supportsImages,
         reasoningEnabled,
-      } = resolveModelCapabilities(selectedModel, chatConfig);
+      } = resolveModelCapabilities(selectedModelForRequest, chatConfig);
       const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
         attachments,
         supportsImages,
@@ -169,7 +181,7 @@ export function createSendMessageHandler({
         sessionId: currentSessionId,
         content,
         conversationTurnId,
-        selectedModel,
+        selectedModel: selectedModelForRequest,
         previewAttachments,
         createdAt: userMessageTime,
       });
@@ -191,7 +203,7 @@ export function createSendMessageHandler({
       tempAssistantMessage = createDraftAssistantMessage({
         sessionId: currentSessionId,
         conversationTurnId,
-        selectedModel,
+        selectedModel: selectedModelForRequest,
         userMessage,
         userMessageTime,
       });
@@ -210,7 +222,7 @@ export function createSendMessageHandler({
         sessionId: currentSessionId,
         turnId: conversationTurnId,
         content,
-        selectedModel,
+        selectedModel: selectedModelForRequest,
         chatConfig,
         systemContext: activeSystemContext?.content || chatConfig.systemPrompt || '',
         attachments: apiAttachments || [],
@@ -262,9 +274,11 @@ export function createSendMessageHandler({
         auto_create_task: streamRuntimeOptions.autoCreateTask,
         skills_enabled: streamRuntimeOptions.skillsEnabled === true,
         selected_skill_ids: streamRuntimeOptions.selectedSkillIds || [],
-        model_config_id: selectedModel.id,
+        model_config_id: selectedModelForRequest.id,
         ai_model_config: {
           temperature: 0.7,
+          model_name: selectedModelForRequest.model_name,
+          thinking_level: selectedModelForRequest.thinking_level || null,
         },
       });
       let preferRealtimeStream = getRealtimeConnectionStateSnapshot() === 'connected';
@@ -286,7 +300,7 @@ export function createSendMessageHandler({
       const commandResponse = await client.sendChatCommand(
         currentSessionId,
         content,
-        selectedModel,
+        selectedModelForRequest,
         userId,
         apiAttachments,
         reasoningEnabled,

@@ -37,6 +37,8 @@ export interface TeamMemberWorkspaceProps {
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
   selectedModelId: string | null;
+  selectedModelName?: string | null;
+  selectedThinkingLevel?: string | null;
   aiModelConfigs: AiModelConfig[];
   supportsReasoning: boolean;
   reasoningEnabled: boolean;
@@ -67,6 +69,13 @@ export interface TeamMemberWorkspaceProps {
   onGuide: (content: string, attachments?: File[]) => void | Promise<void>;
   onStop: () => void;
   onModelChange: (modelId: string | null) => void;
+  onModelNameChange?: (modelName: string | null) => void;
+  onThinkingLevelChange?: (level: string | null) => void;
+  onModelRuntimeChange?: (selection: {
+    selectedModelId?: string | null;
+    selectedModelName?: string | null;
+    selectedThinkingLevel?: string | null;
+  }) => void;
   onReasoningToggle: (enabled: boolean) => void;
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;

@@ -14,6 +14,11 @@ export const useTeamMemberWorkspaceProps = ({
     selectedSessionId
     && store.sessionMessagePaginationState?.[selectedSessionId]?.nextBefore
   );
+  const selectedRuntimeModelId = resources.composer.composerSelectedModelId;
+  const supportsReasoning = Boolean(
+    selectedRuntimeModelId
+    && (store.aiModelConfigs || []).find((item) => item.id === selectedRuntimeModelId)?.supports_reasoning === true,
+  );
 
   return ({
   project,
@@ -32,9 +37,11 @@ export const useTeamMemberWorkspaceProps = ({
   chatIsLoading: resources.conversation.chatIsLoading,
   chatIsStreaming: resources.conversation.chatIsStreaming,
   chatIsStopping: resources.conversation.chatIsStopping,
-  selectedModelId: store.selectedModelId,
+  selectedModelId: selectedRuntimeModelId,
+  selectedModelName: resources.composer.composerSelectedModelName,
+  selectedThinkingLevel: resources.composer.composerSelectedThinkingLevel,
   aiModelConfigs: store.aiModelConfigs,
-  supportsReasoning: resources.conversation.supportsReasoning,
+  supportsReasoning,
   reasoningEnabled: store.chatConfig?.reasoningEnabled === true,
   mcpEnabled: resources.composer.composerMcpEnabled,
   enabledMcpIds: resources.composer.composerEnabledMcpIds,
@@ -72,7 +79,10 @@ export const useTeamMemberWorkspaceProps = ({
   onSend: resources.conversation.handleSendMessage,
   onGuide: resources.composer.handleRuntimeGuidanceSend,
   onStop: store.abortCurrentConversation,
-  onModelChange: store.setSelectedModel,
+  onModelChange: resources.composer.handleComposerSelectedModelChange,
+  onModelNameChange: resources.composer.handleComposerSelectedModelNameChange,
+  onThinkingLevelChange: resources.composer.handleComposerSelectedThinkingLevelChange,
+  onModelRuntimeChange: resources.composer.handleComposerModelRuntimeSelectionChange,
   onReasoningToggle: (enabled) => store.updateChatConfig({ reasoningEnabled: enabled }),
   onMcpEnabledChange: resources.composer.handleComposerMcpEnabledChange,
   onEnabledMcpIdsChange: resources.composer.handleComposerEnabledMcpIdsChange,
@@ -123,10 +133,17 @@ export const useTeamMemberWorkspaceProps = ({
   });
 }, [
   project,
+  resources.composer.composerSelectedModelId,
+  resources.composer.composerSelectedModelName,
+  resources.composer.composerSelectedThinkingLevel,
   resources.composer.composerEnabledMcpIds,
   resources.composer.composerAutoCreateTask,
   resources.composer.composerMcpEnabled,
   resources.composer.handleComposerAutoCreateTaskChange,
+  resources.composer.handleComposerModelRuntimeSelectionChange,
+  resources.composer.handleComposerSelectedModelChange,
+  resources.composer.handleComposerSelectedModelNameChange,
+  resources.composer.handleComposerSelectedThinkingLevelChange,
   resources.composer.currentRemoteConnection?.id,
   resources.composer.handleComposerEnabledMcpIdsChange,
   resources.composer.handleComposerMcpEnabledChange,
@@ -146,7 +163,6 @@ export const useTeamMemberWorkspaceProps = ({
   resources.conversation.selectedContactAgent,
   resources.conversation.selectedProjectSession,
   resources.conversation.sessionSummaryPaneVisible,
-  resources.conversation.supportsReasoning,
   resources.summary.clearingSummaries,
   resources.summary.deletingSummaryId,
   resources.summary.loadSessionSummaries,
@@ -196,8 +212,6 @@ export const useTeamMemberWorkspaceProps = ({
   store.closeTurnProcessViewer,
   store.messages,
   store.sessionMessagePaginationState,
-  store.selectedModelId,
   store.turnProcessViewer,
-  store.setSelectedModel,
   store.updateChatConfig,
 ]);

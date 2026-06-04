@@ -6,6 +6,8 @@ interface UseInputAreaContextModelOptions {
   availableModels: AiModelConfig[];
   availableProjects: Project[];
   selectedModelId: string | null;
+  selectedModelName: string | null;
+  selectedThinkingLevel: string | null;
   selectedProjectId: string | null;
   workspaceRoot: string | null;
   isGuidingMode: boolean;
@@ -16,6 +18,8 @@ export const useInputAreaContextModel = ({
   availableModels,
   availableProjects,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   selectedProjectId,
   workspaceRoot,
   isGuidingMode,
@@ -50,6 +54,14 @@ export const useInputAreaContextModel = ({
     () => (availableModels || []).filter((model) => model.enabled),
     [availableModels],
   );
+  const effectiveModelName = useMemo(() => {
+    const explicit = typeof selectedModelName === 'string' ? selectedModelName.trim() : '';
+    return explicit || selectedModel?.model_name || null;
+  }, [selectedModel?.model_name, selectedModelName]);
+  const effectiveThinkingLevel = useMemo(() => {
+    const explicit = typeof selectedThinkingLevel === 'string' ? selectedThinkingLevel.trim() : '';
+    return explicit || selectedModel?.thinking_level || null;
+  }, [selectedModel?.thinking_level, selectedThinkingLevel]);
 
   const hasAiOptions = Boolean(availableModels && availableModels.length > 0);
   const projectForFilePicker = useMemo(
@@ -82,8 +94,14 @@ export const useInputAreaContextModel = ({
   }, [normalizePath, normalizedWorkspaceRoot]);
 
   const currentAiLabel = useMemo(
-    () => (selectedModel ? `Model: ${selectedModel.name}` : '选择模型'),
-    [selectedModel],
+    () => {
+      if (!selectedModel) {
+        return '选择模型';
+      }
+      const modelName = effectiveModelName || selectedModel.model_name;
+      return modelName ? `${selectedModel.name} / ${modelName}` : selectedModel.name;
+    },
+    [effectiveModelName, selectedModel],
   );
 
   return {
@@ -92,6 +110,8 @@ export const useInputAreaContextModel = ({
     normalizedWorkspaceRoot,
     selectedModel,
     enabledModels,
+    effectiveModelName,
+    effectiveThinkingLevel,
     hasAiOptions,
     projectForFilePicker,
     projectRootForFilePicker,

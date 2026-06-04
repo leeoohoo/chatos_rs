@@ -7,6 +7,8 @@ import type {
   SessionMessageResponse,
   SessionPagingOptions,
   SessionResponse,
+  SessionRuntimeSettingsPayload,
+  SessionRuntimeSettingsResponse,
   SessionUpdatePayload,
   SessionUpsertPayload,
   TurnRuntimeSnapshotLookupResponse,
@@ -22,6 +24,11 @@ export interface WorkspaceSessionFacade {
   createSession(data: SessionUpsertPayload): Promise<SessionResponse>;
   getSession(id: string): Promise<SessionResponse>;
   updateSession(id: string, data: SessionUpdatePayload): Promise<SessionResponse>;
+  getConversationRuntimeSettings(conversationId: string): Promise<SessionRuntimeSettingsResponse>;
+  updateConversationRuntimeSettings(
+    conversationId: string,
+    data: SessionRuntimeSettingsPayload,
+  ): Promise<SessionRuntimeSettingsResponse>;
   deleteSession(id: string): Promise<DeleteSuccessResponse>;
   getConversationMessages(
     conversationId: string,
@@ -55,6 +62,12 @@ export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient
   },
   async updateSession(id, data) {
     return workspaceApi.updateSession(this.getRequestFn(), id, data);
+  },
+  async getConversationRuntimeSettings(conversationId) {
+    return workspaceApi.getConversationRuntimeSettings(this.getRequestFn(), conversationId);
+  },
+  async updateConversationRuntimeSettings(conversationId, data) {
+    return workspaceApi.updateConversationRuntimeSettings(this.getRequestFn(), conversationId, data);
   },
   async deleteSession(id) {
     return workspaceApi.deleteSession(this.getRequestFn(), id);

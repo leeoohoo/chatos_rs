@@ -12,6 +12,7 @@ mod history_process_support;
 mod mcp_server_handlers;
 mod message_handlers;
 mod review_handlers;
+mod runtime_settings_handlers;
 mod session_handlers;
 mod summary_handlers;
 mod support;
@@ -24,6 +25,9 @@ use self::message_handlers::{
     get_session_turn_runtime_context_by_turn, get_session_turn_runtime_context_latest,
 };
 use self::review_handlers::{get_session_review_repair_status, run_session_review_repair};
+use self::runtime_settings_handlers::{
+    get_session_runtime_settings, update_session_runtime_settings,
+};
 use self::session_handlers::{
     create_session, delete_session, get_session, list_sessions, update_session,
 };
@@ -40,6 +44,10 @@ pub fn router() -> Router {
         .route(
             "/api/conversations/:id",
             get(get_session).put(update_session).delete(delete_session),
+        )
+        .route(
+            "/api/conversations/:conversation_id/runtime-settings",
+            get(get_session_runtime_settings).put(update_session_runtime_settings),
         )
         .route(
             "/api/conversations/:conversation_id/mcp-servers",

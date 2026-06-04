@@ -37,14 +37,14 @@ export const InputAreaRemoteConnectionPicker: React.FC<InputAreaRemoteConnection
         'text-foreground focus:outline-none focus:ring-1 focus:ring-primary max-w-[220px]',
         (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
       )}
-      title="选择远程服务器（会透传给 AI 工具）"
+      title="选择远程工具上下文（会透传给终端、SSH、MCP 工具）"
     >
       <option value="">
-        服务器: 不选择
+        远程: 不使用
       </option>
       {availableRemoteConnections.map((connection) => (
         <option key={connection.id} value={connection.id}>
-          {`服务器: ${connection.name || connection.host}`}
+          {`远程: ${connection.name || connection.host}`}
         </option>
       ))}
     </select>
