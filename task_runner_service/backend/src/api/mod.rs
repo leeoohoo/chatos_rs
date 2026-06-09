@@ -15,22 +15,23 @@ use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, Tr
 use tracing::Level;
 
 use crate::auth::CurrentUser;
-use crate::mcp_server::{JsonRpcRequest, JsonRpcResponse};
+use crate::mcp_server::{JsonRpcRequest, JsonRpcResponse, McpRequestContext};
 use crate::models::{
-    BatchTaskDeleteRequest, BatchTaskOperationResponse, BatchTaskRunRequest,
-    BatchTaskStatusUpdateRequest, CancelUiPromptRequest, CreateModelConfigRequest,
-    CreateRemoteServerRequest, CreateTaskRequest, CreateUserRequest, CurrentUserResponse,
-    HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry, McpPromptPreviewRequest,
-    McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse, ModelConfigRecord,
-    ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse, PreviewModelCatalogRequest,
-    PromptListFilters, RemoteServerRecord, RemoteServerTestResponse, RunListFilters,
-    RunSummaryRecord, StartTaskRunRequest, SubmitUiPromptRequest, SystemConfigResponse,
-    TaskIndexResponse, TaskListFilters, TaskMemoryContextOptions, TaskMemoryContextResponse,
-    TaskMemoryRecordsOptions, TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, TestModelConfigRequest, TestRemoteServerRequest, UiPromptRecord,
-    UiPromptStatus, UiPromptTaskCountRecord, UpdateModelConfigRequest, UpdateRemoteServerRequest,
-    UpdateTaskMcpRequest, UpdateTaskRequest, UpdateUserRequest, UserSummaryRecord,
+    AgentTokenRequest, AgentTokenResponse, BatchTaskDeleteRequest, BatchTaskOperationResponse,
+    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelUiPromptRequest,
+    CreateModelConfigRequest, CreateRemoteServerRequest, CreateTaskRequest, CreateUserRequest,
+    CurrentUserResponse, HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry,
+    McpPromptPreviewRequest, McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse,
+    ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse,
+    PreviewModelCatalogRequest, PromptListFilters, RemoteServerRecord, RemoteServerTestResponse,
+    RunListFilters, RunSummaryRecord, StartTaskRunRequest, SubmitUiPromptRequest,
+    SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMemoryContextOptions,
+    TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
+    TaskMemorySummaryResponse, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
+    TestRemoteServerRequest, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
+    UpdateModelConfigRequest, UpdateRemoteServerRequest, UpdateTaskMcpRequest, UpdateTaskRequest,
+    UpdateUserRequest, UserSummaryRecord,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
@@ -153,6 +154,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(health_handler))
         .route("/api/system/config", get(system_config_handler))
         .route("/api/auth/login", post(login_handler))
+        .route("/api/auth/agent-token", post(agent_token_handler))
         .merge(protected_api)
         .route("/mcp", post(mcp_entrypoint))
         .with_state(state)
@@ -188,6 +190,10 @@ async fn require_auth(
     }
 
     let current_user = current_user_from_request(&request, &state)?;
+    let path = request.uri().path();
+    if !current_user.is_admin() && path != "/api/auth/me" && path != "/api/auth/logout" {
+        return Err(ApiError::forbidden("当前账号不能访问管理后台接口"));
+    }
     request.extensions_mut().insert(current_user);
     Ok(next.run(request).await)
 }
@@ -199,6 +205,18 @@ async fn login_handler(
     let response = state
         .auth_service
         .login(input.username.as_str(), input.password.as_str())
+        .await
+        .map_err(ApiError::unauthorized)?;
+    Ok(Json(response))
+}
+
+async fn agent_token_handler(
+    State(state): State<AppState>,
+    Json(input): Json<AgentTokenRequest>,
+) -> Result<Json<AgentTokenResponse>, ApiError> {
+    let response = state
+        .auth_service
+        .issue_agent_token(input.username.as_str(), input.password.as_str())
         .await
         .map_err(ApiError::unauthorized)?;
     Ok(Json(response))
@@ -338,6 +356,7 @@ async fn list_tasks(
             keyword: query.keyword,
             tag: query.tag,
             model_config_id: query.model_config_id,
+            creator_user_id: None,
             scheduled_only: query.scheduled_only,
             parent_task_id: query.parent_task_id,
             source_run_id: query.source_run_id,
@@ -360,6 +379,7 @@ async fn list_tasks_page(
             keyword: query.keyword,
             tag: query.tag,
             model_config_id: query.model_config_id,
+            creator_user_id: None,
             scheduled_only: query.scheduled_only,
             parent_task_id: query.parent_task_id,
             source_run_id: query.source_run_id,
@@ -394,6 +414,7 @@ async fn list_task_summaries(
             .list_task_summaries_filtered(TaskListFilters {
                 status: query.status,
                 keyword: query.keyword,
+                creator_user_id: None,
                 limit: query.limit,
                 ..TaskListFilters::default()
             })
@@ -421,7 +442,7 @@ async fn create_task(
 ) -> Result<(StatusCode, Json<TaskRecord>), ApiError> {
     let task = state
         .task_service
-        .create_task(input, Some(&current_user))
+        .create_task(input, Some(&current_user), None)
         .await
         .map_err(ApiError::bad_request)?;
     Ok((StatusCode::CREATED, Json(task)))
@@ -1450,9 +1471,59 @@ async fn preview_mcp_prompt(
 
 async fn mcp_entrypoint(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
-    Json(state.task_runner_mcp_service.handle_jsonrpc(request).await)
+    let id = request.id.clone().unwrap_or(Value::Null);
+    let current_user = bearer_token_from_headers(&headers)
+        .map_err(ApiError::unauthorized)
+        .and_then(|token| {
+            state
+                .auth_service
+                .current_user_for_token(token)
+                .ok_or_else(|| ApiError::unauthorized("登录已失效，请重新登录"))
+        });
+    let current_user = match current_user {
+        Ok(value) => value,
+        Err(err) => {
+            return Json(JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: None,
+                error: Some(crate::mcp_server::JsonRpcError {
+                    code: -32001,
+                    message: err.message,
+                }),
+            });
+        }
+    };
+    Json(
+        state
+            .task_runner_mcp_service
+            .handle_jsonrpc(
+                request,
+                current_user,
+                mcp_request_context_from_headers(&headers),
+            )
+            .await,
+    )
+}
+
+fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
+    McpRequestContext {
+        source_session_id: header_text(headers, "x-chatos-session-id")
+            .or_else(|| header_text(headers, "x-chatos-conversation-id")),
+        source_turn_id: header_text(headers, "x-chatos-turn-id"),
+    }
+}
+
+fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
+    headers
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[derive(Debug)]
@@ -1465,6 +1536,13 @@ impl ApiError {
     fn unauthorized(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
             message: message.into(),
         }
     }

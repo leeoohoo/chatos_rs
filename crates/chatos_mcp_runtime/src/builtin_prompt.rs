@@ -695,6 +695,7 @@ mod tests {
                 server_name: "memory_skill_reader".to_string(),
                 server_type: "builtin".to_string(),
                 server_url: None,
+                server_headers: None,
                 server_config: None,
                 tool_info: json!({}),
             },

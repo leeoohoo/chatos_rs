@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,8 @@ use serde_json::Value;
 pub struct McpHttpServer {
     pub name: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
 }
 
 impl McpHttpServer {
@@ -14,7 +17,13 @@ impl McpHttpServer {
         Self {
             name: name.into(),
             url: url.into(),
+            headers: None,
         }
+    }
+
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = Some(headers);
+        self
     }
 }
 
@@ -80,6 +89,7 @@ pub struct ToolInfo {
     pub server_name: String,
     pub server_type: String,
     pub server_url: Option<String>,
+    pub server_headers: Option<HashMap<String, String>>,
     pub server_config: Option<McpStdioServer>,
     pub tool_info: Value,
 }

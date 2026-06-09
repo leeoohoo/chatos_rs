@@ -5,10 +5,26 @@ use crate::models::memory_mapping_types::{
     CreateMemoryContactRequestDto, CreateMemoryContactResponseDto, MemoryAgentRecallDto,
     MemoryContactDto, MemoryProjectAgentLinkDto, MemoryProjectContactDto, MemoryProjectDto,
     MemoryProjectMemoryDto, SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
+    UpdateContactTaskRunnerConfigRequestDto,
 };
 use crate::repositories::chatos_memory_mappings as mappings_repo;
 use crate::repositories::projects;
 use crate::services::chatos_memory_engine;
+
+#[derive(Debug, Clone)]
+pub struct ContactTaskRunnerRuntimeConfig {
+    pub contact_id: String,
+    pub base_url: String,
+    pub username: String,
+    pub password: String,
+}
+
+fn normalize_non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
 
 pub async fn list_memory_contacts(
     user_id: Option<&str>,
@@ -28,6 +44,49 @@ pub async fn get_memory_contact(contact_id: &str) -> Result<Option<MemoryContact
     Ok(mappings_repo::get_contact_by_id(contact_id)
         .await?
         .map(contact_to_dto))
+}
+
+pub async fn get_contact_task_runner_runtime_config(
+    user_id: Option<&str>,
+    contact_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<Option<ContactTaskRunnerRuntimeConfig>, String> {
+    let user_id = user_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "user_id is required".to_string())?;
+
+    let contact =
+        if let Some(contact_id) = contact_id.map(str::trim).filter(|value| !value.is_empty()) {
+            mappings_repo::get_contact_by_id(contact_id).await?
+        } else if let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) {
+            mappings_repo::get_contact_by_user_and_agent(user_id, agent_id).await?
+        } else {
+            None
+        };
+
+    let Some(contact) = contact else {
+        return Ok(None);
+    };
+    if contact.user_id != user_id || !contact.task_runner_enabled {
+        return Ok(None);
+    }
+    let Some(base_url) = normalize_non_empty(contact.task_runner_base_url.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(username) = normalize_non_empty(contact.task_runner_username.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(password) = normalize_non_empty(contact.task_runner_password.as_deref()) else {
+        return Ok(None);
+    };
+
+    Ok(Some(ContactTaskRunnerRuntimeConfig {
+        contact_id: contact.id,
+        base_url,
+        username,
+        password,
+    }))
 }
 
 pub async fn create_memory_contact(
@@ -57,6 +116,24 @@ pub async fn create_memory_contact(
 
 pub async fn delete_memory_contact(contact_id: &str) -> Result<bool, String> {
     mappings_repo::delete_contact_by_id(contact_id).await
+}
+
+pub async fn update_contact_task_runner_config(
+    contact_id: &str,
+    payload: &UpdateContactTaskRunnerConfigRequestDto,
+) -> Result<Option<MemoryContactDto>, String> {
+    let contact = mappings_repo::update_contact_task_runner_config(
+        contact_id,
+        mappings_repo::UpdateContactTaskRunnerConfigInput {
+            enabled: payload.enabled,
+            base_url: payload.base_url.clone(),
+            username: payload.username.clone(),
+            password: payload.password.clone(),
+            clear_password: payload.clear_password.unwrap_or(false),
+        },
+    )
+    .await?;
+    Ok(contact.map(contact_to_dto))
 }
 
 pub async fn sync_memory_project(
@@ -394,6 +471,13 @@ fn contact_to_dto(contact: ChatosContact) -> MemoryContactDto {
         user_id: contact.user_id,
         agent_id: contact.agent_id,
         agent_name_snapshot: contact.agent_name_snapshot,
+        task_runner_enabled: contact.task_runner_enabled,
+        task_runner_base_url: contact.task_runner_base_url,
+        task_runner_username: contact.task_runner_username,
+        task_runner_has_password: contact
+            .task_runner_password
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
         status: contact.status,
         created_at: contact.created_at,
         updated_at: contact.updated_at,

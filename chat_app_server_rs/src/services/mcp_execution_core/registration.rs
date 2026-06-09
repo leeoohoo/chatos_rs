@@ -14,7 +14,8 @@ pub(crate) async fn register_tools_from_http(
     tool_metadata: &mut HashMap<String, ToolInfo>,
     server: &McpHttpServer,
 ) -> Result<(), String> {
-    let discovered_tools = crate::core::mcp_tools::list_tools_http(&server.url).await?;
+    let discovered_tools =
+        crate::core::mcp_tools::list_tools_http(&server.url, server.headers.as_ref()).await?;
     for tool in discovered_tools {
         register_tool(
             tools,
@@ -22,6 +23,7 @@ pub(crate) async fn register_tools_from_http(
             &server.name,
             "http",
             Some(server.url.clone()),
+            server.headers.clone(),
             None,
             tool,
         );
@@ -41,6 +43,7 @@ pub(crate) async fn register_tools_from_stdio(
             tool_metadata,
             &server.name,
             "stdio",
+            None,
             None,
             Some(server.clone()),
             tool,
@@ -82,6 +85,7 @@ pub(crate) fn register_tools_from_builtin(
             "builtin",
             None,
             None,
+            None,
             tool,
         );
     }
@@ -103,6 +107,11 @@ pub(crate) fn codex_gateway_request_tools(
             "server_label": server.name.clone(),
             "server_url": server.url.clone(),
         }));
+        if let Some(headers) = server.headers.as_ref() {
+            if let Some(item) = out.last_mut() {
+                item["headers"] = json!(headers);
+            }
+        }
     }
 
     for server in stdio_mcp_servers {
@@ -152,6 +161,7 @@ fn register_tool(
     server_name: &str,
     server_type: &str,
     server_url: Option<String>,
+    server_headers: Option<HashMap<String, String>>,
     server_config: Option<McpStdioServer>,
     tool: Value,
 ) {
@@ -173,6 +183,7 @@ fn register_tool(
             server_name: server_name.to_string(),
             server_type: server_type.to_string(),
             server_url,
+            server_headers,
             server_config,
             tool_info: tool,
         },

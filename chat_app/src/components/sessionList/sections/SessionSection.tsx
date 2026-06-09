@@ -27,6 +27,7 @@ interface SessionSectionProps {
   summarySessionId?: string | null;
   runtimeContextSessionId?: string | null;
   displaySessionRuntimeIdMap?: Record<string, string>;
+  taskRunnerEnabledBySessionId?: Record<string, boolean>;
   sessionChatState?: SessionChatStateMap;
   taskReviewPanelsBySession?: Record<string, TaskReviewPanelState[]>;
   uiPromptPanelsBySession?: Record<string, UiPromptPanelState[]>;
@@ -39,6 +40,7 @@ interface SessionSectionProps {
   onSelectSession: (sessionId: string) => void;
   onOpenSummary: (sessionId: string) => void;
   onOpenRuntimeContext: (sessionId: string) => void;
+  onOpenTaskRunnerConfig?: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onLoadMore: () => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -54,6 +56,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   summarySessionId,
   runtimeContextSessionId,
   displaySessionRuntimeIdMap = {},
+  taskRunnerEnabledBySessionId = {},
   sessionChatState,
   taskReviewPanelsBySession = {},
   uiPromptPanelsBySession = {},
@@ -66,6 +69,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   onSelectSession,
   onOpenSummary,
   onOpenRuntimeContext,
+  onOpenTaskRunnerConfig = () => {},
   onDeleteSession,
   onLoadMore,
   onToggleActionMenu,
@@ -173,6 +177,12 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                             return <SessionBusyBadge phase={phase} />;
                           })()
                         )}
+                        {taskRunnerEnabledBySessionId[session.id] ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-600">
+                            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                            任务系统
+                          </span>
+                        ) : null}
                         {(() => {
                           if (isArchivedSession) {
                             return null;
@@ -241,6 +251,20 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         </button>
                         <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
                           <div className="py-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenTaskRunnerConfig(session.id);
+                                closeActionMenus();
+                              }}
+                              disabled={isArchivedSession}
+                              className={cn(
+                                'flex items-center w-full px-3 py-2 text-sm text-foreground hover:bg-accent',
+                                isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent',
+                              )}
+                            >
+                              任务系统
+                            </button>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

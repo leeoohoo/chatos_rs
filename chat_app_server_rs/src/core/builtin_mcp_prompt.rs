@@ -103,6 +103,7 @@ fn shared_tool_info(info: &ToolInfo) -> chatos_mcp_runtime::ToolInfo {
         server_name: info.server_name.clone(),
         server_type: info.server_type.clone(),
         server_url: info.server_url.clone(),
+        server_headers: info.server_headers.clone(),
         server_config: info.server_config.clone().map(|server| {
             chatos_mcp_runtime::McpStdioServer {
                 name: server.name,

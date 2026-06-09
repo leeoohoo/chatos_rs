@@ -68,12 +68,24 @@ export interface ContactResponse {
   user_id: string;
   agent_id: string;
   agent_name_snapshot?: string | null;
+  task_runner_enabled?: boolean | null;
+  task_runner_base_url?: string | null;
+  task_runner_username?: string | null;
+  task_runner_has_password?: boolean | null;
   status?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
 export type ContactCreateResponse = ContactResponse | { contact: ContactResponse };
+
+export interface ContactTaskRunnerUpdatePayload {
+  enabled: boolean;
+  base_url?: string | null;
+  username?: string | null;
+  password?: string | null;
+  clear_password?: boolean;
+}
 
 export interface ContactProjectMemoryResponse {
   id: string;

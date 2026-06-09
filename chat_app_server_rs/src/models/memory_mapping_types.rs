@@ -7,6 +7,12 @@ pub struct MemoryContactDto {
     pub user_id: String,
     pub agent_id: String,
     pub agent_name_snapshot: Option<String>,
+    #[serde(default)]
+    pub task_runner_enabled: bool,
+    pub task_runner_base_url: Option<String>,
+    pub task_runner_username: Option<String>,
+    #[serde(default)]
+    pub task_runner_has_password: bool,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -118,6 +124,17 @@ pub struct CreateMemoryContactRequestDto {
 pub struct CreateMemoryContactResponseDto {
     pub created: bool,
     pub contact: MemoryContactDto,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateContactTaskRunnerConfigRequestDto {
+    pub enabled: bool,
+    pub base_url: Option<String>,
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub clear_password: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

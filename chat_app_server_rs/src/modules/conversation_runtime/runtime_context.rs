@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use tracing::warn;
@@ -20,9 +20,13 @@ use crate::core::mcp_runtime::{
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
+use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
     chatos_agents, chatos_memory_engine, chatos_memory_mappings, chatos_sessions, chatos_skills,
+    task_runner_api_client,
 };
+
+const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
 
 #[derive(Debug, Clone)]
 pub struct ConversationRuntimeRequest {
@@ -195,7 +199,7 @@ pub async fn resolve_runtime_context(
         .or(runtime_metadata.auto_create_task)
         .unwrap_or(false);
 
-    let (http_servers, stdio_servers, mut builtin_servers) = if mcp_enabled {
+    let (mut http_servers, stdio_servers, mut builtin_servers) = if mcp_enabled {
         load_mcp_servers_by_selection(
             effective_user_id.clone(),
             !normalized_mcp_ids.is_empty(),
@@ -207,6 +211,22 @@ pub async fn resolve_runtime_context(
     } else {
         empty_mcp_server_bundle()
     };
+
+    if mcp_enabled
+        && !http_servers
+            .iter()
+            .any(|server| server.name == TASK_RUNNER_CONTACT_MCP_SERVER_NAME)
+    {
+        if let Some(server) = build_contact_task_runner_mcp_server(
+            effective_user_id.as_deref(),
+            runtime_metadata.contact_id.as_deref(),
+            contact_agent_id.as_deref(),
+        )
+        .await
+        {
+            http_servers.push(server);
+        }
+    }
 
     if should_attach_contact_reader_tools {
         if let Some(agent_id) = contact_runtime_context
@@ -272,6 +292,54 @@ pub async fn resolve_runtime_context(
         use_tools,
         memory_summary_prompt,
     }
+}
+
+async fn build_contact_task_runner_mcp_server(
+    effective_user_id: Option<&str>,
+    contact_id: Option<&str>,
+    contact_agent_id: Option<&str>,
+) -> Option<McpHttpServer> {
+    let config = match chatos_memory_mappings::get_contact_task_runner_runtime_config(
+        effective_user_id,
+        contact_id,
+        contact_agent_id,
+    )
+    .await
+    {
+        Ok(value) => value?,
+        Err(err) => {
+            warn!("load contact task runner config failed: detail={}", err);
+            return None;
+        }
+    };
+
+    let token = match task_runner_api_client::exchange_agent_token(
+        &task_runner_api_client::TaskRunnerAgentCredentials {
+            base_url: config.base_url.clone(),
+            username: config.username.clone(),
+            password: config.password.clone(),
+            contact_id: Some(config.contact_id.clone()),
+        },
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            warn!(
+                "exchange task runner agent token failed: contact_id={} detail={}",
+                config.contact_id, err
+            );
+            return None;
+        }
+    };
+
+    let mut headers = HashMap::new();
+    headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+    Some(McpHttpServer {
+        name: TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string(),
+        url: format!("{}/mcp", config.base_url.trim().trim_end_matches('/')),
+        headers: Some(headers),
+    })
 }
 
 async fn build_contact_skill_prompt_mode(

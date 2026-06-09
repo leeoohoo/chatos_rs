@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   Modal,
+  Select,
   Space,
   Switch,
   Table,
@@ -26,12 +27,13 @@ import {
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
-import type { CreateUserPayload, UpdateUserPayload, UserSummaryRecord } from '../types';
+import type { CreateUserPayload, UpdateUserPayload, UserRole, UserSummaryRecord } from '../types';
 
 type UserFormValues = {
   username: string;
   display_name?: string;
   password?: string;
+  role: UserRole;
   enabled: boolean;
 };
 
@@ -112,6 +114,16 @@ export function UsersPage() {
       ),
     },
     {
+      title: '角色',
+      dataIndex: 'role',
+      width: 110,
+      render: (role: UserRole) => (
+        <Tag color={role === 'admin' ? 'blue' : 'purple'}>
+          {role === 'admin' ? '管理员' : 'AI agent'}
+        </Tag>
+      ),
+    },
+    {
       title: '最近登录',
       dataIndex: 'last_login_at',
       width: 180,
@@ -173,7 +185,7 @@ export function UsersPage() {
   function openCreateDrawer() {
     setEditingUser(null);
     form.resetFields();
-    form.setFieldsValue({ enabled: true });
+    form.setFieldsValue({ enabled: true, role: 'agent' });
     setDrawerOpen(true);
   }
 
@@ -183,6 +195,7 @@ export function UsersPage() {
       username: user.username,
       display_name: user.display_name,
       password: undefined,
+      role: user.role,
       enabled: user.enabled,
     });
     setDrawerOpen(true);
@@ -198,6 +211,7 @@ export function UsersPage() {
     if (editingUser) {
       const payload: UpdateUserPayload = {
         display_name: values.display_name,
+        role: values.role,
         enabled: values.enabled,
       };
       if (values.password?.trim()) {
@@ -211,6 +225,7 @@ export function UsersPage() {
       username: values.username,
       display_name: values.display_name,
       password: values.password || '',
+      role: values.role,
       enabled: values.enabled,
     });
   }
@@ -251,7 +266,7 @@ export function UsersPage() {
           <Typography.Title level={3} style={{ margin: 0 }}>
             用户管理
           </Typography.Title>
-          <Typography.Text type="secondary">管理可以登录任务系统的用户。</Typography.Text>
+          <Typography.Text type="secondary">管理员管理后台，AI agent 通过 MCP token 使用任务系统。</Typography.Text>
         </Space>
         <Space>
           <Button
@@ -308,11 +323,20 @@ export function UsersPage() {
           <Form.Item name="display_name" label="显示名">
             <Input autoComplete="name" />
           </Form.Item>
+          <Form.Item name="role" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
+            <Select
+              disabled={editingUser?.id === currentUserId}
+              options={[
+                { label: 'AI agent', value: 'agent' },
+                { label: '管理员', value: 'admin' },
+              ]}
+            />
+          </Form.Item>
           <Form.Item
             name="password"
             label={editingUser ? '重置密码' : '密码'}
             rules={[{ required: !editingUser, message: '请输入密码' }]}
-          >
+        >
             <Input.Password autoComplete={editingUser ? 'new-password' : 'new-password'} />
           </Form.Item>
           <Form.Item name="enabled" label="状态" valuePropName="checked">

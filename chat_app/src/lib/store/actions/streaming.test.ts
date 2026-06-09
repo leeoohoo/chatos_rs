@@ -130,6 +130,7 @@ const createStreamingState = (): ChatStoreShape => ({
   error: null,
   loadContacts: vi.fn(),
   createContact: vi.fn(),
+  updateContactTaskRunnerConfig: vi.fn(),
   deleteContact: vi.fn(),
   getContactByAgentId: vi.fn(),
   markContactsStale: vi.fn(),

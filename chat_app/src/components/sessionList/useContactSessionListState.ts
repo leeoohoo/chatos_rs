@@ -15,6 +15,9 @@ export interface SessionListContact {
   id: string;
   agentId: string;
   name: string;
+  taskRunner?: {
+    enabled: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -58,6 +61,7 @@ interface UseContactSessionListStateOptions {
 interface UseContactSessionListStateResult {
   ensureSessionForContact: (contact: SessionListContact) => Promise<string | null>;
   displaySessionRuntimeIdMap: Record<string, string>;
+  taskRunnerEnabledBySessionId: Record<string, boolean>;
   displaySessions: Session[];
   currentDisplaySessionId: string | null;
   activeSummaryDisplaySessionId: string | null;
@@ -133,6 +137,14 @@ export const useContactSessionListState = ({
     });
   }, [contacts, displaySessionRuntimeIdMap, sessions]);
 
+  const taskRunnerEnabledBySessionId = useMemo<Record<string, boolean>>(() => {
+    const out: Record<string, boolean> = {};
+    for (const contact of contacts || []) {
+      out[`${CONTACT_PLACEHOLDER_PREFIX}${contact.id}`] = Boolean(contact.taskRunner?.enabled);
+    }
+    return out;
+  }, [contacts]);
+
   const currentDisplaySessionId = useMemo(() => {
     if (activePanel !== 'chat') {
       return null;
@@ -166,6 +178,7 @@ export const useContactSessionListState = ({
   return {
     ensureSessionForContact,
     displaySessionRuntimeIdMap,
+    taskRunnerEnabledBySessionId,
     displaySessions,
     currentDisplaySessionId,
     activeSummaryDisplaySessionId,

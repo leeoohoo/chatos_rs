@@ -59,6 +59,7 @@ pub(crate) fn shared_http_server(server: ChatosHttpServer) -> chatos_mcp_runtime
     chatos_mcp_runtime::McpHttpServer {
         name: server.name,
         url: server.url,
+        headers: server.headers,
     }
 }
 
@@ -213,6 +214,7 @@ pub(crate) fn chatos_tool_info(info: &chatos_mcp_runtime::ToolInfo) -> ChatosToo
         server_name: info.server_name.clone(),
         server_type: info.server_type.clone(),
         server_url: info.server_url.clone(),
+        server_headers: info.server_headers.clone(),
         server_config: info.server_config.clone().map(chatos_stdio_server),
         tool_info: info.tool_info.clone(),
     }

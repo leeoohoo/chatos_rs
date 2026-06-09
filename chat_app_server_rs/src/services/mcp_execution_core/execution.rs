@@ -18,6 +18,8 @@ use crate::utils::abort_registry;
 
 use super::parallelism::should_parallelize_tool_batch;
 
+const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
+
 pub(crate) fn tool_call_name(tool_call: &Value) -> Option<&str> {
     extract_tool_call_name(tool_call)
 }
@@ -94,8 +96,10 @@ pub(crate) async fn call_tool_once(
 
     if info.server_type == "http" {
         let url = info.server_url.clone().ok_or("missing server url")?;
+        let headers = http_tool_call_headers(info, session_id, conversation_turn_id);
         let result = jsonrpc_http_call(
             &url,
+            headers.as_ref(),
             "tools/call",
             json!({"name": info.original_name, "arguments": args}),
         )
@@ -131,6 +135,31 @@ pub(crate) async fn call_tool_once(
         .await?;
         Ok(to_text_and_structured_result(&result))
     }
+}
+
+fn http_tool_call_headers(
+    info: &ToolInfo,
+    session_id: Option<&str>,
+    conversation_turn_id: Option<&str>,
+) -> Option<HashMap<String, String>> {
+    let mut headers = info.server_headers.clone().unwrap_or_default();
+    if info.server_name == TASK_RUNNER_MCP_SERVER_NAME {
+        if let Some(session_id) = normalized_context_value(session_id) {
+            headers.insert("X-Chatos-Session-Id".to_string(), session_id.clone());
+            headers.insert("X-Chatos-Conversation-Id".to_string(), session_id);
+        }
+        if let Some(turn_id) = normalized_context_value(conversation_turn_id) {
+            headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
+        }
+    }
+    (!headers.is_empty()).then_some(headers)
+}
+
+fn normalized_context_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 async fn execute_tools_stream_parallel_with_registry(

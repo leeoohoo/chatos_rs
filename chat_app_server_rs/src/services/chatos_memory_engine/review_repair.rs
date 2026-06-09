@@ -1,6 +1,4 @@
-use memory_engine_sdk::{
-    ListJobRunsRequest, SdkCountThreadRecordsRequest, SdkGetThreadRepairScopeStatusRequest,
-};
+use memory_engine_sdk::{ListJobRunsRequest, SdkCountThreadRecordsRequest};
 
 use super::client::build_client;
 use super::mapping::{build_review_repair_scope, build_thread_mapping};
@@ -129,7 +127,7 @@ pub async fn get_chatos_review_repair_status(
         )
         .await?;
 
-    let running_job_count = match client
+    let running_job_count = client
         .list_job_runs(&ListJobRunsRequest {
             job_type: Some("thread_repair".to_string()),
             thread_id: Some(mapping.thread_id.clone()),
@@ -140,26 +138,8 @@ pub async fn get_chatos_review_repair_status(
             limit: Some(10),
         })
         .await
-    {
-        Ok(items) => items.len() as i64,
-        Err(_) => {
-            if let Some(thread_label) = scope.thread_label.clone() {
-                client
-                    .get_thread_repair_scope_status(&SdkGetThreadRepairScopeStatusRequest {
-                        tenant_id: scope.tenant_id.clone(),
-                        thread_label,
-                        thread_status: Some("active".to_string()),
-                        pending_record_type: Some("message".to_string()),
-                        max_threads: Some(5_000),
-                    })
-                    .await
-                    .map(|value| value.running_job_count)
-                    .unwrap_or(0)
-            } else {
-                0
-            }
-        }
-    };
+        .map(|items| items.len() as i64)
+        .unwrap_or(0);
 
     Ok(ReviewRepairStatusResult {
         running: running_job_count > 0,

@@ -2,6 +2,7 @@ import type { ContactRecord } from '../../types';
 import type { ContactResponse } from '../api/client/types';
 import {
   asRecord,
+  readBooleanFirst,
   normalizeDate,
   readString,
   readTrimmedString,
@@ -31,6 +32,12 @@ export const normalizeContact = (raw: ContactResponse | unknown): ContactRecord 
     agentId,
     name,
     status,
+    taskRunner: {
+      enabled: readBooleanFirst(record, ['task_runner_enabled'], false),
+      baseUrl: readTrimmedString(record, 'task_runner_base_url'),
+      username: readTrimmedString(record, 'task_runner_username'),
+      hasPassword: readBooleanFirst(record, ['task_runner_has_password'], false),
+    },
     createdAt,
     updatedAt,
   };

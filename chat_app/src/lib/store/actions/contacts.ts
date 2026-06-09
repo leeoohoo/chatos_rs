@@ -210,6 +210,41 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
       return normalized;
     },
 
+    updateContactTaskRunnerConfig: async (
+      contactId: string,
+      config: {
+        enabled: boolean;
+        baseUrl: string;
+        username: string;
+        password?: string;
+        clearPassword?: boolean;
+      },
+    ) => {
+      const trimmed = contactId.trim();
+      if (!trimmed) {
+        throw new Error('contactId is required');
+      }
+      const password = config.password?.trim();
+      const updated = await client.updateContactTaskRunnerConfig(trimmed, {
+        enabled: config.enabled,
+        base_url: config.baseUrl.trim() || null,
+        username: config.username.trim() || null,
+        password: password || undefined,
+        clear_password: config.clearPassword,
+      });
+      const normalized = normalizeContact(updated);
+      if (!normalized) {
+        throw new Error('update contact returned invalid payload');
+      }
+      upsertContactCaches(normalized);
+      set((state: ChatStoreDraft) => {
+        state.contacts = upsertContactRecord(state.contacts || [], normalized)
+          .filter((item: ContactRecord) => item.status === '' || item.status === 'active')
+          .sort((a: ContactRecord, b: ContactRecord) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      });
+      return normalized;
+    },
+
     deleteContact: async (contactId: string) => {
       const trimmed = contactId.trim();
       if (!trimmed) {

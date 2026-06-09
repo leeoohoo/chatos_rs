@@ -23,6 +23,8 @@ export type UiPromptStatus =
   | 'timed_out'
   | 'failed';
 
+export type UserRole = 'admin' | 'agent';
+
 export type TaskMcpInitMode = 'full' | 'builtin_only' | 'disabled';
 export type TaskBuiltinPromptMode = 'configured' | 'effective';
 export type TaskScheduleMode = 'manual' | 'once' | 'interval';
@@ -31,6 +33,7 @@ export interface AuthUser {
   id: string;
   username: string;
   display_name: string;
+  role: UserRole;
 }
 
 export interface LoginPayload {
@@ -51,6 +54,7 @@ export interface UserSummaryRecord {
   id: string;
   username: string;
   display_name: string;
+  role: UserRole;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -61,12 +65,14 @@ export interface CreateUserPayload {
   username: string;
   display_name?: string;
   password: string;
+  role?: UserRole;
   enabled?: boolean;
 }
 
 export interface UpdateUserPayload {
   display_name?: string;
   password?: string;
+  role?: UserRole;
   enabled?: boolean;
 }
 
@@ -127,6 +133,8 @@ export interface TaskRecord {
   schedule: TaskScheduleConfig;
   parent_task_id?: string | null;
   source_run_id?: string | null;
+  source_session_id?: string | null;
+  source_turn_id?: string | null;
   task_tool_state: TaskToolState;
   mcp_config: TaskMcpConfig;
   created_at: string;

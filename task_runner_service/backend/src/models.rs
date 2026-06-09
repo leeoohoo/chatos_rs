@@ -63,6 +63,19 @@ impl Default for UiPromptStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UserRole {
+    Admin,
+    Agent,
+}
+
+impl Default for UserRole {
+    fn default() -> Self {
+        Self::Agent
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskMcpConfig {
     #[serde(default = "task_mcp_enabled_default")]
@@ -205,6 +218,10 @@ pub struct TaskRecord {
     #[serde(default)]
     pub source_run_id: Option<String>,
     #[serde(default)]
+    pub source_session_id: Option<String>,
+    #[serde(default)]
+    pub source_turn_id: Option<String>,
+    #[serde(default)]
     pub task_tool_state: TaskToolState,
     pub mcp_config: TaskMcpConfig,
     pub created_at: String,
@@ -218,6 +235,8 @@ pub struct UserRecord {
     pub username: String,
     pub display_name: String,
     pub password_hash: String,
+    #[serde(default)]
+    pub role: UserRole,
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -230,6 +249,7 @@ pub struct AuthUser {
     pub id: String,
     pub username: String,
     pub display_name: String,
+    pub role: UserRole,
 }
 
 impl From<&UserRecord> for AuthUser {
@@ -238,6 +258,7 @@ impl From<&UserRecord> for AuthUser {
             id: value.id.clone(),
             username: value.username.clone(),
             display_name: value.display_name.clone(),
+            role: value.role,
         }
     }
 }
@@ -247,6 +268,7 @@ pub struct UserSummaryRecord {
     pub id: String,
     pub username: String,
     pub display_name: String,
+    pub role: UserRole,
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -259,6 +281,7 @@ impl From<&UserRecord> for UserSummaryRecord {
             id: value.id.clone(),
             username: value.username.clone(),
             display_name: value.display_name.clone(),
+            role: value.role,
             enabled: value.enabled,
             created_at: value.created_at.clone(),
             updated_at: value.updated_at.clone(),
@@ -511,6 +534,12 @@ pub struct CreateTaskRequest {
     pub mcp_config: Option<TaskMcpConfig>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskSourceContext {
+    pub source_session_id: Option<String>,
+    pub source_turn_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
@@ -524,6 +553,24 @@ pub struct LoginResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTokenRequest {
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub client: Option<String>,
+    #[serde(default)]
+    pub contact_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTokenResponse {
+    pub token: String,
+    pub token_type: String,
+    pub expires_in: i64,
+    pub user: AuthUser,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrentUserResponse {
     pub user: AuthUser,
 }
@@ -533,6 +580,7 @@ pub struct CreateUserRequest {
     pub username: String,
     pub display_name: Option<String>,
     pub password: String,
+    pub role: Option<UserRole>,
     pub enabled: Option<bool>,
 }
 
@@ -540,6 +588,7 @@ pub struct CreateUserRequest {
 pub struct UpdateUserRequest {
     pub display_name: Option<String>,
     pub password: Option<String>,
+    pub role: Option<UserRole>,
     pub enabled: Option<bool>,
 }
 
@@ -692,6 +741,7 @@ pub struct TaskListFilters {
     pub keyword: Option<String>,
     pub tag: Option<String>,
     pub model_config_id: Option<String>,
+    pub creator_user_id: Option<String>,
     pub scheduled_only: Option<bool>,
     pub parent_task_id: Option<String>,
     pub source_run_id: Option<String>,

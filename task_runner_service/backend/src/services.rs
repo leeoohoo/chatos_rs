@@ -57,10 +57,10 @@ use crate::models::{
     SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
     TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
     TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse,
-    TaskStatus, TaskSummaryRecord, TaskToolOutcomeItem, TaskToolState, TestModelConfigRequest,
-    TestRemoteServerRequest, UpdateModelConfigRequest, UpdateRemoteServerRequest,
-    UpdateTaskMcpRequest, UpdateTaskRequest,
+    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolOutcomeItem, TaskToolState,
+    TestModelConfigRequest, TestRemoteServerRequest, UpdateModelConfigRequest,
+    UpdateRemoteServerRequest, UpdateTaskMcpRequest, UpdateTaskRequest,
 };
 use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::remote_server_runtime::{
@@ -169,6 +169,7 @@ impl TaskService {
         &self,
         input: CreateTaskRequest,
         creator: Option<&CurrentUser>,
+        source_context: Option<TaskSourceContext>,
     ) -> Result<TaskRecord, String> {
         validate_required("title", &input.title)?;
         validate_required("objective", &input.objective)?;
@@ -184,6 +185,7 @@ impl TaskService {
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
         self.validate_task_mcp_config(&mcp_config).await?;
+        let source_context = source_context.unwrap_or_default();
         let task = TaskRecord {
             id: id.clone(),
             title: input.title.trim().to_string(),
@@ -211,6 +213,8 @@ impl TaskService {
             schedule,
             parent_task_id: None,
             source_run_id: None,
+            source_session_id: normalized_optional(source_context.source_session_id),
+            source_turn_id: normalized_optional(source_context.source_turn_id),
             task_tool_state: TaskToolState::default(),
             mcp_config,
             created_at: now.clone(),
@@ -702,6 +706,8 @@ impl TaskService {
             schedule: TaskScheduleConfig::default(),
             parent_task_id: Some(parent.id.clone()),
             source_run_id: Some(run_id.to_string()),
+            source_session_id: parent.source_session_id.clone(),
+            source_turn_id: parent.source_turn_id.clone(),
             task_tool_state,
             mcp_config: parent.mcp_config.clone(),
             created_at: now.clone(),
@@ -3825,6 +3831,7 @@ fn sanitize_task_list_filters(mut filters: TaskListFilters) -> TaskListFilters {
     filters.keyword = normalized_optional(filters.keyword).map(|value| value.to_ascii_lowercase());
     filters.tag = normalized_optional(filters.tag);
     filters.model_config_id = normalized_optional(filters.model_config_id);
+    filters.creator_user_id = normalized_optional(filters.creator_user_id);
     filters.parent_task_id = normalized_optional(filters.parent_task_id);
     filters.source_run_id = normalized_optional(filters.source_run_id);
     filters.limit = filters.limit.map(|value| value.clamp(1, 500));

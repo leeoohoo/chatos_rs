@@ -5,7 +5,9 @@ import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
+import { TaskRunnerConfigModal } from './TaskRunnerConfigModal';
 import type { RemoteConnection } from '../../types';
+import type { ContactItem } from './types';
 import type {
   DirPickerTarget,
   HostKeyPolicy,
@@ -24,6 +26,17 @@ interface SessionListDialogsProps {
   setSelectedContactAgentId: (value: string) => void;
   setContactError: (value: string | null) => void;
   handleCreateContactSession: () => Promise<void> | void;
+  taskRunnerContact: ContactItem | null;
+  taskRunnerError: string | null;
+  taskRunnerSaving: boolean;
+  closeTaskRunnerConfig: () => void;
+  saveTaskRunnerConfig: (values: {
+    enabled: boolean;
+    baseUrl: string;
+    username: string;
+    password?: string;
+    clearPassword?: boolean;
+  }) => Promise<void> | void;
 
   projectModalOpen: boolean;
   projectRoot: string;
@@ -141,6 +154,11 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setSelectedContactAgentId,
   setContactError,
   handleCreateContactSession,
+  taskRunnerContact,
+  taskRunnerError,
+  taskRunnerSaving,
+  closeTaskRunnerConfig,
+  saveTaskRunnerConfig,
   projectModalOpen,
   projectRoot,
   projectError,
@@ -257,6 +275,15 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onCreate={() => {
         void handleCreateContactSession();
       }}
+    />
+
+    <TaskRunnerConfigModal
+      isOpen={Boolean(taskRunnerContact)}
+      contact={taskRunnerContact}
+      saving={taskRunnerSaving}
+      error={taskRunnerError}
+      onClose={closeTaskRunnerConfig}
+      onSave={saveTaskRunnerConfig}
     />
 
     <CreateProjectModal

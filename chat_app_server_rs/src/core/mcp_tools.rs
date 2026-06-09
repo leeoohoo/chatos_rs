@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -29,6 +30,7 @@ pub struct ToolInfo {
     pub server_name: String,
     pub server_type: String,
     pub server_url: Option<String>,
+    pub server_headers: Option<HashMap<String, String>>,
     pub server_config: Option<McpStdioServer>,
     #[allow(dead_code)]
     pub tool_info: Value,

@@ -16,6 +16,8 @@ use crate::types::{
     ToolResultCallback, ToolStreamChunkCallback,
 };
 
+const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
+
 #[derive(Clone, Default)]
 pub struct McpExecutor {
     http_servers: Vec<McpHttpServer>,
@@ -392,7 +394,7 @@ impl McpExecutor {
 
     async fn register_http_tools(&mut self) {
         for server in &self.http_servers {
-            match list_tools_http(server.url.as_str()).await {
+            match list_tools_http(server.url.as_str(), server.headers.as_ref()).await {
                 Ok(tools) => {
                     for tool in tools {
                         if let Some(def) = parse_tool_definition(&tool) {
@@ -410,6 +412,7 @@ impl McpExecutor {
                                     server_name: server.name.clone(),
                                     server_type: "http".to_string(),
                                     server_url: Some(server.url.clone()),
+                                    server_headers: server.headers.clone(),
                                     server_config: None,
                                     tool_info: tool,
                                 },
@@ -446,6 +449,7 @@ impl McpExecutor {
                                     server_name: server.name.clone(),
                                     server_type: "stdio".to_string(),
                                     server_url: None,
+                                    server_headers: None,
                                     server_config: Some(server.clone()),
                                     tool_info: tool,
                                 },
@@ -495,6 +499,7 @@ impl McpExecutor {
                             server_name: server.name.clone(),
                             server_type: "builtin".to_string(),
                             server_url: None,
+                            server_headers: None,
                             server_config: None,
                             tool_info: tool,
                         },
@@ -518,8 +523,10 @@ impl McpExecutor {
         match info.server_type.as_str() {
             "http" => {
                 let url = info.server_url.clone().ok_or("missing server url")?;
+                let headers = http_tool_call_headers(info, &context);
                 let result = jsonrpc_http_call(
                     url.as_str(),
+                    headers.as_ref(),
                     "tools/call",
                     json!({"name": info.original_name, "arguments": args}),
                 )
@@ -599,6 +606,30 @@ fn unavailable_server(server_name: &str, server_type: &str, reason: &str) -> Val
         "server_type": server_type,
         "reason": reason
     })
+}
+
+fn http_tool_call_headers(
+    info: &ToolInfo,
+    context: &ToolCallContext,
+) -> Option<HashMap<String, String>> {
+    let mut headers = info.server_headers.clone().unwrap_or_default();
+    if info.server_name == TASK_RUNNER_MCP_SERVER_NAME {
+        if let Some(session_id) = normalized_context_value(context.conversation_id.as_deref()) {
+            headers.insert("X-Chatos-Session-Id".to_string(), session_id.clone());
+            headers.insert("X-Chatos-Conversation-Id".to_string(), session_id);
+        }
+        if let Some(turn_id) = normalized_context_value(context.conversation_turn_id.as_deref()) {
+            headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
+        }
+    }
+    (!headers.is_empty()).then_some(headers)
+}
+
+fn normalized_context_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn parse_tool_args(args: Value) -> Result<Value, serde_json::Error> {

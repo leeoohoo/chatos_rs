@@ -77,6 +77,10 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             user_id TEXT NOT NULL,
             agent_id TEXT NOT NULL,
             agent_name_snapshot TEXT,
+            task_runner_enabled INTEGER NOT NULL DEFAULT 0,
+            task_runner_base_url TEXT,
+            task_runner_username TEXT,
+            task_runner_password TEXT,
             status TEXT NOT NULL DEFAULT 'active',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -358,6 +362,23 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         .await
         .ok();
     ensure_column(pool, "sessions", "archived_at", "TEXT")
+        .await
+        .ok();
+    ensure_column(
+        pool,
+        "chatos_contacts",
+        "task_runner_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await
+    .ok();
+    ensure_column(pool, "chatos_contacts", "task_runner_base_url", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "chatos_contacts", "task_runner_username", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "chatos_contacts", "task_runner_password", "TEXT")
         .await
         .ok();
     ensure_column(pool, "terminals", "project_id", "TEXT")

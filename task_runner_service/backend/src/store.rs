@@ -27,7 +27,7 @@ use crate::models::{
     RemoteServerRecord, RunListFilters, RunSummaryRecord, TaskListFilters, TaskRecord,
     TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse,
     TaskStatus, TaskSummaryRecord, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
-    UserRecord,
+    UserRecord, UserRole,
 };
 
 const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
@@ -589,6 +589,12 @@ impl InMemoryStore {
                     .is_none_or(|value| task.default_model_config_id.as_deref() == Some(value))
             })
             .filter(|task| {
+                filters
+                    .creator_user_id
+                    .as_deref()
+                    .is_none_or(|value| task.creator_user_id.as_deref() == Some(value))
+            })
+            .filter(|task| {
                 !filters.scheduled_only.unwrap_or(false)
                     || !matches!(task.schedule.mode, TaskScheduleMode::Manual)
             })
@@ -1144,6 +1150,10 @@ impl MongoStore {
         self.ensure_index(&self.tasks, doc! { "parent_task_id": 1 }, false)
             .await?;
         self.ensure_index(&self.tasks, doc! { "source_run_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.tasks, doc! { "source_session_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.tasks, doc! { "source_turn_id": 1 }, false)
             .await?;
         self.ensure_index(&self.tasks, doc! { "creator_user_id": 1 }, false)
             .await?;
@@ -2372,6 +2382,9 @@ impl SqliteStore {
         if filters.model_config_id.is_some() {
             clauses.push("default_model_config_id = ?");
         }
+        if filters.creator_user_id.is_some() {
+            clauses.push("creator_user_id = ?");
+        }
         if filters.scheduled_only.unwrap_or(false) {
             clauses.push("json_extract(schedule_json, '$.mode') <> 'manual'");
         }
@@ -2412,6 +2425,9 @@ impl SqliteStore {
         }
         if let Some(model_config_id) = filters.model_config_id.as_deref() {
             query = query.bind(model_config_id);
+        }
+        if let Some(creator_user_id) = filters.creator_user_id.as_deref() {
+            query = query.bind(creator_user_id);
         }
         if let Some(parent_task_id) = filters.parent_task_id.as_deref() {
             query = query.bind(parent_task_id);
@@ -2570,9 +2586,10 @@ impl SqliteStore {
                 id, title, description, objective, input_payload_json, status, priority,
                 tags_json, default_model_config_id, memory_thread_id, tenant_id, subject_id,
                 creator_user_id, creator_username, creator_display_name, result_summary,
-                last_run_id, schedule_json, parent_task_id, source_run_id, task_tool_state_json,
-                mcp_config_json, created_at, updated_at, deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_run_id, schedule_json, parent_task_id, source_run_id, source_session_id,
+                source_turn_id, task_tool_state_json, mcp_config_json, created_at, updated_at,
+                deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 description = excluded.description,
@@ -2593,6 +2610,8 @@ impl SqliteStore {
                 schedule_json = excluded.schedule_json,
                 parent_task_id = excluded.parent_task_id,
                 source_run_id = excluded.source_run_id,
+                source_session_id = excluded.source_session_id,
+                source_turn_id = excluded.source_turn_id,
                 task_tool_state_json = excluded.task_tool_state_json,
                 mcp_config_json = excluded.mcp_config_json,
                 created_at = excluded.created_at,
@@ -2619,6 +2638,8 @@ impl SqliteStore {
         .bind(encode_json(&task.schedule)?)
         .bind(task.parent_task_id.clone())
         .bind(task.source_run_id.clone())
+        .bind(task.source_session_id.clone())
+        .bind(task.source_turn_id.clone())
         .bind(encode_json(&task.task_tool_state)?)
         .bind(encode_json(&task.mcp_config)?)
         .bind(&task.created_at)
@@ -2668,13 +2689,14 @@ impl SqliteStore {
     async fn save_user(&self, user: UserRecord) -> Result<UserRecord, String> {
         sqlx::query(
             "INSERT INTO users (
-                id, username, display_name, password_hash, enabled, created_at, updated_at,
+                id, username, display_name, password_hash, role, enabled, created_at, updated_at,
                 last_login_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 username = excluded.username,
                 display_name = excluded.display_name,
                 password_hash = excluded.password_hash,
+                role = excluded.role,
                 enabled = excluded.enabled,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
@@ -2684,6 +2706,7 @@ impl SqliteStore {
         .bind(&user.username)
         .bind(&user.display_name)
         .bind(&user.password_hash)
+        .bind(user_role_to_str(user.role))
         .bind(bool_to_int(user.enabled))
         .bind(&user.created_at)
         .bind(&user.updated_at)
@@ -3623,6 +3646,8 @@ fn task_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TaskRecord, String> {
         schedule: decode_json(row.get("schedule_json"))?,
         parent_task_id: row.get("parent_task_id"),
         source_run_id: row.get("source_run_id"),
+        source_session_id: row.get("source_session_id"),
+        source_turn_id: row.get("source_turn_id"),
         task_tool_state: decode_json(row.get("task_tool_state_json"))?,
         mcp_config: decode_json(row.get("mcp_config_json"))?,
         created_at: row.get("created_at"),
@@ -3651,6 +3676,7 @@ fn user_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<UserRecord, String> {
         username: row.get("username"),
         display_name: row.get("display_name"),
         password_hash: row.get("password_hash"),
+        role: user_role_from_str(row.get::<String, _>("role").as_str()),
         enabled: int_to_bool(row.get::<i64, _>("enabled")),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -3838,6 +3864,9 @@ fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     }
     if let Some(model_config_id) = filters.model_config_id.as_deref() {
         filter.insert("default_model_config_id", model_config_id);
+    }
+    if let Some(creator_user_id) = filters.creator_user_id.as_deref() {
+        filter.insert("creator_user_id", creator_user_id);
     }
     if filters.scheduled_only.unwrap_or(false) {
         filter.insert("schedule.mode", doc! { "$ne": "manual" });
@@ -4044,6 +4073,20 @@ fn task_status_from_str(value: &str) -> TaskStatus {
         "cancelled" => TaskStatus::Cancelled,
         "archived" => TaskStatus::Archived,
         _ => TaskStatus::Draft,
+    }
+}
+
+fn user_role_to_str(role: UserRole) -> &'static str {
+    match role {
+        UserRole::Admin => "admin",
+        UserRole::Agent => "agent",
+    }
+}
+
+fn user_role_from_str(value: &str) -> UserRole {
+    match value {
+        "admin" => UserRole::Admin,
+        _ => UserRole::Agent,
     }
 }
 

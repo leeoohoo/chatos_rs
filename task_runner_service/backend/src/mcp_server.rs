@@ -2,13 +2,15 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::auth::CurrentUser;
 use crate::models::{
     BatchTaskDeleteRequest, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
     CancelUiPromptRequest, CreateModelConfigRequest, CreateTaskRequest, McpServerInfo,
-    RunListFilters, StartTaskRunRequest, SubmitUiPromptRequest, TaskListFilters,
+    ModelConfigRecord, RunListFilters, StartTaskRunRequest, SubmitUiPromptRequest, TaskListFilters,
     TaskMemoryContextOptions, TaskMemoryRecordsOptions, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskStatus, TestModelConfigRequest, UiPromptRecord,
-    UiPromptStatus, UpdateModelConfigRequest, UpdateTaskRequest,
+    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskSourceContext, TaskStatsResponse,
+    TaskStatus, TestModelConfigRequest, UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest,
+    UpdateTaskRequest,
 };
 use crate::services::{ModelConfigService, RunService, TaskService};
 use crate::ui_prompt_service::UiPromptService;
@@ -23,6 +25,24 @@ const TASK_RUNNER_MCP_STDIO_ARGS: &[&str] = &[
     "--bin",
     "task_runner_mcp_stdio",
 ];
+
+#[derive(Debug, Clone, Default)]
+pub struct McpRequestContext {
+    pub source_session_id: Option<String>,
+    pub source_turn_id: Option<String>,
+}
+
+impl McpRequestContext {
+    fn task_source_context(&self) -> Option<TaskSourceContext> {
+        if self.source_session_id.is_none() && self.source_turn_id.is_none() {
+            return None;
+        }
+        Some(TaskSourceContext {
+            source_session_id: self.source_session_id.clone(),
+            source_turn_id: self.source_turn_id.clone(),
+        })
+    }
+}
 
 #[derive(Clone)]
 pub struct TaskRunnerMcpService {
@@ -294,7 +314,7 @@ impl TaskRunnerMcpService {
             ),
             tool_definition(
                 "create_task",
-                "Create a new Task Runner task.",
+                "Create a new Task Runner task for the current authenticated agent. Ownership and memory scope are assigned automatically by Task Runner.",
                 create_task_schema(),
             ),
             tool_definition(
@@ -572,16 +592,39 @@ impl TaskRunnerMcpService {
         ]
     }
 
-    pub async fn handle_jsonrpc(&self, request: JsonRpcRequest) -> JsonRpcResponse {
+    fn list_tools_for_user(&self, current_user: &CurrentUser) -> Vec<Value> {
+        let tools = self.list_tools();
+        if current_user.is_admin() {
+            return tools;
+        }
+        tools
+            .into_iter()
+            .filter(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(agent_tool_allowed)
+            })
+            .collect()
+    }
+
+    pub async fn handle_jsonrpc(
+        &self,
+        request: JsonRpcRequest,
+        current_user: CurrentUser,
+        request_context: McpRequestContext,
+    ) -> JsonRpcResponse {
         let id = request.id.unwrap_or(Value::Null);
         match request.method.as_str() {
             "tools/list" => JsonRpcResponse {
                 jsonrpc: "2.0",
                 id,
-                result: Some(json!({ "tools": self.list_tools() })),
+                result: Some(json!({ "tools": self.list_tools_for_user(&current_user) })),
                 error: None,
             },
-            "tools/call" => match self.handle_tool_call(request.params).await {
+            "tools/call" => match self
+                .handle_tool_call(request.params, &current_user, &request_context)
+                .await
+            {
                 Ok(result) => JsonRpcResponse {
                     jsonrpc: "2.0",
                     id,
@@ -610,7 +653,12 @@ impl TaskRunnerMcpService {
         }
     }
 
-    async fn handle_tool_call(&self, params: Value) -> Result<Value, String> {
+    async fn handle_tool_call(
+        &self,
+        params: Value,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<Value, String> {
         let name = params
             .get("name")
             .and_then(Value::as_str)
@@ -621,10 +669,20 @@ impl TaskRunnerMcpService {
             .get("arguments")
             .cloned()
             .unwrap_or_else(|| json!({}));
-        self.call_tool(name, args).await
+        self.call_tool(name, args, current_user, request_context)
+            .await
     }
 
-    async fn call_tool(&self, name: &str, args: Value) -> Result<Value, String> {
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<Value, String> {
+        if !current_user.is_admin() && !agent_tool_allowed(name) {
+            return Err("当前 agent 无权调用该任务系统工具".to_string());
+        }
         match name {
             "list_tasks" => {
                 let args: ListTasksArgs = decode_args(args)?;
@@ -635,6 +693,7 @@ impl TaskRunnerMcpService {
                         keyword: args.keyword,
                         tag: args.tag,
                         model_config_id: args.model_config_id,
+                        creator_user_id: task_creator_filter(current_user),
                         scheduled_only: args.scheduled_only,
                         parent_task_id: args.parent_task_id,
                         source_run_id: args.source_run_id,
@@ -647,24 +706,31 @@ impl TaskRunnerMcpService {
             "get_task" => {
                 let args: TaskIdArgs = decode_args(args)?;
                 let task = self
-                    .task_service
-                    .get_task(args.task_id.as_str())
-                    .await?
-                    .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
+                    .require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
                 Ok(text_result(json!(task)))
             }
             "get_task_stats" => {
                 let _ = decode_args::<Value>(args).ok();
-                let stats = self.task_service.task_stats().await?;
+                let stats = self.task_stats_for_user(current_user).await?;
                 Ok(text_result(json!(stats)))
             }
             "create_task" => {
                 let input: CreateTaskRequest = decode_args(args)?;
-                let task = self.task_service.create_task(input, None).await?;
+                let task = self
+                    .task_service
+                    .create_task(
+                        input,
+                        Some(current_user),
+                        request_context.task_source_context(),
+                    )
+                    .await?;
                 Ok(text_result(json!(task)))
             }
             "update_task" => {
                 let args: UpdateTaskArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
                 let task = self
                     .task_service
                     .update_task(args.task_id.as_str(), args.patch)
@@ -674,6 +740,8 @@ impl TaskRunnerMcpService {
             }
             "delete_task" => {
                 let args: TaskIdArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
                 let deleted = self.task_service.delete_task(args.task_id.as_str()).await?;
                 if !deleted {
                     return Err(format!("任务不存在: {}", args.task_id));
@@ -685,6 +753,8 @@ impl TaskRunnerMcpService {
             }
             "batch_update_task_status" => {
                 let args: BatchTaskStatusUpdateArgs = decode_args(args)?;
+                self.require_tasks_for_user(args.task_ids.as_slice(), current_user)
+                    .await?;
                 let result = self
                     .task_service
                     .batch_update_status(BatchTaskStatusUpdateRequest {
@@ -696,6 +766,8 @@ impl TaskRunnerMcpService {
             }
             "batch_delete_tasks" => {
                 let args: BatchTaskDeleteArgs = decode_args(args)?;
+                self.require_tasks_for_user(args.task_ids.as_slice(), current_user)
+                    .await?;
                 let result = self
                     .task_service
                     .batch_delete_tasks(BatchTaskDeleteRequest {
@@ -707,7 +779,10 @@ impl TaskRunnerMcpService {
             "list_model_configs" => {
                 let _ = decode_args::<Value>(args).ok();
                 let models = self.model_config_service.list_model_configs().await?;
-                Ok(text_result(json!(models)))
+                Ok(text_result(json!(model_configs_for_user(
+                    models,
+                    current_user
+                ))))
             }
             "get_model_config" => {
                 let args: ModelConfigIdArgs = decode_args(args)?;
@@ -716,14 +791,16 @@ impl TaskRunnerMcpService {
                     .get_model_config(args.model_config_id.as_str())
                     .await?
                     .ok_or_else(|| format!("模型配置不存在: {}", args.model_config_id))?;
-                Ok(text_result(json!(model)))
+                Ok(text_result(model_config_for_user(model, current_user)))
             }
             "create_model_config" => {
+                require_admin_tool(current_user)?;
                 let input: CreateModelConfigRequest = decode_args(args)?;
                 let model = self.model_config_service.create_model_config(input).await?;
                 Ok(text_result(json!(model)))
             }
             "update_model_config" => {
+                require_admin_tool(current_user)?;
                 let args: UpdateModelConfigArgs = decode_args(args)?;
                 let model = self
                     .model_config_service
@@ -733,6 +810,7 @@ impl TaskRunnerMcpService {
                 Ok(text_result(json!(model)))
             }
             "delete_model_config" => {
+                require_admin_tool(current_user)?;
                 let args: ModelConfigIdArgs = decode_args(args)?;
                 let deleted = self
                     .model_config_service
@@ -747,6 +825,7 @@ impl TaskRunnerMcpService {
                 })))
             }
             "test_model_config" => {
+                require_admin_tool(current_user)?;
                 let args: TestModelConfigArgs = decode_args(args)?;
                 let result = self
                     .model_config_service
@@ -762,6 +841,9 @@ impl TaskRunnerMcpService {
             }
             "list_runs" => {
                 let args: ListRunsArgs = decode_args(args)?;
+                if let Some(task_id) = args.task_id.as_deref() {
+                    self.require_task_for_user(task_id, current_user).await?;
+                }
                 let runs = self
                     .run_service
                     .list_runs_filtered(RunListFilters {
@@ -773,19 +855,20 @@ impl TaskRunnerMcpService {
                         offset: None,
                     })
                     .await?;
+                let runs = self.filter_runs_for_user(runs, current_user).await?;
                 Ok(text_result(json!(runs)))
             }
             "get_run" => {
                 let args: RunIdArgs = decode_args(args)?;
                 let run = self
-                    .run_service
-                    .get_run(args.run_id.as_str())
-                    .await?
-                    .ok_or_else(|| format!("运行记录不存在: {}", args.run_id))?;
+                    .require_run_for_user(args.run_id.as_str(), current_user)
+                    .await?;
                 Ok(text_result(json!(run)))
             }
             "start_task_run" => {
                 let args: StartTaskRunArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
                 let run = self
                     .run_service
                     .start_run(
@@ -800,6 +883,8 @@ impl TaskRunnerMcpService {
             }
             "batch_start_task_runs" => {
                 let args: BatchTaskRunArgs = decode_args(args)?;
+                self.require_tasks_for_user(args.task_ids.as_slice(), current_user)
+                    .await?;
                 let result = self
                     .run_service
                     .batch_start_runs(BatchTaskRunRequest {
@@ -812,6 +897,8 @@ impl TaskRunnerMcpService {
             }
             "get_task_memory_context" => {
                 let args: GetTaskMemoryContextArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
                 let response = self
                     .task_service
                     .get_task_memory_context(
@@ -830,6 +917,8 @@ impl TaskRunnerMcpService {
             }
             "list_task_memory_records" => {
                 let args: ListTaskMemoryRecordsArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
                 let response = self
                     .task_service
                     .get_task_memory_records(
@@ -849,6 +938,8 @@ impl TaskRunnerMcpService {
             }
             "summarize_task_memory" => {
                 let args: TaskIdArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
                 let response = self
                     .task_service
                     .summarize_task_memory(args.task_id.as_str())
@@ -858,6 +949,8 @@ impl TaskRunnerMcpService {
             }
             "cancel_run" => {
                 let args: RunIdArgs = decode_args(args)?;
+                self.require_run_for_user(args.run_id.as_str(), current_user)
+                    .await?;
                 let run = self
                     .run_service
                     .cancel_run(args.run_id.as_str())
@@ -867,6 +960,8 @@ impl TaskRunnerMcpService {
             }
             "retry_run" => {
                 let args: RunIdArgs = decode_args(args)?;
+                self.require_run_for_user(args.run_id.as_str(), current_user)
+                    .await?;
                 let run = self
                     .run_service
                     .retry_run(args.run_id.as_str())
@@ -876,6 +971,8 @@ impl TaskRunnerMcpService {
             }
             "list_run_events" => {
                 let args: RunIdArgs = decode_args(args)?;
+                self.require_run_for_user(args.run_id.as_str(), current_user)
+                    .await?;
                 let events = self
                     .run_service
                     .list_run_events(args.run_id.as_str())
@@ -884,10 +981,17 @@ impl TaskRunnerMcpService {
             }
             "list_prompts" => {
                 let args: ListPromptsArgs = decode_args(args)?;
+                if let Some(task_id) = args.task_id.as_deref() {
+                    self.require_task_for_user(task_id, current_user).await?;
+                }
+                if let Some(run_id) = args.run_id.as_deref() {
+                    self.require_run_for_user(run_id, current_user).await?;
+                }
                 let prompts = self
                     .ui_prompt_service
                     .list_prompts(args.task_id.as_deref(), args.run_id.as_deref(), args.status)
                     .await?;
+                let prompts = self.filter_prompts_for_user(prompts, current_user).await?;
                 Ok(text_result(json!(prompts)))
             }
             "get_prompt" => {
@@ -897,10 +1001,17 @@ impl TaskRunnerMcpService {
                     .get_prompt(args.prompt_id.as_str())
                     .await?
                     .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
+                self.require_prompt_for_user(&prompt, current_user).await?;
                 Ok(text_result(json!(prompt)))
             }
             "submit_prompt" => {
                 let args: SubmitPromptArgs = decode_args(args)?;
+                let prompt = self
+                    .ui_prompt_service
+                    .get_prompt(args.prompt_id.as_str())
+                    .await?
+                    .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
+                self.require_prompt_for_user(&prompt, current_user).await?;
                 let prompt = self
                     .ui_prompt_service
                     .submit_prompt(
@@ -919,6 +1030,12 @@ impl TaskRunnerMcpService {
                 let args: CancelPromptArgs = decode_args(args)?;
                 let prompt = self
                     .ui_prompt_service
+                    .get_prompt(args.prompt_id.as_str())
+                    .await?
+                    .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
+                self.require_prompt_for_user(&prompt, current_user).await?;
+                let prompt = self
+                    .ui_prompt_service
                     .cancel_prompt(
                         args.prompt_id.as_str(),
                         CancelUiPromptRequest {
@@ -932,6 +1049,230 @@ impl TaskRunnerMcpService {
             other => Err(format!("tool not found: {other}")),
         }
     }
+
+    async fn task_stats_for_user(
+        &self,
+        current_user: &CurrentUser,
+    ) -> Result<TaskStatsResponse, String> {
+        if current_user.is_admin() {
+            return self.task_service.task_stats().await;
+        }
+        let tasks = self
+            .task_service
+            .list_tasks_filtered(TaskListFilters {
+                creator_user_id: Some(current_user.id.clone()),
+                ..TaskListFilters::default()
+            })
+            .await?;
+        let mut stats = TaskStatsResponse {
+            total: 0,
+            scheduled: 0,
+            follow_up: 0,
+            draft: 0,
+            ready: 0,
+            running: 0,
+            succeeded: 0,
+            failed: 0,
+            blocked: 0,
+            cancelled: 0,
+            archived: 0,
+        };
+        for task in tasks {
+            stats.total += 1;
+            if !matches!(task.schedule.mode, TaskScheduleMode::Manual) {
+                stats.scheduled += 1;
+            }
+            if task.parent_task_id.is_some() {
+                stats.follow_up += 1;
+            }
+            match task.status {
+                TaskStatus::Draft => stats.draft += 1,
+                TaskStatus::Ready => stats.ready += 1,
+                TaskStatus::Running => stats.running += 1,
+                TaskStatus::Succeeded => stats.succeeded += 1,
+                TaskStatus::Failed => stats.failed += 1,
+                TaskStatus::Blocked => stats.blocked += 1,
+                TaskStatus::Cancelled => stats.cancelled += 1,
+                TaskStatus::Archived => stats.archived += 1,
+            }
+        }
+        Ok(stats)
+    }
+
+    async fn require_tasks_for_user(
+        &self,
+        task_ids: &[String],
+        current_user: &CurrentUser,
+    ) -> Result<(), String> {
+        for task_id in task_ids {
+            self.require_task_for_user(task_id.as_str(), current_user)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn require_task_for_user(
+        &self,
+        task_id: &str,
+        current_user: &CurrentUser,
+    ) -> Result<TaskRecord, String> {
+        let task = self
+            .task_service
+            .get_task(task_id)
+            .await?
+            .ok_or_else(|| format!("任务不存在: {task_id}"))?;
+        ensure_task_owner(&task, current_user)?;
+        Ok(task)
+    }
+
+    async fn require_run_for_user(
+        &self,
+        run_id: &str,
+        current_user: &CurrentUser,
+    ) -> Result<TaskRunRecord, String> {
+        let run = self
+            .run_service
+            .get_run(run_id)
+            .await?
+            .ok_or_else(|| format!("运行记录不存在: {run_id}"))?;
+        self.require_task_for_user(run.task_id.as_str(), current_user)
+            .await?;
+        Ok(run)
+    }
+
+    async fn require_prompt_for_user(
+        &self,
+        prompt: &UiPromptRecord,
+        current_user: &CurrentUser,
+    ) -> Result<(), String> {
+        if current_user.is_admin() {
+            return Ok(());
+        }
+        if let Some(task_id) = prompt.task_id.as_deref() {
+            self.require_task_for_user(task_id, current_user).await?;
+            return Ok(());
+        }
+        if let Some(run_id) = prompt.run_id.as_deref() {
+            self.require_run_for_user(run_id, current_user).await?;
+            return Ok(());
+        }
+        Err("当前 agent 无权访问该提示".to_string())
+    }
+
+    async fn filter_runs_for_user(
+        &self,
+        runs: Vec<TaskRunRecord>,
+        current_user: &CurrentUser,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        if current_user.is_admin() {
+            return Ok(runs);
+        }
+        let mut out = Vec::new();
+        for run in runs {
+            if self
+                .require_task_for_user(run.task_id.as_str(), current_user)
+                .await
+                .is_ok()
+            {
+                out.push(run);
+            }
+        }
+        Ok(out)
+    }
+
+    async fn filter_prompts_for_user(
+        &self,
+        prompts: Vec<UiPromptRecord>,
+        current_user: &CurrentUser,
+    ) -> Result<Vec<UiPromptRecord>, String> {
+        if current_user.is_admin() {
+            return Ok(prompts);
+        }
+        let mut out = Vec::new();
+        for prompt in prompts {
+            if self
+                .require_prompt_for_user(&prompt, current_user)
+                .await
+                .is_ok()
+            {
+                out.push(prompt);
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn agent_tool_allowed(name: &str) -> bool {
+    matches!(
+        name,
+        "list_tasks"
+            | "get_task"
+            | "get_task_stats"
+            | "create_task"
+            | "update_task"
+            | "delete_task"
+            | "batch_update_task_status"
+            | "batch_delete_tasks"
+            | "list_model_configs"
+            | "get_model_config"
+            | "list_runs"
+            | "get_run"
+            | "start_task_run"
+            | "batch_start_task_runs"
+            | "get_task_memory_context"
+            | "list_task_memory_records"
+            | "summarize_task_memory"
+            | "cancel_run"
+            | "retry_run"
+            | "list_run_events"
+            | "list_prompts"
+            | "get_prompt"
+            | "submit_prompt"
+            | "cancel_prompt"
+    )
+}
+
+fn task_creator_filter(current_user: &CurrentUser) -> Option<String> {
+    (!current_user.is_admin()).then(|| current_user.id.clone())
+}
+
+fn ensure_task_owner(task: &TaskRecord, current_user: &CurrentUser) -> Result<(), String> {
+    if current_user.is_admin() {
+        return Ok(());
+    }
+    if task.creator_user_id.as_deref() == Some(current_user.id.as_str()) {
+        return Ok(());
+    }
+    Err("当前 agent 无权访问该任务".to_string())
+}
+
+fn require_admin_tool(current_user: &CurrentUser) -> Result<(), String> {
+    if current_user.is_admin() {
+        Ok(())
+    } else {
+        Err("当前 agent 无权调用管理员工具".to_string())
+    }
+}
+
+fn model_configs_for_user(
+    models: Vec<ModelConfigRecord>,
+    current_user: &CurrentUser,
+) -> Vec<Value> {
+    models
+        .into_iter()
+        .map(|model| model_config_for_user(model, current_user))
+        .collect()
+}
+
+fn model_config_for_user(model: ModelConfigRecord, current_user: &CurrentUser) -> Value {
+    if current_user.is_admin() {
+        return json!(model);
+    }
+    let mut value = json!(model);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("api_key".to_string(), Value::String(String::new()));
+    }
+    value
 }
 
 fn tool_definition(name: &str, description: &str, input_schema: Value) -> Value {
@@ -967,12 +1308,9 @@ fn create_task_schema() -> Value {
             "description": { "type": "string" },
             "objective": { "type": "string", "minLength": 1 },
             "input_payload": {},
-            "status": { "type": "string", "enum": task_status_values() },
             "priority": { "type": "integer" },
             "tags": { "type": "array", "items": { "type": "string" } },
             "default_model_config_id": { "type": "string" },
-            "tenant_id": { "type": "string" },
-            "subject_id": { "type": "string" },
             "schedule": { "type": "object" },
             "mcp_config": { "type": "object" }
         },
@@ -1106,4 +1444,22 @@ fn _assert_types(
     _event: TaskRunEventRecord,
     _prompt: UiPromptRecord,
 ) {
+}
+
+#[cfg(test)]
+mod tests {
+    use super::create_task_schema;
+
+    #[test]
+    fn create_task_schema_hides_memory_scope_fields() {
+        let schema = create_task_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(|value| value.as_object())
+            .expect("object properties");
+
+        assert!(!properties.contains_key("tenant_id"));
+        assert!(!properties.contains_key("subject_id"));
+        assert!(!properties.contains_key("status"));
+    }
 }

@@ -67,6 +67,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             summarySessionId={controller.contactSessionState.activeSummaryDisplaySessionId}
             runtimeContextSessionId={activeRuntimeContextSessionId}
             displaySessionRuntimeIdMap={controller.contactSessionState.displaySessionRuntimeIdMap}
+            taskRunnerEnabledBySessionId={controller.contactSessionState.taskRunnerEnabledBySessionId}
             sessionChatState={controller.sessionChatState}
             taskReviewPanelsBySession={controller.taskReviewPanelsBySession}
             uiPromptPanelsBySession={controller.uiPromptPanelsBySession}
@@ -87,6 +88,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             }}
             onOpenSummary={controller.sessionListActions.handleOpenSummary}
             onOpenRuntimeContext={controller.sessionListActions.handleOpenRuntimeContext}
+            onOpenTaskRunnerConfig={controller.openTaskRunnerConfig}
             onDeleteSession={controller.deleteActions.handleDeleteSession}
             onLoadMore={() => {}}
             onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
@@ -170,6 +172,11 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setSelectedContactAgentId={controller.contactSessionCreator.setSelectedContactAgentId}
         setContactError={controller.contactSessionCreator.setContactError}
         handleCreateContactSession={controller.contactSessionCreator.handleCreateContactSession}
+        taskRunnerContact={controller.taskRunnerContact}
+        taskRunnerError={controller.taskRunnerError}
+        taskRunnerSaving={controller.taskRunnerSaving}
+        closeTaskRunnerConfig={controller.closeTaskRunnerConfig}
+        saveTaskRunnerConfig={controller.saveTaskRunnerConfig}
         projectModalOpen={controller.projectModalOpen}
         projectRoot={controller.projectRoot}
         projectError={controller.projectError}

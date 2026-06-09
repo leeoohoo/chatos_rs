@@ -3,6 +3,7 @@ use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{FindOptions, UpdateOptions};
 use sqlx::{QueryBuilder, Sqlite};
 
+use crate::core::values::optional_string_bson;
 use crate::models::memory_mapping::{
     ChatosContact, ChatosContactRow, ChatosMemoryProject, ChatosMemoryProjectRow,
     ChatosProjectAgentLink, ChatosProjectAgentLinkRow,
@@ -14,6 +15,15 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateContactTaskRunnerConfigInput {
+    pub enabled: bool,
+    pub base_url: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub clear_password: bool,
 }
 
 pub fn default_project_name(project_id: &str) -> String {
@@ -354,6 +364,103 @@ pub async fn update_contact_agent(
                 )
                 .bind(&agent_id)
                 .bind(&agent_name_snapshot)
+                .bind(&updated_at)
+                .bind(&contact_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                if result.rows_affected() == 0 {
+                    return Ok(None);
+                }
+                let row = sqlx::query_as::<_, ChatosContactRow>(
+                    "SELECT * FROM chatos_contacts WHERE id = ?",
+                )
+                .bind(&contact_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok(row.map(ChatosContactRow::to_contact))
+            })
+        },
+    )
+    .await
+}
+
+pub async fn update_contact_task_runner_config(
+    contact_id: &str,
+    input: UpdateContactTaskRunnerConfigInput,
+) -> Result<Option<ChatosContact>, String> {
+    let Some(existing) = get_contact_by_id(contact_id).await? else {
+        return Ok(None);
+    };
+    let updated_at = crate::core::time::now_rfc3339();
+    let base_url = normalize_optional_text(input.base_url.as_deref());
+    let username = normalize_optional_text(input.username.as_deref());
+    let password = match normalize_optional_text(input.password.as_deref()) {
+        Some(value) => Some(value),
+        None if input.clear_password => None,
+        None => existing.task_runner_password.clone(),
+    };
+    let enabled = input.enabled && base_url.is_some() && username.is_some() && password.is_some();
+
+    with_db(
+        |db| {
+            let contact_id = contact_id.to_string();
+            let base_url = base_url.clone();
+            let username = username.clone();
+            let password = password.clone();
+            let updated_at = updated_at.clone();
+            Box::pin(async move {
+                let mut set_doc = doc! {
+                    "task_runner_enabled": enabled,
+                    "updated_at": &updated_at,
+                };
+                set_doc.insert(
+                    "task_runner_base_url",
+                    optional_string_bson(base_url.clone()),
+                );
+                set_doc.insert(
+                    "task_runner_username",
+                    optional_string_bson(username.clone()),
+                );
+                set_doc.insert(
+                    "task_runner_password",
+                    optional_string_bson(password.clone()),
+                );
+                let result = db
+                    .collection::<Document>("chatos_contacts")
+                    .update_one(
+                        doc! { "id": &contact_id },
+                        doc! { "$set": set_doc },
+                        None,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if result.matched_count == 0 {
+                    return Ok(None);
+                }
+                db.collection::<ChatosContact>("chatos_contacts")
+                    .find_one(doc! { "id": &contact_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+        },
+        |pool| {
+            let contact_id = contact_id.to_string();
+            let base_url = base_url.clone();
+            let username = username.clone();
+            let password = password.clone();
+            let updated_at = updated_at.clone();
+            Box::pin(async move {
+                let result = sqlx::query(
+                    "UPDATE chatos_contacts SET \
+                    task_runner_enabled = ?, task_runner_base_url = ?, task_runner_username = ?, task_runner_password = ?, updated_at = ? \
+                    WHERE id = ?",
+                )
+                .bind(if enabled { 1_i64 } else { 0_i64 })
+                .bind(&base_url)
+                .bind(&username)
+                .bind(&password)
                 .bind(&updated_at)
                 .bind(&contact_id)
                 .execute(pool)

@@ -69,6 +69,7 @@ export const useSessionListController = ({
     loadSessions,
     loadContacts: loadContactsAction,
     createContact: createContactAction,
+    updateContactTaskRunnerConfig,
     deleteContact: deleteContactAction,
     markContactsStale,
     removeContactLocally,
@@ -132,6 +133,9 @@ export const useSessionListController = ({
   const [terminalModalOpen, setTerminalModalOpen] = useState(false);
   const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [taskRunnerContactId, setTaskRunnerContactId] = useState<string | null>(null);
+  const [taskRunnerError, setTaskRunnerError] = useState<string | null>(null);
+  const [taskRunnerSaving, setTaskRunnerSaving] = useState(false);
 
   const apiClient = useApiClient();
   const { confirm, alert } = useDialogService();
@@ -164,6 +168,11 @@ export const useSessionListController = ({
     [contacts],
   );
 
+  const taskRunnerContact = useMemo(
+    () => (contacts || []).find((item: ContactItem) => item.id === taskRunnerContactId) || null,
+    [contacts, taskRunnerContactId],
+  );
+
   const contactSessionState = useContactSessionListState({
     contacts,
     sessions: sessions || [],
@@ -185,6 +194,65 @@ export const useSessionListController = ({
   });
 
   const inlineActionMenus = useInlineActionMenus();
+
+  const openTaskRunnerConfig = (displaySessionId: string) => {
+    const contactId = displaySessionId.startsWith('contact-placeholder:')
+      ? displaySessionId.replace('contact-placeholder:', '').trim()
+      : '';
+    const contact = (contacts || []).find((item: ContactItem) => item.id === contactId);
+    if (!contact) {
+      setTaskRunnerError('联系人不存在，请刷新后重试');
+      return;
+    }
+    setTaskRunnerContactId(contact.id);
+    setTaskRunnerError(null);
+  };
+
+  const closeTaskRunnerConfig = () => {
+    setTaskRunnerContactId(null);
+    setTaskRunnerError(null);
+  };
+
+  const saveTaskRunnerConfig = async (values: {
+    enabled: boolean;
+    baseUrl: string;
+    username: string;
+    password?: string;
+    clearPassword?: boolean;
+  }) => {
+    if (!taskRunnerContact) {
+      return;
+    }
+    const baseUrl = values.baseUrl.trim();
+    const username = values.username.trim();
+    if (values.enabled && (!baseUrl || !username)) {
+      setTaskRunnerError('启用时需要填写任务系统地址和用户名');
+      return;
+    }
+    if (
+      values.enabled
+      && !values.password?.trim()
+      && !taskRunnerContact.taskRunner?.hasPassword
+      && !values.clearPassword
+    ) {
+      setTaskRunnerError('启用时需要填写密码');
+      return;
+    }
+    setTaskRunnerSaving(true);
+    setTaskRunnerError(null);
+    try {
+      await updateContactTaskRunnerConfig(taskRunnerContact.id, {
+        ...values,
+        baseUrl,
+        username,
+      });
+      closeTaskRunnerConfig();
+    } catch (error) {
+      setTaskRunnerError(error instanceof Error ? error.message : '保存任务系统配置失败');
+    } finally {
+      setTaskRunnerSaving(false);
+    }
+  };
 
   const sessionListActions = useSessionListActions({
     contacts: contacts as ContactItem[],
@@ -447,6 +515,7 @@ export const useSessionListController = ({
     isRefreshingRemote,
     isRefreshingTerminals,
     localFsPickers,
+    openTaskRunnerConfig,
     projectError,
     projectModalOpen,
     projectRoot,
@@ -461,6 +530,11 @@ export const useSessionListController = ({
     setProjectRoot,
     setTerminalModalOpen,
     setTerminalRoot,
+    taskRunnerContact,
+    taskRunnerError,
+    taskRunnerSaving,
+    closeTaskRunnerConfig,
+    saveTaskRunnerConfig,
     taskReviewPanelsBySession,
     terminals,
     terminalError,

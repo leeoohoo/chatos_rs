@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::Stdio;
 
 use serde_json::{json, Value};
@@ -6,8 +7,11 @@ use uuid::Uuid;
 
 use crate::types::McpStdioServer;
 
-pub async fn list_tools_http(url: &str) -> Result<Vec<Value>, String> {
-    let response = jsonrpc_http_call(url, "tools/list", json!({})).await?;
+pub async fn list_tools_http(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+) -> Result<Vec<Value>, String> {
+    let response = jsonrpc_http_call(url, headers, "tools/list", json!({})).await?;
     extract_tools(&response)
 }
 
@@ -29,15 +33,22 @@ pub fn extract_tools(response: &Value) -> Result<Vec<Value>, String> {
         .ok_or_else(|| "tools not found in response".to_string())
 }
 
-pub async fn jsonrpc_http_call(url: &str, method: &str, params: Value) -> Result<Value, String> {
+pub async fn jsonrpc_http_call(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-    let response = reqwest::Client::new()
-        .post(url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let client = reqwest::Client::new();
+    let mut request = client.post(url).json(&payload);
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+    }
+    let response = request.send().await.map_err(|err| err.to_string())?;
 
     let value: Value = response.json().await.map_err(|err| err.to_string())?;
     if value.get("error").is_some() {

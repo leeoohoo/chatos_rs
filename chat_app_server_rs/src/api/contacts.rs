@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use axum::{
     extract::{Path, Query},
-    routing::get,
+    routing::{get, patch},
     Json, Router,
 };
 use serde::Deserialize;
@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::resolve_user_id;
-use crate::models::memory_mapping_types::CreateMemoryContactRequestDto;
+use crate::models::memory_mapping_types::{
+    CreateMemoryContactRequestDto, UpdateContactTaskRunnerConfigRequestDto,
+};
 use crate::services::chatos_memory_mappings;
 use crate::services::realtime::publish_contacts_updated;
 
@@ -39,6 +41,10 @@ pub fn router() -> Router {
         .route(
             "/api/contacts/:contact_id",
             get(get_contact).delete(delete_contact),
+        )
+        .route(
+            "/api/contacts/:contact_id/task-runner",
+            patch(update_contact_task_runner),
         )
         .route(
             "/api/contacts/:contact_id/project-memories",
@@ -176,6 +182,53 @@ async fn delete_contact(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "delete contact failed", "detail": err})),
+        ),
+    }
+}
+
+async fn update_contact_task_runner(
+    auth: AuthUser,
+    Path(contact_id): Path<String>,
+    Json(req): Json<UpdateContactTaskRunnerConfigRequestDto>,
+) -> (StatusCode, Json<Value>) {
+    match chatos_memory_mappings::get_memory_contact(contact_id.as_str()).await {
+        Ok(Some(contact)) => {
+            if contact.user_id != auth.user_id {
+                return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+            }
+        }
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "contact not found"})),
+            );
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "get contact failed", "detail": err})),
+            );
+        }
+    }
+
+    match chatos_memory_mappings::update_contact_task_runner_config(contact_id.as_str(), &req).await
+    {
+        Ok(Some(contact)) => {
+            publish_contacts_updated(
+                auth.user_id.as_str(),
+                "contact_updated",
+                Some(contact.id.as_str()),
+                Some(contact.clone()),
+            );
+            (StatusCode::OK, Json(json!(contact)))
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "contact not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "update contact task runner config failed", "detail": err})),
         ),
     }
 }

@@ -12,6 +12,7 @@ export const useSessionListStoreState = (storeToUse: SessionListStoreHook) => {
     loadSessions: state.loadSessions,
     loadContacts: state.loadContacts,
     createContact: state.createContact,
+    updateContactTaskRunnerConfig: state.updateContactTaskRunnerConfig,
     deleteContact: state.deleteContact,
     markContactsStale: state.markContactsStale,
     removeContactLocally: state.removeContactLocally,
