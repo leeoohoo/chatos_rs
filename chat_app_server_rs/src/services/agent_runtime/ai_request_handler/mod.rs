@@ -1,5 +1,5 @@
+#[cfg(test)]
 mod parser;
-mod stream_request;
 
 #[cfg(test)]
 mod tests;
@@ -8,38 +8,39 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use chatos_ai_runtime::request_payload::{
+    build_chat_completions_request_payload as build_shared_chat_completions_request_payload,
+    build_responses_request_payload as build_shared_responses_request_payload,
+    CHAT_PROMPT_CACHE_RETENTION,
+};
+#[cfg(test)]
+use chatos_ai_runtime::request_retry::is_prompt_cache_retention_unsupported_error;
+use chatos_ai_runtime::request_retry::{
+    base_url_supports_prompt_cache_retention, should_retry_without_prompt_cache_retention,
+};
+pub use chatos_ai_runtime::AiResponse;
+use chatos_ai_runtime::{
+    AiRequestHandler as SharedAiRequestHandler, AiRequestOptions as SharedAiRequestOptions,
+    AiTransport as SharedAiTransport, StreamCallbacks as SharedStreamCallbacks,
+};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tracing::{error, info, warn};
 
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{
-    build_abort_token, normalize_reasoning_effort, persist_assistant_response_with_policy,
-    should_persist_assistant_message, validate_request_payload_size, AiStreamCallbacks,
-    AssistantResponsePersistenceRequest,
+    build_abort_token, persist_assistant_response_with_policy, should_persist_assistant_message,
+    validate_request_payload_size, AiStreamCallbacks, AssistantResponsePersistenceRequest,
 };
-use crate::utils::model_config::{is_gpt_provider, normalize_provider, thinking_mode_for_provider};
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";
 const REQUEST_BODY_LIMIT_ENV: &str = "AI_AGENT_REQUEST_BODY_MAX_BYTES";
-const CHAT_PROMPT_CACHE_RETENTION: &str = "24h";
 const UPSTREAM_CONNECT_TIMEOUT_MS_ENV: &str = "AI_AGENT_UPSTREAM_CONNECT_TIMEOUT_MS";
 const UPSTREAM_READ_TIMEOUT_MS_ENV: &str = "AI_AGENT_UPSTREAM_READ_TIMEOUT_MS";
 const DEFAULT_UPSTREAM_CONNECT_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_UPSTREAM_READ_TIMEOUT_MS: u64 = 120_000;
 const MIN_UPSTREAM_TIMEOUT_MS: u64 = 1_000;
 const MAX_UPSTREAM_TIMEOUT_MS: u64 = 600_000;
-
-#[derive(Debug, Clone)]
-pub struct AiResponse {
-    pub content: String,
-    pub reasoning: Option<String>,
-    pub tool_calls: Option<Value>,
-    pub finish_reason: Option<String>,
-    pub provider_error: Option<Value>,
-    pub usage: Option<Value>,
-    pub response_id: Option<String>,
-}
 
 pub type StreamCallbacks = AiStreamCallbacks;
 
@@ -62,6 +63,20 @@ impl AiTransport {
         match self {
             Self::Responses => "responses",
             Self::ChatCompletions => "chat_completions",
+        }
+    }
+
+    fn as_shared(self) -> SharedAiTransport {
+        match self {
+            Self::Responses => SharedAiTransport::Responses,
+            Self::ChatCompletions => SharedAiTransport::ChatCompletions,
+        }
+    }
+
+    fn persist_skip_log_label(self) -> &'static str {
+        match self {
+            Self::Responses => "non-terminal empty stream response",
+            Self::ChatCompletions => "chat-completions empty stream response",
         }
     }
 }
@@ -166,14 +181,6 @@ impl AiRequestHandler {
             return Err(err);
         }
 
-        let url = match transport {
-            AiTransport::Responses => {
-                format!("{}/responses", self.base_url.trim_end_matches('/'))
-            }
-            AiTransport::ChatCompletions => {
-                format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
-            }
-        };
         let token = build_abort_token(session_id.as_deref(), turn_id.as_deref());
 
         info!(
@@ -202,49 +209,27 @@ impl AiRequestHandler {
 
         let persist_messages = purpose != "agent_builder";
         let force_identity_encoding = purpose == "session_summary_job";
-        if let Some(cb) = on_before_send_model_request.as_ref() {
-            cb(payload.clone());
-        }
-
-        let first_attempt = match transport {
-            AiTransport::Responses => {
-                self.handle_stream_request(
-                    url.clone(),
-                    payload.clone(),
-                    callbacks.clone(),
-                    session_id.clone(),
-                    turn_id.clone(),
-                    token.clone(),
-                    force_identity_encoding,
-                    persist_messages,
-                    message_mode.clone(),
-                    message_source.clone(),
-                    metadata.clone(),
-                )
-                .await
-            }
-            AiTransport::ChatCompletions => {
-                self.handle_chat_completions_stream_request(
-                    url.clone(),
-                    payload.clone(),
-                    callbacks.clone(),
-                    provider.clone(),
-                    thinking_level.clone(),
-                    session_id.clone(),
-                    turn_id.clone(),
-                    token.clone(),
-                    force_identity_encoding,
-                    persist_messages,
-                    message_mode.clone(),
-                    message_source.clone(),
-                    metadata.clone(),
-                )
-                .await
-            }
-        };
+        let first_attempt = self
+            .send_prebuilt_payload_and_persist(
+                transport,
+                payload.clone(),
+                callbacks.clone(),
+                provider.clone(),
+                thinking_level.clone(),
+                session_id.clone(),
+                turn_id.clone(),
+                token.clone(),
+                force_identity_encoding,
+                persist_messages,
+                message_mode.clone(),
+                message_source.clone(),
+                metadata.clone(),
+                on_before_send_model_request.clone(),
+            )
+            .await;
 
         if transport == AiTransport::Responses
-            && should_retry_without_prompt_cache_retention(&first_attempt, payload.as_object())
+            && should_retry_without_prompt_cache_retention(&first_attempt, &payload)
         {
             warn!(
                 "{} upstream rejected prompt_cache_retention; disable and retry once: purpose={}, session={}",
@@ -268,10 +253,12 @@ impl AiRequestHandler {
                 transport,
             );
             return self
-                .handle_stream_request(
-                    url,
+                .send_prebuilt_payload_and_persist(
+                    transport,
                     payload,
                     callbacks,
+                    provider,
+                    thinking_level,
                     session_id,
                     turn_id,
                     token,
@@ -280,43 +267,84 @@ impl AiRequestHandler {
                     message_mode,
                     message_source,
                     metadata,
+                    on_before_send_model_request,
                 )
                 .await;
         }
 
         first_attempt
     }
-}
 
-fn should_retry_without_prompt_cache_retention(
-    first_attempt: &Result<AiResponse, String>,
-    payload_object: Option<&serde_json::Map<String, Value>>,
-) -> bool {
-    if payload_object
-        .and_then(|object| object.get("prompt_cache_retention"))
-        .is_none()
-    {
-        return false;
-    }
-    match first_attempt {
-        Ok(_) => false,
-        Err(err) => is_prompt_cache_retention_unsupported_error(err.as_str()),
-    }
-}
+    #[allow(clippy::too_many_arguments)]
+    async fn send_prebuilt_payload_and_persist(
+        &self,
+        transport: AiTransport,
+        payload: Value,
+        callbacks: StreamCallbacks,
+        provider: Option<String>,
+        thinking_level: Option<String>,
+        session_id: Option<String>,
+        turn_id: Option<String>,
+        token: Option<tokio_util::sync::CancellationToken>,
+        force_identity_encoding: bool,
+        persist_messages: bool,
+        message_mode: Option<String>,
+        message_source: Option<String>,
+        metadata: Option<Value>,
+        on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> Result<AiResponse, String> {
+        let response = SharedAiRequestHandler::from_client(self.client.clone())
+            .send_prebuilt_payload_with_options(
+                self.base_url.as_str(),
+                self.api_key.as_str(),
+                transport.as_shared(),
+                payload,
+                to_shared_stream_callbacks(&callbacks),
+                provider,
+                thinking_level,
+                on_before_send_model_request,
+                SharedAiRequestOptions {
+                    abort_token: token,
+                    force_identity_encoding,
+                    ..Default::default()
+                },
+            )
+            .await?;
 
-fn is_prompt_cache_retention_unsupported_error(err: &str) -> bool {
-    let normalized = err.to_ascii_lowercase();
-    if !normalized.contains("prompt_cache_retention") {
-        return false;
-    }
-    normalized.contains("unsupported parameter")
-        || normalized.contains("unknown parameter")
-        || normalized.contains("not supported")
-}
+        info!(
+            "{} stream response parsed: transport={}, session_id={}, turn_id={}, response_id={}, tool_call_count={}",
+            AGENT_RUNTIME_LOG_PREFIX,
+            transport.log_label(),
+            session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            response.response_id.as_deref().unwrap_or("none"),
+            response
+                .tool_calls
+                .as_ref()
+                .and_then(|value| value.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0)
+        );
 
-fn base_url_supports_prompt_cache_retention(base_url: &str) -> bool {
-    let normalized = base_url.trim().to_ascii_lowercase();
-    normalized.contains("api.openai.com")
+        persist_assistant_response_if_needed(
+            self,
+            session_id,
+            turn_id,
+            persist_messages,
+            message_mode,
+            message_source,
+            metadata,
+            response.content.as_str(),
+            response.reasoning.clone(),
+            response.tool_calls.clone(),
+            response.response_id.clone(),
+            response.finish_reason.clone(),
+            transport.persist_skip_log_label(),
+        )
+        .await;
+
+        Ok(response)
+    }
 }
 
 fn build_http_client() -> (reqwest::Client, u64, u64) {
@@ -345,6 +373,13 @@ fn build_http_client() -> (reqwest::Client, u64, u64) {
             );
             (reqwest::Client::new(), connect_timeout_ms, read_timeout_ms)
         }
+    }
+}
+
+fn to_shared_stream_callbacks(callbacks: &StreamCallbacks) -> SharedStreamCallbacks {
+    SharedStreamCallbacks {
+        on_chunk: callbacks.on_chunk.clone(),
+        on_thinking: callbacks.on_thinking.clone(),
     }
 }
 
@@ -471,56 +506,20 @@ fn build_responses_request_payload(
     stream: bool,
     include_prompt_cache_retention: bool,
 ) -> Value {
-    let mut payload = json!({
-        "model": model,
-        "input": input
-    });
-    let mut has_prompt_cache_key = false;
-    if let Some(instr) = instructions {
-        payload["instructions"] = Value::String(instr);
-    }
-    if let Some(cache_key) = prompt_cache_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        payload["prompt_cache_key"] = Value::String(cache_key.to_string());
-        has_prompt_cache_key = true;
-    }
-    if has_prompt_cache_key && include_prompt_cache_retention {
-        payload["prompt_cache_retention"] = Value::String(CHAT_PROMPT_CACHE_RETENTION.to_string());
-    }
-    if let Some(t) = tools {
-        if !t.is_empty() {
-            payload["tools"] = Value::Array(t);
-            payload["tool_choice"] = Value::String("auto".to_string());
-        }
-    }
-    if let Some(cwd) = request_cwd
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        payload["cwd"] = Value::String(cwd.to_string());
-    }
-    if let Some(t) = temperature {
-        payload["temperature"] = json!(t);
-    }
-    if let Some(max) = max_output_tokens {
-        payload["max_output_tokens"] = json!(max);
-    }
-    if let Some(level) = normalize_reasoning_effort(provider.as_deref(), thinking_level.as_deref())
-    {
-        let mut reasoning_payload = json!({ "effort": level });
-        if is_gpt_provider(provider.as_deref().unwrap_or("gpt")) {
-            reasoning_payload["summary"] = Value::String("auto".to_string());
-        }
-        payload["reasoning"] = reasoning_payload;
-    }
-    if stream {
-        payload["stream"] = Value::Bool(true);
-    }
-    payload
+    build_shared_responses_request_payload(
+        input,
+        model,
+        instructions,
+        prompt_cache_key,
+        tools,
+        request_cwd,
+        temperature,
+        max_output_tokens,
+        provider,
+        thinking_level,
+        stream,
+        include_prompt_cache_retention,
+    )
 }
 
 fn build_chat_completions_request_payload(
@@ -534,414 +533,17 @@ fn build_chat_completions_request_payload(
     thinking_level: Option<String>,
     stream: bool,
 ) -> Value {
-    let mut messages = input_to_chat_completions_messages(input);
-    if let Some(system_prompt) = instructions
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        messages.insert(
-            0,
-            json!({
-                "role": "system",
-                "content": system_prompt
-            }),
-        );
-    }
-
-    let mut payload = json!({
-        "model": model,
-        "messages": messages,
-    });
-    if let Some(t) = tools {
-        if !t.is_empty() {
-            payload["tools"] =
-                Value::Array(t.into_iter().map(chat_completion_tool_definition).collect());
-            payload["tool_choice"] = Value::String("auto".to_string());
-        }
-    }
-    if should_send_chat_completions_temperature(provider.as_deref(), thinking_level.as_deref()) {
-        if let Some(t) = temperature {
-            payload["temperature"] = json!(t);
-        }
-    }
-    if let Some(max) = max_output_tokens {
-        payload["max_tokens"] = json!(max);
-    }
-    if let Some(level) = normalize_reasoning_effort(provider.as_deref(), thinking_level.as_deref())
-    {
-        payload["reasoning_effort"] = Value::String(level);
-    }
-    if let Some(mode) = thinking_mode_for_provider(provider.as_deref(), thinking_level.as_deref()) {
-        payload["thinking"] = json!({ "type": mode });
-    }
-    if stream {
-        payload["stream"] = Value::Bool(true);
-        payload["stream_options"] = json!({"include_usage": true});
-    }
-    payload
-}
-
-fn should_send_chat_completions_temperature(
-    provider: Option<&str>,
-    thinking_level: Option<&str>,
-) -> bool {
-    let provider = normalize_provider(provider.unwrap_or("gpt"));
-    let thinking_mode = thinking_mode_for_provider(Some(provider.as_str()), thinking_level);
-    !(provider == "deepseek" && thinking_mode == Some("enabled"))
-}
-
-fn input_to_chat_completions_messages(input: Value) -> Vec<Value> {
-    match input {
-        Value::String(text) => vec![json!({
-            "role": "user",
-            "content": text,
-        })],
-        Value::Array(items) => response_items_to_chat_messages(items),
-        other => vec![json!({
-            "role": "user",
-            "content": other.to_string(),
-        })],
-    }
-}
-
-fn response_items_to_chat_messages(items: Vec<Value>) -> Vec<Value> {
-    let mut messages = Vec::new();
-    let mut index = 0;
-
-    while index < items.len() {
-        let item = &items[index];
-        let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
-
-        if item_type == "message" {
-            if let Some(mut message) = response_message_item_to_chat_message(item) {
-                index += 1;
-
-                let role = message.get("role").and_then(Value::as_str).unwrap_or("");
-                if role == "assistant" {
-                    let mut tool_calls = Vec::new();
-                    while index < items.len()
-                        && items[index].get("type").and_then(Value::as_str) == Some("function_call")
-                    {
-                        tool_calls.push(chat_function_call_item_to_tool_call(&items[index]));
-                        index += 1;
-                    }
-                    if !tool_calls.is_empty() {
-                        message["tool_calls"] = Value::Array(tool_calls);
-                    }
-                }
-
-                messages.push(message);
-                continue;
-            }
-        }
-
-        if item_type == "function_call" {
-            let mut tool_calls = Vec::new();
-            while index < items.len()
-                && items[index].get("type").and_then(Value::as_str) == Some("function_call")
-            {
-                tool_calls.push(chat_function_call_item_to_tool_call(&items[index]));
-                index += 1;
-            }
-            if !tool_calls.is_empty() {
-                messages.push(json!({
-                    "role": "assistant",
-                    "content": Value::Null,
-                    "tool_calls": tool_calls,
-                }));
-            }
-            continue;
-        }
-
-        if let Some(message) = response_item_to_chat_message(item.clone()) {
-            messages.push(message);
-        }
-        index += 1;
-    }
-
-    drop_incomplete_tool_call_messages(messages)
-}
-
-fn response_message_item_to_chat_message(item: &Value) -> Option<Value> {
-    let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
-    let content = item
-        .get("content")
-        .map(chat_message_content_to_value)
-        .unwrap_or_else(|| Value::String(String::new()));
-    let mut message = json!({
-        "role": role,
-        "content": content,
-    });
-    if role == "assistant" {
-        if let Some(reasoning_content) = chat_message_reasoning_content(item) {
-            message["reasoning_content"] = Value::String(reasoning_content);
-        }
-    }
-    Some(message)
-}
-
-fn drop_incomplete_tool_call_messages(messages: Vec<Value>) -> Vec<Value> {
-    let mut output = Vec::with_capacity(messages.len());
-    let mut index = 0;
-
-    while index < messages.len() {
-        let message = &messages[index];
-        let tool_call_ids: Vec<String> = message
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.get("id").and_then(Value::as_str))
-                    .filter(|id| !id.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        if tool_call_ids.is_empty() {
-            output.push(message.clone());
-            index += 1;
-            continue;
-        }
-
-        let mut scan = index + 1;
-        let mut seen_tool_ids = std::collections::HashSet::new();
-        while scan < messages.len()
-            && messages[scan].get("role").and_then(Value::as_str) == Some("tool")
-        {
-            if let Some(id) = messages[scan]
-                .get("tool_call_id")
-                .and_then(Value::as_str)
-                .filter(|id| !id.is_empty())
-            {
-                seen_tool_ids.insert(id.to_string());
-            }
-            scan += 1;
-        }
-
-        if tool_call_ids.iter().all(|id| seen_tool_ids.contains(id)) {
-            output.push(message.clone());
-            for tool_message in messages.iter().take(scan).skip(index + 1) {
-                output.push(tool_message.clone());
-            }
-        }
-
-        index = scan;
-    }
-
-    output
-}
-
-fn response_item_to_chat_message(item: Value) -> Option<Value> {
-    let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
-    match item_type {
-        "message" => response_message_item_to_chat_message(&item),
-        "function_call" => Some(json!({
-            "role": "assistant",
-            "content": Value::Null,
-            "tool_calls": [chat_function_call_item_to_tool_call(&item)],
-        })),
-        "function_call_output" => {
-            let call_id = item
-                .get("call_id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let output = item
-                .get("output")
-                .map(|value| chat_message_content_to_text(value))
-                .unwrap_or_default();
-            Some(json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": output,
-            }))
-        }
-        _ => None,
-    }
-}
-
-fn chat_message_reasoning_content(item: &Value) -> Option<String> {
-    item.get("reasoning_content")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            item.get("reasoning")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .or_else(|| {
-            let content = item.get("content")?;
-            let parts = content.as_array()?;
-            let mut chunks = Vec::new();
-            for part in parts {
-                let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
-                if part_type == "reasoning" || part_type == "reasoning_content" {
-                    let text = part
-                        .get("text")
-                        .or_else(|| part.get("content"))
-                        .or_else(|| part.get("reasoning"))
-                        .map(chat_message_content_to_text)
-                        .unwrap_or_else(|| chat_message_content_to_text(part));
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        chunks.push(trimmed.to_string());
-                    }
-                }
-            }
-            if chunks.is_empty() {
-                None
-            } else {
-                Some(chunks.join(""))
-            }
-        })
-}
-
-fn chat_function_call_item_to_tool_call(item: &Value) -> Value {
-    let call_id = item
-        .get("call_id")
-        .and_then(Value::as_str)
-        .or_else(|| item.get("id").and_then(Value::as_str))
-        .unwrap_or("");
-    let name = item.get("name").and_then(Value::as_str).unwrap_or("");
-    let arguments = item
-        .get("arguments")
-        .and_then(Value::as_str)
-        .unwrap_or("{}");
-    json!({
-        "id": call_id,
-        "type": "function",
-        "function": {
-            "name": name,
-            "arguments": arguments,
-        }
-    })
-}
-
-fn chat_completion_tool_definition(tool: Value) -> Value {
-    if tool.get("function").and_then(Value::as_object).is_some() {
-        return tool;
-    }
-
-    let name = tool
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    let description = tool
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    let parameters = tool
-        .get("parameters")
-        .cloned()
-        .unwrap_or_else(|| json!({"type":"object","properties":{}}));
-
-    json!({
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": parameters,
-        }
-    })
-}
-
-fn chat_message_content_to_value(content: &Value) -> Value {
-    match content {
-        Value::String(text) => Value::String(text.clone()),
-        Value::Array(parts) => {
-            let normalized: Vec<Value> = parts
-                .iter()
-                .filter_map(chat_content_part_to_value)
-                .collect();
-            if normalized.is_empty() {
-                Value::String(chat_message_content_to_text(content))
-            } else {
-                Value::Array(normalized)
-            }
-        }
-        other => Value::String(chat_message_content_to_text(other)),
-    }
-}
-
-fn chat_content_part_to_value(part: &Value) -> Option<Value> {
-    let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
-    match part_type {
-        "input_text" | "output_text" | "text" => Some(json!({
-            "type": "text",
-            "text": part
-                .get("text")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| chat_message_content_to_text(part)),
-        })),
-        "input_image" => {
-            let image_url = part
-                .get("image_url")
-                .and_then(|value| {
-                    value.as_str().map(|inner| inner.to_string()).or_else(|| {
-                        value
-                            .get("url")
-                            .and_then(Value::as_str)
-                            .map(|inner| inner.to_string())
-                    })
-                })
-                .unwrap_or_default();
-            if image_url.is_empty() {
-                None
-            } else {
-                Some(json!({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": image_url,
-                        "detail": part.get("detail").cloned().unwrap_or(Value::String("auto".to_string())),
-                    }
-                }))
-            }
-        }
-        "image_url" => {
-            let image_url = part
-                .get("image_url")
-                .and_then(|value| {
-                    value.as_str().map(|inner| inner.to_string()).or_else(|| {
-                        value
-                            .get("url")
-                            .and_then(Value::as_str)
-                            .map(|inner| inner.to_string())
-                    })
-                })
-                .unwrap_or_default();
-            if image_url.is_empty() {
-                None
-            } else {
-                Some(json!({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": image_url,
-                        "detail": part.get("detail").cloned().unwrap_or(Value::String("auto".to_string())),
-                    }
-                }))
-            }
-        }
-        _ => {
-            let text = chat_message_content_to_text(part);
-            if text.is_empty() {
-                None
-            } else {
-                Some(json!({
-                    "type": "text",
-                    "text": text,
-                }))
-            }
-        }
-    }
+    build_shared_chat_completions_request_payload(
+        input,
+        model,
+        instructions,
+        tools,
+        temperature,
+        max_output_tokens,
+        provider,
+        thinking_level,
+        stream,
+    )
 }
 
 fn chat_message_content_to_text(content: &Value) -> String {

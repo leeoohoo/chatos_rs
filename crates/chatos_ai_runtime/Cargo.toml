@@ -1,0 +1,19 @@
+[package]
+name = "chatos_ai_runtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+futures = "0.3"
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chatos_mcp_runtime = { path = "../chatos_mcp_runtime" }
+memory_engine_sdk = { path = "../../../memory_engine/sdk" }

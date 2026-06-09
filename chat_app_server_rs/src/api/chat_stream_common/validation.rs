@@ -3,7 +3,7 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use super::types::ChatStreamRequest;
-use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
+use crate::services::shared_ai_runtime::resolve_shared_model_runtime_config_for_request;
 
 pub(crate) async fn validate_chat_stream_request(
     req: &ChatStreamRequest,
@@ -26,7 +26,7 @@ pub(crate) async fn validate_chat_stream_request(
         ));
     }
     if require_responses {
-        let model_runtime = resolve_model_runtime_for_request(
+        let model_runtime = resolve_shared_model_runtime_config_for_request(
             req.model_config_id.as_deref(),
             req.ai_model_config.as_ref(),
             req.conversation_id.as_deref(),

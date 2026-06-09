@@ -394,8 +394,7 @@ fn retries_when_provider_reports_prompt_cache_retention_not_supported() {
     });
 
     assert!(should_retry_without_prompt_cache_retention(
-        &attempt,
-        payload.as_object(),
+        &attempt, &payload
     ));
 }
 

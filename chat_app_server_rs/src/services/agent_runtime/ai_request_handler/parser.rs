@@ -1,42 +1,18 @@
-#[path = "parser/extractors.rs"]
-mod extractors;
-#[path = "parser/stream_state.rs"]
-mod stream_state;
-#[path = "parser/tool_calls.rs"]
-mod tool_calls;
-
-pub(super) use self::extractors::{extract_output_text, extract_reasoning_from_response};
-pub(super) use self::stream_state::apply_stream_event;
-pub(super) use self::tool_calls::{collect_stream_tool_calls, extract_tool_calls};
-
 #[cfg(test)]
-use self::extractors::looks_like_response_id;
+use chatos_ai_runtime::response_parse::join_stream_text;
 #[cfg(test)]
-use crate::core::tool_call::join_stream_text;
-
-use std::collections::BTreeMap;
-
-use serde_json::Value;
-
-#[derive(Debug, Default)]
-pub(super) struct StreamState {
-    pub full_content: String,
-    pub reasoning: String,
-    pub tool_calls_map: BTreeMap<usize, Value>,
-    pub tool_call_index_map: BTreeMap<String, usize>,
-    pub usage: Option<Value>,
-    pub response_obj: Option<Value>,
-    pub response_id: Option<String>,
-    pub finish_reason: Option<String>,
-    pub provider_error: Option<Value>,
-    pub sent_any_chunk: bool,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct StreamCallbacksPayload {
-    pub chunk: Option<String>,
-    pub thinking: Option<String>,
-}
+use chatos_ai_runtime::response_parse::looks_like_response_id;
+#[cfg(test)]
+pub(super) use chatos_ai_runtime::response_parse::{
+    extract_output_text, extract_reasoning_from_response,
+};
+pub(super) use chatos_ai_runtime::stream_parse::{
+    apply_responses_stream_event as apply_stream_event, StreamState,
+};
+#[cfg(test)]
+pub(super) use chatos_ai_runtime::stream_parse::{
+    collect_stream_tool_calls, extract_responses_tool_calls as extract_tool_calls,
+};
 
 #[cfg(test)]
 mod tests {

@@ -129,11 +129,7 @@ pub fn extract_message_tool_calls_for_display(message: &Message) -> Vec<Value> {
 }
 
 pub fn select_preferred_text<'a>(content: &'a str, reasoning: Option<&'a str>) -> Option<&'a str> {
-    if text_has_content(content) {
-        return Some(content);
-    }
-
-    reasoning.filter(|value| text_has_content(value))
+    chatos_ai_runtime::select_preferred_response_text(content, reasoning)
 }
 
 pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message, String> {

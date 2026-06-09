@@ -101,8 +101,8 @@ pub async fn ai_create_agent(
         created: true,
         agent: created,
         source: "chatos_agent_builder".to_string(),
-        model: runtime.model,
-        provider: runtime.provider,
+        model: runtime.model().to_string(),
+        provider: runtime.provider().to_string(),
         content: Some(raw),
     })
 }

@@ -1,15 +1,13 @@
-use std::collections::HashSet;
-
+use chatos_ai_runtime::{build_stateless_history_items_with_output_cap, StatelessHistoryMessage};
 use serde_json::Value;
 use tracing::info;
 
 use super::compat::cap_tool_output_for_input;
-use super::{build_current_input_items, to_message_item, to_message_item_with_reasoning, AiClient};
+use super::{build_current_input_items, AiClient};
 use crate::core::messages::is_session_summary_message;
-use crate::core::tool_call::{
-    build_function_call_item, build_function_call_output_item, extract_message_tool_calls,
-    extract_tool_call_id, extract_tool_call_name, tool_call_arguments_text,
-};
+
+#[cfg(test)]
+pub(super) use chatos_ai_runtime::splice_current_input_items;
 
 impl AiClient {
     pub(super) async fn maybe_refresh_stateless_context(
@@ -70,13 +68,11 @@ impl AiClient {
         current_input_items: &[Value],
         include_tool_items: bool,
     ) -> Vec<Value> {
-        let mut items = Vec::new();
-        let mut deferred_prefixed_items = Vec::new();
+        let mut leading_prefixed_items = Vec::new();
+        let mut trailing_prefixed_items = Vec::new();
         let memory_summary_count;
         let history_count;
         let mut memory_summary_used = false;
-        let mut tool_call_ids: HashSet<String> = HashSet::new();
-        let mut tool_output_ids: HashSet<String> = HashSet::new();
         let context_data = if let Some(sid) = session_id.as_ref() {
             self.message_manager
                 .get_memory_chat_history_context(sid)
@@ -90,102 +86,72 @@ impl AiClient {
         if !prefixed_input_items.is_empty() {
             for item in prefixed_input_items {
                 if is_task_board_prefixed_input_item(item) {
-                    deferred_prefixed_items.push(item.clone());
+                    trailing_prefixed_items.push(item.clone());
                 } else {
-                    items.push(item.clone());
+                    leading_prefixed_items.push(item.clone());
                 }
             }
         }
         if let Some(summary_text) = merged_summary {
             memory_summary_used = true;
-            items.push(to_message_item(
-                "system",
-                &Value::String(summary_text),
+            let history = pending_history;
+            history_count = history.len();
+            let history_items = history
+                .into_iter()
+                .map(|msg| StatelessHistoryMessage {
+                    role: msg.role.clone(),
+                    content: msg.content.clone(),
+                    reasoning: msg.reasoning.clone(),
+                    tool_calls: msg.tool_calls.clone(),
+                    tool_call_id: msg.tool_call_id.clone(),
+                    metadata: msg.metadata.clone(),
+                    skip_in_input: is_session_summary_message(&msg),
+                })
+                .collect::<Vec<_>>();
+
+            let items = build_stateless_history_items_with_output_cap(
+                leading_prefixed_items.as_slice(),
+                trailing_prefixed_items.as_slice(),
+                Some(summary_text.as_str()),
+                history_items.as_slice(),
+                current_input_items,
+                include_tool_items,
                 force_text,
-            ));
+                cap_tool_output_for_input,
+            );
+            info!(
+                "[Agent Runtime] stateless items built: memory_summary_used={}, summaries={}, history_messages={}, total_items={}",
+                memory_summary_used,
+                memory_summary_count,
+                history_count,
+                items.len()
+            );
+            return items;
         }
         let history = pending_history;
-
         history_count = history.len();
-
-        if include_tool_items {
-            for msg in &history {
-                if msg.role == "tool" {
-                    if let Some(call_id) = msg.tool_call_id.clone() {
-                        if !call_id.is_empty() {
-                            tool_output_ids.insert(call_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        for msg in history {
-            if is_session_summary_message(&msg) {
-                continue;
-            }
-            if msg.role == "user"
-                || msg.role == "assistant"
-                || msg.role == "system"
-                || msg.role == "developer"
-            {
-                let content = Value::String(msg.content.clone());
-                let message_item = if msg.role == "assistant" {
-                    to_message_item_with_reasoning(
-                        &msg.role,
-                        &content,
-                        msg.reasoning.as_deref(),
-                        force_text,
-                    )
-                } else {
-                    to_message_item(&msg.role, &content, force_text)
-                };
-                items.push(message_item);
-                if include_tool_items {
-                    if msg.role == "assistant" {
-                        for tc in extract_message_tool_calls(
-                            msg.tool_calls.as_ref(),
-                            msg.metadata.as_ref(),
-                        ) {
-                            let call_id = extract_tool_call_id(&tc).unwrap_or("").to_string();
-                            if call_id.is_empty() {
-                                continue;
-                            }
-                            if !tool_output_ids.contains(&call_id) {
-                                continue;
-                            }
-                            let name = extract_tool_call_name(&tc).unwrap_or("").to_string();
-                            let args_str = tool_call_arguments_text(&tc);
-                            tool_call_ids.insert(call_id.clone());
-                            items.push(build_function_call_item(
-                                call_id.as_str(),
-                                name.as_str(),
-                                args_str.as_str(),
-                            ));
-                        }
-                    }
-                }
-                continue;
-            }
-            if msg.role == "tool" {
-                if include_tool_items {
-                    if let Some(call_id) = msg.tool_call_id.clone() {
-                        if tool_call_ids.contains(&call_id) {
-                            let output = cap_tool_output_for_input(msg.content.as_str());
-                            items.push(build_function_call_output_item(
-                                call_id.as_str(),
-                                output.as_str(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        splice_current_input_items(&mut items, current_input_items);
-        if !deferred_prefixed_items.is_empty() {
-            items.extend(deferred_prefixed_items);
-        }
+        let history_items = history
+            .into_iter()
+            .map(|msg| StatelessHistoryMessage {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+                reasoning: msg.reasoning.clone(),
+                tool_calls: msg.tool_calls.clone(),
+                tool_call_id: msg.tool_call_id.clone(),
+                metadata: msg.metadata.clone(),
+                skip_in_input: is_session_summary_message(&msg),
+            })
+            .collect::<Vec<_>>();
+        let items = build_stateless_history_items_with_output_cap(
+            leading_prefixed_items.as_slice(),
+            trailing_prefixed_items.as_slice(),
+            None,
+            history_items.as_slice(),
+            current_input_items,
+            include_tool_items,
+            force_text,
+            cap_tool_output_for_input,
+        );
         info!(
             "[Agent Runtime] stateless items built: memory_summary_used={}, summaries={}, history_messages={}, total_items={}",
             memory_summary_used,
@@ -212,22 +178,6 @@ fn is_task_board_prefixed_input_item(item: &Value) -> bool {
         .and_then(|value| value.as_str())
         .map(|text| text.contains("[Task Board]"))
         .unwrap_or(false)
-}
-
-fn splice_current_input_items(items: &mut Vec<Value>, current_input_items: &[Value]) {
-    if current_input_items.is_empty() {
-        return;
-    }
-
-    if let Some(index) = items.iter().rposition(|item| {
-        item.get("type").and_then(|value| value.as_str()) == Some("message")
-            && item.get("role").and_then(|value| value.as_str()) == Some("user")
-    }) {
-        items.splice(index..=index, current_input_items.iter().cloned());
-        return;
-    }
-
-    items.extend_from_slice(current_input_items);
 }
 
 #[cfg(test)]

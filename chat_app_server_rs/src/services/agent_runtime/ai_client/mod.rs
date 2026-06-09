@@ -24,10 +24,7 @@ mod stateless_context;
 mod test_support;
 mod tool_plan;
 
-use self::input_transform::{
-    build_current_input_items, normalize_input_to_text_value, to_message_item,
-    to_message_item_with_reasoning,
-};
+use self::input_transform::{build_current_input_items, normalize_input_to_text_value};
 
 #[derive(Default)]
 pub struct ProcessOptions {

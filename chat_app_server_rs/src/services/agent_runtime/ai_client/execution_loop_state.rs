@@ -1,5 +1,8 @@
-use std::collections::HashSet;
-
+use chatos_ai_runtime::{
+    append_tool_turn_items as append_shared_tool_turn_items,
+    merge_missing_tool_turn_items as merge_shared_missing_tool_turn_items,
+    merge_pending_tool_turn_items as merge_shared_pending_tool_turn_items,
+};
 use serde_json::Value;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
@@ -201,12 +204,9 @@ impl AiClient {
                     include_tool_items,
                 )
                 .await;
-            merge_missing_tool_turn_items(
-                &mut rebuilt,
-                include_tool_items,
-                tool_call_items,
-                tool_outputs,
-            );
+            if include_tool_items {
+                merge_shared_missing_tool_turn_items(&mut rebuilt, tool_call_items, tool_outputs);
+            }
             rebuilt
         } else {
             let mut local = if let Some(items) = stateless_context_items.clone() {
@@ -253,66 +253,7 @@ fn merge_missing_tool_turn_items_from_pending(
     let tool_outputs = pending_tool_outputs
         .map(|items| items.as_slice())
         .unwrap_or(&[]);
-    merge_missing_tool_turn_items(items, include_tool_items, tool_call_items, tool_outputs);
-}
-
-fn merge_missing_tool_turn_items(
-    items: &mut Vec<Value>,
-    include_tool_items: bool,
-    tool_call_items: &[Value],
-    tool_outputs: &[Value],
-) {
-    if !include_tool_items {
-        return;
-    }
-
-    let mut existing_call_ids: HashSet<String> = items
-        .iter()
-        .filter(|item| item.get("type").and_then(|value| value.as_str()) == Some("function_call"))
-        .filter_map(|item| {
-            item.get("call_id")
-                .and_then(|value| value.as_str())
-                .map(|value| value.to_string())
-        })
-        .collect();
-    let mut pending_call_ids = HashSet::new();
-
-    for item in tool_call_items {
-        let Some(call_id) = item.get("call_id").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        if call_id.is_empty() {
-            continue;
-        }
-        pending_call_ids.insert(call_id.to_string());
-        if existing_call_ids.insert(call_id.to_string()) {
-            items.push(item.clone());
-        }
-    }
-
-    let mut existing_output_ids: HashSet<String> = items
-        .iter()
-        .filter(|item| {
-            item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-        })
-        .filter_map(|item| {
-            item.get("call_id")
-                .and_then(|value| value.as_str())
-                .map(|value| value.to_string())
-        })
-        .collect();
-
-    for item in tool_outputs {
-        let Some(call_id) = item.get("call_id").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        if call_id.is_empty() || !pending_call_ids.contains(call_id) {
-            continue;
-        }
-        if existing_output_ids.insert(call_id.to_string()) {
-            items.push(item.clone());
-        }
-    }
+    merge_shared_pending_tool_turn_items(items, Some(tool_call_items), Some(tool_outputs));
 }
 
 fn append_tool_turn_items(
@@ -323,11 +264,13 @@ fn append_tool_turn_items(
     tool_outputs: &[Value],
 ) {
     if let Some(item) = assistant_item {
+        if include_tool_items {
+            append_shared_tool_turn_items(items, Some(item), tool_call_items, tool_outputs);
+            return;
+        }
         items.push(item.clone());
-    }
-    if include_tool_items {
-        items.extend(tool_call_items.iter().cloned());
-        items.extend(tool_outputs.iter().cloned());
+    } else if include_tool_items {
+        append_shared_tool_turn_items(items, None, tool_call_items, tool_outputs);
     }
 }
 

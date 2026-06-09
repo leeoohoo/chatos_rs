@@ -1,6 +1,5 @@
 use std::future::Future;
 
-use reqwest::RequestBuilder;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -33,42 +32,6 @@ pub(crate) fn build_abort_token(
     let token = CancellationToken::new();
     abort_registry::set_controller(session_id, turn_id, token.clone());
     Some(token)
-}
-
-fn build_bearer_post_request(
-    client: &reqwest::Client,
-    url: &str,
-    api_key: &str,
-    force_identity_encoding: bool,
-) -> RequestBuilder {
-    let mut req = client.post(url).bearer_auth(api_key);
-    if force_identity_encoding {
-        req = req
-            .header(reqwest::header::ACCEPT_ENCODING, "identity")
-            .header(reqwest::header::CONNECTION, "close")
-            .version(reqwest::Version::HTTP_11);
-    }
-    req
-}
-
-pub(crate) async fn send_bearer_json_request(
-    client: &reqwest::Client,
-    url: &str,
-    api_key: &str,
-    payload: &Value,
-    token: Option<CancellationToken>,
-    force_identity_encoding: bool,
-) -> Result<reqwest::Response, String> {
-    let req = build_bearer_post_request(client, url, api_key, force_identity_encoding);
-    await_with_optional_abort(req.json(payload).send(), token).await
-}
-
-pub(crate) async fn read_error_response_text(
-    response: reqwest::Response,
-) -> Result<String, String> {
-    let status = response.status();
-    let raw = response.text().await.map_err(|err| err.to_string())?;
-    Ok(format_error_response(status, raw.as_str()))
 }
 
 pub(crate) fn format_error_response(status: reqwest::StatusCode, raw: &str) -> String {

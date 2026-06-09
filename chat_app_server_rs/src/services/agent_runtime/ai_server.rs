@@ -5,6 +5,9 @@ use crate::services::agent_runtime::ai_request_handler::AiRequestHandler;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{normalize_turn_id, persist_user_message_and_build_content_parts};
+use crate::services::shared_ai_runtime::{
+    build_shared_ai_runtime_with_chatos_records, build_shared_contextual_turn_runner,
+};
 use crate::utils::attachments;
 
 pub struct AiServer {
@@ -12,6 +15,7 @@ pub struct AiServer {
     pub ai_request_handler: AiRequestHandler,
     pub mcp_tool_execute: McpToolExecute,
     pub ai_client: AiClient,
+    pub shared_ai_runtime: chatos_ai_runtime::AiRuntime,
     pub default_model: String,
     pub default_temperature: f64,
     pub base_url: String,
@@ -36,11 +40,16 @@ impl AiServer {
             mcp_tool_execute.clone(),
             message_manager.clone(),
         );
+        let shared_ai_runtime = build_shared_ai_runtime_with_chatos_records(
+            Some(mcp_tool_execute.clone()),
+            message_manager.clone(),
+        );
         Self {
             message_manager,
             ai_request_handler,
             mcp_tool_execute,
             ai_client,
+            shared_ai_runtime,
             default_model,
             default_temperature,
             base_url,
@@ -53,7 +62,21 @@ impl AiServer {
 
     pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
         self.mcp_tool_execute = mcp_tool_execute.clone();
-        self.ai_client.set_mcp_tool_execute(mcp_tool_execute);
+        self.ai_client
+            .set_mcp_tool_execute(mcp_tool_execute.clone());
+        self.shared_ai_runtime = build_shared_ai_runtime_with_chatos_records(
+            Some(mcp_tool_execute),
+            self.message_manager.clone(),
+        );
+    }
+
+    pub fn build_shared_contextual_turn_runner(
+        &self,
+    ) -> Result<chatos_ai_runtime::ContextualTurnRunner, String> {
+        build_shared_contextual_turn_runner(
+            Some(self.mcp_tool_execute.clone()),
+            self.message_manager.clone(),
+        )
     }
 
     pub async fn chat(

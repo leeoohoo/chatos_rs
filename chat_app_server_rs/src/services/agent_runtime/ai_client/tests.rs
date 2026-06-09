@@ -509,7 +509,7 @@ async fn runtime_guidance_attachment_parts_are_responses_compatible() {
     let guidance_item = input
         .iter()
         .find(|item| {
-            item.get("role").and_then(|value| value.as_str()) == Some("system")
+            item.get("role").and_then(|value| value.as_str()) == Some("user")
                 && item
                     .get("content")
                     .and_then(|value| value.as_array())

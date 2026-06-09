@@ -1,117 +1,17 @@
-pub fn normalize_provider(provider: &str) -> String {
-    let p = provider.trim().to_lowercase();
-    match p.as_str() {
-        "openai" | "gpt" => "gpt".to_string(),
-        "kimik2" | "kimi" | "moonshot" => "kimi".to_string(),
-        "openai-compatible" | "openai_compatible" | "compatible" => "openai_compatible".to_string(),
-        _ => p,
-    }
-}
+pub use chatos_ai_runtime::model_config::{
+    default_base_url_for_provider, normalize_provider, normalize_thinking_level,
+    reasoning_effort_for_provider,
+};
 
 pub fn is_gpt_provider(provider: &str) -> bool {
-    normalize_provider(provider) == "gpt"
-}
-
-pub fn default_base_url_for_provider(provider: &str, fallback_base_url: &str) -> String {
-    match normalize_provider(provider).as_str() {
-        "deepseek" => "https://api.deepseek.com".to_string(),
-        "kimi" => "https://api.moonshot.ai/v1".to_string(),
-        _ => {
-            let fallback = fallback_base_url.trim();
-            if fallback.is_empty() {
-                "https://api.openai.com/v1".to_string()
-            } else {
-                fallback.to_string()
-            }
-        }
-    }
-}
-
-pub fn normalize_thinking_level(
-    provider: &str,
-    level: Option<&str>,
-) -> Result<Option<String>, String> {
-    let Some(level) = level.map(|v| v.trim()).filter(|v| !v.is_empty()) else {
-        return Ok(None);
-    };
-    let provider = normalize_provider(provider);
-    let lvl = level.to_lowercase();
-    let normalized = match lvl.as_str() {
-        "off" | "disabled" => "none",
-        "auto" => "auto",
-        "none" => "none",
-        "minimal" => "minimal",
-        "low" => "low",
-        "medium" => "medium",
-        "high" => "high",
-        "xhigh" | "max" => {
-            if provider == "deepseek" {
-                "max"
-            } else {
-                "xhigh"
-            }
-        }
-        _ => return Err("invalid thinking_level".to_string()),
-    };
-
-    let allowed = match provider.as_str() {
-        "gpt" => ["none", "minimal", "low", "medium", "high", "xhigh"].as_slice(),
-        "deepseek" => ["none", "low", "medium", "high", "max"].as_slice(),
-        "kimi" => ["none", "auto", "low", "medium", "high", "xhigh"].as_slice(),
-        _ => ["none", "minimal", "low", "medium", "high", "xhigh", "max"].as_slice(),
-    };
-    if !allowed.contains(&normalized) {
-        return Err("invalid thinking_level".to_string());
-    }
-    Ok(Some(normalized.to_string()))
-}
-
-pub fn reasoning_effort_for_provider(
-    provider: Option<&str>,
-    level: Option<&str>,
-) -> Option<String> {
-    let provider = normalize_provider(provider.unwrap_or("gpt"));
-    let normalized = normalize_thinking_level(provider.as_str(), level)
-        .ok()
-        .flatten()?;
-
-    match provider.as_str() {
-        "deepseek" => match normalized.as_str() {
-            "none" => None,
-            "max" | "xhigh" => Some("max".to_string()),
-            "low" | "medium" | "high" | "auto" | "minimal" => Some("high".to_string()),
-            _ => None,
-        },
-        "kimi" => None,
-        _ => Some(normalized),
-    }
+    chatos_ai_runtime::model_config::is_gpt_provider(provider)
 }
 
 pub fn thinking_mode_for_provider(
     provider: Option<&str>,
     level: Option<&str>,
 ) -> Option<&'static str> {
-    let provider = normalize_provider(provider.unwrap_or("gpt"));
-    let normalized = normalize_thinking_level(provider.as_str(), level)
-        .ok()
-        .flatten()?;
-    match provider.as_str() {
-        "deepseek" => {
-            if normalized == "none" {
-                Some("disabled")
-            } else {
-                Some("enabled")
-            }
-        }
-        "kimi" => {
-            if normalized == "none" {
-                Some("disabled")
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
+    chatos_ai_runtime::model_config::thinking_mode_for_provider(provider, level)
 }
 
 #[cfg(test)]

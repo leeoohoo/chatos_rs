@@ -28,6 +28,17 @@ fn list_tools_contains_browser_navigate_and_vision() {
         assert!(names.contains(&"browser_inspect".to_string()));
         assert!(names.contains(&"browser_research".to_string()));
         assert!(names.contains(&"browser_vision".to_string()));
+    } else if unavailable.len() == 1
+        && unavailable.first().map(|(name, _)| name.as_str()) == Some("browser_vision")
+    {
+        assert!(names.contains(&"browser_navigate".to_string()));
+        assert!(names.contains(&"browser_inspect".to_string()));
+        assert!(names.contains(&"browser_research".to_string()));
+        assert!(!names.contains(&"browser_vision".to_string()));
+        assert!(unavailable
+            .first()
+            .map(|(_, reason)| reason.contains("vision model adapter"))
+            .unwrap_or(false));
     } else {
         assert!(names.is_empty());
         assert_eq!(unavailable.len(), 12);

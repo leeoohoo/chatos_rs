@@ -41,6 +41,7 @@ portable-pty = "0.8"
 dashmap = "5.5"
 regex = "1"
 async-recursion = "1"
+async-trait = "0.1"
 libc = "0.2"
 argon2 = "0.5"
 jsonwebtoken = "9"
@@ -52,12 +53,10 @@ scraper = "0.20"
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "macros", "chrono", "json"] }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
-memory_engine_sdk = { path = "/Users/lilei/project/my_project/memory_engine/sdk" }
+memory_engine_sdk = { path = "../../memory_engine/sdk" }
+chatos_ai_runtime = { path = "../crates/chatos_ai_runtime" }
+chatos_builtin_tools = { path = "../crates/chatos_builtin_tools" }
+chatos_mcp_runtime = { path = "../crates/chatos_mcp_runtime" }
 
 [features]
 pdf = []
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1

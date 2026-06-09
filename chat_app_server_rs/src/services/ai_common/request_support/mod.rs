@@ -13,17 +13,10 @@ pub(crate) use self::error_classify::{
     classify_user_facing_ai_error, handle_transient_retry, is_retryable_provider_backpressure_error,
 };
 #[cfg(test)]
-pub(crate) use self::error_classify::{
-    is_response_parse_error, is_transient_network_error, is_transient_transport_or_parse_error,
-};
-#[cfg(test)]
 pub(crate) use self::request_transport::{
     await_with_optional_abort, format_error_response, truncate_log,
 };
-pub(crate) use self::request_transport::{
-    build_abort_token, normalize_reasoning_effort, read_error_response_text,
-    send_bearer_json_request, validate_request_payload_size,
-};
+pub(crate) use self::request_transport::{build_abort_token, validate_request_payload_size};
 pub(crate) use self::user_message::{
     build_user_content_parts, build_user_message_metadata, normalize_turn_id,
     persist_user_message_and_build_content_parts,
