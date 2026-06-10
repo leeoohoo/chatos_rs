@@ -47,14 +47,14 @@ use uuid::Uuid;
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
-    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CreateModelConfigRequest,
-    CreateRemoteServerRequest, CreateTaskRequest, HealthResponse, McpCatalogEntry,
-    McpPromptPreviewRequest, McpPromptPreviewResponse, McpUnavailableTool, ModelCatalogResponse,
-    ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse,
-    PreviewModelCatalogRequest, PromptListFilters, ProviderModelRecord, RemoteServerRecord,
-    RemoteServerTestResponse, RunListFilters, RunSummaryRecord, StartTaskRunRequest,
-    SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
+    mcp_builtin_kind_guide, now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem,
+    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
+    CreateModelConfigRequest, CreateRemoteServerRequest, CreateTaskRequest, HealthResponse,
+    McpCatalogEntry, McpPromptPreviewRequest, McpPromptPreviewResponse, McpUnavailableTool,
+    ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
+    PaginatedResponse, PreviewModelCatalogRequest, PromptListFilters, ProviderModelRecord,
+    RemoteServerRecord, RemoteServerTestResponse, RunListFilters, RunSummaryRecord,
+    StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
     TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
     TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord, TaskRunEventRecord,
     TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskSourceContext,
@@ -2803,6 +2803,18 @@ impl McpCatalogService {
             .into_iter()
             .map(|kind| {
                 let server = kind.server_with_options(&server_options);
+                let guide = mcp_builtin_kind_guide(kind);
+                let description = guide.description.to_string();
+                let use_cases = guide
+                    .use_cases
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect::<Vec<_>>();
+                let capabilities = guide
+                    .capabilities
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect::<Vec<_>>();
                 match build_task_runner_builtin_provider(
                     &server,
                     self.task_service.clone(),
@@ -2828,6 +2840,9 @@ impl McpCatalogService {
                             server_name: kind.server_name().to_string(),
                             config_id: kind.config_id().map(ToOwned::to_owned),
                             command: kind.command().map(ToOwned::to_owned),
+                            description,
+                            use_cases,
+                            capabilities,
                             implemented: true,
                             runtime_default: runtime_defaults
                                 .iter()
@@ -2848,6 +2863,9 @@ impl McpCatalogService {
                         server_name: kind.server_name().to_string(),
                         config_id: kind.config_id().map(ToOwned::to_owned),
                         command: kind.command().map(ToOwned::to_owned),
+                        description,
+                        use_cases,
+                        capabilities,
                         implemented: false,
                         runtime_default: runtime_defaults
                             .iter()
@@ -2864,6 +2882,9 @@ impl McpCatalogService {
                         server_name: kind.server_name().to_string(),
                         config_id: kind.config_id().map(ToOwned::to_owned),
                         command: kind.command().map(ToOwned::to_owned),
+                        description,
+                        use_cases,
+                        capabilities,
                         implemented: true,
                         runtime_default: runtime_defaults
                             .iter()

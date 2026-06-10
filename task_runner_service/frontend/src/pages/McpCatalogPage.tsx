@@ -129,8 +129,27 @@ export function McpCatalogPage() {
     },
     {
       title: t('common.description'),
-      dataIndex: 'message',
-      render: (message?: string | null) => message || '-',
+      dataIndex: 'description',
+      render: (_: string, record) => (
+        <Space direction="vertical" size={4}>
+          <Typography.Text>{record.description || '-'}</Typography.Text>
+          {record.use_cases.length ? (
+            <Space size={4} wrap>
+              {record.use_cases.map((item) => (
+                <Tag key={item}>{item}</Tag>
+              ))}
+            </Space>
+          ) : null}
+          {record.capabilities.length ? (
+            <Typography.Text type="secondary">
+              {record.capabilities.join(' / ')}
+            </Typography.Text>
+          ) : null}
+          {record.message ? (
+            <Typography.Text type="secondary">{record.message}</Typography.Text>
+          ) : null}
+        </Space>
+      ),
     },
   ];
 

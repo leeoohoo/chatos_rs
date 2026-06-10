@@ -4,16 +4,18 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::models::{
-    BatchTaskDeleteRequest, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
-    CancelUiPromptRequest, CreateModelConfigRequest, CreateTaskRequest, McpServerInfo,
-    ModelConfigRecord, RunListFilters, StartTaskRunRequest, SubmitUiPromptRequest, TaskListFilters,
-    TaskMemoryContextOptions, TaskMemoryRecordsOptions, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskSourceContext, TaskStatsResponse,
-    TaskStatus, TestModelConfigRequest, UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest,
+    mcp_builtin_kind_guide, mcp_builtin_kind_values, BatchTaskDeleteRequest, BatchTaskRunRequest,
+    BatchTaskStatusUpdateRequest, CancelUiPromptRequest, CreateModelConfigRequest,
+    CreateTaskRequest, McpServerInfo, ModelConfigRecord, RunListFilters, StartTaskRunRequest,
+    SubmitUiPromptRequest, TaskListFilters, TaskMcpConfig, TaskMemoryContextOptions,
+    TaskMemoryRecordsOptions, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskScheduleConfig, TaskScheduleMode, TaskSourceContext, TaskStatsResponse, TaskStatus,
+    TestModelConfigRequest, UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest,
     UpdateTaskRequest,
 };
-use crate::services::{ModelConfigService, RunService, TaskService};
+use crate::services::{McpCatalogService, ModelConfigService, RunService, TaskService};
 use crate::ui_prompt_service::UiPromptService;
+use chatos_mcp_runtime::builtin_kind_by_any;
 
 const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
 const TASK_RUNNER_MCP_ENDPOINT_PATH: &str = "/mcp";
@@ -50,6 +52,7 @@ pub struct TaskRunnerMcpService {
     model_config_service: ModelConfigService,
     run_service: RunService,
     ui_prompt_service: UiPromptService,
+    mcp_catalog_service: McpCatalogService,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +104,54 @@ struct ListTasksArgs {
 #[derive(Debug, Deserialize)]
 struct TaskIdArgs {
     task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTaskArgs {
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    objective: String,
+    #[serde(default)]
+    input_payload: Option<Value>,
+    #[serde(default)]
+    priority: Option<i32>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    default_model_config_id: Option<String>,
+    #[serde(default)]
+    schedule: Option<TaskScheduleConfig>,
+    #[serde(default)]
+    enabled_builtin_kinds: Option<Vec<String>>,
+    #[serde(default)]
+    mcp_config: Option<TaskMcpConfig>,
+}
+
+impl CreateTaskArgs {
+    fn into_request(self) -> Result<CreateTaskRequest, String> {
+        let mut mcp_config = self.mcp_config;
+        if let Some(enabled_builtin_kinds) = self.enabled_builtin_kinds {
+            let normalized = normalize_mcp_builtin_kind_names(enabled_builtin_kinds)?;
+            let config = mcp_config.get_or_insert_with(TaskMcpConfig::default);
+            config.enabled = true;
+            config.enabled_builtin_kinds = normalized;
+        }
+        Ok(CreateTaskRequest {
+            title: self.title,
+            description: self.description,
+            objective: self.objective,
+            input_payload: self.input_payload,
+            status: None,
+            priority: self.priority,
+            tags: self.tags,
+            default_model_config_id: self.default_model_config_id,
+            tenant_id: None,
+            subject_id: None,
+            schedule: self.schedule,
+            mcp_config,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,12 +297,14 @@ impl TaskRunnerMcpService {
         model_config_service: ModelConfigService,
         run_service: RunService,
         ui_prompt_service: UiPromptService,
+        mcp_catalog_service: McpCatalogService,
     ) -> Self {
         Self {
             task_service,
             model_config_service,
             run_service,
             ui_prompt_service,
+            mcp_catalog_service,
         }
     }
 
@@ -316,6 +369,11 @@ impl TaskRunnerMcpService {
                 "create_task",
                 "Create a new Task Runner task for the current authenticated agent. Ownership and memory scope are assigned automatically by Task Runner.",
                 create_task_schema(),
+            ),
+            tool_definition(
+                "list_mcp_builtin_catalog",
+                "List builtin MCP capabilities that can be enabled for newly created Task Runner tasks, including use cases, capabilities, and current tool names.",
+                empty_object_schema(),
             ),
             tool_definition(
                 "update_task",
@@ -716,7 +774,8 @@ impl TaskRunnerMcpService {
                 Ok(text_result(json!(stats)))
             }
             "create_task" => {
-                let input: CreateTaskRequest = decode_args(args)?;
+                let input: CreateTaskRequest =
+                    decode_args::<CreateTaskArgs>(args)?.into_request()?;
                 let task = self
                     .task_service
                     .create_task(
@@ -726,6 +785,10 @@ impl TaskRunnerMcpService {
                     )
                     .await?;
                 Ok(text_result(json!(task)))
+            }
+            "list_mcp_builtin_catalog" => {
+                let _ = decode_args::<Value>(args).ok();
+                Ok(text_result(json!(self.mcp_catalog_service.list_catalog())))
             }
             "update_task" => {
                 let args: UpdateTaskArgs = decode_args(args)?;
@@ -1209,6 +1272,7 @@ fn agent_tool_allowed(name: &str) -> bool {
             | "get_task"
             | "get_task_stats"
             | "create_task"
+            | "list_mcp_builtin_catalog"
             | "update_task"
             | "delete_task"
             | "batch_update_task_status"
@@ -1301,18 +1365,24 @@ fn required_object_schema(properties: Value, required: &[&str]) -> Value {
 }
 
 fn create_task_schema() -> Value {
+    let enabled_builtin_kinds_description = builtin_mcp_kind_schema_description();
     json!({
         "type": "object",
         "properties": {
-            "title": { "type": "string", "minLength": 1 },
-            "description": { "type": "string" },
-            "objective": { "type": "string", "minLength": 1 },
-            "input_payload": {},
-            "priority": { "type": "integer" },
-            "tags": { "type": "array", "items": { "type": "string" } },
-            "default_model_config_id": { "type": "string" },
-            "schedule": { "type": "object" },
-            "mcp_config": { "type": "object" }
+            "title": { "type": "string", "minLength": 1, "description": "任务标题。" },
+            "description": { "type": "string", "description": "任务背景、上下文或补充说明。" },
+            "objective": { "type": "string", "minLength": 1, "description": "任务执行目标，说明任务完成时应达成什么结果。" },
+            "input_payload": { "description": "任务输入数据。可以放结构化 JSON、引用信息或执行所需材料。" },
+            "priority": { "type": "integer", "description": "任务优先级，数字越大优先级越高。" },
+            "tags": { "type": "array", "items": { "type": "string" }, "description": "任务标签。" },
+            "default_model_config_id": { "type": "string", "description": "指定任务默认使用的模型配置 ID；不确定时不要传。" },
+            "schedule": { "type": "object", "description": "任务调度配置；不需要定时或延迟执行时不要传。" },
+            "enabled_builtin_kinds": {
+                "type": "array",
+                "items": builtin_mcp_kind_item_schema(),
+                "uniqueItems": true,
+                "description": enabled_builtin_kinds_description
+            }
         },
         "required": ["title", "objective"],
         "additionalProperties": false
@@ -1332,10 +1402,98 @@ fn update_task_schema() -> Value {
             "tags": { "type": "array", "items": { "type": "string" } },
             "default_model_config_id": { "type": "string" },
             "schedule": { "type": "object" },
-            "mcp_config": { "type": "object" }
+            "mcp_config": task_mcp_config_schema()
         },
         "additionalProperties": false
     })
+}
+
+fn task_mcp_config_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "enabled": { "type": "boolean", "description": "是否启用 MCP。通常保持 true。" },
+            "init_mode": {
+                "type": "string",
+                "enum": ["builtin_only", "full", "disabled"],
+                "description": "MCP 初始化方式。任务系统通常使用 builtin_only。"
+            },
+            "builtin_prompt_mode": {
+                "type": "string",
+                "enum": ["effective", "configured"],
+                "description": "MCP prompt 生成方式。通常使用 effective。"
+            },
+            "builtin_prompt_locale": {
+                "type": "string",
+                "enum": ["zh-CN", "en-US"],
+                "description": "MCP prompt 语言。"
+            },
+            "enabled_builtin_kinds": {
+                "type": "array",
+                "items": builtin_mcp_kind_item_schema(),
+                "uniqueItems": true,
+                "description": builtin_mcp_kind_schema_description()
+            },
+            "workspace_dir": {
+                "type": "string",
+                "description": "任务执行工作目录；不确定时不要传，后端会使用默认工作目录。"
+            },
+            "default_remote_server_id": {
+                "type": "string",
+                "description": "RemoteConnectionController 的默认远程服务器 ID；不确定时不要传。"
+            }
+        },
+        "additionalProperties": false
+    })
+}
+
+fn builtin_mcp_kind_item_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": mcp_builtin_kind_values()
+    })
+}
+
+fn builtin_mcp_kind_schema_description() -> String {
+    let mut lines = vec![
+        "可选的 builtin MCP 多选列表。只在任务执行确实需要对应能力时选择；不确定时可先调用 list_mcp_builtin_catalog 查看当前目录。可选值："
+            .to_string(),
+    ];
+    for value in mcp_builtin_kind_values() {
+        if let Some(kind) = builtin_kind_by_any(value.as_str()) {
+            let guide = mcp_builtin_kind_guide(kind);
+            lines.push(format!(
+                "- {}: {} 使用场景：{}。能力：{}。",
+                value,
+                guide.description,
+                guide.use_cases.join("、"),
+                guide.capabilities.join("、")
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn normalize_mcp_builtin_kind_names(values: Vec<String>) -> Result<Vec<String>, String> {
+    let allowed = mcp_builtin_kind_values();
+    let mut out = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let kind = builtin_kind_by_any(trimmed).ok_or_else(|| {
+            format!(
+                "未知 builtin MCP kind: {trimmed}. 可选值: {}",
+                allowed.join(", ")
+            )
+        })?;
+        let normalized = kind.kind_name().to_string();
+        if !out.iter().any(|item| item == &normalized) {
+            out.push(normalized);
+        }
+    }
+    Ok(out)
 }
 
 fn create_model_config_schema() -> Value {
@@ -1461,5 +1619,20 @@ mod tests {
         assert!(!properties.contains_key("tenant_id"));
         assert!(!properties.contains_key("subject_id"));
         assert!(!properties.contains_key("status"));
+        assert!(!properties.contains_key("mcp_config"));
+        assert!(properties.contains_key("enabled_builtin_kinds"));
+
+        let kind_enum = properties
+            .get("enabled_builtin_kinds")
+            .and_then(|value| value.get("items"))
+            .and_then(|value| value.get("enum"))
+            .and_then(|value| value.as_array())
+            .expect("enabled_builtin_kinds enum");
+        assert!(kind_enum
+            .iter()
+            .any(|value| value.as_str() == Some("WebTools")));
+        assert!(kind_enum
+            .iter()
+            .any(|value| value.as_str() == Some("RemoteConnectionController")));
     }
 }

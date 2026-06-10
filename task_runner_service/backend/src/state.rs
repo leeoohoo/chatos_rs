@@ -53,6 +53,7 @@ impl AppState {
             model_config_service.clone(),
             run_service.clone(),
             ui_prompt_service.clone(),
+            mcp_catalog_service.clone(),
         );
         Ok(Self {
             config,

@@ -498,6 +498,9 @@ export function TasksPage() {
         label: entry.kind,
         value: entry.kind,
         disabled: !entry.implemented,
+        description: entry.description,
+        useCases: entry.use_cases,
+        capabilities: entry.capabilities,
         message: entry.message || undefined,
       })),
     [mcpCatalogQuery.data],
@@ -2037,7 +2040,18 @@ export function TasksPage() {
                     value={String(option.value)}
                     disabled={option.disabled || !mcpEnabled}
                   >
-                    {option.label}
+                    <Space direction="vertical" size={2}>
+                      <Typography.Text>{option.label}</Typography.Text>
+                      {option.description ? (
+                        <Typography.Text type="secondary">{option.description}</Typography.Text>
+                      ) : null}
+                      {option.useCases.length || option.capabilities.length || option.message ? (
+                        <Typography.Text type="secondary">
+                          {[...option.useCases, ...option.capabilities].join(' / ')}
+                          {option.message ? ` / ${option.message}` : ''}
+                        </Typography.Text>
+                      ) : null}
+                    </Space>
                   </Checkbox>
                 ))}
               </Space>

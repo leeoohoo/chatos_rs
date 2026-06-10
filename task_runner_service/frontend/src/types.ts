@@ -444,6 +444,9 @@ export interface McpCatalogEntry {
   server_name: string;
   config_id?: string | null;
   command?: string | null;
+  description: string;
+  use_cases: string[];
+  capabilities: string[];
   implemented: boolean;
   runtime_default: boolean;
   default_allow_writes: boolean;
