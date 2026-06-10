@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { InputAreaProps } from '../../types';
@@ -87,6 +88,7 @@ export function useInputAreaController({
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
 }: UseInputAreaControllerParams) {
+  const { t } = useI18n();
   const isGuidingMode = isStreaming && !isStopping;
   const effectiveAllowAttachments = allowAttachments;
 
@@ -376,14 +378,14 @@ export function useInputAreaController({
   const requireModelSelection = useCallback(() => {
     if (showModelSelector && !selectedModelId) {
       void alert({
-        title: '请选择模型',
-        message: '请先选择一个模型',
+        title: t('inputArea.send.selectModelTitle'),
+        message: t('inputArea.send.selectModelMessage'),
         type: 'warning',
       });
       return true;
     }
     return false;
-  }, [alert, selectedModelId, showModelSelector]);
+  }, [alert, selectedModelId, showModelSelector, t]);
 
   const {
     message,

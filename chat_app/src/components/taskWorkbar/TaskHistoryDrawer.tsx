@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import TaskCard from './TaskCard';
 import type { HistoryFilter, TaskWorkbarItem } from './types';
 
@@ -36,6 +37,8 @@ const TaskHistoryDrawer = ({
   onDeleteTask,
   onEditTask,
 }: TaskHistoryDrawerProps) => {
+  const { t } = useI18n();
+
   if (!open) {
     return null;
   }
@@ -44,7 +47,7 @@ const TaskHistoryDrawer = ({
     <div className="fixed inset-0 z-50">
       <button
         type="button"
-        aria-label="关闭历史任务抽屉"
+        aria-label={t('taskWorkbar.history.closeLabel')}
         className="absolute inset-0 bg-black/35"
         onClick={onClose}
       />
@@ -52,9 +55,12 @@ const TaskHistoryDrawer = ({
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div>
-              <div className="text-sm font-semibold text-foreground">历史任务</div>
+              <div className="text-sm font-semibold text-foreground">{t('taskWorkbar.history')}</div>
               <div className="text-xs text-muted-foreground">
-                {`全部 ${sortedHistoryTasks.length} · 已处理 ${processedHistoryTasks.length}`}
+                {t('taskWorkbar.history.total', {
+                  total: sortedHistoryTasks.length,
+                  processed: processedHistoryTasks.length,
+                })}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -65,7 +71,7 @@ const TaskHistoryDrawer = ({
                   onClick={onRefresh}
                   disabled={isLoading || historyLoading}
                 >
-                  {(isLoading || historyLoading) ? '刷新中...' : '刷新'}
+                  {(isLoading || historyLoading) ? t('taskWorkbar.refreshing') : t('taskWorkbar.refresh')}
                 </button>
               ) : null}
               <button
@@ -73,7 +79,7 @@ const TaskHistoryDrawer = ({
                 className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent"
                 onClick={onClose}
               >
-                关闭
+                {t('common.close')}
               </button>
             </div>
           </div>
@@ -89,7 +95,7 @@ const TaskHistoryDrawer = ({
                 }`}
                 onClick={() => onSetHistoryFilter('all')}
               >
-                全部
+                {t('taskWorkbar.history.all')}
               </button>
               <button
                 type="button"
@@ -100,7 +106,7 @@ const TaskHistoryDrawer = ({
                 }`}
                 onClick={() => onSetHistoryFilter('unfinished')}
               >
-                未完成
+                {t('taskWorkbar.history.unfinished')}
               </button>
               <button
                 type="button"
@@ -111,7 +117,7 @@ const TaskHistoryDrawer = ({
                 }`}
                 onClick={() => onSetHistoryFilter('blocked')}
               >
-                阻塞
+                {t('taskWorkbar.history.blocked')}
               </button>
               <button
                 type="button"
@@ -122,7 +128,7 @@ const TaskHistoryDrawer = ({
                 }`}
                 onClick={() => onSetHistoryFilter('processed')}
               >
-                已处理
+                {t('taskWorkbar.processed')}
               </button>
             </div>
 
@@ -133,18 +139,18 @@ const TaskHistoryDrawer = ({
             ) : null}
 
             {historyLoading || (isLoading && visibleHistoryTasks.length === 0) ? (
-              <div className="text-xs text-muted-foreground">历史任务加载中...</div>
+              <div className="text-xs text-muted-foreground">{t('taskWorkbar.loading')}</div>
             ) : null}
 
             {!historyLoading && visibleHistoryTasks.length === 0 ? (
               <div className="text-xs text-muted-foreground">
                 {historyFilter === 'processed'
-                  ? '暂无已处理待办。'
+                  ? t('taskWorkbar.history.emptyProcessed')
                   : historyFilter === 'unfinished'
-                    ? '暂无未完成任务。'
+                    ? t('taskWorkbar.history.emptyUnfinished')
                     : historyFilter === 'blocked'
-                      ? '暂无阻塞任务。'
-                      : '暂无历史任务。'}
+                      ? t('taskWorkbar.history.emptyBlocked')
+                      : t('taskWorkbar.history.emptyAll')}
               </div>
             ) : null}
 

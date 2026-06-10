@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { TaskReviewDraft } from '../../lib/store/types';
 import type { TaskReviewPanelActionsArgs } from './panelActionTypes';
 import { recoverPendingPanelConversation } from './pendingPanelRecovery';
@@ -18,6 +19,7 @@ export const useTaskReviewPanelActions = ({
   markHistoryWorkbarTasksStale,
   removePendingTaskReviewCachePanel,
 }: TaskReviewPanelActionsArgs) => {
+  const { t } = useI18n();
   const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
     if (!activeTaskReviewPanel) {
       return;
@@ -70,7 +72,7 @@ export const useTaskReviewPanelActions = ({
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : '任务确认提交失败';
+      const message = error instanceof Error ? error.message : t('taskDraft.confirmFailed');
       upsertTaskReviewPanel({
         ...pendingPanel,
         submitting: false,
@@ -89,6 +91,7 @@ export const useTaskReviewPanelActions = ({
     removePendingTaskReviewCachePanel,
     removeTaskReviewPanel,
     taskHistoryOpen,
+    t,
     upsertTaskReviewPanel,
   ]);
 
@@ -136,7 +139,7 @@ export const useTaskReviewPanelActions = ({
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : '任务取消提交失败';
+      const message = error instanceof Error ? error.message : t('taskDraft.cancelFailed');
       upsertTaskReviewPanel({
         ...pendingPanel,
         submitting: false,
@@ -155,6 +158,7 @@ export const useTaskReviewPanelActions = ({
     removePendingTaskReviewCachePanel,
     removeTaskReviewPanel,
     taskHistoryOpen,
+    t,
     upsertTaskReviewPanel,
   ]);
 

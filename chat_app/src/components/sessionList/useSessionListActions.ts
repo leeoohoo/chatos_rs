@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
-import { deriveNameFromPath } from './helpers';
+import type { TranslateFn } from '../../i18n/I18nProvider';
+import { deriveNameFromPath, translateSessionListMessage } from './helpers';
 import type { ChatState, SessionSelectOptions } from '../../lib/store/types';
 import type { Project, RemoteConnection, Session, Terminal } from '../../types';
 import type { ContactItem } from './types';
@@ -7,6 +8,7 @@ import type { ContactItem } from './types';
 type ActivePanel = ChatState['activePanel'];
 
 interface SessionListActionsParams {
+  t?: TranslateFn;
   contacts: ContactItem[];
   currentSession: Session | null;
   terminals: Terminal[];
@@ -43,6 +45,7 @@ interface SessionListActionsParams {
 }
 
 export const useSessionListActions = ({
+  t,
   contacts,
   currentSession,
   terminals,
@@ -164,7 +167,7 @@ export const useSessionListActions = ({
 
   const handleCreateProject = useCallback(async () => {
     if (!projectRoot.trim()) {
-      setProjectError('请选择项目目录');
+      setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.selectProjectDirectory'));
       return;
     }
     try {
@@ -172,13 +175,13 @@ export const useSessionListActions = ({
       await createProject(name, projectRoot.trim());
       setProjectModalOpen(false);
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : '创建项目失败');
+      setProjectError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createProjectFailed'));
     }
-  }, [createProject, projectRoot, setProjectError, setProjectModalOpen]);
+  }, [createProject, projectRoot, setProjectError, setProjectModalOpen, t]);
 
   const handleCreateTerminal = useCallback(async () => {
     if (!terminalRoot.trim()) {
-      setTerminalError('请选择终端目录');
+      setTerminalError(translateSessionListMessage(t, 'sessionList.resource.error.selectTerminalDirectory'));
       return;
     }
     try {
@@ -186,9 +189,9 @@ export const useSessionListActions = ({
       await createTerminal(terminalRoot.trim(), name);
       setTerminalModalOpen(false);
     } catch (error) {
-      setTerminalError(error instanceof Error ? error.message : '创建终端失败');
+      setTerminalError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createTerminalFailed'));
     }
-  }, [createTerminal, setTerminalError, setTerminalModalOpen, terminalRoot]);
+  }, [createTerminal, setTerminalError, setTerminalModalOpen, t, terminalRoot]);
 
   const handleSelectProject = useCallback(async (projectId: string) => {
     try {

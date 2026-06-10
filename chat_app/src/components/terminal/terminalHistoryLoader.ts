@@ -16,6 +16,7 @@ import {
 import { resetTerminalInputParseState } from './terminalLifecycleHandlers';
 import type { TerminalHistoryState } from './TerminalHeader';
 import { debugLog } from '../../lib/utils';
+import type { TerminalRuntimeTextRef } from './terminalRuntimeText';
 
 export interface TerminalHistoryClient {
   listTerminalLogs(
@@ -49,6 +50,7 @@ export const createTerminalHistoryLoader = ({
   setCanLoadMoreHistory,
   setHistoryBusy,
   setHistoryModeHint,
+  runtimeTextRef,
 }: {
   terminalId: string;
   term: XTerm;
@@ -74,6 +76,7 @@ export const createTerminalHistoryLoader = ({
   setCanLoadMoreHistory: Dispatch<SetStateAction<boolean>>;
   setHistoryBusy: Dispatch<SetStateAction<boolean>>;
   setHistoryModeHint: Dispatch<SetStateAction<string | null>>;
+  runtimeTextRef?: TerminalRuntimeTextRef;
 }) => async () => {
   beginTerminalHistoryLoad({
     mode,
@@ -131,6 +134,7 @@ export const createTerminalHistoryLoader = ({
       setHistoryState,
       setCanLoadMoreHistory,
       setErrorMessage,
+      runtimeTextRef,
     });
   } finally {
     finalizeTerminalHistoryLoad({
@@ -202,6 +206,7 @@ export const createTerminalHistoryLoadExecutor = ({
   setCanLoadMoreHistory,
   setHistoryBusy,
   setHistoryModeHint,
+  runtimeTextRef,
 }: {
   terminalId: string;
   term: XTerm;
@@ -226,6 +231,7 @@ export const createTerminalHistoryLoadExecutor = ({
   setCanLoadMoreHistory: Dispatch<SetStateAction<boolean>>;
   setHistoryBusy: Dispatch<SetStateAction<boolean>>;
   setHistoryModeHint: Dispatch<SetStateAction<string | null>>;
+  runtimeTextRef?: TerminalRuntimeTextRef;
 }) => async (
   limit: number,
   mode: 'initial' | 'more',
@@ -259,6 +265,7 @@ export const createTerminalHistoryLoadExecutor = ({
     setCanLoadMoreHistory,
     setHistoryBusy,
     setHistoryModeHint,
+    runtimeTextRef,
   })();
 };
 
@@ -372,6 +379,7 @@ const handleTerminalHistoryLoadError = ({
   setHistoryState,
   setCanLoadMoreHistory,
   setErrorMessage,
+  runtimeTextRef,
 }: {
   error: unknown;
   mode: 'initial' | 'more';
@@ -380,6 +388,7 @@ const handleTerminalHistoryLoadError = ({
   setHistoryState: Dispatch<SetStateAction<TerminalHistoryState>>;
   setCanLoadMoreHistory: Dispatch<SetStateAction<boolean>>;
   setErrorMessage: Dispatch<SetStateAction<string | null>>;
+  runtimeTextRef?: TerminalRuntimeTextRef;
 }) => {
   if (isCancelled() || !isCurrentRequest()) {
     return;
@@ -389,7 +398,7 @@ const handleTerminalHistoryLoadError = ({
     setHistoryState('error');
     setCanLoadMoreHistory(false);
   }
-  setErrorMessage(error instanceof Error ? error.message : '加载历史失败');
+  setErrorMessage(error instanceof Error ? error.message : (runtimeTextRef?.current.historyLoadFailed || 'Failed to load history'));
 };
 
 const finalizeTerminalHistoryLoad = ({

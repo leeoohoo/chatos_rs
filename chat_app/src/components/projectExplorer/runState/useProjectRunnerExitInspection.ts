@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { TerminalLogResponse } from '../../../lib/api/client/types';
 import type { ProjectRunnerActiveTerminal } from '../../../lib/domain/projectRunner';
 import { extractFailureReasonFromLogs } from './projectRunnerFailureReason';
@@ -29,6 +30,8 @@ export const useProjectRunnerExitInspection = ({
   setRunnerDiagnosis,
   setRunnerMessage,
 }: UseProjectRunnerExitInspectionOptions) => {
+  const { t } = useI18n();
+
   useEffect(() => {
     const { shouldInspect, shouldMarkChecked, runKey } = shouldInspectProjectRunnerExit({
       lastExitedRun,
@@ -51,12 +54,12 @@ export const useProjectRunnerExitInspection = ({
     const inspect = async () => {
       try {
         if (exitedRun.exitReason === 'closed') {
-          setRunnerDiagnosis('运行已停止');
+          setRunnerDiagnosis(t('runSettings.exit.stopped'));
           setRunnerError(null);
           return;
         }
         if (exitedRun.exitCode === 0) {
-          setRunnerDiagnosis('进程已正常退出');
+          setRunnerDiagnosis(t('runSettings.exit.normal'));
           setRunnerError(null);
           return;
         }
@@ -64,20 +67,21 @@ export const useProjectRunnerExitInspection = ({
         if (disposed) {
           return;
         }
-        const reason = extractFailureReasonFromLogs(logs || [], exitedRun.command);
+        const reason = extractFailureReasonFromLogs(logs || [], exitedRun.command, t);
         if (reason) {
           setRunnerDiagnosis(reason);
-          setRunnerError(`运行失败：${reason}`);
+          setRunnerError(t('runSettings.exit.failed', { reason }));
           setRunnerMessage(null);
           return;
         }
         if (typeof exitedRun.exitCode === 'number') {
-          setRunnerDiagnosis(`进程已退出，退出码 ${exitedRun.exitCode}`);
-          setRunnerError(`运行失败：进程已退出，退出码 ${exitedRun.exitCode}`);
+          const codeDiagnosis = t('runSettings.exit.code', { code: exitedRun.exitCode });
+          setRunnerDiagnosis(codeDiagnosis);
+          setRunnerError(t('runSettings.exit.failed', { reason: codeDiagnosis }));
           setRunnerMessage(null);
           return;
         }
-        setRunnerDiagnosis('进程已退出，但没有识别出明确的失败原因');
+        setRunnerDiagnosis(t('runSettings.exit.unknown'));
       } catch {
         // ignore log inspection errors
       } finally {
@@ -100,5 +104,6 @@ export const useProjectRunnerExitInspection = ({
     setRunnerDiagnosis,
     setRunnerError,
     setRunnerMessage,
+    t,
   ]);
 };

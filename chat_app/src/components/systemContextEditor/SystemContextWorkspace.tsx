@@ -174,7 +174,7 @@ export default function SystemContextWorkspace({
         <div className="min-h-[360px] flex flex-col">
           <div className="mb-2 flex items-center justify-between">
             <label className="text-sm font-medium">{t('systemContext.content.title')}</label>
-            <span className="text-xs text-muted-foreground">{formData.content.length} 字符</span>
+            <span className="text-xs text-muted-foreground">{t('systemContext.content.characterCount', { count: formData.content.length })}</span>
           </div>
           <textarea
             value={formData.content}

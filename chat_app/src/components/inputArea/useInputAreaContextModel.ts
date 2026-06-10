@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { AiModelConfig, Project } from '../../types';
 
 interface UseInputAreaContextModelOptions {
@@ -25,6 +26,7 @@ export const useInputAreaContextModel = ({
   isGuidingMode,
   showProjectFileButton,
 }: UseInputAreaContextModelOptions) => {
+  const { t } = useI18n();
   const normalizePath = useCallback((value: string) => {
     const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
     if (normalized.length > 1 && normalized.endsWith('/')) {
@@ -82,7 +84,7 @@ export const useInputAreaContextModel = ({
 
   const workspaceRootDisplayName = useMemo(() => {
     if (!normalizedWorkspaceRoot) {
-      return '未选择';
+      return t('inputArea.workspace.empty');
     }
 
     const normalized = normalizePath(normalizedWorkspaceRoot);
@@ -91,17 +93,17 @@ export const useInputAreaContextModel = ({
       return normalized;
     }
     return segments[segments.length - 1] || normalized;
-  }, [normalizePath, normalizedWorkspaceRoot]);
+  }, [normalizePath, normalizedWorkspaceRoot, t]);
 
   const currentAiLabel = useMemo(
     () => {
       if (!selectedModel) {
-        return '选择模型';
+        return t('inputArea.model.selectTitle');
       }
       const modelName = effectiveModelName || selectedModel.model_name;
       return modelName ? `${selectedModel.name} / ${modelName}` : selectedModel.name;
     },
-    [effectiveModelName, selectedModel],
+    [effectiveModelName, selectedModel, t],
   );
 
   return {

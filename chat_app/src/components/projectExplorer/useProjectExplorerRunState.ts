@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
 import type { Project } from '../../types';
 import { useProjectRunnerCatalogState } from './runState/useProjectRunnerCatalogState';
@@ -20,6 +21,7 @@ export const useProjectExplorerRunState = ({
   project,
   enabled,
 }: UseProjectExplorerRunStateParams) => {
+  const { t } = useI18n();
   const runnerCatalog = useProjectRunnerCatalogState({ client, project, enabled });
   const runnerTerminal = useProjectRunnerTerminalPolling({ client, project, enabled });
   const runnerCommands = useProjectRunnerCommands({
@@ -63,6 +65,7 @@ export const useProjectExplorerRunState = ({
     runTargets: runnerCatalog.runTargets,
     selectedToolchainOptions: runnerCatalog.selectedToolchainOptions,
     availableOptionsByKind: runnerCatalog.runEnvironment?.optionsByKind || {},
+    t,
   }), [
     runnerCatalog.runEnvironment?.optionsByKind,
     runnerCatalog.runTargets,
@@ -70,6 +73,7 @@ export const useProjectExplorerRunState = ({
     runnerCommands.runnerDiagnosis,
     runnerCommands.runnerError,
     selectedRunTarget,
+    t,
   ]);
 
   return {

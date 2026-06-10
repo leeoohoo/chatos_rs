@@ -1,4 +1,5 @@
 import { useState, type FC } from 'react';
+import { useI18n } from '../../../i18n/I18nProvider';
 
 interface PasswordFieldProps {
   value: string;
@@ -47,7 +48,11 @@ export const PasswordField: FC<PasswordFieldProps> = ({
   placeholder,
   autoComplete,
 }) => {
+  const { t } = useI18n();
   const [visible, setVisible] = useState(false);
+  const visibilityLabel = visible
+    ? t('remoteConnection.password.hide')
+    : t('remoteConnection.password.show');
 
   return (
     <div className="mt-1 relative">
@@ -63,8 +68,8 @@ export const PasswordField: FC<PasswordFieldProps> = ({
         type="button"
         onClick={() => setVisible((current) => !current)}
         className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground focus:outline-none"
-        aria-label={visible ? '隐藏密码' : '显示密码'}
-        title={visible ? '隐藏密码' : '显示密码'}
+        aria-label={visibilityLabel}
+        title={visibilityLabel}
       >
         {visible ? <EyeOffIcon /> : <EyeIcon />}
       </button>

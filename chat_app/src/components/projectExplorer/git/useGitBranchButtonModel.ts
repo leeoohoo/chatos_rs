@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { useProjectChangeSummaryRealtime } from '../../../lib/realtime/useProjectChangeSummaryRealtime';
 import type { GitBranchInfo } from '../../../types';
 import type { ProjectGitApiClient } from './projectGitTypes';
@@ -22,6 +23,7 @@ export const useGitBranchButtonModel = ({
   onRepositoryChanged,
   onRepositorySelectionChange,
 }: UseGitBranchButtonModelOptions) => {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [newBranchName, setNewBranchName] = useState('');
@@ -51,15 +53,15 @@ export const useGitBranchButtonModel = ({
   });
 
   const branchLabel = useMemo(() => {
-    if (git.loadingSummary && !git.summary) return 'Git 检查中...';
+    if (git.loadingSummary && !git.summary) return t('git.checking');
     if (!git.summary) return 'Git';
     if (!git.summary?.isRepo && git.availableRepositories.length > 0) {
-      return `发现 ${git.availableRepositories.length} 个仓库`;
+      return t('git.repositoryCount', { count: git.availableRepositories.length });
     }
-    if (!git.summary?.isRepo) return '无 Git 仓库';
+    if (!git.summary?.isRepo) return t('git.noRepositoryShort');
     if (git.summary.detached) return `detached: ${git.summary.head || '-'}`;
-    return git.summary.currentBranch || '未知分支';
-  }, [git.availableRepositories.length, git.loadingSummary, git.summary]);
+    return git.summary.currentBranch || t('git.unknownBranch');
+  }, [git.availableRepositories.length, git.loadingSummary, git.summary, t]);
 
   const changeCount = git.summary
     ? git.summary.changes.staged

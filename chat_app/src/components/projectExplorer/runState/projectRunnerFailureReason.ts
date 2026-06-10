@@ -1,3 +1,4 @@
+import type { TranslateFn } from '../../../i18n/I18nProvider';
 import type { TerminalLogResponse } from '../../../lib/api/client/types';
 
 const normalizeLine = (value: string): string => value.trim();
@@ -15,7 +16,9 @@ const findLastMatchingLine = (lines: string[], patterns: RegExp[]): string | nul
 export const extractFailureReasonFromLogs = (
   logs: TerminalLogResponse[],
   command: string,
+  t?: TranslateFn,
 ): string | null => {
+  const translate = t || ((key: string) => key);
   const lines = logs
     .map((item) => String(item?.content || ''))
     .join('\n')
@@ -26,7 +29,7 @@ export const extractFailureReasonFromLogs = (
     return null;
   }
 
-  const specializedChecks: Array<{ patterns: RegExp[]; reason?: string }> = [
+  const specializedChecks: Array<{ patterns: RegExp[]; reasonKey?: string }> = [
     {
       patterns: [
         /could not find or load main class/i,
@@ -42,21 +45,21 @@ export const extractFailureReasonFromLogs = (
         /target option .* is no longer supported/i,
         /unsupported class file major version/i,
       ],
-      reason: 'JDK 版本与项目编译目标不匹配',
+      reasonKey: 'runSettings.failure.jdkMismatch',
     },
     {
       patterns: [
         /java_home.*not defined correctly/i,
         /the java_home environment variable is not defined correctly/i,
       ],
-      reason: 'JAVA_HOME 配置无效',
+      reasonKey: 'runSettings.failure.invalidJavaHome',
     },
     {
       patterns: [
         /non-parseable settings/i,
         /settings\.xml/i,
       ],
-      reason: 'Maven settings.xml 配置有误',
+      reasonKey: 'runSettings.failure.invalidMavenSettings',
     },
     {
       patterns: [
@@ -68,7 +71,7 @@ export const extractFailureReasonFromLogs = (
         /authentication failed/i,
         /proxy authentication/i,
       ],
-      reason: 'Maven 依赖下载失败，请检查仓库、认证或代理配置',
+      reasonKey: 'runSettings.failure.mavenDependencies',
     },
     {
       patterns: [
@@ -76,7 +79,7 @@ export const extractFailureReasonFromLogs = (
         /unsupported class file major version/i,
         /this version of gradle/i,
       ],
-      reason: 'Gradle 与当前 JDK 版本不匹配',
+      reasonKey: 'runSettings.failure.gradleJdkMismatch',
     },
     {
       patterns: [
@@ -84,7 +87,7 @@ export const extractFailureReasonFromLogs = (
         /permission denied.*gradlew/i,
         /wrapper.*permission denied/i,
       ],
-      reason: 'Gradle Wrapper 没有执行权限',
+      reasonKey: 'runSettings.failure.gradleWrapperPermission',
     },
     {
       patterns: [
@@ -92,14 +95,14 @@ export const extractFailureReasonFromLogs = (
         /a bin target must be available/i,
         /no targets specified in the manifest/i,
       ],
-      reason: 'Rust 可执行入口不存在或 bin 名称不匹配',
+      reasonKey: 'runSettings.failure.rustEntrypoint',
     },
     {
       patterns: [
         /could not compile/i,
         /error(\[e\d+\])?:/i,
       ],
-      reason: 'Rust 编译失败，请检查代码或依赖配置',
+      reasonKey: 'runSettings.failure.rustCompile',
     },
     {
       patterns: [
@@ -108,7 +111,7 @@ export const extractFailureReasonFromLogs = (
         /go: cannot find main module/i,
         /go\.mod file not found/i,
       ],
-      reason: 'Go 入口或模块配置有误',
+      reasonKey: 'runSettings.failure.goEntrypoint',
     },
     {
       patterns: [
@@ -116,7 +119,7 @@ export const extractFailureReasonFromLogs = (
         /address already in use/i,
         /eaddrinuse/i,
       ],
-      reason: '端口已被占用',
+      reasonKey: 'runSettings.failure.portInUse',
     },
     {
       patterns: [
@@ -125,7 +128,7 @@ export const extractFailureReasonFromLogs = (
         /can\'t open file/i,
         /pytest: command not found/i,
       ],
-      reason: 'Python 解释器或依赖环境有误',
+      reasonKey: 'runSettings.failure.pythonRuntime',
     },
     {
       patterns: [
@@ -161,14 +164,14 @@ export const extractFailureReasonFromLogs = (
     if (!matched) {
       continue;
     }
-    return check.reason || matched;
+    return check.reasonKey ? translate(check.reasonKey) : matched;
   }
 
   const cmd = command.toLowerCase();
   const likelyLongRunning = /(run|start|dev|serve|bootrun|spring-boot:run)/i.test(cmd)
     && !/(test|build|lint)/i.test(cmd);
   if (likelyLongRunning) {
-    return '命令已退出，未检测到持续运行进程';
+    return translate('runSettings.failure.longRunningExited');
   }
   return null;
 };

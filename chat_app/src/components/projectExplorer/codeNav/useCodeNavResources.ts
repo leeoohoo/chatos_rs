@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type {
   CodeNavCapabilities,
   CodeNavDocumentSymbolsResult,
@@ -23,6 +24,7 @@ export const useCodeNavResources = ({
   selectedFilePath,
   clearTokenSelection,
 }: UseCodeNavResourcesOptions) => {
+  const { t } = useI18n();
   const [navCapabilities, setNavCapabilities] = useState<CodeNavCapabilities | null>(null);
   const [navCapabilitiesLoading, setNavCapabilitiesLoading] = useState(false);
   const [navCapabilitiesError, setNavCapabilitiesError] = useState<string | null>(null);
@@ -66,14 +68,14 @@ export const useCodeNavResources = ({
         return;
       }
       setDocumentSymbols(null);
-      setDocumentSymbolsError(error instanceof Error ? error.message : '获取文件符号失败');
+      setDocumentSymbolsError(error instanceof Error ? error.message : t('projectExplorer.codeNav.symbolsFailed'));
       documentSymbolsLoadedKeyRef.current = null;
     } finally {
       if (documentSymbolsRequestVersionRef.current === requestVersion) {
         setDocumentSymbolsLoading(false);
       }
     }
-  }, [client, currentFileKey, projectRootPath, resetDocumentSymbols, selectedFilePath]);
+  }, [client, currentFileKey, projectRootPath, resetDocumentSymbols, selectedFilePath, t]);
 
   useEffect(() => {
     clearTokenSelection();
@@ -96,7 +98,7 @@ export const useCodeNavResources = ({
       } catch (error) {
         if (cancelled) return;
         setNavCapabilities(null);
-        setNavCapabilitiesError(error instanceof Error ? error.message : '获取代码导航能力失败');
+        setNavCapabilitiesError(error instanceof Error ? error.message : t('projectExplorer.codeNav.capabilitiesFailed'));
       } finally {
         if (!cancelled) {
           setNavCapabilitiesLoading(false);
@@ -110,7 +112,7 @@ export const useCodeNavResources = ({
     return () => {
       cancelled = true;
     };
-  }, [clearTokenSelection, client, projectRootPath, resetDocumentSymbols, selectedFilePath]);
+  }, [clearTokenSelection, client, projectRootPath, resetDocumentSymbols, selectedFilePath, t]);
 
   return {
     navCapabilities,

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import type { Message, ToolCall } from '../../types';
+import { useI18n } from '../../i18n/I18nProvider';
 import { getToolDisplayName } from '../../lib/tools/displayName';
 import { cn } from '../../lib/utils';
 import { ToolCallRenderer } from '../ToolCallRenderer';
@@ -13,6 +14,7 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
   toolCalls,
   toolResultById,
 }) => {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const shouldClampTimeline = toolCalls.length > 6;
 
@@ -86,18 +88,18 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
         className="flex w-full items-center gap-2 px-1 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
-        aria-label={expanded ? '收起工具时间线' : '展开工具时间线'}
+        aria-label={expanded ? t('toolTimeline.collapseLabel') : t('toolTimeline.expandLabel')}
         aria-expanded={expanded}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className={`inline-flex h-2 w-2 rounded-full ${statusDotClass}`} />
-          <span className="font-medium text-foreground">工具调用</span>
-          <span>· {toolCalls.length} 个</span>
+          <span className="font-medium text-foreground">{t('toolTimeline.title')}</span>
+          <span>· {t('toolTimeline.count', { count: toolCalls.length })}</span>
           {summaryNames && (
             <span className="hidden truncate sm:inline">{summaryNames}</span>
           )}
           <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-            <span>{expanded ? '收起' : '展开'}</span>
+            <span>{expanded ? t('toolTimeline.collapse') : t('toolTimeline.expand')}</span>
             <svg
               className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`}
               viewBox="0 0 24 24"

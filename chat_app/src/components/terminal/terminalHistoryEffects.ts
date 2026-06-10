@@ -176,6 +176,7 @@ export const handleTerminalHistoryLoadError = ({
   setHistoryState,
   setCanLoadMoreHistory,
   setErrorMessage,
+  fallbackErrorMessage = 'Failed to load history',
 }: Pick<
   TerminalHistoryLoadContext,
   | 'mode'
@@ -186,6 +187,7 @@ export const handleTerminalHistoryLoadError = ({
   | 'setErrorMessage'
 > & {
   error: unknown;
+  fallbackErrorMessage?: string;
 }): boolean => {
   if (isCancelled() || !isCurrentRequest()) {
     return false;
@@ -195,7 +197,7 @@ export const handleTerminalHistoryLoadError = ({
     setHistoryState('error');
     setCanLoadMoreHistory(false);
   }
-  setErrorMessage(error instanceof Error ? error.message : '加载历史失败');
+  setErrorMessage(error instanceof Error ? error.message : fallbackErrorMessage);
   return true;
 };
 

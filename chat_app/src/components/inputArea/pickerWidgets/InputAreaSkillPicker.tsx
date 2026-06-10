@@ -1,6 +1,7 @@
 import type { MouseEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { AgentConfig } from '../../../types';
 
@@ -31,6 +32,7 @@ export const InputAreaSkillPicker = ({
   onToggleSelectedSkill,
   onClearSelectedSkills,
 }: InputAreaSkillPickerProps) => {
+  const { t } = useI18n();
   const selectedSkillCount = selectedSkillIds.length;
   const skillsToggleDisabled = disabled || isStreaming || isStopping;
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
@@ -91,11 +93,11 @@ export const InputAreaSkillPicker = ({
         )}
         title={
           !currentAgent
-            ? '启用技能上下文；发送时会按当前会话智能体解析'
-            : (skillsEnabled ? '已启用技能上下文' : '未启用技能上下文')
+            ? t('inputArea.skill.enableHint')
+            : (skillsEnabled ? t('inputArea.skill.enabledHint') : t('inputArea.skill.disabledHint'))
         }
       >
-        技能 {skillsEnabled && !skillsToggleDisabled ? '开' : '关'}
+        {t('inputArea.skill.button', { state: skillsEnabled && !skillsToggleDisabled ? t('composer.toggle.on') : t('composer.toggle.off') })}
       </button>
 
       {skillsEnabled && (
@@ -111,15 +113,15 @@ export const InputAreaSkillPicker = ({
                 : 'border-border bg-background text-muted-foreground hover:text-foreground',
               (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
             )}
-            title="选择本轮要直接注入全文的技能；不选则使用技能优先概览模式"
+            title={t('inputArea.skill.selectTitle')}
           >
-            {selectedSkillCount > 0 ? `已选 ${selectedSkillCount}` : '技能选择'}
+            {selectedSkillCount > 0 ? t('inputArea.skill.selectedCount', { count: selectedSkillCount }) : t('inputArea.skill.selectButton')}
           </button>
 
           {skillPickerOpen && (
             <div className="absolute bottom-full left-0 z-50 mb-2 w-72 max-h-80 overflow-y-auto rounded-lg border border-border bg-popover p-2 shadow-lg">
               <div className="px-2 pb-2 text-xs text-muted-foreground">
-                选择具体技能会把技能全文直接带入上下文；不选择则使用技能优先概览模式。
+                {t('inputArea.skill.description')}
               </div>
               {availableSkillOptions.length > 0 ? (
                 <div className="space-y-1">
@@ -173,17 +175,17 @@ export const InputAreaSkillPicker = ({
                       }}
                       disabled={disabled || isStreaming || isStopping}
                       className="mt-2 w-full rounded-md border border-dashed border-border px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-                      title="清空已选技能，保留技能优先模式"
+                      title={t('inputArea.skill.clearTitle')}
                     >
-                      清空已选技能
+                      {t('inputArea.skill.clear')}
                     </button>
                   )}
                 </div>
               ) : (
                 <div className="rounded-md border border-dashed border-border px-2 py-3 text-xs text-muted-foreground">
                   {skillsLoading
-                    ? '正在加载当前智能体的技能...'
-                    : '当前智能体暂无可选择技能。不选择具体技能时，发送会使用技能优先概览模式。'}
+                    ? t('inputArea.skill.loading')
+                    : t('inputArea.skill.empty')}
                 </div>
               )}
             </div>

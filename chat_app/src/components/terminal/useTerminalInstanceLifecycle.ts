@@ -32,6 +32,7 @@ import {
   createTerminalHistoryLoadExecutor,
   type TerminalHistoryClient,
 } from './terminalHistoryLoader';
+import type { TerminalRuntimeTextRef } from './terminalRuntimeText';
 
 interface UseTerminalInstanceLifecycleParams {
   currentTerminal: Terminal | null;
@@ -77,6 +78,7 @@ interface UseTerminalInstanceLifecycleParams {
   setHistoryBusy: Dispatch<SetStateAction<boolean>>;
   setHistoryModeHint: Dispatch<SetStateAction<string | null>>;
   appendCommands: AppendCommandsFn;
+  runtimeTextRef: TerminalRuntimeTextRef;
 }
 
 export const useTerminalInstanceLifecycle = ({
@@ -119,6 +121,7 @@ export const useTerminalInstanceLifecycle = ({
   setHistoryBusy,
   setHistoryModeHint,
   appendCommands,
+  runtimeTextRef,
 }: UseTerminalInstanceLifecycleParams) => {
   useEffect(() => {
     themeColorsRef.current = themeColors;
@@ -287,6 +290,7 @@ export const useTerminalInstanceLifecycle = ({
     pendingOutputChunksRef,
     replayingHistoryRef,
     resizeObserverRef,
+    runtimeTextRef,
     scrollHandlerRef,
     setCanLoadMoreHistory,
     setCommandHistory,

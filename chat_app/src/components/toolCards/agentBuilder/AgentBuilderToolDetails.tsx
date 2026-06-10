@@ -2,7 +2,7 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
-import { RowsCard, StringListCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, StringListCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const truncateText = (value: string, maxLength: number = 260): string => {
@@ -14,6 +14,7 @@ const truncateText = (value: string, maxLength: number = 260): string => {
 };
 
 const SkillItemsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { t } = useI18n();
   const skills = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -22,7 +23,7 @@ const SkillItemsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Available skills', `${skills.length} 个`)}
+      {renderCardHeader('Available skills', formatToolCardCount(t, 'skills', skills.length))}
       <div className="tool-detail-list">
         {skills.map((skill, index) => (
           <div key={`agent-skill-${index}`} className="tool-detail-item">
@@ -43,6 +44,7 @@ const SkillItemsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 };
 
 const EmbeddedSkillsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { t } = useI18n();
   const skills = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -51,7 +53,7 @@ const EmbeddedSkillsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Embedded skills', `${skills.length} 个`)}
+      {renderCardHeader('Embedded skills', formatToolCardCount(t, 'skills', skills.length))}
       <div className="tool-detail-list">
         {skills.map((skill, index) => (
           <div key={`embedded-skill-${index}`} className="tool-detail-item">

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
 import type {
   CodeNavLocation,
@@ -46,6 +47,8 @@ export const useProjectExplorerSelection = ({
   setError,
   setPreviewTargetLine,
 }: UseProjectExplorerSelectionParams) => {
+  const { t } = useI18n();
+
   const projectRootEntry = useMemo<FsEntry | null>(() => {
     if (!project?.rootPath) return null;
     return {
@@ -97,7 +100,7 @@ export const useProjectExplorerSelection = ({
       const data = await client.readFsFile(entry.path);
       setSelectedFile(normalizeFile(data));
     } catch (error) {
-      setError(readErrorMessage(error, '读取文件失败'));
+      setError(readErrorMessage(error, t('projectExplorer.error.readFile')));
     } finally {
       setLoadingFile(false);
     }
@@ -109,6 +112,7 @@ export const useProjectExplorerSelection = ({
     setLoadingFile,
     setSelectedFile,
     setSelectedPath,
+    t,
   ]);
 
   const openCodeNavLocation = useCallback(async (

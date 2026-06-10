@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { Project } from '../../../types';
 import { DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
@@ -26,6 +27,8 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
   onToggleActionMenu,
   closeActionMenus,
 }) => {
+  const { t } = useI18n();
+
   return (
     <div className={cn('flex flex-col min-h-0', expanded ? 'flex-1' : 'shrink-0')}>
       <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
@@ -35,13 +38,13 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
           className="flex items-center gap-2 uppercase tracking-wide"
         >
           <span>{expanded ? '▾' : '▸'}</span>
-          <span>PROJECTS</span>
+          <span>{t('session.projects')}</span>
         </button>
         <button
           type="button"
           onClick={onCreate}
           className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-          title="新增项目"
+          title={t('session.addProject')}
         >
           <PlusIcon className="w-4 h-4" />
         </button>
@@ -51,7 +54,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
         <div className="flex-1 min-h-0 overflow-y-auto">
           {projects.length === 0 ? (
             <div className="px-3 py-3 text-xs text-muted-foreground">
-              还没有项目，点击右侧 + 新建。
+              {t('session.noProjects')}
             </div>
           ) : (
             <div className="p-2 space-y-1">
@@ -94,7 +97,7 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                           className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
                         >
                           <TrashIcon className="w-4 h-4 mr-2" />
-                          归档
+                          {t('session.archiveProject')}
                         </button>
                       </div>
                     </div>

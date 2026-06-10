@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { ProjectTreeEntryNode } from './ProjectTreeEntryNode';
 import { ProjectTreeSearchResults } from './ProjectTreeSearchResults';
@@ -68,6 +69,7 @@ export const ProjectTreeEntries: React.FC<ProjectTreeEntriesProps> = ({
   onStartDragAutoScroll,
   onClearDragAutoScroll,
 }) => {
+  const { t } = useI18n();
   const rootEntries = entriesMap[project.rootPath] || [];
   const {
     handleContainerDragLeave,
@@ -126,10 +128,10 @@ export const ProjectTreeEntries: React.FC<ProjectTreeEntriesProps> = ({
             />
           ))}
           {loadingPaths.has(project.rootPath) && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
+            <div className="px-3 py-2 text-xs text-muted-foreground">{t('common.loading')}</div>
           )}
           {!loadingPaths.has(project.rootPath) && rootEntries.length === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">目录为空</div>
+            <div className="px-3 py-2 text-xs text-muted-foreground">{t('projectExplorer.tree.emptyDirectory')}</div>
           )}
         </>
       )}

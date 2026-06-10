@@ -25,6 +25,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
+import { useI18n } from '../i18n/I18nProvider';
 import type {
   CreateModelConfigPayload,
   ModelCatalogResponse,
@@ -108,6 +109,7 @@ function normalizeSupportedProvider(provider?: string): SupportedProvider {
 }
 
 export function ModelsPage() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -128,6 +130,14 @@ export function ModelsPage() {
   const autoUpdatingBaseUrlRef = useRef(false);
   const routeModelId = searchParams.get('model_id') || undefined;
   const normalizedProvider = normalizeSupportedProvider(watchedProvider);
+  const enabledFilterOptions = useMemo(
+    () => [
+      { label: t('models.filter.all'), value: 'all' },
+      { label: t('models.filter.enabled'), value: 'enabled' },
+      { label: t('models.filter.disabled'), value: 'disabled' },
+    ],
+    [t],
+  );
 
   const modelsQuery = useQuery({
     queryKey: ['model-configs'],
@@ -160,7 +170,7 @@ export function ModelsPage() {
         queryClient.invalidateQueries({ queryKey: ['model-configs'] }),
         queryClient.invalidateQueries({ queryKey: ['model-config-usage'] }),
       ]);
-      messageApi.success('模型配置已创建');
+      messageApi.success(t('models.created'));
       resetModelDrawerState();
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -174,7 +184,7 @@ export function ModelsPage() {
         queryClient.invalidateQueries({ queryKey: ['model-configs'] }),
         queryClient.invalidateQueries({ queryKey: ['model-config-usage'] }),
       ]);
-      messageApi.success('模型配置已更新');
+      messageApi.success(t('models.updated'));
       resetModelDrawerState();
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -189,7 +199,7 @@ export function ModelsPage() {
         queryClient.invalidateQueries({ queryKey: ['tasks'] }),
         queryClient.invalidateQueries({ queryKey: ['task-index'] }),
       ]);
-      messageApi.success('模型配置已删除');
+      messageApi.success(t('models.deleted'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -199,9 +209,9 @@ export function ModelsPage() {
     onSuccess: (result) => {
       setTestResult(result);
       if (result.ok) {
-        messageApi.success('模型连通性测试成功');
+        messageApi.success(t('models.testSuccess'));
       } else {
-        messageApi.warning('模型连通性测试失败');
+        messageApi.warning(t('models.testFailed'));
       }
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -217,11 +227,11 @@ export function ModelsPage() {
         form.setFieldValue('supports_responses', matched.supports_responses);
       }
       if (catalog.source === 'live') {
-        messageApi.success(`模型列表已更新，共 ${catalog.models.length} 个`);
+        messageApi.success(t('models.catalogUpdated', { count: catalog.models.length }));
       } else if (catalog.error) {
-        messageApi.warning(`模型列表拉取失败，已回退到当前配置: ${catalog.error}`);
+        messageApi.warning(t('models.catalogFallbackWithError', { error: catalog.error }));
       } else {
-        messageApi.warning('未能获取在线模型列表，已回退到当前配置');
+        messageApi.warning(t('models.catalogFallback'));
       }
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -326,10 +336,10 @@ export function ModelsPage() {
     () =>
       ['all', ...Array.from(new Set((modelsQuery.data || []).map((model) => model.provider))).sort()]
         .map((provider) => ({
-          label: provider === 'all' ? '全部 Provider' : provider,
+          label: provider === 'all' ? t('models.providerAll') : provider,
           value: provider,
         })),
-    [modelsQuery.data],
+    [modelsQuery.data, t],
   );
   const filteredModels = useMemo(() => {
     const keyword = keywordFilter.trim().toLowerCase();
@@ -364,7 +374,7 @@ export function ModelsPage() {
 
   const columns: ColumnsType<ModelConfigRecord> = [
     {
-      title: '配置名称',
+      title: t('models.column.name'),
       dataIndex: 'name',
       render: (_, record) => (
         <Space direction="vertical" size={0}>
@@ -390,65 +400,69 @@ export function ModelsPage() {
       title: 'Responses',
       dataIndex: 'supports_responses',
       width: 120,
-      render: (value: boolean) => (value ? 'yes' : 'no'),
+      render: (value: boolean) => (value ? t('common.yes') : t('common.no')),
     },
     {
-      title: '绑定任务',
+      title: t('models.column.boundTasks'),
       key: 'task_count',
       width: 120,
       render: (_, record) => taskCountByModelId.get(record.id) || 0,
     },
     {
-      title: '运行次数',
+      title: t('models.column.runCount'),
       key: 'run_count',
       width: 120,
       render: (_, record) => runCountByModelId.get(record.id) || 0,
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'enabled',
       width: 120,
-      render: (value: boolean) => <Tag color={value ? 'success' : 'default'}>{value ? 'enabled' : 'disabled'}</Tag>,
+      render: (value: boolean) => (
+        <Tag color={value ? 'success' : 'default'}>
+          {value ? t('common.enabled') : t('common.disabled')}
+        </Tag>
+      ),
     },
     {
-      title: '更新时间',
+      title: t('common.updatedAt'),
       dataIndex: 'updated_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 420,
       render: (_, record) => (
         <Space>
           <Button size="small" onClick={() => openDetailDrawer(record.id)}>
-            详情
+            {t('common.detail')}
           </Button>
           <Button
             size="small"
             onClick={() => navigate(`/tasks?model_config_id=${encodeURIComponent(record.id)}`)}
           >
-            任务
+            {t('tasks.title')}
           </Button>
           <Button
             size="small"
             onClick={() => navigate(`/runs?model_config_id=${encodeURIComponent(record.id)}`)}
           >
-            运行
+            {t('prompts.column.run')}
           </Button>
           <Button size="small" onClick={() => openEditDrawer(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
           <Button
             size="small"
             onClick={() => testModelMutation.mutate(record.id)}
             loading={testModelMutation.isPending}
           >
-            测试
+            {t('common.test')}
           </Button>
           <Button size="small" danger onClick={() => confirmDelete(record)}>
-            删除
+            {t('common.delete')}
           </Button>
         </Space>
       ),
@@ -513,8 +527,8 @@ export function ModelsPage() {
 
   function confirmDelete(model: ModelConfigRecord) {
     Modal.confirm({
-      title: `删除模型配置: ${model.name}`,
-      content: '删除后，引用它的任务会失去默认模型绑定。',
+      title: t('models.deleteConfirmTitle', { name: model.name }),
+      content: t('models.deleteConfirmContent'),
       okButtonProps: { danger: true },
       onOk: () => deleteModelMutation.mutate(model.id),
     });
@@ -574,16 +588,16 @@ export function ModelsPage() {
         <Space style={{ justifyContent: 'space-between', width: '100%' }}>
           <Space direction="vertical" size={0}>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              模型配置
+              {t('models.title')}
             </Typography.Title>
             <Typography.Text type="secondary">
-              保存 Task Runner 可直接调用的模型连接信息与运行参数。
+              {t('models.subtitle')}
             </Typography.Text>
           </Space>
           <Space>
             <Input
               allowClear
-              placeholder="搜索名称 / Model / URL"
+              placeholder={t('models.searchPlaceholder')}
               style={{ width: 240 }}
               value={keywordFilter}
               onChange={(event) => setKeywordFilter(event.target.value)}
@@ -599,11 +613,7 @@ export function ModelsPage() {
               onChange={(value) =>
                 setEnabledFilter(value as 'all' | 'enabled' | 'disabled')
               }
-              options={[
-                { label: '全部', value: 'all' },
-                { label: '启用中', value: 'enabled' },
-                { label: '已停用', value: 'disabled' },
-              ]}
+              options={enabledFilterOptions}
             />
             <Button
               onClick={() => {
@@ -612,23 +622,23 @@ export function ModelsPage() {
                 setEnabledFilter('all');
               }}
             >
-              清空筛选
+              {t('common.clearFilters')}
             </Button>
-            <Button onClick={() => modelsQuery.refetch()}>刷新</Button>
+            <Button onClick={() => modelsQuery.refetch()}>{t('common.refresh')}</Button>
             <Button type="primary" onClick={openCreateDrawer}>
-              新建模型配置
+              {t('models.new')}
             </Button>
           </Space>
         </Space>
 
         <Space size="large" wrap>
-          <Statistic title="当前可见模型" value={filteredModels.length} />
+          <Statistic title={t('models.visible')} value={filteredModels.length} />
           <Statistic
-            title="启用中"
+            title={t('models.enabledCount')}
             value={filteredModels.filter((model) => model.enabled).length}
           />
-          <Statistic title="绑定任务" value={filteredTaskCount} />
-          <Statistic title="运行记录" value={filteredRunCount} />
+          <Statistic title={t('models.column.boundTasks')} value={filteredTaskCount} />
+          <Statistic title={t('models.runRecords')} value={filteredRunCount} />
         </Space>
 
         <Table<ModelConfigRecord>
@@ -641,7 +651,7 @@ export function ModelsPage() {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无模型配置，请先创建或导入模型配置"
+                description={t('models.empty')}
               />
             ),
           }}
@@ -649,20 +659,20 @@ export function ModelsPage() {
       </Space>
 
       <Drawer
-        title={editingModel ? '编辑模型配置' : '新建模型配置'}
+        title={editingModel ? t('models.drawer.edit') : t('models.drawer.create')}
         open={drawerOpen}
         width={560}
         destroyOnClose
         onClose={resetModelDrawerState}
         extra={
           <Space>
-            <Button onClick={resetModelDrawerState}>取消</Button>
+            <Button onClick={resetModelDrawerState}>{t('common.cancel')}</Button>
             <Button
               type="primary"
               loading={createModelMutation.isPending || updateModelMutation.isPending}
               onClick={() => form.submit()}
             >
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
@@ -673,7 +683,7 @@ export function ModelsPage() {
           onFinish={handleSubmit}
           onValuesChange={handleModelFormChange}
         >
-          <Form.Item name="name" label="配置名称" rules={[{ required: true }]}>
+          <Form.Item name="name" label={t('models.column.name')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
           <Space size="middle" style={{ width: '100%' }} align="start">
@@ -689,15 +699,17 @@ export function ModelsPage() {
           </Form.Item>
           <Form.Item label="Model" required>
             <Space.Compact style={{ width: '100%' }}>
-              <Form.Item name="model" noStyle rules={[{ required: true, message: '请选择模型' }]}>
+              <Form.Item name="model" noStyle rules={[{ required: true, message: t('models.form.modelRequired') }]}>
                 <Select
                   showSearch
                   allowClear
-                  placeholder="先拉取模型列表"
+                  placeholder={t('models.form.modelPlaceholder')}
                   options={modelOptions}
                   optionFilterProp="label"
                   notFoundContent={
-                    previewModelCatalogMutation.isPending ? '正在拉取模型...' : '暂无模型列表'
+                    previewModelCatalogMutation.isPending
+                      ? t('models.form.loadingModels')
+                      : t('models.form.noModels')
                   }
                 />
               </Form.Item>
@@ -706,15 +718,18 @@ export function ModelsPage() {
                 onClick={fetchModelCatalog}
                 disabled={!watchedApiKey?.trim()}
               >
-                拉取模型
+                {t('models.form.fetchModels')}
               </Button>
             </Space.Compact>
             <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
               {modelCatalog
                 ? modelCatalog.source === 'live'
-                  ? `已通过 ${modelCatalog.base_url}/models 获取 ${modelCatalog.models.length} 个模型`
-                  : modelCatalog.error || '未获取到在线模型列表'
-                : '供应商固定为 openai / deepseek / kimik2；配置好 Base URL 和 API Key 后再拉取模型。'}
+                  ? t('models.form.catalogLoaded', {
+                      baseUrl: modelCatalog.base_url,
+                      count: modelCatalog.models.length,
+                    })
+                  : modelCatalog.error || t('models.form.catalogEmpty')
+                : t('models.form.catalogHint')}
             </Typography.Text>
           </Form.Item>
           <Space size="middle" style={{ width: '100%' }} align="start">
@@ -727,7 +742,7 @@ export function ModelsPage() {
             <Form.Item name="thinking_level" label="Thinking Level" style={{ flex: 1 }}>
               <Select
                 allowClear
-                placeholder="按供应商选择"
+                placeholder={t('models.form.thinkingPlaceholder')}
                 options={thinkingLevelOptions}
               />
             </Form.Item>
@@ -761,7 +776,9 @@ export function ModelsPage() {
       </Drawer>
 
       <Drawer
-        title={selectedModel ? `模型详情 - ${selectedModel.name}` : '模型详情'}
+        title={selectedModel
+          ? t('models.detail.titleWithName', { name: selectedModel.name })
+          : t('models.detail.title')}
         open={Boolean(routeModelId)}
         width={760}
         onClose={closeDetailDrawer}
@@ -770,16 +787,16 @@ export function ModelsPage() {
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Space wrap>
               <Button onClick={() => navigate(`/tasks?model_config_id=${encodeURIComponent(selectedModel.id)}`)}>
-                查看绑定任务
+                {t('models.detail.viewTasks')}
               </Button>
               <Button onClick={() => navigate(`/runs?model_config_id=${encodeURIComponent(selectedModel.id)}`)}>
-                查看运行记录
+                {t('models.detail.viewRuns')}
               </Button>
               <Button
                 loading={testModelMutation.isPending}
                 onClick={() => testModelMutation.mutate(selectedModel.id)}
               >
-                测试连通性
+                {t('models.detail.testConnection')}
               </Button>
               <Button
                 onClick={() => {
@@ -787,22 +804,22 @@ export function ModelsPage() {
                   openEditDrawer(selectedModel);
                 }}
               >
-                编辑配置
+                {t('models.detail.editConfig')}
               </Button>
             </Space>
 
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="模型配置 ID">{selectedModel.id}</Descriptions.Item>
+              <Descriptions.Item label={t('models.detail.modelId')}>{selectedModel.id}</Descriptions.Item>
               <Descriptions.Item label="Provider">{selectedModel.provider}</Descriptions.Item>
               <Descriptions.Item label="Model">{selectedModel.model}</Descriptions.Item>
               <Descriptions.Item label="Base URL">{selectedModel.base_url}</Descriptions.Item>
-              <Descriptions.Item label="状态">
+              <Descriptions.Item label={t('common.status')}>
                 <Tag color={selectedModel.enabled ? 'success' : 'default'}>
-                  {selectedModel.enabled ? 'enabled' : 'disabled'}
+                  {selectedModel.enabled ? t('common.enabled') : t('common.disabled')}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Supports Responses">
-                {selectedModel.supports_responses ? 'yes' : 'no'}
+                {selectedModel.supports_responses ? t('common.yes') : t('common.no')}
               </Descriptions.Item>
               <Descriptions.Item label="Temperature">
                 {selectedModel.temperature ?? '-'}
@@ -817,21 +834,23 @@ export function ModelsPage() {
                 {selectedModel.request_cwd || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="Prompt Cache Retention">
-                {selectedModel.include_prompt_cache_retention ? 'enabled' : 'disabled'}
+                {selectedModel.include_prompt_cache_retention
+                  ? t('common.enabled')
+                  : t('common.disabled')}
               </Descriptions.Item>
               <Descriptions.Item label="Request Body Limit">
                 {selectedModel.request_body_limit_bytes ?? '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="绑定任务数">
+              <Descriptions.Item label={t('models.column.boundTasks')}>
                 {taskCountByModelId.get(selectedModel.id) || 0}
               </Descriptions.Item>
-              <Descriptions.Item label="运行次数">
+              <Descriptions.Item label={t('models.column.runCount')}>
                 {runCountByModelId.get(selectedModel.id) || 0}
               </Descriptions.Item>
-              <Descriptions.Item label="创建时间">
+              <Descriptions.Item label={t('models.detail.createdAt')}>
                 {dayjs(selectedModel.created_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
-              <Descriptions.Item label="更新时间">
+              <Descriptions.Item label={t('common.updatedAt')}>
                 {dayjs(selectedModel.updated_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
             </Descriptions>
@@ -846,7 +865,7 @@ export function ModelsPage() {
             ) : null}
 
             <div>
-              <Typography.Title level={5}>绑定任务</Typography.Title>
+              <Typography.Title level={5}>{t('models.detail.boundTasks')}</Typography.Title>
               {modelTasksQuery.data?.length ? (
                 <List
                   bordered
@@ -859,7 +878,7 @@ export function ModelsPage() {
                           size="small"
                           onClick={() => navigate(`/tasks?task_id=${encodeURIComponent(task.id)}`)}
                         >
-                          打开
+                          {t('common.open')}
                         </Button>,
                       ]}
                     >
@@ -880,12 +899,12 @@ export function ModelsPage() {
                   )}
                 />
               ) : modelTasksQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有绑定任务" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('models.detail.noBoundTasks')} />
               )}
             </div>
 
             <div>
-              <Typography.Title level={5}>最近运行</Typography.Title>
+              <Typography.Title level={5}>{t('models.detail.recentRuns')}</Typography.Title>
               {modelRunsQuery.data?.length ? (
                 <List
                   bordered
@@ -898,7 +917,7 @@ export function ModelsPage() {
                           size="small"
                           onClick={() => navigate(`/runs?run_id=${encodeURIComponent(run.id)}`)}
                         >
-                          打开
+                          {t('common.open')}
                         </Button>,
                       ]}
                     >
@@ -919,14 +938,14 @@ export function ModelsPage() {
                             {run.result_summary}
                           </Typography.Paragraph>
                         ) : (
-                          <Typography.Text type="secondary">暂无摘要</Typography.Text>
+                          <Typography.Text type="secondary">{t('models.detail.noSummary')}</Typography.Text>
                         )}
                       </Space>
                     </List.Item>
                   )}
                 />
               ) : modelRunsQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前还没有运行记录" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('models.detail.noRuns')} />
               )}
             </div>
           </Space>
@@ -936,12 +955,12 @@ export function ModelsPage() {
       </Drawer>
 
       <Modal
-        title="模型测试结果"
+        title={t('models.testResult.title')}
         open={Boolean(testResult)}
         width={680}
         footer={[
           <Button key="close" onClick={() => setTestResult(null)}>
-            关闭
+            {t('common.close')}
           </Button>,
         ]}
         onCancel={() => setTestResult(null)}
@@ -949,26 +968,26 @@ export function ModelsPage() {
         {testResult ? (
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="结果">
+              <Descriptions.Item label={t('models.testResult.result')}>
                 <Tag color={testResult.ok ? 'success' : 'error'}>
-                  {testResult.ok ? 'success' : 'failed'}
+                  {testResult.ok ? t('common.success') : t('common.failed')}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Provider">{testResult.provider}</Descriptions.Item>
               <Descriptions.Item label="Model">{testResult.model}</Descriptions.Item>
-              <Descriptions.Item label="测试时间">
+              <Descriptions.Item label={t('models.testResult.testedAt')}>
                 {dayjs(testResult.tested_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
               <Descriptions.Item label="Response ID">
                 {testResult.response_id || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="输出">
+              <Descriptions.Item label={t('models.testResult.output')}>
                 {testResult.content || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="Reasoning">
                 {testResult.reasoning || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="错误信息">
+              <Descriptions.Item label={t('models.testResult.error')}>
                 {testResult.error || '-'}
               </Descriptions.Item>
             </Descriptions>

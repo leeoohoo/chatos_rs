@@ -4,6 +4,7 @@ import { useRemoteConnectionFormState } from './remoteConnectionForm/useRemoteCo
 
 export const useRemoteConnectionForm = ({
   apiClient,
+  t,
   remoteConnections,
   createRemoteConnection,
   updateRemoteConnection,
@@ -11,6 +12,7 @@ export const useRemoteConnectionForm = ({
   const form = useRemoteConnectionFormState();
   const actions = useRemoteConnectionFormActions({
     apiClient,
+    t,
     remoteConnections,
     createRemoteConnection,
     updateRemoteConnection,

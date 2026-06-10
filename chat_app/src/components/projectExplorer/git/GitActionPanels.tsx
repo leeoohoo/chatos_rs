@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+
 export const GitActionRows: React.FC<{
   actionLoading: boolean;
   onFetch: () => Promise<void>;
@@ -42,21 +44,25 @@ export const NewBranchRow: React.FC<{
   disabled: boolean;
   onChange: (value: string) => void;
   onCreate: () => Promise<void>;
-}> = ({ value, disabled, onChange, onCreate }) => (
-  <div className="mb-3 flex gap-2">
-    <input
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      placeholder="New Branch..."
-      className="h-8 min-w-0 flex-1 rounded border border-border bg-background px-2 text-xs outline-none focus:border-primary"
-    />
-    <button
-      type="button"
-      disabled={disabled || !value.trim()}
-      onClick={() => { void onCreate(); }}
-      className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50"
-    >
-      创建
-    </button>
-  </div>
-);
+}> = ({ value, disabled, onChange, onCreate }) => {
+  const { t } = useI18n();
+
+  return (
+    <div className="mb-3 flex gap-2">
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={t('git.newBranchPlaceholder')}
+        className="h-8 min-w-0 flex-1 rounded border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+      />
+      <button
+        type="button"
+        disabled={disabled || !value.trim()}
+        onClick={() => { void onCreate(); }}
+        className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50"
+      >
+        {t('git.create')}
+      </button>
+    </div>
+  );
+};

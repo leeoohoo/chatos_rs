@@ -15,7 +15,7 @@ interface SessionBusyBadgeProps {
 const SessionBusyBadge: React.FC<SessionBusyBadgeProps> = ({
   phase = null,
   busy = false,
-  idleText = '空闲',
+  idleText,
   thinkingText,
   reviewingText,
   className,
@@ -31,7 +31,7 @@ const SessionBusyBadge: React.FC<SessionBusyBadgeProps> = ({
     ? (reviewingText || t('sessionStatus.reviewing'))
     : (resolvedPhase === 'thinking'
       ? (thinkingText || t('sessionStatus.thinking'))
-      : idleText);
+      : (idleText || t('sessionStatus.idle')));
   const textClassName = resolvedPhase === 'reviewing'
     ? 'text-blue-600'
     : (resolvedPhase === 'thinking' ? 'text-amber-600' : 'text-muted-foreground');

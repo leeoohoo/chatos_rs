@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import {
   PROJECT_REQUIRED_MCP_IDS,
   REMOTE_REQUIRED_MCP_IDS,
@@ -85,6 +86,7 @@ export const useMcpSelection = ({
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
 }: UseMcpSelectionOptions): UseMcpSelectionResult => {
+  const { t } = useI18n();
   const [mcpPickerOpen, setMcpPickerOpen] = useState(false);
   const [availableMcpConfigs, setAvailableMcpConfigs] = useState<SelectableMcpConfig[]>([]);
   const [mcpConfigsLoading, setMcpConfigsLoading] = useState(false);
@@ -132,8 +134,12 @@ export const useMcpSelection = ({
     [availableMcpConfigs],
   );
   const mcpToolsetPresets = useMemo(
-    () => buildMcpToolsetPresets(selectableMcpIds, availableMcpIds),
-    [availableMcpIds, selectableMcpIds],
+    () => buildMcpToolsetPresets(selectableMcpIds, availableMcpIds).map((preset) => ({
+      ...preset,
+      label: t(`inputArea.mcpPreset.${preset.id}.label`),
+      description: t(`inputArea.mcpPreset.${preset.id}.description`),
+    })),
+    [availableMcpIds, selectableMcpIds, t],
   );
   const projectMcpDefault = useMemo(() => {
     if (!normalizedProjectScopeKey) {
@@ -152,12 +158,12 @@ export const useMcpSelection = ({
       });
       setAvailableMcpConfigs(normalizeSelectableMcpConfigs(rows));
     } catch (error) {
-      setMcpConfigsError(error instanceof Error ? error.message : '加载 MCP 列表失败');
+      setMcpConfigsError(error instanceof Error ? error.message : t('inputArea.mcp.loadFailed'));
       setAvailableMcpConfigs([]);
     } finally {
       setMcpConfigsLoading(false);
     }
-  }, [client]);
+  }, [client, t]);
 
   useEffect(() => {
     if (!mcpEnabled) {

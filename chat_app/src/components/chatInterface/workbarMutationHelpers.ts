@@ -1,3 +1,4 @@
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { TaskManagerTaskResponse } from '../../lib/api/client/types/runtime';
 import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
@@ -32,6 +33,7 @@ interface ApplyLocalTaskMutationResultArgs {
 interface ValidateTaskModalDraftArgs {
   draft: TaskOutcomeDraft;
   mode: TaskModalMode;
+  t?: TranslateFn;
 }
 
 interface BuildTaskUpdatePayloadArgs {
@@ -84,17 +86,19 @@ export const normalizeTaskModalDraft = (
 export const validateTaskModalDraft = ({
   draft,
   mode,
+  t,
 }: ValidateTaskModalDraftArgs): string | null => {
+  const translate: TranslateFn = t || ((key) => key);
   const normalized = normalizeTaskModalDraft(draft);
   if (mode === 'complete' && !normalized.outcomeSummary) {
-    return '完成任务时必须填写成果摘要';
+    return translate('taskOutcome.error.completeOutcomeRequired');
   }
   if (draft.status === 'blocked') {
     if (!normalized.outcomeSummary) {
-      return '阻塞任务必须填写已完成尝试或成果摘要';
+      return translate('taskOutcome.error.blockedOutcomeRequired');
     }
     if (!normalized.blockerReason) {
-      return '阻塞任务必须填写阻塞原因';
+      return translate('taskOutcome.error.blockerReasonRequired');
     }
   }
   return null;

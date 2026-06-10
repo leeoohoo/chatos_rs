@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { TaskWorkbarItem } from './types';
 
 type TaskModalMode = 'complete' | 'edit';
@@ -40,14 +41,14 @@ const buildDraft = (task: TaskWorkbarItem | null): TaskOutcomeDraft => ({
   blockerKind: task?.blockerKind || 'unknown',
 });
 
-const blockerKindOptions: Array<{ value: string; label: string }> = [
-  { value: 'unknown', label: '未分类' },
-  { value: 'missing_information', label: '缺信息' },
-  { value: 'design_decision', label: '待决策' },
-  { value: 'external_dependency', label: '外部依赖' },
-  { value: 'permission', label: '权限限制' },
-  { value: 'environment_failure', label: '环境故障' },
-  { value: 'upstream_bug', label: '上游缺陷' },
+const blockerKindOptions: Array<{ value: string; labelKey: string }> = [
+  { value: 'unknown', labelKey: 'taskOutcome.blockerKind.unknown' },
+  { value: 'missing_information', labelKey: 'taskOutcome.blockerKind.missing_information' },
+  { value: 'design_decision', labelKey: 'taskOutcome.blockerKind.design_decision' },
+  { value: 'external_dependency', labelKey: 'taskOutcome.blockerKind.external_dependency' },
+  { value: 'permission', labelKey: 'taskOutcome.blockerKind.permission' },
+  { value: 'environment_failure', labelKey: 'taskOutcome.blockerKind.environment_failure' },
+  { value: 'upstream_bug', labelKey: 'taskOutcome.blockerKind.upstream_bug' },
 ];
 
 const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
@@ -59,6 +60,7 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  const { t } = useI18n();
   const [draft, setDraft] = useState<TaskOutcomeDraft>(() => buildDraft(task));
 
   useEffect(() => {
@@ -72,10 +74,12 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
   const isCompleteMode = mode === 'complete';
   const title = useMemo(() => {
     if (isCompleteMode) {
-      return '完成任务';
+      return t('taskOutcome.completeTitle');
     }
-    return `编辑任务${task?.title ? ` · ${task.title}` : ''}`;
-  }, [isCompleteMode, task?.title]);
+    return t('taskOutcome.editTitle', {
+      suffix: task?.title ? ` · ${task.title}` : '',
+    });
+  }, [isCompleteMode, t, task?.title]);
 
   if (!open || !task) {
     return null;
@@ -90,8 +94,8 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
             <div className="text-base font-semibold text-foreground">{title}</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {isCompleteMode
-                ? '沉淀本次任务成果，避免后续任务重复探索。'
-                : '编辑任务状态与上下文，确保看板里保留可复用信息。'}
+                ? t('taskOutcome.completeSubtitle')
+                : t('taskOutcome.editSubtitle')}
             </div>
           </div>
           <button
@@ -100,7 +104,7 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
             onClick={onClose}
             disabled={submitting}
           >
-            关闭
+            {t('common.close')}
           </button>
         </div>
 
@@ -115,7 +119,7 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
             {!isCompleteMode ? (
               <>
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">标题</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.title')}</span>
                   <input
                     type="text"
                     value={draft.title}
@@ -126,7 +130,7 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
                 </label>
 
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">优先级</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.priority')}</span>
                   <select
                     value={draft.priority}
                     onChange={(event) => setDraft((prev) => ({ ...prev, priority: event.target.value as TaskWorkbarItem['priority'] }))}
@@ -140,7 +144,7 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
                 </label>
 
                 <label className="md:col-span-2 flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">详情</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.details')}</span>
                   <textarea
                     value={draft.details}
                     onChange={(event) => setDraft((prev) => ({ ...prev, details: event.target.value }))}
@@ -151,7 +155,7 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
                 </label>
 
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">状态</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.status')}</span>
                   <select
                     value={draft.status}
                     onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value as TaskWorkbarItem['status'] }))}
@@ -166,12 +170,12 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
                 </label>
 
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">截止时间</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.dueAt')}</span>
                   <input
                     type="text"
                     value={draft.dueAt}
                     onChange={(event) => setDraft((prev) => ({ ...prev, dueAt: event.target.value }))}
-                    placeholder="留空表示清空"
+                    placeholder={t('taskOutcome.clearDuePlaceholder')}
                     className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     disabled={submitting}
                   />
@@ -181,26 +185,26 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
 
             <label className="md:col-span-2 flex flex-col gap-1.5">
               <span className="text-xs font-medium text-foreground">
-                成果摘要
+                {t('taskOutcome.outcomeSummary')}
                 {(isCompleteMode || isBlocked) ? ' *' : ''}
               </span>
               <textarea
                 value={draft.outcomeSummary}
                 onChange={(event) => setDraft((prev) => ({ ...prev, outcomeSummary: event.target.value }))}
                 rows={4}
-                placeholder="写清这次做了什么、得出了什么结论、产出了什么结果。"
+                placeholder={t('taskOutcome.outcomePlaceholder')}
                 className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 disabled={submitting}
               />
             </label>
 
             <label className="md:col-span-2 flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-foreground">接手提示</span>
+              <span className="text-xs font-medium text-foreground">{t('taskOutcome.resumeHint')}</span>
               <textarea
                 value={draft.resumeHint}
                 onChange={(event) => setDraft((prev) => ({ ...prev, resumeHint: event.target.value }))}
                 rows={2}
-                placeholder="给下一个接手的人一句上下文提示，可选。"
+                placeholder={t('taskOutcome.resumeHintPlaceholder')}
                 className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 disabled={submitting}
               />
@@ -209,19 +213,19 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
             {isBlocked ? (
               <>
                 <label className="md:col-span-2 flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">阻塞原因 *</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.blockerReason')} *</span>
                   <textarea
                     value={draft.blockerReason}
                     onChange={(event) => setDraft((prev) => ({ ...prev, blockerReason: event.target.value }))}
                     rows={3}
-                    placeholder="写清为什么卡住，最好是事实性描述。"
+                    placeholder={t('taskOutcome.blockerReasonPlaceholder')}
                     className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     disabled={submitting}
                   />
                 </label>
 
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">阻塞类型</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.blockerKind')}</span>
                   <select
                     value={draft.blockerKind || 'unknown'}
                     onChange={(event) => setDraft((prev) => ({ ...prev, blockerKind: event.target.value }))}
@@ -230,19 +234,19 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
                   >
                     {blockerKindOptions.map((option) => (
                       <option key={option.value} value={option.value}>
-                        {option.label}
+                        {t(option.labelKey)}
                       </option>
                     ))}
                   </select>
                 </label>
 
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-foreground">继续所需条件</span>
+                  <span className="text-xs font-medium text-foreground">{t('taskOutcome.blockerNeeds')}</span>
                   <textarea
                     value={draft.blockerNeedsText}
                     onChange={(event) => setDraft((prev) => ({ ...prev, blockerNeedsText: event.target.value }))}
                     rows={3}
-                    placeholder="每行一项，写清还缺什么才能继续。"
+                    placeholder={t('taskOutcome.blockerNeedsPlaceholder')}
                     className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     disabled={submitting}
                   />
@@ -255,8 +259,8 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
           <div className="text-xs text-muted-foreground">
             {isBlocked
-              ? 'blocked 任务会记录已做尝试、阻塞原因和继续条件。'
-              : (isCompleteMode ? 'done 任务需要沉淀本次成果。' : '建议为重要任务补充成果，后续上下文会直接复用。')}
+              ? t('taskOutcome.blockedHelp')
+              : (isCompleteMode ? t('taskOutcome.doneHelp') : t('taskOutcome.editHelp'))}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -265,7 +269,7 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
               onClick={onClose}
               disabled={submitting}
             >
-              取消
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -273,7 +277,9 @@ const TaskOutcomeModal: React.FC<TaskOutcomeModalProps> = ({
               onClick={() => onSubmit(draft)}
               disabled={submitting}
             >
-              {submitting ? '提交中...' : (isCompleteMode ? '标记完成' : '保存任务')}
+              {submitting
+                ? t('taskOutcome.submitting')
+                : (isCompleteMode ? t('taskOutcome.submitComplete') : t('taskOutcome.submitEdit'))}
             </button>
           </div>
         </div>

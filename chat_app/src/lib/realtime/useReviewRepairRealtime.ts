@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../api/client';
 import { useRealtimeConnectionState, useRealtimeEvent, useRealtimeTopic } from './RealtimeProvider';
 import type { RealtimeEventEnvelope, ReviewRepairRealtimePayload } from './types';
@@ -69,6 +70,7 @@ const loadReviewRepairStatus = async (
   apiClient: ApiClient,
   sessionId: string,
   options: { force?: boolean } = {},
+  fallbackErrorMessage = 'Failed to load review repair status',
 ): Promise<{ running: boolean; pendingCount: number | null }> => {
   const normalizedSessionId = String(sessionId || '').trim();
   if (!normalizedSessionId) {
@@ -89,7 +91,7 @@ const loadReviewRepairStatus = async (
   const request = apiClient.getConversationReviewRepairStatus(normalizedSessionId)
     .then((result) => {
       if (result?.success === false) {
-        throw new Error(result.detail || result.error || '获取复盘状态失败');
+        throw new Error(result.detail || result.error || fallbackErrorMessage);
       }
       const nextStatus = {
         running: result?.result?.running === true,
@@ -120,6 +122,7 @@ export const useReviewRepairRealtime = ({
   onCompleted,
   onFailed,
 }: UseReviewRepairRealtimeOptions): ReviewRepairState => {
+  const { t } = useI18n();
   const connectionState = useRealtimeConnectionState();
   const [reviewRepairRunning, setReviewRepairRunning] = useState(false);
   const [reviewRepairPendingCount, setReviewRepairPendingCount] = useState<number | null>(null);
@@ -196,9 +199,14 @@ export const useReviewRepairRealtime = ({
       setReviewRepairPendingCount(null);
       return { running: false, pendingCount: null };
     }
-    const status = await loadReviewRepairStatus(apiClient, currentSessionId, { force: true });
+    const status = await loadReviewRepairStatus(
+      apiClient,
+      currentSessionId,
+      { force: true },
+      t('taskWorkbar.reviewRepairStatusFailed'),
+    );
     return applyStatusToState(currentSessionId, status);
-  }, [apiClient, applyStatusToState]);
+  }, [apiClient, applyStatusToState, t]);
 
   const markReviewRepairStarting = useCallback(() => {
     setReviewRepairRunning(true);
@@ -239,7 +247,7 @@ export const useReviewRepairRealtime = ({
     if (event.event === 'conversation.review_repair.completed') {
       triggerCompleted();
     } else if (event.event === 'conversation.review_repair.failed') {
-      triggerFailed(event.payload.error || '执行复盘失败');
+      triggerFailed(event.payload.error || t('taskWorkbar.reviewRepairFailed'));
       void refreshReviewRepairStatus(conversationId).catch((error) => {
         console.error('Failed to refresh review repair status after realtime failure:', error);
       });
@@ -268,7 +276,12 @@ export const useReviewRepairRealtime = ({
       return undefined;
     }
 
-    void loadReviewRepairStatus(apiClient, sessionId)
+    void loadReviewRepairStatus(
+      apiClient,
+      sessionId,
+      {},
+      t('taskWorkbar.reviewRepairStatusFailed'),
+    )
       .then((status) => {
         statusHydratedRef.current = true;
         applyStatusToState(sessionId, status);
@@ -284,6 +297,7 @@ export const useReviewRepairRealtime = ({
     apiClient,
     applyStatusToState,
     sessionId,
+    t,
   ]);
 
   useEffect(() => {
@@ -321,7 +335,7 @@ export const useReviewRepairRealtime = ({
       if (document.visibilityState === 'visible') {
         void refreshReviewRepairStatus(sessionId).catch((error) => {
           console.error('Failed to refresh review repair status on visibility restore:', error);
-          triggerFailed(error instanceof Error ? error.message : '获取复盘状态失败');
+          triggerFailed(error instanceof Error ? error.message : t('taskWorkbar.reviewRepairStatusFailed'));
         });
       }
     };
@@ -335,6 +349,7 @@ export const useReviewRepairRealtime = ({
     refreshReviewRepairStatus,
     reviewRepairRunning,
     sessionId,
+    t,
     triggerFailed,
   ]);
 

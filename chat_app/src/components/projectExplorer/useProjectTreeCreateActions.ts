@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
 import { isValidEntryName } from './utils';
 import { readProjectTreeErrorMessage } from './projectTreeActionHelpers';
@@ -32,32 +33,33 @@ export const useProjectTreeCreateActions = ({
   openFile,
 }: UseProjectTreeCreateActionsOptions) => {
   const { prompt } = useDialogService();
+  const { t } = useI18n();
 
   const handleCreateDirectory = useCallback(async (dirPathOverride?: string) => {
     const targetDirPath = dirPathOverride || selectedDirPath;
     if (!targetDirPath) {
-      setActionError('请先选择一个目录');
+      setActionError(t('projectExplorer.action.selectDirectoryFirst'));
       return;
     }
 
     const rawName = await prompt({
-      title: '新建目录',
-      message: '请输入新目录名称',
-      inputLabel: '目录名称',
-      placeholder: '例如 src',
-      confirmText: '创建',
-      cancelText: '取消',
+      title: t('projectExplorer.action.createDirectoryTitle'),
+      message: t('projectExplorer.action.createDirectoryMessage'),
+      inputLabel: t('projectExplorer.action.directoryName'),
+      placeholder: t('projectExplorer.action.directoryPlaceholder'),
+      confirmText: t('projectExplorer.action.create'),
+      cancelText: t('common.cancel'),
       type: 'info',
     });
     if (rawName === null) return;
 
     const name = rawName.trim();
     if (!name) {
-      setActionError('目录名称不能为空');
+      setActionError(t('projectExplorer.action.directoryNameRequired'));
       return;
     }
     if (!isValidEntryName(name)) {
-      setActionError('目录名称不合法');
+      setActionError(t('projectExplorer.action.directoryNameInvalid'));
       return;
     }
 
@@ -73,9 +75,9 @@ export const useProjectTreeCreateActions = ({
         return next;
       });
       await loadEntries(targetDirPath);
-      setActionMessage(`已创建目录：${name}`);
+      setActionMessage(t('projectExplorer.action.directoryCreated', { name }));
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '创建目录失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.action.directoryCreateFailed')));
     } finally {
       setActionLoading(false);
     }
@@ -89,34 +91,35 @@ export const useProjectTreeCreateActions = ({
     setActionMessage,
     setExpandedPaths,
     setMoveConflict,
+    t,
     toExpandedKey,
   ]);
 
   const handleCreateFile = useCallback(async (dirPathOverride?: string) => {
     const targetDirPath = dirPathOverride || selectedDirPath;
     if (!targetDirPath) {
-      setActionError('请先选择一个目录');
+      setActionError(t('projectExplorer.action.selectDirectoryFirst'));
       return;
     }
 
     const rawName = await prompt({
-      title: '新建文件',
-      message: '请输入新文件名称',
-      inputLabel: '文件名称',
-      placeholder: '例如 index.ts',
-      confirmText: '创建',
-      cancelText: '取消',
+      title: t('projectExplorer.action.createFileTitle'),
+      message: t('projectExplorer.action.createFileMessage'),
+      inputLabel: t('projectExplorer.action.fileName'),
+      placeholder: t('projectExplorer.action.filePlaceholder'),
+      confirmText: t('projectExplorer.action.create'),
+      cancelText: t('common.cancel'),
       type: 'info',
     });
     if (rawName === null) return;
 
     const name = rawName.trim();
     if (!name) {
-      setActionError('文件名称不能为空');
+      setActionError(t('projectExplorer.action.fileNameRequired'));
       return;
     }
     if (!isValidEntryName(name)) {
-      setActionError('文件名称不合法');
+      setActionError(t('projectExplorer.action.fileNameInvalid'));
       return;
     }
 
@@ -132,7 +135,7 @@ export const useProjectTreeCreateActions = ({
         return next;
       });
       await loadEntries(targetDirPath);
-      setActionMessage(`已创建文件：${name}`);
+      setActionMessage(t('projectExplorer.action.fileCreated', { name }));
       if (createdPath) {
         await openFile({
           name,
@@ -143,7 +146,7 @@ export const useProjectTreeCreateActions = ({
         });
       }
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '创建文件失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.action.fileCreateFailed')));
     } finally {
       setActionLoading(false);
     }
@@ -157,6 +160,7 @@ export const useProjectTreeCreateActions = ({
     setActionLoading,
     setActionMessage,
     setExpandedPaths,
+    t,
     toExpandedKey,
   ]);
 

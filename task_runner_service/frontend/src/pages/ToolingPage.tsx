@@ -21,6 +21,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
+import { useI18n } from '../i18n/I18nProvider';
 import type {
   ToolingNoteSummary,
   ToolingTerminalLogEntry,
@@ -54,6 +55,7 @@ const logKindColor = (kind: string) => {
 };
 
 export function ToolingPage() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
   const [view, setView] = useState<'notepad' | 'terminal'>('notepad');
@@ -151,7 +153,7 @@ export function ToolingPage() {
         queryClient.invalidateQueries({ queryKey: ['tooling', 'terminal', 'processes'] }),
         queryClient.invalidateQueries({ queryKey: ['tooling', 'terminal', 'logs'] }),
       ]);
-      messageApi.success('终端进程已终止');
+      messageApi.success(t('tooling.terminal.killed'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -174,14 +176,14 @@ export function ToolingPage() {
     onSuccess: async () => {
       setTerminalInput('');
       await queryClient.invalidateQueries({ queryKey: ['tooling', 'terminal', 'logs'] });
-      messageApi.success('输入已发送到终端');
+      messageApi.success(t('tooling.terminal.inputSent'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
 
   const noteColumns: ColumnsType<ToolingNoteSummary> = [
     {
-      title: '标题',
+      title: t('tooling.notepad.titleColumn'),
       dataIndex: 'title',
       render: (_, record) => (
         <Space direction="vertical" size={0}>
@@ -191,7 +193,7 @@ export function ToolingPage() {
       ),
     },
     {
-      title: '标签',
+      title: t('tooling.notepad.tagsColumn'),
       dataIndex: 'tags',
       width: 220,
       render: (tags: string[]) =>
@@ -206,18 +208,18 @@ export function ToolingPage() {
         ),
     },
     {
-      title: '更新时间',
+      title: t('tooling.notepad.updatedAt'),
       dataIndex: 'updated_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 120,
       render: (_, record) => (
         <Button size="small" onClick={() => setSelectedNoteId(record.id)}>
-          查看
+          {t('common.view')}
         </Button>
       ),
     },
@@ -225,7 +227,7 @@ export function ToolingPage() {
 
   const terminalColumns: ColumnsType<ToolingTerminalProcessRecord> = [
     {
-      title: '终端',
+      title: t('tooling.terminal.terminal'),
       dataIndex: 'terminal_name',
       width: 180,
       render: (_, record) => (
@@ -236,13 +238,13 @@ export function ToolingPage() {
       ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 120,
       render: (value: string) => <Tag color={terminalStatusColor(value)}>{value}</Tag>,
     },
     {
-      title: '命令',
+      title: t('tooling.terminal.command'),
       dataIndex: 'command',
       render: (value: string) => (
         <Typography.Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 0 }}>
@@ -251,25 +253,25 @@ export function ToolingPage() {
       ),
     },
     {
-      title: '目录',
+      title: t('tooling.terminal.cwd'),
       dataIndex: 'cwd',
       width: 260,
       ellipsis: true,
     },
     {
-      title: '最后活跃',
+      title: t('tooling.terminal.lastActive'),
       dataIndex: 'last_active_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 180,
       render: (_, record) => (
         <Space>
           <Button size="small" onClick={() => setSelectedTerminalId(record.terminal_id)}>
-            日志
+            {t('common.logs')}
           </Button>
           <Button
             size="small"
@@ -278,7 +280,7 @@ export function ToolingPage() {
             loading={killTerminalMutation.isPending}
             onClick={() => killTerminalMutation.mutate(record.terminal_id)}
           >
-            终止
+            {t('tooling.terminal.kill')}
           </Button>
         </Space>
       ),
@@ -300,10 +302,10 @@ export function ToolingPage() {
         <Space style={{ justifyContent: 'space-between', width: '100%' }}>
           <Space direction="vertical" size={0}>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              工具状态
+              {t('tooling.title')}
             </Typography.Title>
             <Typography.Text type="secondary">
-              查看任务运行期间由共享 builtin tools 产生的便签与终端运行态。
+              {t('tooling.subtitle')}
             </Typography.Text>
           </Space>
           <Segmented
@@ -328,7 +330,7 @@ export function ToolingPage() {
               <Select
                 allowClear
                 style={{ width: 220 }}
-                placeholder="按文件夹筛选"
+                placeholder={t('tooling.notepad.folderFilter')}
                 value={folderFilter}
                 options={(notepadFoldersQuery.data?.folders || []).map((folder) => ({
                   label: folder,
@@ -340,7 +342,7 @@ export function ToolingPage() {
                 mode="multiple"
                 allowClear
                 style={{ minWidth: 260 }}
-                placeholder="按标签筛选"
+                placeholder={t('tooling.notepad.tagFilter')}
                 value={tagFilter}
                 options={(notepadTagsQuery.data?.tags || []).map((tag) => ({
                   label: `${tag.tag} (${tag.count})`,
@@ -351,7 +353,7 @@ export function ToolingPage() {
               <Input.Search
                 allowClear
                 style={{ width: 280 }}
-                placeholder="搜索标题 / 文件夹"
+                placeholder={t('tooling.notepad.searchPlaceholder')}
                 value={noteQueryText}
                 onChange={(event) => setNoteQueryText(event.target.value)}
                 onSearch={(value) => setNoteQueryText(value)}
@@ -363,7 +365,7 @@ export function ToolingPage() {
                   setNoteQueryText('');
                 }}
               >
-                清空筛选
+                {t('common.clearFilters')}
               </Button>
               <Button
                 onClick={() => {
@@ -372,14 +374,14 @@ export function ToolingPage() {
                   void notepadNotesQuery.refetch();
                 }}
               >
-                刷新
+                {t('common.refresh')}
               </Button>
             </Space>
 
             <Space size="large" wrap>
-              <Statistic title="文件夹" value={notepadFoldersQuery.data?.folders.length || 0} />
-              <Statistic title="标签" value={notepadTagsQuery.data?.tags.length || 0} />
-              <Statistic title="笔记" value={notepadNotesQuery.data?.notes.length || 0} />
+              <Statistic title={t('tooling.notepad.folders')} value={notepadFoldersQuery.data?.folders.length || 0} />
+              <Statistic title={t('tooling.notepad.tags')} value={notepadTagsQuery.data?.tags.length || 0} />
+              <Statistic title={t('tooling.notepad.notes')} value={notepadNotesQuery.data?.notes.length || 0} />
             </Space>
 
             <Table<ToolingNoteSummary>
@@ -389,7 +391,7 @@ export function ToolingPage() {
               dataSource={notepadNotesQuery.data?.notes || []}
               pagination={{ pageSize: 10 }}
               locale={{
-                emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无便签" />,
+                emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tooling.notepad.empty')} />,
               }}
             />
           </Space>
@@ -401,29 +403,29 @@ export function ToolingPage() {
                 style={{ width: 220 }}
                 value={terminalUserId}
                 onChange={(event) => setTerminalUserId(event.target.value)}
-                placeholder="user_id（可选）"
+                placeholder="user_id"
               />
               <Input
                 allowClear
                 style={{ width: 260 }}
                 value={terminalProjectId}
                 onChange={(event) => setTerminalProjectId(event.target.value)}
-                placeholder="project_id（可选）"
+                placeholder="project_id"
               />
               <Space size={8}>
-                <Typography.Text type="secondary">包含已退出</Typography.Text>
+                <Typography.Text type="secondary">{t('tooling.terminal.includeExited')}</Typography.Text>
                 <Switch checked={includeExited} onChange={setIncludeExited} />
               </Space>
-              <Button onClick={() => terminalProcessesQuery.refetch()}>刷新</Button>
+              <Button onClick={() => terminalProcessesQuery.refetch()}>{t('common.refresh')}</Button>
             </Space>
 
             <Space size="large" wrap>
               <Statistic
-                title="终端进程"
+                title={t('tooling.terminal.processes')}
                 value={terminalProcessesQuery.data?.processes.length || 0}
               />
               <Statistic
-                title="运行中"
+                title={t('tooling.terminal.running')}
                 value={
                   (terminalProcessesQuery.data?.processes || []).filter(
                     (process) => process.status !== 'exited',
@@ -431,7 +433,7 @@ export function ToolingPage() {
                 }
               />
               <Statistic
-                title="已退出"
+                title={t('tooling.terminal.exited')}
                 value={
                   (terminalProcessesQuery.data?.processes || []).filter(
                     (process) => process.status === 'exited',
@@ -448,7 +450,7 @@ export function ToolingPage() {
               pagination={{ pageSize: 10 }}
               locale={{
                 emptyText: (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无终端会话" />
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tooling.terminal.empty')} />
                 ),
               }}
             />
@@ -457,7 +459,7 @@ export function ToolingPage() {
       </Space>
 
       <Drawer
-        title={selectedNoteQuery.data?.note.title || '便签详情'}
+        title={selectedNoteQuery.data?.note.title || t('tooling.notepad.detailTitle')}
         open={Boolean(selectedNoteId)}
         width={760}
         onClose={() => setSelectedNoteId(null)}
@@ -466,10 +468,10 @@ export function ToolingPage() {
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Descriptions bordered column={1} size="small">
               <Descriptions.Item label="ID">{selectedNoteQuery.data.note.id}</Descriptions.Item>
-              <Descriptions.Item label="文件夹">
+              <Descriptions.Item label={t('tooling.notepad.folder')}>
                 {selectedNoteQuery.data.note.folder || '/'}
               </Descriptions.Item>
-              <Descriptions.Item label="标签">
+              <Descriptions.Item label={t('tooling.notepad.tags')}>
                 {selectedNoteQuery.data.note.tags.length ? (
                   <Space size={[4, 4]} wrap>
                     {selectedNoteQuery.data.note.tags.map((tag) => (
@@ -480,8 +482,8 @@ export function ToolingPage() {
                   '-'
                 )}
               </Descriptions.Item>
-              <Descriptions.Item label="文件">{selectedNoteQuery.data.note.file}</Descriptions.Item>
-              <Descriptions.Item label="更新时间">
+              <Descriptions.Item label={t('tooling.notepad.file')}>{selectedNoteQuery.data.note.file}</Descriptions.Item>
+              <Descriptions.Item label={t('tooling.notepad.updatedAt')}>
                 {dayjs(selectedNoteQuery.data.note.updated_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
             </Descriptions>
@@ -500,14 +502,14 @@ export function ToolingPage() {
             </Typography.Paragraph>
           </Space>
         ) : selectedNoteQuery.isLoading ? (
-          <Typography.Text type="secondary">正在加载便签内容...</Typography.Text>
+          <Typography.Text type="secondary">{t('tooling.notepad.loading')}</Typography.Text>
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未找到便签内容" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tooling.notepad.notFound')} />
         )}
       </Drawer>
 
       <Drawer
-        title={selectedTerminal?.terminal_name || '终端日志'}
+        title={selectedTerminal?.terminal_name || t('tooling.terminal.logTitle')}
         open={Boolean(selectedTerminalId)}
         width={860}
         onClose={() => {
@@ -518,24 +520,24 @@ export function ToolingPage() {
         {selectedTerminalLogsQuery.data ? (
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Space wrap>
-              <Button onClick={() => selectedTerminalLogsQuery.refetch()}>刷新日志</Button>
+              <Button onClick={() => selectedTerminalLogsQuery.refetch()}>{t('tooling.terminal.refreshLogs')}</Button>
               <Button
                 danger
                 disabled={selectedTerminalLogsQuery.data.status === 'exited'}
                 loading={killTerminalMutation.isPending}
                 onClick={() => killTerminalMutation.mutate(selectedTerminalLogsQuery.data.terminal_id)}
               >
-                终止进程
+                {t('tooling.terminal.killProcess')}
               </Button>
             </Space>
 
             <Space direction="vertical" size={8} style={{ width: '100%' }}>
-              <Typography.Text strong>发送输入</Typography.Text>
+              <Typography.Text strong>{t('tooling.terminal.sendInput')}</Typography.Text>
               <Input.TextArea
                 rows={3}
                 value={terminalInput}
                 onChange={(event) => setTerminalInput(event.target.value)}
-                placeholder="输入要写入终端 stdin 的内容"
+                placeholder={t('tooling.terminal.inputPlaceholder')}
               />
               <Space wrap>
                 <Button
@@ -550,7 +552,7 @@ export function ToolingPage() {
                     })
                   }
                 >
-                  发送并回车
+                  {t('tooling.terminal.sendAndEnter')}
                 </Button>
                 <Button
                   disabled={!terminalInput}
@@ -563,7 +565,7 @@ export function ToolingPage() {
                     })
                   }
                 >
-                  仅发送
+                  {t('tooling.terminal.sendOnly')}
                 </Button>
               </Space>
             </Space>
@@ -572,18 +574,18 @@ export function ToolingPage() {
               <Descriptions.Item label="Terminal ID">
                 {selectedTerminalLogsQuery.data.terminal_id}
               </Descriptions.Item>
-              <Descriptions.Item label="状态">
+              <Descriptions.Item label={t('common.status')}>
                 <Tag color={terminalStatusColor(selectedTerminalLogsQuery.data.status)}>
                   {selectedTerminalLogsQuery.data.status}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="命令">
+              <Descriptions.Item label={t('tooling.terminal.command')}>
                 {selectedTerminalLogsQuery.data.command}
               </Descriptions.Item>
-              <Descriptions.Item label="目录">
+              <Descriptions.Item label={t('tooling.terminal.cwd')}>
                 {selectedTerminalLogsQuery.data.cwd}
               </Descriptions.Item>
-              <Descriptions.Item label="最后活跃">
+              <Descriptions.Item label={t('tooling.terminal.lastActive')}>
                 {dayjs(selectedTerminalLogsQuery.data.last_active_at).format(
                   'YYYY-MM-DD HH:mm:ss',
                 )}
@@ -627,13 +629,13 @@ export function ToolingPage() {
                 )}
               />
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有日志输出" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tooling.terminal.noLogs')} />
             )}
           </Space>
         ) : selectedTerminalLogsQuery.isLoading ? (
-          <Typography.Text type="secondary">正在加载终端日志...</Typography.Text>
+          <Typography.Text type="secondary">{t('tooling.terminal.loadingLogs')}</Typography.Text>
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未找到终端日志" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tooling.terminal.logsNotFound')} />
         )}
       </Drawer>
     </>

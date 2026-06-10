@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
 
 interface CreateContactModalProps {
@@ -28,6 +29,7 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
   onSelectedAgentChange,
   onCreate,
 }) => {
+  const { t } = useI18n();
   const enabledAgents = agents.filter((agent) => agent.enabled !== false);
   const existingSet = new Set(
     existingAgentIds
@@ -39,7 +41,7 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
   return (
     <ManagerFormDialog
       open={isOpen}
-      title="添加联系人"
+      title={t('contactModal.title')}
       widthClassName="max-w-xl"
       onClose={onClose}
     >
@@ -47,11 +49,11 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
         <div className="space-y-3 rounded-xl border border-border bg-muted/40 p-4">
           {enabledAgents.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              当前没有可用联系人，请先在 Memory 中创建 Agent。
+              {t('contactModal.noAgents')}
             </div>
           ) : availableAgents.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              所有可用 Agent 已经添加为联系人。
+              {t('contactModal.allAdded')}
             </div>
           ) : (
             <div className="max-h-72 overflow-y-auto rounded-lg border border-border bg-background">
@@ -88,7 +90,7 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
             onClick={onClose}
             className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -96,7 +98,7 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
             disabled={!selectedAgentId || availableAgents.length === 0}
             className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            添加并开始聊天
+            {t('contactModal.submit')}
           </button>
         </div>
       </div>

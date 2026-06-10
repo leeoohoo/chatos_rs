@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
   useOptionalChatStoreContext,
@@ -54,6 +55,7 @@ export const useSessionListController = ({
   onOpenSessionRuntimeContext,
   isCollapsed,
 }: SessionListControllerParams) => {
+  const { t } = useI18n();
   const contextStoreHook = useOptionalChatStoreContext();
   const storeToUse = store || contextStoreHook;
   if (!storeToUse) {
@@ -142,6 +144,7 @@ export const useSessionListController = ({
 
   const remoteForm = useRemoteConnectionForm({
     apiClient,
+    t,
     remoteConnections,
     createRemoteConnection,
     updateRemoteConnection,
@@ -149,6 +152,7 @@ export const useSessionListController = ({
 
   const localFsPickers = useLocalFsPickers({
     apiClient,
+    t,
     projectRoot,
     terminalRoot,
     remotePrivateKeyPath: remoteForm.remotePrivateKeyPath,
@@ -174,6 +178,7 @@ export const useSessionListController = ({
   );
 
   const contactSessionState = useContactSessionListState({
+    t,
     contacts,
     sessions: sessions || [],
     currentSession,
@@ -184,6 +189,7 @@ export const useSessionListController = ({
   });
 
   const contactSessionCreator = useContactSessionCreator({
+    t,
     agents,
     currentSessionId: currentSession?.id || null,
     loadContacts: loadContactsAction,
@@ -201,7 +207,7 @@ export const useSessionListController = ({
       : '';
     const contact = (contacts || []).find((item: ContactItem) => item.id === contactId);
     if (!contact) {
-      setTaskRunnerError('联系人不存在，请刷新后重试');
+      setTaskRunnerError(t('taskRunnerConfig.contactMissing'));
       return;
     }
     setTaskRunnerContactId(contact.id);
@@ -226,7 +232,7 @@ export const useSessionListController = ({
     const baseUrl = values.baseUrl.trim();
     const username = values.username.trim();
     if (values.enabled && (!baseUrl || !username)) {
-      setTaskRunnerError('启用时需要填写任务系统地址和用户名');
+      setTaskRunnerError(t('taskRunnerConfig.missingEndpoint'));
       return;
     }
     if (
@@ -235,7 +241,7 @@ export const useSessionListController = ({
       && !taskRunnerContact.taskRunner?.hasPassword
       && !values.clearPassword
     ) {
-      setTaskRunnerError('启用时需要填写密码');
+      setTaskRunnerError(t('taskRunnerConfig.missingPassword'));
       return;
     }
     setTaskRunnerSaving(true);
@@ -248,13 +254,14 @@ export const useSessionListController = ({
       });
       closeTaskRunnerConfig();
     } catch (error) {
-      setTaskRunnerError(error instanceof Error ? error.message : '保存任务系统配置失败');
+      setTaskRunnerError(error instanceof Error ? error.message : t('taskRunnerConfig.saveFailed'));
     } finally {
       setTaskRunnerSaving(false);
     }
   };
 
   const sessionListActions = useSessionListActions({
+    t,
     contacts: contacts as ContactItem[],
     currentSession,
     terminals,
@@ -296,6 +303,7 @@ export const useSessionListController = ({
   });
 
   const deleteActions = useSessionListDeleteActions({
+    t,
     projects,
     terminals,
     remoteConnections,

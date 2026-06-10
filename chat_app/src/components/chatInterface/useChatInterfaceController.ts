@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
 import { countPendingReviewRepairMessages } from '../../lib/domain/reviewRepair';
 import type {
@@ -119,6 +120,7 @@ export const useChatInterfaceController = ({
   resetHistoryWorkbarState,
   handleOpenWorkbarHistory,
 }: UseChatInterfaceControllerParams) => {
+  const { t } = useI18n();
   const overlayState = useChatInterfaceOverlayState();
 
   const { sessionSummaryPaneVisible } = useChatSessionEffects({
@@ -318,7 +320,7 @@ export const useChatInterfaceController = ({
     try {
       const result = await apiClient.runConversationReviewRepair(sessionId);
       if (result?.success === false) {
-        throw new Error(result.detail || result.error || '执行复盘失败');
+        throw new Error(result.detail || result.error || t('taskWorkbar.reviewRepairFailed'));
       }
     } catch (error) {
       await refreshReviewRepairStatus(sessionId).catch((statusError) => {
@@ -330,6 +332,7 @@ export const useChatInterfaceController = ({
     apiClient,
     markReviewRepairStarting,
     refreshReviewRepairStatus,
+    t,
   ]);
 
   const handleCloseSummary = useCallback(() => {

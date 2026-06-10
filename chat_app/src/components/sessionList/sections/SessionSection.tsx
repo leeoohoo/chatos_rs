@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { Session } from '../../../types';
 import type { TaskReviewPanelState, UiPromptPanelState } from '../../../lib/store/types';
@@ -77,6 +78,8 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   formatTimeAgo,
   getSessionStatus,
 }) => {
+  const { t } = useI18n();
+
   return (
     <div className={cn('flex flex-col min-h-0', expanded ? 'flex-1' : 'shrink-0')}>
       <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
@@ -86,13 +89,13 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
           className="flex items-center gap-2 uppercase tracking-wide"
         >
           <span>{expanded ? '▾' : '▸'}</span>
-          <span>CONTACTS</span>
+          <span>{t('session.contacts')}</span>
         </button>
         <div className="flex items-center gap-1">
           <button
             onClick={onRefresh}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="刷新联系人列表"
+            title={t('session.refreshContacts')}
           >
             <svg className={cn('w-4 h-4', isRefreshing && 'animate-spin')} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0112.125-5.303M19.5 12a7.5 7.5 0 01-12.125 5.303M16.5 6.697V3m0 3.697h-3.697M7.5 17.303V21m0-3.697H3.803" />
@@ -101,7 +104,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
           <button
             onClick={onCreateSession}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="添加联系人"
+            title={t('session.addContact')}
           >
             <PlusIcon className="w-4 h-4" />
           </button>
@@ -113,12 +116,12 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
           {sessions.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-muted-foreground py-6">
               <ChatIcon className="w-12 h-12 mb-4 opacity-50" />
-              <p className="text-sm">还没有联系人</p>
+              <p className="text-sm">{t('session.noContacts')}</p>
               <button
                 onClick={onCreateSession}
                 className="mt-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
               >
-                添加第一个联系人
+                {t('session.addFirstContact')}
               </button>
             </div>
           ) : (
@@ -156,7 +159,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         {isArchivedSession ? (
                           <span className={cn('inline-flex items-center gap-1', isArchivingSession ? 'text-amber-600' : 'text-slate-500')}>
                             <span className={cn('inline-block w-2 h-2 rounded-full', isArchivingSession ? 'bg-amber-500 animate-pulse' : 'bg-slate-400')} />
-                            {isArchivingSession ? '归档中' : '已归档'}
+                            {isArchivingSession ? t('session.archiving') : t('session.archived')}
                           </span>
                         ) : (
                           (() => {
@@ -180,7 +183,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         {taskRunnerEnabledBySessionId[session.id] ? (
                           <span className="inline-flex items-center gap-1 text-emerald-600">
                             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
-                            任务系统
+                            {t('session.taskRunner')}
                           </span>
                         ) : null}
                         {(() => {
@@ -198,7 +201,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           return (
                             <span className="inline-flex items-center gap-1 text-blue-600">
                               <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                              {`待处理 ${pendingCount}`}
+                              {t('session.pendingCount', { count: pendingCount })}
                             </span>
                           );
                         })()}
@@ -220,9 +223,9 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           onOpenSummary(session.id);
                         }}
                         disabled={isArchivedSession}
-                        title={summarySessionId === session.id ? '关闭总结视图' : '打开总结视图'}
+                        title={summarySessionId === session.id ? t('session.summary.close') : t('session.summary.open')}
                       >
-                        {summarySessionId === session.id ? '关闭总结' : '总结'}
+                        {summarySessionId === session.id ? t('session.summary.closeButton') : t('session.summary.openButton')}
                       </button>
                       <button
                         type="button"
@@ -238,9 +241,9 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           onOpenRuntimeContext(session.id);
                         }}
                         disabled={isArchivedSession}
-                        title="查看当前轮次上下文快照"
+                        title={t('session.runtimeContextTitle')}
                       >
-                        上下文
+                        {t('session.runtimeContext')}
                       </button>
                       <div className="relative" data-action-menu-root="true">
                         <button
@@ -263,7 +266,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                                 isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent',
                               )}
                             >
-                              任务系统
+                              {t('session.taskRunner')}
                             </button>
                             <button
                               onClick={(e) => {
@@ -278,7 +281,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                               )}
                             >
                               <TrashIcon className="w-4 h-4 mr-2" />
-                              {isArchivedSession ? '已归档' : '删除联系人'}
+                              {isArchivedSession ? t('session.archived') : t('session.deleteContact')}
                             </button>
                           </div>
                         </div>
@@ -294,7 +297,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                     disabled={isLoadingMore}
                     className="w-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-accent transition-colors disabled:opacity-50"
                   >
-                    {isLoadingMore ? '加载中...' : '加载更多'}
+                    {isLoadingMore ? t('common.loading') : t('session.loadMore')}
                   </button>
                 </div>
               )}

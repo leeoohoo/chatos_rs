@@ -1,8 +1,13 @@
+import type { TranslateFn } from '../../../i18n/I18nProvider';
 import { ApiRequestError } from '../../../lib/api/client/shared';
 import { normalizeProjectRunValidationIssue } from '../../../lib/domain/projectExplorer';
 import { formatProjectRunValidationIssues } from './projectRunnerValidationIssues';
 
-export const extractProjectRunnerValidationMessage = (error: unknown, fallback: string): string => {
+export const extractProjectRunnerValidationMessage = (
+  error: unknown,
+  fallback: string,
+  t?: TranslateFn,
+): string => {
   if (!(error instanceof ApiRequestError) || !error.payload || typeof error.payload !== 'object') {
     return fallback;
   }
@@ -14,5 +19,5 @@ export const extractProjectRunnerValidationMessage = (error: unknown, fallback: 
   const issues = rawIssues
     .map(normalizeProjectRunValidationIssue)
     .filter((item) => item.kind && item.message);
-  return formatProjectRunValidationIssues(issues, fallback);
+  return formatProjectRunValidationIssues(issues, fallback, t);
 };

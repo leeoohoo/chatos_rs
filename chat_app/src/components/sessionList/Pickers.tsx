@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import {
   DirectoryPickerActionButton,
   DirectoryPickerEntryList,
@@ -37,6 +38,8 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
   onEntryClick,
   onSelectFile,
 }) => {
+  const { t } = useI18n();
+
   if (!isOpen) {
     return null;
   }
@@ -58,7 +61,8 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
         </div>
         <DirectoryPickerPathDisplay
           currentPath={currentPath}
-          emptyText="请选择磁盘/目录"
+          emptyText={t('sessionList.picker.chooseDiskOrDirectory')}
+          label={t('sessionList.picker.currentPathLabel')}
         />
         <div className="mt-3 flex items-center gap-2">
           <DirectoryPickerActionButton
@@ -66,19 +70,19 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
             disabled={!parentPath}
             className="bg-muted"
           >
-            返回上级
+            {t('sessionList.picker.backParent')}
           </DirectoryPickerActionButton>
           <DirectoryPickerActionButton
             onClick={onRefresh}
             className="bg-muted"
           >
-            刷新
+            {t('common.refresh')}
           </DirectoryPickerActionButton>
         </div>
         <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">
-          {loading && <div className="p-4 text-sm text-muted-foreground">加载中...</div>}
+          {loading && <div className="p-4 text-sm text-muted-foreground">{t('common.loading')}</div>}
           {!loading && items.length === 0 && (
-            <div className="p-4 text-sm text-muted-foreground">没有可用文件</div>
+            <div className="p-4 text-sm text-muted-foreground">{t('sessionList.picker.noFiles')}</div>
           )}
           {!loading && items.length > 0 && (
             <div className="divide-y divide-border">
@@ -103,7 +107,7 @@ export const KeyFilePickerDialog: React.FC<KeyFilePickerDialogProps> = ({
                       onClick={() => onSelectFile(entry.path)}
                       className="px-2.5 py-1 rounded border border-border text-xs text-foreground hover:bg-accent"
                     >
-                      选择
+                      {t('common.select')}
                     </button>
                   )}
                 </div>
@@ -164,6 +168,8 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
   onNewFolderNameChange,
   onCreateDir,
 }) => {
+  const { t } = useI18n();
+
   if (!isOpen) {
     return null;
   }
@@ -177,7 +183,9 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
       <div className="relative bg-card border border-border rounded-lg shadow-xl w-[640px] max-h-[80vh] p-6 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold text-foreground">
-            {target === 'terminal' ? '选择终端目录' : '选择项目目录'}
+            {target === 'terminal'
+              ? t('sessionList.resource.terminalDirectory')
+              : t('sessionList.resource.projectDirectory')}
           </h3>
           <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -187,10 +195,11 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
         </div>
         <DirectoryPickerPathDisplay
           currentPath={currentPath}
-          emptyText="请选择盘符/目录"
+          emptyText={t('sessionList.picker.chooseDriveOrDirectory')}
+          label={t('sessionList.picker.currentPathLabel')}
         />
         {canCreate && currentPath && !writable && (
-          <div className="mt-2 text-xs text-amber-600">当前目录只读，不能在这里新建目录</div>
+          <div className="mt-2 text-xs text-amber-600">{t('sessionList.picker.readonlyDirectory')}</div>
         )}
         <div className="mt-3 flex items-center gap-2">
           <DirectoryPickerActionButton
@@ -198,7 +207,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
             disabled={!parentPath}
             className="bg-muted"
           >
-            返回上级
+            {t('sessionList.picker.backParent')}
           </DirectoryPickerActionButton>
           <button
             type="button"
@@ -206,7 +215,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
             disabled={!currentPath}
             className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            选择当前目录
+            {t('sessionList.picker.selectCurrentDirectory')}
           </button>
           {canCreate && (
             <button
@@ -214,8 +223,8 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
               onClick={onOpenCreateModal}
               disabled={!currentPath || !canCreateHere || creatingFolder}
               className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {creatingFolder ? '新建中...' : '新建目录'}
+          >
+              {creatingFolder ? t('sessionList.picker.creatingDirectory') : t('sessionList.picker.createDirectory')}
             </button>
           )}
           {canCreate && (
@@ -223,15 +232,16 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
               type="button"
               onClick={onToggleHiddenDirs}
               className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
-            >
-              {showHiddenDirs ? '不显示隐藏目录' : '显示隐藏目录'}
+          >
+              {showHiddenDirs ? t('sessionList.picker.hideHiddenDirs') : t('sessionList.picker.showHiddenDirs')}
             </button>
           )}
         </div>
         <DirectoryPickerEntryList
           loading={loading}
           items={items}
-          emptyText="没有可用目录"
+          emptyText={t('sessionList.picker.noDirectories')}
+          loadingText={t('common.loading')}
           onOpenEntry={onOpenEntry}
           className="mt-3 flex-1 overflow-y-auto rounded border border-border"
           listClassName="divide-y divide-border"
@@ -245,15 +255,15 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
           <div className="absolute inset-0 z-10 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/40" onClick={() => !creatingFolder && onCreateModalClose()} />
             <div className="relative w-[420px] max-w-[90%] rounded-lg border border-border bg-card p-4 shadow-xl">
-              <div className="text-sm font-medium text-foreground mb-2">新建目录</div>
+              <div className="text-sm font-medium text-foreground mb-2">{t('sessionList.picker.newDirectory')}</div>
               <div className="text-xs text-muted-foreground mb-3 break-all">
-                当前路径：<span className="text-foreground">{currentPath || '-'}</span>
+                {t('sessionList.picker.currentPath', { path: currentPath || '-' })}
               </div>
               <input
                 autoFocus
                 value={newFolderName}
                 onChange={(e) => onNewFolderNameChange(e.target.value)}
-                placeholder="请输入新目录名称"
+                placeholder={t('sessionList.picker.newDirectoryPlaceholder')}
                 className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -272,7 +282,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
                   disabled={creatingFolder}
                   className="bg-muted"
                 >
-                  取消
+                  {t('common.cancel')}
                 </DirectoryPickerActionButton>
                 <button
                   type="button"
@@ -280,7 +290,7 @@ export const DirPickerDialog: React.FC<DirPickerDialogProps> = ({
                   disabled={creatingFolder}
                   className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {creatingFolder ? '新建中...' : '确定'}
+                  {creatingFolder ? t('sessionList.picker.creatingDirectory') : t('common.confirm')}
                 </button>
               </div>
             </div>

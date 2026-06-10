@@ -75,7 +75,7 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
 
     return (
       <div className="tool-detail-stack">
-        {renderObjectListCard(translateToolTitle('Input items', locale), argumentsValue)}
+        {renderObjectListCard(translateToolTitle('Input items', locale), argumentsValue, locale)}
       </div>
     );
   }
@@ -140,7 +140,7 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
         return;
       }
 
-      sections.push(renderObjectListCard(sectionTitle, value));
+      sections.push(renderObjectListCard(sectionTitle, value, locale));
       return;
     }
 

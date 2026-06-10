@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { normalizeGitCompare, normalizeGitFileDiff } from '../../../lib/domain/git';
 import type { GitBranchInfo, GitCompareResult, GitFileDiff } from '../../../types';
 import type { ProjectGitApiClient } from './projectGitTypes';
@@ -15,6 +16,7 @@ export const useProjectGitCompare = ({
   projectRoot,
   setError,
 }: UseProjectGitCompareParams) => {
+  const { t } = useI18n();
   const [compareResult, setCompareResult] = useState<GitCompareResult | null>(null);
   const [fileDiff, setFileDiff] = useState<GitFileDiff | null>(null);
   const [loadingCompare, setLoadingCompare] = useState(false);
@@ -53,13 +55,13 @@ export const useProjectGitCompare = ({
     } catch (err) {
       if (compareRequestIdRef.current !== requestId) return;
       setCompareResult(null);
-      setError(err instanceof Error ? err.message : '分支对比失败');
+      setError(err instanceof Error ? err.message : t('git.error.compareFailed'));
     } finally {
       if (compareRequestIdRef.current === requestId) {
         setLoadingCompare(false);
       }
     }
-  }, [client, projectRoot, setError]);
+  }, [client, projectRoot, setError, t]);
 
   const loadFileDiff = useCallback(async (path: string, target?: string, staged?: boolean) => {
     if (!projectRoot) return;
@@ -75,13 +77,13 @@ export const useProjectGitCompare = ({
     } catch (err) {
       if (diffRequestIdRef.current !== requestId) return;
       setFileDiff(null);
-      setError(err instanceof Error ? err.message : '加载 diff 失败');
+      setError(err instanceof Error ? err.message : t('git.error.diffLoadFailed'));
     } finally {
       if (diffRequestIdRef.current === requestId) {
         setLoadingDiff(false);
       }
     }
-  }, [client, projectRoot, setError]);
+  }, [client, projectRoot, setError, t]);
 
   return {
     compareResult,

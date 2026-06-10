@@ -2,6 +2,7 @@ import React from 'react';
 import { MessageList } from '../MessageList';
 import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import type { ChatInterfaceProps, Message } from '../../types';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface SessionSummaryViewItem {
   id: string;
@@ -90,6 +91,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
   onRefresh,
   onClose,
 }) => {
+  const { t } = useI18n();
   const toTimestamp = (value?: string | null): number => {
     const parsed = value ? new Date(value).getTime() : Number.NaN;
     return Number.isFinite(parsed) ? parsed : 0;
@@ -101,21 +103,21 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
       return {
         id: `summary:${summary.id}`,
         kind: 'session_summary' as const,
-        text: summary.summaryText || '(空总结)',
+        text: summary.summaryText || t('memory.emptySummary'),
         level: summary.level,
         time,
         timeTs: Math.max(toTimestamp(summary.updatedAt), toTimestamp(summary.createdAt)),
-        sourceLabel: `会话总结 L${summary.level}`,
+        sourceLabel: t('memory.sessionSummarySource', { level: summary.level }),
       };
     }),
     ...agentRecalls.map((recall) => ({
       id: `recall:${recall.id}`,
       kind: 'agent_recall' as const,
-      text: recall.recallText || '(空回忆)',
+      text: recall.recallText || t('memory.emptyRecall'),
       level: recall.level,
       time: recall.updatedAt || recall.lastSeenAt || '',
       timeTs: Math.max(toTimestamp(recall.updatedAt), toTimestamp(recall.lastSeenAt)),
-      sourceLabel: `智能体记忆 L${recall.level}`,
+      sourceLabel: t('memory.agentRecallSource', { level: recall.level }),
     })),
   ].sort((left, right) => right.timeTs - left.timeTs);
 
@@ -124,12 +126,12 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
     <div className="basis-[42%] min-h-[170px] bg-card/40 flex flex-col overflow-hidden">
       <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-sm font-medium truncate">记忆视图</div>
+          <div className="text-sm font-medium truncate">{t('memory.title')}</div>
           <div className="text-[11px] text-muted-foreground truncate">
-            {contactName || sessionTitle || '当前联系人'}
+            {contactName || sessionTitle || t('memory.currentContact')}
           </div>
           <div className="text-[11px] text-muted-foreground truncate">
-            {projectName ? `项目：${projectName}` : '项目：未选择'}
+            {projectName ? t('memory.projectName', { name: projectName }) : t('memory.projectNone')}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -139,14 +141,14 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
             disabled={memoryLoading}
             onClick={onRefresh}
           >
-            {memoryLoading ? '刷新中...' : '刷新'}
+            {memoryLoading ? t('common.refreshing') : t('common.refresh')}
           </button>
           <button
             type="button"
             className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
             onClick={onClose}
           >
-            关闭
+            {t('common.close')}
           </button>
         </div>
       </div>
@@ -159,13 +161,13 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         ) : null}
 
         <div className="rounded-lg border border-border bg-background/80 p-3">
-          <div className="text-xs font-semibold text-foreground">记忆条目</div>
+          <div className="text-xs font-semibold text-foreground">{t('memory.entries')}</div>
           <div className="mt-1 text-[11px] text-muted-foreground">
-            {projectId ? `project_id: ${projectId}` : 'project_id: 0（未选择项目）'}
+            {projectId ? `project_id: ${projectId}` : t('memory.projectIdNone')}
           </div>
           {memoryTimeline.length === 0 ? (
             <div className="mt-2 text-xs text-muted-foreground">
-              当前暂无可用记忆。
+              {t('memory.empty')}
             </div>
           ) : (
             <div className="mt-2 space-y-2">

@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { InputAreaFloatingModelPicker } from './InlineWidgets';
 import type { InputAreaComposerProps } from './InputAreaComposerTypes';
@@ -110,6 +111,10 @@ export function InputAreaComposerControls({
   onToggleSelectedSkill,
   onClearSelectedSkills,
 }: InputAreaComposerProps) {
+  const { t } = useI18n();
+  const onText = t('composer.toggle.on');
+  const offText = t('composer.toggle.off');
+
   return (
     <>
       <InputAreaFloatingModelPicker
@@ -153,7 +158,7 @@ export function InputAreaComposerControls({
         projectFileAttachingPath={projectFileAttachingPath}
         projectFilePickerOpen={projectFilePickerOpen}
         onTogglePicker={() => { void handleToggleProjectFilePicker(); }}
-        projectName={projectForFilePicker?.name || '当前项目'}
+        projectName={projectForFilePicker?.name || t('composer.currentProject')}
         projectFilePathLabel={projectFilePathLabel}
         projectFileFilter={projectFileFilter}
         onProjectFileFilterChange={setProjectFileFilter}
@@ -263,9 +268,9 @@ export function InputAreaComposerControls({
             : 'bg-muted text-muted-foreground hover:text-foreground',
           (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
         )}
-        title={autoCreateTask ? '自动建任务已开启' : '自动建任务已关闭'}
+        title={autoCreateTask ? t('composer.autoCreateTask.onTitle') : t('composer.autoCreateTask.offTitle')}
       >
-        任务自动建 {autoCreateTask ? '开' : '关'}
+        {t('composer.autoCreateTask.label', { state: autoCreateTask ? onText : offText })}
       </button>
 
       {reasoningSupported && (
@@ -280,9 +285,9 @@ export function InputAreaComposerControls({
               : 'bg-muted text-muted-foreground hover:text-foreground',
             (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
           )}
-          title={reasoningEnabled ? '推理已开启' : '推理已关闭'}
+          title={reasoningEnabled ? t('composer.reasoning.onTitle') : t('composer.reasoning.offTitle')}
         >
-          推理 {reasoningEnabled ? '开' : '关'}
+          {t('composer.reasoning.label', { state: reasoningEnabled ? onText : offText })}
         </button>
       )}
     </>

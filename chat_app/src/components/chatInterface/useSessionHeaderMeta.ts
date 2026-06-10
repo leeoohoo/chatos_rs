@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 
 import { readSessionRuntimeFromMetadata } from '../../lib/store/helpers/sessionRuntime';
 import type { Project, RemoteConnection, Session, Terminal } from '../../types';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface SessionHeaderContactItem {
   id: string;
@@ -26,6 +27,7 @@ export const useSessionHeaderMeta = ({
   currentTerminal,
   currentRemoteConnection,
 }: UseSessionHeaderMetaParams) => {
+  const { t } = useI18n();
   const currentContactName = useMemo(() => {
     if (!currentSession) {
       return '';
@@ -66,11 +68,11 @@ export const useSessionHeaderMeta = ({
   }, [contacts, currentSession]);
 
   const headerTitle = activePanel === 'project'
-    ? (currentProject?.name || '项目')
+    ? (currentProject?.name || t('sessionHeader.projectFallback'))
     : activePanel === 'terminal'
-      ? (currentTerminal?.name || '终端')
+      ? (currentTerminal?.name || t('terminal.titleFallback'))
       : activePanel === 'remote_terminal' || activePanel === 'remote_sftp'
-        ? (currentRemoteConnection?.name || '远端连接')
+        ? (currentRemoteConnection?.name || t('sessionHeader.remoteConnectionFallback'))
       : (currentContactName || currentSession?.title || '');
 
   return {

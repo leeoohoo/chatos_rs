@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
 import type { ContactItem } from './types';
 
@@ -28,6 +29,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
   onClose,
   onSave,
 }) => {
+  const { t } = useI18n();
   const [enabled, setEnabled] = useState(false);
   const [baseUrl, setBaseUrl] = useState(DEFAULT_TASK_RUNNER_BASE_URL);
   const [username, setUsername] = useState('');
@@ -58,7 +60,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
   return (
     <ManagerFormDialog
       open={isOpen}
-      title="任务系统"
+      title={t('taskRunnerConfig.title')}
       widthClassName="max-w-xl"
       onClose={onClose}
     >
@@ -80,7 +82,9 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
             <div>
               <div className="text-sm font-medium text-foreground">{contact.name}</div>
               <div className="text-xs text-muted-foreground">
-                {taskRunner.hasPassword ? '已保存密码' : '未保存密码'}
+                {taskRunner.hasPassword
+                  ? t('taskRunnerConfig.passwordSaved')
+                  : t('taskRunnerConfig.passwordMissing')}
               </div>
             </div>
             <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -89,12 +93,12 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
                 checked={enabled}
                 onChange={(event) => setEnabled(event.target.checked)}
               />
-              启用
+              {t('taskRunnerConfig.enabled')}
             </label>
           </div>
 
           <div>
-            <label className="text-sm text-muted-foreground">任务系统地址</label>
+            <label className="text-sm text-muted-foreground">{t('taskRunnerConfig.baseUrl')}</label>
             <input
               value={baseUrl}
               onChange={(event) => setBaseUrl(event.target.value)}
@@ -104,7 +108,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
           </div>
 
           <div>
-            <label className="text-sm text-muted-foreground">用户名</label>
+            <label className="text-sm text-muted-foreground">{t('taskRunnerConfig.username')}</label>
             <input
               value={username}
               onChange={(event) => setUsername(event.target.value)}
@@ -114,7 +118,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
           </div>
 
           <div>
-            <label className="text-sm text-muted-foreground">密码</label>
+            <label className="text-sm text-muted-foreground">{t('taskRunnerConfig.password')}</label>
             <input
               value={password}
               onChange={(event) => {
@@ -125,7 +129,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
               }}
               type="password"
               className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={taskRunner.hasPassword ? '留空则继续使用已保存密码' : ''}
+              placeholder={taskRunner.hasPassword ? t('taskRunnerConfig.passwordKeepPlaceholder') : ''}
               autoComplete="new-password"
             />
           </div>
@@ -138,7 +142,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
                 disabled={Boolean(password.trim())}
                 onChange={(event) => setClearPassword(event.target.checked)}
               />
-              清空已保存密码
+              {t('taskRunnerConfig.clearPassword')}
             </label>
           ) : null}
 
@@ -151,14 +155,14 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
             onClick={onClose}
             className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
             disabled={saving}
             className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? '保存中...' : '保存'}
+            {saving ? t('common.saving') : t('common.save')}
           </button>
         </div>
       </form>

@@ -7,12 +7,14 @@ import {
   type MermaidExportNotice,
   type MermaidPreviewStatus,
 } from './mermaid';
+import type { TranslateFn } from '../../i18n/I18nProvider';
 
 interface UseMermaidPreviewControllerOptions {
   markdownContainerRef: React.RefObject<HTMLDivElement | null>;
   hasMermaidBlock: boolean;
   isStreaming: boolean;
   renderDependency: string;
+  t: TranslateFn;
 }
 
 export const useMermaidPreviewController = ({
@@ -20,6 +22,7 @@ export const useMermaidPreviewController = ({
   hasMermaidBlock,
   isStreaming,
   renderDependency,
+  t,
 }: UseMermaidPreviewControllerOptions) => {
   const mermaidRenderSeqRef = useRef(0);
   const mermaidApiRef = useRef<MermaidApi | null>(null);
@@ -165,7 +168,7 @@ export const useMermaidPreviewController = ({
 
   const copyMermaidPreviewImage = useCallback(async () => {
     if (mermaidPreviewStatus !== 'rendered') {
-      showMermaidExportNotice('error', '图表尚未渲染完成，暂时无法复制图片');
+      showMermaidExportNotice('error', t('markdown.mermaid.copy.notReady'));
       return;
     }
 
@@ -175,7 +178,7 @@ export const useMermaidPreviewController = ({
         try {
           const pngBlob = await buildMermaidPreviewPngBlob();
           await clipboardWriter([new ClipboardItem({ 'image/png': pngBlob })]);
-          showMermaidExportNotice('success', 'PNG 图片已复制到剪贴板');
+          showMermaidExportNotice('success', t('markdown.mermaid.copyPngSuccess'));
           return;
         } catch (pngCopyError) {
           console.warn('Failed to copy Mermaid PNG to clipboard, trying SVG fallback:', pngCopyError);
@@ -184,7 +187,7 @@ export const useMermaidPreviewController = ({
         try {
           const svgBlob = buildMermaidPreviewSvgBlob();
           await clipboardWriter([new ClipboardItem({ 'image/svg+xml': svgBlob })]);
-          showMermaidExportNotice('success', 'SVG 图片已复制到剪贴板');
+          showMermaidExportNotice('success', t('markdown.mermaid.copySvgSuccess'));
           return;
         } catch (svgCopyError) {
           console.warn('Failed to copy Mermaid SVG to clipboard:', svgCopyError);
@@ -197,10 +200,10 @@ export const useMermaidPreviewController = ({
       }
       const { svgText } = getMermaidPreviewSvgSnapshot();
       await textWriter(svgText);
-      showMermaidExportNotice('success', '当前环境不支持图片写入，已复制 SVG 源码');
+      showMermaidExportNotice('success', t('markdown.mermaid.copySvgSourceSuccess'));
     } catch (error) {
       console.error('Failed to copy Mermaid preview image:', error);
-      showMermaidExportNotice('error', '复制失败，请先尝试下载');
+      showMermaidExportNotice('error', t('markdown.mermaid.copyFailed'));
     }
   }, [
     buildMermaidPreviewPngBlob,
@@ -208,11 +211,12 @@ export const useMermaidPreviewController = ({
     getMermaidPreviewSvgSnapshot,
     mermaidPreviewStatus,
     showMermaidExportNotice,
+    t,
   ]);
 
   const downloadMermaidPreviewImage = useCallback(async () => {
     if (mermaidPreviewStatus !== 'rendered') {
-      showMermaidExportNotice('error', '图表尚未渲染完成，暂时无法下载图片');
+      showMermaidExportNotice('error', t('markdown.mermaid.download.notReady'));
       return;
     }
 
@@ -221,7 +225,7 @@ export const useMermaidPreviewController = ({
       try {
         const imageBlob = await buildMermaidPreviewPngBlob();
         downloadBlobToLocal(imageBlob, `mermaid-preview-${timestamp}.png`);
-        showMermaidExportNotice('success', 'PNG 图片已下载到本地');
+        showMermaidExportNotice('success', t('markdown.mermaid.downloadPngSuccess'));
         return;
       } catch (pngDownloadError) {
         console.warn('Failed to download Mermaid PNG, trying SVG fallback:', pngDownloadError);
@@ -229,10 +233,10 @@ export const useMermaidPreviewController = ({
 
       const svgBlob = buildMermaidPreviewSvgBlob();
       downloadBlobToLocal(svgBlob, `mermaid-preview-${timestamp}.svg`);
-      showMermaidExportNotice('success', 'PNG 导出失败，已下载 SVG');
+      showMermaidExportNotice('success', t('markdown.mermaid.downloadSvgFallback'));
     } catch (finalError) {
       console.error('Failed to download Mermaid preview image:', finalError);
-      showMermaidExportNotice('error', '下载失败，请稍后重试');
+      showMermaidExportNotice('error', t('markdown.mermaid.downloadFailed'));
     }
   }, [
     buildMermaidPreviewPngBlob,
@@ -240,6 +244,7 @@ export const useMermaidPreviewController = ({
     downloadBlobToLocal,
     mermaidPreviewStatus,
     showMermaidExportNotice,
+    t,
   ]);
 
   useEffect(() => {
@@ -274,7 +279,7 @@ export const useMermaidPreviewController = ({
     }
     if (!mermaidPreviewCode.trim()) {
       setMermaidPreviewStatus('error');
-      setMermaidPreviewError('Mermaid 内容为空');
+      setMermaidPreviewError(t('markdown.mermaid.empty'));
       return;
     }
 
@@ -384,7 +389,7 @@ export const useMermaidPreviewController = ({
         }
         previewContainer.innerHTML = '';
         setMermaidPreviewStatus('error');
-        setMermaidPreviewError('Mermaid 渲染失败，已显示源码');
+        setMermaidPreviewError(t('markdown.mermaid.renderFailed'));
       }
     };
 
@@ -401,6 +406,7 @@ export const useMermaidPreviewController = ({
     markdownContainerRef,
     mermaidPreviewCode,
     renderDependency,
+    t,
   ]);
 
   return {

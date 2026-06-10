@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+
 export const ProjectTreeHeaderActions: React.FC<{
   actionLoading: boolean;
   actionReloadPath: string | null;
@@ -12,34 +14,38 @@ export const ProjectTreeHeaderActions: React.FC<{
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
-}) => (
-  <div className="flex flex-wrap gap-1">
-    <button
-      type="button"
-      onClick={onCreateDirectoryAtRoot}
-      disabled={actionLoading}
-      className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      根目录新建目录
-    </button>
-    <button
-      type="button"
-      onClick={onCreateFileAtRoot}
-      disabled={actionLoading}
-      className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      根目录新建文件
-    </button>
-    <button
-      type="button"
-      onClick={onRefresh}
-      disabled={!actionReloadPath || actionLoading}
-      className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      刷新
-    </button>
-  </div>
-);
+}) => {
+  const { t } = useI18n();
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      <button
+        type="button"
+        onClick={onCreateDirectoryAtRoot}
+        disabled={actionLoading}
+        className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {t('projectExplorer.tree.createDirectoryAtRoot')}
+      </button>
+      <button
+        type="button"
+        onClick={onCreateFileAtRoot}
+        disabled={actionLoading}
+        className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {t('projectExplorer.tree.createFileAtRoot')}
+      </button>
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={!actionReloadPath || actionLoading}
+        className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {t('projectExplorer.tree.refresh')}
+      </button>
+    </div>
+  );
+};
 
 export const ProjectTreeHeaderMessages: React.FC<{
   actionMessage: string | null;

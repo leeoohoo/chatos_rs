@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { McpToolsetPreset, SelectableMcpConfig } from '../useMcpSelection';
 
@@ -67,7 +68,10 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
   onApplyMcpToolsetPreset,
   onSaveProjectMcpDefault,
   onApplyProjectMcpDefault,
-}) => (
+}) => {
+  const { t } = useI18n();
+
+  return (
   <div className="relative flex-shrink-0" ref={mcpPickerRef}>
     <div className="flex items-center gap-1">
       <button
@@ -81,9 +85,9 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
             : 'bg-muted text-muted-foreground hover:text-foreground',
           (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
         )}
-        title={mcpEnabled ? 'MCP 已开启' : 'MCP 已关闭'}
+        title={mcpEnabled ? t('inputArea.mcp.enabledTitle') : t('inputArea.mcp.disabledTitle')}
       >
-        MCP {mcpEnabled ? '开' : '关'}
+        {t('inputArea.mcp.button', { state: mcpEnabled ? t('composer.toggle.on') : t('composer.toggle.off') })}
       </button>
       <button
         type="button"
@@ -94,9 +98,9 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
           'text-muted-foreground hover:text-foreground hover:bg-accent',
           (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
         )}
-        title="选择当前对话可用 MCP"
+        title={t('inputArea.mcp.selectTitle')}
       >
-        MCP 选择
+        {t('inputArea.mcp.selectButton')}
         <span className="ml-1">▾</span>
       </button>
     </div>
@@ -104,13 +108,13 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
       <div className="absolute left-0 bottom-full mb-2 z-30 w-80 max-w-[calc(100vw-2rem)] bg-popover text-popover-foreground border rounded-md shadow-lg">
         <div className="px-3 py-2 border-b flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <div className="text-xs font-medium">MCP 选择</div>
+            <div className="text-xs font-medium">{t('inputArea.mcp.selectButton')}</div>
             <div className="text-[11px] text-muted-foreground">
               {mcpEnabled
                 ? (isAllMcpSelected
-                  ? `已选全部 (${selectableMcpIds.length || 0})`
-                  : `已选 ${selectedMcpCount}/${selectableMcpIds.length || 0}`)
-                : 'MCP 总开关已关闭'}
+                  ? t('inputArea.mcp.selectedAll', { count: selectableMcpIds.length || 0 })
+                  : t('inputArea.mcp.selectedCount', { selected: selectedMcpCount, total: selectableMcpIds.length || 0 }))
+                : t('inputArea.mcp.offSummary')}
             </div>
           </div>
           <button
@@ -119,22 +123,22 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
             disabled={mcpConfigsLoading}
             className="px-2 py-0.5 text-[11px] rounded border text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
           >
-            刷新
+            {t('common.refresh')}
           </button>
         </div>
 
         <div className="max-h-72 overflow-auto py-1">
           {mcpConfigsLoading ? (
-            <div className="px-3 py-3 text-xs text-muted-foreground">加载中...</div>
+            <div className="px-3 py-3 text-xs text-muted-foreground">{t('common.loading')}</div>
           ) : mcpConfigsError ? (
             <div className="px-3 py-3 text-xs text-destructive">{mcpConfigsError}</div>
           ) : availableMcpConfigs.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-muted-foreground">暂无可用 MCP</div>
+            <div className="px-3 py-3 text-xs text-muted-foreground">{t('inputArea.mcp.empty')}</div>
           ) : (
             <>
               {mcpToolsetPresets.length > 0 && (
                 <div className="px-3 pt-2 pb-2 border-b">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">工具集预设</div>
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('inputArea.mcp.presets')}</div>
                   <div className="mt-2 grid grid-cols-2 gap-1.5">
                     {mcpToolsetPresets.map((preset) => (
                       <button
@@ -160,7 +164,7 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
               )}
 
               <div className="px-3 py-2 border-b">
-                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">项目默认</div>
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('inputArea.mcp.projectDefault')}</div>
                 <div className="mt-2 flex items-center gap-1.5">
                   <button
                     type="button"
@@ -171,9 +175,9 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
                       'hover:bg-accent hover:text-foreground',
                       'disabled:opacity-50 disabled:cursor-not-allowed',
                     )}
-                    title={projectScopeKey ? '将当前 MCP 选择保存为项目默认' : '需先选择项目或工作目录'}
+                    title={projectScopeKey ? t('inputArea.mcp.saveDefaultTitle') : t('inputArea.mcp.needProjectTitle')}
                   >
-                    设为默认
+                    {t('inputArea.mcp.saveDefault')}
                   </button>
                   <button
                     type="button"
@@ -184,9 +188,9 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
                       'hover:bg-accent hover:text-foreground',
                       'disabled:opacity-50 disabled:cursor-not-allowed',
                     )}
-                    title={hasProjectMcpDefault ? '套用已保存的项目默认 MCP 选择' : '当前项目还没有默认配置'}
+                    title={hasProjectMcpDefault ? t('inputArea.mcp.applyDefaultTitle') : t('inputArea.mcp.noDefaultTitle')}
                   >
-                    套用默认
+                    {t('inputArea.mcp.applyDefault')}
                   </button>
                 </div>
               </div>
@@ -203,13 +207,13 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
                   }}
                   disabled={disabled || isStreaming || isStopping}
                 />
-                <span>全部可用</span>
+                <span>{t('inputArea.mcp.allAvailable')}</span>
               </label>
 
               {builtinMcpConfigs.length > 0 && (
                 <>
                   <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    内置 MCP
+                    {t('inputArea.mcp.builtin')}
                   </div>
                   {builtinMcpConfigs.map((item) => {
                     const projectDisabled = !hasDirectoryContext && isProjectRequiredMcpId(item.id);
@@ -240,10 +244,10 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
                         />
                         <span className="truncate" title={item.displayName}>{item.displayName}</span>
                         {projectDisabled && (
-                          <span className="text-[11px] text-muted-foreground">需选择目录</span>
+                          <span className="text-[11px] text-muted-foreground">{t('inputArea.mcp.needDirectory')}</span>
                         )}
                         {remoteDisabled && (
-                          <span className="text-[11px] text-muted-foreground">需选择服务器</span>
+                          <span className="text-[11px] text-muted-foreground">{t('inputArea.mcp.needServer')}</span>
                         )}
                       </label>
                     );
@@ -254,7 +258,7 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
               {customMcpConfigs.length > 0 && (
                 <>
                   <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    自定义 MCP
+                    {t('inputArea.mcp.custom')}
                   </div>
                   {customMcpConfigs.map((item) => {
                     const checked = isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id);
@@ -283,4 +287,5 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
       </div>
     )}
   </div>
-);
+  );
+};

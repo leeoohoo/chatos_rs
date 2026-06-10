@@ -7,6 +7,7 @@ import type {
   GitStatusResult,
   GitSummary,
 } from '../../../types';
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { GitActionResponse } from '../../../lib/api/client/types';
 import {
   normalizeGitAction,
@@ -79,6 +80,7 @@ export const useProjectGit = ({
   onRepositorySelectionChange,
 }: UseProjectGitOptions): UseProjectGitResult => {
   const { confirm } = useDialogService();
+  const { t } = useI18n();
   const [preferredRepoRoot, setPreferredRepoRoot] = useState<string | null>(null);
   const [clientInfo, setClientInfo] = useState<GitClientInfo | null>(
     () => peekGitClientInfoCacheEntry(client)?.clientInfo || null,
@@ -182,7 +184,7 @@ export const useProjectGit = ({
           source: 'unknown' as const,
           path: 'git',
           version: null,
-          error: err instanceof Error ? err.message : '加载 Git 客户端信息失败',
+          error: err instanceof Error ? err.message : t('git.error.clientInfoLoadFailed'),
           bundledCandidates: [],
         }))
         .then((normalized) => {
@@ -200,13 +202,13 @@ export const useProjectGit = ({
         source: 'unknown',
         path: 'git',
         version: null,
-        error: err instanceof Error ? err.message : '加载 Git 客户端信息失败',
+        error: err instanceof Error ? err.message : t('git.error.clientInfoLoadFailed'),
         bundledCandidates: [],
       });
     } finally {
       setLoadingClientInfo(false);
     }
-  }, [client, enabled]);
+  }, [client, enabled, t]);
 
   const markSummaryStale = useCallback(() => {
     if (!enabled) {
@@ -271,7 +273,7 @@ export const useProjectGit = ({
         summaryRef.current = null;
         activeRepoRootRef.current = null;
         summaryLoadedRootRef.current = null;
-        setError(err instanceof Error ? err.message : '加载 Git 状态失败');
+        setError(err instanceof Error ? err.message : t('git.error.statusLoadFailed'));
       } finally {
         setLoadingSummary(false);
       }
@@ -305,11 +307,11 @@ export const useProjectGit = ({
       summaryRef.current = null;
       activeRepoRootRef.current = null;
       summaryLoadedRootRef.current = null;
-      setError(err instanceof Error ? err.message : '加载 Git 状态失败');
+      setError(err instanceof Error ? err.message : t('git.error.statusLoadFailed'));
     } finally {
       setLoadingSummary(false);
     }
-  }, [client, enabled, projectRoot]);
+  }, [client, enabled, projectRoot, t]);
 
   const loadDetails = useCallback(async (options?: { force?: boolean }) => {
     const latestRepoRoot = resolveActiveRepoRoot(summaryRef.current) || activeRepoRootRef.current || activeRepoRoot;
@@ -356,7 +358,7 @@ export const useProjectGit = ({
         branchesRef.current = null;
         statusRef.current = null;
         detailsLoadedRootRef.current = null;
-        setError(err instanceof Error ? err.message : '加载 Git 详情失败');
+        setError(err instanceof Error ? err.message : t('git.error.detailsLoadFailed'));
       } finally {
         setLoadingBranches(false);
         setLoadingStatus(false);
@@ -394,12 +396,12 @@ export const useProjectGit = ({
       branchesRef.current = null;
       statusRef.current = null;
       detailsLoadedRootRef.current = null;
-      setError(err instanceof Error ? err.message : '加载 Git 详情失败');
+      setError(err instanceof Error ? err.message : t('git.error.detailsLoadFailed'));
     } finally {
       setLoadingBranches(false);
       setLoadingStatus(false);
     }
-  }, [activeRepoRoot, client, enabled]);
+  }, [activeRepoRoot, client, enabled, t]);
 
   const runAction = useCallback(async (
     action: () => Promise<GitActionResponse>,
@@ -435,12 +437,12 @@ export const useProjectGit = ({
       setActionMessage(actionOutputMessage(result, fallbackMessage));
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Git 操作失败');
+      setError(err instanceof Error ? err.message : t('git.error.actionFailed'));
       return false;
     } finally {
       setActionLoading(false);
     }
-  }, [client, loadDetails, onRepositoryChanged, projectRoot, refreshSummary]);
+  }, [activeRepoRoot, client, loadDetails, onRepositoryChanged, projectRoot, refreshSummary, t]);
 
   const {
     compareResult,

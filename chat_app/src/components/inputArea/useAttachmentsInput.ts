@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import {
   formatFileSize,
   isLikelyCodeFileName,
@@ -21,6 +22,7 @@ export const useAttachmentsInput = ({
   supportedFileTypes,
   fileInputRef,
 }: UseAttachmentsInputOptions) => {
+  const { t } = useI18n();
   const [attachments, setAttachments] = useState<File[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -65,19 +67,19 @@ export const useAttachmentsInput = ({
       for (const f of incoming) {
         if (!f) continue;
         if (!isFileTypeAllowed(f)) {
-          errors.push(`${f.name} 类型不支持`);
+          errors.push(t('inputArea.attach.unsupportedType', { name: f.name }));
           continue;
         }
         if (f.size > MAX_FILE_BYTES) {
-          errors.push(`${f.name} 超过单文件上限(${formatFileSize(MAX_FILE_BYTES)})`);
+          errors.push(t('inputArea.attach.fileTooLarge', { name: f.name, limit: formatFileSize(MAX_FILE_BYTES) }));
           continue;
         }
         if (count + 1 > MAX_ATTACHMENTS) {
-          errors.push(`${f.name} 超过数量上限(${MAX_ATTACHMENTS} 个)`);
+          errors.push(t('inputArea.attach.tooManyFiles', { name: f.name, limit: MAX_ATTACHMENTS }));
           continue;
         }
         if (total + f.size > MAX_TOTAL_BYTES) {
-          errors.push(`${f.name} 导致总大小超限(${formatFileSize(MAX_TOTAL_BYTES)})`);
+          errors.push(t('inputArea.attach.totalTooLarge', { name: f.name, limit: formatFileSize(MAX_TOTAL_BYTES) }));
           continue;
         }
         accepted.push(f);
@@ -85,13 +87,18 @@ export const useAttachmentsInput = ({
         count += 1;
       }
       if (errors.length > 0) {
-        setAttachError(`部分文件未添加：${errors.join('；')}。限制：单文件≤${formatFileSize(MAX_FILE_BYTES)}，总计≤${formatFileSize(MAX_TOTAL_BYTES)}，最多 ${MAX_ATTACHMENTS} 个。`);
+        setAttachError(t('inputArea.attach.partialError', {
+          errors: errors.join('; '),
+          fileLimit: formatFileSize(MAX_FILE_BYTES),
+          totalLimit: formatFileSize(MAX_TOTAL_BYTES),
+          maxCount: MAX_ATTACHMENTS,
+        }));
       } else {
         setAttachError(null);
       }
       return accepted.length > 0 ? [...prev, ...accepted] : prev;
     });
-  }, [isFileTypeAllowed]);
+  }, [isFileTypeAllowed, t]);
 
   useEffect(() => {
     if (!allowAttachments || disabled) {

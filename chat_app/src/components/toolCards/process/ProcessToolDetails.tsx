@@ -2,7 +2,7 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
-import { RowsCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const PROCESS_TOOL_NAMES = new Set([
@@ -18,6 +18,7 @@ const PROCESS_TOOL_NAMES = new Set([
 ]);
 
 const LogListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, items }) => {
+  const { t } = useI18n();
   const logs = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -26,7 +27,7 @@ const LogListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, ite
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${logs.length} 条`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'logs', logs.length))}
       <div className="tool-detail-list">
         {logs.map((log, index) => (
           <div key={`${title}-${index}`} className="tool-detail-item">
@@ -44,6 +45,7 @@ const LogListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, ite
 };
 
 const TerminalListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, items }) => {
+  const { t } = useI18n();
   const terminals = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -52,7 +54,7 @@ const TerminalListCard: React.FC<{ title: string; items: unknown[] }> = ({ title
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${terminals.length} 个`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'terminals', terminals.length))}
       <div className="tool-detail-list">
         {terminals.map((terminal, index) => (
           <div key={`${title}-${index}`} className="tool-detail-item">

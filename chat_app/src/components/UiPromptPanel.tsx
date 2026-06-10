@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import type {
   UiPromptChoice,
   UiPromptField,
@@ -58,6 +59,7 @@ const normalizeMultiSelection = (choice?: UiPromptChoice): string[] => {
 };
 
 export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, onCancel }) => {
+  const { t } = useI18n();
   const fields = Array.isArray(panel.payload?.fields) ? panel.payload.fields : [];
   const choice = panel.payload?.choice;
   const [values, setValues] = useState<Record<string, string>>(() => buildInitialValues(fields));
@@ -133,13 +135,15 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
       >
         <div>
           <div className="text-sm font-semibold text-foreground">
-            {panel.title || '需要你的输入'}
+            {panel.title || t('uiPrompt.titleFallback')}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            {expanded ? '点击收起内容' : '内容默认折叠，点击展开'}
+            {expanded ? t('taskDraft.collapseHint') : t('taskDraft.expandHint')}
           </div>
         </div>
-        <span className="text-xs text-muted-foreground">{expanded ? '收起' : '展开'}</span>
+        <span className="text-xs text-muted-foreground">
+          {expanded ? t('taskDraft.collapse') : t('taskDraft.expand')}
+        </span>
       </button>
 
       {expanded ? (
@@ -187,7 +191,11 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
           {hasChoice ? (
             <div className="mt-3 rounded-lg border border-border bg-background/50 p-2">
               <div className="mb-2 text-xs font-medium text-muted-foreground">
-                请选择{isMultiple ? `（${minSelections}-${maxSelections}项）` : ''}
+                {t('uiPrompt.choose', {
+                  suffix: isMultiple
+                    ? t('uiPrompt.choiceRange', { min: minSelections, max: maxSelections })
+                    : '',
+                })}
               </div>
               <div className="custom-scrollbar max-h-72 space-y-1.5 overflow-y-scroll pr-1 [scrollbar-gutter:stable]">
                 {choice!.options.map((option) => {
@@ -241,7 +249,7 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
 
       {selectionInvalid ? (
         <div className="mt-2 text-xs text-destructive">
-          选择项数量不符合限制（最少 {minSelections}，最多 {maxSelections}）。
+          {t('uiPrompt.selectionInvalid', { min: minSelections, max: maxSelections })}
         </div>
       ) : null}
 
@@ -253,7 +261,7 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
             onClick={handleCancel}
             disabled={panel.submitting === true}
           >
-            取消
+            {t('common.cancel')}
           </button>
         ) : null}
         <button
@@ -262,7 +270,7 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
           onClick={handleSubmit}
           disabled={submitDisabled}
         >
-          {panel.submitting ? '提交中...' : '确认提交'}
+          {panel.submitting ? t('taskOutcome.submitting') : t('uiPrompt.submit')}
         </button>
       </div>
     </div>

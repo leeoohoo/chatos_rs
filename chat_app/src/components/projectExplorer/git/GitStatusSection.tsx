@@ -1,7 +1,8 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { GitStatusFile } from '../../../types';
-import { statusLabel, statusTitle } from './gitBranchButtonShared';
+import { getGitStatusLabel, getGitStatusTitle } from './gitBranchButtonShared';
 
 export const StatusSection: React.FC<{
   files: GitStatusFile[];
@@ -22,14 +23,15 @@ export const StatusSection: React.FC<{
   onUnstageFiles,
   onDiscardFiles,
 }) => {
+  const { t } = useI18n();
   const discardableFiles = files.filter((file) => !file.conflicted);
 
   return (
     <div className="mb-3">
       <div className="mb-1 flex items-center justify-between gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        <span>Working Tree</span>
+        <span>{t('git.workingTree')}</span>
         <div className="flex items-center gap-2">
-          <span>{files.length} files</span>
+          <span>{t('git.filesCount', { count: files.length })}</span>
           {discardableFiles.length > 1 && (
             <button
               type="button"
@@ -37,16 +39,16 @@ export const StatusSection: React.FC<{
               disabled={actionLoading}
               className="h-7 shrink-0 rounded border border-rose-300 px-2 text-[11px] font-normal normal-case text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              全部回滚
+              {t('git.discardAll')}
             </button>
           )}
         </div>
       </div>
       <div className="overflow-hidden rounded border border-border bg-background">
         {loading ? (
-          <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
+          <div className="px-3 py-2 text-xs text-muted-foreground">{t('git.loading')}</div>
         ) : files.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-muted-foreground">工作区干净</div>
+          <div className="px-3 py-2 text-xs text-muted-foreground">{t('git.clean')}</div>
         ) : files.map((file) => (
           <div
             key={`${file.path}:${file.staged ? 'staged' : 'worktree'}`}
@@ -54,9 +56,9 @@ export const StatusSection: React.FC<{
           >
             <span
               className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
-              title={statusTitle[file.status]}
+              title={getGitStatusTitle(file.status, t)}
             >
-              {statusLabel[file.status] || file.status}
+              {getGitStatusLabel(file.status, t)}
             </span>
             <span className="min-w-0 flex-1 truncate font-mono text-[11px]" title={file.path}>
               {file.path}
@@ -68,7 +70,7 @@ export const StatusSection: React.FC<{
                 disabled={loadingDiff}
                 className="h-7 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Staged Diff
+                {t('git.stagedDiff')}
               </button>
             )}
             {(file.unstaged || (!file.staged && file.status !== 'untracked')) && (
@@ -78,7 +80,7 @@ export const StatusSection: React.FC<{
                 disabled={loadingDiff}
                 className="h-7 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Worktree Diff
+                {t('git.worktreeDiff')}
               </button>
             )}
             {file.status === 'untracked' && (
@@ -88,7 +90,7 @@ export const StatusSection: React.FC<{
                 disabled={loadingDiff}
                 className="h-7 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Preview Diff
+                {t('git.previewDiff')}
               </button>
             )}
             {file.staged && (
@@ -98,7 +100,7 @@ export const StatusSection: React.FC<{
                 disabled={actionLoading || file.conflicted}
                 className="h-7 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Unstage
+                {t('git.unstage')}
               </button>
             )}
             {(!file.staged || file.unstaged || file.status === 'untracked') && (
@@ -108,7 +110,7 @@ export const StatusSection: React.FC<{
                 disabled={actionLoading || file.conflicted}
                 className="h-7 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Stage
+                {t('git.stage')}
               </button>
             )}
             {!file.conflicted && (
@@ -118,7 +120,7 @@ export const StatusSection: React.FC<{
                 disabled={actionLoading}
                 className="h-7 shrink-0 rounded border border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                回滚
+                {t('git.discard')}
               </button>
             )}
           </div>

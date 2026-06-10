@@ -1,6 +1,7 @@
 import React from 'react';
 
-import { renderCardHeader } from './primitives';
+import { useI18n } from '../../../i18n/I18nProvider';
+import { formatToolCardCount, renderCardHeader } from './primitives';
 import { asRecord, asString } from './value';
 
 interface ResultCardProps {
@@ -12,6 +13,7 @@ export const SearchResultsBriefCard: React.FC<ResultCardProps> = ({
   title,
   items,
 }) => {
+  const { t } = useI18n();
   const cards = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null)
@@ -45,7 +47,7 @@ export const SearchResultsBriefCard: React.FC<ResultCardProps> = ({
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${cards.length} 条`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'cards', cards.length))}
       <div className="tool-detail-list">{cards}</div>
     </div>
   );
@@ -55,6 +57,7 @@ export const ExtractResultsBriefCard: React.FC<ResultCardProps> = ({
   title,
   items,
 }) => {
+  const { t } = useI18n();
   const cards = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null)
@@ -93,9 +96,8 @@ export const ExtractResultsBriefCard: React.FC<ResultCardProps> = ({
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${cards.length} 条`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'cards', cards.length))}
       <div className="tool-detail-list">{cards}</div>
     </div>
   );
 };
-

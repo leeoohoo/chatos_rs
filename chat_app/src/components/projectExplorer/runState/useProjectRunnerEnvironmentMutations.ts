@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type ApiClient from '../../../lib/api/client';
 import { normalizeProjectRunEnvironment } from '../../../lib/domain/projectExplorer';
 import type {
@@ -41,6 +42,8 @@ export const useProjectRunnerEnvironmentMutations = ({
   setEnvVarsDraft,
   loadRunEnvironment,
 }: UseProjectRunnerEnvironmentMutationsOptions) => {
+  const { t } = useI18n();
+
   const persistEnvironment = useCallback(async (
     nextSelectedToolchains: Record<string, string>,
     nextCustomToolchains: Record<string, ProjectRunCustomToolchain>,
@@ -87,7 +90,7 @@ export const useProjectRunnerEnvironmentMutations = ({
         runEnvironment?.envVars || {},
       );
     } catch (error) {
-      setRunEnvironmentError(error instanceof Error ? error.message : '更新运行环境失败');
+      setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.updateEnvironmentFailed'));
       await loadRunEnvironment();
     }
   }, [
@@ -100,6 +103,7 @@ export const useProjectRunnerEnvironmentMutations = ({
     runEnvironment?.selectedToolchains,
     setRunEnvironment,
     setRunEnvironmentError,
+    t,
   ]);
 
   const saveCustomToolchain = useCallback(async (kind: string) => {
@@ -124,7 +128,7 @@ export const useProjectRunnerEnvironmentMutations = ({
         runEnvironment?.envVars || {},
       );
     } catch (error) {
-      setRunEnvironmentError(error instanceof Error ? error.message : '保存自定义工具链失败');
+      setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.saveCustomToolchainFailed'));
       await loadRunEnvironment();
     }
   }, [
@@ -136,6 +140,7 @@ export const useProjectRunnerEnvironmentMutations = ({
     runEnvironment,
     setRunEnvironment,
     setRunEnvironmentError,
+    t,
   ]);
 
   const saveEnvVarsDraft = useCallback(async () => {
@@ -156,7 +161,7 @@ export const useProjectRunnerEnvironmentMutations = ({
         nextEnvState.nextEnvVars,
       );
     } catch (error) {
-      setRunEnvironmentError(error instanceof Error ? error.message : '保存环境变量失败');
+      setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.saveEnvVarsFailed'));
       await loadRunEnvironment();
     }
   }, [
@@ -168,6 +173,7 @@ export const useProjectRunnerEnvironmentMutations = ({
     runEnvironment,
     setRunEnvironment,
     setRunEnvironmentError,
+    t,
   ]);
 
   return {

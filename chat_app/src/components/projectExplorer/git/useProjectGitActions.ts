@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { GitActionResponse } from '../../../lib/api/client/types';
 import type { GitBranchInfo } from '../../../types';
 import type { ProjectGitApiClient } from './projectGitTypes';
@@ -37,40 +38,42 @@ export const useProjectGitActions = ({
   runAction,
   setError,
 }: UseProjectGitActionsParams) => {
+  const { t } = useI18n();
+
   const fetchRemote = useCallback(async () => {
     if (!projectRoot) return;
     await runAction(
       () => client.fetchGit({ root: projectRoot, remote: 'origin' }),
-      'Fetch 完成',
+      t('git.action.fetchDone'),
     );
-  }, [client, projectRoot, runAction]);
+  }, [client, projectRoot, runAction, t]);
 
   const pullCurrent = useCallback(async () => {
     if (!projectRoot) return;
     await runAction(
       () => client.pullGit({ root: projectRoot, mode: 'ff-only' }),
-      'Pull 完成',
+      t('git.action.pullDone'),
       true,
     );
-  }, [client, projectRoot, runAction]);
+  }, [client, projectRoot, runAction, t]);
 
   const pushCurrent = useCallback(async () => {
     if (!projectRoot) return;
     await runAction(
       () => client.pushGit({ root: projectRoot }),
-      'Push 完成',
+      t('git.action.pushDone'),
     );
-  }, [client, projectRoot, runAction]);
+  }, [client, projectRoot, runAction, t]);
 
   const checkoutBranch = useCallback(async (branch: GitBranchInfo) => {
     if (!projectRoot) return;
     if (branch.current) return;
     if (summary?.dirty) {
       const confirmed = await confirm({
-        title: '切换分支',
-        message: '当前工作区有未提交改动，切换分支可能失败或影响改动。是否继续？',
-        confirmText: '继续切换',
-        cancelText: '取消',
+        title: t('git.action.checkoutTitle'),
+        message: t('git.action.checkoutDirtyMessage'),
+        confirmText: t('git.action.checkoutConfirm'),
+        cancelText: t('common.cancel'),
         type: 'warning',
       });
       if (!confirmed) return;
@@ -83,10 +86,10 @@ export const useProjectGitActions = ({
         remoteBranch: isRemote ? branch.name : undefined,
         createTracking: isRemote && !branch.trackedBy,
       }),
-      `已切换到 ${branch.shortName || branch.name}`,
+      t('git.action.checkoutDone', { branch: branch.shortName || branch.name }),
       true,
     );
-  }, [client, confirm, projectRoot, runAction, summary?.dirty]);
+  }, [client, confirm, projectRoot, runAction, summary?.dirty, t]);
 
   const mergeBranch = useCallback(async (branch: GitBranchInfo) => {
     if (!projectRoot) return;
@@ -94,29 +97,33 @@ export const useProjectGitActions = ({
     const target = branch.name.trim();
     if (!target) return;
     if (summary?.operationState) {
-      setError(`当前处于 ${summary.operationState} 状态，请先处理完再 Merge`);
+      setError(t('git.action.mergeBlockedOperation', { state: summary.operationState }));
       return;
     }
     if (summary?.detached) {
-      setError('当前是 detached HEAD，无法从界面执行 Merge');
+      setError(t('git.action.mergeDetached'));
       return;
     }
     const current = summary?.currentBranch || 'HEAD';
     const targetLabel = branch.shortName || branch.name;
     const dirtyWarning = summary?.dirty
-      ? '\n\n当前工作区有未提交改动，Merge 可能失败或产生冲突。建议先提交或暂存。是否继续？'
+      ? t('git.action.mergeDirtyWarning')
       : '';
     const confirmed = await confirm({
-      title: '合并分支',
-      message: `确认将 ${targetLabel} 合并到当前分支 ${current} 吗？${dirtyWarning}`,
-      confirmText: '确认合并',
-      cancelText: '取消',
+      title: t('git.action.mergeTitle'),
+      message: t('git.action.mergeMessage', {
+        target: targetLabel,
+        current,
+        dirtyWarning,
+      }),
+      confirmText: t('git.action.mergeConfirm'),
+      cancelText: t('common.cancel'),
       type: 'warning',
     });
     if (!confirmed) return;
     await runAction(
       () => client.mergeGit({ root: projectRoot, branch: target, mode: 'default' }),
-      `已将 ${targetLabel} 合并到 ${current}`,
+      t('git.action.mergeDone', { target: targetLabel, current }),
       true,
     );
   }, [
@@ -129,13 +136,14 @@ export const useProjectGitActions = ({
     summary?.detached,
     summary?.dirty,
     summary?.operationState,
+    t,
   ]);
 
   const createBranch = useCallback(async (name: string, startPoint?: string) => {
     if (!projectRoot) return;
     const trimmed = name.trim();
     if (!trimmed) {
-      setError('分支名不能为空');
+      setError(t('git.action.branchNameRequired'));
       return;
     }
     await runAction(
@@ -145,52 +153,52 @@ export const useProjectGitActions = ({
         startPoint,
         checkout: true,
       }),
-      `已创建并切换到 ${trimmed}`,
+      t('git.action.createBranchDone', { branch: trimmed }),
       true,
     );
-  }, [client, projectRoot, runAction, setError]);
+  }, [client, projectRoot, runAction, setError, t]);
 
   const stageFiles = useCallback(async (paths: string[]) => {
     if (!projectRoot) return;
     const validPaths = normalizeNonEmptyPaths(paths);
     if (validPaths.length === 0) {
-      setError('请选择要 Stage 的文件');
+      setError(t('git.action.selectStageFiles'));
       return;
     }
     await runAction(
       () => client.stageGitPaths({ root: projectRoot, paths: validPaths }),
-      'Stage 完成',
+      t('git.action.stageDone'),
     );
-  }, [client, projectRoot, runAction, setError]);
+  }, [client, projectRoot, runAction, setError, t]);
 
   const unstageFiles = useCallback(async (paths: string[]) => {
     if (!projectRoot) return;
     const validPaths = normalizeNonEmptyPaths(paths);
     if (validPaths.length === 0) {
-      setError('请选择要 Unstage 的文件');
+      setError(t('git.action.selectUnstageFiles'));
       return;
     }
     await runAction(
       () => client.unstageGitPaths({ root: projectRoot, paths: validPaths }),
-      'Unstage 完成',
+      t('git.action.unstageDone'),
     );
-  }, [client, projectRoot, runAction, setError]);
+  }, [client, projectRoot, runAction, setError, t]);
 
   const discardFiles = useCallback(async (paths: string[]) => {
     if (!projectRoot) return;
     const validPaths = normalizeNonEmptyPaths(paths);
     if (validPaths.length === 0) {
-      setError('请选择要回滚的文件');
+      setError(t('git.action.selectDiscardFiles'));
       return;
     }
     const targetLabel = validPaths.length === 1
       ? validPaths[0]
-      : `${validPaths.length} 个文件`;
+      : t('git.action.fileCount', { count: validPaths.length });
     const confirmed = await confirm({
-      title: '取消变更',
-      message: `确认回滚 ${targetLabel} 的变更吗？\n\n已跟踪文件会恢复到 HEAD；未跟踪文件会被删除。该操作不可撤销。`,
-      confirmText: '确认回滚',
-      cancelText: '取消',
+      title: t('git.action.discardTitle'),
+      message: t('git.action.discardMessage', { target: targetLabel }),
+      confirmText: t('git.action.discardConfirm'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -198,41 +206,41 @@ export const useProjectGitActions = ({
     }
     await runAction(
       () => client.discardGitPaths({ root: projectRoot, paths: validPaths }),
-      '回滚完成',
+      t('git.action.discardDone'),
     );
-  }, [client, confirm, projectRoot, runAction, setError]);
+  }, [client, confirm, projectRoot, runAction, setError, t]);
 
   const commitStaged = useCallback(async (message: string) => {
     if (!projectRoot) return false;
     const trimmed = message.trim();
     if (!trimmed) {
-      setError('Commit message 不能为空');
+      setError(t('git.action.commitMessageRequired'));
       return false;
     }
     return runAction(
       () => client.commitGit({ root: projectRoot, message: trimmed }),
-      'Commit staged 完成',
+      t('git.action.commitStagedDone'),
       true,
     );
-  }, [client, projectRoot, runAction, setError]);
+  }, [client, projectRoot, runAction, setError, t]);
 
   const commitSelected = useCallback(async (message: string, paths: string[]) => {
     if (!projectRoot) return false;
     const trimmed = message.trim();
     if (!trimmed) {
-      setError('Commit message 不能为空');
+      setError(t('git.action.commitMessageRequired'));
       return false;
     }
     if (paths.length === 0) {
-      setError('请至少选择一个文件');
+      setError(t('git.action.selectCommitFiles'));
       return false;
     }
     return runAction(
       () => client.commitGit({ root: projectRoot, message: trimmed, paths }),
-      'Commit 完成',
+      t('git.action.commitDone'),
       true,
     );
-  }, [client, projectRoot, runAction, setError]);
+  }, [client, projectRoot, runAction, setError, t]);
 
   return {
     fetchRemote,

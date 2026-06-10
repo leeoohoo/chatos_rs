@@ -24,6 +24,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
+import { useI18n, type TranslateFn } from '../i18n/I18nProvider';
 import type {
   CreateRemoteServerPayload,
   RemoteServerAuthType,
@@ -47,11 +48,11 @@ type RemoteServerFormValues = {
   enabled: boolean;
 };
 
-const AUTH_TYPE_OPTIONS = [
-  { label: '密码', value: 'password' },
-  { label: '私钥', value: 'private_key' },
-  { label: '私钥 + 证书', value: 'private_key_cert' },
-] as const;
+const authTypeLabelKeys: Record<RemoteServerAuthType, string> = {
+  password: 'servers.auth.password',
+  private_key: 'servers.auth.privateKey',
+  private_key_cert: 'servers.auth.privateKeyCert',
+};
 
 const HOST_KEY_POLICY_OPTIONS = [
   { label: 'accept_new', value: 'accept_new' },
@@ -59,6 +60,7 @@ const HOST_KEY_POLICY_OPTIONS = [
 ] as const;
 
 export function ServersPage() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [messageApi, contextHolder] = message.useMessage();
@@ -72,6 +74,33 @@ export function ServersPage() {
   const [form] = Form.useForm<RemoteServerFormValues>();
   const routeServerId = searchParams.get('server_id') || undefined;
   const authType = Form.useWatch('auth_type', form) || 'password';
+  const authTypeOptions = useMemo(
+    () => (Object.keys(authTypeLabelKeys) as RemoteServerAuthType[]).map((value) => ({
+      label: t(authTypeLabelKeys[value]),
+      value,
+    })),
+    [t],
+  );
+  const authTypeFilterOptions = useMemo(
+    () => [
+      { label: t('servers.auth.all'), value: 'all' },
+      ...authTypeOptions,
+    ],
+    [authTypeOptions, t],
+  );
+  const enabledFilterOptions = useMemo(
+    () => [
+      { label: t('servers.filter.all'), value: 'all' },
+      { label: t('servers.filter.enabled'), value: 'enabled' },
+      { label: t('servers.filter.disabled'), value: 'disabled' },
+    ],
+    [t],
+  );
+  const getAuthTypeLabel = (value: string) => (
+    value in authTypeLabelKeys
+      ? t(authTypeLabelKeys[value as RemoteServerAuthType])
+      : value
+  );
 
   const serversQuery = useQuery({
     queryKey: ['remote-servers'],
@@ -90,7 +119,7 @@ export function ServersPage() {
         queryClient.invalidateQueries({ queryKey: ['remote-servers'] }),
         queryClient.invalidateQueries({ queryKey: ['mcp-catalog'] }),
       ]);
-      messageApi.success('服务器已创建');
+      messageApi.success(t('servers.created'));
       closeEditor();
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -110,7 +139,7 @@ export function ServersPage() {
         queryClient.invalidateQueries({ queryKey: ['remote-server'] }),
         queryClient.invalidateQueries({ queryKey: ['mcp-catalog'] }),
       ]);
-      messageApi.success('服务器已更新');
+      messageApi.success(t('servers.updated'));
       closeEditor();
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -127,7 +156,7 @@ export function ServersPage() {
       if (routeServerId === id) {
         closeDetailDrawer();
       }
-      messageApi.success('服务器已删除');
+      messageApi.success(t('servers.deleted'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -138,9 +167,9 @@ export function ServersPage() {
       setTestResult(result);
       await queryClient.invalidateQueries({ queryKey: ['remote-servers'] });
       if (result.ok) {
-        messageApi.success('草稿连通性测试成功');
+        messageApi.success(t('servers.draftTestSuccess'));
       } else {
-        messageApi.warning('草稿连通性测试失败');
+        messageApi.warning(t('servers.draftTestFailed'));
       }
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -158,9 +187,9 @@ export function ServersPage() {
         queryClient.invalidateQueries({ queryKey: ['remote-server'] }),
       ]);
       if (result.ok) {
-        messageApi.success('服务器连通性测试成功');
+        messageApi.success(t('servers.testSuccess'));
       } else {
-        messageApi.warning('服务器连通性测试失败');
+        messageApi.warning(t('servers.testFailed'));
       }
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -210,7 +239,7 @@ export function ServersPage() {
 
   const columns: ColumnsType<RemoteServerRecord> = [
     {
-      title: '服务器',
+      title: t('servers.column.server'),
       dataIndex: 'name',
       width: 260,
       render: (_, record) => (
@@ -225,20 +254,20 @@ export function ServersPage() {
       ),
     },
     {
-      title: '认证方式',
+      title: t('servers.column.authType'),
       dataIndex: 'auth_type',
       width: 140,
-      render: (value: string) => authTypeLabel(value),
+      render: (value: string) => getAuthTypeLabel(value),
     },
     {
-      title: '默认目录',
+      title: t('servers.column.defaultDir'),
       dataIndex: 'default_remote_path',
       width: 220,
       render: (value?: string | null) => value || '-',
       ellipsis: true,
     },
     {
-      title: '主机校验',
+      title: t('servers.column.hostKeyPolicy'),
       dataIndex: 'host_key_policy',
       width: 120,
       render: (value: string) => (
@@ -246,55 +275,57 @@ export function ServersPage() {
       ),
     },
     {
-      title: '最近测试',
+      title: t('servers.column.lastTest'),
       key: 'last_test',
       width: 240,
       render: (_, record) => (
         <Space direction="vertical" size={0}>
-          {renderTestStatus(record.last_test_status)}
+          {renderTestStatus(record.last_test_status, t)}
           <Typography.Text type="secondary">
             {record.last_tested_at
               ? dayjs(record.last_tested_at).format('YYYY-MM-DD HH:mm:ss')
-              : '未测试'}
+              : t('servers.untested')}
           </Typography.Text>
         </Space>
       ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'enabled',
       width: 120,
       render: (value: boolean) => (
-        <Tag color={value ? 'success' : 'default'}>{value ? 'enabled' : 'disabled'}</Tag>
+        <Tag color={value ? 'success' : 'default'}>
+          {value ? t('common.enabled') : t('common.disabled')}
+        </Tag>
       ),
     },
     {
-      title: '更新时间',
+      title: t('common.updatedAt'),
       dataIndex: 'updated_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 300,
       render: (_, record) => (
         <Space>
           <Button size="small" onClick={() => openDetailDrawer(record.id)}>
-            详情
+            {t('common.detail')}
           </Button>
           <Button size="small" onClick={() => openEditDrawer(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
           <Button
             size="small"
             loading={testSavedMutation.isPending && testingServerId === record.id}
             onClick={() => testSavedMutation.mutate(record.id)}
           >
-            测试
+            {t('common.test')}
           </Button>
           <Button size="small" danger onClick={() => confirmDelete(record)}>
-            删除
+            {t('common.delete')}
           </Button>
         </Space>
       ),
@@ -357,8 +388,8 @@ export function ServersPage() {
 
   function confirmDelete(server: RemoteServerRecord) {
     Modal.confirm({
-      title: `删除服务器: ${server.name}`,
-      content: '删除后，共享的 RemoteConnectionController 将不再能访问这台服务器。',
+      title: t('servers.deleteConfirmTitle', { name: server.name }),
+      content: t('servers.deleteConfirmContent'),
       okButtonProps: { danger: true },
       onOk: () => deleteServerMutation.mutate(server.id),
     });
@@ -386,16 +417,16 @@ export function ServersPage() {
         <Space style={{ justifyContent: 'space-between', width: '100%' }} align="start">
           <Space direction="vertical" size={0}>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              服务器
+              {t('servers.title')}
             </Typography.Title>
             <Typography.Text type="secondary">
-              维护 Task Runner 可复用的远程服务器清单，供共享 RemoteConnectionController builtin MCP 调用。
+              {t('servers.subtitle')}
             </Typography.Text>
           </Space>
           <Space wrap>
             <Input
               allowClear
-              placeholder="搜索名称 / Host / 用户 / 路径"
+              placeholder={t('servers.searchPlaceholder')}
               style={{ width: 260 }}
               value={keywordFilter}
               onChange={(event) => setKeywordFilter(event.target.value)}
@@ -403,10 +434,7 @@ export function ServersPage() {
             <Select
               style={{ width: 180 }}
               value={authTypeFilter}
-              options={[
-                { label: '全部认证方式', value: 'all' },
-                ...AUTH_TYPE_OPTIONS,
-              ]}
+              options={authTypeFilterOptions}
               onChange={(value) => setAuthTypeFilter(value as 'all' | RemoteServerAuthType)}
             />
             <Segmented
@@ -414,11 +442,7 @@ export function ServersPage() {
               onChange={(value) =>
                 setEnabledFilter(value as 'all' | 'enabled' | 'disabled')
               }
-              options={[
-                { label: '全部', value: 'all' },
-                { label: '启用中', value: 'enabled' },
-                { label: '已停用', value: 'disabled' },
-              ]}
+              options={enabledFilterOptions}
             />
             <Button
               onClick={() => {
@@ -427,29 +451,29 @@ export function ServersPage() {
                 setEnabledFilter('all');
               }}
             >
-              清空筛选
+              {t('common.clearFilters')}
             </Button>
-            <Button onClick={() => serversQuery.refetch()}>刷新</Button>
+            <Button onClick={() => serversQuery.refetch()}>{t('common.refresh')}</Button>
             <Button type="primary" onClick={openCreateDrawer}>
-              新建服务器
+              {t('servers.new')}
             </Button>
           </Space>
         </Space>
 
         <Space size="large" wrap>
-          <Statistic title="当前可见服务器" value={filteredServers.length} />
+          <Statistic title={t('servers.visible')} value={filteredServers.length} />
           <Statistic
-            title="启用中"
+            title={t('servers.enabledCount')}
             value={filteredServers.filter((server) => server.enabled).length}
           />
           <Statistic
-            title="测试成功"
+            title={t('servers.testPassed')}
             value={
               filteredServers.filter((server) => server.last_test_status === 'success').length
             }
           />
           <Statistic
-            title="严格校验"
+            title={t('servers.strictCheck')}
             value={filteredServers.filter((server) => server.host_key_policy === 'strict').length}
           />
         </Space>
@@ -465,7 +489,7 @@ export function ServersPage() {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无远程服务器，请先创建服务器配置"
+                description={t('servers.empty')}
               />
             ),
           }}
@@ -473,50 +497,64 @@ export function ServersPage() {
       </Space>
 
       <Drawer
-        title={editingServer ? '编辑服务器' : '新建服务器'}
+        title={editingServer ? t('servers.drawer.edit') : t('servers.drawer.create')}
         open={drawerOpen}
         width={560}
         destroyOnClose
         onClose={closeEditor}
         extra={
           <Space>
-            <Button onClick={closeEditor}>取消</Button>
+            <Button onClick={closeEditor}>{t('common.cancel')}</Button>
             <Button loading={testDraftMutation.isPending} onClick={handleDraftTest}>
-              测试草稿
+              {t('servers.testDraft')}
             </Button>
             <Button
               type="primary"
               loading={createServerMutation.isPending || updateServerMutation.isPending}
               onClick={() => form.submit()}
             >
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
       >
         <Form<RemoteServerFormValues> layout="vertical" form={form} onFinish={handleSubmit}>
-          <Form.Item name="name" label="服务器名称" rules={[{ required: true, message: '请输入服务器名称' }]}>
+          <Form.Item
+            name="name"
+            label={t('servers.form.name')}
+            rules={[{ required: true, message: t('servers.form.nameRequired') }]}
+          >
             <Input />
           </Form.Item>
           <Space size="middle" style={{ width: '100%' }} align="start">
-            <Form.Item name="host" label="Host" style={{ flex: 1 }} rules={[{ required: true, message: '请输入主机地址' }]}>
-              <Input placeholder="127.0.0.1 或 server.example.com" />
+            <Form.Item
+              name="host"
+              label="Host"
+              style={{ flex: 1 }}
+              rules={[{ required: true, message: t('servers.form.hostRequired') }]}
+            >
+              <Input placeholder={t('servers.form.hostPlaceholder')} />
             </Form.Item>
             <Form.Item name="port" label="Port" style={{ width: 140 }}>
               <InputNumber min={1} max={65535} style={{ width: '100%' }} />
             </Form.Item>
           </Space>
           <Space size="middle" style={{ width: '100%' }} align="start">
-            <Form.Item name="username" label="Username" style={{ flex: 1 }} rules={[{ required: true, message: '请输入用户名' }]}>
+            <Form.Item
+              name="username"
+              label="Username"
+              style={{ flex: 1 }}
+              rules={[{ required: true, message: t('servers.form.usernameRequired') }]}
+            >
               <Input />
             </Form.Item>
-            <Form.Item name="auth_type" label="认证方式" style={{ width: 220 }} rules={[{ required: true }]}>
-              <Select options={AUTH_TYPE_OPTIONS as unknown as { label: string; value: string }[]} />
+            <Form.Item name="auth_type" label={t('servers.form.authType')} style={{ width: 220 }} rules={[{ required: true }]}>
+              <Select options={authTypeOptions} />
             </Form.Item>
           </Space>
 
           {authType === 'password' ? (
-            <Form.Item name="password" label="Password" rules={[{ required: true, message: '请输入密码' }]}>
+            <Form.Item name="password" label="Password" rules={[{ required: true, message: t('servers.form.passwordRequired') }]}>
               <Input.Password />
             </Form.Item>
           ) : null}
@@ -525,7 +563,7 @@ export function ServersPage() {
             <Form.Item
               name="private_key_path"
               label="Private Key Path"
-              rules={[{ required: true, message: '请输入私钥路径' }]}
+              rules={[{ required: true, message: t('servers.form.privateKeyRequired') }]}
             >
               <Input placeholder="~/.ssh/id_rsa" />
             </Form.Item>
@@ -535,13 +573,13 @@ export function ServersPage() {
             <Form.Item
               name="certificate_path"
               label="Certificate Path"
-              rules={[{ required: true, message: '请输入证书路径' }]}
+              rules={[{ required: true, message: t('servers.form.certificateRequired') }]}
             >
               <Input placeholder="~/.ssh/id_rsa-cert.pub" />
             </Form.Item>
           ) : null}
 
-          <Form.Item name="default_remote_path" label="默认远程目录">
+          <Form.Item name="default_remote_path" label={t('servers.form.defaultRemotePath')}>
             <Input placeholder="/srv/app" />
           </Form.Item>
 
@@ -566,7 +604,9 @@ export function ServersPage() {
       </Drawer>
 
       <Drawer
-        title={selectedServer ? `服务器详情 - ${selectedServer.name}` : '服务器详情'}
+        title={selectedServer
+          ? t('servers.detail.titleWithName', { name: selectedServer.name })
+          : t('servers.detail.title')}
         open={Boolean(routeServerId)}
         width={760}
         onClose={closeDetailDrawer}
@@ -578,7 +618,7 @@ export function ServersPage() {
                 loading={testSavedMutation.isPending && testingServerId === selectedServer.id}
                 onClick={() => testSavedMutation.mutate(selectedServer.id)}
               >
-                测试连通性
+                {t('servers.detail.testConnection')}
               </Button>
               <Button
                 onClick={() => {
@@ -586,26 +626,26 @@ export function ServersPage() {
                   openEditDrawer(selectedServer);
                 }}
               >
-                编辑配置
+                {t('servers.detail.editConfig')}
               </Button>
               <Button danger onClick={() => confirmDelete(selectedServer)}>
-                删除服务器
+                {t('servers.detail.deleteServer')}
               </Button>
             </Space>
 
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="服务器 ID">{selectedServer.id}</Descriptions.Item>
-              <Descriptions.Item label="名称">{selectedServer.name}</Descriptions.Item>
+              <Descriptions.Item label={t('servers.detail.serverId')}>{selectedServer.id}</Descriptions.Item>
+              <Descriptions.Item label={t('servers.detail.name')}>{selectedServer.name}</Descriptions.Item>
               <Descriptions.Item label="Host">
                 {selectedServer.host}:{selectedServer.port}
               </Descriptions.Item>
               <Descriptions.Item label="Username">{selectedServer.username}</Descriptions.Item>
-              <Descriptions.Item label="认证方式">
-                {authTypeLabel(selectedServer.auth_type)}
+              <Descriptions.Item label={t('servers.column.authType')}>
+                {getAuthTypeLabel(selectedServer.auth_type)}
               </Descriptions.Item>
-              <Descriptions.Item label="状态">
+              <Descriptions.Item label={t('common.status')}>
                 <Tag color={selectedServer.enabled ? 'success' : 'default'}>
-                  {selectedServer.enabled ? 'enabled' : 'disabled'}
+                  {selectedServer.enabled ? t('common.enabled') : t('common.disabled')}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Host Key Policy">
@@ -613,11 +653,11 @@ export function ServersPage() {
                   {selectedServer.host_key_policy}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="默认远程目录">
+              <Descriptions.Item label={t('servers.form.defaultRemotePath')}>
                 {selectedServer.default_remote_path || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="Password">
-                {selectedServer.password ? '已保存' : '-'}
+                {selectedServer.password ? t('servers.detail.passwordSaved') : '-'}
               </Descriptions.Item>
               <Descriptions.Item label="Private Key Path">
                 {selectedServer.private_key_path || '-'}
@@ -625,32 +665,32 @@ export function ServersPage() {
               <Descriptions.Item label="Certificate Path">
                 {selectedServer.certificate_path || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="最近测试状态">
-                {renderTestStatus(selectedServer.last_test_status)}
+              <Descriptions.Item label={t('servers.detail.lastTestStatus')}>
+                {renderTestStatus(selectedServer.last_test_status, t)}
               </Descriptions.Item>
-              <Descriptions.Item label="最近测试时间">
+              <Descriptions.Item label={t('servers.detail.lastTestedAt')}>
                 {selectedServer.last_tested_at
                   ? dayjs(selectedServer.last_tested_at).format('YYYY-MM-DD HH:mm:ss')
                   : '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="最近测试信息">
+              <Descriptions.Item label={t('servers.detail.lastTestMessage')}>
                 {selectedServer.last_test_message || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="最近使用时间">
+              <Descriptions.Item label={t('servers.detail.lastActiveAt')}>
                 {selectedServer.last_active_at
                   ? dayjs(selectedServer.last_active_at).format('YYYY-MM-DD HH:mm:ss')
                   : '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="创建时间">
+              <Descriptions.Item label={t('servers.detail.createdAt')}>
                 {dayjs(selectedServer.created_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
-              <Descriptions.Item label="更新时间">
+              <Descriptions.Item label={t('common.updatedAt')}>
                 {dayjs(selectedServer.updated_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
             </Descriptions>
 
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              保存后，Task Runner 侧共享的 RemoteConnectionController builtin MCP 会直接复用这里的服务器列表。
+              {t('servers.detail.hint')}
             </Typography.Paragraph>
           </Space>
         ) : selectedServerQuery.isLoading ? null : (
@@ -659,36 +699,36 @@ export function ServersPage() {
       </Drawer>
 
       <Modal
-        title="服务器测试结果"
+        title={t('servers.testResult.title')}
         open={Boolean(testResult)}
         width={680}
         footer={[
           <Button key="close" onClick={() => setTestResult(null)}>
-            关闭
+            {t('common.close')}
           </Button>,
         ]}
         onCancel={() => setTestResult(null)}
       >
         {testResult ? (
           <Descriptions bordered column={1} size="small">
-            <Descriptions.Item label="结果">
+            <Descriptions.Item label={t('servers.testResult.result')}>
               <Tag color={testResult.ok ? 'success' : 'error'}>
-                {testResult.ok ? 'success' : 'failed'}
+                {testResult.ok ? t('common.success') : t('common.failed')}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="服务器">
+            <Descriptions.Item label={t('servers.column.server')}>
               {testResult.name} ({testResult.username}@{testResult.host}:{testResult.port})
             </Descriptions.Item>
-            <Descriptions.Item label="认证方式">
-              {authTypeLabel(testResult.auth_type)}
+            <Descriptions.Item label={t('servers.column.authType')}>
+              {getAuthTypeLabel(testResult.auth_type)}
             </Descriptions.Item>
-            <Descriptions.Item label="远端主机名">
+            <Descriptions.Item label={t('servers.testResult.remoteHost')}>
               {testResult.remote_host || '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="错误信息">
+            <Descriptions.Item label={t('servers.testResult.error')}>
               {testResult.error || '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="测试时间">
+            <Descriptions.Item label={t('servers.testResult.testedAt')}>
               {dayjs(testResult.tested_at).format('YYYY-MM-DD HH:mm:ss')}
             </Descriptions.Item>
           </Descriptions>
@@ -756,16 +796,12 @@ function normalizeHostKeyPolicy(value: string): 'accept_new' | 'strict' {
   return value === 'strict' ? 'strict' : 'accept_new';
 }
 
-function authTypeLabel(value: string): string {
-  return AUTH_TYPE_OPTIONS.find((item) => item.value === value)?.label || value;
-}
-
-function renderTestStatus(value?: string | null) {
+function renderTestStatus(value: string | null | undefined, t: TranslateFn) {
   if (value === 'success') {
-    return <Tag color="success">success</Tag>;
+    return <Tag color="success">{t('common.success')}</Tag>;
   }
   if (value === 'failed') {
-    return <Tag color="error">failed</Tag>;
+    return <Tag color="error">{t('common.failed')}</Tag>;
   }
-  return <Tag>untested</Tag>;
+  return <Tag>{t('servers.untested')}</Tag>;
 }

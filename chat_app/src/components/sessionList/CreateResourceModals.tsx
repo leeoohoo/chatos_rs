@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
 import { deriveNameFromPath } from './helpers';
 
@@ -7,6 +8,7 @@ interface CreateResourceModalProps {
   isOpen: boolean;
   title: string;
   pathLabel: string;
+  previewLabel: string;
   pathValue: string;
   error: string | null;
   fallbackName: string;
@@ -20,6 +22,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   isOpen,
   title,
   pathLabel,
+  previewLabel,
   pathValue,
   error,
   fallbackName,
@@ -28,6 +31,8 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   onOpenPicker,
   onSubmit,
 }) => {
+  const { t } = useI18n();
+
   return (
     <ManagerFormDialog
       open={isOpen}
@@ -50,7 +55,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
                 value={pathValue}
                 onChange={(e) => onPathChange(e.target.value)}
                 className="flex-1 rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="选择或输入本地目录路径"
+                placeholder={t('sessionList.resource.pathPlaceholder')}
                 autoFocus
               />
               <button
@@ -58,13 +63,13 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
                 onClick={onOpenPicker}
                 className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
               >
-                选择目录
+                {t('sessionList.resource.chooseDirectory')}
               </button>
             </div>
           </div>
           {pathValue.trim() ? (
             <div className="text-xs text-muted-foreground">
-              {title.includes('项目') ? '项目名称将默认使用：' : '终端名称将默认使用：'}
+              {previewLabel}
               <span className="text-foreground">{deriveNameFromPath(pathValue, fallbackName)}</span>
             </div>
           ) : null}
@@ -78,13 +83,13 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
             onClick={onClose}
             className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
             className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
           >
-            创建
+            {t('common.create')}
           </button>
         </div>
       </form>
@@ -111,11 +116,14 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onOpenPicker,
   onCreate,
 }) => {
+  const { t } = useI18n();
+
   return (
     <CreateResourceModal
       isOpen={isOpen}
-      title="新增项目"
-      pathLabel="项目目录"
+      title={t('sessionList.resource.projectTitle')}
+      pathLabel={t('sessionList.resource.projectDirectory')}
+      previewLabel={t('sessionList.resource.projectDefaultName')}
       pathValue={projectRoot}
       error={projectError}
       fallbackName="Project"
@@ -146,11 +154,14 @@ export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
   onOpenPicker,
   onCreate,
 }) => {
+  const { t } = useI18n();
+
   return (
     <CreateResourceModal
       isOpen={isOpen}
-      title="新增终端"
-      pathLabel="终端目录"
+      title={t('sessionList.resource.terminalTitle')}
+      pathLabel={t('sessionList.resource.terminalDirectory')}
+      previewLabel={t('sessionList.resource.terminalDefaultName')}
       pathValue={terminalRoot}
       error={terminalError}
       fallbackName="Terminal"

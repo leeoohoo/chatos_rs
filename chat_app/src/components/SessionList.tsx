@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../i18n/I18nProvider';
 import type { ChatStore as SessionListStoreHook } from '../lib/store/createChatStoreWithBackend';
 import { cn } from '../lib/utils';
 import { SessionListDialogs } from './sessionList/SessionListDialogs';
@@ -40,6 +41,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     activeSummarySessionId,
     activeRuntimeContextSessionId,
   } = props;
+  const { t, locale } = useI18n();
   const isCollapsed = collapsed ?? !isOpen;
   const controller = useSessionListController({
     store,
@@ -48,6 +50,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     onOpenSessionRuntimeContext,
     isCollapsed,
   });
+  const formatTimeAgoForLocale = React.useCallback(
+    (date: string | Date | undefined | null) => formatTimeAgo(date, t, locale),
+    [locale, t],
+  );
 
   return (
     <div
@@ -93,7 +99,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             onLoadMore={() => {}}
             onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgo}
+            formatTimeAgo={formatTimeAgoForLocale}
             getSessionStatus={getSessionStatus}
           />
 
@@ -131,7 +137,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             onDelete={controller.deleteActions.handleDeleteTerminal}
             onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgo}
+            formatTimeAgo={formatTimeAgoForLocale}
           />
 
           <div className="my-2 border-t border-border" />
@@ -158,7 +164,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             onDelete={controller.deleteActions.handleDeleteRemoteConnection}
             onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgo}
+            formatTimeAgo={formatTimeAgoForLocale}
           />
         </div>
       )}

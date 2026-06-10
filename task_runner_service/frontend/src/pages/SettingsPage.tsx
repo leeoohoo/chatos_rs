@@ -4,8 +4,10 @@ import { Alert, Button, Descriptions, Space, Statistic, Tag, Typography } from '
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
+import { useI18n } from '../i18n/I18nProvider';
 
 export function SettingsPage() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const healthQuery = useQuery({
     queryKey: ['health'],
@@ -41,10 +43,10 @@ export function SettingsPage() {
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Space direction="vertical" size={0}>
         <Typography.Title level={3} style={{ margin: 0 }}>
-          设置
+          {t('settings.title')}
         </Typography.Title>
         <Typography.Text type="secondary">
-          查看 Task Runner 当前运行时配置、存储模式和 Memory Engine 接线状态。
+          {t('settings.subtitle')}
         </Typography.Text>
       </Space>
 
@@ -52,7 +54,9 @@ export function SettingsPage() {
         <Alert
           type={health.status === 'ok' ? 'success' : 'warning'}
           message={`${health.service} / ${health.status}`}
-          description={`最后探测时间: ${dayjs(health.now).format('YYYY-MM-DD HH:mm:ss')}`}
+          description={t('settings.lastProbe', {
+            time: dayjs(health.now).format('YYYY-MM-DD HH:mm:ss'),
+          })}
           showIcon
         />
       ) : null}
@@ -60,21 +64,21 @@ export function SettingsPage() {
       <Space size="large" wrap>
         <Statistic title="Builtin MCP" value={implementedBuiltinCount} />
         <Statistic title="Runtime Default" value={runtimeDefaultCount} />
-        <Statistic title="对外暴露工具" value={mcpServer?.tool_names.length || 0} />
+        <Statistic title={t('settings.externalTools')} value={mcpServer?.tool_names.length || 0} />
       </Space>
 
       {config ? (
         <Descriptions bordered column={1} size="small">
-          <Descriptions.Item label="HTTP 监听">
+          <Descriptions.Item label={t('settings.httpListen')}>
             {config.host}:{config.port}
           </Descriptions.Item>
-          <Descriptions.Item label="存储模式">
+          <Descriptions.Item label={t('settings.storeMode')}>
             <Tag color={storeModeColor}>{config.store_mode}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="数据库">{config.database_url}</Descriptions.Item>
+          <Descriptions.Item label={t('settings.database')}>{config.database_url}</Descriptions.Item>
           <Descriptions.Item label="Memory Engine">
             <Tag color={config.memory_engine_configured ? 'success' : 'default'}>
-              {config.memory_engine_configured ? 'configured' : 'not configured'}
+              {config.memory_engine_configured ? t('common.configured') : t('common.notConfigured')}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Memory Base URL">
@@ -83,13 +87,13 @@ export function SettingsPage() {
           <Descriptions.Item label="Memory Source ID">
             {config.memory_engine_source_id}
           </Descriptions.Item>
-          <Descriptions.Item label="默认 Tenant">
+          <Descriptions.Item label={t('settings.defaultTenant')}>
             {config.default_tenant_id}
           </Descriptions.Item>
-          <Descriptions.Item label="默认 Subject">
+          <Descriptions.Item label={t('settings.defaultSubject')}>
             {config.default_subject_id}
           </Descriptions.Item>
-          <Descriptions.Item label="默认 Workspace">
+          <Descriptions.Item label={t('settings.defaultWorkspace')}>
             {config.default_workspace_dir}
           </Descriptions.Item>
           <Descriptions.Item label="Memory Timeout">
@@ -106,13 +110,13 @@ export function SettingsPage() {
 
       {mcpServer ? (
         <Descriptions
-          title="MCP 服务"
+          title={t('settings.mcpService')}
           bordered
           column={1}
           size="small"
           extra={
             <Button size="small" onClick={() => navigate('/mcp')}>
-              打开 MCP 目录
+              {t('settings.openMcpCatalog')}
             </Button>
           }
         >
@@ -135,7 +139,7 @@ export function SettingsPage() {
           <Descriptions.Item label="STDIO Args">
             {mcpServer.stdio_args.length ? mcpServer.stdio_args.join(' ') : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="暴露工具数">
+          <Descriptions.Item label={t('settings.exposedToolCount')}>
             {mcpServer.tool_names.length}
           </Descriptions.Item>
         </Descriptions>

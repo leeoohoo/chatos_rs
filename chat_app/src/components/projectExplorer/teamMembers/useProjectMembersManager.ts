@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { normalizeProjectScopeId } from '../../../features/contactSession/sessionResolver';
 import type { ProjectContactLinkResponse } from '../../../lib/api/client/types';
 import type { ContactRecord } from '../../../lib/store/types';
@@ -87,6 +88,7 @@ export const useProjectMembersManager = ({
   onMemberRemoved,
 }: UseProjectMembersManagerOptions): UseProjectMembersManagerResult => {
   const { confirm } = useDialogService();
+  const { t } = useI18n();
   const [projectMembers, setProjectMembers] = useState<ProjectContactLink[]>([]);
   const [projectMembersLoading, setProjectMembersLoading] = useState(false);
   const [projectMembersError, setProjectMembersError] = useState<string | null>(null);
@@ -139,14 +141,14 @@ export const useProjectMembersManager = ({
       if (!shouldApply()) {
         return;
       }
-      setProjectMembersError(error instanceof Error ? error.message : '加载项目成员失败');
+      setProjectMembersError(error instanceof Error ? error.message : t('teamMembers.error.loadMembersFailed'));
       setProjectMembers([]);
     } finally {
       if (shouldApply()) {
         setProjectMembersLoading(false);
       }
     }
-  }, [apiClient, projectId, syncProjectMembersFromRows]);
+  }, [apiClient, projectId, syncProjectMembersFromRows, t]);
 
   useProjectRunRealtime({
     projectId: normalizedProjectId || null,
@@ -185,21 +187,21 @@ export const useProjectMembersManager = ({
         latestContacts = normalizedLoaded;
       }
     } catch (error) {
-      setMemberPickerError(error instanceof Error ? error.message : '加载联系人失败');
+      setMemberPickerError(error instanceof Error ? error.message : t('teamMembers.error.loadContactsFailed'));
     }
     const firstAvailable = latestContacts.find((item) => !projectContactIdSet.has(item.id));
     setMemberPickerSelectedId(firstAvailable?.id || null);
     setMemberPickerOpen(true);
-  }, [contacts, loadContacts, projectContactIdSet]);
+  }, [contacts, loadContacts, projectContactIdSet, t]);
 
   const confirmAddMember = useCallback(async (): Promise<string | null> => {
     const contactId = memberPickerSelectedId?.trim() || '';
     if (!contactId) {
-      setMemberPickerError('请先选择联系人');
+      setMemberPickerError(t('teamMembers.error.selectContactFirst'));
       return null;
     }
     if (!projectId) {
-      setMemberPickerError('当前项目不存在');
+      setMemberPickerError(t('teamMembers.error.projectMissing'));
       return null;
     }
     try {
@@ -218,7 +220,7 @@ export const useProjectMembersManager = ({
       setMemberPickerError(null);
       return contactId;
     } catch (error) {
-      setMemberPickerError(error instanceof Error ? error.message : '添加项目成员失败');
+      setMemberPickerError(error instanceof Error ? error.message : t('teamMembers.error.addFailed'));
       return null;
     }
   }, [
@@ -227,6 +229,7 @@ export const useProjectMembersManager = ({
     memberPickerSelectedId,
     projectId,
     syncProjectMembersFromRows,
+    t,
   ]);
 
   const removeMember = useCallback(async (contact: ContactItem): Promise<boolean> => {
@@ -234,10 +237,10 @@ export const useProjectMembersManager = ({
       return false;
     }
     const confirmed = await confirm({
-      title: '移除项目成员',
-      message: `确定将 ${contact.name} 从当前项目团队中移除吗？`,
-      confirmText: '移除',
-      cancelText: '取消',
+      title: t('teamMembers.removeTitle'),
+      message: t('teamMembers.removeMessage', { name: contact.name }),
+      confirmText: t('teamMembers.remove'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -261,7 +264,7 @@ export const useProjectMembersManager = ({
       }
       return true;
     } catch (error) {
-      setMemberPickerError(error instanceof Error ? error.message : '移除项目成员失败');
+      setMemberPickerError(error instanceof Error ? error.message : t('teamMembers.error.removeFailed'));
       return false;
     } finally {
       setRemovingContactId((prev) => (prev === contact.id ? null : prev));
@@ -273,6 +276,7 @@ export const useProjectMembersManager = ({
     onMemberRemoved,
     projectId,
     syncProjectMembersFromRows,
+    t,
   ]);
 
   const closeMemberPicker = useCallback(() => {

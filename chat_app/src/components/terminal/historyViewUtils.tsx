@@ -16,7 +16,7 @@ import {
 export const TERMINAL_HISTORY_INITIAL_LIMIT = 120;
 export const TERMINAL_HISTORY_PAGE_SIZE = 600;
 export const TERMINAL_HISTORY_MAX_LIMIT = 3000;
-export const TERMINAL_HISTORY_TAIL_ONLY_HINT = '已预载更早历史，终端窗口保持实时 tail 模式以确保流畅。';
+export const TERMINAL_HISTORY_TAIL_ONLY_HINT = 'terminal.history.tailOnlyHint';
 export const TERMINAL_SNAPSHOT_INITIAL_LINES = 500;
 export const TERMINAL_SNAPSHOT_PAGE_LINES = 500;
 export const TERMINAL_SNAPSHOT_MAX_LINES = 10_000;

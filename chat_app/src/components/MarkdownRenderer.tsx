@@ -3,6 +3,7 @@ import React, { useCallback, useMemo, useRef } from 'react';
 import { MermaidPreviewModal } from './markdownRenderer/MermaidPreviewModal';
 import { buildMarkdownHtml, hasMermaidFence } from './markdownRenderer/markdownHtml';
 import { useMermaidPreviewController } from './markdownRenderer/useMermaidPreviewController';
+import { useI18n } from '../i18n/I18nProvider';
 import './MarkdownRenderer.css';
 
 interface MarkdownRendererProps {
@@ -20,6 +21,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 }) => {
   void _onApplyCode;
 
+  const { t } = useI18n();
   const markdownContainerRef = useRef<HTMLDivElement | null>(null);
 
   const copyToClipboard = useCallback(async (code: string) => {
@@ -31,8 +33,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   }, []);
 
   const renderedHtml = useMemo(
-    () => buildMarkdownHtml(content, isStreaming),
-    [content, isStreaming],
+    () => buildMarkdownHtml(content, isStreaming, t),
+    [content, isStreaming, t],
   );
 
   const hasMermaidBlock = useMemo(
@@ -56,6 +58,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     hasMermaidBlock,
     isStreaming,
     renderDependency: renderedHtml,
+    t,
   });
 
   const handleClick = useCallback((event: React.MouseEvent) => {
@@ -84,13 +87,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         return;
       }
       const expanded = codeBlock.classList.toggle('expanded');
-      button.setAttribute('title', expanded ? '收起' : '展开');
+      button.setAttribute('title', expanded ? t('markdown.code.collapse') : t('markdown.code.expand'));
       const icon = button.querySelector('.icon');
       if (icon) {
         icon.classList.toggle('rotated', expanded);
       }
     }
-  }, [copyToClipboard, openMermaidPreview]);
+  }, [copyToClipboard, openMermaidPreview, t]);
 
   return (
     <div

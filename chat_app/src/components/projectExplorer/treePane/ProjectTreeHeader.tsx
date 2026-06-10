@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 import {
@@ -90,6 +91,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   onClearDragExpandTimer,
   onClearDragAutoScroll,
 }) => {
+  const { t } = useI18n();
   const {
     handleRootDragEnter,
     handleRootDragLeave,
@@ -123,7 +125,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
       onDragLeave={handleRootDragLeave}
       onDrop={handleRootDrop}
     >
-      <div className="text-xs text-muted-foreground">项目目录</div>
+      <div className="text-xs text-muted-foreground">{t('projectExplorer.tree.title')}</div>
       <div className="truncate text-sm font-medium text-foreground" title={project.rootPath}>
         {project.name}
       </div>
@@ -131,7 +133,9 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         {project.rootPath}
       </div>
       <div className="truncate text-[11px] text-muted-foreground" title={selectedEntry?.path || ''}>
-        当前选择：{selectedEntry ? selectedEntry.path : '未选择'}
+        {t('projectExplorer.tree.currentSelection', {
+          path: selectedEntry ? selectedEntry.path : t('projectExplorer.tree.noSelection'),
+        })}
       </div>
       <button
         type="button"
@@ -141,7 +145,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         }}
         className="text-left text-[11px] text-blue-600 hover:underline"
       >
-        选中项目根目录
+        {t('projectExplorer.tree.selectRoot')}
       </button>
       <ProjectTreeHeaderActions
         actionLoading={actionLoading}
@@ -150,7 +154,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         onCreateFileAtRoot={onCreateFileAtRoot}
         onRefresh={onRefresh}
       />
-      <div className="text-[11px] text-muted-foreground">这里仅负责查看目录；Stage、Commit、Push 请使用右上角 Git 面板</div>
+      <div className="text-[11px] text-muted-foreground">{t('projectExplorer.tree.gitHint')}</div>
       <ProjectTreeSearchControls
         searchQuery={searchQuery}
         searchCaseSensitive={searchCaseSensitive}

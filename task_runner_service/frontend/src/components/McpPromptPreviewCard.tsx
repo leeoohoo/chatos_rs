@@ -1,38 +1,45 @@
 import { Alert, Collapse, Space, Tag, Typography } from 'antd';
 
+import { useI18n } from '../i18n/I18nProvider';
 import type { McpPromptPreviewResponse } from '../types';
 
 export function McpPromptPreviewCard({ preview }: { preview: McpPromptPreviewResponse }) {
+  const { t } = useI18n();
+
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       {preview.build.runtime_limitations ? (
         <Alert
           type="warning"
           showIcon
-          message="Runtime Limitations"
+          message={t('mcpPreview.runtimeLimitations')}
           description={preview.build.runtime_limitations}
         />
       ) : null}
 
       <Space wrap>
         <Tag color={preview.enabled ? 'success' : 'default'}>
-          {preview.enabled ? 'enabled' : 'disabled'}
+          {preview.enabled ? t('common.enabled') : t('common.disabled')}
         </Tag>
         <Tag>{preview.init_mode}</Tag>
         <Tag color="blue">{preview.builtin_prompt_mode}</Tag>
         <Tag>{preview.builtin_prompt_locale}</Tag>
-        <Tag color="processing">kinds: {preview.selected_builtin_kinds.length}</Tag>
-        <Tag color="cyan">sections: {preview.build.selected_section_ids.length}</Tag>
+        <Tag color="processing">
+          {t('mcpPreview.kindsCount', { count: preview.selected_builtin_kinds.length })}
+        </Tag>
+        <Tag color="cyan">
+          {t('mcpPreview.sectionsCount', { count: preview.build.selected_section_ids.length })}
+        </Tag>
       </Space>
 
       <div>
-        <Typography.Text strong>Active Builtin Kinds</Typography.Text>
+        <Typography.Text strong>{t('mcpPreview.activeKinds')}</Typography.Text>
         <div style={{ marginTop: 8 }}>
           <Space size={[8, 8]} wrap>
             {preview.selected_builtin_kinds.length ? (
               preview.selected_builtin_kinds.map((kind) => <Tag key={kind}>{kind}</Tag>)
             ) : (
-              <Typography.Text type="secondary">当前没有启用 builtin kinds</Typography.Text>
+              <Typography.Text type="secondary">{t('mcpPreview.noActiveKinds')}</Typography.Text>
             )}
           </Space>
         </div>
@@ -43,7 +50,7 @@ export function McpPromptPreviewCard({ preview }: { preview: McpPromptPreviewRes
         items={[
           {
             key: 'sections',
-            label: `Section IDs (${preview.build.selected_section_ids.length})`,
+            label: t('mcpPreview.sections', { count: preview.build.selected_section_ids.length }),
             children: (
               <Space size={[8, 8]} wrap>
                 {preview.build.selected_section_ids.map((item) => (
@@ -56,7 +63,9 @@ export function McpPromptPreviewCard({ preview }: { preview: McpPromptPreviewRes
           },
           {
             key: 'servers',
-            label: `Builtin Servers (${preview.build.active_builtin_server_names.length})`,
+            label: t('mcpPreview.servers', {
+              count: preview.build.active_builtin_server_names.length,
+            }),
             children: (
               <Space size={[8, 8]} wrap>
                 {preview.build.active_builtin_server_names.map((item) => (
@@ -71,7 +80,7 @@ export function McpPromptPreviewCard({ preview }: { preview: McpPromptPreviewRes
       />
 
       <div>
-        <Typography.Text strong>Prompt Content</Typography.Text>
+        <Typography.Text strong>{t('mcpPreview.promptContent')}</Typography.Text>
         <Typography.Paragraph
           style={{
             background: '#fafafa',
@@ -83,7 +92,7 @@ export function McpPromptPreviewCard({ preview }: { preview: McpPromptPreviewRes
             fontFamily: 'monospace',
           }}
         >
-          {preview.build.prompt || '当前配置下没有生成 builtin MCP prompt'}
+          {preview.build.prompt || t('mcpPreview.emptyPrompt')}
         </Typography.Paragraph>
       </div>
     </Space>

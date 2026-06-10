@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 import {
   normalizeWorkbarTask,
@@ -52,6 +53,7 @@ export const useWorkbarTaskResourceState = ({
   currentSession,
   activeConversationTurnId,
 }: UseWorkbarTaskResourceStateParams) => {
+  const { t } = useI18n();
   const [workbarCurrentTurnTasks, setWorkbarCurrentTurnTasks] = useState<TaskWorkbarItem[]>([]);
   const [workbarHistoryTasks, setWorkbarHistoryTasks] = useState<TaskWorkbarItem[]>([]);
   const [workbarHistoryLoadedSessionId, setWorkbarHistoryLoadedSessionId] = useState<string | null>(null);
@@ -104,7 +106,7 @@ export const useWorkbarTaskResourceState = ({
     const requestSeq = beginSessionLoadRequest(currentTurnLoadSeqRef);
     await runGuardedSessionLoad({
       applyResult: setWorkbarCurrentTurnTasks,
-      errorMessage: '任务操作失败',
+      errorMessage: t('taskOutcome.error.operationFailed'),
       load: () => {
         const existingInflight = force
           ? null
@@ -159,7 +161,7 @@ export const useWorkbarTaskResourceState = ({
         sessionId,
       }),
     });
-  }, [apiClient]);
+  }, [apiClient, t]);
 
   const loadHistoryWorkbarTasks = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId) {
@@ -192,7 +194,7 @@ export const useWorkbarTaskResourceState = ({
         setWorkbarHistoryTasks(normalizedTasks);
         setWorkbarHistoryLoadedSessionId(sessionId);
       },
-      errorMessage: '任务加载失败',
+      errorMessage: t('taskWorkbar.loadFailed'),
       load: () => {
         const existingInflight = force
           ? null
@@ -224,7 +226,7 @@ export const useWorkbarTaskResourceState = ({
         sessionId,
       }),
     });
-  }, [apiClient]);
+  }, [apiClient, t]);
 
   const refreshWorkbarTasks = useCallback(async () => {
     if (!currentSession) {

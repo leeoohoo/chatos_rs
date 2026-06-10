@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type {
   FsEntriesResponse,
 } from '../../lib/api/client/types';
@@ -33,6 +34,8 @@ export const useProjectExplorerDataLoading = ({
   setError,
   setEntriesMap,
 }: UseProjectExplorerDataLoadingParams) => {
+  const { t } = useI18n();
+
   const tryLoadEntries = useCallback(async (path: string, options?: LoadEntriesOptions) => {
     const silent = options?.silent === true;
     setLoadingPaths((prev) => new Set(prev).add(path));
@@ -46,7 +49,7 @@ export const useProjectExplorerDataLoading = ({
       return true;
     } catch (err) {
       if (!silent) {
-        setError(readErrorMessage(err, '加载目录失败'));
+        setError(readErrorMessage(err, t('projectExplorer.error.loadDirectory')));
       }
       return false;
     } finally {
@@ -56,7 +59,7 @@ export const useProjectExplorerDataLoading = ({
         return next;
       });
     }
-  }, [client, setEntriesMap, setError, setLoadingPaths]);
+  }, [client, setEntriesMap, setError, setLoadingPaths, t]);
 
   const loadEntries = useCallback(async (path: string, options?: LoadEntriesOptions) => {
     await tryLoadEntries(path, options);

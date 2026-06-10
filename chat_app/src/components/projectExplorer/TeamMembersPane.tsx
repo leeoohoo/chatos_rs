@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import type { Project } from '../../types';
 import TurnRuntimeContextDrawer from '../chatInterface/TurnRuntimeContextDrawer';
@@ -14,6 +15,7 @@ interface TeamMembersPaneProps {
 }
 
 const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className }) => {
+  const { t } = useI18n();
   const {
     sidebarProps,
     workspaceProps,
@@ -24,7 +26,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
   if (!project) {
     return (
       <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
-        请选择一个项目
+        {t('runSettings.selectProject')}
       </div>
     );
   }

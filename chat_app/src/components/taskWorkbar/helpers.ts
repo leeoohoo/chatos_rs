@@ -14,16 +14,16 @@ export const priorityStyles: Record<TaskWorkbarItem['priority'], string> = {
 };
 
 export const statusText: Record<TaskWorkbarItem['status'], string> = {
-  todo: '待办',
-  doing: '进行中',
-  blocked: '阻塞',
-  done: '已完成',
+  todo: 'Todo',
+  doing: 'In progress',
+  blocked: 'Blocked',
+  done: 'Done',
 };
 
 export const priorityText: Record<TaskWorkbarItem['priority'], string> = {
-  high: '高',
-  medium: '中',
-  low: '低',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
 };
 
 export const isUnfinishedTask = (task: TaskWorkbarItem): boolean => task.status === 'todo' || task.status === 'doing';
@@ -83,9 +83,9 @@ export const guidanceStatusStyles: Record<RuntimeGuidanceWorkbarItem['status'], 
 };
 
 export const guidanceStatusText: Record<RuntimeGuidanceWorkbarItem['status'], string> = {
-  queued: '待应用',
-  applied: '已应用',
-  dropped: '已丢弃',
+  queued: 'Queued',
+  applied: 'Applied',
+  dropped: 'Dropped',
 };
 
 export const sortTasks = (items: TaskWorkbarItem[]) => {

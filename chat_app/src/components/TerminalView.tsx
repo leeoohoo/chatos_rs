@@ -5,6 +5,7 @@ import { useAuthStoreSelector } from '../lib/auth/authStore';
 import { useChatStoreSelector } from '../lib/store/ChatStoreContext';
 import { useTheme } from '../hooks/useTheme';
 import EmbeddedTerminalView from './terminal/EmbeddedTerminalView';
+import { useI18n } from '../i18n/I18nProvider';
 
 interface TerminalViewProps {
   className?: string;
@@ -16,12 +17,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const client = useApiClient();
   const { actualTheme } = useTheme();
   const accessToken = useAuthStoreSelector((state) => state.accessToken);
+  const { t } = useI18n();
 
   return (
     <EmbeddedTerminalView
       terminal={currentTerminal}
       className={className}
-      emptyText="请选择一个终端"
+      emptyText={t('terminal.empty.select')}
       loadTerminals={loadTerminals}
       client={client}
       accessToken={accessToken}

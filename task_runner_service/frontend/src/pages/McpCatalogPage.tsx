@@ -21,6 +21,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { api, buildApiUrl } from '../api/client';
 import { McpPromptPreviewCard } from '../components/McpPromptPreviewCard';
+import { useI18n } from '../i18n/I18nProvider';
 import type {
   McpCatalogEntry,
   McpServerInfo,
@@ -29,11 +30,12 @@ import type {
 } from '../types';
 
 export function McpCatalogPage() {
+  const { locale, t } = useI18n();
   const navigate = useNavigate();
   const [mcpEnabled, setMcpEnabled] = useState(true);
   const [initMode, setInitMode] = useState<TaskMcpInitMode>('builtin_only');
   const [promptMode, setPromptMode] = useState<TaskBuiltinPromptMode>('effective');
-  const [promptLocale, setPromptLocale] = useState('zh-CN');
+  const [promptLocale, setPromptLocale] = useState(locale);
   const [selectedKinds, setSelectedKinds] = useState<string[]>([]);
   const serverInfoQuery = useQuery({
     queryKey: ['mcp-server-info'],
@@ -96,7 +98,7 @@ export function McpCatalogPage() {
       ),
     },
     {
-      title: '状态',
+      title: t('mcpCatalog.column.status'),
       dataIndex: 'implemented',
       width: 140,
       render: (implemented: boolean) => (
@@ -113,20 +115,20 @@ export function McpCatalogPage() {
         runtimeDefault ? <Tag color="blue">default</Tag> : <Tag>optional</Tag>,
     },
     {
-      title: '写权限',
+      title: t('mcpCatalog.column.writes'),
       dataIndex: 'default_allow_writes',
       width: 120,
       render: (allowWrites: boolean) =>
         allowWrites ? <Tag color="volcano">write</Tag> : <Tag color="default">read-only</Tag>,
     },
     {
-      title: '已暴露工具数',
+      title: t('mcpCatalog.column.toolCount'),
       key: 'tool_count',
       width: 140,
       render: (_, record) => record.available_tool_names.length,
     },
     {
-      title: '说明',
+      title: t('common.description'),
       dataIndex: 'message',
       render: (message?: string | null) => message || '-',
     },
@@ -136,10 +138,10 @@ export function McpCatalogPage() {
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Space direction="vertical" size={0}>
         <Typography.Title level={3} style={{ margin: 0 }}>
-          MCP 目录
+          {t('mcpCatalog.title')}
         </Typography.Title>
         <Typography.Text type="secondary">
-          查看 Task Runner 当前复用了哪些 chatos 内置 builtin MCP，以及对外提供的独立 MCP server 接入信息。
+          {t('mcpCatalog.subtitle')}
         </Typography.Text>
       </Space>
 
@@ -162,26 +164,26 @@ export function McpCatalogPage() {
               RemoteConnectionController
             </Typography.Title>
             <Typography.Text type="secondary">
-              这个共享 builtin MCP 现在直接复用 Task Runner 里的服务器清单，不需要 chatos 的远程终端页面。
+              {t('mcpCatalog.remoteSubtitle')}
             </Typography.Text>
           </Space>
           <Space>
-            <Button onClick={() => remoteServersQuery.refetch()}>刷新服务器状态</Button>
+            <Button onClick={() => remoteServersQuery.refetch()}>{t('mcpCatalog.refreshServers')}</Button>
             <Button type="primary" onClick={() => navigate('/servers')}>
-              管理服务器
+              {t('mcpCatalog.manageServers')}
             </Button>
           </Space>
         </Space>
 
         <Space size="large" wrap>
-          <Statistic title="服务器总数" value={remoteServerSummary.total} />
-          <Statistic title="启用中" value={remoteServerSummary.enabled} />
-          <Statistic title="测试成功" value={remoteServerSummary.testedSuccess} />
-          <Statistic title="严格校验" value={remoteServerSummary.strict} />
+          <Statistic title={t('mcpCatalog.serverTotal')} value={remoteServerSummary.total} />
+          <Statistic title={t('mcpCatalog.serverEnabled')} value={remoteServerSummary.enabled} />
+          <Statistic title={t('mcpCatalog.testSuccess')} value={remoteServerSummary.testedSuccess} />
+          <Statistic title={t('mcpCatalog.strictCheck')} value={remoteServerSummary.strict} />
         </Space>
 
         <Descriptions bordered column={1} size="small">
-          <Descriptions.Item label="Builtin 状态">
+          <Descriptions.Item label={t('mcpCatalog.builtinStatus')}>
             {remoteControllerEntry ? (
               <Tag color={remoteControllerEntry.implemented ? 'success' : 'warning'}>
                 {remoteControllerEntry.implemented ? 'implemented' : 'planned'}
@@ -190,12 +192,12 @@ export function McpCatalogPage() {
               '-'
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="可用工具数">
+          <Descriptions.Item label={t('mcpCatalog.availableToolCount')}>
             {remoteControllerEntry?.available_tool_names.length ?? 0}
           </Descriptions.Item>
-          <Descriptions.Item label="说明">
+          <Descriptions.Item label={t('common.description')}>
             {remoteControllerEntry?.message ||
-              '服务器来源于“服务器”页面里维护的本地清单，任务执行时会通过共享 RemoteConnectionController 访问。'}
+              t('mcpCatalog.remoteDescriptionFallback')}
           </Descriptions.Item>
         </Descriptions>
       </Space>
@@ -213,16 +215,16 @@ export function McpCatalogPage() {
       >
         <Space direction="vertical" size={0}>
           <Typography.Title level={5} style={{ margin: 0 }}>
-            Builtin Prompt 预览
+            {t('mcpCatalog.promptPreviewTitle')}
           </Typography.Title>
           <Typography.Text type="secondary">
-            按当前启用状态、初始化模式、语言和 builtin kinds 预览最终注入给模型的 MCP system prompt。
+            {t('mcpCatalog.promptPreviewSubtitle')}
           </Typography.Text>
         </Space>
 
         <Space wrap>
           <Space size={8}>
-            <Typography.Text type="secondary">启用 MCP</Typography.Text>
+            <Typography.Text type="secondary">{t('mcpCatalog.enableMcp')}</Typography.Text>
             <Switch checked={mcpEnabled} onChange={setMcpEnabled} />
           </Space>
           <Select
@@ -248,14 +250,14 @@ export function McpCatalogPage() {
             value={promptLocale}
             onChange={setPromptLocale}
             options={[
-              { label: 'zh-CN', value: 'zh-CN' },
-              { label: 'en-US', value: 'en-US' },
+              { label: t('mcp.promptLanguage.zhCN'), value: 'zh-CN' },
+              { label: t('mcp.promptLanguage.enUS'), value: 'en-US' },
             ]}
           />
           <Select
             mode="multiple"
             allowClear
-            placeholder="默认全部 configurable kinds"
+            placeholder={t('mcpCatalog.kindsPlaceholder')}
             style={{ minWidth: 320 }}
             value={selectedKinds}
             options={kindOptions}
@@ -278,7 +280,7 @@ export function McpCatalogPage() {
           emptyText: (
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="当前没有可展示的 MCP builtin 目录"
+              description={t('mcpCatalog.emptyCatalog')}
             />
           ),
         }}
@@ -289,7 +291,9 @@ export function McpCatalogPage() {
               items={[
                 {
                   key: 'available-tools',
-                  label: `可用工具 (${record.available_tool_names.length})`,
+                  label: t('mcpCatalog.availableTools', {
+                    count: record.available_tool_names.length,
+                  }),
                   children: record.available_tool_names.length ? (
                     <List
                       size="small"
@@ -297,12 +301,14 @@ export function McpCatalogPage() {
                       renderItem={(item) => <List.Item>{item}</List.Item>}
                     />
                   ) : (
-                    <Typography.Text type="secondary">暂无</Typography.Text>
+                    <Typography.Text type="secondary">{t('common.noData')}</Typography.Text>
                   ),
                 },
                 {
                   key: 'unavailable-tools',
-                  label: `不可用工具 (${record.unavailable_tools.length})`,
+                  label: t('mcpCatalog.unavailableTools', {
+                    count: record.unavailable_tools.length,
+                  }),
                   children: record.unavailable_tools.length ? (
                     <List
                       size="small"
@@ -319,7 +325,7 @@ export function McpCatalogPage() {
                       )}
                     />
                   ) : (
-                    <Typography.Text type="secondary">暂无</Typography.Text>
+                    <Typography.Text type="secondary">{t('common.noData')}</Typography.Text>
                   ),
                 },
               ]}
@@ -332,6 +338,8 @@ export function McpCatalogPage() {
 }
 
 function ExternalMcpServerCard({ info }: { info: McpServerInfo }) {
+  const { t } = useI18n();
+
   return (
     <Space
       direction="vertical"
@@ -346,10 +354,10 @@ function ExternalMcpServerCard({ info }: { info: McpServerInfo }) {
     >
       <Space direction="vertical" size={0}>
         <Typography.Title level={5} style={{ margin: 0 }}>
-          外部 MCP Server
+          {t('mcpCatalog.externalServerTitle')}
         </Typography.Title>
         <Typography.Text type="secondary">
-          其他系统可以通过这个 HTTP JSON-RPC 入口调用 Task Runner 的任务、运行和人工提示能力。
+          {t('mcpCatalog.externalServerSubtitle')}
         </Typography.Text>
       </Space>
 
@@ -382,7 +390,7 @@ function ExternalMcpServerCard({ info }: { info: McpServerInfo }) {
       <Divider style={{ margin: '4px 0' }} />
 
       <Space direction="vertical" size={4}>
-        <Typography.Text strong>已暴露工具</Typography.Text>
+        <Typography.Text strong>{t('mcpCatalog.exposedTools')}</Typography.Text>
         <List
           size="small"
           bordered

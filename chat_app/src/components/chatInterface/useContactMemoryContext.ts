@@ -16,6 +16,7 @@ import {
   isSessionLoadRequestCurrent,
   runGuardedSessionLoad,
 } from './sessionLoadGuard';
+import { useI18n } from '../../i18n/I18nProvider';
 
 export interface SessionMemorySummary {
   id: string;
@@ -77,6 +78,7 @@ export const useContactMemoryContext = ({
   currentContactId,
   currentProjectIdForMemory,
 }: UseContactMemoryContextOptions): UseContactMemoryContextResult => {
+  const { t } = useI18n();
   const [sessionMemorySummaries, setSessionMemorySummaries] = useState<SessionMemorySummary[]>([]);
   const [agentRecalls, setAgentRecalls] = useState<ContactAgentRecall[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
@@ -191,7 +193,7 @@ export const useContactMemoryContext = ({
         staleMemorySessionsRef.current.delete(sessionId);
         memoryLoadedKeyRef.current = loadKey;
       },
-      errorMessage: '会话总结加载失败',
+      errorMessage: t('memory.sessionSummaryLoadFailed'),
       load: () => loadConversationSummaryItems(apiClient, sessionId, {
         force,
         limit: 100,
@@ -212,6 +214,7 @@ export const useContactMemoryContext = ({
     currentProjectIdForMemory,
     currentSessionId,
     resetMemoryState,
+    t,
   ]);
 
   const loadContactMemoryContext = useCallback(async (sessionId: string, force = false) => {
@@ -236,7 +239,7 @@ export const useContactMemoryContext = ({
       setSessionMemorySummaries([]);
       setAgentRecalls([]);
       memoryLoadedKeyRef.current = loadKey;
-      setMemoryError('当前会话未绑定联系人，无法加载记忆。');
+      setMemoryError(t('memory.unboundContact'));
       setMemoryLoading(false);
       return;
     }
@@ -256,7 +259,7 @@ export const useContactMemoryContext = ({
         staleMemorySessionsRef.current.delete(sessionId);
         memoryLoadedKeyRef.current = loadKey;
       },
-      errorMessage: '记忆加载失败',
+      errorMessage: t('memory.loadFailed'),
       load: async () => {
         const [selectedSessionSummaries, recallRows] = await Promise.all([
           loadConversationSummaryItems(apiClient, sessionId, { force, limit: 100 }),
@@ -283,6 +286,7 @@ export const useContactMemoryContext = ({
     currentProjectIdForMemory,
     currentSessionId,
     resetMemoryState,
+    t,
   ]);
 
   return {

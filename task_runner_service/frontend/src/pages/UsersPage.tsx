@@ -27,6 +27,7 @@ import {
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
+import { useI18n } from '../i18n/I18nProvider';
 import type { CreateUserPayload, UpdateUserPayload, UserRole, UserSummaryRecord } from '../types';
 
 type UserFormValues = {
@@ -38,6 +39,7 @@ type UserFormValues = {
 };
 
 export function UsersPage() {
+  const { t } = useI18n();
   const { message } = App.useApp();
   const [modal, modalContext] = Modal.useModal();
   const queryClient = useQueryClient();
@@ -57,7 +59,7 @@ export function UsersPage() {
   const createUserMutation = useMutation({
     mutationFn: (payload: CreateUserPayload) => api.createUser(payload),
     onSuccess: async () => {
-      message.success('用户已创建');
+      message.success(t('users.created'));
       closeDrawer();
       await queryClient.invalidateQueries({ queryKey: ['users'] });
     },
@@ -68,7 +70,7 @@ export function UsersPage() {
     mutationFn: ({ id, payload }: { id: string; payload: UpdateUserPayload }) =>
       api.updateUser(id, payload),
     onSuccess: async () => {
-      message.success('用户已更新');
+      message.success(t('users.updated'));
       closeDrawer();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['users'] }),
@@ -81,7 +83,7 @@ export function UsersPage() {
   const deleteUserMutation = useMutation({
     mutationFn: (id: string) => api.deleteUser(id),
     onSuccess: async () => {
-      message.success('用户已删除');
+      message.success(t('users.deleted'));
       await queryClient.invalidateQueries({ queryKey: ['users'] });
     },
     onError: showError,
@@ -93,57 +95,59 @@ export function UsersPage() {
 
   const columns: ColumnsType<UserSummaryRecord> = [
     {
-      title: '用户',
+      title: t('users.column.user'),
       dataIndex: 'username',
       render: (_, record) => (
         <Space direction="vertical" size={0}>
           <Space size={8}>
             <Typography.Text strong>{record.display_name || record.username}</Typography.Text>
-            {record.id === currentUserId ? <Tag color="blue">当前用户</Tag> : null}
+            {record.id === currentUserId ? <Tag color="blue">{t('users.currentUser')}</Tag> : null}
           </Space>
           <Typography.Text type="secondary">{record.username}</Typography.Text>
         </Space>
       ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'enabled',
       width: 110,
       render: (enabled: boolean) => (
-        <Tag color={enabled ? 'success' : 'default'}>{enabled ? '启用' : '禁用'}</Tag>
-      ),
-    },
-    {
-      title: '角色',
-      dataIndex: 'role',
-      width: 110,
-      render: (role: UserRole) => (
-        <Tag color={role === 'admin' ? 'blue' : 'purple'}>
-          {role === 'admin' ? '管理员' : 'AI agent'}
+        <Tag color={enabled ? 'success' : 'default'}>
+          {enabled ? t('users.enabled') : t('users.disabled')}
         </Tag>
       ),
     },
     {
-      title: '最近登录',
+      title: t('users.column.role'),
+      dataIndex: 'role',
+      width: 110,
+      render: (role: UserRole) => (
+        <Tag color={role === 'admin' ? 'blue' : 'purple'}>
+          {role === 'admin' ? t('users.role.admin') : 'AI agent'}
+        </Tag>
+      ),
+    },
+    {
+      title: t('users.lastLogin'),
       dataIndex: 'last_login_at',
       width: 180,
       render: (value?: string | null) =>
         value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-',
     },
     {
-      title: '创建时间',
+      title: t('models.detail.createdAt'),
       dataIndex: 'created_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '更新时间',
+      title: t('common.updatedAt'),
       dataIndex: 'updated_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 300,
       render: (_, record) => {
@@ -151,7 +155,7 @@ export function UsersPage() {
         return (
           <Space wrap>
             <Button size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(record)}>
-              编辑
+              {t('common.edit')}
             </Button>
             <Button
               size="small"
@@ -160,7 +164,7 @@ export function UsersPage() {
               loading={updateUserMutation.isPending}
               onClick={() => toggleUserEnabled(record)}
             >
-              {record.enabled ? '禁用' : '启用'}
+              {record.enabled ? t('users.disabled') : t('users.enabled')}
             </Button>
             <Button
               size="small"
@@ -170,7 +174,7 @@ export function UsersPage() {
               loading={deleteUserMutation.isPending}
               onClick={() => confirmDelete(record)}
             >
-              删除
+              {t('common.delete')}
             </Button>
           </Space>
         );
@@ -179,7 +183,7 @@ export function UsersPage() {
   ];
 
   function showError(error: unknown) {
-    message.error(error instanceof Error ? error.message : '操作失败');
+    message.error(error instanceof Error ? error.message : t('users.operationFailed'));
   }
 
   function openCreateDrawer() {
@@ -241,11 +245,11 @@ export function UsersPage() {
 
   function confirmDelete(user: UserSummaryRecord) {
     modal.confirm({
-      title: `删除用户 ${user.username}`,
-      content: '删除后该用户不能再登录，已有任务上的创建人显示不会被清空。',
-      okText: '删除',
+      title: t('users.deleteConfirmTitle', { username: user.username }),
+      content: t('users.deleteConfirmContent'),
+      okText: t('common.delete'),
       okButtonProps: { danger: true },
-      cancelText: '取消',
+      cancelText: t('common.cancel'),
       onOk: () => deleteUserMutation.mutateAsync(user.id),
     });
   }
@@ -264,9 +268,9 @@ export function UsersPage() {
       >
         <Space direction="vertical" size={0}>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            用户管理
+            {t('users.title')}
           </Typography.Title>
-          <Typography.Text type="secondary">管理员管理后台，AI agent 通过 MCP token 使用任务系统。</Typography.Text>
+          <Typography.Text type="secondary">{t('users.subtitle')}</Typography.Text>
         </Space>
         <Space>
           <Button
@@ -274,10 +278,10 @@ export function UsersPage() {
             onClick={() => usersQuery.refetch()}
             loading={usersQuery.isFetching}
           >
-            刷新
+            {t('common.refresh')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateDrawer}>
-            新建用户
+            {t('users.new')}
           </Button>
         </Space>
       </div>
@@ -288,20 +292,22 @@ export function UsersPage() {
         dataSource={usersQuery.data || []}
         loading={usersQuery.isLoading}
         pagination={{ pageSize: 10, showSizeChanger: true }}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无用户" /> }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('users.empty')} /> }}
       />
 
       <Drawer
-        title={editingUser ? `编辑用户 - ${editingUser.username}` : '新建用户'}
+        title={editingUser
+          ? t('users.drawer.editWithName', { username: editingUser.username })
+          : t('users.drawer.create')}
         open={drawerOpen}
         width={460}
         onClose={closeDrawer}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={closeDrawer}>取消</Button>
+            <Button onClick={closeDrawer}>{t('common.cancel')}</Button>
             <Button type="primary" loading={pending} onClick={() => form.submit()}>
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
@@ -315,32 +321,36 @@ export function UsersPage() {
         >
           <Form.Item
             name="username"
-            label="用户名"
-            rules={[{ required: !editingUser, message: '请输入用户名' }]}
+            label={t('users.form.username')}
+            rules={[{ required: !editingUser, message: t('users.form.usernameRequired') }]}
           >
             <Input disabled={Boolean(editingUser)} autoComplete="username" />
           </Form.Item>
-          <Form.Item name="display_name" label="显示名">
+          <Form.Item name="display_name" label={t('users.form.displayName')}>
             <Input autoComplete="name" />
           </Form.Item>
-          <Form.Item name="role" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
+          <Form.Item name="role" label={t('users.column.role')} rules={[{ required: true, message: t('users.form.roleRequired') }]}>
             <Select
               disabled={editingUser?.id === currentUserId}
               options={[
                 { label: 'AI agent', value: 'agent' },
-                { label: '管理员', value: 'admin' },
+                { label: t('users.role.admin'), value: 'admin' },
               ]}
             />
           </Form.Item>
           <Form.Item
             name="password"
-            label={editingUser ? '重置密码' : '密码'}
-            rules={[{ required: !editingUser, message: '请输入密码' }]}
+            label={editingUser ? t('users.form.resetPassword') : t('auth.password')}
+            rules={[{ required: !editingUser, message: t('users.form.passwordRequired') }]}
         >
             <Input.Password autoComplete={editingUser ? 'new-password' : 'new-password'} />
           </Form.Item>
-          <Form.Item name="enabled" label="状态" valuePropName="checked">
-            <Switch checkedChildren="启用" unCheckedChildren="禁用" disabled={editingUser?.id === currentUserId} />
+          <Form.Item name="enabled" label={t('common.status')} valuePropName="checked">
+            <Switch
+              checkedChildren={t('users.enabled')}
+              unCheckedChildren={t('users.disabled')}
+              disabled={editingUser?.id === currentUserId}
+            />
           </Form.Item>
         </Form>
       </Drawer>

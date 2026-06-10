@@ -19,6 +19,7 @@ import {
   resetTerminalSocketConnectionState,
   resetTerminalSocketSnapshotState,
 } from './terminalSocketState';
+import type { TerminalRuntimeTextRef } from './terminalRuntimeText';
 
 interface UseTerminalSocketLifecycleParams {
   currentTerminal: Terminal | null;
@@ -50,6 +51,7 @@ interface UseTerminalSocketLifecycleParams {
   } | null>;
   setConnectionState: Dispatch<SetStateAction<TerminalConnectionState>>;
   setErrorMessage: Dispatch<SetStateAction<string | null>>;
+  runtimeTextRef: TerminalRuntimeTextRef;
 }
 
 const shouldFallbackRefreshTerminals = (): boolean => (
@@ -79,6 +81,7 @@ export const useTerminalSocketLifecycle = ({
   snapshotRequestContextRef,
   setConnectionState,
   setErrorMessage,
+  runtimeTextRef,
 }: UseTerminalSocketLifecycleParams) => {
   useEffect(() => {
     if (!currentTerminal) return;
@@ -177,7 +180,7 @@ export const useTerminalSocketLifecycle = ({
               }
             } else if (payload?.type === 'error') {
               applyTerminalErrorMessage({
-                message: payload.error || '终端发生错误',
+                message: payload.error || runtimeTextRef.current.genericError,
                 inputForwardEnabledRef,
                 setConnectionState,
                 setErrorMessage,
@@ -198,7 +201,7 @@ export const useTerminalSocketLifecycle = ({
             supportsSnapshotPagingRef,
             snapshotRequestContextRef,
           });
-          setErrorMessage('终端实时连接失败，请点击“重连”；如果仍无输出，可先查看右侧命令历史并刷新运行状态。');
+          setErrorMessage(runtimeTextRef.current.realtimeConnectionFailed);
           setConnectionState('error');
         };
 
@@ -228,7 +231,7 @@ export const useTerminalSocketLifecycle = ({
           snapshotRequestContextRef,
         });
         console.error('Failed to issue terminal websocket ticket:', error);
-        setErrorMessage('终端实时连接鉴权失败，请刷新登录状态后重试。');
+        setErrorMessage(runtimeTextRef.current.authFailed);
         setConnectionState('error');
       }
     })();
@@ -258,6 +261,7 @@ export const useTerminalSocketLifecycle = ({
     outputParseStateRef,
     pendingOutputChunksRef,
     replayingHistoryRef,
+    runtimeTextRef,
     setConnectionState,
     setErrorMessage,
     snapshotLoadingRef,

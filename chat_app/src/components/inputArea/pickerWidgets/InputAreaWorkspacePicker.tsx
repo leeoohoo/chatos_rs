@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import {
   DirectoryPickerActionButton,
   DirectoryPickerEntryList,
@@ -45,6 +46,8 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
   onLoadWorkspaceDirectories,
   onSelectWorkspaceRoot,
 }) => {
+  const { t } = useI18n();
+
   if (!showWorkspaceRootPicker) {
     return null;
   }
@@ -60,9 +63,9 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
           'text-muted-foreground hover:text-foreground hover:bg-accent',
           (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
         )}
-        title={normalizedWorkspaceRoot || '选择工作目录'}
+        title={normalizedWorkspaceRoot || t('inputArea.workspace.chooseTitle')}
       >
-        {`工作目录: ${workspaceRootDisplayName}`}
+        {t('inputArea.workspace.button', { name: workspaceRootDisplayName })}
         <span className="ml-1">▾</span>
       </button>
       {workspacePickerOpen && (
@@ -70,8 +73,8 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
           <div className="px-3 py-2 border-b space-y-2">
             <DirectoryPickerPathDisplay
               currentPath={workspacePath}
-              emptyText="请选择目录"
-              label="当前路径: "
+              emptyText={t('inputArea.workspace.chooseDirectory')}
+              label={t('inputArea.workspace.currentPath')}
               className="truncate text-[11px]"
             />
             <div className="flex items-center gap-2">
@@ -80,35 +83,36 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
                 disabled={workspaceLoading || !workspaceParent}
                 className="border text-[11px] hover:text-foreground"
               >
-                返回上级
+                {t('inputArea.workspace.backParent')}
               </DirectoryPickerActionButton>
               <DirectoryPickerActionButton
                 onClick={() => onLoadWorkspaceDirectories(workspacePath || normalizedWorkspaceRoot || null)}
                 disabled={workspaceLoading}
                 className="border text-[11px] hover:text-foreground"
               >
-                刷新
+                {t('common.refresh')}
               </DirectoryPickerActionButton>
               <DirectoryPickerActionButton
                 onClick={() => onSelectWorkspaceRoot(workspacePath)}
                 disabled={workspaceLoading || !workspacePath}
                 className="border text-[11px] hover:text-foreground"
               >
-                选择当前目录
+                {t('inputArea.workspace.selectCurrent')}
               </DirectoryPickerActionButton>
               <DirectoryPickerActionButton
                 onClick={() => onSelectWorkspaceRoot(null)}
                 disabled={workspaceLoading && !normalizedWorkspaceRoot}
                 className="border text-[11px] hover:text-foreground"
               >
-                清空
+                {t('inputArea.workspace.clear')}
               </DirectoryPickerActionButton>
             </div>
           </div>
           <DirectoryPickerEntryList
             loading={workspaceLoading}
             items={workspacePath ? workspaceEntries : workspaceRoots}
-            emptyText="没有可用目录"
+            emptyText={t('inputArea.workspace.noDirectories')}
+            loadingText={t('common.loading')}
             onOpenEntry={(path) => onLoadWorkspaceDirectories(path)}
             showFolderIcon
             className="max-h-64 overflow-auto py-1"

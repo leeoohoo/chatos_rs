@@ -7,6 +7,7 @@ import TerminalCommandHistoryPanel from './TerminalCommandHistoryPanel';
 import TerminalHeader from './TerminalHeader';
 import TerminalStatusBanners from './TerminalStatusBanners';
 import { useTerminalRuntime } from './useTerminalRuntime';
+import { useI18n } from '../../i18n/I18nProvider';
 
 const NOOP_LOAD_TERMINALS = () => undefined;
 
@@ -30,12 +31,13 @@ interface EmbeddedTerminalViewProps {
 export const EmbeddedTerminalView: React.FC<EmbeddedTerminalViewProps> = ({
   terminal,
   className,
-  emptyText = '当前项目还没有独立运行终端',
+  emptyText,
   loadTerminals = NOOP_LOAD_TERMINALS,
   client,
   accessToken,
   actualTheme,
 }) => {
+  const { t } = useI18n();
   const {
     containerRef,
     connectionState,
@@ -59,7 +61,7 @@ export const EmbeddedTerminalView: React.FC<EmbeddedTerminalViewProps> = ({
   if (!terminal) {
     return (
       <div className={cn('flex h-full items-center justify-center text-sm text-muted-foreground', className)}>
-        {emptyText}
+        {emptyText || t('terminal.empty.dedicated')}
       </div>
     );
   }
@@ -67,7 +69,7 @@ export const EmbeddedTerminalView: React.FC<EmbeddedTerminalViewProps> = ({
   return (
     <div className={cn('flex h-full flex-col bg-card', className)}>
       <TerminalHeader
-        terminalTitle={terminal.name || '终端'}
+        terminalTitle={terminal.name || t('terminal.titleFallback')}
         terminalCwd={terminal.cwd || ''}
         connectionState={connectionState}
         terminalStatus={terminal.status || 'unknown'}

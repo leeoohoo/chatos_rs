@@ -7,7 +7,8 @@ import { getToolDisplayName } from '../lib/tools/displayName';
 import { LazyMarkdownRenderer } from './LazyMarkdownRenderer';
 import { ToolCallRenderer } from './ToolCallRenderer';
 import { useTurnProcessViewerModel } from './turnProcessViewer/useTurnProcessViewerModel';
-import { useI18n } from '../i18n/I18nProvider';
+import { useI18n, type TranslateFn } from '../i18n/I18nProvider';
+import { UNAVAILABLE_TOOL_REASON_FALLBACK_KEY } from './messageItem/messageReaders';
 
 interface TurnProcessModalProps {
   open: boolean;
@@ -25,6 +26,7 @@ const MODAL_DESC_ID = 'turn-process-modal-description';
 const STREAM_FOLLOW_BOTTOM_THRESHOLD = 72;
 type TimelineItem = ReturnType<typeof useTurnProcessViewerModel>['timelineItems'][number];
 type ToolCallTimelineItem = Extract<TimelineItem, { kind: 'tool_call' }>;
+type TimelineItemStatusCode = 'running' | 'recorded' | 'unavailable' | 'failed' | 'completed' | 'streaming' | 'waiting';
 
 const formatTime = (value: Date | null): string => {
   if (!value) {
@@ -33,10 +35,10 @@ const formatTime = (value: Date | null): string => {
   return value.toLocaleString();
 };
 
-const buildUserMessageTitle = (content: string): string => {
+const buildUserMessageTitle = (content: string, fallbackTitle: string): string => {
   const normalized = typeof content === 'string' ? content.replace(/\s+/g, ' ').trim() : '';
   if (!normalized) {
-    return '过程详情';
+    return fallbackTitle;
   }
   return normalized.length > 72 ? `${normalized.slice(0, 72)}...` : normalized;
 };
@@ -61,20 +63,19 @@ const getTimelineToolName = (rawName: string | undefined, fallbackLabel: string)
 
 const getTimelineItemTitle = (
   item: TimelineItem,
-  labels: {
-    thinking: string;
-    toolLabel: string;
-    unavailableToolLabel: string;
-    unnamedTool: string;
-  },
+  t: TranslateFn,
 ): string => {
   if (item.kind === 'thinking') {
-    return labels.thinking;
+    return t('turnProcess.item.thinking');
   }
   if (item.kind === 'tool_call') {
-    return `${labels.toolLabel} · ${getTimelineToolName(item.toolCall.name, labels.unnamedTool)}`;
+    return t('turnProcess.item.tool', {
+      name: getTimelineToolName(item.toolCall.name, t('turnProcess.item.toolFallback')),
+    });
   }
-  return `${labels.unavailableToolLabel} · ${item.entry.serverName}_${item.entry.toolName}`;
+  return t('turnProcess.item.unavailableTool', {
+    name: `${item.entry.serverName}_${item.entry.toolName}`,
+  });
 };
 
 const getToolCallFinalResult = (toolCall: ToolCallTimelineItem['toolCall']): unknown => (
@@ -120,49 +121,49 @@ const isNearBottom = (element: HTMLDivElement | null): boolean => {
 
 const getTimelineItemStatus = (
   item: TimelineItem,
-): { label: string; className: string } => {
+): { code: TimelineItemStatusCode; className: string } => {
   if (item.kind === 'thinking') {
     return item.isStreaming
       ? {
-        label: '进行中',
+        code: 'running',
         className: 'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300',
       }
       : {
-        label: '已记录',
+        code: 'recorded',
         className: 'bg-muted text-muted-foreground',
       };
   }
 
   if (item.kind === 'tool_unavailable') {
     return {
-      label: '不可用',
+      code: 'unavailable',
       className: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
     };
   }
 
   if (item.toolCall.error) {
     return {
-      label: '失败',
+      code: 'failed',
       className: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
     };
   }
 
   if (isToolCallSettled(item)) {
     return {
-      label: '已完成',
+      code: 'completed',
       className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
     };
   }
 
   if (item.streamLog) {
     return {
-      label: '执行中',
+      code: 'streaming',
       className: 'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300',
     };
   }
 
   return {
-    label: '等待中',
+    code: 'waiting',
     className: 'bg-muted text-muted-foreground',
   };
 };
@@ -181,16 +182,16 @@ const getTimelineOverview = (items: TimelineItem[]): {
     return acc;
   }
 
-  const status = getTimelineItemStatus(item).label;
-  if (status === '失败') {
+  const status = getTimelineItemStatus(item).code;
+  if (status === 'failed') {
     acc.failed += 1;
     return acc;
   }
-  if (status === '已完成' || status === '已记录') {
+  if (status === 'completed' || status === 'recorded') {
     acc.completed += 1;
     return acc;
   }
-  if (status === '进行中' || status === '执行中' || status === '等待中') {
+  if (status === 'running' || status === 'streaming' || status === 'waiting') {
     acc.running += 1;
   }
 
@@ -203,8 +204,14 @@ const getTimelineOverview = (items: TimelineItem[]): {
   unavailable: 0,
 });
 
-const isRunningStatusLabel = (label: string): boolean => (
-  label === '进行中' || label === '执行中'
+const isRunningStatusCode = (code: TimelineItemStatusCode): boolean => (
+  code === 'running' || code === 'streaming'
+);
+
+const formatUnavailableToolReason = (reason: string, t: TranslateFn): string => (
+  reason === UNAVAILABLE_TOOL_REASON_FALLBACK_KEY
+    ? t('message.unavailableToolFallback')
+    : reason
 );
 
 export const TurnProcessModal: React.FC<TurnProcessModalProps> = ({
@@ -259,7 +266,7 @@ export const TurnProcessModal: React.FC<TurnProcessModalProps> = ({
       if (!item) {
         continue;
       }
-      if (isRunningStatusLabel(getTimelineItemStatus(item).label)) {
+      if (isRunningStatusCode(getTimelineItemStatus(item).code)) {
         return item.id;
       }
     }
@@ -365,13 +372,6 @@ export const TurnProcessModal: React.FC<TurnProcessModalProps> = ({
     return null;
   }
 
-  const timelineLabels = {
-    thinking: t('turnProcess.item.thinking'),
-    toolLabel: t('turnProcess.item.tool', { name: '' }).replace(/\s*[·:：-]\s*$/, '').trim() || '工具',
-    unavailableToolLabel: t('turnProcess.item.unavailableTool', { name: '' }).replace(/\s*[·:：-]\s*$/, '').trim() || '不可用工具',
-    unnamedTool: t('turnProcess.item.toolFallback'),
-  };
-
   return (
     <div className="fixed inset-0 z-[75] flex items-center justify-center p-4">
       <div
@@ -401,7 +401,7 @@ export const TurnProcessModal: React.FC<TurnProcessModalProps> = ({
                 </span>
               </div>
               <div className="mt-1 text-sm text-muted-foreground">
-                {buildUserMessageTitle(userMessage?.content || '')}
+                {buildUserMessageTitle(userMessage?.content || '', t('turnProcess.title'))}
               </div>
               <div id={MODAL_DESC_ID} className="mt-1 text-[11px] text-muted-foreground">
                 {isStreaming ? t('turnProcess.streamingDescription') : t('turnProcess.staticDescription')}
@@ -512,15 +512,15 @@ export const TurnProcessModal: React.FC<TurnProcessModalProps> = ({
                 const showStreamLog = item.kind === 'tool_call'
                   ? shouldShowToolStreamLog(item)
                   : false;
-                const isRunningStep = isRunningStatusLabel(itemStatus.label);
+                const isRunningStep = isRunningStatusCode(itemStatus.code);
                 const isPrimaryActiveStep = item.id === primaryActiveItemId;
                 const isSecondaryRunningStep = isRunningStep && !isPrimaryActiveStep;
                 const itemDotClass = item.kind === 'tool_unavailable'
                   ? 'bg-amber-500'
                   : item.kind === 'tool_call'
-                    ? (itemStatus.label === '失败'
+                    ? (itemStatus.code === 'failed'
                       ? 'bg-rose-500'
-                      : (itemStatus.label === '已完成' ? 'bg-emerald-500' : 'bg-sky-500'))
+                      : (itemStatus.code === 'completed' ? 'bg-emerald-500' : 'bg-sky-500'))
                     : 'bg-violet-500';
 
                 return (
@@ -546,10 +546,10 @@ export const TurnProcessModal: React.FC<TurnProcessModalProps> = ({
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <div className="text-xs font-medium text-foreground">
-                            {getTimelineItemTitle(item, timelineLabels)}
+                            {getTimelineItemTitle(item, t)}
                           </div>
                           <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${itemStatus.className}`}>
-                            {itemStatus.label}
+                            {t(`turnProcess.status.${itemStatus.code}`)}
                           </span>
                           {isPrimaryActiveStep && (
                           <span className="inline-flex items-center rounded-full bg-sky-600 px-2 py-0.5 text-[11px] font-medium text-white">
@@ -600,7 +600,7 @@ export const TurnProcessModal: React.FC<TurnProcessModalProps> = ({
 
                       {item.kind === 'tool_unavailable' && (
                         <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-                          {item.entry.reason}
+                          {formatUnavailableToolReason(item.entry.reason, t)}
                         </div>
                       )}
                     </div>

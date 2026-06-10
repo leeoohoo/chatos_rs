@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { MessageList } from '../../MessageList';
 import TeamMemberSummaryView from './TeamMemberSummaryView';
 import type { TeamMemberWorkspaceProps } from './TeamMemberWorkspaceTypes';
@@ -50,24 +51,26 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
   onCloseSummary,
   onDeleteSummary,
 }) => {
+  const { t } = useI18n();
+
   if (!selectedContact) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-        请选择一个团队成员开始对话
+        {t('teamMembers.selectPrompt')}
       </div>
     );
   }
   if (!selectedProjectSession) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-        正在准备会话...
+        {t('teamMembers.preparingSession')}
       </div>
     );
   }
   if (!isSelectedSessionActive) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-        正在切换到 {selectedContact.name} 的会话...
+        {t('teamMembers.switchingSession', { name: selectedContact.name })}
       </div>
     );
   }

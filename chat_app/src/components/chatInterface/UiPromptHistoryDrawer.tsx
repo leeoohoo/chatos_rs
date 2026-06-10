@@ -1,5 +1,6 @@
 import React from 'react';
 import type { UiPromptHistoryItem } from './types';
+import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
 
 interface UiPromptHistoryDrawerProps {
   open: boolean;
@@ -12,12 +13,12 @@ interface UiPromptHistoryDrawerProps {
   formatCreatedAt: (value: string) => string;
 }
 
-const formatUiPromptStatus = (status: string): string => {
+const formatUiPromptStatus = (status: string, t: TranslateFn): string => {
   const normalized = String(status || '').trim().toLowerCase();
-  if (normalized === 'ok') return '已提交';
-  if (normalized === 'canceled' || normalized === 'cancelled') return '已取消';
-  if (normalized === 'timeout') return '超时';
-  if (normalized === 'pending') return '待处理';
+  if (normalized === 'ok') return t('uiPromptHistory.status.ok');
+  if (normalized === 'canceled' || normalized === 'cancelled') return t('uiPromptHistory.status.canceled');
+  if (normalized === 'timeout') return t('uiPromptHistory.status.timeout');
+  if (normalized === 'pending') return t('uiPromptHistory.status.pending');
   return normalized || '-';
 };
 
@@ -48,6 +49,8 @@ const UiPromptHistoryDrawer: React.FC<UiPromptHistoryDrawerProps> = ({
   onClose,
   formatCreatedAt,
 }) => {
+  const { t } = useI18n();
+
   if (!open) {
     return null;
   }
@@ -56,7 +59,7 @@ const UiPromptHistoryDrawer: React.FC<UiPromptHistoryDrawerProps> = ({
     <div className="fixed inset-0 z-50">
       <button
         type="button"
-        aria-label="关闭交互确认记录抽屉"
+        aria-label={t('uiPromptHistory.closeAria')}
         className="absolute inset-0 bg-black/35"
         onClick={onClose}
       />
@@ -64,9 +67,9 @@ const UiPromptHistoryDrawer: React.FC<UiPromptHistoryDrawerProps> = ({
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div>
-              <div className="text-sm font-semibold text-foreground">交互确认记录</div>
+              <div className="text-sm font-semibold text-foreground">{t('uiPromptHistory.title')}</div>
               <div className="text-xs text-muted-foreground">
-                当前会话：{items.length}
+                {t('uiPromptHistory.currentSessionCount', { count: items.length })}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -76,14 +79,14 @@ const UiPromptHistoryDrawer: React.FC<UiPromptHistoryDrawerProps> = ({
                 disabled={refreshDisabled}
                 onClick={onRefresh}
               >
-                {loading ? '刷新中...' : '刷新'}
+                {loading ? t('common.refreshing') : t('common.refresh')}
               </button>
               <button
                 type="button"
                 className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent"
                 onClick={onClose}
               >
-                关闭
+                {t('common.close')}
               </button>
             </div>
           </div>
@@ -96,11 +99,11 @@ const UiPromptHistoryDrawer: React.FC<UiPromptHistoryDrawerProps> = ({
             ) : null}
 
             {loading && items.length === 0 ? (
-              <div className="text-xs text-muted-foreground">交互确认记录加载中...</div>
+              <div className="text-xs text-muted-foreground">{t('uiPromptHistory.loading')}</div>
             ) : null}
 
             {!loading && items.length === 0 ? (
-              <div className="text-xs text-muted-foreground">暂无已处理的交互确认记录。</div>
+              <div className="text-xs text-muted-foreground">{t('uiPromptHistory.empty')}</div>
             ) : null}
 
             {items.length > 0 ? (
@@ -109,17 +112,20 @@ const UiPromptHistoryDrawer: React.FC<UiPromptHistoryDrawerProps> = ({
                   <div key={item.id} className="rounded-lg border border-border bg-background/80 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="truncate text-sm font-medium text-foreground">
-                        {item.title || '未命名 Prompt'}
+                        {item.title || t('uiPromptHistory.unnamedPrompt')}
                       </div>
                       <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${uiPromptStatusClass(item.status)}`}>
-                        {formatUiPromptStatus(item.status)}
+                        {formatUiPromptStatus(item.status, t)}
                       </span>
                     </div>
                     {item.message ? (
                       <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.message}</div>
                     ) : null}
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      {`类型 ${item.kind || '-'} · 时间 ${formatCreatedAt(item.updatedAt || item.createdAt)}`}
+                      {t('uiPromptHistory.meta', {
+                        kind: item.kind || '-',
+                        time: formatCreatedAt(item.updatedAt || item.createdAt),
+                      })}
                     </div>
                     {item.response ? (
                       <pre className="custom-scrollbar mt-2 max-h-40 overflow-y-scroll rounded border border-border bg-background p-2 text-[11px] text-foreground [scrollbar-gutter:stable]">

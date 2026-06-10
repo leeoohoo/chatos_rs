@@ -2,10 +2,11 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
-import { RowsCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asNumber, asRecord, asString } from '../shared/value';
 
 const PluginCommandListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { t } = useI18n();
   const commands = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -14,7 +15,7 @@ const PluginCommandListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Plugin commands', `${commands.length} 个`)}
+      {renderCardHeader('Plugin commands', formatToolCardCount(t, 'commands', commands.length))}
       <div className="tool-detail-list">
         {commands.map((command, index) => (
           <div key={`plugin-command-${index}`} className="tool-detail-item">
@@ -35,6 +36,7 @@ const PluginCommandListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 };
 
 const RelatedSkillsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { t } = useI18n();
   const skills = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -43,7 +45,7 @@ const RelatedSkillsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Related skills', `${skills.length} 个`)}
+      {renderCardHeader('Related skills', formatToolCardCount(t, 'skills', skills.length))}
       <div className="tool-detail-list">
         {skills.map((skill, index) => (
           <div key={`related-skill-${index}`} className="tool-detail-item">

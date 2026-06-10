@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useI18n } from '../i18n/I18nProvider';
 import {
   formatGuidanceAppliedTime,
   isBlockedTask,
@@ -90,6 +91,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   runtimeGuidanceLastAppliedAt = null,
   runtimeGuidanceItems = [],
 }) => {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [uncontrolledHistoryOpen, setUncontrolledHistoryOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
@@ -128,9 +130,16 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
     }
     const appliedAt = formatGuidanceAppliedTime(runtimeGuidanceLastAppliedAt);
     return appliedAt
-      ? `引导待应用: ${runtimeGuidancePendingCount} · 已应用: ${runtimeGuidanceAppliedCount} · 最近应用: ${appliedAt}`
-      : `引导待应用: ${runtimeGuidancePendingCount} · 已应用: ${runtimeGuidanceAppliedCount}`;
-  }, [runtimeGuidanceAppliedCount, runtimeGuidanceLastAppliedAt, runtimeGuidancePendingCount]);
+      ? t('taskWorkbar.guidanceHintWithTime', {
+        pending: runtimeGuidancePendingCount,
+        applied: runtimeGuidanceAppliedCount,
+        time: appliedAt,
+      })
+      : t('taskWorkbar.guidanceHint', {
+        pending: runtimeGuidancePendingCount,
+        applied: runtimeGuidanceAppliedCount,
+      });
+  }, [runtimeGuidanceAppliedCount, runtimeGuidanceLastAppliedAt, runtimeGuidancePendingCount, t]);
   const visibleRuntimeGuidanceItems = useMemo(() => {
     const normalizedCurrentTurnId = typeof currentTurnId === 'string' ? currentTurnId.trim() : '';
     const sortedItems = [...runtimeGuidanceItems].sort((a, b) => {
@@ -201,9 +210,18 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
               <path d="M7 5l6 5-6 5V5z" />
             </svg>
             <div className="min-w-0">
-              <div className="text-xs font-semibold text-foreground">Workbar</div>
-              <div className="text-[11px] text-muted-foreground">{`\u5f53\u524d\u8f6e\u4efb\u52a1\uff1a${currentTurnTasks.length}`}</div>
-              <div className="text-[11px] text-muted-foreground">{`当前：${currentTurnTaskGroups.current.length} · 未完成：${groupedTasks.unfinished.length} · 阻塞：${groupedTasks.blocked.length} · 已完成：${groupedTasks.done.length}`}</div>
+              <div className="text-xs font-semibold text-foreground">{t('taskWorkbar.title')}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {t('taskWorkbar.currentTurnTasks', { count: currentTurnTasks.length })}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {t('taskWorkbar.summary', {
+                  current: currentTurnTaskGroups.current.length,
+                  unfinished: groupedTasks.unfinished.length,
+                  blocked: groupedTasks.blocked.length,
+                  done: groupedTasks.done.length,
+                })}
+              </div>
               {runtimeGuidanceHint ? (
                 <div className="text-[11px] text-muted-foreground">{runtimeGuidanceHint}</div>
               ) : null}
@@ -212,7 +230,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                   className="truncate text-[11px] text-muted-foreground"
                   title={latestRuntimeGuidanceContent}
                 >
-                  {`最近引导：${latestRuntimeGuidanceContent}`}
+                  {t('taskWorkbar.recentGuidance', { content: latestRuntimeGuidanceContent })}
                 </div>
               ) : null}
             </div>
@@ -225,7 +243,10 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
                 onClick={onOpenUiPromptHistory}
               >
-                {`交互确认记录 ${uiPromptHistoryCount}${uiPromptHistoryLoading ? ' · 更新中' : ''}`}
+                {t('taskWorkbar.uiPromptHistory', {
+                  count: uiPromptHistoryCount,
+                  suffix: uiPromptHistoryLoading ? t('taskWorkbar.updatingSuffix') : '',
+                })}
               </button>
             ) : null}
             {onReviewRepair ? (
@@ -235,7 +256,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 onClick={() => { void onReviewRepair(); }}
                 disabled={reviewRepairRunning || reviewRepairDisabled}
               >
-                {reviewRepairRunning ? '复盘中...' : '复盘'}
+                {reviewRepairRunning ? t('taskWorkbar.reviewRepairing') : t('taskWorkbar.reviewRepair')}
               </button>
             ) : null}
             {expanded ? (
@@ -245,14 +266,14 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                   className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
                   onClick={() => handleOpenHistory('all')}
                 >
-                  {'历史任务'}
+                  {t('taskWorkbar.history')}
                 </button>
                 <button
                   type="button"
                   className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
                   onClick={() => handleOpenHistory('processed')}
                 >
-                  {'已处理'}
+                  {t('taskWorkbar.processed')}
                 </button>
               </>
             ) : null}
@@ -263,7 +284,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 onClick={onRefresh}
                 disabled={isLoading}
               >
-                {isLoading ? '\u5237\u65b0\u4e2d...' : '\u5237\u65b0'}
+                {isLoading ? t('taskWorkbar.refreshing') : t('taskWorkbar.refresh')}
               </button>
             ) : null}
           </div>
@@ -280,21 +301,21 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             <RuntimeGuidanceSection items={visibleRuntimeGuidanceItems} />
 
             {isLoading && currentTurnTasks.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">{'\u4efb\u52a1\u52a0\u8f7d\u4e2d...'}</div>
+              <div className="text-[11px] text-muted-foreground">{t('taskWorkbar.loading')}</div>
             ) : null}
 
             {!isLoading && !currentTurnId && currentTurnTasks.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">{'\u5f53\u524d\u6682\u65e0\u8f6e\u6b21\u3002'}</div>
+              <div className="text-[11px] text-muted-foreground">{t('taskWorkbar.noTurn')}</div>
             ) : null}
 
             {!isLoading && currentTurnId && currentTurnTasks.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">{'\u672c\u8f6e\u6682\u65e0\u4efb\u52a1\u3002'}</div>
+              <div className="text-[11px] text-muted-foreground">{t('taskWorkbar.noTasksThisTurn')}</div>
             ) : null}
 
             {currentTurnTasks.length > 0 ? (
               <div className="space-y-2">
                 <div>
-                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">当前</div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">{t('taskWorkbar.group.current')}</div>
                   <div className="flex gap-1.5 overflow-x-auto pb-1">
                     {currentTurnTaskSummary ? (
                       <TaskCard
@@ -310,7 +331,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                   </div>
                 </div>
                 <div>
-                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">未完成</div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">{t('taskWorkbar.group.unfinished')}</div>
                   <div className="flex gap-1.5 overflow-x-auto pb-1">
                     {currentTurnTaskGroups.unfinished.map((task) => (
                       <TaskCard
@@ -326,7 +347,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                   </div>
                 </div>
                 <div>
-                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">阻塞</div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">{t('taskWorkbar.group.blocked')}</div>
                   <div className="flex gap-1.5 overflow-x-auto pb-1">
                     {currentTurnTaskGroups.blocked.map((task) => (
                       <TaskCard
@@ -342,7 +363,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                   </div>
                 </div>
                 <div>
-                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">已完成</div>
+                  <div className="mb-1 text-[11px] font-medium text-muted-foreground">{t('taskWorkbar.group.done')}</div>
                   <div className="flex gap-1.5 overflow-x-auto pb-1">
                     {currentTurnTaskGroups.done.map((task) => (
                       <TaskCard

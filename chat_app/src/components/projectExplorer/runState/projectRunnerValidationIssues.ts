@@ -1,9 +1,13 @@
+import type { TranslateFn } from '../../../i18n/I18nProvider';
 import type { ProjectRunValidationIssue } from '../../../types';
 
-const formatValidationIssueLine = (issue: ProjectRunValidationIssue): string => {
+const formatValidationIssueLine = (
+  issue: ProjectRunValidationIssue,
+  t?: TranslateFn,
+): string => {
   const base = issue.targetLabel ? `[${issue.targetLabel}] ${issue.message}` : issue.message;
   if (issue.hint) {
-    return `${base}；建议：${issue.hint}`;
+    return t ? t('runSettings.validationIssueHint', { base, hint: issue.hint }) : `${base}; suggestion: ${issue.hint}`;
   }
   return base;
 };
@@ -11,12 +15,15 @@ const formatValidationIssueLine = (issue: ProjectRunValidationIssue): string => 
 export const formatProjectRunValidationIssues = (
   issues: ProjectRunValidationIssue[],
   fallback: string,
+  t?: TranslateFn,
 ): string => {
   const normalized = issues
-    .map(formatValidationIssueLine)
+    .map((issue) => formatValidationIssueLine(issue, t))
     .filter(Boolean);
   if (normalized.length === 0) {
     return fallback;
   }
-  return `启动前检查未通过：${normalized.join('；')}`;
+  return t
+    ? t('runSettings.validationFailed', { issues: normalized.join('; ') })
+    : `Preflight check failed: ${normalized.join('; ')}`;
 };

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { deriveParentPath } from '../../lib/domain/filesystem';
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   FsEntriesResponse,
   FsMutationResponse,
@@ -8,6 +9,7 @@ import type { FsEntry } from '../../types';
 import {
   getKeyFilePickerTitle,
   normalizeFsEntry,
+  translateSessionListMessage,
   type DirPickerTarget,
   type KeyFilePickerTarget,
 } from './helpers';
@@ -20,6 +22,7 @@ interface FsPickerApiClient {
 
 interface UseLocalFsPickersOptions {
   apiClient: FsPickerApiClient;
+  t?: TranslateFn;
   projectRoot: string;
   terminalRoot: string;
   remotePrivateKeyPath: string;
@@ -76,6 +79,7 @@ const readErrorMessage = (error: unknown, fallback: string): string => (
 
 export const useLocalFsPickers = ({
   apiClient,
+  t,
   projectRoot,
   terminalRoot,
   remotePrivateKeyPath,
@@ -89,6 +93,8 @@ export const useLocalFsPickers = ({
   onRemoteJumpPrivateKeyPathChange,
   onRemoteJumpCertificatePathChange,
 }: UseLocalFsPickersOptions): UseLocalFsPickersResult => {
+  const tr = useCallback((key: string) => translateSessionListMessage(t, key), [t]);
+
   const [keyFilePickerOpen, setKeyFilePickerOpen] = useState(false);
   const [keyFilePickerTarget, setKeyFilePickerTarget] = useState<KeyFilePickerTarget>('private_key');
   const [keyFilePickerPath, setKeyFilePickerPath] = useState<string | null>(null);
@@ -133,11 +139,11 @@ export const useLocalFsPickers = ({
           : [],
       );
     } catch (err) {
-      setDirPickerError(readErrorMessage(err, '加载目录失败'));
+      setDirPickerError(readErrorMessage(err, tr('sessionList.picker.error.loadDirectoriesFailed')));
     } finally {
       setDirPickerLoading(false);
     }
-  }, [apiClient]);
+  }, [apiClient, tr]);
 
   const openDirPicker = useCallback(async (target: DirPickerTarget) => {
     setDirPickerTarget(target);
@@ -158,31 +164,31 @@ export const useLocalFsPickers = ({
 
   const openCreateDirModal = useCallback(() => {
     if (!dirPickerPath) {
-      setDirPickerError('请先进入一个父目录后再新建目录');
+      setDirPickerError(tr('sessionList.picker.error.enterParentBeforeCreate'));
       return;
     }
     if (!dirPickerWritable) {
-      setDirPickerError('当前目录不允许写入');
+      setDirPickerError(tr('sessionList.picker.error.directoryReadonly'));
       return;
     }
     setDirPickerError(null);
     setDirPickerNewFolderName('');
     setDirPickerCreateModalOpen(true);
-  }, [dirPickerPath, dirPickerWritable]);
+  }, [dirPickerPath, dirPickerWritable, tr]);
 
   const createDirInPicker = useCallback(async () => {
     const basePath = dirPickerPath;
     if (!basePath) {
-      setDirPickerError('请先进入一个父目录后再新建目录');
+      setDirPickerError(tr('sessionList.picker.error.enterParentBeforeCreate'));
       return;
     }
     if (!dirPickerWritable) {
-      setDirPickerError('当前目录不允许写入');
+      setDirPickerError(tr('sessionList.picker.error.directoryReadonly'));
       return;
     }
     const name = dirPickerNewFolderName.trim();
     if (!name) {
-      setDirPickerError('请输入新目录名称');
+      setDirPickerError(tr('sessionList.picker.error.directoryNameRequired'));
       return;
     }
 
@@ -207,7 +213,7 @@ export const useLocalFsPickers = ({
 
       await loadDirEntries(createdPath);
     } catch (err) {
-      setDirPickerError(readErrorMessage(err, '新建目录失败'));
+      setDirPickerError(readErrorMessage(err, tr('sessionList.picker.error.createDirectoryFailed')));
     } finally {
       setDirPickerCreatingFolder(false);
     }
@@ -220,6 +226,7 @@ export const useLocalFsPickers = ({
     loadDirEntries,
     onProjectRootChange,
     onTerminalRootChange,
+    tr,
   ]);
 
   const chooseDir = useCallback((path: string | null) => {
@@ -250,11 +257,11 @@ export const useLocalFsPickers = ({
           : [],
       );
     } catch (err) {
-      setKeyFilePickerError(readErrorMessage(err, '加载文件列表失败'));
+      setKeyFilePickerError(readErrorMessage(err, tr('sessionList.picker.error.loadFilesFailed')));
     } finally {
       setKeyFilePickerLoading(false);
     }
-  }, [apiClient]);
+  }, [apiClient, tr]);
 
   const openKeyFilePicker = useCallback(async (target: KeyFilePickerTarget) => {
     setKeyFilePickerTarget(target);
@@ -314,8 +321,8 @@ export const useLocalFsPickers = ({
   );
 
   const keyFilePickerTitle = useMemo(
-    () => getKeyFilePickerTitle(keyFilePickerTarget),
-    [keyFilePickerTarget],
+    () => getKeyFilePickerTitle(keyFilePickerTarget, t),
+    [keyFilePickerTarget, t],
   );
 
   return {

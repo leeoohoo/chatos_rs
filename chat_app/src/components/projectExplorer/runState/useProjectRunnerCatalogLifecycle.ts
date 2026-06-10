@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type ApiClient from '../../../lib/api/client';
 import {
   normalizeProjectRunCatalog,
@@ -52,6 +53,7 @@ export const useProjectRunnerCatalogLifecycle = ({
   setEnvVarsDraft,
   applyRunCatalog,
 }: UseProjectRunnerCatalogLifecycleOptions) => {
+  const { t } = useI18n();
   const runCatalogRequestRef = useRef<Promise<void> | null>(null);
   const queuedRunCatalogModeRef = useRef<ProjectRunRefreshMode | null>(null);
   const runCatalogVersionRef = useRef(0);
@@ -116,13 +118,13 @@ export const useProjectRunnerCatalogLifecycle = ({
         return;
       }
       setRunEnvironment(null);
-      setRunEnvironmentError(error instanceof Error ? error.message : '加载运行环境失败');
+      setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.loadEnvironmentFailed'));
     } finally {
       if (guard.shouldApply()) {
         setRunEnvironmentLoading(false);
       }
     }
-  }, [client, enabled, project?.id, setEnvVarsDraft, setRunEnvironment, setRunEnvironmentError, setRunEnvironmentLoading]);
+  }, [client, enabled, project?.id, setEnvVarsDraft, setRunEnvironment, setRunEnvironmentError, setRunEnvironmentLoading, t]);
 
   const loadRunCatalogOnce = useCallback(async (mode: ProjectRunRefreshMode = 'analyze') => {
     if (!enabled || !project?.id) {
@@ -158,7 +160,7 @@ export const useProjectRunnerCatalogLifecycle = ({
         return;
       }
       setRunTargets([]);
-      setRunCatalogError(error instanceof Error ? error.message : '分析运行目标失败');
+      setRunCatalogError(error instanceof Error ? error.message : t('runSettings.error.analyzeTargetsFailed'));
       setSelectedRunTargetId(null);
     } finally {
       if (guard.shouldApply()) {
@@ -174,6 +176,7 @@ export const useProjectRunnerCatalogLifecycle = ({
     setRunCatalogLoading,
     setRunTargets,
     setSelectedRunTargetId,
+    t,
   ]);
 
   const queueRunCatalogMode = useCallback((mode: ProjectRunRefreshMode) => {
@@ -230,9 +233,9 @@ export const useProjectRunnerCatalogLifecycle = ({
       applyRunCatalog(catalog);
       setSelectedRunTargetId(catalog.defaultTargetId || normalizedTargetId);
     } catch (error) {
-      setRunCatalogError(error instanceof Error ? error.message : '设置默认运行目标失败');
+      setRunCatalogError(error instanceof Error ? error.message : t('runSettings.error.setDefaultTargetFailed'));
     }
-  }, [applyRunCatalog, client, enabled, project?.id, setRunCatalogError, setSelectedRunTargetId]);
+  }, [applyRunCatalog, client, enabled, project?.id, setRunCatalogError, setSelectedRunTargetId, t]);
 
   const refreshRunnerState = useCallback(async (mode: ProjectRunRefreshMode = 'catalog') => {
     await Promise.all([

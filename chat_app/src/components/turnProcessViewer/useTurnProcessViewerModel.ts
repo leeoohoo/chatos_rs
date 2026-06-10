@@ -17,6 +17,7 @@ import {
   buildTurnProcessTimeline,
   type TurnProcessTimelineItem,
 } from './buildTurnProcessTimeline';
+import { useI18n } from '../../i18n/I18nProvider';
 
 const normalizeId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
@@ -55,6 +56,7 @@ export const useTurnProcessViewerModel = ({
   cachedProcessMessages?: Record<string, Message[]> | null;
   apiClient: ApiClient;
 }) => {
+  const { t } = useI18n();
   const normalizedUserMessageId = normalizeId(userMessageId);
   const normalizedTurnId = normalizeId(turnId);
 
@@ -176,13 +178,13 @@ export const useTurnProcessViewerModel = ({
       }
       setFetchedProcessMessages([]);
       setLoading(false);
-      setError(fetchError instanceof Error ? fetchError.message : '加载过程内容失败');
+      setError(fetchError instanceof Error ? fetchError.message : t('turnProcess.loadErrorFallback'));
     });
 
     return () => {
       active = false;
     };
-  }, [apiClient, normalizedUserMessageId, open, resolvedTurnId, sessionId]);
+  }, [apiClient, normalizedUserMessageId, open, resolvedTurnId, sessionId, t]);
 
   const processMessages = useMemo(
     () => mergeUniqueMessages(

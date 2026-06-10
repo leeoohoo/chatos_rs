@@ -6,6 +6,7 @@ import type {
   TurnRuntimeSnapshotSystemMessage,
   TurnRuntimeSnapshotTool,
 } from '../../lib/api/client/types';
+import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
 
 interface TurnRuntimeContextDrawerProps {
   open: boolean;
@@ -46,30 +47,30 @@ const getSystemMessageTone = (messageId?: string | null): string => {
   return 'border-sky-500/30 bg-sky-500/10';
 };
 
-const buildItemSummary = (item: TurnRuntimeSnapshotContextItem): string => {
+const buildItemSummary = (item: TurnRuntimeSnapshotContextItem, t: TranslateFn): string => {
   const parts = [
     item.role ? `role=${item.role}` : '',
     item.type ? `type=${item.type}` : '',
     item.source ? `source=${item.source}` : '',
   ].filter(Boolean);
-  return parts.join(' · ') || '上下文项';
+  return parts.join(' · ') || t('runtimeContext.itemFallback');
 };
 
-const buildSystemMessageSummary = (item: TurnRuntimeSnapshotSystemMessage): string => {
+const buildSystemMessageSummary = (item: TurnRuntimeSnapshotSystemMessage, t: TranslateFn): string => {
   const parts = [
     item.id ? `id=${item.id}` : '',
     item.source ? `source=${item.source}` : '',
   ].filter(Boolean);
-  return parts.join(' · ') || '系统消息';
+  return parts.join(' · ') || t('runtimeContext.systemMessageFallback');
 };
 
-const buildToolSummary = (tool: TurnRuntimeSnapshotTool): string => {
+const buildToolSummary = (tool: TurnRuntimeSnapshotTool, t: TranslateFn): string => {
   const parts = [
     tool.name ? `name=${tool.name}` : '',
     tool.server_name ? `server=${tool.server_name}` : '',
     tool.server_type ? `type=${tool.server_type}` : '',
   ].filter(Boolean);
-  return parts.join(' · ') || '工具';
+  return parts.join(' · ') || t('runtimeContext.toolFallback');
 };
 
 const buildRequestMetaPayload = (
@@ -104,6 +105,8 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
   onRefresh,
   onClose,
 }) => {
+  const { t } = useI18n();
+
   if (!open) {
     return null;
   }
@@ -126,7 +129,7 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
     <div className="fixed inset-0 z-50">
       <button
         type="button"
-        aria-label="关闭上下文快照抽屉"
+        aria-label={t('runtimeContext.closeAria')}
         className="absolute inset-0 bg-black/35"
         onClick={onClose}
       />
@@ -134,9 +137,9 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div>
-              <div className="text-sm font-semibold text-foreground">轮次运行上下文</div>
+              <div className="text-sm font-semibold text-foreground">{t('runtimeContext.title')}</div>
               <div className="text-xs text-muted-foreground">
-                {sessionId ? `会话 ${sessionId}` : '未选择会话'}
+                {sessionId ? t('runtimeContext.sessionId', { id: sessionId }) : t('runtimeContext.noSession')}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -146,14 +149,14 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
                 disabled={!sessionId || loading}
                 onClick={onRefresh}
               >
-                {loading ? '刷新中...' : '刷新'}
+                {loading ? t('common.refreshing') : t('common.refresh')}
               </button>
               <button
                 type="button"
                 className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent"
                 onClick={onClose}
               >
-                关闭
+                {t('common.close')}
               </button>
             </div>
           </div>
@@ -177,13 +180,13 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
             </div>
 
             <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-950 dark:text-sky-100">
-              本面板展示的是当前轮快照里的关键信息；“完整请求（payload）”始终指向最近一次真正发送给模型的那次请求。
+              {t('runtimeContext.description')}
             </div>
 
-            <div className="mb-2 text-xs font-medium text-foreground">系统消息快照</div>
+            <div className="mb-2 text-xs font-medium text-foreground">{t('runtimeContext.systemMessages')}</div>
             {systemMessages.length === 0 ? (
               <div className="mb-3 rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                当前快照里没有系统消息
+                {t('runtimeContext.emptySystemMessages')}
               </div>
             ) : (
               <div className="mb-4 space-y-2">
@@ -193,8 +196,8 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
                     className={`rounded-md border p-3 ${getSystemMessageTone(item.id)}`}
                   >
                     <summary className="cursor-pointer list-none text-xs text-foreground">
-                      <span className="font-medium">{`${index + 1}. ${buildSystemMessageSummary(item)}`}</span>
-                      <span className="ml-2 text-muted-foreground">默认折叠，点击展开内容</span>
+                      <span className="font-medium">{`${index + 1}. ${buildSystemMessageSummary(item, t)}`}</span>
+                      <span className="ml-2 text-muted-foreground">{t('runtimeContext.collapsedHint')}</span>
                     </summary>
                     <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-foreground">
 {item.content}
@@ -204,10 +207,10 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
               </div>
             )}
 
-            <div className="mb-2 text-xs font-medium text-foreground">最近一次实际请求内容</div>
+            <div className="mb-2 text-xs font-medium text-foreground">{t('runtimeContext.actualContext')}</div>
             {actualPreviewItems.length === 0 ? (
               <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                当前快照里还没有记录实际发送上下文
+                {t('runtimeContext.emptyActualContext')}
               </div>
             ) : (
               <div className="space-y-2">
@@ -217,8 +220,8 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
                     className={`rounded-md border p-3 ${getPreviewItemTone(item.role, item.type)}`}
                   >
                     <summary className="cursor-pointer list-none text-xs text-foreground">
-                      <span className="font-medium">{`${index + 1}. ${buildItemSummary(item)}`}</span>
-                      <span className="ml-2 text-muted-foreground">默认折叠，点击展开内容</span>
+                      <span className="font-medium">{`${index + 1}. ${buildItemSummary(item, t)}`}</span>
+                      <span className="ml-2 text-muted-foreground">{t('runtimeContext.collapsedHint')}</span>
                     </summary>
                     <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-foreground">
 {item.content}
@@ -228,10 +231,10 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
               </div>
             )}
 
-            <div className="mb-2 mt-4 text-xs font-medium text-foreground">本轮可用工具列表（tools）</div>
+            <div className="mb-2 mt-4 text-xs font-medium text-foreground">{t('runtimeContext.tools')}</div>
             {tools.length === 0 ? (
               <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                当前快照里没有记录工具
+                {t('runtimeContext.emptyTools')}
               </div>
             ) : (
               <div className="space-y-2">
@@ -241,8 +244,8 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
                     className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3"
                   >
                     <summary className="cursor-pointer list-none text-xs text-foreground">
-                      <span className="font-medium">{`${index + 1}. ${buildToolSummary(tool)}`}</span>
-                      <span className="ml-2 text-muted-foreground">默认折叠，点击展开内容</span>
+                      <span className="font-medium">{`${index + 1}. ${buildToolSummary(tool, t)}`}</span>
+                      <span className="ml-2 text-muted-foreground">{t('runtimeContext.collapsedHint')}</span>
                     </summary>
                     <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-foreground">
 {JSON.stringify(tool, null, 2)}
@@ -252,18 +255,18 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
               </div>
             )}
 
-            <div className="mb-2 mt-4 text-xs font-medium text-foreground">最近一次发送给模型的完整请求（payload）</div>
+            <div className="mb-2 mt-4 text-xs font-medium text-foreground">{t('runtimeContext.payload')}</div>
             {lastModelRequestPayload ? (
               <pre className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-foreground whitespace-pre-wrap break-words">
 {JSON.stringify(lastModelRequestPayload, null, 2)}
               </pre>
             ) : (
               <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                当前快照里还没有记录完整请求 payload
+                {t('runtimeContext.emptyPayload')}
               </div>
             )}
 
-            <div className="mb-2 mt-4 text-xs font-medium text-foreground">请求级元信息（快照结构化）</div>
+            <div className="mb-2 mt-4 text-xs font-medium text-foreground">{t('runtimeContext.requestMeta')}</div>
             <pre className="rounded-md border border-border bg-background/70 p-3 text-xs text-foreground whitespace-pre-wrap break-words">
 {JSON.stringify(requestMetaPayload, null, 2)}
             </pre>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 import { deriveParentPath } from '../../lib/domain/filesystem';
 import type { FsEntry } from '../../types';
 import { normalizeFsEntry } from './fileUtils';
@@ -51,6 +52,7 @@ export const useWorkspaceDirectoryPicker = ({
   normalizedWorkspaceRoot,
   onWorkspaceRootChange,
 }: UseWorkspaceDirectoryPickerOptions): UseWorkspaceDirectoryPickerResult => {
+  const { t } = useI18n();
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [workspaceParent, setWorkspaceParent] = useState<string | null>(null);
@@ -81,11 +83,11 @@ export const useWorkspaceDirectoryPicker = ({
       setWorkspaceEntries(entries);
       setWorkspaceRoots(roots);
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : '加载目录失败');
+      setWorkspaceError(error instanceof Error ? error.message : t('inputArea.workspace.loadFailed'));
     } finally {
       setWorkspaceLoading(false);
     }
-  }, [client]);
+  }, [client, t]);
 
   const handleToggleWorkspacePicker = useCallback(async () => {
     if (!showWorkspaceRootPicker || disabled || isStreaming || isStopping) {

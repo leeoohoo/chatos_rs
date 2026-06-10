@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { useContactSessionResolver } from '../../../features/contactSession/useContactSessionResolver';
 import {
   findLatestMatchedSession,
@@ -44,6 +45,7 @@ export const useTeamMembersContactResources = ({
   project,
   store,
 }: UseTeamMembersContactResourcesOptions) => {
+  const { t } = useI18n();
   const {
     apiClient,
     currentSession,
@@ -148,7 +150,7 @@ export const useTeamMembersContactResources = ({
   const ensureContactSession = useCallback(async (contact: ContactItem): Promise<string | null> => {
     return ensureContactSessionFromResolver(contact, {
       projectId: normalizedProjectId,
-      title: contact.name || '联系人',
+      title: contact.name || t('teamMembers.contactFallback'),
       selectedModelId: selectedModelId ?? null,
       projectRoot: project.rootPath || null,
       mcpEnabled: true,
@@ -160,6 +162,7 @@ export const useTeamMembersContactResources = ({
     normalizedProjectId,
     project.rootPath,
     selectedModelId,
+    t,
   ]);
 
   const conversation = useTeamMemberConversation({

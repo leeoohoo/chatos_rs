@@ -1,8 +1,65 @@
+import type { TranslateFn } from '../../../i18n/I18nProvider';
 import type {
   ProjectRunResolutionSuggestion,
   ProjectRunTarget,
   ProjectRunToolchainOption,
 } from '../../../types';
+
+const fallbackTranslate: TranslateFn = (key, params) => {
+  const values = params || {};
+  switch (key) {
+    case 'runSettings.toolchain.rustc':
+      return 'Rust compiler';
+    case 'runSettings.suggestion.switchOtherJdk':
+      return `Switch to another JDK: ${values.label}`;
+    case 'runSettings.suggestion.checkJdk':
+      return 'Check and switch JDK version';
+    case 'runSettings.suggestion.selectValidJdk':
+      return 'Select a valid JDK directory again';
+    case 'runSettings.suggestion.switchMavenSettings':
+      return `Switch Maven Settings: ${values.label}`;
+    case 'runSettings.suggestion.checkMavenSettings':
+      return 'Check Maven Settings file';
+    case 'runSettings.suggestion.reviewMavenSettings':
+      return 'Check Maven Settings and repository credentials first';
+    case 'runSettings.suggestion.switchOtherEntrypoint':
+      return `Switch to another run entry: ${values.label}`;
+    case 'runSettings.suggestion.switchNoGradlew':
+      return 'Switch to a run entry that does not depend on gradlew';
+    case 'runSettings.suggestion.tryOtherEntrypoint':
+      return `Try switching to another entry: ${values.label}`;
+    case 'runSettings.suggestion.checkEntrypoint':
+      return 'Check and switch run entry';
+    case 'runSettings.suggestion.trySiblingTarget':
+      return `Try another entry for the same language: ${values.label}`;
+    case 'runSettings.suggestion.switchRustEntrypoint':
+      return `Switch to another Rust entry: ${values.label}`;
+    case 'runSettings.suggestion.checkRustEntrypoint':
+      return 'Check Rust entrypoint and Cargo configuration';
+    case 'runSettings.suggestion.reviewRustToolchain':
+      return 'Check Cargo / Rust build environment';
+    case 'runSettings.suggestion.switchGoEntrypoint':
+      return `Switch to another Go entry: ${values.label}`;
+    case 'runSettings.suggestion.checkGoEntrypoint':
+      return 'Check Go entrypoint and go.mod configuration';
+    case 'runSettings.suggestion.selectPython':
+      return 'Switch or check Python interpreter';
+    case 'runSettings.suggestion.tryPortTarget':
+      return `Try another run entry first: ${values.label}`;
+    case 'runSettings.suggestion.checkPort':
+      return 'Check port usage or change project port configuration';
+    case 'runSettings.suggestion.switchNodeEntrypoint':
+      return `Switch to another Node.js entry: ${values.label}`;
+    case 'runSettings.suggestion.checkNodeEntrypoint':
+      return 'Check script command, port, or frontend entry configuration';
+    case 'runSettings.suggestion.switchToolchain':
+      return `Switch ${values.toolchain} to another discovered environment`;
+    case 'runSettings.suggestion.selectToolchain':
+      return `Select an available environment for ${values.toolchain}`;
+    default:
+      return key;
+  }
+};
 
 const TOOLCHAIN_LABELS: Record<string, string> = {
   java_home: 'JDK',
@@ -12,7 +69,7 @@ const TOOLCHAIN_LABELS: Record<string, string> = {
   gradle: 'Gradle',
   gradle_user_home: 'Gradle User Home',
   cargo: 'Cargo',
-  rustc: 'Rust 编译器',
+  rustc: 'Rustc',
   go: 'Go',
   node: 'Node.js',
   npm: 'npm',
@@ -21,7 +78,9 @@ const TOOLCHAIN_LABELS: Record<string, string> = {
   python: 'Python',
 };
 
-const formatToolchainLabel = (kind: string): string => TOOLCHAIN_LABELS[kind] || kind;
+const formatToolchainLabel = (kind: string, t: TranslateFn): string => (
+  kind === 'rustc' ? t('runSettings.toolchain.rustc') : TOOLCHAIN_LABELS[kind] || kind
+);
 
 const buildToolchainSuggestion = (
   id: string,
@@ -65,12 +124,14 @@ export const buildProjectRunResolutionSuggestions = ({
   runTargets,
   selectedToolchainOptions,
   availableOptionsByKind,
+  t = fallbackTranslate,
 }: {
   diagnosis: string | null;
   selectedTarget: ProjectRunTarget | null;
   runTargets: ProjectRunTarget[];
   selectedToolchainOptions: Record<string, ProjectRunToolchainOption | null>;
   availableOptionsByKind: Record<string, ProjectRunToolchainOption[]>;
+  t?: TranslateFn;
 }): ProjectRunResolutionSuggestion[] => {
   const text = (diagnosis || '').trim().toLowerCase();
   if (!text) {
@@ -93,26 +154,28 @@ export const buildProjectRunResolutionSuggestions = ({
     }
     suggestions.push(value);
   };
+  const includesFailure = (key: string) => text.includes(t(key).toLowerCase());
 
   const javaHomeOptions = availableOptionsByKind.java_home || [];
   const currentJavaHome = selectedToolchainOptions.java_home;
   const alternativeJavaHome = javaHomeOptions.find((item) => item.id !== currentJavaHome?.id) || null;
 
   if (
-    /jdk.*不匹配|invalid target release|unsupported class file major version|release version .* not supported|source option .* no longer supported|target option .* no longer supported/i.test(text)
+    includesFailure('runSettings.failure.jdkMismatch')
+    || /invalid target release|unsupported class file major version|release version .* not supported|source option .* no longer supported|target option .* no longer supported/i.test(text)
   ) {
     maybePush(buildToolchainSuggestion(
       'switch-java-home',
-      alternativeJavaHome ? `切换到其它 JDK：${alternativeJavaHome.label}` : '检查并切换 JDK 版本',
+      alternativeJavaHome ? t('runSettings.suggestion.switchOtherJdk', { label: alternativeJavaHome.label }) : t('runSettings.suggestion.checkJdk'),
       'java_home',
       alternativeJavaHome || currentJavaHome,
     ));
   }
 
-  if (/java_home|jdk 目录下未发现 bin\/java|选择的是 jdk\/jre 根目录/i.test(text)) {
+  if (/java_home|jdk.*bin\/java|jdk\/jre root/i.test(text)) {
     maybePush(buildToolchainSuggestion(
       'select-java-home',
-      '重新选择有效的 JDK 目录',
+      t('runSettings.suggestion.selectValidJdk'),
       'java_home',
       alternativeJavaHome || currentJavaHome,
     ));
@@ -124,26 +187,26 @@ export const buildProjectRunResolutionSuggestions = ({
   if (/maven settings|settings\.xml|non-parseable settings/i.test(text)) {
     maybePush(buildToolchainSuggestion(
       'switch-maven-settings',
-      alternativeMavenSettings ? `切换 Maven Settings：${alternativeMavenSettings.label}` : '检查 Maven Settings 文件',
+      alternativeMavenSettings ? t('runSettings.suggestion.switchMavenSettings', { label: alternativeMavenSettings.label }) : t('runSettings.suggestion.checkMavenSettings'),
       'mvn_settings',
       alternativeMavenSettings || currentMavenSettings,
     ));
   }
 
-  if (/maven 依赖下载失败|could not resolve dependencies|transfer failed|authentication failed|proxy/i.test(text)) {
+  if (includesFailure('runSettings.failure.mavenDependencies') || /could not resolve dependencies|transfer failed|authentication failed|proxy/i.test(text)) {
     maybePush(buildToolchainSuggestion(
       'review-maven-settings',
-      '优先检查 Maven Settings 与仓库认证',
+      t('runSettings.suggestion.reviewMavenSettings'),
       'mvn_settings',
       currentMavenSettings || alternativeMavenSettings,
     ));
   }
 
-  if (/gradle wrapper 没有执行权限|gradlew.*permission denied/i.test(text)) {
+  if (includesFailure('runSettings.failure.gradleWrapperPermission') || /gradlew.*permission denied/i.test(text)) {
     const gradleTarget = siblingTargets.find((item) => !item.command.includes('gradlew')) || null;
     maybePush(buildTargetSuggestion(
       'switch-gradle-target',
-      gradleTarget ? `切换到另一个运行入口：${gradleTarget.label}` : '切换到不依赖 gradlew 的运行入口',
+      gradleTarget ? t('runSettings.suggestion.switchOtherEntrypoint', { label: gradleTarget.label }) : t('runSettings.suggestion.switchNoGradlew'),
       gradleTarget,
     ));
   }
@@ -151,59 +214,59 @@ export const buildProjectRunResolutionSuggestions = ({
   if (/could not find or load main class|main method not found|no main manifest attribute/i.test(text)) {
     maybePush(buildTargetSuggestion(
       'switch-entrypoint',
-      siblingTargets[0] ? `尝试切换到其它入口：${siblingTargets[0].label}` : '检查并切换运行入口',
+      siblingTargets[0] ? t('runSettings.suggestion.tryOtherEntrypoint', { label: siblingTargets[0].label }) : t('runSettings.suggestion.checkEntrypoint'),
       siblingTargets[0] || null,
     ));
   }
 
-  if (/命令已退出，未检测到持续运行进程|进程已退出，退出码/i.test(text) && siblingTargets.length > 0) {
+  if ((includesFailure('runSettings.failure.longRunningExited') || text.includes(t('runSettings.exit.code', { code: '' }).toLowerCase().replace(/\s*$/, ''))) && siblingTargets.length > 0) {
     maybePush(buildTargetSuggestion(
       'switch-sibling-target',
-      `尝试另一个同语言入口：${siblingTargets[0].label}`,
+      t('runSettings.suggestion.trySiblingTarget', { label: siblingTargets[0].label }),
       siblingTargets[0],
     ));
   }
 
-  if (/rust 可执行入口不存在或 bin 名称不匹配|no bin target named|a bin target must be available|no targets specified in the manifest/i.test(text)) {
+  if (includesFailure('runSettings.failure.rustEntrypoint') || /no bin target named|a bin target must be available|no targets specified in the manifest/i.test(text)) {
     maybePush(buildTargetSuggestion(
       'switch-rust-target',
-      siblingTargets[0] ? `切换到另一个 Rust 入口：${siblingTargets[0].label}` : '检查 Rust 入口与 Cargo 配置',
+      siblingTargets[0] ? t('runSettings.suggestion.switchRustEntrypoint', { label: siblingTargets[0].label }) : t('runSettings.suggestion.checkRustEntrypoint'),
       siblingTargets[0] || null,
     ));
   }
 
-  if (/rust 编译失败|could not compile|error\[e\d+\]/i.test(text)) {
+  if (includesFailure('runSettings.failure.rustCompile') || /could not compile|error\[e\d+\]/i.test(text)) {
     maybePush(buildToolchainSuggestion(
       'review-rust-toolchain',
-      '检查 Cargo / Rust 编译环境',
+      t('runSettings.suggestion.reviewRustToolchain'),
       'cargo',
       (availableOptionsByKind.cargo || []).find((item) => item.id !== selectedToolchainOptions.cargo?.id)
         || selectedToolchainOptions.cargo,
     ));
   }
 
-  if (/go 入口或模块配置有误|no go files|go\.mod file not found|cannot find main module/i.test(text)) {
+  if (includesFailure('runSettings.failure.goEntrypoint') || /no go files|go\.mod file not found|cannot find main module/i.test(text)) {
     maybePush(buildTargetSuggestion(
       'switch-go-target',
-      siblingTargets[0] ? `切换到另一个 Go 入口：${siblingTargets[0].label}` : '检查 Go 入口与 go.mod 配置',
+      siblingTargets[0] ? t('runSettings.suggestion.switchGoEntrypoint', { label: siblingTargets[0].label }) : t('runSettings.suggestion.checkGoEntrypoint'),
       siblingTargets[0] || null,
     ));
   }
 
-  if (/python 解释器或依赖环境有误|modulenotfounderror|no module named|pytest: command not found/i.test(text)) {
+  if (includesFailure('runSettings.failure.pythonRuntime') || /modulenotfounderror|no module named|pytest: command not found/i.test(text)) {
     maybePush(buildToolchainSuggestion(
       'select-python-runtime',
-      '切换或检查 Python 解释器',
+      t('runSettings.suggestion.selectPython'),
       'python',
       (availableOptionsByKind.python || []).find((item) => item.id !== selectedToolchainOptions.python?.id)
         || selectedToolchainOptions.python,
     ));
   }
 
-  if (/端口已被占用|eaddrinuse|address already in use/i.test(text)) {
+  if (includesFailure('runSettings.failure.portInUse') || /eaddrinuse|address already in use/i.test(text)) {
     maybePush(buildTargetSuggestion(
       'switch-port-target',
-      siblingTargets[0] ? `先尝试另一个运行入口：${siblingTargets[0].label}` : '检查端口占用或修改项目端口配置',
+      siblingTargets[0] ? t('runSettings.suggestion.tryPortTarget', { label: siblingTargets[0].label }) : t('runSettings.suggestion.checkPort'),
       siblingTargets[0] || null,
     ));
   }
@@ -211,12 +274,12 @@ export const buildProjectRunResolutionSuggestions = ({
   if (/missing script:|cannot find module|enoent|eaddrinuse/i.test(text)) {
     maybePush(buildTargetSuggestion(
       'switch-node-target',
-      siblingTargets[0] ? `切换到另一个 Node.js 入口：${siblingTargets[0].label}` : '检查脚本命令、端口或前端入口配置',
+      siblingTargets[0] ? t('runSettings.suggestion.switchNodeEntrypoint', { label: siblingTargets[0].label }) : t('runSettings.suggestion.checkNodeEntrypoint'),
       siblingTargets[0] || null,
     ));
   }
 
-  if (/command not found|缺少运行环境|no such file or directory/i.test(text)) {
+  if (/command not found|missing runtime|no such file or directory/i.test(text)) {
     const requiredKinds = selectedTarget?.requiredToolchains || [];
     for (const kind of requiredKinds) {
       const current = selectedToolchainOptions[kind];
@@ -224,8 +287,8 @@ export const buildProjectRunResolutionSuggestions = ({
       maybePush(buildToolchainSuggestion(
         `resolve-${kind}`,
         current
-          ? `切换 ${formatToolchainLabel(kind)} 到其它已发现环境`
-          : `为 ${formatToolchainLabel(kind)} 选择一个可用环境`,
+          ? t('runSettings.suggestion.switchToolchain', { toolchain: formatToolchainLabel(kind, t) })
+          : t('runSettings.suggestion.selectToolchain', { toolchain: formatToolchainLabel(kind, t) }),
         kind,
         alternative || current,
       ));

@@ -16,8 +16,8 @@ export const REMOTE_REQUIRED_MCP_IDS = new Set([
 export const MCP_TOOLSET_PRESET_SPECS: McpToolsetPresetSpec[] = [
   {
     id: 'coding',
-    label: '代码开发',
-    description: '代码读写 + 终端 + 任务，适合实现与调试',
+    label: 'Coding',
+    description: 'Code read/write + terminal + tasks',
     preferredIds: [
       'builtin_code_maintainer_read',
       'builtin_code_maintainer_write',
@@ -29,8 +29,8 @@ export const MCP_TOOLSET_PRESET_SPECS: McpToolsetPresetSpec[] = [
   },
   {
     id: 'web_research',
-    label: 'Web 研究',
-    description: '网页搜索/提取 + 浏览器自动化 + 只读代码',
+    label: 'Web research',
+    description: 'Web search/extraction + browser automation + read-only code',
     preferredIds: [
       'builtin_web_tools',
       'builtin_browser_tools',
@@ -40,8 +40,8 @@ export const MCP_TOOLSET_PRESET_SPECS: McpToolsetPresetSpec[] = [
   },
   {
     id: 'remote_ops',
-    label: '远程运维',
-    description: '远程连接 + 终端 + 任务，适合服务器排障',
+    label: 'Remote ops',
+    description: 'Remote connection + terminal + tasks',
     preferredIds: [
       'builtin_remote_connection_controller',
       'builtin_terminal_controller',
@@ -51,8 +51,8 @@ export const MCP_TOOLSET_PRESET_SPECS: McpToolsetPresetSpec[] = [
   },
   {
     id: 'minimal',
-    label: '轻量模式',
-    description: '仅保留最小必要工具，减少噪音',
+    label: 'Minimal',
+    description: 'Minimum necessary tools',
     preferredIds: [
       'builtin_code_maintainer_read',
       'builtin_terminal_controller',

@@ -3,11 +3,11 @@ import React from 'react';
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
 import GenericStructuredResultDetails from '../shared/GenericStructuredResultDetails';
-import { RowsCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const ConnectionListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const connections = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -18,7 +18,7 @@ const ConnectionListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
     <div className="tool-detail-card tool-detail-card--full">
       {renderCardHeader(
         translateToolTitle('Connections', locale),
-        locale === 'zh-CN' ? `${connections.length} 个` : `${connections.length} connections`,
+        formatToolCardCount(t, 'connections', connections.length),
       )}
       <div className="tool-detail-list">
         {connections.map((connection, index) => {
@@ -50,7 +50,7 @@ const ConnectionListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 };
 
 const RemoteEntriesCard: React.FC<{ items: unknown[] }> = ({ items }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const entries = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -61,7 +61,7 @@ const RemoteEntriesCard: React.FC<{ items: unknown[] }> = ({ items }) => {
     <div className="tool-detail-card tool-detail-card--full">
       {renderCardHeader(
         translateToolTitle('Remote entries', locale),
-        locale === 'zh-CN' ? `${entries.length} 项` : `${entries.length} entries`,
+        formatToolCardCount(t, 'entries', entries.length),
       )}
       <div className="tool-detail-list">
         {entries.map((entry, index) => (

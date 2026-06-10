@@ -1,4 +1,5 @@
 import type { FC } from 'react';
+import { useI18n } from '../../../i18n/I18nProvider';
 import type {
   KeyFilePickerTarget,
   RemoteAuthType,
@@ -31,80 +32,84 @@ export const AuthSection: FC<AuthSectionProps> = ({
   onRemoteCertificatePathChange,
   onRemoteDefaultPathChange,
   onOpenKeyFilePicker,
-}) => (
-  <div className="grid grid-cols-2 gap-3">
-    <div>
-      <label className="text-sm text-muted-foreground">认证方式</label>
-      <select
-        value={remoteAuthType}
-        onChange={(e) => onRemoteAuthTypeChange(e.target.value as RemoteAuthType)}
-        className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-      >
-        <option value="private_key">private_key</option>
-        <option value="private_key_cert">private_key_cert</option>
-        <option value="password">password</option>
-      </select>
-    </div>
-    <div>
-      <label className="text-sm text-muted-foreground">默认远端目录（可选）</label>
-      <input
-        value={remoteDefaultPath}
-        onChange={(e) => onRemoteDefaultPathChange(e.target.value)}
-        className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        placeholder="例如 /home/root"
-      />
-    </div>
-    {remoteAuthType === 'password' ? (
-      <div className="col-span-2">
-        <label className="text-sm text-muted-foreground">密码</label>
-        <PasswordField
-          value={remotePassword}
-          onChange={onRemotePasswordChange}
-          placeholder="请输入 SSH 登录密码"
-          autoComplete="current-password"
+}) => {
+  const { t } = useI18n();
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className="text-sm text-muted-foreground">{t('remoteConnection.authType')}</label>
+        <select
+          value={remoteAuthType}
+          onChange={(e) => onRemoteAuthTypeChange(e.target.value as RemoteAuthType)}
+          className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="private_key">{t('remoteConnection.auth.privateKey')}</option>
+          <option value="private_key_cert">{t('remoteConnection.auth.privateKeyCert')}</option>
+          <option value="password">{t('remoteConnection.auth.password')}</option>
+        </select>
+      </div>
+      <div>
+        <label className="text-sm text-muted-foreground">{t('remoteConnection.defaultPath')}</label>
+        <input
+          value={remoteDefaultPath}
+          onChange={(e) => onRemoteDefaultPathChange(e.target.value)}
+          className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          placeholder={t('remoteConnection.defaultPathPlaceholder')}
         />
       </div>
-    ) : (
-      <>
+      {remoteAuthType === 'password' ? (
         <div className="col-span-2">
-          <label className="text-sm text-muted-foreground">私钥路径</label>
-          <div className="mt-1 flex items-center gap-2">
-            <input
-              value={remotePrivateKeyPath}
-              onChange={(e) => onRemotePrivateKeyPathChange(e.target.value)}
-              className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="/Users/you/.ssh/id_rsa"
-            />
-            <button
-              type="button"
-              onClick={() => onOpenKeyFilePicker('private_key')}
-              className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
-            >
-              选择文件
-            </button>
-          </div>
+          <label className="text-sm text-muted-foreground">{t('remoteConnection.password')}</label>
+          <PasswordField
+            value={remotePassword}
+            onChange={onRemotePasswordChange}
+            placeholder={t('remoteConnection.passwordPlaceholder')}
+            autoComplete="current-password"
+          />
         </div>
-        {remoteAuthType === 'private_key_cert' && (
+      ) : (
+        <>
           <div className="col-span-2">
-            <label className="text-sm text-muted-foreground">证书路径</label>
+            <label className="text-sm text-muted-foreground">{t('remoteConnection.privateKeyPath')}</label>
             <div className="mt-1 flex items-center gap-2">
               <input
-                value={remoteCertificatePath}
-                onChange={(e) => onRemoteCertificatePathChange(e.target.value)}
+                value={remotePrivateKeyPath}
+                onChange={(e) => onRemotePrivateKeyPathChange(e.target.value)}
                 className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="/Users/you/.ssh/id_rsa-cert.pub"
+                placeholder="/Users/you/.ssh/id_rsa"
               />
               <button
                 type="button"
-                onClick={() => onOpenKeyFilePicker('certificate')}
+                onClick={() => onOpenKeyFilePicker('private_key')}
                 className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
               >
-                选择文件
+                {t('remoteConnection.selectFile')}
               </button>
             </div>
           </div>
-        )}
-      </>
-    )}
-  </div>
-);
+          {remoteAuthType === 'private_key_cert' && (
+            <div className="col-span-2">
+              <label className="text-sm text-muted-foreground">{t('remoteConnection.certificatePath')}</label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  value={remoteCertificatePath}
+                  onChange={(e) => onRemoteCertificatePathChange(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="/Users/you/.ssh/id_rsa-cert.pub"
+                />
+                <button
+                  type="button"
+                  onClick={() => onOpenKeyFilePicker('certificate')}
+                  className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+                >
+                  {t('remoteConnection.selectFile')}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};

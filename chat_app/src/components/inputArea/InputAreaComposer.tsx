@@ -1,9 +1,11 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { InputAreaSendButton } from './InlineWidgets';
 import { InputAreaComposerControls } from './InputAreaComposerControls';
 import type { InputAreaComposerProps } from './InputAreaComposerTypes';
 
 export default function InputAreaComposer(props: InputAreaComposerProps) {
+  const { t } = useI18n();
   const {
   disabled,
   isStreaming,
@@ -51,7 +53,7 @@ export default function InputAreaComposer(props: InputAreaComposerProps) {
         onChange={handleInputChange}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
-        placeholder={isGuidingMode ? '执行中，可发送引导（不会打断当前执行）...' : placeholder}
+        placeholder={isGuidingMode ? t('inputArea.composer.guidingPlaceholder') : placeholder}
         disabled={disabled}
         className={cn(
           'flex-1 resize-none bg-transparent border-none outline-none',
@@ -81,7 +83,7 @@ export default function InputAreaComposer(props: InputAreaComposerProps) {
               : 'bg-red-500 text-white hover:bg-red-600',
             'disabled:opacity-50 disabled:cursor-not-allowed',
           )}
-          title={isStopping ? '停止中...' : '停止生成'}
+          title={isStopping ? t('inputArea.send.stopping') : t('inputArea.send.stop')}
           style={{ backgroundColor: isStopping ? '#f59e0b' : '#ef4444', color: 'white' }}
         >
           {isStopping ? (

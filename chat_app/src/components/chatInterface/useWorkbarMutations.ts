@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
 import { useDialogService } from '../ui/DialogProvider';
@@ -87,6 +88,7 @@ export function useWorkbarMutations({
   markTaskRealtimeMutationHandled,
   setWorkbarError,
 }: UseWorkbarMutationsArgs) {
+  const { t } = useI18n();
   const { confirm } = useDialogService();
   const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
@@ -131,7 +133,7 @@ export function useWorkbarMutations({
       setTaskModalOpen(false);
       setTaskModalTask(null);
     } catch (error) {
-      const message = error instanceof Error ? error.message : '任务操作失败';
+      const message = error instanceof Error ? error.message : t('taskOutcome.error.operationFailed');
       setTaskModalError(message);
       setWorkbarError(message);
     } finally {
@@ -150,6 +152,7 @@ export function useWorkbarMutations({
     removeCurrentTurnWorkbarTask,
     removeHistoryWorkbarTask,
     setWorkbarError,
+    t,
     taskHistoryOpen,
   ]);
 
@@ -174,10 +177,10 @@ export function useWorkbarMutations({
       return;
     }
     const confirmed = await confirm({
-      title: 'Delete Task',
-      message: `Delete task "${task.title}"?`,
-      confirmText: 'Delete',
-      cancelText: 'Cancel',
+      title: t('taskOutcome.deleteConfirmTitle'),
+      message: t('taskOutcome.deleteConfirmMessage', { title: task.title }),
+      confirmText: t('taskOutcome.deleteConfirmButton'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -190,7 +193,7 @@ export function useWorkbarMutations({
         removeTaskId: task.id,
       };
     });
-  }, [apiClient, confirm, currentSessionId, withWorkbarTaskMutation]);
+  }, [apiClient, confirm, currentSessionId, t, withWorkbarTaskMutation]);
 
   const handleWorkbarEditTask = useCallback(async (task: TaskWorkbarItem) => {
     setTaskModalMode('edit');
@@ -207,6 +210,7 @@ export function useWorkbarMutations({
     const validationMessage = validateTaskModalDraft({
       draft,
       mode: taskModalMode,
+      t,
     });
     if (validationMessage) {
       setTaskModalError(validationMessage);
@@ -246,7 +250,7 @@ export function useWorkbarMutations({
         patchTask: updatedTask,
       };
     });
-  }, [apiClient, closeTaskModal, currentSessionId, setWorkbarError, taskModalMode, taskModalTask, withWorkbarTaskMutation]);
+  }, [apiClient, closeTaskModal, currentSessionId, setWorkbarError, t, taskModalMode, taskModalTask, withWorkbarTaskMutation]);
 
   return {
     workbarActionLoadingTaskId,

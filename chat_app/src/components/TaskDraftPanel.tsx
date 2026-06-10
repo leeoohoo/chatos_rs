@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import type { TaskReviewDraft, TaskReviewPanelState } from '../lib/store/types';
 
 interface TaskDraftPanelProps {
@@ -38,6 +39,7 @@ const normalizeDraft = (draft: TaskReviewDraft): TaskReviewDraft => ({
 });
 
 export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm, onCancel }) => {
+  const { t } = useI18n();
   const [drafts, setDrafts] = useState<TaskReviewDraft[]>(() =>
     panel.drafts.length > 0 ? panel.drafts : [createEmptyDraft()]
   );
@@ -92,13 +94,13 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
         onClick={() => setExpanded((prev) => !prev)}
       >
         <div>
-          <div className="text-sm font-semibold text-amber-900 dark:text-amber-100">任务创建确认</div>
+          <div className="text-sm font-semibold text-amber-900 dark:text-amber-100">{t('taskDraft.title')}</div>
           <div className="mt-1 text-xs text-amber-800/80 dark:text-amber-200/80">
-            {expanded ? '点击收起内容' : '内容默认折叠，点击展开'}
+            {expanded ? t('taskDraft.collapseHint') : t('taskDraft.expandHint')}
           </div>
         </div>
         <span className="text-xs text-amber-800/80 dark:text-amber-200/80">
-          {expanded ? '收起' : '展开'}
+          {expanded ? t('taskDraft.collapse') : t('taskDraft.expand')}
         </span>
       </button>
 
@@ -106,7 +108,7 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
         <>
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="text-xs text-amber-800/80 dark:text-amber-200/80">
-              可编辑任务后点击确定，系统会立即创建并把结果返回给调用方
+              {t('taskDraft.description')}
             </div>
             <button
               type="button"
@@ -114,7 +116,7 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
               onClick={addDraft}
               disabled={panel.submitting === true}
             >
-              新增任务
+              {t('taskDraft.add')}
             </button>
           </div>
 
@@ -122,44 +124,46 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
             {drafts.map((draft, index) => (
               <div key={draft.id} className="rounded-lg border border-amber-200 bg-white p-2 dark:border-amber-800 dark:bg-slate-900/60">
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-xs font-medium text-slate-600 dark:text-slate-300">任务 {index + 1}</div>
+                  <div className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    {t('taskDraft.item', { index: index + 1 })}
+                  </div>
                   <button
                     type="button"
                     className="text-xs text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => removeDraft(draft.id)}
                     disabled={panel.submitting === true}
                   >
-                    删除
+                    {t('taskDraft.delete')}
                   </button>
                 </div>
 
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                   <label className="flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-                    标题
+                    {t('taskDraft.titleField')}
                     <input
                       type="text"
                       value={draft.title}
                       onChange={(event) => updateDraft(draft.id, { title: event.target.value })}
                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 outline-none focus:border-primary dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                      placeholder="必填"
+                      placeholder={t('taskDraft.titlePlaceholder')}
                       disabled={panel.submitting === true}
                     />
                   </label>
 
                   <label className="flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-                    截止时间（可选）
+                    {t('taskDraft.dueAt')}
                     <input
                       type="text"
                       value={draft.dueAt || ''}
                       onChange={(event) => updateDraft(draft.id, { dueAt: event.target.value || null })}
                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 outline-none focus:border-primary dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                      placeholder="例如: 2026-03-01T10:00:00Z"
+                      placeholder={t('taskDraft.dueAtPlaceholder')}
                       disabled={panel.submitting === true}
                     />
                   </label>
 
                   <label className="flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-                    优先级
+                    {t('taskDraft.priority')}
                     <select
                       value={draft.priority}
                       onChange={(event) => updateDraft(draft.id, { priority: event.target.value as TaskReviewDraft['priority'] })}
@@ -173,7 +177,7 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
                   </label>
 
                   <label className="flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-                    状态
+                    {t('taskDraft.status')}
                     <select
                       value={draft.status}
                       onChange={(event) => updateDraft(draft.id, { status: event.target.value as TaskReviewDraft['status'] })}
@@ -188,7 +192,7 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
                   </label>
 
                   <label className="md:col-span-2 flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-                    标签（逗号分隔）
+                    {t('taskDraft.tags')}
                     <input
                       type="text"
                       value={draft.tags.join(', ')}
@@ -206,12 +210,12 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
                   </label>
 
                   <label className="md:col-span-2 flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-                    详情
+                    {t('taskDraft.details')}
                     <textarea
                       value={draft.details}
                       onChange={(event) => updateDraft(draft.id, { details: event.target.value })}
                       className="min-h-[64px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 outline-none focus:border-primary dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                      placeholder="可选"
+                      placeholder={t('taskDraft.optional')}
                       disabled={panel.submitting === true}
                     />
                   </label>
@@ -235,7 +239,7 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
           onClick={handleCancel}
           disabled={panel.submitting === true}
         >
-          取消
+          {t('common.cancel')}
         </button>
         <button
           type="button"
@@ -243,7 +247,7 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
           onClick={handleConfirm}
           disabled={confirmDisabled}
         >
-          {panel.submitting ? '提交中...' : '确定并创建任务'}
+          {panel.submitting ? t('taskOutcome.submitting') : t('taskDraft.confirm')}
         </button>
       </div>
     </div>

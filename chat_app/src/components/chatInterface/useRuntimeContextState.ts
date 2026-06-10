@@ -8,6 +8,7 @@ import {
   markRuntimeContextStale,
 } from '../../lib/runtimeContext/cache';
 import type { Session } from '../../types';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface UseRuntimeContextStateParams {
   apiClient: ApiClient;
@@ -20,6 +21,7 @@ export const useRuntimeContextState = ({
   currentSession,
   runtimeContextRefreshNonce,
 }: UseRuntimeContextStateParams) => {
+  const { t } = useI18n();
   const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
   const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
   const [runtimeContextData, setRuntimeContextData] =
@@ -53,14 +55,14 @@ export const useRuntimeContextState = ({
     } catch (error) {
       console.error('Failed to load turn runtime context:', error);
       if (latestSessionIdRef.current === sessionId) {
-        setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
+        setRuntimeContextError(error instanceof Error ? error.message : t('runtimeContext.loadFailed'));
       }
     } finally {
       if (latestSessionIdRef.current === sessionId && !options?.silent) {
         setRuntimeContextLoading(false);
       }
     }
-  }, [apiClient]);
+  }, [apiClient, t]);
 
   const handleOpenRuntimeContext = useCallback((sessionId: string) => {
     if (!sessionId) {

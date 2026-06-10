@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { UiPromptResponsePayload } from '../../lib/store/types';
 import type { UiPromptPanelActionsArgs } from './panelActionTypes';
 import { recoverPendingPanelConversation } from './pendingPanelRecovery';
@@ -17,6 +18,7 @@ export const useUiPromptPanelActions = ({
   markUiPromptHistoryStale,
   removePendingUiPromptCachePanel,
 }: UiPromptPanelActionsArgs) => {
+  const { t } = useI18n();
   const handleUiPromptSubmit = useCallback(async (payload: UiPromptResponsePayload) => {
     if (!activeUiPromptPanel) {
       return;
@@ -53,7 +55,7 @@ export const useUiPromptPanelActions = ({
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : '交互确认提交失败';
+      const message = error instanceof Error ? error.message : t('uiPrompt.submitFailed');
       upsertUiPromptPanel({
         ...pendingPanel,
         submitting: false,
@@ -70,6 +72,7 @@ export const useUiPromptPanelActions = ({
     preferRealtimeSync,
     removePendingUiPromptCachePanel,
     removeUiPromptPanel,
+    t,
     uiPromptHistoryOpen,
     upsertUiPromptPanel,
   ]);
@@ -113,7 +116,7 @@ export const useUiPromptPanelActions = ({
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : '交互确认取消失败';
+      const message = error instanceof Error ? error.message : t('uiPrompt.cancelFailed');
       upsertUiPromptPanel({
         ...pendingPanel,
         submitting: false,
@@ -130,6 +133,7 @@ export const useUiPromptPanelActions = ({
     preferRealtimeSync,
     removePendingUiPromptCachePanel,
     removeUiPromptPanel,
+    t,
     uiPromptHistoryOpen,
     upsertUiPromptPanel,
   ]);

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { LazyMarkdownRenderer } from '../../LazyMarkdownRenderer';
 import { highlightCodeBlock, highlightCodeBlockAuto } from '../../../lib/tools/highlight';
 import { cn } from '../../../lib/utils';
@@ -96,6 +97,7 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
   onDraftContentChange,
   onSaveDraft,
 }) => {
+  const { t } = useI18n();
   const lineRefMap = useRef<Record<number, HTMLDivElement | null>>({});
   const renderedFilePathRef = useRef<string | null>(null);
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -317,7 +319,7 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
               ? 'bg-amber-500/80 text-black shadow-[0_0_0_1px_rgba(245,158,11,0.65)]'
               : 'bg-amber-300/60 hover:bg-amber-300/85',
           )}
-          title={`跳转到 L${hit.line}:C${hit.column}`}
+          title={t('projectExplorer.preview.jumpToHit', { line: hit.line, column: hit.column })}
         >
           {segment.text}
         </button>

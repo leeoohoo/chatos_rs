@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type ApiClient from '../../../lib/api/client';
 import { readProjectRunnerDispatchTarget } from '../../../lib/domain/projectRunner';
 import type { ProjectRunnerActiveTerminal } from '../../../lib/domain/projectRunner';
@@ -45,6 +46,7 @@ export const useProjectRunnerCommands = ({
   removeRunInstanceLocally,
   refreshProjectActiveRun,
 }: UseProjectRunnerCommandsOptions) => {
+  const { t } = useI18n();
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -63,7 +65,7 @@ export const useProjectRunnerCommands = ({
     preferredTerminalId?: string | null,
   ) => {
     if (!project?.id) {
-      throw new Error('项目不存在');
+      throw new Error(t('runSettings.error.projectMissing'));
     }
     const result = await client.executeProjectRun(project.id, {
       target_id: target.id,
@@ -81,8 +83,8 @@ export const useProjectRunnerCommands = ({
     }
     setRunnerMessage(
       terminalName
-        ? `${label}：已在终端 ${terminalName} 执行`
-        : `${label}：命令已派发到终端`,
+        ? t('runSettings.commandDispatchedInTerminal', { label, terminal: terminalName })
+        : t('runSettings.commandDispatched', { label }),
     );
     setRunnerDiagnosis(null);
   }, [
@@ -93,6 +95,7 @@ export const useProjectRunnerCommands = ({
     setActiveRun,
     setLastExitedRun,
     setActiveTerminalBusy,
+    t,
   ]);
 
   const handleRunnerStart = useCallback(async () => {
@@ -100,16 +103,16 @@ export const useProjectRunnerCommands = ({
     setRunnerError(null);
     try {
       if (!selectedRunTarget) {
-        throw new Error('未发现可运行目标');
+        throw new Error(t('runSettings.error.noRunTarget'));
       }
-      await dispatchProjectRunTarget(selectedRunTarget, '启动成功', null);
+      await dispatchProjectRunTarget(selectedRunTarget, t('runSettings.startSuccess'), null);
     } catch (error) {
-      setRunnerError(extractProjectRunnerValidationMessage(error, error instanceof Error ? error.message : '启动失败'));
+      setRunnerError(extractProjectRunnerValidationMessage(error, error instanceof Error ? error.message : t('runSettings.startFailed'), t));
       setRunnerMessage(null);
     } finally {
       setStarting(false);
     }
-  }, [dispatchProjectRunTarget, selectedRunTarget]);
+  }, [dispatchProjectRunTarget, selectedRunTarget, t]);
 
   const handleRunnerStop = useCallback(async () => {
     setStopping(true);
@@ -117,15 +120,15 @@ export const useProjectRunnerCommands = ({
     try {
       const terminalId = buildProjectRunnerSelectedTerminalId(selectedTerminalId || activeRun?.terminalId);
       if (!terminalId) {
-        throw new Error('当前项目还没有独立运行终端');
+        throw new Error(t('runSettings.error.noDedicatedTerminal'));
       }
       setManualControlAt(Date.now());
       await client.interruptTerminal(terminalId, { reason: 'project_run_stop' });
       setActiveTerminalBusy(false);
-      setRunnerMessage('停止成功：已请求中断当前运行终端');
+      setRunnerMessage(t('runSettings.stopSuccess'));
       setRunnerDiagnosis(null);
     } catch (error) {
-      setRunnerError(error instanceof Error ? error.message : '停止失败');
+      setRunnerError(error instanceof Error ? error.message : t('runSettings.stopFailed'));
       setRunnerMessage(null);
     } finally {
       setStopping(false);
@@ -135,6 +138,7 @@ export const useProjectRunnerCommands = ({
     client,
     selectedTerminalId,
     setActiveTerminalBusy,
+    t,
   ]);
 
   const handleRunnerRestart = useCallback(async () => {
@@ -142,10 +146,10 @@ export const useProjectRunnerCommands = ({
     setRunnerError(null);
     try {
       if (!project?.id) {
-        throw new Error('项目不存在');
+        throw new Error(t('runSettings.error.projectMissing'));
       }
       if (!selectedRunTarget) {
-        throw new Error('未发现可运行目标');
+        throw new Error(t('runSettings.error.noRunTarget'));
       }
       const terminalId = buildProjectRunnerSelectedTerminalId(selectedTerminalId || activeRun?.terminalId);
       if (terminalId) {
@@ -153,9 +157,9 @@ export const useProjectRunnerCommands = ({
         await client.interruptTerminal(terminalId, { reason: 'project_run_restart' });
         setActiveTerminalBusy(false);
       }
-      await dispatchProjectRunTarget(selectedRunTarget, '重启成功', terminalId || null);
+      await dispatchProjectRunTarget(selectedRunTarget, t('runSettings.restartSuccess'), terminalId || null);
     } catch (error) {
-      setRunnerError(extractProjectRunnerValidationMessage(error, error instanceof Error ? error.message : '重启失败'));
+      setRunnerError(extractProjectRunnerValidationMessage(error, error instanceof Error ? error.message : t('runSettings.restartFailed'), t));
       setRunnerMessage(null);
     } finally {
       setRestarting(false);
@@ -169,6 +173,7 @@ export const useProjectRunnerCommands = ({
     selectedTerminalId,
     setActiveTerminalBusy,
     setManualControlAt,
+    t,
   ]);
 
   const handleRunnerDelete = useCallback(async () => {
@@ -177,7 +182,7 @@ export const useProjectRunnerCommands = ({
     try {
       const terminalId = buildProjectRunnerSelectedTerminalId(selectedTerminalId || activeRun?.terminalId);
       if (!terminalId) {
-        throw new Error('当前项目还没有独立运行终端');
+        throw new Error(t('runSettings.error.noDedicatedTerminal'));
       }
       const nextTerminalId = resolveProjectRunnerDeleteTarget(projectRunTerminalIds, terminalId);
       await client.deleteTerminal(terminalId);
@@ -188,11 +193,11 @@ export const useProjectRunnerCommands = ({
       }
       setLastExitedRun((value) => (value?.terminalId === terminalId ? null : value));
       setActiveTerminalBusy(false);
-      setRunnerMessage(nextTerminalId ? '删除成功：已切换到其它项目实例' : '删除成功：当前项目实例已移除');
+      setRunnerMessage(nextTerminalId ? t('runSettings.deleteSwitched') : t('runSettings.deleteRemoved'));
       setRunnerDiagnosis(null);
       await refreshProjectActiveRun();
     } catch (error) {
-      setRunnerError(error instanceof Error ? error.message : '删除失败');
+      setRunnerError(error instanceof Error ? error.message : t('runSettings.deleteFailed'));
       setRunnerMessage(null);
     } finally {
       setDeleting(false);
@@ -208,6 +213,7 @@ export const useProjectRunnerCommands = ({
     setActiveRun,
     setLastExitedRun,
     setActiveTerminalBusy,
+    t,
   ]);
 
   const resetRunnerCommandState = useCallback(() => {

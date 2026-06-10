@@ -1,8 +1,7 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import {
   priorityStyles,
-  priorityText,
   statusStyles,
-  statusText,
 } from './helpers';
 import type { TaskWorkbarItem } from './types';
 
@@ -23,6 +22,7 @@ const TaskCard = ({
   onEditTask,
   isMutating = false,
 }: TaskCardProps) => {
+  const { locale, t } = useI18n();
   const cardClass = compact
     ? 'min-w-[160px] max-w-[190px] min-w-0 overflow-hidden rounded-md border border-border bg-background p-2'
     : 'min-w-0 overflow-hidden rounded-lg border border-border bg-background p-2.5';
@@ -50,28 +50,30 @@ const TaskCard = ({
       <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
         <div className={titleClass}>{task.title}</div>
         <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${statusStyles[task.status]}`}>
-          {statusText[task.status]}
+          {t(`taskWorkbar.status.${task.status}`)}
         </span>
       </div>
 
       {task.details ? <div className={detailsClass}>{task.details}</div> : null}
       {outcomeSummary ? (
         <div className={secondaryTextClass} title={outcomeSummary}>
-          {`成果：${outcomeSummary}`}
+          {t('taskWorkbar.card.outcome', { value: outcomeSummary })}
         </div>
       ) : null}
       {task.status === 'blocked' && blockerReason ? (
         <div className={secondaryTextClass} title={blockerReason}>
-          {`阻塞：${blockerReason}`}
+          {t('taskWorkbar.card.blocker', { value: blockerReason })}
         </div>
       ) : null}
 
       <div className={metaClass}>
         <div>
-          <span className={priorityStyles[task.priority]}>优先级 {priorityText[task.priority]}</span>
+          <span className={priorityStyles[task.priority]}>
+            {t('taskWorkbar.card.priority', { value: t(`taskWorkbar.priority.${task.priority}`) })}
+          </span>
         </div>
         <div className="truncate" title={task.conversationTurnId}>
-          轮次 {task.conversationTurnId}
+          {t('taskWorkbar.card.turn', { value: task.conversationTurnId })}
         </div>
       </div>
 
@@ -79,22 +81,22 @@ const TaskCard = ({
         <div className={compact ? 'mt-1 flex items-center gap-1' : 'mt-2 flex items-center gap-1'}>
           {onCompleteTask && task.status !== 'done' ? (
             <button type="button" className={actionClass} onClick={() => onCompleteTask(task)} disabled={isMutating}>
-              完成
+              {t('taskWorkbar.card.complete')}
             </button>
           ) : null}
           {onEditTask ? (
             <button type="button" className={actionClass} onClick={() => onEditTask(task)} disabled={isMutating}>
-              编辑
+              {t('taskWorkbar.card.edit')}
             </button>
           ) : null}
           {onDeleteTask ? (
             <button type="button" className={actionClass} onClick={() => onDeleteTask(task)} disabled={isMutating}>
-              删除
+              {t('taskWorkbar.card.delete')}
             </button>
           ) : null}
           {isMutating ? (
             <span className={compact ? 'text-[10px] text-muted-foreground' : 'text-[11px] text-muted-foreground'}>
-              处理中...
+              {t('taskWorkbar.card.processing')}
             </span>
           ) : null}
         </div>
@@ -102,15 +104,17 @@ const TaskCard = ({
 
       {task.dueAt ? (
         <div className={compact ? 'mt-1 truncate text-[10px] text-muted-foreground' : 'mt-1 truncate text-[11px] text-muted-foreground'} title={task.dueAt}>
-          截止 {task.dueAt}
+          {t('taskWorkbar.card.due', { value: task.dueAt })}
         </div>
       ) : null}
       {task.status === 'blocked' && task.blockerNeeds.length > 0 ? (
         <div
           className={compact ? 'mt-1 line-clamp-2 text-[10px] text-muted-foreground' : 'mt-1 line-clamp-3 text-[11px] text-muted-foreground'}
-          title={task.blockerNeeds.join('；')}
+          title={task.blockerNeeds.join(locale === 'zh-CN' ? '；' : '; ')}
         >
-          {`需满足：${task.blockerNeeds.join('；')}`}
+          {t('taskWorkbar.card.needs', {
+            value: task.blockerNeeds.join(locale === 'zh-CN' ? '；' : '; '),
+          })}
         </div>
       ) : null}
     </div>

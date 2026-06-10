@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { resolveSessionProjectScopeId } from '../../../features/contactSession/sessionResolver';
+import { useI18n } from '../../../i18n/I18nProvider';
 import { countPendingReviewRepairMessages } from '../../../lib/domain/reviewRepair';
 import { useSessionRuntimeSettings } from '../../../features/sessionRuntime/useSessionRuntimeSettings';
 import { useSessionWorkbarPanels } from '../../chatInterface/useSessionWorkbarPanels';
@@ -23,6 +24,7 @@ export const useTeamMembersRuntimeResources = ({
   store,
   contacts,
 }: UseTeamMembersRuntimeResourcesOptions) => {
+  const { t } = useI18n();
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false);
   const {
     apiClient,
@@ -250,13 +252,13 @@ export const useTeamMembersRuntimeResources = ({
       clearError?.();
       const result = await apiClient.runConversationReviewRepair(sessionId);
       if (result?.success === false) {
-        throw new Error(result.detail || result.error || '执行复盘失败');
+        throw new Error(result.detail || result.error || t('taskWorkbar.reviewRepairFailed'));
       }
     } catch (error) {
       await refreshReviewRepairStatus(sessionId).catch((statusError) => {
         console.error('Failed to refresh team review repair status after run error:', statusError);
       });
-      setError?.(error instanceof Error ? error.message : '执行复盘失败');
+      setError?.(error instanceof Error ? error.message : t('taskWorkbar.reviewRepairFailed'));
       throw error;
     }
   }, [
@@ -265,6 +267,7 @@ export const useTeamMembersRuntimeResources = ({
     markReviewRepairStarting,
     refreshReviewRepairStatus,
     setError,
+    t,
   ]);
 
   const handleRemoveMember = useCallback(async (contact: ContactItem) => {

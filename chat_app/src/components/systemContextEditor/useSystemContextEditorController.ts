@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useI18n } from '../../i18n/I18nProvider';
+import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
 import { splitLines, readContextContent, readContextName } from './helpers';
 import type {
@@ -13,15 +13,15 @@ import type {
   ViewMode,
 } from './types';
 
-const DEFAULT_ASSISTANT_FORM: AssistantFormState = {
+const buildDefaultAssistantForm = (t: TranslateFn): AssistantFormState => ({
   scene: '',
-  style: '专业、简洁',
-  language: '中文',
-  outputFormat: '结构化：结论/步骤/代码/风险',
+  style: t('systemContext.assistant.defaultStyle'),
+  language: t('systemContext.assistant.defaultLanguage'),
+  outputFormat: t('systemContext.assistant.defaultOutputFormat'),
   constraintsText: '',
   forbiddenText: '',
-  optimizeGoal: '提升约束完整性与可执行性',
-};
+  optimizeGoal: t('systemContext.assistant.defaultOptimizeGoal'),
+});
 
 export function useSystemContextEditorController(storeData: SystemContextEditorStoreLike) {
   const { t } = useI18n();
@@ -46,7 +46,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [assistantForm, setAssistantForm] = useState<AssistantFormState>(DEFAULT_ASSISTANT_FORM);
+  const [assistantForm, setAssistantForm] = useState<AssistantFormState>(() => buildDefaultAssistantForm(t));
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<PromptCandidate[]>([]);
@@ -176,6 +176,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     selectedContextId,
     updateSystemContext,
     viewMode,
+    t,
   ]);
 
   const handleDelete = useCallback(async (context: SystemContextLike) => {

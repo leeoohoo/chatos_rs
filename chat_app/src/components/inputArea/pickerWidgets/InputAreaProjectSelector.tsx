@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { Project } from '../../../types';
 
@@ -22,6 +23,8 @@ export const InputAreaProjectSelector: React.FC<InputAreaProjectSelectorProps> =
   isStreaming,
   isStopping,
 }) => {
+  const { t } = useI18n();
+
   if (!showProjectSelector || availableProjects.length === 0) {
     return null;
   }
@@ -36,9 +39,9 @@ export const InputAreaProjectSelector: React.FC<InputAreaProjectSelectorProps> =
         'text-foreground focus:outline-none focus:ring-1 focus:ring-primary',
         (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
       )}
-      title="发送时透传 project_root"
+      title={t('inputArea.project.selectTitle')}
     >
-      <option value="">请选择项目</option>
+      <option value="">{t('inputArea.project.selectPlaceholder')}</option>
       {availableProjects.map((project) => (
         <option key={project.id} value={project.id}>
           {project.name}

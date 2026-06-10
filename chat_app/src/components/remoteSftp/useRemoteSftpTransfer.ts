@@ -148,7 +148,7 @@ export const useRemoteSftpTransfer = ({
         return;
       }
     }
-    setError(latest.error || '传输失败');
+    setError(latest.error || t('remote.sftp.error.transferFailed'));
   }, [clearTransferRefreshTimer, onSecondFactorRequired, setError, t]);
 
   const refreshTransferStatusOnce = useCallback(async () => {

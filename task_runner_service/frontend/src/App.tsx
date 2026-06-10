@@ -13,10 +13,13 @@ import {
   Typography,
   theme,
 } from 'antd';
+import antdEnUS from 'antd/locale/en_US';
+import antdZhCN from 'antd/locale/zh_CN';
 import { LockOutlined, LoginOutlined, UserOutlined } from '@ant-design/icons';
 
 import { api, clearAuthToken, getAuthToken, setAuthToken } from './api/client';
 import { AppShell } from './components/AppShell';
+import { I18nProvider, useI18n } from './i18n/I18nProvider';
 import type { AuthUser, LoginPayload } from './types';
 
 const TasksPage = lazy(async () => ({
@@ -49,7 +52,18 @@ const UsersPage = lazy(async () => ({
 
 export default function App() {
   return (
+    <I18nProvider>
+      <TaskRunnerApp />
+    </I18nProvider>
+  );
+}
+
+function TaskRunnerApp() {
+  const { locale } = useI18n();
+
+  return (
     <ConfigProvider
+      locale={locale === 'en-US' ? antdEnUS : antdZhCN}
       theme={{
         algorithm: theme.defaultAlgorithm,
         token: {
@@ -67,6 +81,7 @@ export default function App() {
 
 function AuthGate() {
   const { message } = AntdApp.useApp();
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [checking, setChecking] = useState(true);
@@ -120,9 +135,9 @@ function AuthGate() {
       setAuthToken(response.token);
       queryClient.clear();
       setCurrentUser(response.user);
-      message.success('登录成功');
+      message.success(t('auth.loginSuccess'));
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '登录失败');
+      message.error(error instanceof Error ? error.message : t('auth.loginFailed'));
     } finally {
       setLoginLoading(false);
     }
@@ -133,13 +148,13 @@ function AuthGate() {
     try {
       await api.logout();
     } catch {
-      // 本地退出仍然继续。
+      // Continue with local logout even if the server-side logout fails.
     } finally {
       clearAuthToken();
       queryClient.clear();
       setCurrentUser(null);
       setLogoutLoading(false);
-      message.success('已退出登录');
+      message.success(t('auth.logoutSuccess'));
     }
   }
 
@@ -195,6 +210,8 @@ type LoginPageProps = {
 };
 
 function LoginPage({ loading, onLogin }: LoginPageProps) {
+  const { locale, setLocale, t } = useI18n();
+
   return (
     <Flex
       align="center"
@@ -216,11 +233,29 @@ function LoginPage({ loading, onLogin }: LoginPageProps) {
           boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
         }}
       >
-        <Space direction="vertical" size={6} style={{ width: '100%', marginBottom: 24 }}>
-          <Typography.Title level={3} style={{ margin: 0 }}>
-            Task Runner
-          </Typography.Title>
-          <Typography.Text type="secondary">登录后管理任务、模型配置与运行记录</Typography.Text>
+        <Space direction="vertical" size={12} style={{ width: '100%', marginBottom: 24 }}>
+          <Space align="start" style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Space direction="vertical" size={6}>
+              <Typography.Title level={3} style={{ margin: 0 }}>
+                {t('app.brand')}
+              </Typography.Title>
+              <Typography.Text type="secondary">{t('auth.loginSubtitle')}</Typography.Text>
+            </Space>
+            <Button.Group size="small">
+              <Button
+                type={locale === 'zh-CN' ? 'primary' : 'default'}
+                onClick={() => setLocale('zh-CN')}
+              >
+                {t('language.chinese')}
+              </Button>
+              <Button
+                type={locale === 'en-US' ? 'primary' : 'default'}
+                onClick={() => setLocale('en-US')}
+              >
+                EN
+              </Button>
+            </Button.Group>
+          </Space>
         </Space>
         <Form<LoginPayload>
           layout="vertical"
@@ -229,16 +264,16 @@ function LoginPage({ loading, onLogin }: LoginPageProps) {
           requiredMark={false}
         >
           <Form.Item
-            label="用户名"
+            label={t('auth.username')}
             name="username"
-            rules={[{ required: true, message: '请输入用户名' }]}
+            rules={[{ required: true, message: t('auth.usernameRequired') }]}
           >
             <Input prefix={<UserOutlined />} autoComplete="username" />
           </Form.Item>
           <Form.Item
-            label="密码"
+            label={t('auth.password')}
             name="password"
-            rules={[{ required: true, message: '请输入密码' }]}
+            rules={[{ required: true, message: t('auth.passwordRequired') }]}
           >
             <Input.Password prefix={<LockOutlined />} autoComplete="current-password" />
           </Form.Item>
@@ -249,7 +284,7 @@ function LoginPage({ loading, onLogin }: LoginPageProps) {
             icon={<LoginOutlined />}
             loading={loading}
           >
-            登录
+            {t('auth.login')}
           </Button>
         </Form>
       </div>

@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import { useAuthStoreSelector } from '../../lib/auth/authStore';
 import { useTheme } from '../../hooks/useTheme';
@@ -129,84 +130,82 @@ const TARGET_CONFIG_KIND_MAP: Record<string, string[]> = {
   rust: ['cargo_manifest', 'cargo_runtime_config', 'cargo_toolchain'],
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  ready: '已就绪',
-  loading: '分析中',
-  empty: '未发现目标',
-  error: '分析失败',
-  idle: '未选择项目',
+const getRunStatusLabel = (status: string, t: TranslateFn): string => {
+  const key = `runSettings.status.${status}`;
+  const label = t(key);
+  return label === key ? status : label;
 };
 
-const formatRunTargetSource = (target: ProjectRunTarget): string => {
+const formatRunTargetSource = (target: ProjectRunTarget, t: TranslateFn): string => {
   const kind = (target.kind || '').trim();
   const entrypoint = (target.entrypoint || '').trim();
   const manifestPath = (target.manifestPath || '').trim();
 
   if (kind === 'node') {
     if (entrypoint.startsWith('package.json:scripts.')) {
-      return `来源: package.json 脚本 ${entrypoint.replace('package.json:scripts.', '')}`;
+      return t('runSettings.source.packageScript', { script: entrypoint.replace('package.json:scripts.', '') });
     }
-    return manifestPath ? '来源: package.json' : '来源: Node.js 自动分析';
+    return manifestPath ? t('runSettings.source.packageJson') : t('runSettings.source.nodeAuto');
   }
   if (kind === 'python') {
     if (entrypoint.endsWith('.py')) {
-      return `来源: Python 脚本 ${entrypoint}`;
+      return t('runSettings.source.pythonScript', { entrypoint });
     }
     if (target.command.includes('pytest')) {
-      return '来源: Python 测试入口';
+      return t('runSettings.source.pythonTest');
     }
-    return manifestPath ? '来源: Python 项目清单' : '来源: Python 自动分析';
+    return manifestPath ? t('runSettings.source.pythonManifest') : t('runSettings.source.pythonAuto');
   }
   if (kind === 'go') {
     if (entrypoint.startsWith('./cmd/')) {
-      return `来源: Go cmd 入口 ${entrypoint}`;
+      return t('runSettings.source.goCmd', { entrypoint });
     }
     if (entrypoint === '.') {
-      return '来源: Go 根目录 main 包';
+      return t('runSettings.source.goRootMain');
     }
-    return manifestPath ? '来源: go.mod' : '来源: Go 自动分析';
+    return manifestPath ? t('runSettings.source.goMod') : t('runSettings.source.goAuto');
   }
   if (kind === 'rust') {
     if (entrypoint.startsWith('src/bin/')) {
-      return `来源: Rust bin 入口 ${entrypoint}`;
+      return t('runSettings.source.rustBin', { entrypoint });
     }
     if (entrypoint === 'src/main.rs') {
-      return '来源: Rust 默认主程序 src/main.rs';
+      return t('runSettings.source.rustDefaultMain');
     }
-    return manifestPath ? '来源: Cargo 项目清单' : '来源: Rust 自动分析';
+    return manifestPath ? t('runSettings.source.cargoManifest') : t('runSettings.source.rustAuto');
   }
   if (kind === 'java') {
     if (entrypoint) {
-      return `来源: Java 主类 ${entrypoint}`;
+      return t('runSettings.source.javaMain', { entrypoint });
     }
     if (manifestPath.endsWith('pom.xml')) {
-      return '来源: Maven 项目';
+      return t('runSettings.source.mavenProject');
     }
     if (manifestPath) {
-      return '来源: Gradle 项目';
+      return t('runSettings.source.gradleProject');
     }
   }
-  return target.source === 'auto' ? '来源: 自动分析' : `来源: ${target.source}`;
+  return target.source === 'auto' ? t('runSettings.source.auto') : t('runSettings.source.generic', { source: target.source });
 };
 
-const formatRunTargetOptionHint = (target: ProjectRunTarget): string => {
+const formatRunTargetOptionHint = (target: ProjectRunTarget, t: TranslateFn): string => {
   const kind = (target.kind || '').trim();
   const entrypoint = (target.entrypoint || '').trim();
 
   if (kind === 'node' && entrypoint.startsWith('package.json:scripts.')) {
-    return `脚本 ${entrypoint.replace('package.json:scripts.', '')}`;
+    return t('runSettings.option.script', { script: entrypoint.replace('package.json:scripts.', '') });
   }
   if (kind === 'python' && entrypoint) {
     return entrypoint;
   }
   if (kind === 'go' && entrypoint) {
-    return entrypoint === '.' ? '根目录 main 包' : entrypoint;
+    return entrypoint === '.' ? t('runSettings.option.goRootMain') : entrypoint;
   }
   if (kind === 'rust' && entrypoint.startsWith('src/bin/')) {
     return entrypoint.replace('src/bin/', '').replace('/main.rs', '').replace('.rs', '');
   }
   if (kind === 'rust' && entrypoint === 'src/main.rs') {
-    return '默认主程序';
+    return t('runSettings.option.rustDefaultMain');
   }
   if (kind === 'java' && entrypoint) {
     return entrypoint;
@@ -233,38 +232,39 @@ const resolveTargetDisplayName = (kind?: string | null): string => {
 
 const formatToolchainKind = (kind: string): string => TOOLCHAIN_LABELS[kind] || kind;
 
-const formatToolchainSource = (source?: string | null): string => {
+const formatToolchainSource = (source: string | null | undefined, t: TranslateFn): string => {
   switch ((source || '').trim()) {
     case 'sandbox':
-      return '项目沙箱';
+      return t('runSettings.toolchainSource.sandbox');
     case 'project-local':
-      return '项目内';
+      return t('runSettings.toolchainSource.projectLocal');
     case 'env':
-      return '环境变量';
+      return t('runSettings.toolchainSource.env');
     case 'path':
       return 'PATH';
     case 'system':
-      return '系统安装';
+      return t('runSettings.toolchainSource.system');
     case 'manual':
-      return '手动指定';
+      return t('runSettings.toolchainSource.manual');
     default:
-      return '自动发现';
+      return t('runSettings.toolchainSource.auto');
   }
 };
 
-const resolveManualHint = (kind: string): string => {
+const resolveManualHint = (kind: string, t: TranslateFn): string => {
   if (kind === 'mvn_settings') {
-    return '没有发现时，通常优先检查 ~/.m2/settings.xml 或项目内 .mvn/settings.xml';
+    return t('runSettings.manualHint.mavenSettings');
   }
   if (kind === 'gradle_user_home') {
-    return '没有发现时，通常优先检查 ~/.gradle 或项目内 .gradle';
+    return t('runSettings.manualHint.gradleHome');
   }
-  return '下拉框里会优先展示项目内环境、系统已安装版本和本机版本管理器里的候选；这里只有在自动发现不完整时才需要填写。';
+  return t('runSettings.manualHint.default');
 };
 
 const resolveConfigFilesEmptyText = (
   target: ProjectRunTarget | null,
   toolchainKinds: string[],
+  t: TranslateFn,
 ): string => {
   const projectLabel = resolveTargetDisplayName(target?.kind);
 
@@ -273,28 +273,28 @@ const resolveConfigFilesEmptyText = (
     .filter((value, index, list) => Boolean(value) && list.indexOf(value) === index);
 
   if (projectLabel && toolchainLabels.length > 0) {
-    return `当前没有发现额外的 ${projectLabel} 项目配置文件；本次运行会主要依赖 ${toolchainLabels.join(' / ')} 环境。`;
+    return t('runSettings.config.emptyWithToolchain', { project: projectLabel, toolchains: toolchainLabels.join(' / ') });
   }
   if (projectLabel) {
-    return `当前没有发现额外的 ${projectLabel} 项目配置文件。`;
+    return t('runSettings.config.emptyProject', { project: projectLabel });
   }
-  return '当前没有发现额外的项目运行配置文件。';
+  return t('runSettings.config.emptyDefault');
 };
 
-const resolveConfigSectionTitle = (target: ProjectRunTarget | null): string => {
+const resolveConfigSectionTitle = (target: ProjectRunTarget | null, t: TranslateFn): string => {
   switch ((target?.kind || '').trim()) {
     case 'java':
-      return 'Java 项目配置文件';
+      return t('runSettings.config.section.java');
     case 'rust':
-      return 'Cargo / Rust 配置文件';
+      return t('runSettings.config.section.rust');
     case 'python':
-      return 'Python 项目配置文件';
+      return t('runSettings.config.section.python');
     case 'node':
-      return 'Node.js 项目配置文件';
+      return t('runSettings.config.section.node');
     case 'go':
-      return 'Go 项目配置文件';
+      return t('runSettings.config.section.go');
     default:
-      return '项目配置文件';
+      return t('runSettings.config.section.default');
   }
 };
 
@@ -325,15 +325,15 @@ const resolveConfigKindsForTarget = (target: ProjectRunTarget | null): string[] 
   return TARGET_CONFIG_KIND_MAP[targetKind] || [];
 };
 
-const buildInjectedEnvHint = (toolchainKinds: string[]): string => {
+const buildInjectedEnvHint = (toolchainKinds: string[], t: TranslateFn): string => {
   const keys = toolchainKinds
     .map((kind) => TOOLCHAIN_AUTO_ENV_KEYS[kind])
     .filter(Boolean)
     .slice(0, 3);
   if (keys.length === 0) {
-    return '这里填的是项目自定义变量；上面运行环境里已选择的工具链路径会自动注入，不需要在这里重复填写。';
+    return t('runSettings.injectedEnv.none');
   }
-  return `这里填的是项目自定义变量；像 ${keys.map((key) => `\`${key}\``).join('、')} 这类会根据上面的下拉自动注入。`;
+  return t('runSettings.injectedEnv.some', { keys: keys.map((key) => `\`${key}\``).join(' / ') });
 };
 
 export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = ({
@@ -384,6 +384,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   onRunnerDelete,
   onRefreshRunnerState,
 }) => {
+  const { t } = useI18n();
   const terminalClient = useApiClient();
   const accessToken = useAuthStoreSelector((state) => state.accessToken);
   const { actualTheme } = useTheme();
@@ -398,7 +399,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   const otherTargetIssues = validationIssues.filter((issue) => (
     selectedTarget?.id && issue.targetId && issue.targetId !== selectedTarget.id
   ));
-  const statusLabel = STATUS_LABELS[runStatus] || runStatus;
+  const statusLabel = getRunStatusLabel(runStatus, t);
   const statusTone = runStatus === 'ready'
     ? 'text-emerald-700 border-emerald-500/30 bg-emerald-500/10'
     : runStatus === 'error'
@@ -410,21 +411,21 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
       <div className="border-b border-border px-4 py-3">
         <div className="min-w-0">
           <div className="truncate text-base font-semibold text-foreground">
-            {projectName || '项目设置'}
+            {projectName || t('runSettings.projectSettings')}
           </div>
           <div className="mt-1 truncate text-xs text-muted-foreground">
-            {projectRootPath || '未配置项目目录'}
+            {projectRootPath || t('runSettings.noProjectRoot')}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
             <span className={`rounded border px-2 py-1 ${statusTone}`}>
-              运行状态: {statusLabel}
+              {t('runSettings.runStatus', { status: statusLabel })}
             </span>
             <span className="rounded border border-border px-2 py-1 text-muted-foreground">
-              运行目标: {runTargets.length}
+              {t('runSettings.runTargetsCount', { count: runTargets.length })}
             </span>
             {selectedTarget?.language && (
               <span className="rounded border border-border px-2 py-1 text-muted-foreground">
-                语言: {selectedTarget.language}
+                {t('runSettings.language', { language: selectedTarget.language })}
               </span>
             )}
           </div>
@@ -443,7 +444,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
             )}
             {runnerDiagnosis && !runnerError?.includes(runnerDiagnosis) && (
               <div className="text-amber-700">
-                最近一次退出诊断: {runnerDiagnosis}
+                {t('runSettings.latestExitDiagnosis', { diagnosis: runnerDiagnosis })}
               </div>
             )}
           </div>
@@ -453,14 +454,14 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
       <div className="space-y-4 p-4">
         {runnerDiagnosis && (
           <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3">
-            <div className="mb-2 text-[11px] text-muted-foreground">最近一次运行诊断</div>
+            <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.latestRunDiagnosis')}</div>
             <div className="text-sm text-amber-800">{runnerDiagnosis}</div>
             <div className="mt-2 text-[11px] text-muted-foreground">
-              这是根据最近一次启动后终端退出日志自动提炼出的原因，用来帮助快速定位本地环境或入口配置问题。
+              {t('runSettings.diagnosisDescription')}
             </div>
             {runnerSuggestions.length > 0 && (
               <div className="mt-3 space-y-2">
-                <div className="text-[11px] text-muted-foreground">建议操作</div>
+                <div className="text-[11px] text-muted-foreground">{t('runSettings.suggestions')}</div>
                 <div className="flex flex-wrap gap-2">
                   {runnerSuggestions.map((suggestion) => (
                     <button
@@ -491,10 +492,10 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
         )}
 
         <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">运行前检查</div>
+          <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.preflight')}</div>
           {selectedTargetIssues.length === 0 && otherTargetIssues.length === 0 ? (
             <div className="text-sm text-emerald-700">
-              当前未发现明显的本地运行配置问题。
+              {t('runSettings.preflightClean')}
             </div>
           ) : (
             <div className="space-y-3">
@@ -508,7 +509,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   )}
                   {issue.hint && (
                     <div className="mt-2 text-[11px] text-muted-foreground">
-                      建议: {issue.hint}
+                      {t('runSettings.issueHint', { hint: issue.hint })}
                     </div>
                   )}
                 </div>
@@ -516,7 +517,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
               {otherTargetIssues.length > 0 && (
                 <details className="rounded border border-border/60 bg-card">
                   <summary className="cursor-pointer list-none px-3 py-2 text-xs text-muted-foreground">
-                    查看其它运行入口的问题 ({otherTargetIssues.length})
+                    {t('runSettings.otherTargetIssues', { count: otherTargetIssues.length })}
                   </summary>
                   <div className="border-t border-border/60 space-y-3 px-3 py-3">
                     {otherTargetIssues.map((issue, index) => (
@@ -532,7 +533,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                         )}
                         {issue.hint && (
                           <div className="mt-2 text-[11px] text-muted-foreground">
-                            建议: {issue.hint}
+                            {t('runSettings.issueHint', { hint: issue.hint })}
                           </div>
                         )}
                       </div>
@@ -545,9 +546,9 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
         </div>
 
         <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">运行目标</div>
+          <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.runTargets')}</div>
           {runTargets.length === 0 ? (
-            <div className="text-sm text-muted-foreground">当前项目尚未分析出可运行目标。</div>
+            <div className="text-sm text-muted-foreground">{t('runSettings.noRunTargets')}</div>
           ) : (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -559,7 +560,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                 >
                   {runTargets.map((target) => (
                     <option key={target.id} value={target.id}>
-                      {[target.label, formatRunTargetOptionHint(target)].filter(Boolean).join(' · ')}
+                      {[target.label, formatRunTargetOptionHint(target, t)].filter(Boolean).join(' · ')}
                     </option>
                   ))}
                 </select>
@@ -571,20 +572,20 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
               {selectedTarget && (
                 <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                   <span className="rounded border border-border px-2 py-1">
-                    {formatRunTargetSource(selectedTarget)}
+                    {formatRunTargetSource(selectedTarget, t)}
                   </span>
                   {selectedTarget.entrypoint && (
                     <span className="rounded border border-border px-2 py-1" title={selectedTarget.entrypoint}>
-                      入口: {selectedTarget.entrypoint}
+                      {t('runSettings.entrypoint', { entrypoint: selectedTarget.entrypoint })}
                     </span>
                   )}
                   {selectedTarget.manifestPath && (
                     <span className="rounded border border-border px-2 py-1" title={selectedTarget.manifestPath}>
-                      清单: {selectedTarget.manifestPath}
+                      {t('runSettings.manifest', { manifest: selectedTarget.manifestPath })}
                     </span>
                   )}
                   <span className="rounded border border-border px-2 py-1">
-                    命令: {selectedTarget.command}
+                    {t('runSettings.command', { command: selectedTarget.command })}
                   </span>
                 </div>
               )}
@@ -597,7 +598,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   className="h-8 rounded border border-emerald-500/40 px-3 text-xs text-emerald-700 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                   title={commandPreview}
                 >
-                  {starting ? '启动中...' : '启动新实例'}
+                  {starting ? t('runSettings.starting') : t('runSettings.startNew')}
                 </button>
                 <button
                   type="button"
@@ -605,7 +606,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   disabled={runStatus !== 'ready' || starting || stopping || restarting || deleting || !selectedRunInstanceId}
                   className="h-8 rounded border border-rose-500/40 px-3 text-xs text-rose-700 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {stopping ? '停止中...' : '停止当前实例'}
+                  {stopping ? t('runSettings.stopping') : t('runSettings.stopCurrent')}
                 </button>
                 <button
                   type="button"
@@ -614,7 +615,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                   title={commandPreview}
                 >
-                  {restarting ? '重启中...' : '重启当前实例'}
+                  {restarting ? t('runSettings.restarting') : t('runSettings.restartCurrent')}
                 </button>
                 <button
                   type="button"
@@ -622,7 +623,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   disabled={starting || stopping || restarting || deleting || !selectedRunInstanceId}
                   className="h-8 rounded border border-destructive/40 px-3 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {deleting ? '删除中...' : '删除当前实例'}
+                  {deleting ? t('runSettings.deleting') : t('runSettings.deleteCurrent')}
                 </button>
                 <button
                   type="button"
@@ -630,7 +631,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   disabled={runCatalogLoading || runEnvironmentLoading || deleting}
                   className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {runCatalogLoading || runEnvironmentLoading ? '刷新中...' : '刷新状态'}
+                  {runCatalogLoading || runEnvironmentLoading ? t('runSettings.refreshing') : t('runSettings.refreshStatus')}
                 </button>
               </div>
             </div>
@@ -639,20 +640,20 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
 
         <div className="rounded border border-border/70 bg-background/50 p-3">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="text-[11px] text-muted-foreground">运行实例</div>
+            <div className="text-[11px] text-muted-foreground">{t('runSettings.instances')}</div>
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
               <span className="rounded border border-border px-2 py-1">
-                实例数: {projectRunInstances.length}
+                {t('runSettings.instanceCount', { count: projectRunInstances.length })}
               </span>
               <span className="rounded border border-border px-2 py-1">
-                项目状态: {projectRunState?.status || 'idle'}
+                {t('runSettings.projectStatus', { status: projectRunState?.status || 'idle' })}
               </span>
             </div>
           </div>
 
           {projectRunInstances.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              还没有运行中的项目实例。先在上面选择入口，再点击“启动新实例”。
+              {t('runSettings.noInstances')}
             </div>
           ) : (
             <div className="space-y-3">
@@ -672,10 +673,10 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                       ].join(' ')}
                     >
                       <div className="font-medium text-foreground">
-                        实例 {index + 1}
+                        {t('runSettings.instance', { index: index + 1 })}
                       </div>
                       <div className="mt-1">
-                        {instance.running ? (instance.busy ? '运行中' : '空闲') : instance.status}
+                        {instance.running ? (instance.busy ? t('runSettings.running') : t('runSettings.idle')) : instance.status}
                       </div>
                     </button>
                   );
@@ -684,10 +685,14 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
 
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                 <span className="rounded border border-border px-2 py-1">
-                  终端状态: {projectRunTerminal?.status || 'idle'}
+                  {t('runSettings.terminalStatus', { status: projectRunTerminal?.status || 'idle' })}
                 </span>
                 <span className="rounded border border-border px-2 py-1">
-                  进程: {projectRunTerminal ? (projectRunTerminalBusy ? '运行中' : (projectRunTerminal.status === 'running' ? '空闲' : '未运行')) : '未运行'}
+                  {t('runSettings.process', {
+                    status: projectRunTerminal
+                      ? (projectRunTerminalBusy ? t('runSettings.running') : (projectRunTerminal.status === 'running' ? t('runSettings.idle') : t('runSettings.notRunning')))
+                      : t('runSettings.notRunning'),
+                  })}
                 </span>
                 {projectRunTerminal?.name && (
                   <span className="rounded border border-border px-2 py-1">
@@ -702,25 +707,25 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
         <details className="rounded border border-border/70 bg-background/50" open={false}>
           <summary className="cursor-pointer list-none px-3 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-[11px] text-muted-foreground">运行环境</div>
+              <div className="text-[11px] text-muted-foreground">{t('runSettings.runEnvironment')}</div>
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                 <span className="rounded border border-border px-2 py-1">
-                  工具链项: {availableToolchainKinds.length}
+                  {t('runSettings.toolchainItems', { count: availableToolchainKinds.length })}
                 </span>
                 {missingToolchainKinds.length > 0 && (
                   <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-700">
-                    缺失: {missingToolchainKinds.length}
+                    {t('runSettings.missing', { count: missingToolchainKinds.length })}
                   </span>
                 )}
                 <span className="rounded border border-border px-2 py-1">
-                  默认收起
+                  {t('runSettings.collapsedDefault')}
                 </span>
               </div>
             </div>
           </summary>
           <div className="border-t border-border/60 px-3 py-3">
             {availableToolchainKinds.length === 0 ? (
-              <div className="text-sm text-muted-foreground">当前运行目标不需要额外工具链配置。</div>
+              <div className="text-sm text-muted-foreground">{t('runSettings.noToolchainNeeded')}</div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2">
                 {availableToolchainKinds.map((kind) => {
@@ -735,7 +740,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                         <div className="text-xs font-medium text-foreground">{formatToolchainKind(kind)}</div>
                         {options.length > 0 && (
                           <div className="text-[11px] text-muted-foreground">
-                            已发现 {options.length} 个可用环境
+                            {t('runSettings.foundOptions', { count: options.length })}
                           </div>
                         )}
                       </div>
@@ -747,27 +752,27 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                         title={selectedOption?.path || kind}
                       >
                         {options.length === 0 ? (
-                          <option value="">未发现 {formatToolchainKind(kind)}</option>
+                          <option value="">{t('runSettings.notFoundToolchain', { name: formatToolchainKind(kind) })}</option>
                         ) : (
                           options.map((option) => (
                             <option key={option.id} value={option.id}>
-                              {option.label} · {formatToolchainSource(option.source)}
+                              {option.label} · {formatToolchainSource(option.source, t)}
                             </option>
                           ))
                         )}
                       </select>
                       <div className="mt-2 space-y-2">
                         <div className="truncate text-[11px] text-muted-foreground" title={selectedOption?.path || ''}>
-                          {selectedOption?.path || (isMissing ? `未发现 ${formatToolchainKind(kind)}，请补充本地路径` : '')}
+                          {selectedOption?.path || (isMissing ? t('runSettings.missingToolchainPath', { name: formatToolchainKind(kind) }) : '')}
                         </div>
                         {selectedOption && (
                           <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                             <span className="rounded border border-border px-2 py-1">
-                              来源: {formatToolchainSource(selectedOption.source)}
+                              {t('runSettings.source', { source: formatToolchainSource(selectedOption.source, t) })}
                             </span>
                             {selectedOption.version && (
                               <span className="rounded border border-border px-2 py-1">
-                                版本提示: {selectedOption.version}
+                                {t('runSettings.versionHint', { version: selectedOption.version })}
                               </span>
                             )}
                           </div>
@@ -776,17 +781,17 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
 
                       <details className="mt-3 rounded border border-dashed border-border/70 bg-background/40">
                         <summary className="cursor-pointer list-none px-3 py-2 text-xs text-muted-foreground">
-                          {showManualInput ? '补充本地路径' : '没有想要的版本？补充本地路径'}
+                          {showManualInput ? t('runSettings.manualPath') : t('runSettings.manualPathAlt')}
                         </summary>
                         <div className="border-t border-border/60 px-3 py-3">
                           <div className="mb-2 text-[11px] text-muted-foreground">
-                            {resolveManualHint(kind)}
+                            {resolveManualHint(kind, t)}
                           </div>
                           <div className="flex items-center gap-2">
                             <input
                               value={manualDraft}
                               onChange={(event) => onCustomToolchainDraftChange(kind, event.target.value)}
-                              placeholder={`手动指定 ${formatToolchainKind(kind)} 路径`}
+                              placeholder={t('runSettings.manualPathPlaceholder', { name: formatToolchainKind(kind) })}
                               className="h-9 flex-1 rounded border border-border bg-background px-3 text-sm text-foreground"
                             />
                             <button
@@ -795,7 +800,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                               disabled={!manualDraft.trim() || runEnvironmentLoading}
                               className="h-9 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              保存并选中
+                              {t('runSettings.saveAndSelect')}
                             </button>
                           </div>
                         </div>
@@ -807,10 +812,10 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
             )}
 
             <div className="mt-4 rounded border border-border/70 bg-background/50 p-3">
-              <div className="mb-2 text-[11px] text-muted-foreground">{resolveConfigSectionTitle(selectedTarget)}</div>
+              <div className="mb-2 text-[11px] text-muted-foreground">{resolveConfigSectionTitle(selectedTarget, t)}</div>
               {selectedConfigFiles.length === 0 ? (
                 <div className="text-sm text-muted-foreground">
-                  {resolveConfigFilesEmptyText(selectedTarget, availableToolchainKinds)}
+                  {resolveConfigFilesEmptyText(selectedTarget, availableToolchainKinds, t)}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -819,7 +824,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-medium text-foreground">{file.label}</span>
                         <span className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground">
-                          来源: {formatToolchainSource(file.source)}
+                          {t('runSettings.source', { source: formatToolchainSource(file.source, t) })}
                         </span>
                       </div>
                       <div className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
@@ -833,14 +838,14 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                     </div>
                   ))}
                   <div className="text-[11px] text-muted-foreground">
-                    这些文件即使不在上面的下拉里手动选择，也会被当前运行目标对应的构建工具或运行时自动读取，所以这里做成只读说明，帮助用户看清这次启动真正会生效的配置。
+                    {t('runSettings.configReadonlyHint')}
                   </div>
                 </div>
               )}
             </div>
 
             <div className="mt-4 rounded border border-border/70 bg-background/50 p-3">
-              <div className="mb-2 text-[11px] text-muted-foreground">项目环境变量</div>
+              <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.envVars')}</div>
               {environmentHints.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                   {environmentHints.map((hint) => (
@@ -858,7 +863,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
               />
               <div className="mt-2 flex items-center justify-between gap-3">
                 <div className="text-[11px] text-muted-foreground">
-                  每行一个 `KEY=VALUE`，支持 `#` 注释。{buildInjectedEnvHint(availableToolchainKinds)}
+                  {t('runSettings.envVarsHelp', { hint: buildInjectedEnvHint(availableToolchainKinds, t) })}
                 </div>
                 <button
                   type="button"
@@ -866,32 +871,32 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
                   disabled={runEnvironmentLoading}
                   className="h-9 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  保存环境变量
+                  {t('runSettings.saveEnvVars')}
                 </button>
               </div>
               <div className="mt-3 rounded border border-border/60 bg-card p-3">
-                <div className="mb-2 text-[11px] text-muted-foreground">启动前环境预览</div>
+                <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.envPreview')}</div>
                 <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
-                  {envPreview || '当前未注入额外环境变量'}
+                  {envPreview || t('runSettings.noEnvPreview')}
                 </pre>
               </div>
             </div>
 
             <div className="mt-4 rounded border border-border/70 bg-background/50 p-3">
-              <div className="mb-2 text-[11px] text-muted-foreground">执行命令预览</div>
+              <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.commandPreview')}</div>
               <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
-                {commandPreview || '暂无命令'}
+                {commandPreview || t('runSettings.noCommand')}
               </pre>
             </div>
           </div>
         </details>
 
         <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">独立运行终端</div>
+          <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.terminal')}</div>
           <div className="h-[420px] overflow-hidden rounded border border-border/60 bg-card">
             <EmbeddedTerminalView
               terminal={projectRunTerminal}
-              emptyText="先在上面启动实例或选择一个已有实例，再在这里查看它独立的终端"
+              emptyText={t('runSettings.terminalEmpty')}
               client={terminalClient}
               accessToken={accessToken}
               actualTheme={actualTheme}

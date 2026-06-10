@@ -17,6 +17,7 @@ import {
   resolveModelSupportFlags,
 } from './viewHelpers';
 import { useSessionHeaderMeta } from './useSessionHeaderMeta';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface UseChatInterfaceDerivedStateParams {
   currentSession: Session | null;
@@ -45,6 +46,7 @@ export const useChatInterfaceDerivedState = ({
   currentRemoteConnection,
   sessionChatState,
 }: UseChatInterfaceDerivedStateParams) => {
+  const { t } = useI18n();
   const { supportsImages, supportsReasoning } = useMemo(
     () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
     [aiModelConfigs, selectedModelId],
@@ -61,7 +63,8 @@ export const useChatInterfaceDerivedState = ({
     contacts,
     agents,
     selectedAgentId,
-  }), [agents, contacts, currentSession, selectedAgentId]);
+    fallbackAgentName: t('currentAgent.fallback'),
+  }), [agents, contacts, currentSession, selectedAgentId, t]);
   const {
     currentContactName,
     currentContactId,

@@ -2,12 +2,19 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
-import { RowsCard, StringListCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import {
+  RowsCard,
+  StringListCard,
+  TextBlockCard,
+  formatToolCardCount,
+  renderCardHeader,
+} from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const normalizeFolder = (folder: string): string => folder.trim() || 'root';
 
 const NoteListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, items }) => {
+  const { t } = useI18n();
   const notes = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -16,7 +23,7 @@ const NoteListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${notes.length} 条`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'notes', notes.length))}
       <div className="tool-detail-list">
         {notes.map((note, index) => {
           const titleText = asString(note.title).trim() || `note ${index + 1}`;
@@ -43,6 +50,7 @@ const NoteListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
 };
 
 const TagListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { locale, t } = useI18n();
   const tags = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -51,7 +59,7 @@ const TagListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Tags', `${tags.length} 个`)}
+      {renderCardHeader(translateToolTitle('Tags', locale), formatToolCardCount(t, 'tags', tags.length))}
       <div className="tool-detail-list">
         {tags.map((tag, index) => (
           <div key={`notepad-tag-${index}`} className="tool-detail-item">

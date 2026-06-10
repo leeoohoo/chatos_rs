@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { FsMoveOptions, FsMoveResponse } from '../../lib/api/client/types';
 import { isValidEntryName } from './utils';
 import {
@@ -45,6 +46,8 @@ export const useProjectTreeMoveActions = ({
   setActionMessage,
   setMoveConflict,
 }: UseProjectTreeMoveActionsOptions) => {
+  const { t } = useI18n();
+
   const applyMoveResult = useCallback(async (
     sourcePath: string,
     targetDirPath: string,
@@ -53,7 +56,7 @@ export const useProjectTreeMoveActions = ({
   ) => {
     const movedPath = readProjectTreeMovedPath(result);
     if (!movedPath) {
-      throw new Error('移动成功，但返回路径为空');
+      throw new Error(t('projectExplorer.action.moveReturnedEmptyPath'));
     }
 
     const nextExpanded = replaceExpandedPathPrefix(sourcePath, movedPath);
@@ -62,7 +65,7 @@ export const useProjectTreeMoveActions = ({
     setSelectedPath(movedPath);
     setSelectedFile(null);
     await reloadTreeWithExpanded(nextExpanded);
-    setActionMessage(`已移动：${movedLabel}`);
+    setActionMessage(t('projectExplorer.action.moved', { name: movedLabel }));
   }, [
     reloadTreeWithExpanded,
     replaceExpandedPathPrefix,
@@ -70,6 +73,7 @@ export const useProjectTreeMoveActions = ({
     setExpandedPaths,
     setSelectedFile,
     setSelectedPath,
+    t,
     toExpandedKey,
   ]);
 
@@ -91,7 +95,7 @@ export const useProjectTreeMoveActions = ({
 
     const sourceEntry = findEntryByPath(sourcePath);
     if (!sourceEntry) {
-      setActionError('拖拽源文件不存在');
+      setActionError(t('projectExplorer.action.dragSourceMissing'));
       return;
     }
 
@@ -103,7 +107,7 @@ export const useProjectTreeMoveActions = ({
         await executeMoveEntry(sourcePath, targetDirPath, sourceEntry.name);
       } catch (err) {
         const message = readProjectTreeErrorMessage(err, '');
-        if (!message.includes('已存在同名')) {
+        if (!message.includes('\u5df2\u5b58\u5728\u540c\u540d')) {
           throw err;
         }
         setMoveConflict({
@@ -112,10 +116,10 @@ export const useProjectTreeMoveActions = ({
           sourceName: sourceEntry.name,
           renameTo: `${sourceEntry.name}_copy`,
         });
-        setActionMessage('目标已存在同名项，请选择处理方式');
+        setActionMessage(t('projectExplorer.action.moveConflictMessage'));
       }
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '移动失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.action.moveFailed')));
     } finally {
       setActionLoading(false);
     }
@@ -129,12 +133,13 @@ export const useProjectTreeMoveActions = ({
     setActionLoading,
     setActionMessage,
     setMoveConflict,
+    t,
   ]);
 
   const handleMoveConflictCancel = useCallback(() => {
     setMoveConflict(null);
-    setActionMessage('已取消移动');
-  }, [setActionMessage, setMoveConflict]);
+    setActionMessage(t('projectExplorer.action.moveCancelled'));
+  }, [setActionMessage, setMoveConflict, t]);
 
   const handleMoveConflictOverwrite = useCallback(async (
     moveConflict: MoveConflictState | null,
@@ -150,21 +155,21 @@ export const useProjectTreeMoveActions = ({
         moveConflict.sourceName,
         { replaceExisting: true },
       );
-      setActionMessage(`已覆盖并移动：${moveConflict.sourceName}`);
+      setActionMessage(t('projectExplorer.action.overwriteMoved', { name: moveConflict.sourceName }));
       setMoveConflict(null);
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '覆盖移动失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.action.overwriteMoveFailed')));
     } finally {
       setActionLoading(false);
     }
-  }, [executeMoveEntry, setActionError, setActionLoading, setActionMessage, setMoveConflict]);
+  }, [executeMoveEntry, setActionError, setActionLoading, setActionMessage, setMoveConflict, t]);
 
   const handleMoveConflictRename = useCallback(async (moveConflict: MoveConflictState | null) => {
     if (!moveConflict) return;
 
     const renamed = moveConflict.renameTo.trim();
     if (!renamed || !isValidEntryName(renamed)) {
-      setActionError('新名称不合法');
+      setActionError(t('projectExplorer.action.newNameInvalid'));
       return;
     }
 
@@ -179,11 +184,11 @@ export const useProjectTreeMoveActions = ({
       );
       setMoveConflict(null);
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '重命名移动失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.action.renameMoveFailed')));
     } finally {
       setActionLoading(false);
     }
-  }, [executeMoveEntry, setActionError, setActionLoading, setMoveConflict]);
+  }, [executeMoveEntry, setActionError, setActionLoading, setMoveConflict, t]);
 
   return {
     handleMoveEntryByDrop,

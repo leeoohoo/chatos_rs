@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { isSessionMatchedContactAndProject } from '../../../features/contactSession/sessionResolver';
 import type { Session, AiModelConfig, Message } from '../../../types';
 import type { SendMessageRuntimeOptions, SessionSelectOptions } from '../../../lib/store/types';
@@ -65,6 +66,7 @@ export const useTeamMemberConversation = ({
   openTurnProcessViewer,
   loadMoreMessages,
 }: UseTeamMemberConversationParams) => {
+  const { t } = useI18n();
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [switchingContactId, setSwitchingContactId] = useState<string | null>(null);
@@ -367,9 +369,9 @@ export const useTeamMemberConversation = ({
       return;
     }
     await clearSummaries(selectedProjectSession.id, {
-      confirmMessage: '确定清空当前会话的所有总结吗？',
+      confirmMessage: t('teamMembers.summaryClearMessage'),
     });
-  }, [clearSummaries, selectedProjectSession?.id]);
+  }, [clearSummaries, selectedProjectSession?.id, t]);
 
   return {
     selectedContactId,

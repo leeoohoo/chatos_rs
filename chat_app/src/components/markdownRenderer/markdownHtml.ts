@@ -1,3 +1,5 @@
+import type { TranslateFn } from '../../i18n/I18nProvider';
+
 const highlightCode = (code: string, _language: string): string => (
   code
     .replace(/&/g, '&amp;')
@@ -7,7 +9,7 @@ const highlightCode = (code: string, _language: string): string => (
 
 export const hasMermaidFence = (content: string): boolean => /```mermaid(?:\s|$)/i.test(content);
 
-export const buildMarkdownHtml = (content: string, isStreaming: boolean): string => {
+export const buildMarkdownHtml = (content: string, isStreaming: boolean, t: TranslateFn): string => {
   const text = typeof content === 'string' ? content : '';
   if (!text) {
     return '';
@@ -60,7 +62,7 @@ export const buildMarkdownHtml = (content: string, isStreaming: boolean): string
 
     if (isStreaming) {
       return `<div class="streaming-table-wrapper">
-                    <div class="streaming-table-indicator">● 正在生成表格...</div>
+                    <div class="streaming-table-indicator">● ${t('markdown.streamingTable')}</div>
                     ${tableHtml}
                 </div>`;
     }
@@ -86,7 +88,7 @@ export const buildMarkdownHtml = (content: string, isStreaming: boolean): string
         .filter((row: string[]) => row.length > 0);
 
       let streamingTableHtml = '<div class="streaming-table-wrapper">';
-      streamingTableHtml += '<div class="streaming-table-indicator">● 正在生成表格...</div>';
+      streamingTableHtml += `<div class="streaming-table-indicator">● ${t('markdown.streamingTable')}</div>`;
       streamingTableHtml += '<table class="streaming-table">';
       if (headers.length > 0) {
         streamingTableHtml += '<thead><tr>';
@@ -127,10 +129,10 @@ export const buildMarkdownHtml = (content: string, isStreaming: boolean): string
                     <div class="mermaid-header">
                         <span class="mermaid-language">mermaid</span>
                         <div class="code-actions">
-                            <button class="code-action-btn mermaid-open-btn" data-code="${encodedCode}" title="预览图表">
-                                预览
+                            <button class="code-action-btn mermaid-open-btn" data-code="${encodedCode}" title="${t('markdown.mermaid.previewTitle')}">
+                                ${t('markdown.mermaid.preview')}
                             </button>
-                            <button class="code-action-btn copy-btn" data-code="${encodedCode}" title="复制图表源码">
+                            <button class="code-action-btn copy-btn" data-code="${encodedCode}" title="${t('markdown.mermaid.copySourceTitle')}">
                                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <rect x="9" y="9" width="13" height="13" rx="2"></rect>
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -151,13 +153,13 @@ export const buildMarkdownHtml = (content: string, isStreaming: boolean): string
                 <div class="code-header">
                     <span class="code-language">${lang}</span>
                     <div class="code-actions">
-                        <button class="code-action-btn copy-btn" data-code="${encodeURIComponent(trimmedCode)}" title="复制代码">
+                        <button class="code-action-btn copy-btn" data-code="${encodeURIComponent(trimmedCode)}" title="${t('markdown.code.copyTitle')}">
                             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <rect x="9" y="9" width="13" height="13" rx="2"></rect>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                             </svg>
                         </button>
-                        <button class="code-action-btn expand-btn" data-block-id="${blockId}" title="展开">
+                        <button class="code-action-btn expand-btn" data-block-id="${blockId}" title="${t('markdown.code.expand')}">
                             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <polyline points="6 9 12 15 18 9"></polyline>
                             </svg>
@@ -184,7 +186,7 @@ export const buildMarkdownHtml = (content: string, isStreaming: boolean): string
       processedText = processedText.replace(
         unclosedCodeBlockRegex,
         `<div class="code-block streaming-code">
-                        <div class="code-header">${lang} <span class="streaming-indicator">● 正在输入...</span></div>
+                        <div class="code-header">${lang} <span class="streaming-indicator">● ${t('markdown.code.streamingInput')}</span></div>
                         <pre><code>${highlightedCode}</code></pre>
                     </div>`,
       );

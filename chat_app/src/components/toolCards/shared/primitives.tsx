@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { useI18n } from '../../../i18n/I18nProvider';
+import { useI18n, type TranslateFn } from '../../../i18n/I18nProvider';
 import {
   formatToolPrimitive,
   translateToolTitle,
@@ -12,6 +12,12 @@ export const renderCardHeader = (title: string, meta?: string) => (
     {meta && <span className="tool-card-badge">{meta}</span>}
   </div>
 );
+
+export const formatToolCardCount = (
+  t: TranslateFn,
+  key: string,
+  count: number,
+) => t(`toolCard.count.${key}`, { count });
 
 interface TextBlockCardProps {
   title: string;
@@ -49,7 +55,7 @@ export const RowsCard: React.FC<RowsCardProps> = ({
   rows,
   fullWidth = false,
 }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const formatValue = (value: string | number | boolean | null | undefined): string => {
     if (value === undefined) {
       return '';
@@ -78,7 +84,7 @@ export const RowsCard: React.FC<RowsCardProps> = ({
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
       {renderCardHeader(
         translateToolTitle(title, locale),
-        locale === 'zh-CN' ? `${filtered.length} 项` : `${filtered.length} items`,
+        formatToolCardCount(t, 'rows', filtered.length),
       )}
       <div className="tool-detail-rows">
         {filtered.map((row) => (
@@ -105,7 +111,7 @@ export const StringListCard: React.FC<StringListCardProps> = ({
   linkify = false,
   fullWidth = false,
 }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const filtered = values.map((item) => item.trim()).filter(Boolean);
   if (filtered.length === 0) return null;
 
@@ -113,7 +119,7 @@ export const StringListCard: React.FC<StringListCardProps> = ({
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
       {renderCardHeader(
         translateToolTitle(title, locale),
-        locale === 'zh-CN' ? `${filtered.length} 项` : `${filtered.length} items`,
+        formatToolCardCount(t, 'items', filtered.length),
       )}
       <div className="tool-detail-list">
         {filtered.map((item, index) => (

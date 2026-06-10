@@ -1,9 +1,46 @@
+import type { TranslateFn } from '../../../i18n/I18nProvider';
 import type {
   ProjectRunCustomToolchain,
   ProjectRunEnvironment,
   ProjectRunTarget,
   ProjectRunToolchainOption,
 } from '../../../types';
+
+const fallbackTranslate: TranslateFn = (key, params) => {
+  const values = params || {};
+  switch (key) {
+    case 'runSettings.environmentHint.javaHome':
+      return `JAVA_HOME=${values.path} will be injected before start`;
+    case 'runSettings.environmentHint.mavenSettings':
+      return `Maven commands will append -s ${values.path}`;
+    case 'runSettings.environmentHint.mavenBin':
+      return `System Maven commands will be replaced with ${values.path}`;
+    case 'runSettings.environmentHint.gradleHome':
+      return `GRADLE_USER_HOME=${values.path} will be injected for Gradle`;
+    case 'runSettings.environmentHint.gradleBin':
+      return `System Gradle commands will be replaced with ${values.path}`;
+    case 'runSettings.environmentHint.python':
+      return `Python commands will prefer ${values.path}`;
+    case 'runSettings.environmentHint.node':
+      return `Node commands will prefer ${values.path}`;
+    case 'runSettings.environmentHint.npm':
+      return `npm commands will prefer ${values.path}`;
+    case 'runSettings.environmentHint.pnpm':
+      return `pnpm commands will prefer ${values.path}`;
+    case 'runSettings.environmentHint.yarn':
+      return `yarn commands will prefer ${values.path}`;
+    case 'runSettings.environmentHint.cargo':
+      return `Cargo commands will prefer ${values.path}`;
+    case 'runSettings.environmentHint.rustc':
+      return `Compile steps will prefer ${values.path}`;
+    case 'runSettings.environmentHint.go':
+      return `Go commands will prefer ${values.path}`;
+    case 'runSettings.manualToolchainLabel':
+      return `Manual: ${values.name}`;
+    default:
+      return key;
+  }
+};
 
 export const resolveCommandPreview = (
   command: string,
@@ -150,6 +187,7 @@ export const buildEnvPreview = (
 export const buildEnvironmentHints = (
   target: ProjectRunTarget | null,
   selectedOptions: Record<string, ProjectRunToolchainOption | null>,
+  t: TranslateFn = fallbackTranslate,
 ): string[] => {
   if (!target) {
     return [];
@@ -158,46 +196,46 @@ export const buildEnvironmentHints = (
   const hints: string[] = [];
   if (target.kind === 'java') {
     if (selectedOptions.java_home?.path) {
-      hints.push(`启动前会自动注入 JAVA_HOME=${selectedOptions.java_home.path}`);
+      hints.push(t('runSettings.environmentHint.javaHome', { path: selectedOptions.java_home.path }));
     }
     if (selectedOptions.mvn_settings?.path) {
-      hints.push(`Maven 命令会自动追加 -s ${selectedOptions.mvn_settings.path}`);
+      hints.push(t('runSettings.environmentHint.mavenSettings', { path: selectedOptions.mvn_settings.path }));
     }
     if (selectedOptions.mvn?.path) {
-      hints.push(`系统 Maven 命令会替换为 ${selectedOptions.mvn.path}`);
+      hints.push(t('runSettings.environmentHint.mavenBin', { path: selectedOptions.mvn.path }));
     }
     if (selectedOptions.gradle_user_home?.path) {
-      hints.push(`Gradle 会自动注入 GRADLE_USER_HOME=${selectedOptions.gradle_user_home.path}`);
+      hints.push(t('runSettings.environmentHint.gradleHome', { path: selectedOptions.gradle_user_home.path }));
     }
     if (selectedOptions.gradle?.path) {
-      hints.push(`系统 Gradle 命令会替换为 ${selectedOptions.gradle.path}`);
+      hints.push(t('runSettings.environmentHint.gradleBin', { path: selectedOptions.gradle.path }));
     }
   }
   if (target.kind === 'python' && selectedOptions.python?.path) {
-    hints.push(`Python 命令会优先使用 ${selectedOptions.python.path}`);
+    hints.push(t('runSettings.environmentHint.python', { path: selectedOptions.python.path }));
   }
   if (target.kind === 'node' && selectedOptions.node?.path) {
-    hints.push(`Node 命令会优先使用 ${selectedOptions.node.path}`);
+    hints.push(t('runSettings.environmentHint.node', { path: selectedOptions.node.path }));
   }
   if (target.kind === 'node' && selectedOptions.npm?.path) {
-    hints.push(`npm 命令会优先使用 ${selectedOptions.npm.path}`);
+    hints.push(t('runSettings.environmentHint.npm', { path: selectedOptions.npm.path }));
   }
   if (target.kind === 'node' && selectedOptions.pnpm?.path) {
-    hints.push(`pnpm 命令会优先使用 ${selectedOptions.pnpm.path}`);
+    hints.push(t('runSettings.environmentHint.pnpm', { path: selectedOptions.pnpm.path }));
   }
   if (target.kind === 'node' && selectedOptions.yarn?.path) {
-    hints.push(`yarn 命令会优先使用 ${selectedOptions.yarn.path}`);
+    hints.push(t('runSettings.environmentHint.yarn', { path: selectedOptions.yarn.path }));
   }
   if (target.kind === 'rust') {
     if (selectedOptions.cargo?.path) {
-      hints.push(`Cargo 命令会优先使用 ${selectedOptions.cargo.path}`);
+      hints.push(t('runSettings.environmentHint.cargo', { path: selectedOptions.cargo.path }));
     }
     if (selectedOptions.rustc?.path) {
-      hints.push(`编译阶段会优先使用 ${selectedOptions.rustc.path}`);
+      hints.push(t('runSettings.environmentHint.rustc', { path: selectedOptions.rustc.path }));
     }
   }
   if (target.kind === 'go' && selectedOptions.go?.path) {
-    hints.push(`Go 命令会优先使用 ${selectedOptions.go.path}`);
+    hints.push(t('runSettings.environmentHint.go', { path: selectedOptions.go.path }));
   }
 
   return hints;
@@ -263,7 +301,9 @@ export const buildCustomToolchainSelectionState = (
     ...customToolchains,
     [normalizedKind]: {
       kind: normalizedKind,
-      label: `手动指定: ${draftPath.split('/').filter(Boolean).slice(-2).join('/') || draftPath}`,
+      label: fallbackTranslate('runSettings.manualToolchainLabel', {
+        name: draftPath.split('/').filter(Boolean).slice(-2).join('/') || draftPath,
+      }),
       path: draftPath,
     },
   };

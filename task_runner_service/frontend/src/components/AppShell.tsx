@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Button, Layout, Menu, Space, Typography } from 'antd';
+import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
 import {
   AppstoreOutlined,
   BellOutlined,
@@ -14,57 +14,10 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 
+import { useI18n } from '../i18n/I18nProvider';
 import type { AuthUser } from '../types';
 
 const { Header, Sider, Content } = Layout;
-
-const items = [
-  {
-    key: '/tasks',
-    label: '任务',
-    icon: <AppstoreOutlined />,
-  },
-  {
-    key: '/models',
-    label: '模型配置',
-    icon: <DeploymentUnitOutlined />,
-  },
-  {
-    key: '/servers',
-    label: '服务器',
-    icon: <DatabaseOutlined />,
-  },
-  {
-    key: '/runs',
-    label: '运行记录',
-    icon: <PlayCircleOutlined />,
-  },
-  {
-    key: '/prompts',
-    label: '人工提示',
-    icon: <BellOutlined />,
-  },
-  {
-    key: '/mcp',
-    label: 'MCP 目录',
-    icon: <ToolOutlined />,
-  },
-  {
-    key: '/tooling',
-    label: '工具状态',
-    icon: <FolderOpenOutlined />,
-  },
-  {
-    key: '/users',
-    label: '用户管理',
-    icon: <TeamOutlined />,
-  },
-  {
-    key: '/settings',
-    label: '设置',
-    icon: <SettingOutlined />,
-  },
-];
 
 type AppShellProps = {
   currentUser: AuthUser;
@@ -73,8 +26,56 @@ type AppShellProps = {
 };
 
 export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps) {
+  const { locale, setLocale, t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
+  const items = [
+    {
+      key: '/tasks',
+      label: t('nav.tasks'),
+      icon: <AppstoreOutlined />,
+    },
+    {
+      key: '/models',
+      label: t('nav.models'),
+      icon: <DeploymentUnitOutlined />,
+    },
+    {
+      key: '/servers',
+      label: t('nav.servers'),
+      icon: <DatabaseOutlined />,
+    },
+    {
+      key: '/runs',
+      label: t('nav.runs'),
+      icon: <PlayCircleOutlined />,
+    },
+    {
+      key: '/prompts',
+      label: t('nav.prompts'),
+      icon: <BellOutlined />,
+    },
+    {
+      key: '/mcp',
+      label: t('nav.mcp'),
+      icon: <ToolOutlined />,
+    },
+    {
+      key: '/tooling',
+      label: t('nav.tooling'),
+      icon: <FolderOpenOutlined />,
+    },
+    {
+      key: '/users',
+      label: t('nav.users'),
+      icon: <TeamOutlined />,
+    },
+    {
+      key: '/settings',
+      label: t('nav.settings'),
+      icon: <SettingOutlined />,
+    },
+  ];
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -82,10 +83,10 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
         <div style={{ padding: '20px 20px 8px' }}>
           <Space direction="vertical" size={0}>
             <Typography.Title level={4} style={{ margin: 0 }}>
-              Task Runner
+              {t('app.brand')}
             </Typography.Title>
             <Typography.Text type="secondary">
-              独立任务执行服务
+              {t('app.subtitle')}
             </Typography.Text>
           </Space>
         </div>
@@ -110,9 +111,19 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
           }}
         >
           <Typography.Text type="secondary">
-            任务管理、人工提示、模型配置、服务器清单、Memory 调试、共享工具状态、MCP 目录与运行回放
+            {t('app.headerSummary')}
           </Typography.Text>
           <Space size="middle" style={{ flexShrink: 0 }}>
+            <Segmented
+              size="small"
+              value={locale}
+              onChange={(value) => setLocale(value === 'en-US' ? 'en-US' : 'zh-CN')}
+              options={[
+                { label: t('language.chinese'), value: 'zh-CN' },
+                { label: t('language.english'), value: 'en-US' },
+              ]}
+              aria-label={t('common.language')}
+            />
             <Space size={6}>
               <UserOutlined />
               <Typography.Text>{currentUser.display_name || currentUser.username}</Typography.Text>
@@ -124,7 +135,7 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
               loading={logoutLoading}
               onClick={onLogout}
             >
-              退出
+              {t('auth.logout')}
             </Button>
           </Space>
         </Header>

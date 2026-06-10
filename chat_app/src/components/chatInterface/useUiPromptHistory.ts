@@ -14,6 +14,7 @@ import {
   setUiPromptHistoryCacheEntry,
   setUiPromptHistoryInflight,
 } from './uiPromptHistoryCache';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface UiPromptHistoryApiClient {
   getUiPromptHistory: (
@@ -42,6 +43,7 @@ export const useUiPromptHistory = ({
   apiClient,
   currentSessionId,
 }: UseUiPromptHistoryOptions): UseUiPromptHistoryResult => {
+  const { t } = useI18n();
   const [uiPromptHistoryItems, setUiPromptHistoryItems] = useState<UiPromptHistoryItem[]>([]);
   const [uiPromptHistoryLoading, setUiPromptHistoryLoading] = useState(false);
   const [uiPromptHistoryError, setUiPromptHistoryError] = useState<string | null>(null);
@@ -121,7 +123,7 @@ export const useUiPromptHistory = ({
           setUiPromptHistoryItems(normalized);
           setUiPromptHistoryLoadedSessionId(sessionId);
         },
-        errorMessage: '交互确认记录加载失败',
+        errorMessage: t('uiPromptHistory.loadFailed'),
         load: () => existingInflight,
         setError: setUiPromptHistoryError,
         setLoading: setUiPromptHistoryLoading,
@@ -142,7 +144,7 @@ export const useUiPromptHistory = ({
         setUiPromptHistoryItems(normalized);
         setUiPromptHistoryLoadedSessionId(sessionId);
       },
-      errorMessage: '交互确认记录加载失败',
+      errorMessage: t('uiPromptHistory.loadFailed'),
       load: () => {
         const inflight = apiClient.getUiPromptHistory(sessionId, { limit: 200 })
           .then((records) => (
@@ -172,7 +174,7 @@ export const useUiPromptHistory = ({
       }),
       showLoading: shouldShowLoading,
     });
-  }, [apiClient, resetUiPromptHistoryState, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
+  }, [apiClient, resetUiPromptHistoryState, t, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
 
   return {
     uiPromptHistoryItems,

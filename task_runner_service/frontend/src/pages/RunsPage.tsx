@@ -23,6 +23,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
 import { api, buildEventSourceUrl } from '../api/client';
+import { useI18n, type TranslateFn } from '../i18n/I18nProvider';
 import type {
   RemoteServerRecord,
   TaskSummaryRecord,
@@ -50,7 +51,16 @@ const promptColorMap: Record<UiPromptStatus, string> = {
   failed: 'error',
 };
 
+const runStatusFilterValues: Array<TaskRunStatus | 'all'> = [
+  'all',
+  'queued',
+  'running',
+  'succeeded',
+  'failed',
+];
+
 export function RunsPage() {
+  const { t } = useI18n();
   const DEFAULT_PAGE_SIZE = 10;
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -66,6 +76,15 @@ export function RunsPage() {
   const taskFilterId = searchParams.get('task_id') || undefined;
   const routeRunId = searchParams.get('run_id') || undefined;
   const routeModelConfigId = searchParams.get('model_config_id') || undefined;
+  const runStatusOptions = useMemo(
+    () => runStatusFilterValues.map((value) => ({
+      label: t(`runs.status.${value}`),
+      value,
+    })),
+    [t],
+  );
+  const runStatusLabel = (status: TaskRunStatus) => t(`runs.status.${status}`);
+  const promptStatusLabel = (status: UiPromptStatus) => t(`prompts.status.${status}`);
 
   const runsQuery = useQuery({
     queryKey: ['runs', taskFilterId, statusFilter, routeModelConfigId, runPage, runPageSize],
@@ -185,7 +204,7 @@ export function RunsPage() {
         queryClient.invalidateQueries({ queryKey: ['run', runId] }),
         queryClient.invalidateQueries({ queryKey: ['run-events', runId] }),
       ]);
-      messageApi.success('取消请求已发出');
+      messageApi.success(t('runs.cancelRequested'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -203,7 +222,7 @@ export function RunsPage() {
       next.set('task_id', run.task_id);
       setSearchParams(next);
       setSelectedRunId(run.id);
-      messageApi.success('已创建新的重试运行');
+      messageApi.success(t('runs.retryCreated'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -290,13 +309,13 @@ export function RunsPage() {
 
   const columns: ColumnsType<TaskRunRecord> = [
     {
-      title: '运行 ID',
+      title: t('runs.column.runId'),
       dataIndex: 'id',
       width: 260,
       render: (value: string) => <Typography.Text code>{value.slice(0, 12)}</Typography.Text>,
     },
     {
-      title: '任务',
+      title: t('runs.column.task'),
       dataIndex: 'task_id',
       render: (value: string) => (
         <Button type="link" size="small" onClick={() => navigate(`/tasks?task_id=${encodeURIComponent(value)}`)}>
@@ -305,13 +324,15 @@ export function RunsPage() {
       ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 120,
-      render: (status: TaskRunStatus) => <Tag color={runColorMap[status]}>{status}</Tag>,
+      render: (status: TaskRunStatus) => (
+        <Tag color={runColorMap[status]}>{runStatusLabel(status)}</Tag>
+      ),
     },
     {
-      title: '模型配置',
+      title: t('runs.column.modelConfig'),
       dataIndex: 'model_config_id',
       width: 220,
       render: (value: string) => (
@@ -326,21 +347,21 @@ export function RunsPage() {
       ),
     },
     {
-      title: '开始时间',
+      title: t('runs.column.startedAt'),
       dataIndex: 'started_at',
       width: 180,
       render: (value?: string | null) =>
         value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-',
     },
     {
-      title: '结束时间',
+      title: t('runs.column.finishedAt'),
       dataIndex: 'finished_at',
       width: 180,
       render: (value?: string | null) =>
         value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-',
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 220,
       render: (_, record) => (
@@ -353,21 +374,21 @@ export function RunsPage() {
               setSearchParams(next);
             }}
           >
-            详情
+            {t('common.detail')}
           </Button>
           <Button
             size="small"
             disabled={record.status !== 'queued' && record.status !== 'running'}
             onClick={() => cancelRunMutation.mutate(record.id)}
           >
-            取消
+            {t('runs.action.cancel')}
           </Button>
           <Button
             size="small"
             disabled={record.status === 'queued' || record.status === 'running'}
             onClick={() => retryRunMutation.mutate(record.id)}
           >
-            重试
+            {t('runs.action.retry')}
           </Button>
         </Space>
       ),
@@ -381,10 +402,10 @@ export function RunsPage() {
         <Space style={{ justifyContent: 'space-between', width: '100%' }}>
           <Space direction="vertical" size={0}>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              运行记录
+              {t('runs.title')}
             </Typography.Title>
             <Typography.Text type="secondary">
-              查看任务执行历史、事件轨迹、人工提示、上下文快照和最终产出。
+              {t('runs.subtitle')}
             </Typography.Text>
           </Space>
           <Space>
@@ -392,7 +413,7 @@ export function RunsPage() {
               allowClear
               showSearch
               filterOption={false}
-              placeholder="按任务筛选"
+              placeholder={t('runs.taskFilter')}
               style={{ width: 220 }}
               value={taskFilterId}
               options={taskOptions}
@@ -409,7 +430,7 @@ export function RunsPage() {
             />
             <Select
               allowClear
-              placeholder="按模型筛选"
+              placeholder={t('runs.modelFilter')}
               style={{ width: 220 }}
               value={routeModelConfigId}
               options={modelOptions}
@@ -426,13 +447,7 @@ export function RunsPage() {
             <Segmented
               value={statusFilter}
               onChange={(value) => setStatusFilter(value as 'all' | TaskRunStatus)}
-              options={[
-                { label: '全部', value: 'all' },
-                { label: '排队', value: 'queued' },
-                { label: '运行中', value: 'running' },
-                { label: '成功', value: 'succeeded' },
-                { label: '失败', value: 'failed' },
-              ]}
+              options={runStatusOptions}
             />
             <Button
               onClick={() => {
@@ -443,9 +458,9 @@ export function RunsPage() {
                 setSearchParams(next);
               }}
             >
-              清空筛选
+              {t('common.clearFilters')}
             </Button>
-            <Button onClick={() => runsQuery.refetch()}>刷新</Button>
+            <Button onClick={() => runsQuery.refetch()}>{t('common.refresh')}</Button>
           </Space>
         </Space>
 
@@ -468,7 +483,7 @@ export function RunsPage() {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无运行记录，执行任务后会出现在这里"
+                description={t('runs.empty')}
               />
             ),
           }}
@@ -476,7 +491,7 @@ export function RunsPage() {
       </Space>
 
       <Drawer
-        title="运行详情"
+        title={t('runs.detail.title')}
         open={Boolean(selectedRunId)}
         width={760}
         onClose={() => {
@@ -490,33 +505,33 @@ export function RunsPage() {
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Space>
               <Button onClick={() => navigate(`/tasks?task_id=${encodeURIComponent(selectedRun.task_id)}`)}>
-                打开任务
+                {t('runs.detail.openTask')}
               </Button>
               <Button
                 disabled={selectedRun.status !== 'queued' && selectedRun.status !== 'running'}
                 loading={cancelRunMutation.isPending}
                 onClick={() => cancelRunMutation.mutate(selectedRun.id)}
               >
-                取消运行
+                {t('runs.detail.cancelRun')}
               </Button>
               <Button
                 disabled={selectedRun.status === 'queued' || selectedRun.status === 'running'}
                 loading={retryRunMutation.isPending}
                 onClick={() => retryRunMutation.mutate(selectedRun.id)}
               >
-                基于当前配置重试
+                {t('runs.detail.retryWithCurrentConfig')}
               </Button>
             </Space>
 
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="运行 ID">{selectedRun.id}</Descriptions.Item>
-              <Descriptions.Item label="任务">
+              <Descriptions.Item label={t('runs.column.runId')}>{selectedRun.id}</Descriptions.Item>
+              <Descriptions.Item label={t('runs.column.task')}>
                 {taskMap.get(selectedRun.task_id)?.title || selectedRun.task_id}
               </Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag color={runColorMap[selectedRun.status]}>{selectedRun.status}</Tag>
+              <Descriptions.Item label={t('common.status')}>
+                <Tag color={runColorMap[selectedRun.status]}>{runStatusLabel(selectedRun.status)}</Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="模型配置">
+              <Descriptions.Item label={t('runs.column.modelConfig')}>
                 <Button
                   type="link"
                   size="small"
@@ -528,29 +543,29 @@ export function RunsPage() {
                   {modelNameMap.get(selectedRun.model_config_id) || selectedRun.model_config_id}
                 </Button>
               </Descriptions.Item>
-              <Descriptions.Item label="开始时间">
+              <Descriptions.Item label={t('runs.column.startedAt')}>
                 {selectedRun.started_at
                   ? dayjs(selectedRun.started_at).format('YYYY-MM-DD HH:mm:ss')
                   : '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="结束时间">
+              <Descriptions.Item label={t('runs.column.finishedAt')}>
                 {selectedRun.finished_at
                   ? dayjs(selectedRun.finished_at).format('YYYY-MM-DD HH:mm:ss')
                   : '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="结果摘要">
+              <Descriptions.Item label={t('runs.detail.resultSummary')}>
                 {selectedRun.result_summary || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="错误信息">
+              <Descriptions.Item label={t('runs.detail.errorMessage')}>
                 {selectedRun.error_message || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="工具调用数">
+              <Descriptions.Item label={t('runs.detail.toolCallCount')}>
                 {selectedToolCalls.length}
               </Descriptions.Item>
-              <Descriptions.Item label="工具结果数">
+              <Descriptions.Item label={t('runs.detail.toolResultCount')}>
                 {selectedToolResults.length}
               </Descriptions.Item>
-              <Descriptions.Item label="模型请求轮次">
+              <Descriptions.Item label={t('runs.detail.modelRequestRounds')}>
                 {selectedModelRequests.length}
               </Descriptions.Item>
               <Descriptions.Item label="Summary Job">
@@ -559,11 +574,17 @@ export function RunsPage() {
             </Descriptions>
 
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="输出分片">
-                {selectedStreamStats.chunkCount} 条 / {selectedStreamStats.chunkChars} chars
+              <Descriptions.Item label={t('runs.detail.outputChunks')}>
+                {t('runs.detail.chunkSummary', {
+                  count: selectedStreamStats.chunkCount,
+                  chars: selectedStreamStats.chunkChars,
+                })}
               </Descriptions.Item>
-              <Descriptions.Item label="思考分片">
-                {selectedStreamStats.thinkingCount} 条 / {selectedStreamStats.thinkingChars} chars
+              <Descriptions.Item label={t('runs.detail.thinkingChunks')}>
+                {t('runs.detail.chunkSummary', {
+                  count: selectedStreamStats.thinkingCount,
+                  chars: selectedStreamStats.thinkingChars,
+                })}
               </Descriptions.Item>
             </Descriptions>
 
@@ -575,22 +596,22 @@ export function RunsPage() {
                 >
                   <Space direction="vertical" size={0}>
                     <Typography.Title level={5} style={{ margin: 0 }}>
-                      远程操作
+                      {t('runs.remote.title')}
                     </Typography.Title>
                     <Typography.Text type="secondary">
-                      这里聚合了本次运行里通过共享 RemoteConnectionController 执行的远程服务器操作。
+                      {t('runs.remote.description')}
                     </Typography.Text>
                   </Space>
                   <Button size="small" onClick={() => navigate('/servers')}>
-                    管理服务器
+                    {t('runs.remote.manageServers')}
                   </Button>
                 </Space>
 
                 <Space size="large" wrap style={{ marginBottom: 12 }}>
-                  <Statistic title="远程操作数" value={selectedRemoteOperationStats.total} />
-                  <Statistic title="涉及服务器" value={selectedRemoteOperationStats.serverCount} />
-                  <Statistic title="成功" value={selectedRemoteOperationStats.successCount} />
-                  <Statistic title="失败" value={selectedRemoteOperationStats.failedCount} />
+                  <Statistic title={t('tasks.detail.remoteOperationCount')} value={selectedRemoteOperationStats.total} />
+                  <Statistic title={t('tasks.detail.involvedServers')} value={selectedRemoteOperationStats.serverCount} />
+                  <Statistic title={t('tasks.detail.success')} value={selectedRemoteOperationStats.successCount} />
+                  <Statistic title={t('tasks.detail.failed')} value={selectedRemoteOperationStats.failedCount} />
                 </Space>
 
                 <Collapse
@@ -600,7 +621,7 @@ export function RunsPage() {
                     label: (
                       <Space wrap>
                         <Tag color={operation.success ? 'success' : 'error'}>
-                          {operation.success ? 'success' : 'failed'}
+                          {operation.success ? t('common.success') : t('common.failed')}
                         </Tag>
                         <Typography.Text strong>{operation.name}</Typography.Text>
                         {operation.connectionName ? (
@@ -632,55 +653,55 @@ export function RunsPage() {
                     children: (
                       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                         <Descriptions bordered column={1} size="small">
-                          <Descriptions.Item label="操作">{operation.name}</Descriptions.Item>
-                          <Descriptions.Item label="服务器">
+                          <Descriptions.Item label={t('runs.remote.operation')}>{operation.name}</Descriptions.Item>
+                          <Descriptions.Item label={t('tasks.detail.server')}>
                             {operation.connectionName || operation.connectionId || '-'}
                           </Descriptions.Item>
-                          <Descriptions.Item label="主机">
+                          <Descriptions.Item label={t('tasks.detail.host')}>
                             {formatRemoteEndpoint(
                               operation.username,
                               operation.host,
                               operation.port,
                             ) || '-'}
                           </Descriptions.Item>
-                          <Descriptions.Item label="命令">
+                          <Descriptions.Item label={t('runs.remote.command')}>
                             {operation.command || '-'}
                           </Descriptions.Item>
-                          <Descriptions.Item label="路径">
+                          <Descriptions.Item label={t('runs.remote.path')}>
                             {operation.path || '-'}
                           </Descriptions.Item>
-                          <Descriptions.Item label="远端主机名">
+                          <Descriptions.Item label={t('tasks.detail.remoteHost')}>
                             {operation.remoteHost || '-'}
                           </Descriptions.Item>
-                          <Descriptions.Item label="输出截断">
+                          <Descriptions.Item label={t('runs.remote.outputTruncated')}>
                             {operation.outputTruncated === undefined
                               ? '-'
                               : operation.outputTruncated
-                                ? 'yes'
-                                : 'no'}
+                                ? t('common.yes')
+                                : t('common.no')}
                           </Descriptions.Item>
-                          <Descriptions.Item label="条目数 / 大小">
+                          <Descriptions.Item label={t('runs.remote.volume')}>
                             {formatRemoteVolume(operation)}
                           </Descriptions.Item>
                         </Descriptions>
 
                         {operation.content ? (
                           <div>
-                            <Typography.Text strong>结果摘要</Typography.Text>
+                            <Typography.Text strong>{t('runs.detail.resultSummary')}</Typography.Text>
                             <CodeParagraph value={operation.content} />
                           </div>
                         ) : null}
 
                         {operation.output ? (
                           <div>
-                            <Typography.Text strong>命令输出</Typography.Text>
+                            <Typography.Text strong>{t('runs.remote.commandOutput')}</Typography.Text>
                             <CodeParagraph value={operation.output} />
                           </div>
                         ) : null}
 
                         {operation.result !== undefined ? (
                           <div>
-                            <Typography.Text strong>结构化结果</Typography.Text>
+                            <Typography.Text strong>{t('runs.remote.structuredResult')}</Typography.Text>
                             <CodeParagraph value={operation.result} />
                           </div>
                         ) : null}
@@ -692,7 +713,7 @@ export function RunsPage() {
             ) : null}
 
             <div>
-              <Typography.Title level={5}>工具调用计划</Typography.Title>
+              <Typography.Title level={5}>{t('runs.tools.plan')}</Typography.Title>
               {selectedToolCalls.length ? (
                 <List
                   bordered
@@ -709,19 +730,19 @@ export function RunsPage() {
                         {toolCall.arguments ? (
                           <CodeParagraph value={toolCall.arguments} />
                         ) : (
-                          <Typography.Text type="secondary">无参数</Typography.Text>
+                          <Typography.Text type="secondary">{t('runs.tools.noArguments')}</Typography.Text>
                         )}
                       </Space>
                     </List.Item>
                   )}
                 />
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本次运行没有工具调用" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('runs.tools.noCalls')} />
               )}
             </div>
 
             <div>
-              <Typography.Title level={5}>工具调用结果</Typography.Title>
+              <Typography.Title level={5}>{t('runs.tools.results')}</Typography.Title>
               {selectedToolResults.length ? (
                 <Collapse
                   ghost
@@ -730,7 +751,7 @@ export function RunsPage() {
                     label: (
                       <Space wrap>
                         <Tag color={result.success ? 'success' : 'error'}>
-                          {result.success ? 'success' : 'failed'}
+                          {result.success ? t('common.success') : t('common.failed')}
                         </Tag>
                         <Typography.Text strong>{result.name}</Typography.Text>
                         <Typography.Text code>
@@ -749,12 +770,12 @@ export function RunsPage() {
                   }))}
                 />
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有工具结果" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('runs.tools.noResults')} />
               )}
             </div>
 
             <div>
-              <Typography.Title level={5}>模型请求明细</Typography.Title>
+              <Typography.Title level={5}>{t('runs.modelRequests.title')}</Typography.Title>
               {selectedModelRequests.length ? (
                 <Collapse
                   ghost
@@ -762,36 +783,39 @@ export function RunsPage() {
                     key: `${event.id}-${index}`,
                     label: (
                       <Space wrap>
-                        <Typography.Text strong>请求 #{index + 1}</Typography.Text>
+                        <Typography.Text strong>
+                          {t('runs.modelRequests.request', { index: index + 1 })}
+                        </Typography.Text>
                         <Typography.Text type="secondary">
                           {dayjs(event.created_at).format('YYYY-MM-DD HH:mm:ss')}
                         </Typography.Text>
                       </Space>
                     ),
                     children: event.payload ? (
-                      <CollapsiblePayload value={event.payload} />
+                      <CollapsiblePayload value={event.payload} t={t} />
                     ) : (
-                      <Typography.Text type="secondary">没有 payload</Typography.Text>
+                      <Typography.Text type="secondary">{t('runs.modelRequests.noPayload')}</Typography.Text>
                     ),
                   }))}
                 />
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有记录到模型请求事件" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('runs.modelRequests.empty')} />
               )}
             </div>
 
-            <JsonBlock title="输入快照" value={selectedRun.input_snapshot} />
+            <JsonBlock title={t('runs.snapshot.input')} value={selectedRun.input_snapshot} t={t} />
             <JsonBlock
-              title="上下文快照"
+              title={t('runs.snapshot.context')}
               value={selectedRun.context_snapshot}
               collapsible
               defaultOpen={false}
+              t={t}
             />
-            <JsonBlock title="用量统计" value={selectedRun.usage} />
-            <JsonBlock title="完整报告" value={selectedRun.report} />
+            <JsonBlock title={t('runs.snapshot.usage')} value={selectedRun.usage} t={t} />
+            <JsonBlock title={t('runs.snapshot.report')} value={selectedRun.report} t={t} />
 
             <div>
-              <Typography.Title level={5}>人工提示</Typography.Title>
+              <Typography.Title level={5}>{t('runs.prompts.title')}</Typography.Title>
               {runPromptsQuery.data?.items.length ? (
                 <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                   <List
@@ -809,7 +833,7 @@ export function RunsPage() {
                               )
                             }
                           >
-                            打开
+                            {t('common.open')}
                           </Button>,
                         ]}
                       >
@@ -822,7 +846,9 @@ export function RunsPage() {
                             <Typography.Text strong>
                               {prompt.title || prompt.message || prompt.kind}
                             </Typography.Text>
-                            <Tag color={promptColorMap[prompt.status]}>{prompt.status}</Tag>
+                            <Tag color={promptColorMap[prompt.status]}>
+                              {promptStatusLabel(prompt.status)}
+                            </Tag>
                             <Typography.Text code>{prompt.id.slice(0, 12)}</Typography.Text>
                           </Space>
                           {prompt.message ? (
@@ -853,7 +879,7 @@ export function RunsPage() {
             </div>
 
             <div>
-              <Typography.Title level={5}>事件轨迹</Typography.Title>
+              <Typography.Title level={5}>{t('runs.events.title')}</Typography.Title>
               {selectedRunEvents.length ? (
                 <Timeline
                   items={selectedRunEvents.map((event) => ({
@@ -867,12 +893,12 @@ export function RunsPage() {
                             : 'blue',
                     children: (
                       <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                        <Typography.Text strong>{describeRunEventType(event)}</Typography.Text>
+                        <Typography.Text strong>{describeRunEventType(event, t)}</Typography.Text>
                         <Typography.Text type="secondary">
                           {dayjs(event.created_at).format('YYYY-MM-DD HH:mm:ss')}
                         </Typography.Text>
                         {event.message ? <Typography.Text>{event.message}</Typography.Text> : null}
-                        <RunEventPayload event={event} />
+                        <RunEventPayload event={event} t={t} />
                       </Space>
                     ),
                   }))}
@@ -893,11 +919,13 @@ export function RunsPage() {
 function JsonBlock({
   title,
   value,
+  t,
   collapsible = false,
   defaultOpen = true,
 }: {
   title: string;
   value: unknown;
+  t: TranslateFn;
   collapsible?: boolean;
   defaultOpen?: boolean;
 }) {
@@ -916,7 +944,10 @@ function JsonBlock({
               key: 'content',
               label: (
                 <Typography.Text type="secondary">
-                  {describeStructuredValueSummary(value, `查看${title}`)}
+                  {describeStructuredValueSummary(
+                    value,
+                    t('runs.viewNamedPayload', { title }),
+                  )}
                 </Typography.Text>
               ),
               children: <CodeParagraph value={value} />,
@@ -949,9 +980,11 @@ function CodeParagraph({ value }: { value: unknown }) {
 
 function CollapsiblePayload({
   value,
+  t,
   defaultOpen = false,
 }: {
   value: unknown;
+  t: TranslateFn;
   defaultOpen?: boolean;
 }) {
   return (
@@ -964,7 +997,7 @@ function CollapsiblePayload({
           key: 'payload',
           label: (
             <Typography.Text type="secondary">
-              {describeStructuredValueSummary(value, '查看 payload')}
+              {describeStructuredValueSummary(value, t('runs.viewPayload'))}
             </Typography.Text>
           ),
           children: <CodeParagraph value={value} />,
@@ -1211,17 +1244,17 @@ function summarizeStreamEvents(events: TaskRunEventRecord[]) {
   };
 }
 
-function describeRunEventType(event: TaskRunEventRecord): string {
+function describeRunEventType(event: TaskRunEventRecord, t: TranslateFn): string {
   if (event.event_type === 'chunk') {
-    return '模型回复';
+    return t('runs.event.modelReply');
   }
   if (event.event_type === 'thinking') {
-    return '思考过程';
+    return t('runs.event.thinking');
   }
   return event.event_type;
 }
 
-function RunEventPayload({ event }: { event: TaskRunEventRecord }) {
+function RunEventPayload({ event, t }: { event: TaskRunEventRecord; t: TranslateFn }) {
   const payload = asRecord(event.payload);
   const aggregatedText = asOptionalString(payload?.text);
   if (
@@ -1233,7 +1266,10 @@ function RunEventPayload({ event }: { event: TaskRunEventRecord }) {
     return (
       <Space direction="vertical" size={8} style={{ width: '100%' }}>
         <Typography.Text type="secondary">
-          {aggregatedCount} 条分片 / {aggregatedChars} chars
+          {t('runs.event.fragmentSummary', {
+            count: aggregatedCount,
+            chars: aggregatedChars,
+          })}
         </Typography.Text>
         <Typography.Paragraph
           style={{
@@ -1255,7 +1291,7 @@ function RunEventPayload({ event }: { event: TaskRunEventRecord }) {
     return null;
   }
 
-  return <CollapsiblePayload value={event.payload} />;
+  return <CollapsiblePayload value={event.payload} t={t} />;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

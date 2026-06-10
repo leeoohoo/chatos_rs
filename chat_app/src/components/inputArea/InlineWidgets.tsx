@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
 import { cn, formatFileSize } from '../../lib/utils';
 import type { AiModelConfig } from '../../types';
 import { useApiClient } from '../../lib/api/ApiClientContext';
@@ -91,31 +92,31 @@ interface InputAreaFloatingModelPickerProps {
   }) => void;
 }
 
-const thinkingOptionsForProvider = (provider?: string) => {
+const thinkingOptionsForProvider = (provider: string | undefined, t: TranslateFn) => {
   const normalized = (provider || 'gpt').trim().toLowerCase();
   if (normalized === 'deepseek') {
     return [
-      { value: '', label: '思考: 默认' },
-      { value: 'none', label: '思考: 关闭' },
-      { value: 'high', label: '思考: high' },
-      { value: 'max', label: '思考: max' },
+      { value: '', label: t('inputArea.model.thinking.default') },
+      { value: 'none', label: t('inputArea.model.thinking.off') },
+      { value: 'high', label: t('inputArea.model.thinking.value', { value: 'high' }) },
+      { value: 'max', label: t('inputArea.model.thinking.value', { value: 'max' }) },
     ];
   }
   if (normalized === 'kimi' || normalized === 'kimik2' || normalized === 'moonshot') {
     return [
-      { value: '', label: '思考: 默认' },
-      { value: 'auto', label: '思考: 自动' },
-      { value: 'none', label: '思考: 关闭' },
+      { value: '', label: t('inputArea.model.thinking.default') },
+      { value: 'auto', label: t('inputArea.model.thinking.auto') },
+      { value: 'none', label: t('inputArea.model.thinking.off') },
     ];
   }
   return [
-    { value: '', label: '思考: 默认' },
-    { value: 'none', label: '思考: none' },
-    { value: 'minimal', label: '思考: minimal' },
-    { value: 'low', label: '思考: low' },
-    { value: 'medium', label: '思考: medium' },
-    { value: 'high', label: '思考: high' },
-    { value: 'xhigh', label: '思考: xhigh' },
+    { value: '', label: t('inputArea.model.thinking.default') },
+    { value: 'none', label: t('inputArea.model.thinking.value', { value: 'none' }) },
+    { value: 'minimal', label: t('inputArea.model.thinking.value', { value: 'minimal' }) },
+    { value: 'low', label: t('inputArea.model.thinking.value', { value: 'low' }) },
+    { value: 'medium', label: t('inputArea.model.thinking.value', { value: 'medium' }) },
+    { value: 'high', label: t('inputArea.model.thinking.value', { value: 'high' }) },
+    { value: 'xhigh', label: t('inputArea.model.thinking.value', { value: 'xhigh' }) },
   ];
 };
 
@@ -138,6 +139,7 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
   onThinkingLevelChange,
   onModelRuntimeChange,
 }) => {
+  const { t } = useI18n();
   const client = useApiClient();
   const selectedModel = React.useMemo(
     () => (selectedModelId
@@ -166,11 +168,11 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
     } catch (error) {
       setModelOptions([]);
       setModelOptionsConfigId(selectedModelId);
-      setModelOptionsError(error instanceof Error ? error.message : '模型列表获取失败');
+      setModelOptionsError(error instanceof Error ? error.message : t('inputArea.model.loadFailed'));
     } finally {
       setModelOptionsLoading(false);
     }
-  }, [client, selectedModelId]);
+  }, [client, selectedModelId, t]);
 
   React.useEffect(() => {
     if (!pickerOpen || !selectedModelId || modelOptionsConfigId === selectedModelId) {
@@ -231,7 +233,7 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
 
   const currentModelName = selectedModelName || effectiveModelName || selectedModel?.model_name || '';
   const currentThinkingLevel = selectedThinkingLevel || effectiveThinkingLevel || selectedModel?.thinking_level || '';
-  const thinkingOptions = thinkingOptionsForProvider(selectedModel?.provider);
+  const thinkingOptions = thinkingOptionsForProvider(selectedModel?.provider, t);
 
   return (
     <div className="absolute -top-3 left-3 z-10" ref={pickerRef}>
@@ -244,7 +246,7 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
           'hover:bg-accent hover:text-accent-foreground transition-colors',
           'disabled:opacity-50 disabled:cursor-not-allowed'
         )}
-        title="选择模型"
+        title={t('inputArea.model.selectTitle')}
       >
         {currentAiLabel}
         <span className="ml-1">▾</span>
@@ -253,14 +255,14 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
         <div className="absolute left-0 bottom-full mb-2 w-[360px] max-w-[calc(100vw-2rem)] bg-popover text-popover-foreground border rounded-md shadow-lg">
           <div className="space-y-2 p-3">
             <div>
-              <label className="mb-1 block text-[11px] text-muted-foreground">供应商配置</label>
+              <label className="mb-1 block text-[11px] text-muted-foreground">{t('inputArea.model.providerConfig')}</label>
               <select
                 value={selectedModelId || ''}
                 disabled={disabled}
                 onChange={(event) => handleProviderChange(event.target.value)}
                 className="w-full rounded-md border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               >
-                <option value="">选择配置</option>
+                <option value="">{t('inputArea.model.selectConfig')}</option>
                 {enabledModels.map((model) => (
                   <option key={model.id} value={model.id}>
                     {`${model.name} (${model.provider || 'gpt'})`}
@@ -271,14 +273,14 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
 
             <div>
               <div className="mb-1 flex items-center justify-between gap-2">
-                <label className="block text-[11px] text-muted-foreground">模型名称</label>
+                <label className="block text-[11px] text-muted-foreground">{t('inputArea.model.modelName')}</label>
                 <button
                   type="button"
                   onClick={() => { void loadModelOptions(true); }}
                   disabled={disabled || !selectedModelId || modelOptionsLoading}
                   className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
                 >
-                  {modelOptionsLoading ? '刷新中' : '刷新'}
+                  {modelOptionsLoading ? t('inputArea.model.refreshing') : t('inputArea.model.refresh')}
                 </button>
               </div>
               <input
@@ -286,7 +288,7 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
                 value={currentModelName}
                 disabled={disabled || !selectedModelId}
                 onChange={(event) => handleModelNameChange(event.target.value || null)}
-                placeholder={selectedModel ? selectedModel.model_name : '先选择供应商配置'}
+                placeholder={selectedModel ? selectedModel.model_name : t('inputArea.model.selectProviderFirst')}
                 className="w-full rounded-md border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
               />
               {modelOptionsError ? (
@@ -335,7 +337,7 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
                 className="rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent"
                 onClick={() => setPickerOpen(false)}
               >
-                完成
+                {t('inputArea.model.done')}
               </button>
             </div>
           </div>
@@ -357,7 +359,7 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
               setPickerOpen(false);
             }}
           >
-            清除选择
+            {t('inputArea.model.clearSelection')}
           </button>
         </div>
       )}
@@ -386,6 +388,8 @@ export const InputAreaSendButton: React.FC<InputAreaSendButtonProps> = ({
   showModelSelector,
   selectedModelId,
 }) => {
+  const { t } = useI18n();
+
   if (isStreaming) {
     return (
       <button
@@ -402,7 +406,7 @@ export const InputAreaSendButton: React.FC<InputAreaSendButtonProps> = ({
             : 'bg-red-500 text-white hover:bg-red-600',
           'disabled:opacity-50 disabled:cursor-not-allowed'
         )}
-        title={isStopping ? '停止中...' : '停止生成'}
+        title={isStopping ? t('inputArea.send.stopping') : t('inputArea.send.stop')}
         style={{ backgroundColor: isStopping ? '#f59e0b' : '#ef4444', color: 'white' }}
       >
         {isStopping ? (
@@ -429,7 +433,7 @@ export const InputAreaSendButton: React.FC<InputAreaSendButtonProps> = ({
           ? 'bg-primary text-primary-foreground hover:bg-primary/90'
           : 'text-muted-foreground'
       )}
-      title={showModelSelector && !selectedModelId ? '请先选择模型' : 'Send message'}
+      title={showModelSelector && !selectedModelId ? t('inputArea.send.selectModelMessage') : t('inputArea.send.messageTitle')}
     >
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />

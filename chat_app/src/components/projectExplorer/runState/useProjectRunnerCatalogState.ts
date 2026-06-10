@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type ApiClient from '../../../lib/api/client';
 import type {
   Project,
@@ -31,6 +32,7 @@ export const useProjectRunnerCatalogState = ({
   project,
   enabled = true,
 }: UseProjectRunnerCatalogStateOptions) => {
+  const { t } = useI18n();
   const [selectedRunTargetId, setSelectedRunTargetId] = useState<string | null>(null);
   const [runTargets, setRunTargets] = useState<ProjectRunTarget[]>([]);
   const [runCatalogLoading, setRunCatalogLoading] = useState(false);
@@ -141,8 +143,8 @@ export const useProjectRunnerCatalogState = ({
   );
 
   const environmentHints = useMemo(
-    () => buildEnvironmentHints(selectedRunTarget, selectedToolchainOptions),
-    [selectedRunTarget, selectedToolchainOptions],
+    () => buildEnvironmentHints(selectedRunTarget, selectedToolchainOptions, t),
+    [selectedRunTarget, selectedToolchainOptions, t],
   );
 
   const envVarsPlaceholder = useMemo(

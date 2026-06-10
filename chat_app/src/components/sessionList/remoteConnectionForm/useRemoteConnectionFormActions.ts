@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 
 import { resolveRemoteConnectionErrorFeedback } from '../../../lib/api/remoteConnectionErrors';
 import type { RemoteConnection } from '../../../types';
-import { buildRemoteConnectionPayload } from '../helpers';
+import { buildRemoteConnectionPayload, translateSessionListMessage } from '../helpers';
 import type {
   RemoteConnectionTestResult,
   UseRemoteConnectionFormOptions,
@@ -22,6 +22,7 @@ interface UseRemoteConnectionFormActionsOptions extends UseRemoteConnectionFormO
 
 export const useRemoteConnectionFormActions = ({
   apiClient,
+  t,
   remoteConnections,
   createRemoteConnection,
   updateRemoteConnection,
@@ -81,6 +82,7 @@ export const useRemoteConnectionFormActions = ({
       readCurrentFormValues(),
       remoteConnections,
       editingRemoteConnectionId,
+      t,
     );
     if ('error' in built) {
       setRemoteError(built.error);
@@ -94,20 +96,23 @@ export const useRemoteConnectionFormActions = ({
     try {
       const result = await apiClient.testRemoteConnectionDraft(built.payload) as RemoteConnectionTestResult;
       const remoteHostName = readRemoteHostName(result);
-      setRemoteSuccess(`连接测试成功${remoteHostName}`);
+      setRemoteSuccess(translateSessionListMessage(t, 'remoteConnection.success.test', { host: remoteHostName }));
       setRemoteErrorAction(null);
     } catch (error) {
       if (isSecondFactorRequired(error)) {
         setPendingVerificationDraftPayload(built.payload);
         setPendingVerificationConnectionId(null);
-        setRemoteVerificationPrompt(extractSecondFactorPrompt(error));
+        setRemoteVerificationPrompt(extractSecondFactorPrompt(
+          error,
+          translateSessionListMessage(t, 'remoteConnection.verificationPrompt'),
+        ));
         setRemoteVerificationCode('');
         setRemoteVerificationModalOpen(true);
         setRemoteError(null);
         setRemoteErrorAction(null);
         return;
       }
-      applyRemoteErrorFeedback(error, '连接测试失败');
+      applyRemoteErrorFeedback(error, translateSessionListMessage(t, 'remoteConnection.error.testFailed'));
     } finally {
       setRemoteTesting(false);
     }
@@ -127,6 +132,7 @@ export const useRemoteConnectionFormActions = ({
     setRemoteVerificationCode,
     setRemoteVerificationModalOpen,
     setRemoteVerificationPrompt,
+    t,
   ]);
 
   const handleSaveRemoteConnection = useCallback(async () => {
@@ -134,6 +140,7 @@ export const useRemoteConnectionFormActions = ({
       readCurrentFormValues(),
       remoteConnections,
       editingRemoteConnectionId,
+      t,
     );
     if ('error' in built) {
       setRemoteError(built.error);
@@ -148,7 +155,7 @@ export const useRemoteConnectionFormActions = ({
       if (editingRemoteConnectionId) {
         const updated = await updateRemoteConnection(editingRemoteConnectionId, built.payload);
         if (!updated) {
-          throw new Error('更新远端连接失败');
+          throw new Error(translateSessionListMessage(t, 'remoteConnection.error.updateFailed'));
         }
       } else {
         await createRemoteConnection(built.payload);
@@ -158,7 +165,9 @@ export const useRemoteConnectionFormActions = ({
     } catch (error) {
       applyRemoteErrorFeedback(
         error,
-        editingRemoteConnectionId ? '更新远端连接失败' : '创建远端连接失败',
+        editingRemoteConnectionId
+          ? translateSessionListMessage(t, 'remoteConnection.error.updateFailed')
+          : translateSessionListMessage(t, 'remoteConnection.error.createFailed'),
       );
     } finally {
       setRemoteSaving(false);
@@ -175,27 +184,31 @@ export const useRemoteConnectionFormActions = ({
     setRemoteModalOpen,
     setRemoteSaving,
     setRemoteSuccess,
+    t,
     updateRemoteConnection,
   ]);
 
   const handleQuickTestRemoteConnection = useCallback(async (connection: RemoteConnection) => {
     try {
       await apiClient.testRemoteConnection(connection.id);
-      setRemoteSuccess(`连接测试成功 (${connection.name})`);
+      setRemoteSuccess(translateSessionListMessage(t, 'remoteConnection.success.quickTest', { name: connection.name }));
       setRemoteError(null);
       setRemoteErrorAction(null);
     } catch (error) {
       if (isSecondFactorRequired(error)) {
         setPendingVerificationDraftPayload(null);
         setPendingVerificationConnectionId(connection.id);
-        setRemoteVerificationPrompt(extractSecondFactorPrompt(error));
+        setRemoteVerificationPrompt(extractSecondFactorPrompt(
+          error,
+          translateSessionListMessage(t, 'remoteConnection.verificationPrompt'),
+        ));
         setRemoteVerificationCode('');
         setRemoteVerificationModalOpen(true);
         setRemoteError(null);
         setRemoteErrorAction(null);
         return;
       }
-      applyRemoteErrorFeedback(error, '连接测试失败');
+      applyRemoteErrorFeedback(error, translateSessionListMessage(t, 'remoteConnection.error.testFailed'));
     }
   }, [
     apiClient,
@@ -208,12 +221,13 @@ export const useRemoteConnectionFormActions = ({
     setRemoteVerificationCode,
     setRemoteVerificationModalOpen,
     setRemoteVerificationPrompt,
+    t,
   ]);
 
   const handleSubmitRemoteVerification = useCallback(async () => {
     const code = remoteVerificationCode.trim();
     if (!code) {
-      setRemoteError('请输入验证码');
+      setRemoteError(translateSessionListMessage(t, 'remoteConnection.error.codeRequired'));
       return;
     }
 
@@ -226,21 +240,24 @@ export const useRemoteConnectionFormActions = ({
           code,
         ) as RemoteConnectionTestResult;
         const remoteHostName = readRemoteHostName(result);
-        setRemoteSuccess(`连接测试成功${remoteHostName}`);
+        setRemoteSuccess(translateSessionListMessage(t, 'remoteConnection.success.test', { host: remoteHostName }));
       } else if (pendingVerificationConnectionId) {
         await apiClient.testRemoteConnection(pendingVerificationConnectionId, code);
-        setRemoteSuccess('连接测试成功');
+        setRemoteSuccess(translateSessionListMessage(t, 'remoteConnection.success.test', { host: '' }));
       } else {
-        throw new Error('验证码上下文已失效，请重新发起连接测试');
+        throw new Error(translateSessionListMessage(t, 'remoteConnection.error.verificationExpired'));
       }
       clearVerificationState();
     } catch (error) {
       if (isSecondFactorRequired(error)) {
-        setRemoteVerificationPrompt(extractSecondFactorPrompt(error));
-        setRemoteError('验证码错误或已过期，请重试');
+        setRemoteVerificationPrompt(extractSecondFactorPrompt(
+          error,
+          translateSessionListMessage(t, 'remoteConnection.verificationPrompt'),
+        ));
+        setRemoteError(translateSessionListMessage(t, 'remoteConnection.error.codeInvalid'));
         return;
       }
-      applyRemoteErrorFeedback(error, '连接测试失败');
+      applyRemoteErrorFeedback(error, translateSessionListMessage(t, 'remoteConnection.error.testFailed'));
       setRemoteVerificationModalOpen(false);
     } finally {
       setRemoteTesting(false);
@@ -258,6 +275,7 @@ export const useRemoteConnectionFormActions = ({
     setRemoteTesting,
     setRemoteVerificationModalOpen,
     setRemoteVerificationPrompt,
+    t,
   ]);
 
   return {

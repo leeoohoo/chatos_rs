@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { RemoteConnection } from '../../../types';
 import { DotsVerticalIcon, PencilIcon, PlusIcon, TrashIcon } from '../../ui/icons';
@@ -38,6 +39,8 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
   closeActionMenus,
   formatTimeAgo,
 }) => {
+  const { t } = useI18n();
+
   return (
     <div className={cn('flex flex-col min-h-0', expanded ? 'flex-1' : 'shrink-0')}>
       <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
@@ -47,13 +50,13 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
           className="flex items-center gap-2 uppercase tracking-wide"
         >
           <span>{expanded ? '▾' : '▸'}</span>
-          <span>REMOTE</span>
+          <span>{t('session.remote')}</span>
         </button>
         <div className="flex items-center gap-1">
           <button
             onClick={onRefresh}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="刷新远端连接列表"
+            title={t('session.refreshRemote')}
           >
             <svg className={cn('w-4 h-4', isRefreshing && 'animate-spin')} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0112.125-5.303M19.5 12a7.5 7.5 0 01-12.125 5.303M16.5 6.697V3m0 3.697h-3.697M7.5 17.303V21m0-3.697H3.803" />
@@ -63,7 +66,7 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
             type="button"
             onClick={onCreate}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="新增远端连接"
+            title={t('session.addRemote')}
           >
             <PlusIcon className="w-4 h-4" />
           </button>
@@ -74,7 +77,7 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
         <div className="flex-1 min-h-0 overflow-y-auto">
           {remoteConnections.length === 0 ? (
             <div className="px-3 py-3 text-xs text-muted-foreground">
-              还没有远端连接，点击右侧 + 新建。
+              {t('session.noRemoteConnections')}
             </div>
           ) : (
             <div className="p-2 space-y-1">
@@ -103,7 +106,7 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
                     </div>
                     {connection.lastActiveAt && (
                       <div className="mt-1 text-[10px] text-muted-foreground/70">
-                        最近活动：{formatTimeAgo(connection.lastActiveAt)}
+                        {t('session.lastActive', { time: formatTimeAgo(connection.lastActiveAt) })}
                       </div>
                     )}
                   </div>
@@ -115,7 +118,7 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
                         onOpenSftp(connection.id);
                       }}
                       className="rounded border border-border px-2 py-1 text-[10px] text-foreground hover:bg-accent"
-                      title="打开 SFTP"
+                      title={t('session.openSftp')}
                     >
                       SFTP
                     </button>
@@ -137,7 +140,7 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
                             className="flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent"
                           >
                             <PencilIcon className="w-4 h-4 mr-2" />
-                            编辑
+                            {t('session.editRemote')}
                           </button>
                           <button
                             onClick={async (e) => {
@@ -150,7 +153,7 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
                             <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 12h16M12 4v16" />
                             </svg>
-                            测试连接
+                            {t('session.testConnection')}
                           </button>
                           <button
                             onClick={(e) => {
@@ -161,7 +164,7 @@ export const RemoteSection: React.FC<RemoteSectionProps> = ({
                             className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
                           >
                             <TrashIcon className="w-4 h-4 mr-2" />
-                            删除
+                            {t('session.deleteRemote')}
                           </button>
                         </div>
                       </div>

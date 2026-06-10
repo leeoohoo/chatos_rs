@@ -2,10 +2,11 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
-import { RowsCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, items }) => {
+  const { t } = useI18n();
   const tasks = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -14,7 +15,7 @@ const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${tasks.length} 项`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'tasks', tasks.length))}
       <div className="tool-detail-list">
         {tasks.map((task, index) => {
           const titleText = asString(task.title).trim() || `task ${index + 1}`;
@@ -40,10 +41,10 @@ const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
                 <div className="tool-detail-item-body">
                   {[
                     details,
-                    outcomeSummary ? `成果: ${outcomeSummary}` : '',
-                    blockerReason ? `阻塞: ${blockerReason}` : '',
-                    blockerNeeds.length > 0 ? `需满足: ${blockerNeeds.join('；')}` : '',
-                    resumeHint ? `提示: ${resumeHint}` : '',
+                    outcomeSummary ? t('toolCard.task.outcome', { value: outcomeSummary }) : '',
+                    blockerReason ? t('toolCard.task.blocker', { value: blockerReason }) : '',
+                    blockerNeeds.length > 0 ? t('toolCard.task.needs', { value: blockerNeeds.join('; ') }) : '',
+                    resumeHint ? t('toolCard.task.hint', { value: resumeHint }) : '',
                     tags.length > 0 ? `#${tags.join(' #')}` : '',
                   ].filter(Boolean).join(' · ')}
                 </div>

@@ -22,6 +22,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
+import { useI18n } from '../i18n/I18nProvider';
 import type {
   TaskSummaryRecord,
   RunSummaryRecord,
@@ -62,7 +63,16 @@ const promptColorMap: Record<UiPromptStatus, string> = {
   failed: 'error',
 };
 
+const promptStatusFilterValues: Array<UiPromptStatus | 'all'> = [
+  'all',
+  'pending',
+  'submitted',
+  'cancelled',
+  'timed_out',
+];
+
 export function PromptsPage() {
+  const { t } = useI18n();
   const DEFAULT_PAGE_SIZE = 10;
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -77,6 +87,14 @@ export function PromptsPage() {
   const taskFilterId = searchParams.get('task_id') || undefined;
   const runFilterId = searchParams.get('run_id') || undefined;
   const statusFilter = (searchParams.get('status') as UiPromptStatus | 'all' | null) || 'all';
+  const promptStatusOptions = useMemo(
+    () => promptStatusFilterValues.map((value) => ({
+      label: t(`prompts.status.${value}`),
+      value,
+    })),
+    [t],
+  );
+  const promptStatusLabel = (status: UiPromptStatus) => t(`prompts.status.${status}`);
 
   const promptsQuery = useQuery({
     queryKey: ['prompts', taskFilterId, runFilterId, statusFilter, promptPage, promptPageSize],
@@ -210,7 +228,7 @@ export function PromptsPage() {
         queryClient.invalidateQueries({ queryKey: ['run-events'] }),
         queryClient.invalidateQueries({ queryKey: ['prompt'] }),
       ]);
-      messageApi.success('提示已提交');
+      messageApi.success(t('prompts.submitted'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -227,7 +245,7 @@ export function PromptsPage() {
         queryClient.invalidateQueries({ queryKey: ['run-events'] }),
         queryClient.invalidateQueries({ queryKey: ['prompt'] }),
       ]);
-      messageApi.success('提示已取消');
+      messageApi.success(t('prompts.cancelled'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -259,18 +277,18 @@ export function PromptsPage() {
 
   const columns: ColumnsType<UiPromptRecord> = [
     {
-      title: '提示 ID',
+      title: t('prompts.column.promptId'),
       dataIndex: 'id',
       width: 180,
       render: (value: string) => <Typography.Text code>{value.slice(0, 12)}</Typography.Text>,
     },
     {
-      title: '标题',
+      title: t('prompts.column.title'),
       dataIndex: 'title',
       render: (_, record) => record.title || record.message || record.kind,
     },
     {
-      title: '任务',
+      title: t('prompts.column.task'),
       dataIndex: 'task_id',
       render: (value?: string | null) =>
         value ? (
@@ -286,7 +304,7 @@ export function PromptsPage() {
         ),
     },
     {
-      title: '运行',
+      title: t('prompts.column.run'),
       dataIndex: 'run_id',
       width: 180,
       render: (value?: string | null) =>
@@ -303,24 +321,26 @@ export function PromptsPage() {
         ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 120,
-      render: (status: UiPromptStatus) => <Tag color={promptColorMap[status]}>{status}</Tag>,
+      render: (status: UiPromptStatus) => (
+        <Tag color={promptColorMap[status]}>{promptStatusLabel(status)}</Tag>
+      ),
     },
     {
-      title: '更新时间',
+      title: t('common.updatedAt'),
       dataIndex: 'updated_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 120,
       render: (_, record) => (
         <Button size="small" onClick={() => openPromptDrawer(record.id)}>
-          {record.status === 'pending' ? '处理' : '查看'}
+          {record.status === 'pending' ? t('prompts.action.handle') : t('common.view')}
         </Button>
       ),
     },
@@ -356,10 +376,10 @@ export function PromptsPage() {
         <Space style={{ justifyContent: 'space-between', width: '100%' }}>
           <Space direction="vertical" size={0}>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              人工提示
+              {t('prompts.title')}
             </Typography.Title>
             <Typography.Text type="secondary">
-              处理任务执行过程中由内置 ui_prompter 发出的人工确认和表单输入。
+              {t('prompts.subtitle')}
             </Typography.Text>
           </Space>
           <Space>
@@ -367,7 +387,7 @@ export function PromptsPage() {
               allowClear
               showSearch
               filterOption={false}
-              placeholder="按任务筛选"
+              placeholder={t('prompts.taskFilter')}
               style={{ width: 220 }}
               value={taskFilterId}
               options={Array.from(
@@ -388,7 +408,7 @@ export function PromptsPage() {
               allowClear
               showSearch
               filterOption={false}
-              placeholder="按运行筛选"
+              placeholder={t('prompts.runFilter')}
               style={{ width: 220 }}
               value={runFilterId}
               options={Array.from(
@@ -416,11 +436,7 @@ export function PromptsPage() {
                 )
               }
               options={[
-                { label: '全部', value: 'all' },
-                { label: '待处理', value: 'pending' },
-                { label: '已提交', value: 'submitted' },
-                { label: '已取消', value: 'cancelled' },
-                { label: '已超时', value: 'timed_out' },
+                ...promptStatusOptions,
               ]}
             />
             <Button
@@ -432,9 +448,9 @@ export function PromptsPage() {
                 setSearchParams(next);
               }}
             >
-              清空筛选
+              {t('common.clearFilters')}
             </Button>
-            <Button onClick={() => promptsQuery.refetch()}>刷新</Button>
+            <Button onClick={() => promptsQuery.refetch()}>{t('common.refresh')}</Button>
           </Space>
         </Space>
 
@@ -457,7 +473,7 @@ export function PromptsPage() {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无人工提示，任务需要人工输入时会出现在这里"
+                description={t('prompts.empty')}
               />
             ),
           }}
@@ -465,7 +481,7 @@ export function PromptsPage() {
       </Space>
 
       <Drawer
-        title="提示详情"
+        title={t('prompts.detail.title')}
         open={Boolean(routePromptId)}
         width={760}
         onClose={closePromptDrawer}
@@ -479,7 +495,7 @@ export function PromptsPage() {
                     navigate(`/tasks?task_id=${encodeURIComponent(selectedPrompt.task_id!)}`)
                   }
                 >
-                  打开任务
+                  {t('prompts.detail.openTask')}
                 </Button>
               ) : null}
               {selectedPrompt.run_id ? (
@@ -488,20 +504,20 @@ export function PromptsPage() {
                     navigate(`/runs?run_id=${encodeURIComponent(selectedPrompt.run_id!)}`)
                   }
                 >
-                  打开运行
+                  {t('prompts.detail.openRun')}
                 </Button>
               ) : null}
             </Space>
 
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="提示 ID">{selectedPrompt.id}</Descriptions.Item>
-              <Descriptions.Item label="任务">
+              <Descriptions.Item label={t('prompts.column.promptId')}>{selectedPrompt.id}</Descriptions.Item>
+              <Descriptions.Item label={t('prompts.column.task')}>
                 {selectedTask?.title || selectedPrompt.task_id || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="运行">
+              <Descriptions.Item label={t('prompts.column.run')}>
                 {selectedRun?.id || selectedPrompt.run_id || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="模型配置">
+              <Descriptions.Item label={t('prompts.detail.modelConfig')}>
                 {selectedRun?.model_config_id ? (
                   <Button
                     type="link"
@@ -519,17 +535,19 @@ export function PromptsPage() {
                   '-'
                 )}
               </Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag color={promptColorMap[selectedPrompt.status]}>{selectedPrompt.status}</Tag>
+              <Descriptions.Item label={t('common.status')}>
+                <Tag color={promptColorMap[selectedPrompt.status]}>
+                  {promptStatusLabel(selectedPrompt.status)}
+                </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="类型">{selectedPrompt.kind}</Descriptions.Item>
-              <Descriptions.Item label="标题">
+              <Descriptions.Item label={t('prompts.detail.kind')}>{selectedPrompt.kind}</Descriptions.Item>
+              <Descriptions.Item label={t('prompts.column.title')}>
                 {selectedPrompt.title || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="消息">
+              <Descriptions.Item label={t('prompts.detail.message')}>
                 {selectedPrompt.message || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="过期时间">
+              <Descriptions.Item label={t('prompts.detail.expiresAt')}>
                 {selectedPrompt.expires_at
                   ? dayjs(selectedPrompt.expires_at).format('YYYY-MM-DD HH:mm:ss')
                   : '-'}
@@ -549,7 +567,7 @@ export function PromptsPage() {
               >
                 {selectedFields.length ? (
                   <>
-                    <Typography.Title level={5}>输入字段</Typography.Title>
+                    <Typography.Title level={5}>{t('prompts.detail.inputFields')}</Typography.Title>
                     {selectedFields.map((field) => (
                       <Form.Item
                         key={field.key}
@@ -558,7 +576,12 @@ export function PromptsPage() {
                         extra={field.description || undefined}
                         rules={
                           field.required
-                            ? [{ required: true, message: `请填写${field.label || field.key}` }]
+                            ? [{
+                                required: true,
+                                message: t('prompts.detail.fieldRequired', {
+                                  field: field.label || field.key,
+                                }),
+                              }]
                             : undefined
                         }
                       >
@@ -576,7 +599,7 @@ export function PromptsPage() {
 
                 {selectedChoice ? (
                   <>
-                    <Typography.Title level={5}>选择项</Typography.Title>
+                    <Typography.Title level={5}>{t('prompts.detail.choices')}</Typography.Title>
                     <Form.Item
                       name="selection"
                       rules={[
@@ -588,15 +611,15 @@ export function PromptsPage() {
                               const max =
                                 selectedChoice.max_selections ?? selectedChoice.options.length;
                               if (items.length < min) {
-                                return Promise.reject(new Error(`至少选择 ${min} 项`));
+                                return Promise.reject(new Error(t('prompts.detail.minSelections', { min })));
                               }
                               if (items.length > max) {
-                                return Promise.reject(new Error(`最多选择 ${max} 项`));
+                                return Promise.reject(new Error(t('prompts.detail.maxSelections', { max })));
                               }
                               return Promise.resolve();
                             }
                             if ((selectedChoice.min_selections ?? 0) > 0 && !value) {
-                              return Promise.reject(new Error('请选择一项'));
+                              return Promise.reject(new Error(t('prompts.detail.chooseOne')));
                             }
                             return Promise.resolve();
                           },
@@ -648,20 +671,20 @@ export function PromptsPage() {
                     htmlType="submit"
                     loading={submitPromptMutation.isPending}
                   >
-                    提交
+                    {t('common.submit')}
                   </Button>
                   <Button
                     disabled={!selectedPrompt.allow_cancel}
                     loading={cancelPromptMutation.isPending}
                     onClick={() => cancelPromptMutation.mutate(selectedPrompt.id)}
                   >
-                    取消提示
+                    {t('prompts.detail.cancelPrompt')}
                   </Button>
                 </Space>
               </Form>
             ) : (
               <>
-                <Typography.Title level={5}>提交结果</Typography.Title>
+                <Typography.Title level={5}>{t('prompts.detail.response')}</Typography.Title>
                 {selectedPrompt.response ? (
                   <Typography.Paragraph
                     style={{
@@ -682,7 +705,7 @@ export function PromptsPage() {
             )}
 
             <div>
-              <Typography.Title level={5}>原始负载</Typography.Title>
+              <Typography.Title level={5}>{t('prompts.detail.rawPayload')}</Typography.Title>
               <Typography.Paragraph
                 style={{
                   background: '#fafafa',

@@ -77,7 +77,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
       return '';
     }
     if (currentProjectIdForMemory === '0') {
-      return '未选择项目';
+      return '';
     }
     const matched = (projects || []).find((item) => item.id === currentProjectIdForMemory);
     return matched?.name || '';

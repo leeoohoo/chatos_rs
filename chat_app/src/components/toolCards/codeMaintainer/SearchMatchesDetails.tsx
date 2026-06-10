@@ -2,7 +2,7 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
-import { renderCardHeader } from '../shared/primitives';
+import { formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asNumber, asRecord, asString } from '../shared/value';
 
 interface SearchMatchesDetailsProps {
@@ -10,7 +10,7 @@ interface SearchMatchesDetailsProps {
 }
 
 export const SearchMatchesDetails: React.FC<SearchMatchesDetailsProps> = ({ result }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -24,7 +24,7 @@ export const SearchMatchesDetails: React.FC<SearchMatchesDetailsProps> = ({ resu
     <div className="tool-detail-card tool-detail-card--full">
       {renderCardHeader(
         translateToolTitle('Matches', locale),
-        locale === 'zh-CN' ? `${matches.length} 条` : `${matches.length} matches`,
+        formatToolCardCount(t, 'matches', matches.length),
       )}
       <div className="tool-detail-list">
         {matches.map((item, index) => (

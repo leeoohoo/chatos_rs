@@ -28,6 +28,7 @@ import dayjs from 'dayjs';
 
 import { api } from '../api/client';
 import { McpPromptPreviewCard } from '../components/McpPromptPreviewCard';
+import { useI18n, type TranslateFn } from '../i18n/I18nProvider';
 import type {
   BatchTaskOperationResponse,
   CreateTaskPayload,
@@ -84,6 +85,26 @@ const statusColorMap: Record<TaskStatus, string> = {
   archived: 'default',
 };
 
+const taskStatusValues: TaskStatus[] = [
+  'draft',
+  'ready',
+  'running',
+  'succeeded',
+  'failed',
+  'blocked',
+  'cancelled',
+  'archived',
+];
+
+const statusFilterValues: Array<'all' | TaskStatus> = [
+  'all',
+  'draft',
+  'ready',
+  'running',
+  'succeeded',
+  'failed',
+];
+
 const runStatusColorMap: Record<TaskRunRecord['status'], string> = {
   queued: 'default',
   running: 'processing',
@@ -93,22 +114,17 @@ const runStatusColorMap: Record<TaskRunRecord['status'], string> = {
   blocked: 'warning',
 };
 
-const scheduleModeLabels: Record<TaskScheduleMode, string> = {
-  manual: '手动执行',
-  once: '定时一次',
-  interval: '周期执行',
+const scheduleModeLabelKeys: Record<TaskScheduleMode, string> = {
+  manual: 'tasks.schedule.manual',
+  once: 'tasks.schedule.once',
+  interval: 'tasks.schedule.interval',
 };
 
-const scheduleModeDescriptions: Record<TaskScheduleMode, string> = {
-  manual: '不会被后台调度器自动触发，只在手动点击运行或接口主动调用时执行。',
-  once: '在指定执行时间自动运行一次，运行后不会继续调度。',
-  interval: '从首次执行时间开始自动运行，并按循环间隔持续调度，最小间隔 60 秒。',
+const scheduleModeDescriptionKeys: Record<TaskScheduleMode, string> = {
+  manual: 'tasks.schedule.manualDescription',
+  once: 'tasks.schedule.onceDescription',
+  interval: 'tasks.schedule.intervalDescription',
 };
-
-const scheduleModeOptions = (['manual', 'once', 'interval'] as TaskScheduleMode[]).map((value) => ({
-  label: scheduleModeLabels[value],
-  value,
-}));
 
 const promptStatusColorMap: Record<UiPromptStatus, string> = {
   pending: 'processing',
@@ -128,6 +144,7 @@ function taskCreatorLabel(task: TaskRecord): string {
 }
 
 export function TasksPage() {
+  const { locale, t } = useI18n();
   const DEFAULT_PAGE_SIZE = 8;
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -163,6 +180,43 @@ export function TasksPage() {
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
+  const effectiveScheduleMode = scheduleMode ?? 'manual';
+  const scheduleModeLabels = useMemo(
+    () => (Object.fromEntries(
+      (['manual', 'once', 'interval'] as TaskScheduleMode[])
+        .map((value) => [value, t(scheduleModeLabelKeys[value])]),
+    ) as Record<TaskScheduleMode, string>),
+    [t],
+  );
+  const scheduleModeDescriptions = useMemo(
+    () => (Object.fromEntries(
+      (['manual', 'once', 'interval'] as TaskScheduleMode[])
+        .map((value) => [value, t(scheduleModeDescriptionKeys[value])]),
+    ) as Record<TaskScheduleMode, string>),
+    [t],
+  );
+  const scheduleModeOptions = useMemo(
+    () => (['manual', 'once', 'interval'] as TaskScheduleMode[]).map((value) => ({
+      label: scheduleModeLabels[value],
+      value,
+    })),
+    [scheduleModeLabels],
+  );
+  const taskStatusOptions = useMemo(
+    () => taskStatusValues.map((value) => ({
+      label: t(`tasks.status.${value}`),
+      value,
+    })),
+    [t],
+  );
+  const statusFilterOptions = useMemo(
+    () => statusFilterValues.map((value) => ({
+      label: t(`tasks.status.${value}`),
+      value,
+    })),
+    [t],
+  );
+  const taskStatusLabel = (status: TaskStatus) => t(`tasks.status.${status}`);
   const routeTaskId = searchParams.get('task_id');
   const routeModelConfigId = searchParams.get('model_config_id') || undefined;
 
@@ -340,7 +394,7 @@ export function TasksPage() {
     mutationFn: api.createTask,
     onSuccess: async () => {
       await invalidateTaskQueries();
-      messageApi.success('任务已创建');
+      messageApi.success(t('tasks.created'));
       closeTaskDrawer();
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -351,7 +405,7 @@ export function TasksPage() {
       api.updateTask(id, payload),
     onSuccess: async () => {
       await invalidateTaskQueries();
-      messageApi.success('任务已更新');
+      messageApi.success(t('tasks.updated'));
       closeTaskDrawer();
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -361,7 +415,7 @@ export function TasksPage() {
     mutationFn: api.deleteTask,
     onSuccess: async () => {
       await invalidateTaskQueries();
-      messageApi.success('任务已删除');
+      messageApi.success(t('tasks.deleted'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -371,7 +425,7 @@ export function TasksPage() {
       api.startTaskRun(taskId, payload),
     onSuccess: async () => {
       await invalidateTaskQueries();
-      messageApi.success('任务已开始执行');
+      messageApi.success(t('tasks.started'));
       closeRunModal();
     },
     onError: (error: Error) => messageApi.error(error.message),
@@ -381,7 +435,7 @@ export function TasksPage() {
     onSuccess: async (result, payload) => {
       await invalidateTaskQueries();
       setSelectedTaskIds([]);
-      showBatchOperationResult(`批量更新为 ${payload.status}`, result);
+      showBatchOperationResult(t('tasks.batchUpdateAction', { status: payload.status }), result);
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -390,7 +444,7 @@ export function TasksPage() {
     onSuccess: async (result) => {
       await invalidateTaskQueries();
       setSelectedTaskIds([]);
-      showBatchOperationResult('批量删除', result);
+      showBatchOperationResult(t('tasks.batchDeleteAction'), result);
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -400,7 +454,7 @@ export function TasksPage() {
       await invalidateTaskQueries();
       setSelectedTaskIds([]);
       closeBatchRunModal();
-      showBatchOperationResult('批量执行', result);
+      showBatchOperationResult(t('tasks.batchRunAction'), result);
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -411,7 +465,7 @@ export function TasksPage() {
         queryClient.invalidateQueries({ queryKey: ['task-memory-context', taskId] }),
         queryClient.invalidateQueries({ queryKey: ['task-memory-records', taskId] }),
       ]);
-      messageApi.success('已触发 Memory Engine 总结任务');
+      messageApi.success(t('tasks.memorySummarizeStarted'));
     },
     onError: (error: Error) => messageApi.error(error.message),
   });
@@ -564,7 +618,7 @@ export function TasksPage() {
 
   const columns: ColumnsType<TaskRecord> = [
     {
-      title: '任务',
+      title: t('tasks.column.task'),
       dataIndex: 'title',
       width: 320,
       render: (_, record) => {
@@ -576,7 +630,11 @@ export function TasksPage() {
               <Typography.Text type="secondary">{record.objective}</Typography.Text>
             </Space>
             <Space size={[4, 4]} wrap>
-              {record.parent_task_id ? <Tag color="purple">follow-up</Tag> : <Tag>manual</Tag>}
+              {record.parent_task_id ? (
+                <Tag color="purple">{t('tasks.followUp')}</Tag>
+              ) : (
+                <Tag>{t('tasks.manual')}</Tag>
+              )}
               {record.parent_task_id ? (
                 <Typography.Text type="secondary">
                   parent: {record.parent_task_id.slice(0, 8)}
@@ -595,7 +653,9 @@ export function TasksPage() {
                 ))}
                 {(pendingPromptCountByTaskId.get(record.id) || 0) > 0 ? (
                   <Tag color="gold">
-                    {pendingPromptCountByTaskId.get(record.id)} pending prompts
+                    {t('tasks.pendingPrompts', {
+                      count: pendingPromptCountByTaskId.get(record.id) || 0,
+                    })}
                   </Tag>
                 ) : null}
               </Space>
@@ -604,9 +664,9 @@ export function TasksPage() {
               <Space direction="vertical" size={0}>
                 <Space size={[4, 4]} wrap>
                   <Tag color={remoteActivity.failedCount > 0 ? 'error' : 'success'}>
-                    remote {remoteActivity.total}
+                    {t('tasks.remoteOperations', { count: remoteActivity.total })}
                   </Tag>
-                  <Tag>{remoteActivity.serverCount} servers</Tag>
+                  <Tag>{t('tasks.remoteServers', { count: remoteActivity.serverCount })}</Tag>
                   {remoteActivity.latest?.connectionName ? (
                     <Tag color="blue">{remoteActivity.latest.connectionName}</Tag>
                   ) : null}
@@ -615,7 +675,7 @@ export function TasksPage() {
                   {remoteActivity.latest?.command ||
                     remoteActivity.latest?.path ||
                     remoteActivity.latest?.summary ||
-                    '最近一次运行包含远程操作'}
+                    t('tasks.remoteActivityFallback')}
                 </Typography.Text>
               </Space>
             ) : null}
@@ -624,24 +684,26 @@ export function TasksPage() {
       },
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 120,
-      render: (status: TaskStatus) => <Tag color={statusColorMap[status]}>{status}</Tag>,
+      render: (status: TaskStatus) => (
+        <Tag color={statusColorMap[status]}>{taskStatusLabel(status)}</Tag>
+      ),
     },
     {
-      title: '创建人',
+      title: t('tasks.column.creator'),
       dataIndex: 'creator_display_name',
       width: 150,
       render: (_, record) => taskCreatorLabel(record),
     },
     {
-      title: '模型',
+      title: t('tasks.column.model'),
       dataIndex: 'default_model_config_id',
       width: 220,
       render: (value?: string | null) => {
         if (!value) {
-          return '未绑定';
+          return t('tasks.modelUnbound');
         }
         return (
           <Button
@@ -656,21 +718,21 @@ export function TasksPage() {
       },
     },
     {
-      title: 'MCP',
+      title: t('tasks.column.mcp'),
       dataIndex: 'mcp_config',
       width: 220,
       render: (mcpConfig: TaskMcpConfig) => (
         <Space size={[4, 4]} wrap>
           <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
-            {mcpConfig.enabled ? 'enabled' : 'disabled'}
+            {mcpConfig.enabled ? t('common.enabled') : t('common.disabled')}
           </Tag>
           <Tag>{mcpConfig.init_mode}</Tag>
-          <Tag>{mcpConfig.enabled_builtin_kinds.length} tools</Tag>
+          <Tag>{t('tasks.mcpTools', { count: mcpConfig.enabled_builtin_kinds.length })}</Tag>
         </Space>
       ),
     },
     {
-      title: '调度',
+      title: t('tasks.column.schedule'),
       dataIndex: 'schedule',
       width: 220,
       render: (schedule: TaskScheduleConfig) => {
@@ -684,7 +746,7 @@ export function TasksPage() {
               {schedule.interval_seconds ? <Tag>{schedule.interval_seconds}s</Tag> : null}
             </Space>
             <Typography.Text type="secondary">
-              next:{' '}
+              {t('tasks.schedule.next')}:{' '}
               {schedule.next_run_at
                 ? dayjs(schedule.next_run_at).format('YYYY-MM-DD HH:mm:ss')
                 : '-'}
@@ -694,7 +756,7 @@ export function TasksPage() {
       },
     },
     {
-      title: '摘要',
+      title: t('tasks.column.summary'),
       dataIndex: 'result_summary',
       render: (value?: string | null) =>
         value ? (
@@ -710,39 +772,39 @@ export function TasksPage() {
         ),
     },
     {
-      title: '优先级',
+      title: t('tasks.column.priority'),
       dataIndex: 'priority',
       width: 90,
     },
     {
-      title: '更新时间',
+      title: t('tasks.column.updatedAt'),
       dataIndex: 'updated_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 430,
       render: (_, record) => (
         <Space wrap>
           <Button size="small" onClick={() => openDetailDrawer(record)}>
-            详情
+            {t('tasks.action.detail')}
           </Button>
           <Button size="small" onClick={() => openEditDrawer(record)}>
-            编辑
+            {t('tasks.action.edit')}
           </Button>
           <Button
             size="small"
             onClick={() => navigate(`/runs?task_id=${encodeURIComponent(record.id)}`)}
           >
-            历史
+            {t('tasks.action.history')}
           </Button>
           <Button
             size="small"
             onClick={() => navigate(`/prompts?task_id=${encodeURIComponent(record.id)}`)}
           >
-            提示
+            {t('tasks.action.prompts')}
           </Button>
           <Button size="small" onClick={() => openMemoryDrawer(record)}>
             Memory
@@ -753,10 +815,10 @@ export function TasksPage() {
             disabled={record.status === 'running'}
             onClick={() => openRunModal(record)}
           >
-            执行
+            {t('tasks.action.run')}
           </Button>
           <Button size="small" danger onClick={() => confirmDelete(record)}>
-            删除
+            {t('tasks.action.delete')}
           </Button>
         </Space>
       ),
@@ -769,31 +831,31 @@ export function TasksPage() {
 
   const memoryRecordColumns: ColumnsType<EngineRecord> = [
     {
-      title: '时间',
+      title: t('tasks.memory.column.time'),
       dataIndex: 'created_at',
       width: 180,
       render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
-      title: '角色',
+      title: t('tasks.memory.column.role'),
       dataIndex: 'role',
       width: 110,
       render: (value: string) => <Tag color={memoryRoleColor(value)}>{value}</Tag>,
     },
     {
-      title: '类型',
+      title: t('tasks.memory.column.type'),
       dataIndex: 'record_type',
       width: 150,
       render: (value: string) => <Typography.Text code>{value}</Typography.Text>,
     },
     {
-      title: '总结状态',
+      title: t('tasks.memory.column.summaryStatus'),
       dataIndex: 'summary_status',
       width: 120,
       render: (value: string) => <Tag color={memorySummaryColor(value)}>{value}</Tag>,
     },
     {
-      title: '内容',
+      title: t('tasks.memory.column.content'),
       dataIndex: 'content',
       render: (value: string) => (
         <Typography.Paragraph ellipsis={{ rows: 3, expandable: true }} style={{ marginBottom: 0 }}>
@@ -852,7 +914,7 @@ export function TasksPage() {
       mcpEnabled: true,
       mcpInitMode: 'builtin_only',
       builtinPromptMode: 'effective',
-      builtinPromptLocale: 'zh-CN',
+      builtinPromptLocale: locale,
       enabledBuiltinKinds: mcpOptions.map((item) => String(item.value)),
       workspaceDir: '',
       defaultRemoteServerId: undefined,
@@ -940,7 +1002,7 @@ export function TasksPage() {
       enabled: values.mcpEnabled ?? true,
       init_mode: values.mcpInitMode ?? 'builtin_only',
       builtin_prompt_mode: values.builtinPromptMode ?? 'effective',
-      builtin_prompt_locale: values.builtinPromptLocale || 'zh-CN',
+      builtin_prompt_locale: values.builtinPromptLocale || locale,
       enabled_builtin_kinds: values.enabledBuiltinKinds || [],
       workspace_dir: values.workspaceDir?.trim() || undefined,
       default_remote_server_id: values.defaultRemoteServerId,
@@ -958,8 +1020,8 @@ export function TasksPage() {
 
   function confirmDelete(task: TaskRecord) {
     Modal.confirm({
-      title: `删除任务: ${task.title}`,
-      content: '删除后会一并清理该任务的运行记录。',
+      title: t('tasks.deleteConfirmTitle', { title: task.title }),
+      content: t('tasks.deleteConfirmContent'),
       okButtonProps: { danger: true },
       onOk: () => deleteTaskMutation.mutate(task.id),
     });
@@ -970,8 +1032,8 @@ export function TasksPage() {
       return;
     }
     Modal.confirm({
-      title: `批量删除 ${selectedTaskIds.length} 个任务`,
-      content: '删除后会一并清理这些任务的运行记录。',
+      title: t('tasks.batchDeleteConfirmTitle', { count: selectedTaskIds.length }),
+      content: t('tasks.batchDeleteConfirmContent'),
       okButtonProps: { danger: true },
       onOk: () => batchDeleteTasksMutation.mutate({ task_ids: selectedTaskIds }),
     });
@@ -996,7 +1058,11 @@ export function TasksPage() {
 
   function showBatchOperationResult(action: string, result: BatchTaskOperationResponse) {
     const failedItems = result.results.filter((item) => !item.ok);
-    const summary = `${action}完成：成功 ${result.succeeded}/${result.total}`;
+    const summary = t('tasks.batchSummary', {
+      action,
+      succeeded: result.succeeded,
+      total: result.total,
+    });
     if (!failedItems.length) {
       messageApi.success(summary);
       return;
@@ -1004,9 +1070,13 @@ export function TasksPage() {
 
     const detail = failedItems
       .slice(0, 3)
-      .map((item) => `${item.task_id.slice(0, 8)}: ${item.message || '失败'}`)
+      .map((item) => `${item.task_id.slice(0, 8)}: ${item.message || t('tasks.batchFailedFallback')}`)
       .join('；');
-    const messageText = `${summary}，失败 ${result.failed}${detail ? `。${detail}` : ''}`;
+    const messageText = t('tasks.batchMessage', {
+      summary,
+      failed: result.failed,
+      detail: detail ? t('tasks.batchDetailPrefix', { detail }) : '',
+    });
     if (result.succeeded > 0) {
       messageApi.warning(messageText);
     } else {
@@ -1017,7 +1087,7 @@ export function TasksPage() {
   function buildTaskPayload(values: TaskFormValues): CreateTaskPayload | null {
     const schedule = buildSchedulePayload(values);
     if (!schedule) {
-      messageApi.error('调度配置不完整，请检查执行时间和循环间隔');
+      messageApi.error(t('tasks.scheduleInvalid'));
       return null;
     }
 
@@ -1087,23 +1157,23 @@ export function TasksPage() {
         <Space style={{ justifyContent: 'space-between', width: '100%' }}>
           <Space direction="vertical" size={0}>
             <Typography.Title level={3} style={{ margin: 0 }}>
-              任务
+              {t('tasks.title')}
             </Typography.Title>
             <Typography.Text type="secondary">
-              管理任务定义、绑定模型配置，并直接触发一次 AI 执行。
+              {t('tasks.subtitle')}
             </Typography.Text>
           </Space>
           <Space wrap>
             <Input.Search
               allowClear
-              placeholder="搜索标题、目标、标签"
+              placeholder={t('tasks.searchPlaceholder')}
               style={{ width: 260 }}
               value={keywordFilter}
               onChange={(event) => setKeywordFilter(event.target.value)}
             />
             <Select
               allowClear
-              placeholder="按标签筛选"
+              placeholder={t('tasks.tagFilter')}
               style={{ width: 180 }}
               value={tagFilter}
               options={tagOptions}
@@ -1111,7 +1181,7 @@ export function TasksPage() {
             />
             <Select
               allowClear
-              placeholder="按模型筛选"
+              placeholder={t('tasks.modelFilter')}
               style={{ width: 220 }}
               value={routeModelConfigId}
               options={modelOptions}
@@ -1128,17 +1198,10 @@ export function TasksPage() {
             <Segmented
               value={statusFilter}
               onChange={(value) => setStatusFilter(value as 'all' | TaskStatus)}
-              options={[
-                { label: '全部', value: 'all' },
-                { label: '草稿', value: 'draft' },
-                { label: '就绪', value: 'ready' },
-                { label: '运行中', value: 'running' },
-                { label: '成功', value: 'succeeded' },
-                { label: '失败', value: 'failed' },
-              ]}
+              options={statusFilterOptions}
             />
             <Space size={8}>
-              <Typography.Text type="secondary">仅调度任务</Typography.Text>
+              <Typography.Text type="secondary">{t('tasks.scheduledOnly')}</Typography.Text>
               <Switch checked={scheduledOnly} onChange={setScheduledOnly} />
             </Space>
             <Button
@@ -1146,10 +1209,10 @@ export function TasksPage() {
                 void Promise.all([tasksQuery.refetch(), taskStatsQuery.refetch()]);
               }}
             >
-              刷新
+              {t('common.refresh')}
             </Button>
             <Button type="primary" onClick={openCreateDrawer}>
-              新建任务
+              {t('tasks.newTask')}
             </Button>
           </Space>
         </Space>
@@ -1163,14 +1226,14 @@ export function TasksPage() {
           }}
         >
           {[
-            { title: '总任务', value: taskStatsQuery.data?.total || 0 },
-            { title: '调度中', value: taskStatsQuery.data?.scheduled || 0 },
-            { title: '后续任务', value: taskStatsQuery.data?.follow_up || 0 },
+            { title: t('tasks.stats.total'), value: taskStatsQuery.data?.total || 0 },
+            { title: t('tasks.stats.scheduled'), value: taskStatsQuery.data?.scheduled || 0 },
+            { title: t('tasks.stats.followUp'), value: taskStatsQuery.data?.follow_up || 0 },
             { title: 'Ready', value: taskStatsQuery.data?.ready || 0 },
-            { title: '运行中', value: taskStatsQuery.data?.running || 0 },
-            { title: '成功', value: taskStatsQuery.data?.succeeded || 0 },
-            { title: '失败', value: taskStatsQuery.data?.failed || 0 },
-            { title: '阻塞', value: taskStatsQuery.data?.blocked || 0 },
+            { title: t('tasks.stats.running'), value: taskStatsQuery.data?.running || 0 },
+            { title: t('tasks.stats.succeeded'), value: taskStatsQuery.data?.succeeded || 0 },
+            { title: t('tasks.stats.failed'), value: taskStatsQuery.data?.failed || 0 },
+            { title: t('tasks.stats.blocked'), value: taskStatsQuery.data?.blocked || 0 },
           ].map((item) => (
             <div
               key={item.title}
@@ -1192,7 +1255,7 @@ export function TasksPage() {
 
         <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
           <Typography.Text type="secondary">
-            已选择 {selectedTaskIds.length} 个任务
+            {t('tasks.selectedCount', { count: selectedTaskIds.length })}
           </Typography.Text>
           <Space wrap>
             <Button
@@ -1200,7 +1263,7 @@ export function TasksPage() {
               loading={batchStartTaskRunsMutation.isPending}
               onClick={openBatchRunModal}
             >
-              批量执行
+              {t('tasks.batchRun')}
             </Button>
             <Button
               disabled={!hasSelectedTasks || batchActionPending}
@@ -1212,7 +1275,7 @@ export function TasksPage() {
                 })
               }
             >
-              设为 Ready
+              {t('tasks.setReady')}
             </Button>
             <Button
               disabled={!hasSelectedTasks || batchActionPending}
@@ -1224,7 +1287,7 @@ export function TasksPage() {
                 })
               }
             >
-              批量归档
+              {t('tasks.batchArchive')}
             </Button>
             <Button
               danger
@@ -1232,7 +1295,7 @@ export function TasksPage() {
               loading={batchDeleteTasksMutation.isPending}
               onClick={confirmBatchDelete}
             >
-              批量删除
+              {t('tasks.batchDelete')}
             </Button>
           </Space>
         </Space>
@@ -1258,7 +1321,7 @@ export function TasksPage() {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无任务，请先创建任务"
+                description={t('tasks.empty')}
               />
             ),
           }}
@@ -1266,7 +1329,9 @@ export function TasksPage() {
       </Space>
 
       <Drawer
-        title={selectedTask ? `任务详情 - ${selectedTask.title}` : '任务详情'}
+        title={selectedTask
+          ? t('tasks.detail.titleWithName', { title: selectedTask.title })
+          : t('tasks.detail.title')}
         open={Boolean(detailTaskId)}
         width={760}
         onClose={closeDetailDrawer}
@@ -1280,7 +1345,7 @@ export function TasksPage() {
                   openEditDrawer(selectedTask);
                 }}
               >
-                编辑任务
+                {t('tasks.detail.editTask')}
               </Button>
               <Button
                 type="primary"
@@ -1290,38 +1355,42 @@ export function TasksPage() {
                   openRunModal(selectedTask);
                 }}
               >
-                立即执行
+                {t('tasks.detail.runNow')}
               </Button>
-              <Button onClick={() => jumpToRunHistory(selectedTask.id)}>全部运行历史</Button>
+              <Button onClick={() => jumpToRunHistory(selectedTask.id)}>
+                {t('tasks.detail.allRunHistory')}
+              </Button>
               <Button
                 onClick={() => {
                   closeDetailDrawer();
                   openMemoryDrawer(selectedTask);
                 }}
               >
-                打开 Memory
+                {t('tasks.detail.openMemory')}
               </Button>
               <Button onClick={() => openTaskMcpPreviewModal(selectedTask)}>
-                预览 MCP Prompt
+                {t('tasks.detail.previewMcpPrompt')}
               </Button>
               <Button
                 onClick={() =>
                   navigate(`/prompts?task_id=${encodeURIComponent(selectedTask.id)}`)
                 }
               >
-                相关提示
+                {t('tasks.detail.relatedPrompts')}
               </Button>
             </Space>
 
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="任务 ID">{selectedTask.id}</Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag color={statusColorMap[selectedTask.status]}>{selectedTask.status}</Tag>
+              <Descriptions.Item label={t('tasks.detail.taskId')}>{selectedTask.id}</Descriptions.Item>
+              <Descriptions.Item label={t('common.status')}>
+                <Tag color={statusColorMap[selectedTask.status]}>
+                  {taskStatusLabel(selectedTask.status)}
+                </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="创建人">
+              <Descriptions.Item label={t('tasks.column.creator')}>
                 {taskCreatorLabel(selectedTask)}
               </Descriptions.Item>
-              <Descriptions.Item label="默认模型">
+              <Descriptions.Item label={t('tasks.detail.defaultModel')}>
                 {selectedTask.default_model_config_id
                   ? (
                     <Button
@@ -1338,37 +1407,37 @@ export function TasksPage() {
                         selectedTask.default_model_config_id}
                     </Button>
                   )
-                  : '未绑定'}
+                  : t('tasks.modelUnbound')}
               </Descriptions.Item>
-              <Descriptions.Item label="优先级">{selectedTask.priority}</Descriptions.Item>
-              <Descriptions.Item label="调度">
-                {describeTaskSchedule(selectedTask.schedule)}
+              <Descriptions.Item label={t('tasks.column.priority')}>{selectedTask.priority}</Descriptions.Item>
+              <Descriptions.Item label={t('tasks.column.schedule')}>
+                {describeTaskSchedule(selectedTask.schedule, t)}
               </Descriptions.Item>
               <Descriptions.Item label="Memory Thread">
                 <Typography.Text code>{selectedTask.memory_thread_id}</Typography.Text>
               </Descriptions.Item>
-              <Descriptions.Item label="最近运行">
+              <Descriptions.Item label={t('tasks.detail.recentRun')}>
                 {selectedTask.last_run_id || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="MCP 工作目录">
-                {selectedTask.mcp_config.workspace_dir || '未单独配置'}
+              <Descriptions.Item label={t('tasks.detail.mcpWorkspace')}>
+                {selectedTask.mcp_config.workspace_dir || t('tasks.detail.workspaceNotConfigured')}
               </Descriptions.Item>
-              <Descriptions.Item label="默认服务器">
+              <Descriptions.Item label={t('tasks.detail.defaultServer')}>
                 {selectedTask.mcp_config.default_remote_server_id
                   ? remoteServerMap.get(selectedTask.mcp_config.default_remote_server_id)?.name ||
                     selectedTask.mcp_config.default_remote_server_id
-                  : '未绑定'}
+                  : t('tasks.modelUnbound')}
               </Descriptions.Item>
-              <Descriptions.Item label="创建时间">
+              <Descriptions.Item label={t('tasks.detail.createdAt')}>
                 {dayjs(selectedTask.created_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
-              <Descriptions.Item label="更新时间">
+              <Descriptions.Item label={t('tasks.column.updatedAt')}>
                 {dayjs(selectedTask.updated_at).format('YYYY-MM-DD HH:mm:ss')}
               </Descriptions.Item>
             </Descriptions>
 
             <div>
-              <Typography.Title level={5}>任务目标</Typography.Title>
+              <Typography.Title level={5}>{t('tasks.detail.objective')}</Typography.Title>
               <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
                 {selectedTask.objective}
               </Typography.Paragraph>
@@ -1376,7 +1445,7 @@ export function TasksPage() {
 
             {selectedTask.description ? (
               <div>
-                <Typography.Title level={5}>任务说明</Typography.Title>
+                <Typography.Title level={5}>{t('tasks.detail.description')}</Typography.Title>
                 <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
                   {selectedTask.description}
                 </Typography.Paragraph>
@@ -1385,7 +1454,7 @@ export function TasksPage() {
 
             {selectedTask.result_summary ? (
               <div>
-                <Typography.Title level={5}>最近结果摘要</Typography.Title>
+                <Typography.Title level={5}>{t('tasks.detail.latestSummary')}</Typography.Title>
                 <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
                   {selectedTask.result_summary}
                 </Typography.Paragraph>
@@ -1394,7 +1463,7 @@ export function TasksPage() {
 
             {selectedTask.task_tool_state.outcome_items.length ? (
               <div>
-                <Typography.Title level={5}>任务产出要点</Typography.Title>
+                <Typography.Title level={5}>{t('tasks.detail.outcomes')}</Typography.Title>
                 <List
                   bordered
                   dataSource={selectedTask.task_tool_state.outcome_items}
@@ -1407,9 +1476,9 @@ export function TasksPage() {
                         </Space>
                         <Typography.Text>{item.text}</Typography.Text>
                         {item.refs.length ? (
-                          <Typography.Text type="secondary">
-                            refs: {item.refs.join(', ')}
-                          </Typography.Text>
+                    <Typography.Text type="secondary">
+                      refs: {item.refs.join(', ')}
+                    </Typography.Text>
                         ) : null}
                       </Space>
                     </List.Item>
@@ -1426,10 +1495,10 @@ export function TasksPage() {
                 >
                   <Space direction="vertical" size={0}>
                     <Typography.Title level={5} style={{ margin: 0 }}>
-                      最近远程操作
+                      {t('tasks.detail.recentRemoteOperations')}
                     </Typography.Title>
                     <Typography.Text type="secondary">
-                      直接从最近一次运行里提取共享 RemoteConnectionController 的操作摘要。
+                      {t('tasks.detail.remoteDescription')}
                     </Typography.Text>
                   </Space>
                   <Space>
@@ -1437,10 +1506,10 @@ export function TasksPage() {
                       size="small"
                       onClick={() => jumpToRunHistory(selectedTask.id, detailLastRunId)}
                     >
-                      打开最近运行
+                      {t('tasks.detail.openRecentRun')}
                     </Button>
                     <Button size="small" onClick={() => navigate('/servers')}>
-                      服务器
+                      {t('tasks.detail.servers')}
                     </Button>
                   </Space>
                 </Space>
@@ -1448,23 +1517,25 @@ export function TasksPage() {
                 {detailRemoteOperations.length ? (
                   <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                     <Space size="large" wrap>
-                      <Statistic title="远程操作数" value={detailRemoteOperationStats.total} />
-                      <Statistic title="涉及服务器" value={detailRemoteOperationStats.serverCount} />
-                      <Statistic title="成功" value={detailRemoteOperationStats.successCount} />
-                      <Statistic title="失败" value={detailRemoteOperationStats.failedCount} />
+                      <Statistic title={t('tasks.detail.remoteOperationCount')} value={detailRemoteOperationStats.total} />
+                      <Statistic title={t('tasks.detail.involvedServers')} value={detailRemoteOperationStats.serverCount} />
+                      <Statistic title={t('tasks.detail.success')} value={detailRemoteOperationStats.successCount} />
+                      <Statistic title={t('tasks.detail.failed')} value={detailRemoteOperationStats.failedCount} />
                     </Space>
 
                     {latestRemoteOperation ? (
                       <Descriptions bordered column={1} size="small">
-                        <Descriptions.Item label="最近一次操作">
+                        <Descriptions.Item label={t('tasks.detail.latestOperation')}>
                           <Space wrap>
                             <Tag color={latestRemoteOperation.success ? 'success' : 'error'}>
-                              {latestRemoteOperation.success ? 'success' : 'failed'}
+                              {latestRemoteOperation.success
+                                ? t('tasks.detail.success')
+                                : t('tasks.detail.failed')}
                             </Tag>
                             <Typography.Text strong>{latestRemoteOperation.name}</Typography.Text>
                           </Space>
                         </Descriptions.Item>
-                        <Descriptions.Item label="服务器">
+                        <Descriptions.Item label={t('tasks.detail.server')}>
                           {latestRemoteOperation.connectionId ? (
                             <Button
                               type="link"
@@ -1485,23 +1556,23 @@ export function TasksPage() {
                             latestRemoteOperation.connectionName || '-'
                           )}
                         </Descriptions.Item>
-                        <Descriptions.Item label="主机">
+                        <Descriptions.Item label={t('tasks.detail.host')}>
                           {formatTaskRemoteEndpoint(
                             latestRemoteOperation.username,
                             latestRemoteOperation.host,
                             latestRemoteOperation.port,
                           ) || '-'}
                         </Descriptions.Item>
-                        <Descriptions.Item label="命令 / 路径">
+                        <Descriptions.Item label={t('tasks.detail.commandPath')}>
                           {latestRemoteOperation.command ||
                             latestRemoteOperation.path ||
                             latestRemoteOperation.summary ||
                             '-'}
                         </Descriptions.Item>
-                        <Descriptions.Item label="远端主机名">
+                        <Descriptions.Item label={t('tasks.detail.remoteHost')}>
                           {latestRemoteOperation.remoteHost || '-'}
                         </Descriptions.Item>
-                        <Descriptions.Item label="结果摘要">
+                        <Descriptions.Item label={t('tasks.detail.resultSummary')}>
                           {latestRemoteOperation.content || '-'}
                         </Descriptions.Item>
                       </Descriptions>
@@ -1518,14 +1589,16 @@ export function TasksPage() {
                               size="small"
                               onClick={() => jumpToRunHistory(selectedTask.id, detailLastRunId)}
                             >
-                              运行详情
+                              {t('tasks.detail.runDetails')}
                             </Button>,
                           ]}
                         >
                           <Space direction="vertical" size={4} style={{ width: '100%' }}>
                             <Space wrap>
                               <Tag color={operation.success ? 'success' : 'error'}>
-                                {operation.success ? 'success' : 'failed'}
+                                {operation.success
+                                  ? t('tasks.detail.success')
+                                  : t('tasks.detail.failed')}
                               </Tag>
                               <Typography.Text strong>{operation.name}</Typography.Text>
                               {operation.connectionName ? (
@@ -1543,7 +1616,7 @@ export function TasksPage() {
                                 operation.path ||
                                 operation.summary ||
                                 operation.content ||
-                                '暂无摘要'}
+                                t('tasks.detail.noSummary')}
                             </Typography.Paragraph>
                           </Space>
                         </List.Item>
@@ -1553,14 +1626,14 @@ export function TasksPage() {
                 ) : detailLastRunEventsQuery.isLoading || detailLastRunQuery.isLoading ? null : (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description="最近一次运行没有远程操作"
+                    description={t('tasks.detail.noRemoteOperations')}
                   />
                 )}
               </div>
             ) : null}
 
             <div>
-              <Typography.Title level={5}>最近运行</Typography.Title>
+              <Typography.Title level={5}>{t('tasks.detail.recentRuns')}</Typography.Title>
               {taskRecentRunsQuery.data?.length ? (
                 <List
                   bordered
@@ -1573,7 +1646,7 @@ export function TasksPage() {
                           size="small"
                           onClick={() => jumpToRunHistory(selectedTask.id, run.id)}
                         >
-                          打开
+                          {t('common.open')}
                         </Button>,
                       ]}
                     >
@@ -1598,19 +1671,19 @@ export function TasksPage() {
                         ) : run.error_message ? (
                           <Typography.Text type="danger">{run.error_message}</Typography.Text>
                         ) : (
-                          <Typography.Text type="secondary">暂无摘要</Typography.Text>
+                          <Typography.Text type="secondary">{t('tasks.detail.noSummary')}</Typography.Text>
                         )}
                       </Space>
                     </List.Item>
                   )}
                 />
               ) : taskRecentRunsQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有运行记录" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.detail.noRunRecords')} />
               )}
             </div>
 
             <div>
-              <Typography.Title level={5}>相关提示</Typography.Title>
+              <Typography.Title level={5}>{t('tasks.detail.relatedPrompts')}</Typography.Title>
               {taskPromptsQuery.data?.items.length ? (
                 <List
                   bordered
@@ -1627,7 +1700,7 @@ export function TasksPage() {
                             )
                           }
                         >
-                          打开
+                          {t('common.open')}
                         </Button>,
                       ]}
                     >
@@ -1660,12 +1733,15 @@ export function TasksPage() {
                   )}
                 />
               ) : taskPromptsQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前任务还没有人工提示" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.detail.noPrompts')} />
               )}
               {taskPromptsQuery.data?.has_more ? (
                 <Space style={{ marginTop: 12 }}>
                   <Typography.Text type="secondary">
-                    仅显示最近 {taskPromptsQuery.data.items.length} / {taskPromptsQuery.data.total} 条
+                    {t('tasks.detail.promptVisibleCount', {
+                      shown: taskPromptsQuery.data.items.length,
+                      total: taskPromptsQuery.data.total,
+                    })}
                   </Typography.Text>
                   <Button
                     size="small"
@@ -1673,14 +1749,14 @@ export function TasksPage() {
                       navigate(`/prompts?task_id=${encodeURIComponent(selectedTask.id)}`)
                     }
                   >
-                    查看全部
+                    {t('tasks.detail.viewAll')}
                   </Button>
                 </Space>
               ) : null}
             </div>
 
             <div>
-              <Typography.Title level={5}>后续任务</Typography.Title>
+              <Typography.Title level={5}>{t('tasks.detail.followUps')}</Typography.Title>
               {taskFollowUpQuery.data?.length ? (
                 <List
                   bordered
@@ -1689,10 +1765,10 @@ export function TasksPage() {
                     <List.Item
                       actions={[
                         <Button key="detail" size="small" onClick={() => openDetailDrawer(task)}>
-                          详情
+                          {t('tasks.action.detail')}
                         </Button>,
                         <Button key="history" size="small" onClick={() => jumpToRunHistory(task.id)}>
-                          历史
+                          {t('tasks.action.history')}
                         </Button>,
                         <Button
                           key="run"
@@ -1701,14 +1777,14 @@ export function TasksPage() {
                           disabled={task.status === 'running'}
                           onClick={() => openRunModal(task)}
                         >
-                          执行
+                          {t('tasks.action.run')}
                         </Button>,
                       ]}
                     >
                       <Space direction="vertical" size={4} style={{ width: '100%' }}>
                         <Space wrap>
                           <Typography.Text strong>{task.title}</Typography.Text>
-                          <Tag color={statusColorMap[task.status]}>{task.status}</Tag>
+                          <Tag color={statusColorMap[task.status]}>{taskStatusLabel(task.status)}</Tag>
                           {task.source_run_id ? (
                             <Typography.Text type="secondary">
                               source run: {task.source_run_id.slice(0, 12)}
@@ -1727,12 +1803,12 @@ export function TasksPage() {
                   )}
                 />
               ) : taskFollowUpQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前任务还没有后续任务" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.detail.noFollowUps')} />
               )}
             </div>
 
             <div>
-              <Typography.Title level={5}>最近运行派生的任务</Typography.Title>
+              <Typography.Title level={5}>{t('tasks.detail.runDerivedTasks')}</Typography.Title>
               {taskRunDerivedQuery.data?.length ? (
                 <List
                   bordered
@@ -1741,17 +1817,17 @@ export function TasksPage() {
                     <List.Item
                       actions={[
                         <Button key="detail" size="small" onClick={() => openDetailDrawer(task)}>
-                          详情
+                          {t('tasks.action.detail')}
                         </Button>,
                         <Button key="history" size="small" onClick={() => jumpToRunHistory(task.id)}>
-                          历史
+                          {t('tasks.action.history')}
                         </Button>,
                       ]}
                     >
                       <Space direction="vertical" size={4} style={{ width: '100%' }}>
                         <Space wrap>
                           <Typography.Text strong>{task.title}</Typography.Text>
-                          <Tag color={statusColorMap[task.status]}>{task.status}</Tag>
+                          <Tag color={statusColorMap[task.status]}>{taskStatusLabel(task.status)}</Tag>
                           {task.parent_task_id ? (
                             <Typography.Text type="secondary">
                               parent: {task.parent_task_id.slice(0, 12)}
@@ -1772,13 +1848,13 @@ export function TasksPage() {
               ) : taskRunDerivedQuery.isLoading ? null : (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="最近一次运行没有产生新的派生任务"
+                  description={t('tasks.detail.noDerivedTasks')}
                 />
               )}
             </div>
 
             {selectedTask.input_payload ? (
-              <JsonBlock title="输入数据快照" value={selectedTask.input_payload} />
+              <JsonBlock title={t('tasks.detail.inputSnapshot')} value={selectedTask.input_payload} />
             ) : null}
           </Space>
         ) : selectedTaskQuery.isLoading ? null : (
@@ -1787,91 +1863,93 @@ export function TasksPage() {
       </Drawer>
 
       <Drawer
-        title={editingTask ? '编辑任务' : '新建任务'}
+        title={editingTask ? t('tasks.drawer.edit') : t('tasks.drawer.create')}
         open={drawerOpen}
         width={820}
         destroyOnClose
         onClose={closeTaskDrawer}
         extra={
           <Space>
-            <Button onClick={closeTaskDrawer}>取消</Button>
+            <Button onClick={closeTaskDrawer}>{t('common.cancel')}</Button>
             <Button
               type="primary"
               loading={createTaskMutation.isPending || updateTaskMutation.isPending}
               onClick={() => form.submit()}
             >
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
       >
         <Form<TaskFormValues> layout="vertical" form={form} onFinish={handleSubmit}>
-          <Form.Item name="title" label="任务标题" rules={[{ required: true, message: '请输入任务标题' }]}>
+          <Form.Item
+            name="title"
+            label={t('tasks.form.title')}
+            rules={[{ required: true, message: t('tasks.form.titleRequired') }]}
+          >
             <Input />
           </Form.Item>
           <Form.Item
             name="objective"
-            label="任务目标"
-            rules={[{ required: true, message: '请输入任务目标' }]}
+            label={t('tasks.form.objective')}
+            rules={[{ required: true, message: t('tasks.form.objectiveRequired') }]}
           >
             <Input.TextArea rows={4} />
           </Form.Item>
-          <Form.Item name="description" label="任务说明">
+          <Form.Item name="description" label={t('tasks.form.description')}>
             <Input.TextArea rows={3} />
           </Form.Item>
 
           <Space size="middle" style={{ width: '100%' }} align="start">
             <Form.Item
               name="status"
-              label="状态"
+              label={t('common.status')}
               style={{ flex: '0 0 220px', minWidth: 220 }}
             >
               <Select
                 style={{ width: '100%' }}
-                options={[
-                  { label: 'draft', value: 'draft' },
-                  { label: 'ready', value: 'ready' },
-                  { label: 'running', value: 'running' },
-                  { label: 'succeeded', value: 'succeeded' },
-                  { label: 'failed', value: 'failed' },
-                  { label: 'blocked', value: 'blocked' },
-                  { label: 'cancelled', value: 'cancelled' },
-                  { label: 'archived', value: 'archived' },
-                ]}
+                options={taskStatusOptions}
               />
             </Form.Item>
-            <Form.Item name="priority" label="优先级" style={{ width: 140 }}>
+            <Form.Item name="priority" label={t('tasks.column.priority')} style={{ width: 140 }}>
               <InputNumber style={{ width: '100%' }} />
             </Form.Item>
           </Space>
 
-          <Form.Item name="default_model_config_id" label="默认模型配置">
-            <Select allowClear options={modelOptions} placeholder="可在运行时覆盖" />
+          <Form.Item name="default_model_config_id" label={t('tasks.form.defaultModel')}>
+            <Select allowClear options={modelOptions} placeholder={t('tasks.form.modelPlaceholder')} />
           </Form.Item>
-          <Form.Item name="tagsText" label="标签">
-            <Input placeholder="用逗号分隔" />
+          <Form.Item name="tagsText" label={t('tasks.form.tags')}>
+            <Input placeholder={t('tasks.form.tagsPlaceholder')} />
           </Form.Item>
 
           <Typography.Title level={5} style={{ marginTop: 8 }}>
-            调度
+            {t('tasks.form.schedule')}
           </Typography.Title>
 
           <Form.Item
             name="scheduleMode"
-            label="执行方式"
-            extra={scheduleModeDescriptions[scheduleMode ?? 'manual']}
+            label={t('tasks.form.scheduleMode')}
+            extra={scheduleModeDescriptions[effectiveScheduleMode]}
           >
             <Select options={scheduleModeOptions} />
           </Form.Item>
 
-          {scheduleMode !== 'manual' ? (
+          {effectiveScheduleMode !== 'manual' ? (
             <Form.Item
               name="scheduleRunAt"
-              label={scheduleMode === 'once' ? '执行时间' : '首次执行时间'}
+              label={
+                effectiveScheduleMode === 'once'
+                  ? t('tasks.form.runAt')
+                  : t('tasks.form.firstRunAt')
+              }
               rules={[
                 {
                   required: true,
-                  message: scheduleMode === 'once' ? '请选择执行时间' : '请选择首次执行时间',
+                  message:
+                    effectiveScheduleMode === 'once'
+                      ? t('tasks.form.runAtRequired')
+                      : t('tasks.form.firstRunAtRequired'),
                 },
               ]}
             >
@@ -1879,18 +1957,18 @@ export function TasksPage() {
             </Form.Item>
           ) : null}
 
-          {scheduleMode === 'interval' ? (
+          {effectiveScheduleMode === 'interval' ? (
             <Form.Item
               name="scheduleIntervalSeconds"
-              label="循环间隔（秒）"
+              label={t('tasks.form.intervalSeconds')}
               rules={[
-                { required: true, message: '请输入循环间隔' },
+                { required: true, message: t('tasks.form.intervalRequired') },
                 {
                   validator: async (_, value) => {
                     if (value === undefined || value === null || value >= 60) {
                       return;
                     }
-                    throw new Error('循环间隔至少 60 秒');
+                    throw new Error(t('tasks.form.intervalMin'));
                   },
                 },
               ]}
@@ -1900,23 +1978,23 @@ export function TasksPage() {
           ) : null}
 
           <Typography.Title level={5} style={{ marginTop: 8 }}>
-            内置 MCP
+            {t('tasks.form.builtinMcp')}
           </Typography.Title>
 
           <Space style={{ marginBottom: 12 }}>
-            <Button onClick={openDraftMcpPreviewModal}>预览当前表单 Prompt</Button>
+            <Button onClick={openDraftMcpPreviewModal}>{t('tasks.form.previewPrompt')}</Button>
           </Space>
 
           <Space size="middle" style={{ marginBottom: 16, width: '100%' }} align="start">
             <Form.Item
               name="mcpEnabled"
-              label="启用"
+              label={t('tasks.form.enable')}
               valuePropName="checked"
               style={{ marginBottom: 0 }}
             >
               <Switch />
             </Form.Item>
-            <Form.Item name="mcpInitMode" label="初始化模式" style={{ marginBottom: 0 }}>
+            <Form.Item name="mcpInitMode" label={t('tasks.form.initMode')} style={{ marginBottom: 0 }}>
               <Select
                 style={{ width: 180 }}
                 disabled={!mcpEnabled}
@@ -1930,7 +2008,7 @@ export function TasksPage() {
           </Space>
 
           <Space size="middle" style={{ width: '100%' }} align="start">
-            <Form.Item name="builtinPromptMode" label="Prompt 模式" style={{ flex: 1 }}>
+            <Form.Item name="builtinPromptMode" label={t('tasks.form.promptMode')} style={{ flex: 1 }}>
               <Select
                 disabled={!mcpEnabled}
                 options={[
@@ -1939,18 +2017,18 @@ export function TasksPage() {
                 ]}
               />
             </Form.Item>
-            <Form.Item name="builtinPromptLocale" label="Prompt 语言" style={{ width: 180 }}>
+            <Form.Item name="builtinPromptLocale" label={t('mcp.promptLanguage.label')} style={{ width: 180 }}>
               <Select
                 disabled={!mcpEnabled}
                 options={[
-                  { label: 'zh-CN', value: 'zh-CN' },
-                  { label: 'en-US', value: 'en-US' },
+                  { label: t('mcp.promptLanguage.zhCN'), value: 'zh-CN' },
+                  { label: t('mcp.promptLanguage.enUS'), value: 'en-US' },
                 ]}
               />
             </Form.Item>
           </Space>
 
-          <Form.Item name="enabledBuiltinKinds" label="启用的 builtin kinds">
+          <Form.Item name="enabledBuiltinKinds" label={t('tasks.form.enabledKinds')}>
             <Checkbox.Group style={{ width: '100%' }}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 {mcpOptions.map((option) => (
@@ -1966,20 +2044,20 @@ export function TasksPage() {
             </Checkbox.Group>
           </Form.Item>
 
-          <Form.Item name="workspaceDir" label="任务工作目录">
+          <Form.Item name="workspaceDir" label={t('tasks.form.workspaceDir')}>
             <Input
               disabled={!mcpEnabled}
-              placeholder="为空时使用模型 Request CWD，其次回退到系统默认 workspace"
+              placeholder={t('tasks.form.workspacePlaceholder')}
             />
           </Form.Item>
 
           {remoteControllerEffectiveSelected ? (
-            <Form.Item name="defaultRemoteServerId" label="默认远程服务器">
+            <Form.Item name="defaultRemoteServerId" label={t('tasks.form.defaultRemoteServer')}>
               <Select
                 allowClear
                 disabled={!mcpEnabled}
                 options={remoteServerOptions}
-                placeholder="为空时模型需先列出服务器，再显式传 connection_id"
+                placeholder={t('tasks.form.defaultRemoteServerPlaceholder')}
               />
             </Form.Item>
           ) : null}
@@ -1991,7 +2069,7 @@ export function TasksPage() {
                   key={entry.kind}
                   type={entry.implemented ? 'secondary' : 'warning'}
                 >
-                  {entry.kind}: {entry.available_tool_names.length} tools
+                  {entry.kind}: {t('tasks.mcpTools', { count: entry.available_tool_names.length })}
                   {entry.message ? `, ${entry.message}` : ''}
                 </Typography.Text>
               ))}
@@ -2015,24 +2093,27 @@ export function TasksPage() {
                   RemoteConnectionController
                 </Tag>
                 <Typography.Text type="secondary">
-                  当前已启用服务器 {enabledRemoteServerCount} / {remoteServerTotalCount}
+                  {t('tasks.form.remoteServerCount', {
+                    enabled: enabledRemoteServerCount,
+                    total: remoteServerTotalCount,
+                  })}
                 </Typography.Text>
               </Space>
               <Typography.Text type="secondary">
                 {defaultRemoteServerId
-                  ? `当前已绑定默认服务器：${
-                      remoteServerMap.get(defaultRemoteServerId)?.name || defaultRemoteServerId
-                    }。模型调用远程工具时可以省略 connection_id。`
+                  ? t('tasks.form.defaultRemoteServerBound', {
+                      server: remoteServerMap.get(defaultRemoteServerId)?.name || defaultRemoteServerId,
+                    })
                   : enabledRemoteServerCount > 0
-                  ? '当前没有绑定默认服务器。模型可以先调用 list_connections，再把 connection_id 传给远程工具。'
-                  : '当前还没有可用服务器。建议先到“服务器”页面创建并测试至少一台启用中的远程服务器。'}
+                  ? t('tasks.form.defaultRemoteServerUnbound')
+                  : t('tasks.form.noRemoteServers')}
               </Typography.Text>
               <Space>
                 <Button size="small" onClick={() => navigate('/servers')}>
-                  管理服务器
+                  {t('tasks.form.manageServers')}
                 </Button>
                 <Button size="small" onClick={() => navigate('/mcp')}>
-                  查看 MCP 目录
+                  {t('tasks.form.viewMcpCatalog')}
                 </Button>
               </Space>
             </Space>
@@ -2041,12 +2122,14 @@ export function TasksPage() {
       </Drawer>
 
       <Modal
-        title={mcpPreviewTask ? `MCP Prompt 预览 - ${mcpPreviewTask.title}` : 'MCP Prompt 预览'}
+        title={mcpPreviewTask
+          ? t('tasks.preview.titleWithName', { title: mcpPreviewTask.title })
+          : t('tasks.preview.title')}
         open={Boolean(mcpPreviewTask)}
         width={860}
         footer={[
           <Button key="close" onClick={closeTaskMcpPreviewModal}>
-            关闭
+            {t('common.close')}
           </Button>,
         ]}
         onCancel={closeTaskMcpPreviewModal}
@@ -2054,19 +2137,19 @@ export function TasksPage() {
         {taskMcpPromptPreviewQuery.data ? (
           <McpPromptPreviewCard preview={taskMcpPromptPreviewQuery.data} />
         ) : taskMcpPromptPreviewQuery.isLoading ? (
-          <Typography.Text type="secondary">正在生成预览...</Typography.Text>
+          <Typography.Text type="secondary">{t('tasks.preview.loading')}</Typography.Text>
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂时无法生成预览" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.preview.unavailable')} />
         )}
       </Modal>
 
       <Modal
-        title="当前表单 MCP Prompt 预览"
+        title={t('tasks.preview.formTitle')}
         open={draftMcpPreviewOpen}
         width={860}
         footer={[
           <Button key="close" onClick={closeDraftMcpPreviewModal}>
-            关闭
+            {t('common.close')}
           </Button>,
         ]}
         onCancel={closeDraftMcpPreviewModal}
@@ -2074,14 +2157,16 @@ export function TasksPage() {
         {draftMcpPreviewMutation.data ? (
           <McpPromptPreviewCard preview={draftMcpPreviewMutation.data} />
         ) : draftMcpPreviewMutation.isPending ? (
-          <Typography.Text type="secondary">正在生成预览...</Typography.Text>
+          <Typography.Text type="secondary">{t('tasks.preview.loading')}</Typography.Text>
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂时无法生成预览" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.preview.unavailable')} />
         )}
       </Modal>
 
       <Drawer
-        title={memoryTask ? `任务 Memory - ${memoryTask.title}` : '任务 Memory'}
+        title={memoryTask
+          ? t('tasks.memory.titleWithName', { title: memoryTask.title })
+          : t('tasks.memory.title')}
         open={Boolean(memoryTask)}
         width={920}
         onClose={closeMemoryDrawer}
@@ -2095,7 +2180,7 @@ export function TasksPage() {
                   setMemoryRoleFilter(value as 'all' | 'user' | 'assistant' | 'tool' | 'system')
                 }
                 options={[
-                  { label: '全部角色', value: 'all' },
+                  { label: t('tasks.memory.allRoles'), value: 'all' },
                   { label: 'user', value: 'user' },
                   { label: 'assistant', value: 'assistant' },
                   { label: 'tool', value: 'tool' },
@@ -2106,7 +2191,7 @@ export function TasksPage() {
                 value={memorySummaryFilter}
                 onChange={(value) => setMemorySummaryFilter(value as 'all' | 'pending' | 'done')}
                 options={[
-                  { label: '全部总结状态', value: 'all' },
+                  { label: t('tasks.memory.allSummaryStatuses'), value: 'all' },
                   { label: 'pending', value: 'pending' },
                   { label: 'done', value: 'done' },
                 ]}
@@ -2116,9 +2201,9 @@ export function TasksPage() {
                 onChange={setMemoryLimit}
                 style={{ width: 140 }}
                 options={[
-                  { label: '最近 20 条', value: 20 },
-                  { label: '最近 50 条', value: 50 },
-                  { label: '最近 100 条', value: 100 },
+                  { label: t('tasks.memory.recentLimit', { count: 20 }), value: 20 },
+                  { label: t('tasks.memory.recentLimit', { count: 50 }), value: 50 },
+                  { label: t('tasks.memory.recentLimit', { count: 100 }), value: 100 },
                 ]}
               />
               <Button
@@ -2129,20 +2214,20 @@ export function TasksPage() {
                   ]);
                 }}
               >
-                刷新
+                {t('common.refresh')}
               </Button>
               <Button
                 loading={summarizeTaskMemoryMutation.isPending}
                 onClick={() => summarizeTaskMemoryMutation.mutate(memoryTask.id)}
               >
-                触发总结
+                {t('tasks.memory.triggerSummary')}
               </Button>
             </Space>
 
             {taskMemoryContextQuery.data?.thread ? (
               <>
                 <Descriptions bordered column={1} size="small">
-                  <Descriptions.Item label="任务 ID">{memoryTask.id}</Descriptions.Item>
+                  <Descriptions.Item label={t('tasks.detail.taskId')}>{memoryTask.id}</Descriptions.Item>
                   <Descriptions.Item label="Memory Thread">
                     <Typography.Text code>{taskMemoryContextQuery.data.memory_thread_id}</Typography.Text>
                   </Descriptions.Item>
@@ -2152,10 +2237,10 @@ export function TasksPage() {
                   <Descriptions.Item label="Subject">
                     {taskMemoryContextQuery.data.subject_id}
                   </Descriptions.Item>
-                  <Descriptions.Item label="线程状态">
+                  <Descriptions.Item label={t('tasks.memory.threadStatus')}>
                     <Tag color="processing">{taskMemoryContextQuery.data.thread.status}</Tag>
                   </Descriptions.Item>
-                  <Descriptions.Item label="总结状态">
+                  <Descriptions.Item label={t('tasks.memory.summaryStatus')}>
                     <Tag color={memorySummaryColor(taskMemoryContextQuery.data.thread.summary_status)}>
                       {taskMemoryContextQuery.data.thread.summary_status}
                     </Tag>
@@ -2175,23 +2260,27 @@ export function TasksPage() {
                 </Descriptions>
 
                 {taskMemoryContextQuery.data.thread.metadata ? (
-                  <JsonBlock title="线程元数据" value={taskMemoryContextQuery.data.thread.metadata} />
+                  <JsonBlock title={t('tasks.memory.threadMetadata')} value={taskMemoryContextQuery.data.thread.metadata} />
                 ) : null}
               </>
             ) : taskMemoryContextQuery.isLoading ? null : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Memory 线程尚未创建" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.memory.threadNotCreated')} />
             )}
 
             <div>
-              <Typography.Title level={5}>上下文预览</Typography.Title>
+              <Typography.Title level={5}>{t('tasks.memory.contextPreview')}</Typography.Title>
               {taskMemoryContextQuery.data?.context ? (
                 <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                   <Space wrap>
                     <Tag color="blue">
-                      summaries: {taskMemoryContextQuery.data.context.meta.summary_count}
+                      {t('tasks.memory.summaries', {
+                        count: taskMemoryContextQuery.data.context.meta.summary_count,
+                      })}
                     </Tag>
                     <Tag color="cyan">
-                      recent records: {taskMemoryContextQuery.data.context.meta.recent_record_count}
+                      {t('tasks.memory.recentRecords', {
+                        count: taskMemoryContextQuery.data.context.meta.recent_record_count,
+                      })}
                     </Tag>
                   </Space>
                   <List
@@ -2214,12 +2303,12 @@ export function TasksPage() {
                   />
                 </Space>
               ) : taskMemoryContextQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可用上下文" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.memory.noContext')} />
               )}
             </div>
 
             <div>
-              <Typography.Title level={5}>Memory Records</Typography.Title>
+              <Typography.Title level={5}>{t('tasks.memory.records')}</Typography.Title>
               <Table<EngineRecord>
                 rowKey="id"
                 loading={taskMemoryRecordsQuery.isLoading}
@@ -2239,7 +2328,7 @@ export function TasksPage() {
                         ) : null}
                       </Space>
                     ) : (
-                      <Typography.Text type="secondary">没有附加结构化数据</Typography.Text>
+                      <Typography.Text type="secondary">{t('tasks.memory.noExtraData')}</Typography.Text>
                     ),
                   rowExpandable: (record) => Boolean(record.structured_payload || record.metadata),
                 }}
@@ -2248,7 +2337,7 @@ export function TasksPage() {
               !taskMemoryRecordsQuery.data?.items.length ? (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="当前筛选条件下没有 records"
+                  description={t('tasks.memory.noRecordsFilter')}
                   style={{ marginTop: 16 }}
                 />
               ) : null}
@@ -2258,7 +2347,9 @@ export function TasksPage() {
       </Drawer>
 
       <Modal
-        title={runningTask ? `执行任务: ${runningTask.title}` : '执行任务'}
+        title={runningTask
+          ? t('tasks.run.titleWithName', { title: runningTask.title })
+          : t('tasks.run.title')}
         open={Boolean(runningTask)}
         onCancel={closeRunModal}
         onOk={() => runForm.submit()}
@@ -2268,24 +2359,24 @@ export function TasksPage() {
         {runningTask ? (
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <Space direction="vertical" size={0}>
-              <Typography.Text type="secondary">任务目标</Typography.Text>
+              <Typography.Text type="secondary">{t('tasks.run.objective')}</Typography.Text>
               <Typography.Paragraph style={{ marginBottom: 0 }}>
                 {runningTask.objective}
               </Typography.Paragraph>
             </Space>
 
             <Form<RunTaskFormValues> layout="vertical" form={runForm} onFinish={handleRunTask}>
-              <Form.Item name="model_config_id" label="本次执行使用的模型配置">
+              <Form.Item name="model_config_id" label={t('tasks.run.modelConfig')}>
                 <Select
                   allowClear
-                  placeholder="默认使用任务绑定的模型配置"
+                  placeholder={t('tasks.run.modelPlaceholder')}
                   options={modelOptions}
                 />
               </Form.Item>
               <Form.Item name="prompt_override" label="Prompt Override">
                 <Input.TextArea
                   rows={5}
-                  placeholder="留空则使用任务目标和输入数据自动构造的默认 prompt"
+                  placeholder={t('tasks.run.promptPlaceholder')}
                 />
               </Form.Item>
             </Form>
@@ -2294,7 +2385,9 @@ export function TasksPage() {
       </Modal>
 
       <Modal
-        title={batchRunTaskIds.length ? `批量执行任务 (${batchRunTaskIds.length})` : '批量执行任务'}
+        title={batchRunTaskIds.length
+          ? t('tasks.batchRun.titleWithCount', { count: batchRunTaskIds.length })
+          : t('tasks.batchRun.title')}
         open={Boolean(batchRunTaskIds.length)}
         onCancel={closeBatchRunModal}
         onOk={() => batchRunForm.submit()}
@@ -2304,11 +2397,11 @@ export function TasksPage() {
         {batchRunTaskIds.length ? (
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <Space direction="vertical" size={0}>
-              <Typography.Text type="secondary">本次执行任务</Typography.Text>
+              <Typography.Text type="secondary">{t('tasks.batchRun.tasks')}</Typography.Text>
               <Typography.Paragraph style={{ marginBottom: 0 }}>
                 {batchRunTasks.length
                   ? batchRunTasks.map((task) => task.title).join(' / ')
-                  : `${batchRunTaskIds.length} 个已选任务`}
+                  : t('tasks.batchRun.selectedFallback', { count: batchRunTaskIds.length })}
               </Typography.Paragraph>
             </Space>
 
@@ -2317,17 +2410,17 @@ export function TasksPage() {
               form={batchRunForm}
               onFinish={handleBatchRunTask}
             >
-              <Form.Item name="model_config_id" label="统一覆盖模型配置">
+              <Form.Item name="model_config_id" label={t('tasks.batchRun.overrideModel')}>
                 <Select
                   allowClear
-                  placeholder="留空则各任务使用自己的默认模型配置"
+                  placeholder={t('tasks.batchRun.overrideModelPlaceholder')}
                   options={modelOptions}
                 />
               </Form.Item>
-              <Form.Item name="prompt_override" label="统一 Prompt Override">
+              <Form.Item name="prompt_override" label={t('tasks.batchRun.overridePrompt')}>
                 <Input.TextArea
                   rows={6}
-                  placeholder="留空则各任务继续使用自己的默认 prompt 生成逻辑"
+                  placeholder={t('tasks.batchRun.overridePromptPlaceholder')}
                 />
               </Form.Item>
             </Form>
@@ -2511,19 +2604,21 @@ function formatScheduleInput(value?: string | null): string | undefined {
   return parsed.format('YYYY-MM-DDTHH:mm:ss');
 }
 
-function describeTaskSchedule(schedule: TaskScheduleConfig): string {
+function describeTaskSchedule(schedule: TaskScheduleConfig, t: TranslateFn): string {
   if (schedule.mode === 'manual') {
-    return scheduleModeLabels.manual;
+    return t(scheduleModeLabelKeys.manual);
   }
 
-  const parts: string[] = [scheduleModeLabels[schedule.mode]];
+  const parts: string[] = [t(scheduleModeLabelKeys[schedule.mode])];
   if (schedule.next_run_at) {
-    parts.push(`下次 ${dayjs(schedule.next_run_at).format('YYYY-MM-DD HH:mm:ss')}`);
+    parts.push(t('tasks.schedule.nextAt', {
+      time: dayjs(schedule.next_run_at).format('YYYY-MM-DD HH:mm:ss'),
+    }));
   } else if (schedule.run_at) {
     parts.push(dayjs(schedule.run_at).format('YYYY-MM-DD HH:mm:ss'));
   }
   if (schedule.interval_seconds) {
-    parts.push(`每 ${schedule.interval_seconds}s`);
+    parts.push(t('tasks.schedule.everySeconds', { seconds: schedule.interval_seconds }));
   }
   return parts.join(' / ');
 }

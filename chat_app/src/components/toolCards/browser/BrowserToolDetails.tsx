@@ -3,7 +3,7 @@ import React from 'react';
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
 import { ExtractResultsBriefCard, SearchResultsBriefCard } from '../shared/researchCards';
-import { RowsCard, StringListCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, StringListCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const isMeaningfulBrowserUrl = (url: string): boolean => {
@@ -48,7 +48,7 @@ const PageStateCard: React.FC<{ record: Record<string, unknown> }> = ({ record }
 };
 
 const ConsolePreviewCards: React.FC<{ record: Record<string, unknown> }> = ({ record }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const messages = asArray(record.messages_brief ?? record.messagesBrief)
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -62,7 +62,7 @@ const ConsolePreviewCards: React.FC<{ record: Record<string, unknown> }> = ({ re
         <div className="tool-detail-card tool-detail-card--full">
           {renderCardHeader(
             translateToolTitle('Console messages', locale),
-            locale === 'zh-CN' ? `${messages.length} 条` : `${messages.length} messages`,
+            formatToolCardCount(t, 'messages', messages.length),
           )}
           <div className="tool-detail-list">
             {messages.map((item, index) => (
@@ -83,7 +83,7 @@ const ConsolePreviewCards: React.FC<{ record: Record<string, unknown> }> = ({ re
         <div className="tool-detail-card tool-detail-card--full">
           {renderCardHeader(
             translateToolTitle('JavaScript errors', locale),
-            locale === 'zh-CN' ? `${errors.length} 条` : `${errors.length} errors`,
+            formatToolCardCount(t, 'errors', errors.length),
           )}
           <div className="tool-detail-list">
             {errors.map((item, index) => (
@@ -109,7 +109,7 @@ export const BrowserToolDetails: React.FC<BrowserToolDetailsProps> = ({
   displayName,
   result,
 }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -148,7 +148,7 @@ export const BrowserToolDetails: React.FC<BrowserToolDetailsProps> = ({
         <div className="tool-detail-card tool-detail-card--full">
           {renderCardHeader(
             translateToolTitle('Images', locale),
-            locale === 'zh-CN' ? `${images.length} 张` : `${images.length} images`,
+            formatToolCardCount(t, 'images', images.length),
           )}
           <div className="tool-detail-list">
             {images.map((item, index) => (

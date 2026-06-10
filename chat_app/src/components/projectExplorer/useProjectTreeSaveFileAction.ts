@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { normalizeFile } from './utils';
 import { readProjectTreeErrorMessage } from './projectTreeActionHelpers';
 import type { UseProjectTreeActionsOptions } from './projectTreeActionTypes';
@@ -31,10 +32,12 @@ export const useProjectTreeSaveFileAction = ({
   setSavingFile,
   setSaveError,
 }: UseProjectTreeSaveFileActionOptions) => {
+  const { t } = useI18n();
+
   const handleSaveFile = useCallback(async (path: string, content: string) => {
     const trimmedPath = path.trim();
     if (!trimmedPath) {
-      setSaveError('文件路径不能为空');
+      setSaveError(t('projectExplorer.action.filePathRequired'));
       return false;
     }
 
@@ -58,10 +61,10 @@ export const useProjectTreeSaveFileAction = ({
       ) {
         await loadEntries(projectRootPath, { silent: true, forceRefresh: true });
       }
-      setActionMessage(`已保存文件：${trimmedPath.split(/[\\/]/).pop() || trimmedPath}`);
+      setActionMessage(t('projectExplorer.action.fileSaved', { name: trimmedPath.split(/[\\/]/).pop() || trimmedPath }));
       return true;
     } catch (error) {
-      const message = readProjectTreeErrorMessage(error, '保存文件失败');
+      const message = readProjectTreeErrorMessage(error, t('projectExplorer.action.fileSaveFailed'));
       setSaveError(message);
       return false;
     } finally {
@@ -78,6 +81,7 @@ export const useProjectTreeSaveFileAction = ({
     setSaveError,
     setSavingFile,
     setSelectedFile,
+    t,
   ]);
 
   return {

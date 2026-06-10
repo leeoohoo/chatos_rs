@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import { useSessionRuntimeSettings } from '../../features/sessionRuntime/useSessionRuntimeSettings';
+import { useI18n } from '../../i18n/I18nProvider';
 import type { ChatInterfaceProps } from '../../types';
 import { useChatInterfaceController } from './useChatInterfaceController';
 import { useChatInterfaceDerivedState } from './useChatInterfaceDerivedState';
@@ -25,6 +26,7 @@ export const useChatInterfaceModel = ({
   onMessageSend,
   customRenderer,
 }: UseChatInterfaceModelParams) => {
+  const { t } = useI18n();
   const store = useChatInterfaceStoreBridge();
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
@@ -196,7 +198,7 @@ export const useChatInterfaceModel = ({
         store.clearError();
         await controller.handleRunReviewRepair(sessionId);
       } catch (error) {
-        store.setError(error instanceof Error ? error.message : '执行复盘失败');
+        store.setError(error instanceof Error ? error.message : t('taskWorkbar.reviewRepairFailed'));
       }
     },
     handleCloseSummary: controller.handleCloseSummary,

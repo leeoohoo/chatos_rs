@@ -1,4 +1,5 @@
 import type { FC } from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 import RemoteVerificationModal from '../remote/RemoteVerificationModal';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
 import { AuthSection } from './remoteConnectionModal/AuthSection';
@@ -67,11 +68,13 @@ export const RemoteConnectionModal: FC<RemoteConnectionModalProps> = ({
   onTest,
   onSave,
 }) => {
+  const { t } = useI18n();
+
   return (
     <>
       <ManagerFormDialog
         open={isOpen}
-        title={editingRemoteConnection ? '编辑远端连接' : '新增远端连接'}
+        title={editingRemoteConnection ? t('remoteConnection.modal.editTitle') : t('remoteConnection.modal.createTitle')}
         widthClassName="max-w-3xl"
         onClose={onClose}
       >

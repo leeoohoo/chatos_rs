@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { UI_MESSAGES } from '../../i18n/messages';
 import { cn } from '../../lib/utils';
 import type { FsEntry } from '../../types';
 
@@ -13,7 +14,7 @@ interface DirectoryPickerPathDisplayProps {
 export const DirectoryPickerPathDisplay: React.FC<DirectoryPickerPathDisplayProps> = ({
   currentPath,
   emptyText,
-  label = '当前路径：',
+  label = UI_MESSAGES['zh-CN']['sessionList.picker.currentPathLabel'] || 'Current path: ',
   className,
 }) => (
   <div
@@ -29,6 +30,7 @@ interface DirectoryPickerEntryListProps {
   loading: boolean;
   items: FsEntry[];
   emptyText: string;
+  loadingText?: string;
   onOpenEntry: (path: string) => void;
   showFolderIcon?: boolean;
   className?: string;
@@ -43,6 +45,7 @@ export const DirectoryPickerEntryList: React.FC<DirectoryPickerEntryListProps> =
   loading,
   items,
   emptyText,
+  loadingText = UI_MESSAGES['zh-CN']['common.loading'] || 'Loading...',
   onOpenEntry,
   showFolderIcon = false,
   className,
@@ -55,7 +58,7 @@ export const DirectoryPickerEntryList: React.FC<DirectoryPickerEntryListProps> =
   <div className={className}>
     {loading && (
       <div className={cn('p-4 text-sm text-muted-foreground', loadingClassName)}>
-        加载中...
+        {loadingText}
       </div>
     )}
     {!loading && items.length === 0 && (
