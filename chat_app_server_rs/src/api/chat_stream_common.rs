@@ -57,6 +57,7 @@ mod tests {
             Some("contact prompt"),
             Some("   "),
             Some("routing prompt"),
+            None,
         )
         .await
         .expect("input items");

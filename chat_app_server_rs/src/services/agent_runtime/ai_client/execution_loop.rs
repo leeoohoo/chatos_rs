@@ -1,3 +1,4 @@
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -559,6 +560,18 @@ impl AiClient {
             let execution_plan = build_tool_call_execution_plan(&tool_calls_arr);
             let display_tool_calls = Value::Array(execution_plan.display_calls.clone());
             let tool_call_items = build_tool_call_items(&tool_calls_arr);
+            let caller_model_runtime = ToolCallerModelRuntime::openai_compatible(
+                self.ai_request_handler.base_url().to_string(),
+                self.ai_request_handler.api_key().to_string(),
+                model.clone(),
+                provider.clone(),
+            )
+            .with_responses_support(supports_responses)
+            .with_images_support(supports_images)
+            .with_thinking_level(thinking_level.clone())
+            .with_temperature(Some(temperature))
+            .with_instructions(system_prompt.clone())
+            .with_max_output_tokens(max_tokens);
             let mcp_tool_execute = self.mcp_tool_execute.clone();
             let message_manager = self.message_manager.clone();
             let persist_session_id = session_id.clone();
@@ -574,6 +587,7 @@ impl AiClient {
                         session_id.as_deref(),
                         turn_id.as_deref(),
                         Some(model.as_str()),
+                        Some(&caller_model_runtime),
                         on_tools_stream_cb,
                     )
                 },

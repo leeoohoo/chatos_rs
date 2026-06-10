@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::{json, Value};
 use tokio::task::{Id, JoinSet};
 use tracing::{error, warn};
@@ -41,6 +42,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
     builtin_services: &HashMap<String, BuiltinToolService>,
@@ -51,6 +53,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
             session_id,
             conversation_turn_id,
             caller_model,
+            caller_model_runtime,
             on_tool_result,
             tool_metadata,
             builtin_services,
@@ -72,6 +75,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
                 session_id,
                 conversation_turn_id,
                 caller_model,
+                caller_model_runtime,
                 on_stream_chunk,
             )
             .await
@@ -88,6 +92,7 @@ pub(crate) async fn call_tool_once(
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 ) -> Result<(String, Option<Value>), String> {
     let info = tool_metadata
@@ -121,6 +126,7 @@ pub(crate) async fn call_tool_once(
             args,
             session_id,
             conversation_turn_id,
+            caller_model_runtime,
             on_stream_chunk,
         )?;
         Ok(to_text_and_structured_result(&result))
@@ -167,6 +173,7 @@ async fn execute_tools_stream_parallel_with_registry(
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
     builtin_services: &HashMap<String, BuiltinToolService>,
@@ -179,12 +186,14 @@ async fn execute_tools_stream_parallel_with_registry(
         session_id,
         conversation_turn_id,
         caller_model,
+        caller_model_runtime,
         on_tool_result,
         move |tool_name,
               args,
               session_id_owned,
               turn_id_owned,
               caller_model_owned,
+              caller_model_runtime_owned,
               on_stream_chunk| {
             let tool_metadata = tool_metadata.clone();
             let builtin_services = builtin_services.clone();
@@ -197,6 +206,7 @@ async fn execute_tools_stream_parallel_with_registry(
                     session_id_owned.as_deref(),
                     turn_id_owned.as_deref(),
                     caller_model_owned.as_deref(),
+                    caller_model_runtime_owned.as_ref(),
                     on_stream_chunk,
                 )
                 .await
@@ -211,6 +221,7 @@ pub(crate) async fn execute_tools_stream_parallel<E, Fut>(
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     execute_one: E,
 ) -> Vec<ToolResult>
@@ -221,6 +232,7 @@ where
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<ToolCallerModelRuntime>,
             Option<ToolStreamChunkCallback>,
         ) -> Fut
         + Clone
@@ -309,6 +321,7 @@ where
         let session_id_owned = session_id.map(|value| value.to_string());
         let turn_id_owned = conversation_turn_id.map(|value| value.to_string());
         let caller_model_owned = caller_model.map(|value| value.to_string());
+        let caller_model_runtime_owned = caller_model_runtime.cloned();
         let pending_call_id = call_id.clone();
         let pending_tool_name = tool_name.clone();
         let pending_turn_id = stream_turn_id_for_result.clone();
@@ -319,6 +332,7 @@ where
                 session_id_owned,
                 turn_id_owned,
                 caller_model_owned,
+                caller_model_runtime_owned,
                 on_stream_chunk,
             )
             .await;

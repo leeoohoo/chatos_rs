@@ -1,3 +1,4 @@
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -7,6 +8,7 @@ use super::actions_shared::{fail_json, is_success, normalize_inline_text, run_br
 pub(super) async fn browser_vision_with_context(
     ctx: BoundContext,
     conversation_id: Option<&str>,
+    caller_model_runtime: Option<ToolCallerModelRuntime>,
     question: String,
     annotate: bool,
 ) -> Result<Value, String> {
@@ -68,6 +70,7 @@ pub(super) async fn browser_vision_with_context(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| value.to_string()),
+        caller_model_runtime,
         annotate,
     };
     let (analysis, vision) = match adapter.analyze_screenshot(request).await {

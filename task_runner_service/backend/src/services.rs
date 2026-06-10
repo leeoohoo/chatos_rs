@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -39,6 +39,7 @@ use memory_engine_sdk::{
     ComposeContextPolicy, SdkComposeContextRequest, SdkCountThreadRecordsRequest,
     SdkListThreadRecordsRequest, SdkUpsertThreadRequest,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tracing::{info, warn};
@@ -53,10 +54,11 @@ use crate::models::{
     McpCatalogEntry, McpPromptPreviewRequest, McpPromptPreviewResponse, McpUnavailableTool,
     ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
     PaginatedResponse, PreviewModelCatalogRequest, PromptListFilters, ProviderModelRecord,
-    RemoteServerRecord, RemoteServerTestResponse, RunListFilters, RunSummaryRecord,
-    StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
-    TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
-    TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord, TaskRunEventRecord,
+    RecordTaskProcessRequest, RemoteServerRecord, RemoteServerTestResponse, RunListFilters,
+    RunSummaryRecord, StartTaskRunRequest, SystemConfigResponse, TaskDependencyGraph,
+    TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskMemoryContextOptions,
+    TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
+    TaskMemorySummaryResponse, TaskProcessLogOperation, TaskRecord, TaskRunEventRecord,
     TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskSourceContext,
     TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolOutcomeItem, TaskToolState,
     TestModelConfigRequest, TestRemoteServerRequest, UpdateModelConfigRequest,
@@ -71,6 +73,9 @@ use crate::terminal_store::TaskRunnerTerminalControllerStore;
 use crate::ui_prompt_service::UiPromptService;
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
+const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
+const TASK_PROCESS_LOG_INTERNAL_SERVER_NAME: &str = "task_run_process";
+const TASK_PROCESS_LOG_INTERNAL_TOOL_NAME: &str = "record_process";
 
 #[derive(Clone)]
 pub struct TaskService {
@@ -107,13 +112,27 @@ pub struct ToolingStateService {
     config: AppConfig,
 }
 
+#[derive(Debug, Clone)]
+struct PrerequisiteTaskContext {
+    task_id: String,
+    title: String,
+    objective: String,
+    status: TaskStatus,
+    run_id: Option<String>,
+    result_summary: Option<String>,
+    run_result_summary: Option<String>,
+    process_log: Option<String>,
+    report_content: Option<String>,
+}
+
 impl TaskService {
     pub(crate) fn new(config: AppConfig, store: AppStore) -> Self {
         Self { config, store }
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskRecord>, String> {
-        self.store.list_tasks().await
+        self.hydrate_tasks_prerequisites(self.store.list_tasks().await?)
+            .await
     }
 
     pub async fn list_tasks_filtered(
@@ -121,7 +140,8 @@ impl TaskService {
         filters: TaskListFilters,
     ) -> Result<Vec<TaskRecord>, String> {
         let filters = sanitize_task_list_filters(filters);
-        self.store.list_tasks_filtered(&filters).await
+        self.hydrate_tasks_prerequisites(self.store.list_tasks_filtered(&filters).await?)
+            .await
     }
 
     pub async fn list_tasks_page(
@@ -131,11 +151,190 @@ impl TaskService {
         let mut filters = sanitize_task_list_filters(filters);
         filters.limit = Some(filters.limit.unwrap_or(20));
         filters.offset = Some(filters.offset.unwrap_or(0));
-        self.store.list_tasks_page(&filters).await
+        let mut page = self.store.list_tasks_page(&filters).await?;
+        page.items = self.hydrate_tasks_prerequisites(page.items).await?;
+        Ok(page)
     }
 
     pub async fn get_task(&self, id: &str) -> Result<Option<TaskRecord>, String> {
-        self.store.get_task(id).await
+        match self.store.get_task(id).await? {
+            Some(task) => self.hydrate_task_prerequisites(task).await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn list_task_prerequisites(
+        &self,
+        id: &str,
+    ) -> Result<Vec<TaskSummaryRecord>, String> {
+        if self.store.get_task(id).await?.is_none() {
+            return Err(format!("任务不存在: {id}"));
+        }
+        let ids = self.direct_prerequisite_ids(id).await?;
+        self.store.get_task_summaries_by_ids(&ids).await
+    }
+
+    pub async fn set_task_prerequisites(
+        &self,
+        id: &str,
+        prerequisite_task_ids: Vec<String>,
+        current_user: Option<&CurrentUser>,
+    ) -> Result<Option<TaskRecord>, String> {
+        let Some(mut task) = self.store.get_task(id).await? else {
+            return Ok(None);
+        };
+        let prerequisite_task_ids = normalize_prerequisite_task_ids(prerequisite_task_ids);
+        self.validate_task_prerequisites(id, &prerequisite_task_ids, current_user)
+            .await?;
+        self.store
+            .set_task_prerequisites(id, prerequisite_task_ids.clone())
+            .await?;
+        task.prerequisite_task_ids = prerequisite_task_ids;
+        task.updated_at = now_rfc3339();
+        let saved = self.store.save_task(task).await?;
+        self.hydrate_task_prerequisites(saved).await.map(Some)
+    }
+
+    pub async fn get_task_dependency_graph(
+        &self,
+        id: &str,
+    ) -> Result<Option<TaskDependencyGraph>, String> {
+        if self.store.get_task(id).await?.is_none() {
+            return Ok(None);
+        }
+        let direct_ids = self.direct_prerequisite_ids(id).await?;
+        let transitive_ids = self.resolve_prerequisite_order(id).await?;
+        let direct = self.store.get_task_summaries_by_ids(&direct_ids).await?;
+        let transitive = self
+            .store
+            .get_task_summaries_by_ids(&transitive_ids)
+            .await?;
+        let blocked_by = transitive
+            .iter()
+            .filter(|task| task.status != TaskStatus::Succeeded)
+            .cloned()
+            .collect::<Vec<_>>();
+        Ok(Some(TaskDependencyGraph {
+            task_id: id.to_string(),
+            prerequisites: direct,
+            transitive_prerequisites: transitive,
+            ready: blocked_by.is_empty(),
+            blocked_by,
+        }))
+    }
+
+    async fn hydrate_task_prerequisites(&self, mut task: TaskRecord) -> Result<TaskRecord, String> {
+        task.prerequisite_task_ids = self.direct_prerequisite_ids(&task.id).await?;
+        Ok(task)
+    }
+
+    async fn hydrate_tasks_prerequisites(
+        &self,
+        tasks: Vec<TaskRecord>,
+    ) -> Result<Vec<TaskRecord>, String> {
+        let mut out = Vec::with_capacity(tasks.len());
+        for task in tasks {
+            out.push(self.hydrate_task_prerequisites(task).await?);
+        }
+        Ok(out)
+    }
+
+    async fn direct_prerequisite_ids(&self, task_id: &str) -> Result<Vec<String>, String> {
+        Ok(self
+            .store
+            .list_task_prerequisites(task_id)
+            .await?
+            .into_iter()
+            .map(|item| item.prerequisite_task_id)
+            .collect())
+    }
+
+    async fn validate_task_prerequisites(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: &[String],
+        current_user: Option<&CurrentUser>,
+    ) -> Result<(), String> {
+        if prerequisite_task_ids.len() > 50 {
+            return Err("前置任务数量不能超过 50 个".to_string());
+        }
+        for prerequisite_task_id in prerequisite_task_ids {
+            if prerequisite_task_id == task_id {
+                return Err("任务不能依赖自身".to_string());
+            }
+            let prerequisite = self
+                .store
+                .get_task(prerequisite_task_id)
+                .await?
+                .ok_or_else(|| format!("前置任务不存在: {prerequisite_task_id}"))?;
+            if let Some(user) = current_user {
+                if !user.is_admin()
+                    && prerequisite.creator_user_id.as_deref() != Some(user.id.as_str())
+                {
+                    return Err(format!("无权引用前置任务: {prerequisite_task_id}"));
+                }
+            }
+        }
+
+        let mut stack = prerequisite_task_ids.to_vec();
+        let mut visited = HashSet::new();
+        let mut visited_count = 0usize;
+        while let Some(current) = stack.pop() {
+            if current == task_id {
+                return Err(format!(
+                    "前置任务不能形成循环依赖，任务 {task_id} 会依赖自身"
+                ));
+            }
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            visited_count += 1;
+            if visited_count > 200 {
+                return Err("前置任务依赖链过深或过大，请拆分后再保存".to_string());
+            }
+            for edge in self.store.list_task_prerequisites(&current).await? {
+                stack.push(edge.prerequisite_task_id);
+            }
+        }
+        Ok(())
+    }
+
+    async fn resolve_prerequisite_order(&self, task_id: &str) -> Result<Vec<String>, String> {
+        let mut stack = vec![(task_id.to_string(), false)];
+        let mut visiting = HashSet::new();
+        let mut visited = HashSet::new();
+        let mut order = Vec::new();
+
+        while let Some((current, expanded)) = stack.pop() {
+            if expanded {
+                visiting.remove(&current);
+                if visited.insert(current.clone()) && current != task_id {
+                    order.push(current);
+                }
+                continue;
+            }
+            if visited.contains(&current) {
+                continue;
+            }
+            if !visiting.insert(current.clone()) {
+                return Err(format!("前置任务不能形成循环依赖: {current}"));
+            }
+            if visiting.len() > 200 {
+                return Err("前置任务依赖链过深或过大，请拆分后再执行".to_string());
+            }
+            stack.push((current.clone(), true));
+            let mut prerequisites = self.direct_prerequisite_ids(&current).await?;
+            prerequisites.reverse();
+            for prerequisite_task_id in prerequisites {
+                if prerequisite_task_id == task_id {
+                    return Err(format!(
+                        "前置任务不能形成循环依赖，任务 {task_id} 会依赖自身"
+                    ));
+                }
+                stack.push((prerequisite_task_id, false));
+            }
+        }
+        Ok(order)
     }
 
     pub async fn task_stats(&self) -> Result<TaskStatsResponse, String> {
@@ -179,13 +378,43 @@ impl TaskService {
         if matches!(input.status, Some(TaskStatus::Running)) {
             return Err("任务运行状态由系统维护，请通过执行任务进入 running".to_string());
         }
+        let prerequisite_task_ids = normalize_prerequisite_task_ids(
+            input.prerequisite_task_ids.clone().unwrap_or_default(),
+        );
 
         let id = Uuid::new_v4().to_string();
+        self.validate_task_prerequisites(&id, &prerequisite_task_ids, creator)
+            .await?;
         let now = now_rfc3339();
-        let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
-        let mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
-        self.validate_task_mcp_config(&mcp_config).await?;
         let source_context = source_context.unwrap_or_default();
+        let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
+        let mut mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
+        if let Some(workspace_dir) = normalized_optional(source_context.workspace_dir.clone()) {
+            mcp_config.workspace_dir = Some(workspace_dir);
+        }
+        if mcp_config.workspace_dir.is_some() {
+            let _ = ensure_workspace_dir_available(
+                self.config.default_workspace_dir.as_str(),
+                mcp_config.workspace_dir.as_deref(),
+            )?;
+        }
+        let passthrough_remote_server =
+            if let Some(remote_server_config) = source_context.remote_server_config.clone() {
+                Some(build_remote_server_record(
+                    remote_server_config,
+                    creator,
+                    Some(id.clone()),
+                    now.clone(),
+                )?)
+            } else {
+                None
+            };
+        if let Some(remote_server) = passthrough_remote_server.as_ref() {
+            mcp_config.default_remote_server_id = Some(remote_server.id.clone());
+        }
+        if passthrough_remote_server.is_none() {
+            self.validate_task_mcp_config(&mcp_config).await?;
+        }
         let task = TaskRecord {
             id: id.clone(),
             title: input.title.trim().to_string(),
@@ -209,12 +438,14 @@ impl TaskService {
             creator_username: creator.map(|user| user.username.clone()),
             creator_display_name: creator.map(|user| user.display_name.clone()),
             result_summary: None,
+            process_log: None,
             last_run_id: None,
             schedule,
             parent_task_id: None,
             source_run_id: None,
             source_session_id: normalized_optional(source_context.source_session_id),
             source_turn_id: normalized_optional(source_context.source_turn_id),
+            prerequisite_task_ids: prerequisite_task_ids.clone(),
             task_tool_state: TaskToolState::default(),
             mcp_config,
             created_at: now.clone(),
@@ -222,7 +453,14 @@ impl TaskService {
             deleted_at: None,
         };
         self.ensure_task_thread(&task).await?;
-        self.store.save_task(task).await
+        if let Some(remote_server) = passthrough_remote_server {
+            self.store.save_remote_server(remote_server).await?;
+        }
+        let saved = self.store.save_task(task).await?;
+        self.store
+            .set_task_prerequisites(&id, prerequisite_task_ids)
+            .await?;
+        self.hydrate_task_prerequisites(saved).await
     }
 
     pub async fn update_task(
@@ -279,9 +517,38 @@ impl TaskService {
             task.mcp_config = sanitize_task_mcp_config(mcp_config);
             self.validate_task_mcp_config(&task.mcp_config).await?;
         }
+        let prerequisite_task_ids = patch
+            .prerequisite_task_ids
+            .map(normalize_prerequisite_task_ids);
+        if let Some(prerequisite_task_ids) = prerequisite_task_ids.as_ref() {
+            self.validate_task_prerequisites(id, prerequisite_task_ids, None)
+                .await?;
+            task.prerequisite_task_ids = prerequisite_task_ids.clone();
+        }
         task.updated_at = now_rfc3339();
         self.ensure_task_thread(&task).await?;
-        Ok(Some(self.store.save_task(task).await?))
+        let saved = self.store.save_task(task).await?;
+        if let Some(prerequisite_task_ids) = prerequisite_task_ids {
+            self.store
+                .set_task_prerequisites(id, prerequisite_task_ids)
+                .await?;
+        }
+        self.hydrate_task_prerequisites(saved).await.map(Some)
+    }
+
+    pub async fn record_task_process(
+        &self,
+        id: &str,
+        input: RecordTaskProcessRequest,
+    ) -> Result<Option<TaskRecord>, String> {
+        let Some(mut task) = self.store.get_task(id).await? else {
+            return Ok(None);
+        };
+        let now = now_rfc3339();
+        task.process_log = apply_task_process_log_update(task.process_log, input, now.as_str())?;
+        task.updated_at = now;
+        let saved = self.store.save_task(task).await?;
+        self.hydrate_task_prerequisites(saved).await.map(Some)
     }
 
     pub async fn update_task_mcp(
@@ -702,12 +969,14 @@ impl TaskService {
             creator_username: parent.creator_username.clone(),
             creator_display_name: parent.creator_display_name.clone(),
             result_summary,
+            process_log: None,
             last_run_id: None,
             schedule: TaskScheduleConfig::default(),
             parent_task_id: Some(parent.id.clone()),
             source_run_id: Some(run_id.to_string()),
             source_session_id: parent.source_session_id.clone(),
             source_turn_id: parent.source_turn_id.clone(),
+            prerequisite_task_ids: Vec::new(),
             task_tool_state,
             mcp_config: parent.mcp_config.clone(),
             created_at: now.clone(),
@@ -1562,36 +1831,10 @@ impl RemoteServerService {
     pub async fn create_remote_server(
         &self,
         input: CreateRemoteServerRequest,
+        creator: Option<&CurrentUser>,
     ) -> Result<RemoteServerRecord, String> {
-        validate_required("name", &input.name)?;
-        validate_required("host", &input.host)?;
-        validate_required("username", &input.username)?;
-        validate_required("auth_type", &input.auth_type)?;
-
         let now = now_rfc3339();
-        let record = RemoteServerRecord {
-            id: Uuid::new_v4().to_string(),
-            name: input.name.trim().to_string(),
-            host: input.host.trim().to_string(),
-            port: normalize_remote_server_port(input.port)?,
-            username: input.username.trim().to_string(),
-            auth_type: normalize_remote_server_auth_type(&input.auth_type)?,
-            password: normalized_optional(input.password),
-            private_key_path: normalized_optional(input.private_key_path),
-            certificate_path: normalized_optional(input.certificate_path),
-            default_remote_path: normalized_optional(input.default_remote_path),
-            host_key_policy: normalize_remote_server_host_key_policy(
-                input.host_key_policy.as_deref(),
-            )?,
-            enabled: input.enabled.unwrap_or(true),
-            last_tested_at: None,
-            last_test_status: None,
-            last_test_message: None,
-            last_active_at: None,
-            created_at: now.clone(),
-            updated_at: now,
-        };
-        validate_remote_server_auth_fields(&record)?;
+        let record = build_remote_server_record(input, creator, None, now)?;
         self.store.save_remote_server(record).await
     }
 
@@ -1707,6 +1950,10 @@ impl RemoteServerService {
             last_test_status: None,
             last_test_message: None,
             last_active_at: None,
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            task_id: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -2214,6 +2461,348 @@ impl RunService {
         self.start_run(&run.task_id, request).await.map(Some)
     }
 
+    async fn prepare_prerequisite_context(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+        input: &StartTaskRunRequest,
+    ) -> Result<Vec<PrerequisiteTaskContext>, String> {
+        let prerequisite_ids = self.resolve_prerequisite_order(task.id.as_str()).await?;
+        if prerequisite_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.store
+            .append_run_event(TaskRunEventRecord::new(
+                run.id.clone(),
+                "dependency_graph_resolved",
+                Some(format!("解析到 {} 个前置任务", prerequisite_ids.len())),
+                Some(json!({ "prerequisite_task_ids": prerequisite_ids.clone() })),
+            ))
+            .await?;
+
+        let mut contexts = Vec::new();
+        for prerequisite_task_id in prerequisite_ids {
+            let prerequisite_task = self
+                .store
+                .get_task(&prerequisite_task_id)
+                .await?
+                .ok_or_else(|| format!("前置任务不存在: {prerequisite_task_id}"))?;
+            let prerequisite_run = self
+                .ensure_prerequisite_succeeded(&prerequisite_task, run, input)
+                .await?;
+            let prerequisite_task = self
+                .store
+                .get_task(&prerequisite_task_id)
+                .await?
+                .unwrap_or(prerequisite_task);
+            contexts.push(build_prerequisite_context(
+                &prerequisite_task,
+                prerequisite_run.as_ref(),
+            ));
+        }
+        self.store
+            .append_run_event(TaskRunEventRecord::new(
+                run.id.clone(),
+                "dependency_context_attached",
+                Some("前置任务结果已加入本次任务 prompt".to_string()),
+                Some(prerequisite_context_json(&contexts)),
+            ))
+            .await?;
+        Ok(contexts)
+    }
+
+    async fn ensure_prerequisite_succeeded(
+        &self,
+        task: &TaskRecord,
+        parent_run: &TaskRunRecord,
+        input: &StartTaskRunRequest,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        if matches!(task.status, TaskStatus::Archived) {
+            return Err(format!("前置任务已归档，不能执行: {}", task.id));
+        }
+        if matches!(task.status, TaskStatus::Succeeded) {
+            return Ok(self.latest_successful_run(task.id.as_str()).await?);
+        }
+
+        let active_run = self.active_run_for_task(task.id.as_str()).await?;
+        let run = if let Some(active_run) = active_run {
+            self.store
+                .append_run_event(TaskRunEventRecord::new(
+                    parent_run.id.clone(),
+                    "dependency_waiting_active_run",
+                    Some(format!("等待前置任务正在运行的 run: {}", task.title)),
+                    Some(json!({
+                        "task_id": task.id,
+                        "run_id": active_run.id,
+                    })),
+                ))
+                .await?;
+            active_run
+        } else {
+            self.store
+                .append_run_event(TaskRunEventRecord::new(
+                    parent_run.id.clone(),
+                    "dependency_run_started",
+                    Some(format!("开始执行前置任务: {}", task.title)),
+                    Some(json!({ "task_id": task.id })),
+                ))
+                .await?;
+            self.queue_dependency_run(
+                task.clone(),
+                StartTaskRunRequest {
+                    model_config_id: input.model_config_id.clone(),
+                    prompt_override: None,
+                },
+            )
+            .await?
+        };
+
+        let completed = self
+            .wait_for_run_terminal(run.id.as_str(), parent_run.id.as_str())
+            .await?;
+        self.store
+            .append_run_event(TaskRunEventRecord::new(
+                parent_run.id.clone(),
+                "dependency_run_finished",
+                Some(format!(
+                    "前置任务执行结束: {} / {}",
+                    task.title,
+                    completed.status.status_string()
+                )),
+                Some(json!({
+                    "task_id": task.id,
+                    "run_id": completed.id,
+                    "status": completed.status.status_string(),
+                    "result_summary": completed.result_summary,
+                    "error_message": completed.error_message,
+                })),
+            ))
+            .await?;
+        if completed.status == TaskRunStatus::Succeeded {
+            Ok(Some(completed))
+        } else {
+            Err(format!(
+                "前置任务未成功完成: {} ({})",
+                task.title,
+                completed.status.status_string()
+            ))
+        }
+    }
+
+    async fn wait_for_run_terminal(
+        &self,
+        run_id: &str,
+        parent_run_id: &str,
+    ) -> Result<TaskRunRecord, String> {
+        let timeout = self.config.execution_timeout + Duration::from_secs(30);
+        let started = tokio::time::Instant::now();
+        loop {
+            let run = self
+                .store
+                .get_run(run_id)
+                .await?
+                .ok_or_else(|| format!("运行不存在: {run_id}"))?;
+            if is_terminal_run_status(run.status) {
+                return Ok(run);
+            }
+            if self.store.is_cancel_requested(parent_run_id) {
+                return Err("当前任务已请求取消，停止等待前置任务".to_string());
+            }
+            if started.elapsed() > timeout {
+                return Err(format!("等待前置任务运行超时: {run_id}"));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    async fn active_run_for_task(&self, task_id: &str) -> Result<Option<TaskRunRecord>, String> {
+        Ok(self
+            .store
+            .list_runs(Some(task_id))
+            .await?
+            .into_iter()
+            .find(|run| matches!(run.status, TaskRunStatus::Queued | TaskRunStatus::Running)))
+    }
+
+    async fn latest_successful_run(&self, task_id: &str) -> Result<Option<TaskRunRecord>, String> {
+        Ok(self
+            .store
+            .list_runs(Some(task_id))
+            .await?
+            .into_iter()
+            .find(|run| run.status == TaskRunStatus::Succeeded))
+    }
+
+    async fn collect_succeeded_prerequisite_context(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<PrerequisiteTaskContext>, String> {
+        let prerequisite_ids = self.resolve_prerequisite_order(task_id).await?;
+        let mut contexts = Vec::new();
+        for prerequisite_task_id in prerequisite_ids {
+            let task = self
+                .store
+                .get_task(&prerequisite_task_id)
+                .await?
+                .ok_or_else(|| format!("前置任务不存在: {prerequisite_task_id}"))?;
+            if task.status != TaskStatus::Succeeded {
+                return Err(format!("前置任务尚未成功完成: {}", task.title));
+            }
+            let run = self.latest_successful_run(task.id.as_str()).await?;
+            contexts.push(build_prerequisite_context(&task, run.as_ref()));
+        }
+        Ok(contexts)
+    }
+
+    async fn queue_dependency_run(
+        &self,
+        task: TaskRecord,
+        input: StartTaskRunRequest,
+    ) -> Result<TaskRunRecord, String> {
+        if self.store.has_active_run_for_task(task.id.as_str()).await? {
+            return self
+                .active_run_for_task(task.id.as_str())
+                .await?
+                .ok_or_else(|| "前置任务已有运行中记录，但读取失败".to_string());
+        }
+        self.ensure_task_thread(&task).await?;
+
+        let model_config_id = normalized_optional(input.model_config_id.clone())
+            .or(task.default_model_config_id.clone())
+            .ok_or_else(|| "前置任务未绑定模型配置，且本次执行也没有指定模型配置".to_string())?;
+        let model_config = self
+            .store
+            .get_model_config(&model_config_id)
+            .await?
+            .ok_or_else(|| format!("模型配置不存在: {model_config_id}"))?;
+        if !model_config.enabled {
+            return Err(format!("模型配置已禁用: {model_config_id}"));
+        }
+        let effective_workspace_dir =
+            ensure_effective_task_workspace_dir(&self.config, &task, &model_config)?;
+
+        let run_id = Uuid::new_v4().to_string();
+        let input_snapshot = json!({
+            "task_id": task.id,
+            "task_title": task.title,
+            "objective": task.objective,
+            "description": task.description,
+            "input_payload": task.input_payload,
+            "prompt_override": input.prompt_override,
+            "model_config_id": model_config_id,
+            "mcp_config": task.mcp_config,
+            "started_as_prerequisite": true,
+        });
+        let now = now_rfc3339();
+        let run = TaskRunRecord {
+            id: run_id.clone(),
+            task_id: task.id.clone(),
+            model_config_id: model_config_id.clone(),
+            memory_thread_id: task.memory_thread_id.clone(),
+            status: TaskRunStatus::Queued,
+            started_at: None,
+            finished_at: None,
+            input_snapshot,
+            context_snapshot: None,
+            result_summary: None,
+            error_message: None,
+            usage: None,
+            report: None,
+            cancel_requested: false,
+            summary_job_run_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.store.save_run(run.clone()).await?;
+        if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
+            task_record.status = TaskStatus::Running;
+            task_record.last_run_id = Some(run.id.clone());
+            task_record.updated_at = now_rfc3339();
+            if let Err(err) = self.store.save_task(task_record).await {
+                warn!(
+                    "failed to persist queued prerequisite task state for task {} and run {}: {}",
+                    task.id, run.id, err
+                );
+            }
+        }
+        self.store
+            .append_run_event(TaskRunEventRecord::new(
+                run.id.clone(),
+                "queued",
+                Some("前置任务已进入队列".to_string()),
+                None,
+            ))
+            .await?;
+
+        let prerequisite_context = self
+            .collect_succeeded_prerequisite_context(task.id.as_str())
+            .await?;
+        let service = self.clone();
+        let run_for_spawn = run.clone();
+        let input_for_spawn = input.clone();
+        tokio::spawn(async move {
+            service
+                .execute_run_model_phase(
+                    task,
+                    model_config,
+                    run_for_spawn,
+                    input_for_spawn,
+                    effective_workspace_dir,
+                    prerequisite_context,
+                )
+                .await;
+        });
+
+        Ok(run)
+    }
+
+    async fn resolve_prerequisite_order(&self, task_id: &str) -> Result<Vec<String>, String> {
+        TaskService::new(self.config.clone(), self.store.clone())
+            .resolve_prerequisite_order(task_id)
+            .await
+    }
+
+    async fn finish_blocked_by_prerequisite(
+        &self,
+        task: &TaskRecord,
+        run: &mut TaskRunRecord,
+        message: String,
+    ) {
+        run.status = TaskRunStatus::Blocked;
+        run.finished_at = Some(now_rfc3339());
+        run.updated_at = now_rfc3339();
+        run.error_message = Some(message.clone());
+        run.result_summary = Some(message.clone());
+        run.cancel_requested = false;
+        if let Err(err) = self.store.save_run(run.clone()).await {
+            warn!("failed to persist blocked task run {}: {}", run.id, err);
+        }
+        if let Err(err) = self
+            .store
+            .append_run_event(TaskRunEventRecord::new(
+                run.id.clone(),
+                "dependency_failed",
+                Some(message.clone()),
+                None,
+            ))
+            .await
+        {
+            warn!(
+                "failed to append dependency_failed event for run {}: {}",
+                run.id, err
+            );
+        }
+        if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
+            task_record.status = TaskStatus::Blocked;
+            task_record.result_summary = Some(message);
+            task_record.last_run_id = Some(run.id.clone());
+            task_record.updated_at = now_rfc3339();
+            if let Err(err) = self.store.save_task(task_record).await {
+                warn!("failed to persist blocked task {}: {}", task.id, err);
+            }
+        }
+    }
+
     async fn execute_run(
         &self,
         task: TaskRecord,
@@ -2221,6 +2810,35 @@ impl RunService {
         mut run: TaskRunRecord,
         input: StartTaskRunRequest,
         effective_workspace_dir: String,
+    ) {
+        let prerequisite_context =
+            match self.prepare_prerequisite_context(&task, &run, &input).await {
+                Ok(context) => context,
+                Err(err) => {
+                    self.finish_blocked_by_prerequisite(&task, &mut run, err)
+                        .await;
+                    return;
+                }
+            };
+        self.execute_run_model_phase(
+            task,
+            model_config,
+            run,
+            input,
+            effective_workspace_dir,
+            prerequisite_context,
+        )
+        .await;
+    }
+
+    async fn execute_run_model_phase(
+        &self,
+        task: TaskRecord,
+        model_config: ModelConfigRecord,
+        mut run: TaskRunRecord,
+        input: StartTaskRunRequest,
+        effective_workspace_dir: String,
+        prerequisite_context: Vec<PrerequisiteTaskContext>,
     ) {
         info!(
             run_id = run.id.as_str(),
@@ -2266,7 +2884,22 @@ impl RunService {
             }
         }
 
-        let prompt = build_task_prompt(&task, input.prompt_override.as_deref());
+        if !prerequisite_context.is_empty() {
+            attach_prerequisite_context_to_run(&mut run, &prerequisite_context);
+            run.updated_at = now_rfc3339();
+            if let Err(err) = self.store.save_run(run.clone()).await {
+                warn!(
+                    "failed to persist prerequisite context for run {}: {}",
+                    run.id, err
+                );
+            }
+        }
+
+        let prompt = build_task_prompt(
+            &task,
+            input.prompt_override.as_deref(),
+            &prerequisite_context,
+        );
         let mut effective_model_config = model_config.clone();
         effective_model_config.request_cwd = Some(effective_workspace_dir.clone());
         let model_runtime_config =
@@ -2277,6 +2910,7 @@ impl RunService {
             "model_config_id": model_config.id,
             "service": "task_runner_service",
         });
+        let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
 
         let mut run_spec = TaskRunSpec::new(
             task.id.clone(),
@@ -2302,6 +2936,11 @@ impl RunService {
                 .with_message_source("task_runner")
                 .with_metadata(metadata.clone()),
         ));
+        if task_process_logging_enabled {
+            run_spec = run_spec.with_prefixed_input_items(task_process_log_prefixed_input_items(
+                task.mcp_config.locale(),
+            ));
+        }
 
         let memory_scope = MemoryScope::thread(
             task.tenant_id.clone(),
@@ -2348,13 +2987,25 @@ impl RunService {
         if let Some(remote_server_id) = task.mcp_config.default_remote_server_id.clone() {
             server_options = server_options.with_remote_connection_id(remote_server_id);
         }
-        let builtin_servers =
+        let mut builtin_servers =
             builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
+        if task_process_logging_enabled {
+            builtin_servers.push(task_process_log_builtin_server());
+        }
         let (builtin_registry, builtin_init_errors) = build_builtin_registry(
             &builtin_servers,
             TaskService::new(self.config.clone(), self.store.clone()),
             self.ui_prompt_service.clone(),
         );
+        let mut builtin_registry = builtin_registry;
+        if task_process_logging_enabled {
+            builtin_registry.register(TaskProcessLogBuiltinProvider::new(
+                TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
+                TaskService::new(self.config.clone(), self.store.clone()),
+                task.id.clone(),
+                run.id.clone(),
+            ));
+        }
         for err in builtin_init_errors {
             if let Err(event_err) = self
                 .store
@@ -3154,33 +3805,155 @@ pub fn system_config(config: &AppConfig) -> SystemConfigResponse {
     }
 }
 
-fn build_task_prompt(task: &TaskRecord, prompt_override: Option<&str>) -> String {
-    if let Some(prompt) = prompt_override
+fn build_task_prompt(
+    task: &TaskRecord,
+    prompt_override: Option<&str>,
+    prerequisite_context: &[PrerequisiteTaskContext],
+) -> String {
+    let current_task_prompt = if let Some(prompt) = prompt_override
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        return prompt.to_string();
+        prompt.to_string()
+    } else {
+        let mut parts = vec![
+            format!("任务标题:\n{}", task.title),
+            format!("任务目标:\n{}", task.objective),
+        ];
+        if let Some(description) = task
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            parts.push(format!("任务说明:\n{description}"));
+        }
+        if let Some(input_payload) = &task.input_payload {
+            let payload_text = serde_json::to_string_pretty(input_payload)
+                .unwrap_or_else(|_| input_payload.to_string());
+            parts.push(format!("输入数据:\n{payload_text}"));
+        }
+        parts.push("请根据任务目标直接开始执行；如果有可用工具，请在必要时调用；最终给出清晰的结果、关键发现和后续建议。".to_string());
+        parts.join("\n\n")
+    };
+
+    if prerequisite_context.is_empty() {
+        return current_task_prompt;
     }
 
-    let mut parts = vec![
-        format!("任务标题:\n{}", task.title),
-        format!("任务目标:\n{}", task.objective),
-    ];
-    if let Some(description) = task
-        .description
-        .as_deref()
+    format!(
+        "{}\n\n当前任务:\n\n{}",
+        format_prerequisite_context_for_prompt(prerequisite_context),
+        current_task_prompt
+    )
+}
+
+fn format_prerequisite_context_for_prompt(contexts: &[PrerequisiteTaskContext]) -> String {
+    let mut parts = vec!["前置任务执行结果:".to_string()];
+    for (index, context) in contexts.iter().enumerate() {
+        let mut item = vec![
+            format!(
+                "{}. [{}] {} / {}",
+                index + 1,
+                context.status.status_string(),
+                context.task_id,
+                context.title
+            ),
+            format!("目标:\n{}", context.objective),
+        ];
+        if let Some(run_id) = context.run_id.as_deref() {
+            item.push(format!("最近成功运行:\n{run_id}"));
+        }
+        if let Some(summary) = context
+            .run_result_summary
+            .as_deref()
+            .or(context.result_summary.as_deref())
+        {
+            item.push(format!("结果摘要:\n{}", truncate_chars(summary, 2_000)));
+        }
+        if let Some(process_log) = context.process_log.as_deref() {
+            item.push(format!("执行过程:\n{}", truncate_chars(process_log, 4_000)));
+        }
+        if let Some(content) = context.report_content.as_deref() {
+            item.push(format!("关键输出:\n{}", truncate_chars(content, 4_000)));
+        }
+        parts.push(item.join("\n"));
+    }
+    truncate_chars(&parts.join("\n\n"), 20_000)
+}
+
+fn build_prerequisite_context(
+    task: &TaskRecord,
+    run: Option<&TaskRunRecord>,
+) -> PrerequisiteTaskContext {
+    PrerequisiteTaskContext {
+        task_id: task.id.clone(),
+        title: task.title.clone(),
+        objective: task.objective.clone(),
+        status: task.status,
+        run_id: run.map(|run| run.id.clone()),
+        result_summary: task.result_summary.clone(),
+        run_result_summary: run.and_then(|run| run.result_summary.clone()),
+        process_log: task.process_log.clone(),
+        report_content: run.and_then(extract_report_content),
+    }
+}
+
+fn extract_report_content(run: &TaskRunRecord) -> Option<String> {
+    run.report
+        .as_ref()
+        .and_then(|report| report.get("content"))
+        .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        parts.push(format!("任务说明:\n{description}"));
+        .map(|value| truncate_chars(value, 4_000))
+}
+
+fn prerequisite_context_json(contexts: &[PrerequisiteTaskContext]) -> Value {
+    json!(contexts
+        .iter()
+        .map(|context| {
+            json!({
+                "task_id": context.task_id,
+                "title": context.title,
+                "objective": context.objective,
+                "status": context.status.status_string(),
+                "run_id": context.run_id,
+                "result_summary": context.result_summary,
+                "run_result_summary": context.run_result_summary,
+                "process_log": context.process_log,
+                "report_content": context.report_content,
+            })
+        })
+        .collect::<Vec<_>>())
+}
+
+fn attach_prerequisite_context_to_run(
+    run: &mut TaskRunRecord,
+    contexts: &[PrerequisiteTaskContext],
+) {
+    let context_json = prerequisite_context_json(contexts);
+    if let Some(object) = run.input_snapshot.as_object_mut() {
+        object.insert("resolved_prerequisites".to_string(), context_json);
     }
-    if let Some(input_payload) = &task.input_payload {
-        let payload_text = serde_json::to_string_pretty(input_payload)
-            .unwrap_or_else(|_| input_payload.to_string());
-        parts.push(format!("输入数据:\n{payload_text}"));
+}
+
+fn is_terminal_run_status(status: TaskRunStatus) -> bool {
+    matches!(
+        status,
+        TaskRunStatus::Succeeded
+            | TaskRunStatus::Failed
+            | TaskRunStatus::Cancelled
+            | TaskRunStatus::Blocked
+    )
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut out = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        out.push_str("\n[内容已截断]");
     }
-    parts.push("请根据任务目标直接开始执行；如果有可用工具，请在必要时调用；最终给出清晰的结果、关键发现和后续建议。".to_string());
-    parts.join("\n\n")
+    out
 }
 
 fn summarized_report_content(content: &Option<String>) -> Option<String> {
@@ -3190,6 +3963,159 @@ fn summarized_report_content(content: &Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())?;
     let summary = content.chars().take(500).collect::<String>();
     Some(summary)
+}
+
+fn task_process_logging_enabled(mcp_config: &TaskMcpConfig) -> bool {
+    mcp_config.enabled
+        && !matches!(
+            mcp_config.init_mode,
+            chatos_ai_runtime::TaskMcpInitMode::Disabled
+        )
+}
+
+fn task_process_log_builtin_server() -> McpBuiltinServer {
+    McpBuiltinServer {
+        name: TASK_PROCESS_LOG_INTERNAL_SERVER_NAME.to_string(),
+        kind: TASK_PROCESS_LOG_INTERNAL_SERVER_NAME.to_string(),
+        workspace_dir: String::new(),
+        user_id: None,
+        project_id: None,
+        remote_connection_id: None,
+        contact_agent_id: None,
+        auto_create_task: false,
+        allow_writes: true,
+        max_file_bytes: 0,
+        max_write_bytes: 0,
+        search_limit: 0,
+    }
+}
+
+fn task_process_log_prefixed_input_items(locale: BuiltinMcpPromptLocale) -> Vec<Value> {
+    let tool_name = format!(
+        "{}_{}",
+        TASK_PROCESS_LOG_INTERNAL_SERVER_NAME, TASK_PROCESS_LOG_INTERNAL_TOOL_NAME
+    );
+    let text = if locale.is_english() {
+        format!(
+            "[Task Execution Process]\nA private internal tool `{tool_name}` is available during this task run. Use it to append visible progress notes, observations, verification results, blockers, and next steps for the current task only. Do not record hidden chain-of-thought, credentials, secrets, or unrelated drafts. This tool is internal to Task Runner execution and is not part of the external Task Runner MCP API."
+        )
+    } else {
+        format!(
+            "[任务执行过程]\n本次任务执行期间提供内部专用工具 `{tool_name}`。仅用它为当前任务追加可展示的进展、观察、验证结果、阻塞和下一步；不要记录隐藏思维链、凭证、密钥或无关草稿。这个工具只属于 Task Runner 内部执行，不属于对外 Task Runner MCP API。"
+        )
+    };
+    vec![json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": text
+        }]
+    })]
+}
+
+#[derive(Debug, Deserialize)]
+struct InternalRecordProcessArgs {
+    #[serde(default)]
+    operation: TaskProcessLogOperation,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    heading: Option<String>,
+}
+
+impl InternalRecordProcessArgs {
+    fn into_request(self) -> RecordTaskProcessRequest {
+        RecordTaskProcessRequest {
+            operation: self.operation,
+            content: self.content,
+            heading: self.heading,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct TaskProcessLogBuiltinProvider {
+    server_name: String,
+    task_service: TaskService,
+    task_id: String,
+    run_id: String,
+}
+
+impl TaskProcessLogBuiltinProvider {
+    fn new(
+        server_name: impl Into<String>,
+        task_service: TaskService,
+        task_id: String,
+        run_id: String,
+    ) -> Self {
+        Self {
+            server_name: server_name.into(),
+            task_service,
+            task_id,
+            run_id,
+        }
+    }
+}
+
+#[async_trait]
+impl BuiltinToolProvider for TaskProcessLogBuiltinProvider {
+    fn server_name(&self) -> &str {
+        self.server_name.as_str()
+    }
+
+    fn list_tools(&self) -> Vec<Value> {
+        vec![json!({
+            "name": TASK_PROCESS_LOG_INTERNAL_TOOL_NAME,
+            "description": "Record visible execution process notes for the current Task Runner task only. Use append for progress, observations, verification results, blockers, and next steps. Do not record hidden chain-of-thought, credentials, secrets, or unrelated drafts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["append", "replace", "clear"],
+                        "default": "append",
+                        "description": "append adds one timestamped entry; replace rewrites the full process log; clear removes the process log."
+                    },
+                    "heading": {
+                        "type": ["string", "null"],
+                        "description": "Short visible heading for append entries, or null when not needed."
+                    },
+                    "content": {
+                        "type": ["string", "null"],
+                        "description": "Visible process content. Required for append/replace; pass null for clear."
+                    }
+                },
+                "required": ["operation", "heading", "content"],
+                "additionalProperties": false
+            }
+        })]
+    }
+
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        _context: ToolCallContext,
+        _on_stream_chunk: Option<ToolStreamChunkCallback>,
+    ) -> Result<Value, String> {
+        if name != TASK_PROCESS_LOG_INTERNAL_TOOL_NAME {
+            return Err(format!("未知任务过程记录工具: {name}"));
+        }
+        let input: InternalRecordProcessArgs =
+            serde_json::from_value(args).map_err(|err| err.to_string())?;
+        let task = self
+            .task_service
+            .record_task_process(self.task_id.as_str(), input.into_request())
+            .await?
+            .ok_or_else(|| format!("任务不存在: {}", self.task_id))?;
+        Ok(json!({
+            "task_id": task.id,
+            "run_id": self.run_id,
+            "process_log": task.process_log,
+            "updated_at": task.updated_at,
+        }))
+    }
 }
 
 fn build_builtin_registry(
@@ -3935,6 +4861,21 @@ fn sanitize_id_list(ids: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+fn normalize_prerequisite_task_ids(ids: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in ids {
+        let id = id.trim().to_string();
+        if id.is_empty() || out.iter().any(|item| item == &id) {
+            continue;
+        }
+        out.push(id);
+        if out.len() >= 50 {
+            break;
+        }
+    }
+    out
+}
+
 fn summarize_batch_results(results: Vec<BatchTaskOperationItem>) -> BatchTaskOperationResponse {
     let total = results.len();
     let succeeded = results.iter().filter(|item| item.ok).count();
@@ -3973,12 +4914,99 @@ fn normalized_optional_nested(value: Option<String>) -> Option<String> {
     normalized_optional(value)
 }
 
+fn apply_task_process_log_update(
+    current: Option<String>,
+    input: RecordTaskProcessRequest,
+    now: &str,
+) -> Result<Option<String>, String> {
+    match input.operation {
+        TaskProcessLogOperation::Clear => Ok(None),
+        TaskProcessLogOperation::Replace => {
+            let content = normalized_optional(input.content);
+            validate_process_log_length(content.as_deref())?;
+            Ok(content)
+        }
+        TaskProcessLogOperation::Append => {
+            let content =
+                normalized_optional(input.content).ok_or_else(|| "content 不能为空".to_string())?;
+            let entry = format_task_process_entry(now, input.heading, content);
+            let next = match normalized_optional(current) {
+                Some(existing) => format!("{existing}\n\n{entry}"),
+                None => entry,
+            };
+            validate_process_log_length(Some(next.as_str()))?;
+            Ok(Some(next))
+        }
+    }
+}
+
+fn format_task_process_entry(now: &str, heading: Option<String>, content: String) -> String {
+    let heading = normalized_optional(heading);
+    match heading {
+        Some(heading) => format!("[{now}] {heading}\n{content}"),
+        None => format!("[{now}]\n{content}"),
+    }
+}
+
+fn validate_process_log_length(value: Option<&str>) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let len = value.chars().count();
+    if len > TASK_PROCESS_LOG_MAX_CHARS {
+        Err(format!(
+            "过程记录不能超过 {TASK_PROCESS_LOG_MAX_CHARS} 字符，当前 {len} 字符"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_required(label: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         Err(format!("{label} 不能为空"))
     } else {
         Ok(())
     }
+}
+
+fn build_remote_server_record(
+    input: CreateRemoteServerRequest,
+    creator: Option<&CurrentUser>,
+    task_id: Option<String>,
+    now: String,
+) -> Result<RemoteServerRecord, String> {
+    validate_required("name", &input.name)?;
+    validate_required("host", &input.host)?;
+    validate_required("username", &input.username)?;
+    validate_required("auth_type", &input.auth_type)?;
+
+    let record = RemoteServerRecord {
+        id: Uuid::new_v4().to_string(),
+        name: input.name.trim().to_string(),
+        host: input.host.trim().to_string(),
+        port: normalize_remote_server_port(input.port)?,
+        username: input.username.trim().to_string(),
+        auth_type: normalize_remote_server_auth_type(&input.auth_type)?,
+        password: normalized_optional(input.password),
+        private_key_path: normalized_optional(input.private_key_path),
+        certificate_path: normalized_optional(input.certificate_path),
+        default_remote_path: normalized_optional(input.default_remote_path),
+        host_key_policy: normalize_remote_server_host_key_policy(input.host_key_policy.as_deref())?,
+        enabled: input.enabled.unwrap_or(true),
+        last_tested_at: None,
+        last_test_status: None,
+        last_test_message: None,
+        last_active_at: None,
+        creator_user_id: creator.map(|user| user.id.clone()),
+        creator_username: creator.map(|user| user.username.clone()),
+        creator_display_name: creator.map(|user| user.display_name.clone()),
+        task_id,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    validate_remote_server_auth_fields(&record)?;
+    Ok(record)
 }
 
 fn normalize_remote_server_port(value: Option<i64>) -> Result<i64, String> {
@@ -4049,6 +5077,19 @@ impl TaskStatusExt for TaskStatus {
             TaskStatus::Blocked => "blocked",
             TaskStatus::Cancelled => "cancelled",
             TaskStatus::Archived => "archived",
+        }
+    }
+}
+
+impl TaskStatusExt for TaskRunStatus {
+    fn status_string(&self) -> &'static str {
+        match self {
+            TaskRunStatus::Queued => "queued",
+            TaskRunStatus::Running => "running",
+            TaskRunStatus::Succeeded => "succeeded",
+            TaskRunStatus::Failed => "failed",
+            TaskRunStatus::Cancelled => "cancelled",
+            TaskRunStatus::Blocked => "blocked",
         }
     }
 }

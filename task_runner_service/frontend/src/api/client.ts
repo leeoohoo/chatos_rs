@@ -23,6 +23,7 @@ import type {
   PaginatedResponse,
   PreviewModelCatalogPayload,
   PromptListFilters,
+  RecordTaskProcessPayload,
   RemoteServerRecord,
   RemoteServerTestResponse,
   StartTaskRunPayload,
@@ -243,6 +244,11 @@ export const api = {
     }),
   updateTask: (id: string, payload: UpdateTaskPayload) =>
     request<TaskRecord>(`/api/tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  recordTaskProcess: (id: string, payload: RecordTaskProcessPayload) =>
+    request<TaskRecord>(`/api/tasks/${id}/process-log`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),

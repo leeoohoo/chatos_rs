@@ -122,6 +122,10 @@ impl AiRequestHandler {
         &self.base_url
     }
 
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     pub async fn handle_request(
         &self,
         input: Value,

@@ -219,6 +219,7 @@ impl RuntimeTurnSpec {
             self.conversation_turn_id.clone(),
         )
         .with_caller_model(self.caller_model.clone())
+        .with_caller_model_runtime(Some(self.model_config.to_tool_caller_model_runtime()))
         .with_record_options(self.record_options.clone())
     }
 

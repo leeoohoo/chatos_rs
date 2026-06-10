@@ -23,20 +23,22 @@ use crate::models::{
     CurrentUserResponse, HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry,
     McpPromptPreviewRequest, McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse,
     ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse,
-    PreviewModelCatalogRequest, PromptListFilters, RemoteServerRecord, RemoteServerTestResponse,
-    RunListFilters, RunSummaryRecord, StartTaskRunRequest, SubmitUiPromptRequest,
-    SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMemoryContextOptions,
-    TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
-    TaskMemorySummaryResponse, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
-    TestRemoteServerRequest, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
-    UpdateModelConfigRequest, UpdateRemoteServerRequest, UpdateTaskMcpRequest, UpdateTaskRequest,
-    UpdateUserRequest, UserSummaryRecord,
+    PreviewModelCatalogRequest, PromptListFilters, RecordTaskProcessRequest, RemoteServerRecord,
+    RemoteServerTestResponse, RunListFilters, RunSummaryRecord, SetTaskPrerequisitesRequest,
+    StartTaskRunRequest, SubmitUiPromptRequest, SystemConfigResponse, TaskDependencyGraph,
+    TaskIndexResponse, TaskListFilters, TaskMemoryContextOptions, TaskMemoryContextResponse,
+    TaskMemoryRecordsOptions, TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatsResponse, TaskStatus,
+    TaskSummaryRecord, TestModelConfigRequest, TestRemoteServerRequest, UiPromptRecord,
+    UiPromptStatus, UiPromptTaskCountRecord, UpdateModelConfigRequest, UpdateRemoteServerRequest,
+    UpdateTaskMcpRequest, UpdateTaskRequest, UpdateUserRequest, UserSummaryRecord,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
 
 const RUN_EVENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
+const TASK_RUNNER_SKILL_ZH_CN: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.zh-CN.md");
+const TASK_RUNNER_SKILL_EN_US: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.en-US.md");
 
 pub fn build_router(state: AppState) -> Router {
     let protected_api = Router::new()
@@ -61,6 +63,15 @@ pub fn build_router(state: AppState) -> Router {
             get(list_task_runs).post(start_task_run),
         )
         .route("/api/tasks/:id/mcp", patch(update_task_mcp))
+        .route(
+            "/api/tasks/:id/prerequisites",
+            get(list_task_prerequisites).put(set_task_prerequisites),
+        )
+        .route(
+            "/api/tasks/:id/dependency-graph",
+            get(get_task_dependency_graph),
+        )
+        .route("/api/tasks/:id/process-log", patch(record_task_process))
         .route(
             "/api/tasks/:id/mcp/prompt-preview",
             get(preview_task_mcp_prompt),
@@ -153,6 +164,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/system/config", get(system_config_handler))
+        .route("/api/skills/task-runner", get(task_runner_skill_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/agent-token", post(agent_token_handler))
         .merge(protected_api)
@@ -178,6 +190,41 @@ async fn health_handler() -> Json<HealthResponse> {
 
 async fn system_config_handler(State(state): State<AppState>) -> Json<SystemConfigResponse> {
     Json(system_config(&state.config))
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskRunnerSkillQuery {
+    lang: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TaskRunnerSkillResponse {
+    name: &'static str,
+    locale: &'static str,
+    content: &'static str,
+}
+
+async fn task_runner_skill_handler(
+    Query(query): Query<TaskRunnerSkillQuery>,
+) -> Json<TaskRunnerSkillResponse> {
+    let lang = query.lang.as_deref().unwrap_or("zh-CN").trim();
+    let english = matches!(
+        lang.to_ascii_lowercase().as_str(),
+        "en" | "en-us" | "english"
+    );
+    Json(if english {
+        TaskRunnerSkillResponse {
+            name: "task-runner-ai-agent-en-us",
+            locale: "en-US",
+            content: TASK_RUNNER_SKILL_EN_US,
+        }
+    } else {
+        TaskRunnerSkillResponse {
+            name: "task-runner-ai-agent-zh-cn",
+            locale: "zh-CN",
+            content: TASK_RUNNER_SKILL_ZH_CN,
+        }
+    })
 }
 
 async fn require_auth(
@@ -552,6 +599,60 @@ async fn update_task_mcp(
     Ok(Json(task))
 }
 
+async fn list_task_prerequisites(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<TaskSummaryRecord>>, ApiError> {
+    let tasks = state
+        .task_service
+        .list_task_prerequisites(&id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(tasks))
+}
+
+async fn set_task_prerequisites(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(input): Json<SetTaskPrerequisitesRequest>,
+) -> Result<Json<TaskRecord>, ApiError> {
+    let task = state
+        .task_service
+        .set_task_prerequisites(&id, input.prerequisite_task_ids, Some(&current_user))
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+    Ok(Json(task))
+}
+
+async fn get_task_dependency_graph(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<TaskDependencyGraph>, ApiError> {
+    let graph = state
+        .task_service
+        .get_task_dependency_graph(&id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+    Ok(Json(graph))
+}
+
+async fn record_task_process(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(input): Json<RecordTaskProcessRequest>,
+) -> Result<Json<TaskRecord>, ApiError> {
+    let task = state
+        .task_service
+        .record_task_process(&id, input)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+    Ok(Json(task))
+}
+
 async fn preview_task_mcp_prompt(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -773,11 +874,12 @@ async fn list_remote_servers(
 
 async fn create_remote_server(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Json(input): Json<CreateRemoteServerRequest>,
 ) -> Result<(StatusCode, Json<RemoteServerRecord>), ApiError> {
     let server = state
         .remote_server_service
-        .create_remote_server(input)
+        .create_remote_server(input, Some(&current_user))
         .await
         .map_err(ApiError::bad_request)?;
     Ok((StatusCode::CREATED, Json(server)))
@@ -1514,6 +1616,11 @@ fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
         source_session_id: header_text(headers, "x-chatos-session-id")
             .or_else(|| header_text(headers, "x-chatos-conversation-id")),
         source_turn_id: header_text(headers, "x-chatos-turn-id"),
+        workspace_dir: header_text(headers, "x-task-runner-workspace-dir")
+            .or_else(|| header_text(headers, "x-chatos-workspace-dir"))
+            .or_else(|| header_text(headers, "x-chatos-workspace-root")),
+        remote_server_config: header_text(headers, "x-task-runner-remote-server-config")
+            .or_else(|| header_text(headers, "x-task-runner-remote-server-json")),
     }
 }
 

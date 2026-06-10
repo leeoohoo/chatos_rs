@@ -10,14 +10,14 @@ use crate::services::shared_builtin_notepad::ChatosNotepadStore;
 use crate::services::shared_builtin_task_manager::ChatosTaskManagerStore;
 use crate::services::shared_builtin_ui_prompter::ChatosUiPrompterStore;
 use chatos_builtin_tools::{
-    AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, BrowserToolsOptions,
-    BrowserToolsService, BrowserVisionAdapterRef, CodeMaintainerHooksRef, CodeMaintainerOptions,
-    CodeMaintainerService, MemoryCommandReaderOptions, MemoryCommandReaderService,
-    MemoryPluginReaderOptions, MemoryPluginReaderService, MemoryReaderStoreRef,
-    MemorySkillReaderOptions, MemorySkillReaderService, NotepadBuiltinService, NotepadOptions,
-    NotepadStoreRef, RemoteConnectionControllerOptions, RemoteConnectionControllerService,
-    RemoteConnectionControllerStoreRef, TaskManagerOptions, TaskManagerService,
-    TaskManagerStoreRef, TerminalControllerOptions, TerminalControllerService,
+    AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, BrowserToolCallContext,
+    BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapterRef, CodeMaintainerHooksRef,
+    CodeMaintainerOptions, CodeMaintainerService, MemoryCommandReaderOptions,
+    MemoryCommandReaderService, MemoryPluginReaderOptions, MemoryPluginReaderService,
+    MemoryReaderStoreRef, MemorySkillReaderOptions, MemorySkillReaderService,
+    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
+    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef, TaskManagerOptions,
+    TaskManagerService, TaskManagerStoreRef, TerminalControllerOptions, TerminalControllerService,
     TerminalControllerStoreRef, UiPrompterOptions, UiPrompterService, UiPrompterStoreRef,
     WebToolsOptions, WebToolsService,
 };
@@ -65,6 +65,7 @@ impl BuiltinToolService {
         args: serde_json::Value,
         conversation_id: Option<&str>,
         conversation_turn_id: Option<&str>,
+        caller_model_runtime: Option<&chatos_mcp_runtime::ToolCallerModelRuntime>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<serde_json::Value, String> {
         match self {
@@ -94,7 +95,17 @@ impl BuiltinToolService {
             ),
             Self::RemoteConnectionController(service) => service.call_tool(name, args),
             Self::WebTools(service) => service.call_tool(name, args),
-            Self::BrowserTools(service) => service.call_tool(name, args, conversation_id),
+            Self::BrowserTools(service) => service.call_tool_with_context(
+                name,
+                args,
+                BrowserToolCallContext {
+                    conversation_id: conversation_id
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned),
+                    caller_model_runtime: caller_model_runtime.cloned(),
+                },
+            ),
             Self::MemorySkillReader(service) => service.call_tool(name, args),
             Self::MemoryCommandReader(service) => service.call_tool(name, args),
             Self::MemoryPluginReader(service) => service.call_tool(name, args),

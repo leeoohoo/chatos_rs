@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
+
 use super::actions_inspect_support::{
     merge_console_result, merge_snapshot_result, merge_vision_result, set_inspection_steps,
     set_inspection_warning,
@@ -16,6 +18,7 @@ use super::{
 pub(super) async fn browser_inspect_with_context(
     ctx: BoundContext,
     conversation_id: Option<&str>,
+    caller_model_runtime: Option<ToolCallerModelRuntime>,
     question: Option<String>,
     full: bool,
     annotate: bool,
@@ -56,7 +59,15 @@ pub(super) async fn browser_inspect_with_context(
 
     if let Some(question) = question {
         if has_page_signal_before_vision {
-            match browser_vision_with_context(ctx, conversation_id, question, annotate).await {
+            match browser_vision_with_context(
+                ctx,
+                conversation_id,
+                caller_model_runtime,
+                question,
+                annotate,
+            )
+            .await
+            {
                 Ok(vision) => {
                     vision_status = merge_vision_result(&mut response, &vision, &mut warnings);
                 }

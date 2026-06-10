@@ -56,6 +56,7 @@ type TaskFormValues = {
   priority?: number;
   status: TaskStatus;
   default_model_config_id?: string;
+  prerequisite_task_ids?: string[];
   tagsText?: string;
   mcpEnabled: boolean;
   mcpInitMode: TaskMcpInitMode;
@@ -492,6 +493,25 @@ export function TasksPage() {
     return map;
   }, [modelsQuery.data]);
 
+  const taskSummaryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (taskIndexQuery.data?.tasks || []).forEach((task) => {
+      map.set(task.id, task.title);
+    });
+    return map;
+  }, [taskIndexQuery.data?.tasks]);
+
+  const prerequisiteTaskOptions = useMemo(
+    () =>
+      (taskIndexQuery.data?.tasks || [])
+        .filter((task) => task.id !== editingTask?.id)
+        .map((task) => ({
+          label: `${task.title} (${task.status})`,
+          value: task.id,
+        })),
+    [editingTask?.id, taskIndexQuery.data?.tasks],
+  );
+
   const mcpOptions = useMemo(
     () =>
       (mcpCatalogQuery.data || []).map((entry) => ({
@@ -913,6 +933,7 @@ export function TasksPage() {
       priority: 0,
       status: 'draft',
       default_model_config_id: undefined,
+      prerequisite_task_ids: [],
       tagsText: '',
       mcpEnabled: true,
       mcpInitMode: 'builtin_only',
@@ -937,6 +958,7 @@ export function TasksPage() {
       priority: task.priority,
       status: task.status,
       default_model_config_id: task.default_model_config_id || undefined,
+      prerequisite_task_ids: task.prerequisite_task_ids || [],
       tagsText: task.tags.join(', '),
       mcpEnabled: task.mcp_config.enabled,
       mcpInitMode: task.mcp_config.init_mode,
@@ -1101,6 +1123,7 @@ export function TasksPage() {
       priority: values.priority,
       status: values.status,
       default_model_config_id: values.default_model_config_id,
+      prerequisite_task_ids: values.prerequisite_task_ids || [],
       tags: values.tagsText
         ?.split(',')
         .map((item) => item.trim())
@@ -1416,6 +1439,19 @@ export function TasksPage() {
               <Descriptions.Item label={t('tasks.column.schedule')}>
                 {describeTaskSchedule(selectedTask.schedule, t)}
               </Descriptions.Item>
+              <Descriptions.Item label="前置任务">
+                {selectedTask.prerequisite_task_ids.length ? (
+                  <Space wrap>
+                    {selectedTask.prerequisite_task_ids.map((taskId) => (
+                      <Tag key={taskId}>
+                        {taskSummaryMap.get(taskId) || taskId.slice(0, 8)}
+                      </Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  '-'
+                )}
+              </Descriptions.Item>
               <Descriptions.Item label="Memory Thread">
                 <Typography.Text code>{selectedTask.memory_thread_id}</Typography.Text>
               </Descriptions.Item>
@@ -1451,6 +1487,15 @@ export function TasksPage() {
                 <Typography.Title level={5}>{t('tasks.detail.description')}</Typography.Title>
                 <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
                   {selectedTask.description}
+                </Typography.Paragraph>
+              </div>
+            ) : null}
+
+            {selectedTask.process_log ? (
+              <div>
+                <Typography.Title level={5}>{t('tasks.detail.processLog')}</Typography.Title>
+                <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
+                  {selectedTask.process_log}
                 </Typography.Paragraph>
               </div>
             ) : null}
@@ -1921,6 +1966,16 @@ export function TasksPage() {
 
           <Form.Item name="default_model_config_id" label={t('tasks.form.defaultModel')}>
             <Select allowClear options={modelOptions} placeholder={t('tasks.form.modelPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="prerequisite_task_ids" label="前置任务">
+            <Select
+              mode="multiple"
+              allowClear
+              showSearch
+              options={prerequisiteTaskOptions}
+              optionFilterProp="label"
+              placeholder="选择必须先完成的任务"
+            />
           </Form.Item>
           <Form.Item name="tagsText" label={t('tasks.form.tags')}>
             <Input placeholder={t('tasks.form.tagsPlaceholder')} />

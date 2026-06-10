@@ -257,6 +257,7 @@ impl chatos_mcp_runtime::BuiltinToolProvider for ChatosBuiltinProvider {
             args,
             context.conversation_id.as_deref(),
             context.conversation_turn_id.as_deref(),
+            context.caller_model_runtime.as_ref(),
             on_stream_chunk,
         )
     }

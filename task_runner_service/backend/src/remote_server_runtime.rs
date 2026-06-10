@@ -53,7 +53,7 @@ struct RemoteEntry {
 impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
     async fn list_connections(
         &self,
-        _context: RemoteConnectionControllerContext,
+        context: RemoteConnectionControllerContext,
     ) -> Result<Value, String> {
         let mut list = self
             .store
@@ -62,6 +62,14 @@ impl RemoteConnectionControllerStore for TaskRunnerRemoteConnectionStore {
             .into_iter()
             .filter(|item| item.enabled)
             .collect::<Vec<_>>();
+        if let Some(default_connection_id) = context
+            .default_remote_connection_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            list.retain(|item| item.id == default_connection_id);
+        }
         list.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
         let connections = list
             .into_iter()

@@ -1,14 +1,12 @@
 use serde_json::json;
 
-use crate::tool_registry::async_text_tool_handler_with_optional_string;
-
 use super::actions::{
     browser_back_with_context, browser_click_with_context, browser_get_images_with_context,
     browser_navigate_with_context, browser_press_with_context, browser_scroll_with_context,
     browser_snapshot_with_context, browser_type_with_context,
 };
 use super::context::{optional_bool, required_trimmed_string};
-use super::{BoundContext, BrowserToolsService};
+use super::{async_browser_text_tool_handler, BoundContext, BrowserToolsService};
 
 impl BrowserToolsService {
     pub(super) fn register_browser_navigate(&mut self, bound: BoundContext) {
@@ -23,11 +21,16 @@ impl BrowserToolsService {
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let url = required_trimmed_string(&args, "url")?;
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_navigate_with_context(ctx, conversation_id.as_deref(), url).await
+                    browser_navigate_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        url,
+                    )
+                    .await
                 })
             }),
         );
@@ -44,11 +47,16 @@ impl BrowserToolsService {
                 },
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let full = optional_bool(&args, "full");
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_snapshot_with_context(ctx, conversation_id.as_deref(), full).await
+                    browser_snapshot_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        full,
+                    )
+                    .await
                 })
             }),
         );
@@ -66,11 +74,16 @@ impl BrowserToolsService {
                 "required": ["ref"],
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let reference = required_trimmed_string(&args, "ref")?;
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_click_with_context(ctx, conversation_id.as_deref(), reference).await
+                    browser_click_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        reference,
+                    )
+                    .await
                 })
             }),
         );
@@ -89,13 +102,18 @@ impl BrowserToolsService {
                 "required": ["ref", "text"],
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let reference = required_trimmed_string(&args, "ref")?;
                 let text = required_trimmed_string(&args, "text")?;
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_type_with_context(ctx, conversation_id.as_deref(), reference, text)
-                        .await
+                    browser_type_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        reference,
+                        text,
+                    )
+                    .await
                 })
             }),
         );
@@ -113,11 +131,16 @@ impl BrowserToolsService {
                 "required": ["direction"],
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let direction = required_trimmed_string(&args, "direction")?;
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_scroll_with_context(ctx, conversation_id.as_deref(), direction).await
+                    browser_scroll_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        direction,
+                    )
+                    .await
                 })
             }),
         );
@@ -132,10 +155,10 @@ impl BrowserToolsService {
                 "properties": {},
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |_args, conversation_id| {
+            async_browser_text_tool_handler(move |_args, browser_context| {
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_back_with_context(ctx, conversation_id.as_deref()).await
+                    browser_back_with_context(ctx, browser_context.conversation_id.as_deref()).await
                 })
             }),
         );
@@ -153,11 +176,12 @@ impl BrowserToolsService {
                 "required": ["key"],
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let key = required_trimmed_string(&args, "key")?;
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_press_with_context(ctx, conversation_id.as_deref(), key).await
+                    browser_press_with_context(ctx, browser_context.conversation_id.as_deref(), key)
+                        .await
                 })
             }),
         );
@@ -172,10 +196,14 @@ impl BrowserToolsService {
                 "properties": {},
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |_args, conversation_id| {
+            async_browser_text_tool_handler(move |_args, browser_context| {
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_get_images_with_context(ctx, conversation_id.as_deref()).await
+                    browser_get_images_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                    )
+                    .await
                 })
             }),
         );

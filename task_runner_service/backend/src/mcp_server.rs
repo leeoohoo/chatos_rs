@@ -1,3 +1,7 @@
+use std::collections::{HashMap, HashSet};
+
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -6,12 +10,12 @@ use crate::auth::CurrentUser;
 use crate::models::{
     mcp_builtin_kind_guide, mcp_builtin_kind_values, BatchTaskDeleteRequest, BatchTaskRunRequest,
     BatchTaskStatusUpdateRequest, CancelUiPromptRequest, CreateModelConfigRequest,
-    CreateTaskRequest, McpServerInfo, ModelConfigRecord, RunListFilters, StartTaskRunRequest,
-    SubmitUiPromptRequest, TaskListFilters, TaskMcpConfig, TaskMemoryContextOptions,
-    TaskMemoryRecordsOptions, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskScheduleConfig, TaskScheduleMode, TaskSourceContext, TaskStatsResponse, TaskStatus,
-    TestModelConfigRequest, UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest,
-    UpdateTaskRequest,
+    CreateRemoteServerRequest, CreateTaskRequest, McpServerInfo, ModelConfigRecord, RunListFilters,
+    StartTaskRunRequest, SubmitUiPromptRequest, TaskListFilters, TaskMcpConfig,
+    TaskMemoryContextOptions, TaskMemoryRecordsOptions, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TestModelConfigRequest, UiPromptRecord, UiPromptStatus,
+    UpdateModelConfigRequest, UpdateTaskRequest,
 };
 use crate::services::{McpCatalogService, ModelConfigService, RunService, TaskService};
 use crate::ui_prompt_service::UiPromptService;
@@ -32,17 +36,30 @@ const TASK_RUNNER_MCP_STDIO_ARGS: &[&str] = &[
 pub struct McpRequestContext {
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
+    pub workspace_dir: Option<String>,
+    pub remote_server_config: Option<String>,
 }
 
 impl McpRequestContext {
-    fn task_source_context(&self) -> Option<TaskSourceContext> {
-        if self.source_session_id.is_none() && self.source_turn_id.is_none() {
-            return None;
+    fn task_source_context(&self) -> Result<Option<TaskSourceContext>, String> {
+        if self.source_session_id.is_none()
+            && self.source_turn_id.is_none()
+            && self.workspace_dir.is_none()
+            && self.remote_server_config.is_none()
+        {
+            return Ok(None);
         }
-        Some(TaskSourceContext {
+        let remote_server_config = self
+            .remote_server_config
+            .as_deref()
+            .map(decode_remote_server_config_header)
+            .transpose()?;
+        Ok(Some(TaskSourceContext {
             source_session_id: self.source_session_id.clone(),
             source_turn_id: self.source_turn_id.clone(),
-        })
+            workspace_dir: self.workspace_dir.clone(),
+            remote_server_config,
+        }))
     }
 }
 
@@ -125,6 +142,8 @@ struct CreateTaskArgs {
     #[serde(default)]
     enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
+    prerequisite_task_ids: Option<Vec<String>>,
+    #[serde(default)]
     mcp_config: Option<TaskMcpConfig>,
 }
 
@@ -150,6 +169,7 @@ impl CreateTaskArgs {
             subject_id: None,
             schedule: self.schedule,
             mcp_config,
+            prerequisite_task_ids: self.prerequisite_task_ids,
         })
     }
 }
@@ -159,6 +179,44 @@ struct UpdateTaskArgs {
     task_id: String,
     #[serde(default)]
     patch: UpdateTaskRequest,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetTaskPrerequisitesArgs {
+    task_id: String,
+    #[serde(default)]
+    prerequisite_task_ids: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CreateTasksWithPrerequisitesArgs {
+    #[serde(default)]
+    tasks: Vec<CreateTaskWithPrerequisitesItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTaskWithPrerequisitesItem {
+    client_ref: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    objective: String,
+    #[serde(default)]
+    input_payload: Option<Value>,
+    #[serde(default)]
+    priority: Option<i32>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    default_model_config_id: Option<String>,
+    #[serde(default)]
+    schedule: Option<TaskScheduleConfig>,
+    #[serde(default)]
+    enabled_builtin_kinds: Option<Vec<String>>,
+    #[serde(default)]
+    prerequisite_refs: Vec<String>,
+    #[serde(default)]
+    prerequisite_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -376,6 +434,11 @@ impl TaskRunnerMcpService {
                 empty_object_schema(),
             ),
             tool_definition(
+                "create_tasks_with_prerequisites",
+                "Create multiple Task Runner tasks in one call and connect prerequisite edges using temporary client_ref values plus existing prerequisite_task_ids. Use this when new prerequisite tasks do not have real task ids yet.",
+                create_tasks_with_prerequisites_schema(),
+            ),
+            tool_definition(
                 "update_task",
                 "Update an existing Task Runner task.",
                 required_object_schema(
@@ -384,6 +447,27 @@ impl TaskRunnerMcpService {
                         "patch": update_task_schema()
                     }),
                     &["task_id", "patch"],
+                ),
+            ),
+            tool_definition(
+                "set_task_prerequisites",
+                "Replace the direct prerequisite task ids for one existing Task Runner task.",
+                required_object_schema(
+                    json!({
+                        "task_id": { "type": "string", "minLength": 1 },
+                        "prerequisite_task_ids": prerequisite_task_ids_schema()
+                    }),
+                    &["task_id", "prerequisite_task_ids"],
+                ),
+            ),
+            tool_definition(
+                "get_task_dependency_graph",
+                "Get direct and transitive prerequisite tasks for one Task Runner task.",
+                required_object_schema(
+                    json!({
+                        "task_id": { "type": "string", "minLength": 1 }
+                    }),
+                    &["task_id"],
                 ),
             ),
             tool_definition(
@@ -759,14 +843,14 @@ impl TaskRunnerMcpService {
                         offset: None,
                     })
                     .await?;
-                Ok(text_result(json!(tasks)))
+                Ok(text_result(tasks_for_external_mcp(tasks)))
             }
             "get_task" => {
                 let args: TaskIdArgs = decode_args(args)?;
                 let task = self
                     .require_task_for_user(args.task_id.as_str(), current_user)
                     .await?;
-                Ok(text_result(json!(task)))
+                Ok(text_result(task_for_external_mcp(task)))
             }
             "get_task_stats" => {
                 let _ = decode_args::<Value>(args).ok();
@@ -781,14 +865,21 @@ impl TaskRunnerMcpService {
                     .create_task(
                         input,
                         Some(current_user),
-                        request_context.task_source_context(),
+                        request_context.task_source_context()?,
                     )
                     .await?;
-                Ok(text_result(json!(task)))
+                Ok(text_result(task_for_external_mcp(task)))
             }
             "list_mcp_builtin_catalog" => {
                 let _ = decode_args::<Value>(args).ok();
                 Ok(text_result(json!(self.mcp_catalog_service.list_catalog())))
+            }
+            "create_tasks_with_prerequisites" => {
+                let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;
+                let result = self
+                    .create_tasks_with_prerequisites(args, current_user, request_context)
+                    .await?;
+                Ok(text_result(result))
             }
             "update_task" => {
                 let args: UpdateTaskArgs = decode_args(args)?;
@@ -799,7 +890,33 @@ impl TaskRunnerMcpService {
                     .update_task(args.task_id.as_str(), args.patch)
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
-                Ok(text_result(json!(task)))
+                Ok(text_result(task_for_external_mcp(task)))
+            }
+            "set_task_prerequisites" => {
+                let args: SetTaskPrerequisitesArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
+                let task = self
+                    .task_service
+                    .set_task_prerequisites(
+                        args.task_id.as_str(),
+                        args.prerequisite_task_ids,
+                        Some(current_user),
+                    )
+                    .await?
+                    .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
+                Ok(text_result(task_for_external_mcp(task)))
+            }
+            "get_task_dependency_graph" => {
+                let args: TaskIdArgs = decode_args(args)?;
+                self.require_task_for_user(args.task_id.as_str(), current_user)
+                    .await?;
+                let graph = self
+                    .task_service
+                    .get_task_dependency_graph(args.task_id.as_str())
+                    .await?
+                    .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
+                Ok(text_result(json!(graph)))
             }
             "delete_task" => {
                 let args: TaskIdArgs = decode_args(args)?;
@@ -1174,6 +1291,124 @@ impl TaskRunnerMcpService {
         Ok(())
     }
 
+    async fn create_tasks_with_prerequisites(
+        &self,
+        args: CreateTasksWithPrerequisitesArgs,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<Value, String> {
+        if args.tasks.is_empty() {
+            return Err("tasks 不能为空".to_string());
+        }
+        if args.tasks.len() > 50 {
+            return Err("一次最多创建 50 个任务".to_string());
+        }
+
+        let mut refs = HashSet::new();
+        for task in &args.tasks {
+            let client_ref = task.client_ref.trim();
+            if client_ref.is_empty() {
+                return Err("client_ref 不能为空".to_string());
+            }
+            if !refs.insert(client_ref.to_string()) {
+                return Err(format!("client_ref 重复: {client_ref}"));
+            }
+        }
+
+        for task in &args.tasks {
+            for prerequisite_ref in &task.prerequisite_refs {
+                let prerequisite_ref = prerequisite_ref.trim();
+                if !refs.contains(prerequisite_ref) {
+                    return Err(format!("未知 prerequisite_ref: {prerequisite_ref}"));
+                }
+                if prerequisite_ref == task.client_ref.trim() {
+                    return Err(format!("任务不能依赖自身: {prerequisite_ref}"));
+                }
+            }
+            for prerequisite_task_id in &task.prerequisite_task_ids {
+                self.require_task_for_user(prerequisite_task_id, current_user)
+                    .await?;
+            }
+        }
+        ensure_client_ref_graph_acyclic(&args.tasks)?;
+
+        let mut ref_to_task_id = HashMap::new();
+        let mut created_tasks = Vec::new();
+        let mut pending_edges = Vec::<(String, Vec<String>, Vec<String>)>::new();
+
+        for item in args.tasks {
+            let client_ref = item.client_ref.trim().to_string();
+            let mut mcp_config = None;
+            if let Some(enabled_builtin_kinds) = item.enabled_builtin_kinds {
+                let normalized = normalize_mcp_builtin_kind_names(enabled_builtin_kinds)?;
+                let config = mcp_config.get_or_insert_with(TaskMcpConfig::default);
+                config.enabled = true;
+                config.enabled_builtin_kinds = normalized;
+            }
+            let task = self
+                .task_service
+                .create_task(
+                    CreateTaskRequest {
+                        title: item.title,
+                        description: item.description,
+                        objective: item.objective,
+                        input_payload: item.input_payload,
+                        status: None,
+                        priority: item.priority,
+                        tags: item.tags,
+                        default_model_config_id: item.default_model_config_id,
+                        tenant_id: None,
+                        subject_id: None,
+                        schedule: item.schedule,
+                        mcp_config,
+                        prerequisite_task_ids: Some(item.prerequisite_task_ids.clone()),
+                    },
+                    Some(current_user),
+                    request_context.task_source_context()?,
+                )
+                .await?;
+            ref_to_task_id.insert(client_ref.clone(), task.id.clone());
+            pending_edges.push((
+                task.id.clone(),
+                item.prerequisite_refs,
+                item.prerequisite_task_ids,
+            ));
+            created_tasks.push(json!({
+                "client_ref": client_ref,
+                "task_id": task.id,
+                "title": task.title,
+                "status": task.status,
+            }));
+        }
+
+        let mut dependency_edges = Vec::new();
+        for (task_id, prerequisite_refs, existing_prerequisite_ids) in pending_edges {
+            let mut prerequisite_ids = existing_prerequisite_ids;
+            for prerequisite_ref in prerequisite_refs {
+                let Some(prerequisite_task_id) = ref_to_task_id.get(prerequisite_ref.trim()) else {
+                    return Err(format!("未知 prerequisite_ref: {prerequisite_ref}"));
+                };
+                prerequisite_ids.push(prerequisite_task_id.clone());
+            }
+            let task = self
+                .task_service
+                .set_task_prerequisites(&task_id, prerequisite_ids, Some(current_user))
+                .await?
+                .ok_or_else(|| format!("任务不存在: {task_id}"))?;
+            for prerequisite_task_id in task.prerequisite_task_ids {
+                dependency_edges.push(json!({
+                    "task_id": task.id,
+                    "prerequisite_task_id": prerequisite_task_id,
+                }));
+            }
+        }
+
+        Ok(json!({
+            "created_tasks": created_tasks,
+            "dependency_edges": dependency_edges,
+        }))
+    }
+
     async fn require_task_for_user(
         &self,
         task_id: &str,
@@ -1273,7 +1508,10 @@ fn agent_tool_allowed(name: &str) -> bool {
             | "get_task_stats"
             | "create_task"
             | "list_mcp_builtin_catalog"
+            | "create_tasks_with_prerequisites"
             | "update_task"
+            | "set_task_prerequisites"
+            | "get_task_dependency_graph"
             | "delete_task"
             | "batch_update_task_status"
             | "batch_delete_tasks"
@@ -1315,6 +1553,22 @@ fn require_admin_tool(current_user: &CurrentUser) -> Result<(), String> {
         Ok(())
     } else {
         Err("当前 agent 无权调用管理员工具".to_string())
+    }
+}
+
+fn tasks_for_external_mcp(tasks: Vec<TaskRecord>) -> Value {
+    Value::Array(tasks.into_iter().map(task_for_external_mcp).collect())
+}
+
+fn task_for_external_mcp(task: TaskRecord) -> Value {
+    let mut value = json!(task);
+    remove_process_log_field(&mut value);
+    value
+}
+
+fn remove_process_log_field(value: &mut Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove("process_log");
     }
 }
 
@@ -1377,6 +1631,7 @@ fn create_task_schema() -> Value {
             "tags": { "type": "array", "items": { "type": "string" }, "description": "任务标签。" },
             "default_model_config_id": { "type": "string", "description": "指定任务默认使用的模型配置 ID；不确定时不要传。" },
             "schedule": { "type": "object", "description": "任务调度配置；不需要定时或延迟执行时不要传。" },
+            "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "enabled_builtin_kinds": {
                 "type": "array",
                 "items": builtin_mcp_kind_item_schema(),
@@ -1402,8 +1657,66 @@ fn update_task_schema() -> Value {
             "tags": { "type": "array", "items": { "type": "string" } },
             "default_model_config_id": { "type": "string" },
             "schedule": { "type": "object" },
+            "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "mcp_config": task_mcp_config_schema()
         },
+        "additionalProperties": false
+    })
+}
+
+fn prerequisite_task_ids_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "uniqueItems": true,
+        "description": "当前任务执行前必须先成功完成的真实任务 ID 列表。只能填写 list_tasks/get_task/create_task/create_tasks_with_prerequisites 返回过的真实 task_id，不能自己编造 ID；如果要同时创建新的前置任务，请使用 create_tasks_with_prerequisites 的 client_ref/prerequisite_refs。"
+    })
+}
+
+fn create_tasks_with_prerequisites_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "client_ref": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "本次工具调用内的临时任务引用，例如 collect_logs。只在本次请求内有效，后端会返回真实 task_id。"
+                        },
+                        "title": { "type": "string", "minLength": 1 },
+                        "description": { "type": "string" },
+                        "objective": { "type": "string", "minLength": 1 },
+                        "input_payload": {},
+                        "priority": { "type": "integer" },
+                        "tags": { "type": "array", "items": { "type": "string" } },
+                        "default_model_config_id": { "type": "string" },
+                        "schedule": { "type": "object" },
+                        "enabled_builtin_kinds": {
+                            "type": "array",
+                            "items": builtin_mcp_kind_item_schema(),
+                            "uniqueItems": true,
+                            "description": builtin_mcp_kind_schema_description()
+                        },
+                        "prerequisite_refs": {
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 1 },
+                            "uniqueItems": true,
+                            "description": "引用同一次 create_tasks_with_prerequisites 请求中其它任务的 client_ref。用于新建任务之间的前置依赖，不能引用自己，不能成环。"
+                        },
+                        "prerequisite_task_ids": prerequisite_task_ids_schema()
+                    },
+                    "required": ["client_ref", "title", "objective"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["tasks"],
         "additionalProperties": false
     })
 }
@@ -1433,14 +1746,6 @@ fn task_mcp_config_schema() -> Value {
                 "items": builtin_mcp_kind_item_schema(),
                 "uniqueItems": true,
                 "description": builtin_mcp_kind_schema_description()
-            },
-            "workspace_dir": {
-                "type": "string",
-                "description": "任务执行工作目录；不确定时不要传，后端会使用默认工作目录。"
-            },
-            "default_remote_server_id": {
-                "type": "string",
-                "description": "RemoteConnectionController 的默认远程服务器 ID；不确定时不要传。"
             }
         },
         "additionalProperties": false
@@ -1494,6 +1799,52 @@ fn normalize_mcp_builtin_kind_names(values: Vec<String>) -> Result<Vec<String>, 
         }
     }
     Ok(out)
+}
+
+fn ensure_client_ref_graph_acyclic(
+    tasks: &[CreateTaskWithPrerequisitesItem],
+) -> Result<(), String> {
+    let mut graph = HashMap::<String, Vec<String>>::new();
+    for task in tasks {
+        graph.insert(
+            task.client_ref.trim().to_string(),
+            task.prerequisite_refs
+                .iter()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect(),
+        );
+    }
+
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for root in graph.keys() {
+        let mut stack = vec![(root.clone(), false)];
+        while let Some((current, expanded)) = stack.pop() {
+            if expanded {
+                visiting.remove(&current);
+                visited.insert(current);
+                continue;
+            }
+            if visited.contains(&current) {
+                continue;
+            }
+            if !visiting.insert(current.clone()) {
+                return Err(format!("前置任务不能形成循环依赖: {current}"));
+            }
+            stack.push((current.clone(), true));
+            for prerequisite_ref in graph.get(&current).into_iter().flatten() {
+                if visiting.contains(prerequisite_ref) {
+                    return Err(format!(
+                        "前置任务不能形成循环依赖: {} -> {}",
+                        current, prerequisite_ref
+                    ));
+                }
+                stack.push((prerequisite_ref.clone(), false));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn create_model_config_schema() -> Value {
@@ -1578,6 +1929,23 @@ where
     serde_json::from_value(args).map_err(|err| err.to_string())
 }
 
+fn decode_remote_server_config_header(value: &str) -> Result<CreateRemoteServerRequest, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("远程服务器透传配置为空".to_string());
+    }
+    let json_text = if trimmed.starts_with('{') {
+        trimmed.to_string()
+    } else {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(trimmed.as_bytes())
+            .map_err(|err| format!("远程服务器透传配置不是有效 base64: {err}"))?;
+        String::from_utf8(bytes).map_err(|err| format!("远程服务器透传配置不是 UTF-8: {err}"))?
+    };
+    serde_json::from_str::<CreateRemoteServerRequest>(&json_text)
+        .map_err(|err| format!("远程服务器透传配置不是有效 JSON: {err}"))
+}
+
 fn text_result(payload: Value) -> Value {
     let text = if payload.is_string() {
         payload.as_str().unwrap_or("").to_string()
@@ -1606,7 +1974,7 @@ fn _assert_types(
 
 #[cfg(test)]
 mod tests {
-    use super::create_task_schema;
+    use super::{agent_tool_allowed, create_task_schema, task_mcp_config_schema};
 
     #[test]
     fn create_task_schema_hides_memory_scope_fields() {
@@ -1634,5 +2002,23 @@ mod tests {
         assert!(kind_enum
             .iter()
             .any(|value| value.as_str() == Some("RemoteConnectionController")));
+    }
+
+    #[test]
+    fn task_mcp_config_schema_hides_host_passthrough_fields() {
+        let schema = task_mcp_config_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(|value| value.as_object())
+            .expect("object properties");
+
+        assert!(!properties.contains_key("workspace_dir"));
+        assert!(!properties.contains_key("default_remote_server_id"));
+        assert!(properties.contains_key("enabled_builtin_kinds"));
+    }
+
+    #[test]
+    fn external_mcp_tools_hide_internal_process_recorder() {
+        assert!(!agent_tool_allowed("record_task_process"));
     }
 }

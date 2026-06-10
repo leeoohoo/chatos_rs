@@ -28,8 +28,8 @@ pub use agent_builder::{
     AgentBuilderStore, AgentBuilderStoreRef,
 };
 pub use browser_tools::{
-    BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapter, BrowserVisionAdapterRef,
-    BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
+    BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapter,
+    BrowserVisionAdapterRef, BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
 };
 pub use code_maintainer::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,

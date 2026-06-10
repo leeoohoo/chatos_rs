@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -23,11 +23,11 @@ use tracing::warn;
 
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
-    ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
-    RemoteServerRecord, RunListFilters, RunSummaryRecord, TaskListFilters, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse,
-    TaskStatus, TaskSummaryRecord, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
-    UserRecord, UserRole,
+    now_rfc3339, ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
+    RemoteServerRecord, RunListFilters, RunSummaryRecord, TaskListFilters, TaskPrerequisiteRecord,
+    TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, UiPromptRecord, UiPromptStatus,
+    UiPromptTaskCountRecord, UserRecord, UserRole,
 };
 
 const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
@@ -42,6 +42,7 @@ struct StoreData {
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
     ui_prompts: BTreeMap<String, UiPromptRecord>,
     users: BTreeMap<String, UserRecord>,
+    task_prerequisites: BTreeMap<String, BTreeSet<String>>,
     cancel_requested_runs: HashSet<String>,
 }
 
@@ -67,6 +68,7 @@ pub(crate) struct MongoStore {
     run_events: Collection<TaskRunEventRecord>,
     ui_prompts: Collection<UiPromptRecord>,
     users: Collection<UserRecord>,
+    task_prerequisites: Collection<TaskPrerequisiteRecord>,
     cancel_requested_runs: Arc<RwLock<HashSet<String>>>,
     run_event_sender: broadcast::Sender<TaskRunEventRecord>,
 }
@@ -192,6 +194,39 @@ impl AppStore {
             Self::InMemory(store) => Ok(store.save_task(task)),
             Self::Sqlite(store) => store.save_task(task).await,
             Self::Mongo(store) => store.save_task(task).await,
+        }
+    }
+
+    pub async fn list_task_prerequisites(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_task_prerequisites(task_id)),
+            Self::Sqlite(store) => store.list_task_prerequisites(task_id).await,
+            Self::Mongo(store) => store.list_task_prerequisites(task_id).await,
+        }
+    }
+
+    pub async fn set_task_prerequisites(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: Vec<String>,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        match self {
+            Self::InMemory(store) => {
+                Ok(store.set_task_prerequisites(task_id, prerequisite_task_ids))
+            }
+            Self::Sqlite(store) => {
+                store
+                    .set_task_prerequisites(task_id, prerequisite_task_ids)
+                    .await
+            }
+            Self::Mongo(store) => {
+                store
+                    .set_task_prerequisites(task_id, prerequisite_task_ids)
+                    .await
+            }
         }
     }
 
@@ -726,6 +761,45 @@ impl InMemoryStore {
         task
     }
 
+    fn list_task_prerequisites(&self, task_id: &str) -> Vec<TaskPrerequisiteRecord> {
+        let data = self.inner.read();
+        data.task_prerequisites
+            .get(task_id)
+            .into_iter()
+            .flat_map(|items| items.iter())
+            .map(|prerequisite_task_id| TaskPrerequisiteRecord {
+                task_id: task_id.to_string(),
+                prerequisite_task_id: prerequisite_task_id.clone(),
+                created_at: now_rfc3339(),
+            })
+            .collect()
+    }
+
+    fn set_task_prerequisites(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: Vec<String>,
+    ) -> Vec<TaskPrerequisiteRecord> {
+        let now = now_rfc3339();
+        let mut data = self.inner.write();
+        let items = prerequisite_task_ids.into_iter().collect::<BTreeSet<_>>();
+        if items.is_empty() {
+            data.task_prerequisites.remove(task_id);
+        } else {
+            data.task_prerequisites.insert(task_id.to_string(), items);
+        }
+        data.task_prerequisites
+            .get(task_id)
+            .into_iter()
+            .flat_map(|items| items.iter())
+            .map(|prerequisite_task_id| TaskPrerequisiteRecord {
+                task_id: task_id.to_string(),
+                prerequisite_task_id: prerequisite_task_id.clone(),
+                created_at: now.clone(),
+            })
+            .collect()
+    }
+
     fn count_users(&self) -> i64 {
         self.inner.read().users.len() as i64
     }
@@ -777,6 +851,10 @@ impl InMemoryStore {
         let Some(_) = data.tasks.remove(id) else {
             return false;
         };
+        data.task_prerequisites.remove(id);
+        for prerequisites in data.task_prerequisites.values_mut() {
+            prerequisites.remove(id);
+        }
         let run_ids = data
             .runs
             .values()
@@ -1128,6 +1206,7 @@ impl MongoStore {
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
             ui_prompts: database.collection::<UiPromptRecord>("ui_prompts"),
             users: database.collection::<UserRecord>("users"),
+            task_prerequisites: database.collection::<TaskPrerequisiteRecord>("task_prerequisites"),
             cancel_requested_runs: Arc::new(RwLock::new(HashSet::new())),
             run_event_sender,
         };
@@ -1174,6 +1253,10 @@ impl MongoStore {
         self.ensure_index(&self.remote_servers, doc! { "id": 1 }, true)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "enabled": 1 }, false)
+            .await?;
+        self.ensure_index(&self.remote_servers, doc! { "creator_user_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.remote_servers, doc! { "task_id": 1 }, false)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "updated_at": -1 }, false)
             .await?;
@@ -1242,6 +1325,19 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.users, doc! { "enabled": 1 }, false)
             .await?;
+
+        self.ensure_index(
+            &self.task_prerequisites,
+            doc! { "task_id": 1, "prerequisite_task_id": 1 },
+            true,
+        )
+        .await?;
+        self.ensure_index(
+            &self.task_prerequisites,
+            doc! { "prerequisite_task_id": 1 },
+            false,
+        )
+        .await?;
 
         Ok(())
     }
@@ -1758,6 +1854,46 @@ impl MongoStore {
         Ok(task)
     }
 
+    async fn list_task_prerequisites(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        self.load_collection_items_with_query(
+            &self.task_prerequisites,
+            doc! { "task_id": task_id },
+            Some(mongo_find_options(
+                doc! { "created_at": 1, "prerequisite_task_id": 1 },
+                None,
+                None,
+            )),
+        )
+        .await
+    }
+
+    async fn set_task_prerequisites(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: Vec<String>,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        self.task_prerequisites
+            .delete_many(doc! { "task_id": task_id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        let now = now_rfc3339();
+        for prerequisite_task_id in prerequisite_task_ids {
+            let record = TaskPrerequisiteRecord {
+                task_id: task_id.to_string(),
+                prerequisite_task_id,
+                created_at: now.clone(),
+            };
+            self.task_prerequisites
+                .insert_one(record, None)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        self.list_task_prerequisites(task_id).await
+    }
+
     async fn count_users(&self) -> Result<i64, String> {
         self.users
             .count_documents(doc! {}, None)
@@ -1809,6 +1945,19 @@ impl MongoStore {
             .into_iter()
             .map(|run| run.id)
             .collect::<Vec<_>>();
+
+        self.task_prerequisites
+            .delete_many(
+                doc! {
+                    "$or": [
+                        doc! { "task_id": id },
+                        doc! { "prerequisite_task_id": id },
+                    ]
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
 
         self.ui_prompts
             .delete_many(
@@ -2586,10 +2735,10 @@ impl SqliteStore {
                 id, title, description, objective, input_payload_json, status, priority,
                 tags_json, default_model_config_id, memory_thread_id, tenant_id, subject_id,
                 creator_user_id, creator_username, creator_display_name, result_summary,
-                last_run_id, schedule_json, parent_task_id, source_run_id, source_session_id,
-                source_turn_id, task_tool_state_json, mcp_config_json, created_at, updated_at,
-                deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                process_log, last_run_id, schedule_json, parent_task_id, source_run_id,
+                source_session_id, source_turn_id, task_tool_state_json, mcp_config_json,
+                created_at, updated_at, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 description = excluded.description,
@@ -2606,6 +2755,7 @@ impl SqliteStore {
                 creator_username = excluded.creator_username,
                 creator_display_name = excluded.creator_display_name,
                 result_summary = excluded.result_summary,
+                process_log = excluded.process_log,
                 last_run_id = excluded.last_run_id,
                 schedule_json = excluded.schedule_json,
                 parent_task_id = excluded.parent_task_id,
@@ -2634,6 +2784,7 @@ impl SqliteStore {
         .bind(task.creator_username.clone())
         .bind(task.creator_display_name.clone())
         .bind(task.result_summary.clone())
+        .bind(task.process_log.clone())
         .bind(task.last_run_id.clone())
         .bind(encode_json(&task.schedule)?)
         .bind(task.parent_task_id.clone())
@@ -2649,6 +2800,61 @@ impl SqliteStore {
         .await
         .map_err(|err| err.to_string())?;
         Ok(task)
+    }
+
+    async fn list_task_prerequisites(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        let rows = sqlx::query(
+            "SELECT task_id, prerequisite_task_id, created_at
+             FROM task_prerequisites
+             WHERE task_id = ?
+             ORDER BY datetime(created_at) ASC, prerequisite_task_id ASC",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+
+        Ok(rows
+            .iter()
+            .map(|row| TaskPrerequisiteRecord {
+                task_id: row.get("task_id"),
+                prerequisite_task_id: row.get("prerequisite_task_id"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
+    }
+
+    async fn set_task_prerequisites(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: Vec<String>,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
+        sqlx::query("DELETE FROM task_prerequisites WHERE task_id = ?")
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let now = now_rfc3339();
+        for prerequisite_task_id in prerequisite_task_ids {
+            sqlx::query(
+                "INSERT OR IGNORE INTO task_prerequisites
+                 (task_id, prerequisite_task_id, created_at)
+                 VALUES (?, ?, ?)",
+            )
+            .bind(task_id)
+            .bind(prerequisite_task_id)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        }
+        tx.commit().await.map_err(|err| err.to_string())?;
+        self.list_task_prerequisites(task_id).await
     }
 
     async fn count_users(&self) -> Result<i64, String> {
@@ -2728,6 +2934,12 @@ impl SqliteStore {
 
     async fn delete_task(&self, id: &str) -> Result<bool, String> {
         let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
+        sqlx::query("DELETE FROM task_prerequisites WHERE task_id = ? OR prerequisite_task_id = ?")
+            .bind(id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
         sqlx::query(
             "DELETE FROM ui_prompts WHERE task_id = ? OR run_id IN (SELECT id FROM task_runs WHERE task_id = ?)",
         )
@@ -2870,8 +3082,9 @@ impl SqliteStore {
                 id, name, host, port, username, auth_type, password, private_key_path,
                 certificate_path, default_remote_path, host_key_policy, enabled,
                 last_tested_at, last_test_status, last_test_message, last_active_at,
+                creator_user_id, creator_username, creator_display_name, task_id,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 host = excluded.host,
@@ -2888,6 +3101,10 @@ impl SqliteStore {
                 last_test_status = excluded.last_test_status,
                 last_test_message = excluded.last_test_message,
                 last_active_at = excluded.last_active_at,
+                creator_user_id = excluded.creator_user_id,
+                creator_username = excluded.creator_username,
+                creator_display_name = excluded.creator_display_name,
+                task_id = excluded.task_id,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at",
         )
@@ -2907,6 +3124,10 @@ impl SqliteStore {
         .bind(server.last_test_status.clone())
         .bind(server.last_test_message.clone())
         .bind(server.last_active_at.clone())
+        .bind(server.creator_user_id.clone())
+        .bind(server.creator_username.clone())
+        .bind(server.creator_display_name.clone())
+        .bind(server.task_id.clone())
         .bind(&server.created_at)
         .bind(&server.updated_at)
         .execute(&self.pool)
@@ -3642,12 +3863,14 @@ fn task_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TaskRecord, String> {
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
         result_summary: row.get("result_summary"),
+        process_log: row.get("process_log"),
         last_run_id: row.get("last_run_id"),
         schedule: decode_json(row.get("schedule_json"))?,
         parent_task_id: row.get("parent_task_id"),
         source_run_id: row.get("source_run_id"),
         source_session_id: row.get("source_session_id"),
         source_turn_id: row.get("source_turn_id"),
+        prerequisite_task_ids: Vec::new(),
         task_tool_state: decode_json(row.get("task_tool_state_json"))?,
         mcp_config: decode_json(row.get("mcp_config_json"))?,
         created_at: row.get("created_at"),
@@ -3728,6 +3951,10 @@ fn remote_server_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<RemoteServerR
         last_test_status: row.get("last_test_status"),
         last_test_message: row.get("last_test_message"),
         last_active_at: row.get("last_active_at"),
+        creator_user_id: row.get("creator_user_id"),
+        creator_username: row.get("creator_username"),
+        creator_display_name: row.get("creator_display_name"),
+        task_id: row.get("task_id"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })

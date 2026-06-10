@@ -96,6 +96,7 @@ pub fn build_task_board_runtime_context(
         runtime_context.contact_system_prompt.clone(),
         runtime_context.builtin_mcp_system_prompt.clone(),
         runtime_context.command_system_prompt.clone(),
+        runtime_context.task_runner_skill_prompt.clone(),
     )
 }
 
@@ -124,6 +125,7 @@ pub fn configure_agent_ai_server(
         refresh_context.contact_system_prompt,
         refresh_context.builtin_mcp_system_prompt,
         refresh_context.command_system_prompt,
+        refresh_context.task_runner_skill_prompt,
     );
     apply_settings_to_ai_client(&mut ai_server.ai_client, effective_settings);
 }

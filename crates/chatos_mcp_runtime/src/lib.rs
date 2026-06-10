@@ -42,5 +42,6 @@ pub use schema::{build_function_tool_schema, parse_tool_definition};
 pub use text::{inject_agent_builder_args, to_text_and_structured_result};
 pub use types::{
     McpBuiltinServer, McpHttpServer, McpStdioServer, ParsedToolDefinition, ToolAbortCheckCallback,
-    ToolCallContext, ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
+    ToolCallContext, ToolCallerModelRuntime, ToolInfo, ToolResult, ToolResultCallback,
+    ToolStreamChunkCallback,
 };

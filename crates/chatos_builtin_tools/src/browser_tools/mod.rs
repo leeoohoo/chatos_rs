@@ -4,15 +4,18 @@ mod registration_basic;
 mod registration_observe;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chatos_mcp_runtime::{ToolCallContext, ToolCallerModelRuntime};
 use parking_lot::Mutex;
 use serde_json::Value;
 
 use crate::browser_runtime::{browser_backend_available, BrowserRuntimeSession};
 use crate::tool_registry::ToolRegistry;
+use crate::tool_registry::{block_on_result, text_result};
 
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_MAX_SNAPSHOT_CHARS: usize = 8_000;
@@ -48,7 +51,33 @@ pub struct BrowserToolsService {
     registry: ToolRegistry<ToolHandler>,
 }
 
-type ToolHandler = Arc<dyn Fn(Value, Option<&str>) -> Result<Value, String> + Send + Sync>;
+type ToolHandler =
+    Arc<dyn Fn(Value, BrowserToolCallContext) -> Result<Value, String> + Send + Sync>;
+
+#[derive(Debug, Clone, Default)]
+pub struct BrowserToolCallContext {
+    pub conversation_id: Option<String>,
+    pub caller_model_runtime: Option<ToolCallerModelRuntime>,
+}
+
+impl BrowserToolCallContext {
+    pub fn from_conversation_id(conversation_id: Option<&str>) -> Self {
+        Self {
+            conversation_id: conversation_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            caller_model_runtime: None,
+        }
+    }
+
+    pub fn from_tool_call_context(context: &ToolCallContext) -> Self {
+        Self {
+            conversation_id: context.conversation_id.clone(),
+            caller_model_runtime: context.caller_model_runtime.clone(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct BoundContext {
@@ -65,6 +94,7 @@ pub struct BrowserVisionRequest {
     pub question: String,
     pub screenshot_path: String,
     pub conversation_id: Option<String>,
+    pub caller_model_runtime: Option<ToolCallerModelRuntime>,
     pub annotate: bool,
 }
 
@@ -160,11 +190,24 @@ impl BrowserToolsService {
         args: Value,
         conversation_id: Option<&str>,
     ) -> Result<Value, String> {
+        self.call_tool_with_context(
+            name,
+            args,
+            BrowserToolCallContext::from_conversation_id(conversation_id),
+        )
+    }
+
+    pub fn call_tool_with_context(
+        &self,
+        name: &str,
+        args: Value,
+        context: BrowserToolCallContext,
+    ) -> Result<Value, String> {
         let tool = self
             .registry
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
-        (tool.handler)(args, conversation_id)
+        (tool.handler)(args, context)
     }
 
     pub fn unavailable_tools(&self) -> Vec<(String, String)> {
@@ -205,6 +248,18 @@ impl BrowserToolsService {
             );
         }
     }
+}
+
+pub(super) fn async_browser_text_tool_handler<F, Fut>(builder: F) -> ToolHandler
+where
+    F: Fn(Value, BrowserToolCallContext) -> Result<Fut, String> + Send + Sync + 'static,
+    Fut: Future<Output = Result<Value, String>>,
+{
+    Arc::new(move |args, context| {
+        let future = builder(args, context)?;
+        let result = block_on_result(future)?;
+        Ok(text_result(result))
+    })
 }
 
 impl Default for BrowserToolsOptions {

@@ -194,6 +194,7 @@ impl chatos_ai_runtime::ToolExecutor for ChatosToolExecutorAdapter {
                 context.conversation_id.as_deref(),
                 context.conversation_turn_id.as_deref(),
                 context.caller_model.as_deref(),
+                context.caller_model_runtime.as_ref(),
                 callback,
             )
             .await
@@ -251,6 +252,7 @@ pub fn shared_model_runtime_config_from_resolved(
         resolved.provider.clone(),
     )
     .with_responses_support(resolved.supports_responses)
+    .with_images_support(Some(resolved.supports_images))
     .with_temperature(Some(resolved.temperature))
     .with_thinking_level(resolved.thinking_level.clone())
     .with_instructions(resolved.system_prompt.clone())

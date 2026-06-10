@@ -1,3 +1,4 @@
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::Value;
 
 use crate::core::mcp_tools::ToolResultCallback;
@@ -65,6 +66,7 @@ impl McpToolExecute {
         session_id: Option<&str>,
         conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
+        caller_model_runtime: Option<&ToolCallerModelRuntime>,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         self.shared
@@ -73,6 +75,7 @@ impl McpToolExecute {
                 session_id,
                 conversation_turn_id,
                 caller_model,
+                caller_model_runtime,
                 on_tool_result,
             )
             .await

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::Value;
 
 use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
@@ -107,6 +108,7 @@ impl SharedMcpToolExecute {
         session_id: Option<&str>,
         conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
+        caller_model_runtime: Option<&ToolCallerModelRuntime>,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         if let Some(shared) = &self.shared_core {
@@ -124,6 +126,7 @@ impl SharedMcpToolExecute {
                         conversation_turn_id.map(ToOwned::to_owned),
                         caller_model.map(ToOwned::to_owned),
                     )
+                    .with_caller_model_runtime(caller_model_runtime.cloned())
                     .with_abort_checker(std::sync::Arc::new(|session_id| {
                         crate::utils::abort_registry::is_aborted(session_id)
                     })),
@@ -141,6 +144,7 @@ impl SharedMcpToolExecute {
                 session_id,
                 conversation_turn_id,
                 caller_model,
+                caller_model_runtime,
                 on_tool_result,
             )
             .await

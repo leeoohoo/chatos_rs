@@ -7,6 +7,7 @@ edition = "2021"
 async-trait = "0.1"
 argon2 = "0.5"
 axum = { version = "0.7", features = ["json"] }
+base64 = "0.22"
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }

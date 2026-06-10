@@ -17,10 +17,12 @@ pub fn build_runtime_prefixed_input_items(
     contact_system_prompt: Option<&str>,
     builtin_mcp_system_prompt: Option<&str>,
     command_system_prompt: Option<&str>,
+    task_runner_skill_prompt: Option<&str>,
 ) -> Option<Vec<Value>> {
     build_prefixed_input_items(&[
         contact_system_prompt,
         builtin_mcp_system_prompt,
+        task_runner_skill_prompt,
         command_system_prompt,
         task_board_prompt,
     ])

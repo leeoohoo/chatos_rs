@@ -28,6 +28,7 @@ export type UserRole = 'admin' | 'agent';
 export type TaskMcpInitMode = 'full' | 'builtin_only' | 'disabled';
 export type TaskBuiltinPromptMode = 'configured' | 'effective';
 export type TaskScheduleMode = 'manual' | 'once' | 'interval';
+export type TaskProcessLogOperation = 'append' | 'replace' | 'clear';
 
 export interface AuthUser {
   id: string;
@@ -129,12 +130,14 @@ export interface TaskRecord {
   creator_username?: string | null;
   creator_display_name?: string | null;
   result_summary?: string | null;
+  process_log?: string | null;
   last_run_id?: string | null;
   schedule: TaskScheduleConfig;
   parent_task_id?: string | null;
   source_run_id?: string | null;
   source_session_id?: string | null;
   source_turn_id?: string | null;
+  prerequisite_task_ids: string[];
   task_tool_state: TaskToolState;
   mcp_config: TaskMcpConfig;
   created_at: string;
@@ -183,6 +186,10 @@ export interface RemoteServerRecord {
   last_test_status?: RemoteServerTestStatus | string | null;
   last_test_message?: string | null;
   last_active_at?: string | null;
+  creator_user_id?: string | null;
+  creator_username?: string | null;
+  creator_display_name?: string | null;
+  task_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -648,9 +655,16 @@ export interface CreateTaskPayload {
   default_model_config_id?: string;
   schedule?: TaskScheduleConfig;
   mcp_config?: TaskMcpConfig;
+  prerequisite_task_ids?: string[];
 }
 
 export interface UpdateTaskPayload extends Partial<CreateTaskPayload> {}
+
+export interface RecordTaskProcessPayload {
+  operation?: TaskProcessLogOperation;
+  content?: string;
+  heading?: string;
+}
 
 export interface TaskListFilters {
   status?: TaskStatus;

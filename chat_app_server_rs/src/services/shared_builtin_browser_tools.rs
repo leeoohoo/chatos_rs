@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine as _;
 use chatos_ai_runtime as shared_ai_runtime;
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::{json, Value};
 
 use chatos_builtin_tools::{
@@ -36,6 +37,7 @@ impl BrowserVisionAdapter for ChatosBrowserVisionAdapter {
             request.question.as_str(),
             request.screenshot_path.as_str(),
             request.conversation_id.as_deref(),
+            request.caller_model_runtime.as_ref(),
         )
         .await?;
 
@@ -142,6 +144,9 @@ fn browser_vision_candidate_from_model_cfg(
     if runtime.api_key.trim().is_empty() || runtime.base_url.trim().is_empty() {
         return None;
     }
+    if !runtime.supports_responses {
+        return None;
+    }
     if !model_cfg_supports_browser_vision(model_cfg, runtime.model.as_str()) {
         return None;
     }
@@ -157,6 +162,41 @@ fn browser_vision_candidate_from_model_cfg(
         temperature: runtime.temperature,
         api_key: runtime.api_key,
         base_url: runtime.base_url,
+    })
+}
+
+fn browser_vision_candidate_from_caller_runtime(
+    runtime: &ToolCallerModelRuntime,
+    prompt_source: &'static str,
+    contact_agent_id: Option<String>,
+    instructions: Option<String>,
+) -> Option<BrowserVisionCandidate> {
+    let model = normalize_non_empty(Some(runtime.model.as_str()))?;
+    let base_url = normalize_non_empty(Some(runtime.base_url.as_str()))?;
+    let api_key = normalize_non_empty(Some(runtime.api_key.as_str()))?;
+    let provider =
+        normalize_non_empty(Some(runtime.provider.as_str())).unwrap_or_else(|| "gpt".to_string());
+    let supports_images = runtime
+        .supports_images
+        .unwrap_or_else(|| is_vision_model(model.as_str()));
+    if !supports_images {
+        return None;
+    }
+    if !runtime.supports_responses {
+        return None;
+    }
+
+    Some(BrowserVisionCandidate {
+        mode: "caller_model",
+        prompt_source,
+        contact_agent_id,
+        instructions,
+        model,
+        provider,
+        thinking_level: runtime.thinking_level.clone(),
+        temperature: runtime.temperature.unwrap_or(0.7),
+        api_key,
+        base_url,
     })
 }
 
@@ -292,6 +332,7 @@ async fn prepare_browser_vision_context(
 
 async fn build_browser_vision_candidates(
     prepared: &BrowserVisionPreparedContext,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     warnings: &mut Vec<String>,
 ) -> Vec<BrowserVisionCandidate> {
     let prompt_source = browser_vision_prompt_source(prepared);
@@ -300,6 +341,15 @@ async fn build_browser_vision_candidates(
     let mut out = Vec::new();
     let mut seen = HashSet::new();
 
+    append_caller_model_candidate(
+        caller_model_runtime,
+        warnings,
+        prompt_source,
+        contact_agent_id.clone(),
+        instructions.clone(),
+        &mut out,
+        &mut seen,
+    );
     append_session_model_candidate(
         prepared,
         warnings,
@@ -331,6 +381,40 @@ async fn build_browser_vision_candidates(
     }
 
     out
+}
+
+fn append_caller_model_candidate(
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
+    warnings: &mut Vec<String>,
+    prompt_source: &'static str,
+    contact_agent_id: Option<String>,
+    instructions: Option<String>,
+    out: &mut Vec<BrowserVisionCandidate>,
+    seen: &mut HashSet<String>,
+) {
+    let Some(runtime) = caller_model_runtime else {
+        return;
+    };
+    if !runtime.is_configured() {
+        warnings.push(
+            "Current caller model runtime is incomplete, so browser_vision will try fallback models."
+                .to_string(),
+        );
+        return;
+    }
+    if let Some(candidate) = browser_vision_candidate_from_caller_runtime(
+        runtime,
+        prompt_source,
+        contact_agent_id,
+        instructions,
+    ) {
+        push_browser_vision_candidate(out, seen, candidate);
+    } else {
+        warnings.push(
+            "Current caller model is not available for browser_vision, so fallback models will be tried."
+                .to_string(),
+        );
+    }
 }
 
 async fn load_browser_vision_session(
@@ -496,10 +580,12 @@ async fn analyze_screenshot_with_best_available_runtime(
     question: &str,
     screenshot_path: &str,
     conversation_id: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
 ) -> Result<BrowserVisionOutput, BrowserVisionFailure> {
     let prepared = prepare_browser_vision_context(conversation_id).await;
     let mut warnings = prepared.warnings.clone();
-    let candidates = build_browser_vision_candidates(&prepared, &mut warnings).await;
+    let candidates =
+        build_browser_vision_candidates(&prepared, caller_model_runtime, &mut warnings).await;
     if candidates.is_empty() {
         return Err(BrowserVisionFailure {
             error: build_browser_vision_unavailable_message(warnings.as_slice()),
@@ -662,4 +748,74 @@ fn ensure_browser_vision_analysis(
         return Err(empty_output_error.to_string());
     }
     Ok(analysis)
+}
+
+#[cfg(test)]
+mod tests {
+    use chatos_mcp_runtime::ToolCallerModelRuntime;
+
+    use super::browser_vision_candidate_from_caller_runtime;
+
+    #[test]
+    fn caller_runtime_builds_first_class_browser_vision_candidate() {
+        let runtime = ToolCallerModelRuntime::openai_compatible(
+            "https://models.example/v1",
+            "secret",
+            "custom-vision-model",
+            "custom",
+        )
+        .with_responses_support(true)
+        .with_images_support(Some(true))
+        .with_temperature(Some(0.2))
+        .with_thinking_level(Some("low".to_string()));
+
+        let candidate = browser_vision_candidate_from_caller_runtime(
+            &runtime,
+            "contact_agent",
+            Some("agent_1".to_string()),
+            Some("contact prompt".to_string()),
+        )
+        .expect("caller runtime candidate");
+
+        assert_eq!(candidate.mode, "caller_model");
+        assert_eq!(candidate.prompt_source, "contact_agent");
+        assert_eq!(candidate.contact_agent_id.as_deref(), Some("agent_1"));
+        assert_eq!(candidate.model, "custom-vision-model");
+        assert_eq!(candidate.provider, "custom");
+        assert_eq!(candidate.base_url, "https://models.example/v1");
+        assert_eq!(candidate.temperature, 0.2);
+        assert_eq!(candidate.thinking_level.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn caller_runtime_rejects_non_responses_or_non_vision_models() {
+        let non_responses = ToolCallerModelRuntime::openai_compatible(
+            "https://models.example/v1",
+            "secret",
+            "custom-vision-model",
+            "custom",
+        )
+        .with_responses_support(false)
+        .with_images_support(Some(true));
+        assert!(browser_vision_candidate_from_caller_runtime(
+            &non_responses,
+            "generic",
+            None,
+            None,
+        )
+        .is_none());
+
+        let non_vision = ToolCallerModelRuntime::openai_compatible(
+            "https://models.example/v1",
+            "secret",
+            "text-only-model",
+            "custom",
+        )
+        .with_responses_support(true)
+        .with_images_support(Some(false));
+        assert!(
+            browser_vision_candidate_from_caller_runtime(&non_vision, "generic", None, None,)
+                .is_none()
+        );
+    }
 }

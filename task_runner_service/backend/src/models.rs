@@ -65,6 +65,20 @@ impl Default for UiPromptStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum TaskProcessLogOperation {
+    Append,
+    Replace,
+    Clear,
+}
+
+impl Default for TaskProcessLogOperation {
+    fn default() -> Self {
+        Self::Append
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum UserRole {
     Admin,
     Agent,
@@ -210,6 +224,8 @@ pub struct TaskRecord {
     #[serde(default)]
     pub creator_display_name: Option<String>,
     pub result_summary: Option<String>,
+    #[serde(default)]
+    pub process_log: Option<String>,
     pub last_run_id: Option<String>,
     #[serde(default)]
     pub schedule: TaskScheduleConfig,
@@ -221,6 +237,8 @@ pub struct TaskRecord {
     pub source_session_id: Option<String>,
     #[serde(default)]
     pub source_turn_id: Option<String>,
+    #[serde(default)]
+    pub prerequisite_task_ids: Vec<String>,
     #[serde(default)]
     pub task_tool_state: TaskToolState,
     pub mcp_config: TaskMcpConfig,
@@ -348,6 +366,14 @@ pub struct RemoteServerRecord {
     pub last_test_status: Option<String>,
     pub last_test_message: Option<String>,
     pub last_active_at: Option<String>,
+    #[serde(default)]
+    pub creator_user_id: Option<String>,
+    #[serde(default)]
+    pub creator_username: Option<String>,
+    #[serde(default)]
+    pub creator_display_name: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -532,12 +558,16 @@ pub struct CreateTaskRequest {
     pub subject_id: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
     pub mcp_config: Option<TaskMcpConfig>,
+    #[serde(default)]
+    pub prerequisite_task_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskSourceContext {
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
+    pub workspace_dir: Option<String>,
+    pub remote_server_config: Option<CreateRemoteServerRequest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -604,6 +634,40 @@ pub struct UpdateTaskRequest {
     pub default_model_config_id: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
     pub mcp_config: Option<TaskMcpConfig>,
+    #[serde(default)]
+    pub prerequisite_task_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPrerequisiteRecord {
+    pub task_id: String,
+    pub prerequisite_task_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskDependencyGraph {
+    pub task_id: String,
+    pub prerequisites: Vec<TaskSummaryRecord>,
+    pub transitive_prerequisites: Vec<TaskSummaryRecord>,
+    pub blocked_by: Vec<TaskSummaryRecord>,
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SetTaskPrerequisitesRequest {
+    #[serde(default)]
+    pub prerequisite_task_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RecordTaskProcessRequest {
+    #[serde(default)]
+    pub operation: TaskProcessLogOperation,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub heading: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use chatos_mcp_runtime::{ToolCallContext, ToolResult, ToolResultCallback};
+use chatos_mcp_runtime::{ToolCallContext, ToolCallerModelRuntime, ToolResult, ToolResultCallback};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeMessage {
@@ -17,6 +17,7 @@ pub struct ModelRuntimeConfig {
     pub model: String,
     pub provider: String,
     pub supports_responses: bool,
+    pub supports_images: Option<bool>,
     pub instructions: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
@@ -45,6 +46,11 @@ impl ModelRuntimeConfig {
 
     pub fn with_responses_support(mut self, supports_responses: bool) -> Self {
         self.supports_responses = supports_responses;
+        self
+    }
+
+    pub fn with_images_support(mut self, supports_images: Option<bool>) -> Self {
+        self.supports_images = supports_images;
         self
     }
 
@@ -109,6 +115,21 @@ impl ModelRuntimeConfig {
             include_prompt_cache_retention: self.include_prompt_cache_retention,
             request_body_limit_bytes: self.request_body_limit_bytes,
         }
+    }
+
+    pub fn to_tool_caller_model_runtime(&self) -> ToolCallerModelRuntime {
+        ToolCallerModelRuntime::openai_compatible(
+            self.base_url.clone(),
+            self.api_key.clone(),
+            self.model.clone(),
+            self.provider.clone(),
+        )
+        .with_responses_support(self.supports_responses)
+        .with_images_support(self.supports_images)
+        .with_thinking_level(self.thinking_level.clone())
+        .with_temperature(self.temperature)
+        .with_instructions(self.instructions.clone())
+        .with_max_output_tokens(self.max_output_tokens)
     }
 }
 

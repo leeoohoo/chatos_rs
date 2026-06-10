@@ -59,6 +59,10 @@ const HOST_KEY_POLICY_OPTIONS = [
   { label: 'strict', value: 'strict' },
 ] as const;
 
+function serverCreatorLabel(server: RemoteServerRecord): string {
+  return server.creator_display_name || server.creator_username || server.creator_user_id || '-';
+}
+
 export function ServersPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -265,6 +269,21 @@ export function ServersPage() {
       width: 220,
       render: (value?: string | null) => value || '-',
       ellipsis: true,
+    },
+    {
+      title: t('servers.column.source'),
+      key: 'source',
+      width: 190,
+      render: (_, record) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text>{serverCreatorLabel(record)}</Typography.Text>
+          {record.task_id ? (
+            <Typography.Text type="secondary" code>
+              {record.task_id.slice(0, 8)}
+            </Typography.Text>
+          ) : null}
+        </Space>
+      ),
     },
     {
       title: t('servers.column.hostKeyPolicy'),
@@ -636,6 +655,12 @@ export function ServersPage() {
             <Descriptions bordered column={1} size="small">
               <Descriptions.Item label={t('servers.detail.serverId')}>{selectedServer.id}</Descriptions.Item>
               <Descriptions.Item label={t('servers.detail.name')}>{selectedServer.name}</Descriptions.Item>
+              <Descriptions.Item label={t('servers.detail.creator')}>
+                {serverCreatorLabel(selectedServer)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('servers.detail.taskId')}>
+                {selectedServer.task_id || '-'}
+              </Descriptions.Item>
               <Descriptions.Item label="Host">
                 {selectedServer.host}:{selectedServer.port}
               </Descriptions.Item>

@@ -140,11 +140,13 @@ mod tests {
             Some("turn-1"),
             None,
             None,
+            None,
             move |tool_name: String,
                   _args: Value,
                   _session_id: Option<String>,
                   _turn_id: Option<String>,
                   _caller_model: Option<String>,
+                  _caller_model_runtime,
                   _on_stream_chunk| {
                 let panic_once = Arc::clone(&panic_once);
                 async move {

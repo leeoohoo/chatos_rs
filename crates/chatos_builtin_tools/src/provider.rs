@@ -6,7 +6,7 @@ use chatos_mcp_runtime::{
 use serde_json::Value;
 
 use crate::agent_builder::AgentBuilderService;
-use crate::browser_tools::{BrowserToolsOptions, BrowserToolsService};
+use crate::browser_tools::{BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService};
 use crate::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
 use crate::memory_readers::{
     MemoryCommandReaderService, MemoryPluginReaderService, MemorySkillReaderService,
@@ -67,9 +67,11 @@ impl SharedBuiltinToolService {
                 context.conversation_turn_id.as_deref(),
                 on_stream_chunk,
             ),
-            Self::BrowserTools(service) => {
-                service.call_tool(name, args, context.conversation_id.as_deref())
-            }
+            Self::BrowserTools(service) => service.call_tool_with_context(
+                name,
+                args,
+                BrowserToolCallContext::from_tool_call_context(context),
+            ),
             Self::CodeMaintainer(service) => {
                 service.call_tool(name, args, context.conversation_id.as_deref())
             }

@@ -23,6 +23,8 @@ mod actions_vision;
 
 use serde_json::Value;
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
+
 use super::BoundContext;
 pub(super) const DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS: i64 =
     actions_config::DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS;
@@ -39,6 +41,7 @@ pub(super) const DEFAULT_BROWSER_RESEARCH_MAX_EXTRACT_CHARS: usize =
 pub(super) async fn browser_research_with_context(
     ctx: BoundContext,
     conversation_id: Option<&str>,
+    caller_model_runtime: Option<ToolCallerModelRuntime>,
     question: String,
     web_query: Option<String>,
     include_web: bool,
@@ -50,6 +53,7 @@ pub(super) async fn browser_research_with_context(
     actions_research::browser_research_with_context(
         ctx,
         conversation_id,
+        caller_model_runtime,
         question,
         web_query,
         include_web,
@@ -64,10 +68,18 @@ pub(super) async fn browser_research_with_context(
 pub(super) async fn browser_vision_with_context(
     ctx: BoundContext,
     conversation_id: Option<&str>,
+    caller_model_runtime: Option<ToolCallerModelRuntime>,
     question: String,
     annotate: bool,
 ) -> Result<Value, String> {
-    actions_vision::browser_vision_with_context(ctx, conversation_id, question, annotate).await
+    actions_vision::browser_vision_with_context(
+        ctx,
+        conversation_id,
+        caller_model_runtime,
+        question,
+        annotate,
+    )
+    .await
 }
 
 pub(super) async fn browser_console_with_context(
@@ -82,12 +94,20 @@ pub(super) async fn browser_console_with_context(
 pub(super) async fn browser_inspect_with_context(
     ctx: BoundContext,
     conversation_id: Option<&str>,
+    caller_model_runtime: Option<ToolCallerModelRuntime>,
     question: Option<String>,
     full: bool,
     annotate: bool,
 ) -> Result<Value, String> {
-    actions_inspect::browser_inspect_with_context(ctx, conversation_id, question, full, annotate)
-        .await
+    actions_inspect::browser_inspect_with_context(
+        ctx,
+        conversation_id,
+        caller_model_runtime,
+        question,
+        full,
+        annotate,
+    )
+    .await
 }
 
 pub(super) async fn browser_navigate_with_context(

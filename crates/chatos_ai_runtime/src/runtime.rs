@@ -4,7 +4,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use chatos_mcp_runtime::{ToolAbortCheckCallback, ToolCallContext, ToolResult, ToolResultCallback};
+use chatos_mcp_runtime::{
+    ToolAbortCheckCallback, ToolCallContext, ToolCallerModelRuntime, ToolResult, ToolResultCallback,
+};
 use tracing::{info, warn};
 
 use crate::error_policy::{is_context_length_exceeded_error, is_request_body_too_large_error};
@@ -29,6 +31,7 @@ pub struct AiRuntimeOptions {
     pub conversation_id: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub caller_model: Option<String>,
+    pub caller_model_runtime: Option<ToolCallerModelRuntime>,
     pub abort_checker: Option<ToolAbortCheckCallback>,
     pub callbacks: RuntimeCallbacks,
     pub record_options: RuntimeRecordOptions,
@@ -166,6 +169,7 @@ impl AiRuntimeOptions {
             conversation_id,
             conversation_turn_id,
             caller_model: None,
+            caller_model_runtime: None,
             abort_checker: None,
             callbacks: RuntimeCallbacks::default(),
             record_options: RuntimeRecordOptions::default(),
@@ -184,6 +188,20 @@ impl AiRuntimeOptions {
 
     pub fn with_caller_model(mut self, caller_model: Option<String>) -> Self {
         self.caller_model = caller_model;
+        self
+    }
+
+    pub fn with_caller_model_runtime(
+        mut self,
+        caller_model_runtime: Option<ToolCallerModelRuntime>,
+    ) -> Self {
+        if self.caller_model.is_none() {
+            self.caller_model = caller_model_runtime
+                .as_ref()
+                .map(|runtime| runtime.model.clone())
+                .filter(|model| !model.trim().is_empty());
+        }
+        self.caller_model_runtime = caller_model_runtime;
         self
     }
 
@@ -224,7 +242,8 @@ impl AiRuntimeOptions {
             self.conversation_id.clone(),
             self.conversation_turn_id.clone(),
             self.caller_model.clone(),
-        );
+        )
+        .with_caller_model_runtime(self.caller_model_runtime.clone());
         if let Some(abort_checker) = &self.abort_checker {
             context.with_abort_checker(Arc::clone(abort_checker))
         } else {
@@ -458,13 +477,18 @@ impl AiRuntime {
                 "tool_count": tool_count,
                 "supports_responses": request.supports_responses,
             });
-            let on_before_model_request = options.callbacks.on_before_model_request.as_ref().map(|cb| {
-                let cb = Arc::clone(cb);
-                let request_debug = request_debug.clone();
-                Arc::new(move |payload: Value| {
-                    cb(attach_runtime_debug(payload, &request_debug));
-                }) as Arc<dyn Fn(Value) + Send + Sync>
-            });
+            let on_before_model_request =
+                options
+                    .callbacks
+                    .on_before_model_request
+                    .as_ref()
+                    .map(|cb| {
+                        let cb = Arc::clone(cb);
+                        let request_debug = request_debug.clone();
+                        Arc::new(move |payload: Value| {
+                            cb(attach_runtime_debug(payload, &request_debug));
+                        }) as Arc<dyn Fn(Value) + Send + Sync>
+                    });
             let response = self
                 .request_handler
                 .handle_request_with_options(
@@ -726,7 +750,10 @@ fn normalized_option(value: Option<&str>) -> Option<String> {
 }
 
 fn input_item_count(input: &Value) -> usize {
-    input.as_array().map(Vec::len).unwrap_or(usize::from(!input.is_null()))
+    input
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(usize::from(!input.is_null()))
 }
 
 fn json_value_size_bytes(value: &Value) -> usize {
@@ -769,6 +796,8 @@ mod tests {
 
     use serde_json::json;
 
+    use chatos_mcp_runtime::ToolCallerModelRuntime;
+
     use super::{
         AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus, IterativeContextRefresh,
     };
@@ -778,6 +807,16 @@ mod tests {
         let options =
             AiRuntimeOptions::new(Some("session_1".to_string()), Some("turn_1".to_string()))
                 .with_caller_model(Some("model_1".to_string()))
+                .with_caller_model_runtime(Some(
+                    ToolCallerModelRuntime::openai_compatible(
+                        "https://example.com/v1",
+                        "secret",
+                        "model_1",
+                        "gpt",
+                    )
+                    .with_responses_support(true)
+                    .with_images_support(Some(true)),
+                ))
                 .with_abort_checker(Some(Arc::new(|session_id| session_id == "session_1")));
 
         assert!(options.is_aborted());
@@ -785,6 +824,14 @@ mod tests {
         assert_eq!(context.conversation_id.as_deref(), Some("session_1"));
         assert_eq!(context.conversation_turn_id.as_deref(), Some("turn_1"));
         assert_eq!(context.caller_model.as_deref(), Some("model_1"));
+        let caller_runtime = context
+            .caller_model_runtime
+            .as_ref()
+            .expect("caller runtime");
+        assert_eq!(caller_runtime.model, "model_1");
+        assert_eq!(caller_runtime.base_url, "https://example.com/v1");
+        assert!(caller_runtime.supports_responses);
+        assert_eq!(caller_runtime.supports_images, Some(true));
         assert!(context.is_aborted());
     }
 

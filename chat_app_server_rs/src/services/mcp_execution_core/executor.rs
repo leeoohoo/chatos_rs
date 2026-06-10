@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::Value;
 
 use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
@@ -79,6 +80,7 @@ impl McpExecutorCore {
         session_id: Option<&str>,
         conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
+        caller_model_runtime: Option<&ToolCallerModelRuntime>,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         execute_tools_stream_with_registry(
@@ -86,6 +88,7 @@ impl McpExecutorCore {
             session_id,
             conversation_turn_id,
             caller_model,
+            caller_model_runtime,
             on_tool_result,
             self.state.tool_metadata(),
             self.state.builtin_services(),

@@ -3774,6 +3774,7 @@ dependencies = [
  "argon2",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",

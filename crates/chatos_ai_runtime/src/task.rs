@@ -307,6 +307,7 @@ impl TaskRunSpec {
     pub fn runtime_options(&self) -> AiRuntimeOptions {
         AiRuntimeOptions::new(Some(self.task_id.clone()), Some(self.run_id.clone()))
             .with_caller_model(Some(self.model_config.model.clone()))
+            .with_caller_model_runtime(Some(self.model_config.to_tool_caller_model_runtime()))
             .with_record_options(self.record_options.clone())
     }
 

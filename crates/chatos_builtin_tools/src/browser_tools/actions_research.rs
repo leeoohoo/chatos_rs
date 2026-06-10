@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
+
 use crate::research_payloads::build_empty_search_payload;
 use crate::research_summary::{
     apply_research_execution_summary, build_empty_research_summary, set_research_summary_warning,
@@ -25,6 +27,7 @@ use super::{
 pub(super) async fn browser_research_with_context(
     ctx: BoundContext,
     conversation_id: Option<&str>,
+    caller_model_runtime: Option<ToolCallerModelRuntime>,
     question: String,
     web_query: Option<String>,
     include_web: bool,
@@ -44,6 +47,7 @@ pub(super) async fn browser_research_with_context(
     let page = browser_inspect_with_context(
         ctx.clone(),
         conversation_id,
+        caller_model_runtime,
         Some(question.clone()),
         full,
         annotate,

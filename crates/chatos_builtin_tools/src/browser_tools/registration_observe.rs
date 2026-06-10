@@ -1,7 +1,5 @@
 use serde_json::json;
 
-use crate::tool_registry::async_text_tool_handler_with_optional_string;
-
 use super::actions::{
     browser_console_with_context, browser_inspect_with_context, browser_research_with_context,
     browser_vision_with_context,
@@ -10,8 +8,8 @@ use super::context::{
     optional_bool, optional_trimmed_string, optional_usize, required_trimmed_string,
 };
 use super::{
-    BoundContext, BrowserToolsService, DEFAULT_BROWSER_RESEARCH_LIMIT,
-    MAX_BROWSER_RESEARCH_EXTRACT_URLS, MAX_BROWSER_RESEARCH_LIMIT,
+    async_browser_text_tool_handler, BoundContext, BrowserToolsService,
+    DEFAULT_BROWSER_RESEARCH_LIMIT, MAX_BROWSER_RESEARCH_EXTRACT_URLS, MAX_BROWSER_RESEARCH_LIMIT,
 };
 
 impl BrowserToolsService {
@@ -27,13 +25,18 @@ impl BrowserToolsService {
                 },
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let clear = optional_bool(&args, "clear");
                 let expression = optional_trimmed_string(&args, "expression");
                 let ctx = bound.clone();
                 Ok(async move {
-                    browser_console_with_context(ctx, conversation_id.as_deref(), clear, expression)
-                        .await
+                    browser_console_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        clear,
+                        expression,
+                    )
+                    .await
                 })
             }),
         );
@@ -52,7 +55,7 @@ impl BrowserToolsService {
                 },
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let question = optional_trimmed_string(&args, "question");
                 let full = optional_bool(&args, "full");
                 let annotate = optional_bool(&args, "annotate");
@@ -60,7 +63,8 @@ impl BrowserToolsService {
                 Ok(async move {
                     browser_inspect_with_context(
                         ctx,
-                        conversation_id.as_deref(),
+                        browser_context.conversation_id.as_deref(),
+                        browser_context.caller_model_runtime.clone(),
                         question,
                         full,
                         annotate,
@@ -89,7 +93,7 @@ impl BrowserToolsService {
                 "required": ["question"],
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let question = required_trimmed_string(&args, "question")?;
                 let web_query = optional_trimmed_string(&args, "web_query");
                 let include_web = args
@@ -107,7 +111,8 @@ impl BrowserToolsService {
                 Ok(async move {
                     browser_research_with_context(
                         ctx,
-                        conversation_id.as_deref(),
+                        browser_context.conversation_id.as_deref(),
+                        browser_context.caller_model_runtime.clone(),
                         question,
                         web_query,
                         include_web,
@@ -135,14 +140,15 @@ impl BrowserToolsService {
                 "required": ["question"],
                 "additionalProperties": false
             }),
-            async_text_tool_handler_with_optional_string(move |args, conversation_id| {
+            async_browser_text_tool_handler(move |args, browser_context| {
                 let question = required_trimmed_string(&args, "question")?;
                 let annotate = optional_bool(&args, "annotate");
                 let ctx = bound.clone();
                 Ok(async move {
                     browser_vision_with_context(
                         ctx,
-                        conversation_id.as_deref(),
+                        browser_context.conversation_id.as_deref(),
+                        browser_context.caller_model_runtime.clone(),
                         question,
                         annotate,
                     )
