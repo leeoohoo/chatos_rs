@@ -247,6 +247,8 @@ const normalizeSnapshotCursor = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
+const isOffsetSnapshotCursor = (value: string): boolean => /^offset:\d+$/i.test(value);
+
 const countCompactHistoryUnits = (messages: Message[]): number => {
   let units = 0;
   for (let index = 0; index < messages.length; index += 1) {
@@ -336,7 +338,10 @@ export const trimCompactHistorySnapshotToRecent = (
   }
 
   const trimmedMessages = messages.slice(startIndex);
-  const nextBefore = readMessageTurnCursor(trimmedMessages[0] as Message) || snapshot.nextBefore || null;
+  const normalizedSnapshotNextBefore = normalizeSnapshotCursor(snapshot.nextBefore);
+  const nextBefore = isOffsetSnapshotCursor(normalizedSnapshotNextBefore)
+    ? normalizedSnapshotNextBefore
+    : readMessageTurnCursor(trimmedMessages[0] as Message) || normalizedSnapshotNextBefore || null;
 
   return {
     messages: cloneStreamingMessageDraft(trimmedMessages),

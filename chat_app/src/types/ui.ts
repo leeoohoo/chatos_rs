@@ -49,6 +49,7 @@ export interface MessageListProps {
   hasMore?: boolean;
   onLoadMore?: () => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
+  hideHistoryProcessSummary?: boolean;
   onMessageEdit?: (messageId: string, content: string) => void;
   onMessageDelete?: (messageId: string) => void;
   customRenderer?: {
@@ -105,6 +106,7 @@ export interface InputAreaProps {
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;
+  taskRunnerAsyncContactMode?: boolean;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
   autoCreateTask?: boolean;

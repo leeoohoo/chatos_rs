@@ -51,3 +51,7 @@ pub fn routes() -> Router {
         .merge(api::task_manager::router())
         .merge(api::ui_prompts::router())
 }
+
+pub fn public_routes() -> Router {
+    Router::new().merge(api::agent_chat::public_router())
+}

@@ -137,6 +137,7 @@ export interface TaskRecord {
   source_run_id?: string | null;
   source_session_id?: string | null;
   source_turn_id?: string | null;
+  source_user_message_id?: string | null;
   prerequisite_task_ids: string[];
   task_tool_state: TaskToolState;
   mcp_config: TaskMcpConfig;
@@ -152,6 +153,7 @@ export interface ModelConfigRecord {
   base_url: string;
   api_key: string;
   model: string;
+  usage_scenario?: string | null;
   temperature?: number | null;
   max_output_tokens?: number | null;
   thinking_level?: string | null;
@@ -642,6 +644,8 @@ export interface SystemConfigResponse {
   execution_timeout_ms: number;
   scheduler_poll_interval_ms: number;
   auto_memory_summary: boolean;
+  default_task_execution_max_iterations: number;
+  task_execution_max_iterations: number;
 }
 
 export interface CreateTaskPayload {
@@ -706,6 +710,7 @@ export interface CreateModelConfigPayload {
   base_url: string;
   api_key: string;
   model: string;
+  usage_scenario?: string;
   temperature?: number;
   max_output_tokens?: number;
   thinking_level?: string;
@@ -718,6 +723,17 @@ export interface CreateModelConfigPayload {
 }
 
 export interface UpdateModelConfigPayload extends Partial<CreateModelConfigPayload> {}
+
+export interface RuntimeSettingsRecord {
+  id: string;
+  task_execution_max_iterations: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateRuntimeSettingsPayload {
+  task_execution_max_iterations?: number;
+}
 
 export interface PreviewModelCatalogPayload {
   provider: string;

@@ -45,6 +45,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   hasMore = false,
   onLoadMore,
   onToggleTurnProcess,
+  hideHistoryProcessSummary = false,
   onMessageEdit,
   onMessageDelete,
   customRenderer,
@@ -164,6 +165,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
             onToggleTurnProcess={onToggleTurnProcess}
+            hideHistoryProcessSummary={hideHistoryProcessSummary}
             derivedProcessStatsByUserId={derivedProcessStatsByUserId}
             toolResultById={toolResultById}
             assistantToolCallsById={assistantToolCallById}
@@ -234,6 +236,7 @@ const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: Messag
   && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
   && prevProps.onLoadMore === nextProps.onLoadMore
   && prevProps.onToggleTurnProcess === nextProps.onToggleTurnProcess
+  && (prevProps.hideHistoryProcessSummary ?? false) === (nextProps.hideHistoryProcessSummary ?? false)
   && prevProps.onMessageEdit === nextProps.onMessageEdit
   && prevProps.onMessageDelete === nextProps.onMessageDelete
   && prevProps.customRenderer === nextProps.customRenderer

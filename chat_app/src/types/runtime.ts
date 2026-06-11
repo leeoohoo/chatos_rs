@@ -1,6 +1,7 @@
 export interface SendMessageRuntimeOptions {
   contactAgentId?: string | null;
   contactId?: string | null;
+  taskRunnerAsyncContactMode?: boolean;
   remoteConnectionId?: string | null;
   modelConfigId?: string | null;
   modelName?: string | null;

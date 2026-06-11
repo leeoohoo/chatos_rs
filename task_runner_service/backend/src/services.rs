@@ -39,7 +39,7 @@ use memory_engine_sdk::{
     ComposeContextPolicy, SdkComposeContextRequest, SdkCountThreadRecordsRequest,
     SdkListThreadRecordsRequest, SdkUpsertThreadRequest,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tracing::{info, warn};
@@ -55,14 +55,15 @@ use crate::models::{
     ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
     PaginatedResponse, PreviewModelCatalogRequest, PromptListFilters, ProviderModelRecord,
     RecordTaskProcessRequest, RemoteServerRecord, RemoteServerTestResponse, RunListFilters,
-    RunSummaryRecord, StartTaskRunRequest, SystemConfigResponse, TaskDependencyGraph,
-    TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskMemoryContextOptions,
-    TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
-    TaskMemorySummaryResponse, TaskProcessLogOperation, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskSourceContext,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolOutcomeItem, TaskToolState,
-    TestModelConfigRequest, TestRemoteServerRequest, UpdateModelConfigRequest,
-    UpdateRemoteServerRequest, UpdateTaskMcpRequest, UpdateTaskRequest,
+    RunSummaryRecord, RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse,
+    TaskDependencyGraph, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
+    TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
+    TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskProcessLogOperation, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode,
+    TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolOutcomeItem,
+    TaskToolState, TestModelConfigRequest, TestRemoteServerRequest, UpdateModelConfigRequest,
+    UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    UpdateTaskRequest,
 };
 use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::remote_server_runtime::{
@@ -76,6 +77,7 @@ const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
 const TASK_PROCESS_LOG_INTERNAL_SERVER_NAME: &str = "task_run_process";
 const TASK_PROCESS_LOG_INTERNAL_TOOL_NAME: &str = "record_process";
+const SYSTEM_RUNTIME_SETTINGS_ID: &str = "system";
 
 #[derive(Clone)]
 pub struct TaskService {
@@ -125,9 +127,67 @@ struct PrerequisiteTaskContext {
     report_content: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ChatosTaskCallbackPayload {
+    event: String,
+    task_id: String,
+    run_id: Option<String>,
+    status: String,
+    task_title: String,
+    result_summary: Option<String>,
+    error_message: Option<String>,
+    report_content: Option<String>,
+    process_log: Option<String>,
+    source_session_id: Option<String>,
+    source_turn_id: Option<String>,
+    source_user_message_id: Option<String>,
+    parent_task_id: Option<String>,
+    source_run_id: Option<String>,
+    prerequisite_task_ids: Vec<String>,
+    schedule_mode: String,
+    callback_at: String,
+}
+
 impl TaskService {
     pub(crate) fn new(config: AppConfig, store: AppStore) -> Self {
         Self { config, store }
+    }
+
+    pub async fn get_runtime_settings(&self) -> Result<Option<RuntimeSettingsRecord>, String> {
+        self.store.get_runtime_settings().await
+    }
+
+    pub async fn update_runtime_settings(
+        &self,
+        input: UpdateRuntimeSettingsRequest,
+    ) -> Result<RuntimeSettingsRecord, String> {
+        if input.task_execution_max_iterations == Some(0) {
+            return Err("task_execution_max_iterations 必须大于 0".to_string());
+        }
+
+        let now = now_rfc3339();
+        let mut settings = self
+            .get_runtime_settings()
+            .await?
+            .unwrap_or(RuntimeSettingsRecord {
+                id: SYSTEM_RUNTIME_SETTINGS_ID.to_string(),
+                task_execution_max_iterations: self.config.default_task_execution_max_iterations,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+        if let Some(task_execution_max_iterations) = input.task_execution_max_iterations {
+            settings.task_execution_max_iterations = task_execution_max_iterations;
+        }
+        settings.updated_at = now;
+        self.store.save_runtime_settings(settings).await
+    }
+
+    pub async fn effective_task_execution_max_iterations(&self) -> Result<usize, String> {
+        Ok(self
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.task_execution_max_iterations.max(1))
+            .unwrap_or(self.config.default_task_execution_max_iterations.max(1)))
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskRecord>, String> {
@@ -445,6 +505,7 @@ impl TaskService {
             source_run_id: None,
             source_session_id: normalized_optional(source_context.source_session_id),
             source_turn_id: normalized_optional(source_context.source_turn_id),
+            source_user_message_id: normalized_optional(source_context.source_user_message_id),
             prerequisite_task_ids: prerequisite_task_ids.clone(),
             task_tool_state: TaskToolState::default(),
             mcp_config,
@@ -460,7 +521,22 @@ impl TaskService {
         self.store
             .set_task_prerequisites(&id, prerequisite_task_ids)
             .await?;
-        self.hydrate_task_prerequisites(saved).await
+        let hydrated = self.hydrate_task_prerequisites(saved).await?;
+        self.try_send_task_created_callback(&hydrated).await;
+        Ok(hydrated)
+    }
+
+    async fn try_send_task_created_callback(&self, task: &TaskRecord) {
+        let Some(payload) = build_chatos_task_callback_payload("task.created", task, None, None)
+        else {
+            return;
+        };
+        if let Err(err) = send_chatos_task_callback(self.config.clone(), payload).await {
+            warn!(
+                "failed to send task created callback for task {}: {}",
+                task.id, err
+            );
+        }
     }
 
     pub async fn update_task(
@@ -976,6 +1052,7 @@ impl TaskService {
             source_run_id: Some(run_id.to_string()),
             source_session_id: parent.source_session_id.clone(),
             source_turn_id: parent.source_turn_id.clone(),
+            source_user_message_id: parent.source_user_message_id.clone(),
             prerequisite_task_ids: Vec::new(),
             task_tool_state,
             mcp_config: parent.mcp_config.clone(),
@@ -993,6 +1070,7 @@ impl TaskService {
             created_task_status = saved.status.status_string(),
             "task manager auto-created follow-up task during task run"
         );
+        self.try_send_task_created_callback(&saved).await;
         Ok(saved)
     }
 
@@ -1293,6 +1371,7 @@ impl ModelConfigService {
             base_url: normalize_model_base_url_input(provider.as_str(), Some(input.base_url)),
             api_key: input.api_key.trim().to_string(),
             model: input.model.trim().to_string(),
+            usage_scenario: normalized_optional(input.usage_scenario),
             temperature: input.temperature,
             max_output_tokens: input.max_output_tokens,
             thinking_level,
@@ -1452,6 +1531,9 @@ impl ModelConfigService {
             validate_required("model", &runtime_model)?;
             model.model = runtime_model.trim().to_string();
         }
+        if let Some(usage_scenario) = patch.usage_scenario {
+            model.usage_scenario = normalized_optional(Some(usage_scenario));
+        }
         if let Some(temperature) = patch.temperature {
             model.temperature = Some(temperature);
         }
@@ -1537,6 +1619,7 @@ impl ModelConfigService {
                 .map(|value| value.trim().to_string())
                 .unwrap_or_default(),
             model: model.unwrap_or_default(),
+            usage_scenario: None,
             temperature: None,
             max_output_tokens: None,
             thinking_level: None,
@@ -1621,6 +1704,9 @@ fn normalize_model_config_record(
         normalize_model_thinking_level_input(provider.as_str(), record.thinking_level.clone())?;
     record.base_url = normalize_model_base_url_input(provider.as_str(), Some(record.base_url));
     record.provider = provider;
+    record.usage_scenario = normalized_optional(record.usage_scenario);
+    record.instructions = normalized_optional(record.instructions);
+    record.request_cwd = normalized_optional(record.request_cwd);
     Ok(record)
 }
 
@@ -2034,6 +2120,15 @@ impl RunService {
         }
     }
 
+    async fn effective_task_execution_max_iterations(&self) -> Result<usize, String> {
+        Ok(self
+            .store
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.task_execution_max_iterations.max(1))
+            .unwrap_or(self.config.default_task_execution_max_iterations.max(1)))
+    }
+
     fn start_lock_for_task(&self, task_id: &str) -> Arc<AsyncMutex<()>> {
         let mut locks = self.start_locks.lock();
         locks
@@ -2437,6 +2532,8 @@ impl RunService {
                 task_record.updated_at = now_rfc3339();
                 self.store.save_task(task_record).await?;
             }
+            self.try_send_terminal_callback(run.task_id.as_str(), &run)
+                .await;
         }
         Ok(Some(run))
     }
@@ -2801,6 +2898,46 @@ impl RunService {
                 warn!("failed to persist blocked task {}: {}", task.id, err);
             }
         }
+        self.try_send_terminal_callback(task.id.as_str(), run).await;
+    }
+
+    async fn finish_failed_before_execution(
+        &self,
+        task: &TaskRecord,
+        run: &mut TaskRunRecord,
+        message: String,
+    ) {
+        run.status = TaskRunStatus::Failed;
+        run.finished_at = Some(now_rfc3339());
+        run.updated_at = now_rfc3339();
+        run.error_message = Some(message.clone());
+        run.result_summary = Some(message.clone());
+        run.cancel_requested = false;
+        if let Err(err) = self.store.save_run(run.clone()).await {
+            warn!("failed to persist failed task run {}: {}", run.id, err);
+        }
+        if let Err(err) = self
+            .store
+            .append_run_event(TaskRunEventRecord::new(
+                run.id.clone(),
+                "failed",
+                Some(message.clone()),
+                None,
+            ))
+            .await
+        {
+            warn!("failed to append failed event for run {}: {}", run.id, err);
+        }
+        if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
+            task_record.status = TaskStatus::Failed;
+            task_record.result_summary = Some(message);
+            task_record.last_run_id = Some(run.id.clone());
+            task_record.updated_at = now_rfc3339();
+            if let Err(err) = self.store.save_task(task_record).await {
+                warn!("failed to persist failed task {}: {}", task.id, err);
+            }
+        }
+        self.try_send_terminal_callback(task.id.as_str(), run).await;
     }
 
     async fn execute_run(
@@ -2883,6 +3020,8 @@ impl RunService {
                 warn!("failed to persist running task {}: {}", task.id, err);
             }
         }
+        self.try_send_run_started_callback(task.id.as_str(), &run)
+            .await;
 
         if !prerequisite_context.is_empty() {
             attach_prerequisite_context_to_run(&mut run, &prerequisite_context);
@@ -2950,7 +3089,20 @@ impl RunService {
         .with_subject_id(task.subject_id.clone());
         run_spec = run_spec.with_memory_scope(Some(memory_scope));
 
-        let mut runtime_config = TaskRuntimeConfig::new();
+        let max_iterations = match self.effective_task_execution_max_iterations().await {
+            Ok(value) => value,
+            Err(err) => {
+                self.finish_failed_before_execution(
+                    &task,
+                    &mut run,
+                    format!("加载运行时配置失败: {err}"),
+                )
+                .await;
+                return;
+            }
+        };
+
+        let mut runtime_config = TaskRuntimeConfig::new().with_max_iterations(Some(max_iterations));
         if let Some(memory_engine_base_url) = self.config.memory_engine_base_url.clone() {
             runtime_config = runtime_config.with_memory_engine(Some(
                 TaskMemoryRuntimeConfig::new(
@@ -3237,6 +3389,8 @@ impl RunService {
                 warn!("failed to persist completed task {}: {}", task.id, err);
             }
         }
+        self.try_send_terminal_callback(task.id.as_str(), &run)
+            .await;
 
         if matches!(run.status, TaskRunStatus::Succeeded)
             && self.config.memory_engine_base_url.is_some()
@@ -3396,6 +3550,7 @@ impl RunService {
                 warn!("failed to persist cancelled task {}: {}", task.id, err);
             }
         }
+        self.try_send_terminal_callback(task.id.as_str(), run).await;
         self.store.clear_cancel_requested(&run.id);
     }
 
@@ -3416,6 +3571,50 @@ impl RunService {
             self.store.clear_cancel_requested(&run.id);
         }
         Ok(())
+    }
+
+    async fn try_send_run_started_callback(&self, task_id: &str, run: &TaskRunRecord) {
+        self.try_send_task_callback("task.run.started", task_id, Some(run))
+            .await;
+    }
+
+    async fn try_send_terminal_callback(&self, task_id: &str, run: &TaskRunRecord) {
+        let event = match run.status {
+            TaskRunStatus::Succeeded => "task.completed",
+            TaskRunStatus::Failed => "task.failed",
+            TaskRunStatus::Cancelled => "task.cancelled",
+            TaskRunStatus::Blocked => "task.blocked",
+            TaskRunStatus::Queued | TaskRunStatus::Running => return,
+        };
+        self.try_send_task_callback(event, task_id, Some(run)).await;
+    }
+
+    async fn try_send_task_callback(
+        &self,
+        event: &str,
+        task_id: &str,
+        run: Option<&TaskRunRecord>,
+    ) {
+        let task = match load_task_snapshot_for_callback(&self.store, task_id).await {
+            Ok(Some(task)) => task,
+            Ok(None) => return,
+            Err(err) => {
+                warn!(
+                    "failed to load callback task snapshot for task {} and event {}: {}",
+                    task_id, event, err
+                );
+                return;
+            }
+        };
+        let Some(payload) = build_chatos_task_callback_payload(event, &task, run, None) else {
+            return;
+        };
+        if let Err(err) = send_chatos_task_callback(self.config.clone(), payload).await {
+            warn!(
+                "failed to send task callback for task {} and event {}: {}",
+                task_id, event, err
+            );
+        }
     }
 
     fn apply_task_mcp_config(
@@ -3786,7 +3985,10 @@ pub fn health() -> HealthResponse {
     }
 }
 
-pub fn system_config(config: &AppConfig) -> SystemConfigResponse {
+pub fn system_config(
+    config: &AppConfig,
+    task_execution_max_iterations: usize,
+) -> SystemConfigResponse {
     SystemConfigResponse {
         host: config.host.to_string(),
         port: config.port,
@@ -3802,6 +4004,8 @@ pub fn system_config(config: &AppConfig) -> SystemConfigResponse {
         execution_timeout_ms: config.execution_timeout.as_millis() as u64,
         scheduler_poll_interval_ms: config.scheduler_poll_interval.as_millis() as u64,
         auto_memory_summary: config.auto_memory_summary,
+        default_task_execution_max_iterations: config.default_task_execution_max_iterations,
+        task_execution_max_iterations,
     }
 }
 
@@ -3936,6 +4140,82 @@ fn attach_prerequisite_context_to_run(
     if let Some(object) = run.input_snapshot.as_object_mut() {
         object.insert("resolved_prerequisites".to_string(), context_json);
     }
+}
+
+async fn load_task_snapshot_for_callback(
+    store: &AppStore,
+    task_id: &str,
+) -> Result<Option<TaskRecord>, String> {
+    let Some(mut task) = store.get_task(task_id).await? else {
+        return Ok(None);
+    };
+    task.prerequisite_task_ids = store
+        .list_task_prerequisites(task_id)
+        .await?
+        .into_iter()
+        .map(|item| item.prerequisite_task_id)
+        .collect();
+    Ok(Some(task))
+}
+
+fn build_chatos_task_callback_payload(
+    event: &str,
+    task: &TaskRecord,
+    run: Option<&TaskRunRecord>,
+    error_message: Option<String>,
+) -> Option<ChatosTaskCallbackPayload> {
+    if task
+        .source_user_message_id
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return None;
+    }
+    Some(ChatosTaskCallbackPayload {
+        event: event.to_string(),
+        task_id: task.id.clone(),
+        run_id: run.map(|item| item.id.clone()),
+        status: task.status.status_string().to_string(),
+        task_title: task.title.clone(),
+        result_summary: run
+            .and_then(|item| item.result_summary.clone())
+            .or_else(|| task.result_summary.clone()),
+        error_message: error_message.or_else(|| run.and_then(|item| item.error_message.clone())),
+        report_content: run.and_then(extract_report_content),
+        process_log: task.process_log.clone(),
+        source_session_id: task.source_session_id.clone(),
+        source_turn_id: task.source_turn_id.clone(),
+        source_user_message_id: task.source_user_message_id.clone(),
+        parent_task_id: task.parent_task_id.clone(),
+        source_run_id: task.source_run_id.clone(),
+        prerequisite_task_ids: task.prerequisite_task_ids.clone(),
+        schedule_mode: task.schedule.mode.mode_key().to_string(),
+        callback_at: now_rfc3339(),
+    })
+}
+
+async fn send_chatos_task_callback(
+    config: AppConfig,
+    payload: ChatosTaskCallbackPayload,
+) -> Result<(), String> {
+    let Some(url) = config.chatos_callback_url.clone() else {
+        return Ok(());
+    };
+    let client = reqwest::Client::builder()
+        .timeout(config.callback_timeout)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let mut request = client.post(url).json(&payload);
+    if let Some(secret) = config.chatos_callback_secret.clone() {
+        request = request.header("X-Task-Runner-Callback-Secret", secret);
+    }
+    let response = request.send().await.map_err(|err| err.to_string())?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("callback request failed: {status} {body}"))
 }
 
 fn is_terminal_run_status(status: TaskRunStatus) -> bool {

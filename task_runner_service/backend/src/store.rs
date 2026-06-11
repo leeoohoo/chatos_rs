@@ -24,10 +24,10 @@ use tracing::warn;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     now_rfc3339, ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
-    RemoteServerRecord, RunListFilters, RunSummaryRecord, TaskListFilters, TaskPrerequisiteRecord,
-    TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, UiPromptRecord, UiPromptStatus,
-    UiPromptTaskCountRecord, UserRecord, UserRole,
+    RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
+    TaskPrerequisiteRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord, UiPromptRecord,
+    UiPromptStatus, UiPromptTaskCountRecord, UserRecord, UserRole,
 };
 
 const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
@@ -37,6 +37,7 @@ const TASK_RUNS_TASK_CREATED_INDEX_NAME: &str = "idx_task_runs_task_created_at";
 struct StoreData {
     tasks: BTreeMap<String, TaskRecord>,
     model_configs: BTreeMap<String, ModelConfigRecord>,
+    runtime_settings: Option<RuntimeSettingsRecord>,
     remote_servers: BTreeMap<String, RemoteServerRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
@@ -63,6 +64,7 @@ pub(crate) struct SqliteStore {
 pub(crate) struct MongoStore {
     tasks: Collection<TaskRecord>,
     model_configs: Collection<ModelConfigRecord>,
+    runtime_settings: Collection<RuntimeSettingsRecord>,
     remote_servers: Collection<RemoteServerRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
@@ -310,6 +312,25 @@ impl AppStore {
             Self::InMemory(store) => Ok(store.save_model_config(model)),
             Self::Sqlite(store) => store.save_model_config(model).await,
             Self::Mongo(store) => store.save_model_config(model).await,
+        }
+    }
+
+    pub async fn get_runtime_settings(&self) -> Result<Option<RuntimeSettingsRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.get_runtime_settings()),
+            Self::Sqlite(store) => store.get_runtime_settings().await,
+            Self::Mongo(store) => store.get_runtime_settings().await,
+        }
+    }
+
+    pub async fn save_runtime_settings(
+        &self,
+        settings: RuntimeSettingsRecord,
+    ) -> Result<RuntimeSettingsRecord, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.save_runtime_settings(settings)),
+            Self::Sqlite(store) => store.save_runtime_settings(settings).await,
+            Self::Mongo(store) => store.save_runtime_settings(settings).await,
         }
     }
 
@@ -893,6 +914,16 @@ impl InMemoryStore {
         model
     }
 
+    fn get_runtime_settings(&self) -> Option<RuntimeSettingsRecord> {
+        self.inner.read().runtime_settings.clone()
+    }
+
+    fn save_runtime_settings(&self, settings: RuntimeSettingsRecord) -> RuntimeSettingsRecord {
+        let mut data = self.inner.write();
+        data.runtime_settings = Some(settings.clone());
+        settings
+    }
+
     fn delete_model_config(&self, id: &str) -> bool {
         let mut data = self.inner.write();
         let deleted = data.model_configs.remove(id).is_some();
@@ -1201,6 +1232,7 @@ impl MongoStore {
         let store = Self {
             tasks: database.collection::<TaskRecord>("tasks"),
             model_configs: database.collection::<ModelConfigRecord>("model_configs"),
+            runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
             remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
@@ -1234,6 +1266,8 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.tasks, doc! { "source_turn_id": 1 }, false)
             .await?;
+        self.ensure_index(&self.tasks, doc! { "source_user_message_id": 1 }, false)
+            .await?;
         self.ensure_index(&self.tasks, doc! { "creator_user_id": 1 }, false)
             .await?;
         self.ensure_index(&self.tasks, doc! { "schedule.next_run_at": 1 }, false)
@@ -1248,6 +1282,8 @@ impl MongoStore {
         self.ensure_index(&self.model_configs, doc! { "id": 1 }, true)
             .await?;
         self.ensure_index(&self.model_configs, doc! { "updated_at": -1 }, false)
+            .await?;
+        self.ensure_index(&self.runtime_settings, doc! { "id": 1 }, true)
             .await?;
 
         self.ensure_index(&self.remote_servers, doc! { "id": 1 }, true)
@@ -2016,6 +2052,19 @@ impl MongoStore {
         Ok(model)
     }
 
+    async fn get_runtime_settings(&self) -> Result<Option<RuntimeSettingsRecord>, String> {
+        self.find_by_id(&self.runtime_settings, "system").await
+    }
+
+    async fn save_runtime_settings(
+        &self,
+        settings: RuntimeSettingsRecord,
+    ) -> Result<RuntimeSettingsRecord, String> {
+        self.upsert_by_id(&self.runtime_settings, &settings.id, &settings)
+            .await?;
+        Ok(settings)
+    }
+
     async fn delete_model_config(&self, id: &str) -> Result<bool, String> {
         let deleted = self.delete_by_id(&self.model_configs, id).await?;
         if !deleted {
@@ -2736,9 +2785,9 @@ impl SqliteStore {
                 tags_json, default_model_config_id, memory_thread_id, tenant_id, subject_id,
                 creator_user_id, creator_username, creator_display_name, result_summary,
                 process_log, last_run_id, schedule_json, parent_task_id, source_run_id,
-                source_session_id, source_turn_id, task_tool_state_json, mcp_config_json,
-                created_at, updated_at, deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_session_id, source_turn_id, source_user_message_id, task_tool_state_json,
+                mcp_config_json, created_at, updated_at, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 description = excluded.description,
@@ -2762,6 +2811,7 @@ impl SqliteStore {
                 source_run_id = excluded.source_run_id,
                 source_session_id = excluded.source_session_id,
                 source_turn_id = excluded.source_turn_id,
+                source_user_message_id = excluded.source_user_message_id,
                 task_tool_state_json = excluded.task_tool_state_json,
                 mcp_config_json = excluded.mcp_config_json,
                 created_at = excluded.created_at,
@@ -2791,6 +2841,7 @@ impl SqliteStore {
         .bind(task.source_run_id.clone())
         .bind(task.source_session_id.clone())
         .bind(task.source_turn_id.clone())
+        .bind(task.source_user_message_id.clone())
         .bind(encode_json(&task.task_tool_state)?)
         .bind(encode_json(&task.mcp_config)?)
         .bind(&task.created_at)
@@ -2991,17 +3042,18 @@ impl SqliteStore {
     ) -> Result<ModelConfigRecord, String> {
         sqlx::query(
             "INSERT INTO model_configs (
-                id, name, provider, base_url, api_key, model, temperature, max_output_tokens,
+                id, name, provider, base_url, api_key, model, usage_scenario, temperature, max_output_tokens,
                 thinking_level, supports_responses, instructions, request_cwd,
                 include_prompt_cache_retention, request_body_limit_bytes, enabled,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 provider = excluded.provider,
                 base_url = excluded.base_url,
                 api_key = excluded.api_key,
                 model = excluded.model,
+                usage_scenario = excluded.usage_scenario,
                 temperature = excluded.temperature,
                 max_output_tokens = excluded.max_output_tokens,
                 thinking_level = excluded.thinking_level,
@@ -3020,6 +3072,7 @@ impl SqliteStore {
         .bind(&model.base_url)
         .bind(&model.api_key)
         .bind(&model.model)
+        .bind(model.usage_scenario.clone())
         .bind(model.temperature)
         .bind(model.max_output_tokens)
         .bind(model.thinking_level.clone())
@@ -3035,6 +3088,42 @@ impl SqliteStore {
         .await
         .map_err(|err| err.to_string())?;
         Ok(model)
+    }
+
+    async fn get_runtime_settings(&self) -> Result<Option<RuntimeSettingsRecord>, String> {
+        let row = sqlx::query(
+            "SELECT id, task_execution_max_iterations, created_at, updated_at
+             FROM runtime_settings
+             WHERE id = 'system'
+             LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        row.as_ref().map(runtime_settings_from_row).transpose()
+    }
+
+    async fn save_runtime_settings(
+        &self,
+        settings: RuntimeSettingsRecord,
+    ) -> Result<RuntimeSettingsRecord, String> {
+        sqlx::query(
+            "INSERT INTO runtime_settings (
+                id, task_execution_max_iterations, created_at, updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                task_execution_max_iterations = excluded.task_execution_max_iterations,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at",
+        )
+        .bind(&settings.id)
+        .bind(settings.task_execution_max_iterations as i64)
+        .bind(&settings.created_at)
+        .bind(&settings.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(settings)
     }
 
     async fn delete_model_config(&self, id: &str) -> Result<bool, String> {
@@ -3870,6 +3959,7 @@ fn task_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TaskRecord, String> {
         source_run_id: row.get("source_run_id"),
         source_session_id: row.get("source_session_id"),
         source_turn_id: row.get("source_turn_id"),
+        source_user_message_id: row.get("source_user_message_id"),
         prerequisite_task_ids: Vec::new(),
         task_tool_state: decode_json(row.get("task_tool_state_json"))?,
         mcp_config: decode_json(row.get("mcp_config_json"))?,
@@ -3915,6 +4005,7 @@ fn model_config_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ModelConfigRec
         base_url: row.get("base_url"),
         api_key: row.get("api_key"),
         model: row.get("model"),
+        usage_scenario: row.get("usage_scenario"),
         temperature: row.get("temperature"),
         max_output_tokens: row.get("max_output_tokens"),
         thinking_level: row.get("thinking_level"),
@@ -3928,6 +4019,17 @@ fn model_config_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ModelConfigRec
             .get::<Option<i64>, _>("request_body_limit_bytes")
             .map(|value| value as usize),
         enabled: int_to_bool(row.get::<i64, _>("enabled")),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    })
+}
+
+fn runtime_settings_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<RuntimeSettingsRecord, String> {
+    Ok(RuntimeSettingsRecord {
+        id: row.get("id"),
+        task_execution_max_iterations: row.get::<i64, _>("task_execution_max_iterations") as usize,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })

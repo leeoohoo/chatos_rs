@@ -12,6 +12,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   currentAgent,
   selectedProjectSession,
   isSelectedSessionActive,
+  isTaskRunnerAsyncContactMode,
   sessionSummaryPaneVisible,
   summaryItems,
   summaryLoading,
@@ -112,6 +113,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
           selectedContact={selectedContact}
           selectedProjectSession={selectedProjectSession}
           isSelectedSessionActive={isSelectedSessionActive}
+          isTaskRunnerAsyncContactMode={isTaskRunnerAsyncContactMode}
           sessionSummaryPaneVisible={sessionSummaryPaneVisible}
           summaryItems={summaryItems}
           summaryLoading={summaryLoading}
@@ -138,8 +140,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         currentAgent={currentAgent}
         selectedProjectSession={selectedProjectSession}
         isSelectedSessionActive={isSelectedSessionActive}
-        chatIsStreaming={chatIsStreaming}
-        chatIsStopping={chatIsStopping}
+        isTaskRunnerAsyncContactMode={isTaskRunnerAsyncContactMode}
+        chatIsStreaming={isTaskRunnerAsyncContactMode ? false : chatIsStreaming}
+        chatIsStopping={isTaskRunnerAsyncContactMode ? false : chatIsStopping}
         selectedModelId={selectedModelId}
         selectedModelName={selectedModelName}
         selectedThinkingLevel={selectedThinkingLevel}
@@ -153,8 +156,8 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
         onSend={onSend}
-        onGuide={onGuide}
-        onStop={onStop}
+        onGuide={isTaskRunnerAsyncContactMode ? undefined : onGuide}
+        onStop={isTaskRunnerAsyncContactMode ? undefined : onStop}
         onModelChange={onModelChange}
         onModelNameChange={onModelNameChange}
         onThinkingLevelChange={onThinkingLevelChange}
@@ -201,16 +204,18 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         runtimeGuidanceItems={runtimeGuidanceItems}
       />
 
-      <TurnProcessModal
-        open={turnProcessViewerOpen}
-        sessionId={turnProcessViewerSessionId}
-        userMessageId={turnProcessViewerUserMessageId}
-        turnId={turnProcessViewerTurnId}
-        messages={messages}
-        cachedProcessMessages={turnProcessViewerCachedMessages}
-        apiClient={turnProcessApiClient}
-        onClose={onCloseTurnProcessViewer}
-      />
+      {!isTaskRunnerAsyncContactMode && (
+        <TurnProcessModal
+          open={turnProcessViewerOpen}
+          sessionId={turnProcessViewerSessionId}
+          userMessageId={turnProcessViewerUserMessageId}
+          turnId={turnProcessViewerTurnId}
+          messages={messages}
+          cachedProcessMessages={turnProcessViewerCachedMessages}
+          apiClient={turnProcessApiClient}
+          onClose={onCloseTurnProcessViewer}
+        />
+      )}
     </div>
   );
 };

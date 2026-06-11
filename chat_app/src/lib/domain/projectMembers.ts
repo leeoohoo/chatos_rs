@@ -16,7 +16,16 @@ export const normalizeProjectMemberContacts = (value: unknown): ContactItem[] =>
     const name = typeof item?.name === 'string' && item.name.trim()
       ? item.name.trim()
       : id;
-    out.push({ id, agentId, name });
+    const rawTaskRunner = item?.taskRunner;
+    const taskRunner = rawTaskRunner && typeof rawTaskRunner === 'object'
+      ? {
+          enabled: rawTaskRunner.enabled === true,
+          baseUrl: typeof rawTaskRunner.baseUrl === 'string' ? rawTaskRunner.baseUrl : '',
+          username: typeof rawTaskRunner.username === 'string' ? rawTaskRunner.username : '',
+          hasPassword: rawTaskRunner.hasPassword === true,
+        }
+      : undefined;
+    out.push({ id, agentId, name, taskRunner });
   }
   return out;
 };

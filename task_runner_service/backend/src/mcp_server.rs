@@ -8,14 +8,14 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::models::{
-    mcp_builtin_kind_guide, mcp_builtin_kind_values, BatchTaskDeleteRequest, BatchTaskRunRequest,
-    BatchTaskStatusUpdateRequest, CancelUiPromptRequest, CreateModelConfigRequest,
-    CreateRemoteServerRequest, CreateTaskRequest, McpServerInfo, ModelConfigRecord, RunListFilters,
-    StartTaskRunRequest, SubmitUiPromptRequest, TaskListFilters, TaskMcpConfig,
-    TaskMemoryContextOptions, TaskMemoryRecordsOptions, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskSourceContext,
-    TaskStatsResponse, TaskStatus, TestModelConfigRequest, UiPromptRecord, UiPromptStatus,
-    UpdateModelConfigRequest, UpdateTaskRequest,
+    mcp_builtin_kind_guide, mcp_builtin_kind_values, now_rfc3339, BatchTaskDeleteRequest,
+    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelUiPromptRequest,
+    CreateModelConfigRequest, CreateRemoteServerRequest, CreateTaskRequest, McpServerInfo,
+    ModelConfigRecord, RunListFilters, StartTaskRunRequest, SubmitUiPromptRequest, TaskListFilters,
+    TaskMcpConfig, TaskMemoryContextOptions, TaskMemoryRecordsOptions, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode,
+    TaskSourceContext, TaskStatsResponse, TaskStatus, TestModelConfigRequest, UiPromptRecord,
+    UiPromptStatus, UpdateModelConfigRequest, UpdateTaskRequest,
 };
 use crate::services::{McpCatalogService, ModelConfigService, RunService, TaskService};
 use crate::ui_prompt_service::UiPromptService;
@@ -31,19 +31,29 @@ const TASK_RUNNER_MCP_STDIO_ARGS: &[&str] = &[
     "--bin",
     "task_runner_mcp_stdio",
 ];
+const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpToolProfile {
+    Default,
+    ChatosAsyncPlanner,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct McpRequestContext {
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
+    pub source_user_message_id: Option<String>,
     pub workspace_dir: Option<String>,
     pub remote_server_config: Option<String>,
+    pub tool_profile: Option<String>,
 }
 
 impl McpRequestContext {
     fn task_source_context(&self) -> Result<Option<TaskSourceContext>, String> {
         if self.source_session_id.is_none()
             && self.source_turn_id.is_none()
+            && self.source_user_message_id.is_none()
             && self.workspace_dir.is_none()
             && self.remote_server_config.is_none()
         {
@@ -57,9 +67,22 @@ impl McpRequestContext {
         Ok(Some(TaskSourceContext {
             source_session_id: self.source_session_id.clone(),
             source_turn_id: self.source_turn_id.clone(),
+            source_user_message_id: self.source_user_message_id.clone(),
             workspace_dir: self.workspace_dir.clone(),
             remote_server_config,
         }))
+    }
+
+    fn tool_profile(&self) -> McpToolProfile {
+        if self.tool_profile.as_deref().is_some_and(|value| {
+            value
+                .trim()
+                .eq_ignore_ascii_case(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
+        }) {
+            McpToolProfile::ChatosAsyncPlanner
+        } else {
+            McpToolProfile::Default
+        }
     }
 }
 
@@ -591,7 +614,10 @@ impl TaskRunnerMcpService {
                 required_object_schema(
                     json!({
                         "task_id": { "type": "string", "minLength": 1 },
-                        "model_config_id": { "type": "string" },
+                        "model_config_id": {
+                            "type": "string",
+                            "description": generic_run_model_config_description()
+                        },
                         "prompt_override": { "type": "string" }
                     }),
                     &["task_id"],
@@ -607,7 +633,10 @@ impl TaskRunnerMcpService {
                             "items": { "type": "string", "minLength": 1 },
                             "minItems": 1
                         },
-                        "model_config_id": { "type": "string" },
+                        "model_config_id": {
+                            "type": "string",
+                            "description": generic_run_model_config_description()
+                        },
                         "prompt_override": { "type": "string" }
                     }),
                     &["task_ids"],
@@ -734,8 +763,15 @@ impl TaskRunnerMcpService {
         ]
     }
 
-    fn list_tools_for_user(&self, current_user: &CurrentUser) -> Vec<Value> {
-        let tools = self.list_tools();
+    async fn list_tools_for_user(
+        &self,
+        current_user: &CurrentUser,
+        tool_profile: McpToolProfile,
+    ) -> Vec<Value> {
+        let mut tools = self.list_tools();
+        if let Ok(model_configs) = self.model_config_service.list_model_configs().await {
+            enrich_tool_schemas_with_model_configs(&mut tools, &model_configs);
+        }
         if current_user.is_admin() {
             return tools;
         }
@@ -744,7 +780,7 @@ impl TaskRunnerMcpService {
             .filter(|tool| {
                 tool.get("name")
                     .and_then(Value::as_str)
-                    .is_some_and(agent_tool_allowed)
+                    .is_some_and(|name| agent_tool_allowed_for_profile(name, tool_profile))
             })
             .collect()
     }
@@ -760,7 +796,11 @@ impl TaskRunnerMcpService {
             "tools/list" => JsonRpcResponse {
                 jsonrpc: "2.0",
                 id,
-                result: Some(json!({ "tools": self.list_tools_for_user(&current_user) })),
+                result: Some(json!({
+                    "tools": self
+                        .list_tools_for_user(&current_user, request_context.tool_profile())
+                        .await
+                })),
                 error: None,
             },
             "tools/call" => match self
@@ -822,7 +862,9 @@ impl TaskRunnerMcpService {
         current_user: &CurrentUser,
         request_context: &McpRequestContext,
     ) -> Result<Value, String> {
-        if !current_user.is_admin() && !agent_tool_allowed(name) {
+        if !current_user.is_admin()
+            && !agent_tool_allowed_for_profile(name, request_context.tool_profile())
+        {
             return Err("当前 agent 无权调用该任务系统工具".to_string());
         }
         match name {
@@ -858,8 +900,11 @@ impl TaskRunnerMcpService {
                 Ok(text_result(json!(stats)))
             }
             "create_task" => {
-                let input: CreateTaskRequest =
+                let mut input: CreateTaskRequest =
                     decode_args::<CreateTaskArgs>(args)?.into_request()?;
+                if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
+                    input = planner_root_create_request(input)?;
+                }
                 let task = self
                     .task_service
                     .create_task(
@@ -1336,6 +1381,17 @@ impl TaskRunnerMcpService {
         let mut created_tasks = Vec::new();
         let mut pending_edges = Vec::<(String, Vec<String>, Vec<String>)>::new();
 
+        let tool_profile = request_context.tool_profile();
+        let prerequisite_ref_targets = args
+            .tasks
+            .iter()
+            .flat_map(|item| {
+                item.prerequisite_refs
+                    .iter()
+                    .map(|value| value.trim().to_string())
+            })
+            .collect::<HashSet<_>>();
+
         for item in args.tasks {
             let client_ref = item.client_ref.trim().to_string();
             let mut mcp_config = None;
@@ -1345,24 +1401,33 @@ impl TaskRunnerMcpService {
                 config.enabled = true;
                 config.enabled_builtin_kinds = normalized;
             }
+            let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
+            let mut request = CreateTaskRequest {
+                title: item.title,
+                description: item.description,
+                objective: item.objective,
+                input_payload: item.input_payload,
+                status: None,
+                priority: item.priority,
+                tags: item.tags,
+                default_model_config_id: item.default_model_config_id,
+                tenant_id: None,
+                subject_id: None,
+                schedule: item.schedule,
+                mcp_config,
+                prerequisite_task_ids: Some(item.prerequisite_task_ids.clone()),
+            };
+            if tool_profile == McpToolProfile::ChatosAsyncPlanner {
+                request = if is_prerequisite_node {
+                    planner_prerequisite_create_request(request)?
+                } else {
+                    planner_root_create_request(request)?
+                };
+            }
             let task = self
                 .task_service
                 .create_task(
-                    CreateTaskRequest {
-                        title: item.title,
-                        description: item.description,
-                        objective: item.objective,
-                        input_payload: item.input_payload,
-                        status: None,
-                        priority: item.priority,
-                        tags: item.tags,
-                        default_model_config_id: item.default_model_config_id,
-                        tenant_id: None,
-                        subject_id: None,
-                        schedule: item.schedule,
-                        mcp_config,
-                        prerequisite_task_ids: Some(item.prerequisite_task_ids.clone()),
-                    },
+                    request,
                     Some(current_user),
                     request_context.task_source_context()?,
                 )
@@ -1534,6 +1599,65 @@ fn agent_tool_allowed(name: &str) -> bool {
     )
 }
 
+fn agent_tool_allowed_for_profile(name: &str, tool_profile: McpToolProfile) -> bool {
+    match tool_profile {
+        McpToolProfile::Default => agent_tool_allowed(name),
+        McpToolProfile::ChatosAsyncPlanner => planner_agent_tool_allowed(name),
+    }
+}
+
+fn planner_agent_tool_allowed(name: &str) -> bool {
+    matches!(
+        name,
+        "list_tasks"
+            | "get_task"
+            | "create_task"
+            | "list_mcp_builtin_catalog"
+            | "create_tasks_with_prerequisites"
+    )
+}
+
+fn planner_root_create_request(mut input: CreateTaskRequest) -> Result<CreateTaskRequest, String> {
+    input.status = Some(TaskStatus::Ready);
+    input.schedule = Some(planner_schedule_once_now(
+        input.schedule.unwrap_or_default(),
+    )?);
+    Ok(input)
+}
+
+fn planner_prerequisite_create_request(
+    mut input: CreateTaskRequest,
+) -> Result<CreateTaskRequest, String> {
+    input.status = Some(TaskStatus::Ready);
+    input.schedule = Some(TaskScheduleConfig {
+        mode: TaskScheduleMode::Manual,
+        run_at: None,
+        interval_seconds: None,
+        next_run_at: None,
+        last_scheduled_at: None,
+    });
+    Ok(input)
+}
+
+fn planner_schedule_once_now(
+    mut schedule: TaskScheduleConfig,
+) -> Result<TaskScheduleConfig, String> {
+    schedule.mode = TaskScheduleMode::Once;
+    if schedule.interval_seconds.is_some() {
+        schedule.interval_seconds = None;
+    }
+    let now = now_rfc3339();
+    if schedule
+        .run_at
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        schedule.run_at = Some(now.clone());
+    }
+    schedule.next_run_at = Some(now);
+    Ok(schedule)
+}
+
 fn task_creator_filter(current_user: &CurrentUser) -> Option<String> {
     (!current_user.is_admin()).then(|| current_user.id.clone())
 }
@@ -1618,6 +1742,146 @@ fn required_object_schema(properties: Value, required: &[&str]) -> Value {
     })
 }
 
+fn generic_task_model_config_description(allow_clear: bool) -> String {
+    let mut lines = vec![
+        "指定任务默认使用的模型配置 ID。先调用 list_model_configs 查看可用模型，并优先根据 usage_scenario 选择最合适的模型。".to_string(),
+        "如果当前任务不需要固定默认模型，可以省略该字段。".to_string(),
+    ];
+    if allow_clear {
+        lines.push("如需清空已有默认模型绑定，可传空字符串。".to_string());
+    }
+    lines.join("\n")
+}
+
+fn generic_run_model_config_description() -> String {
+    "指定本次运行临时覆盖使用的模型配置 ID。先调用 list_model_configs 查看可用模型，并优先根据 usage_scenario 选择；省略时沿用任务自己的默认模型配置。".to_string()
+}
+
+fn enrich_tool_schemas_with_model_configs(
+    tools: &mut [Value],
+    model_configs: &[ModelConfigRecord],
+) {
+    let enabled_models = model_configs
+        .iter()
+        .filter(|model| model.enabled)
+        .cloned()
+        .collect::<Vec<_>>();
+    let task_model_description = task_model_config_description_with_options(&enabled_models, false);
+    let task_model_update_description =
+        task_model_config_description_with_options(&enabled_models, true);
+    let run_model_description = run_model_config_description_with_options(&enabled_models);
+
+    for tool in tools {
+        match tool.get("name").and_then(Value::as_str) {
+            Some("create_task") => set_tool_property_description(
+                tool,
+                &["inputSchema", "properties", "default_model_config_id"],
+                task_model_description.clone(),
+            ),
+            Some("update_task") => set_tool_property_description(
+                tool,
+                &[
+                    "inputSchema",
+                    "properties",
+                    "patch",
+                    "properties",
+                    "default_model_config_id",
+                ],
+                task_model_update_description.clone(),
+            ),
+            Some("create_tasks_with_prerequisites") => set_tool_property_description(
+                tool,
+                &[
+                    "inputSchema",
+                    "properties",
+                    "tasks",
+                    "items",
+                    "properties",
+                    "default_model_config_id",
+                ],
+                task_model_description.clone(),
+            ),
+            Some("start_task_run") => set_tool_property_description(
+                tool,
+                &["inputSchema", "properties", "model_config_id"],
+                run_model_description.clone(),
+            ),
+            Some("batch_start_task_runs") => set_tool_property_description(
+                tool,
+                &["inputSchema", "properties", "model_config_id"],
+                run_model_description.clone(),
+            ),
+            _ => {}
+        }
+    }
+}
+
+fn task_model_config_description_with_options(
+    model_configs: &[ModelConfigRecord],
+    allow_clear: bool,
+) -> String {
+    let mut lines = vec![generic_task_model_config_description(allow_clear)];
+    if model_configs.is_empty() {
+        lines.push("当前还没有启用中的模型配置。".to_string());
+        return lines.join("\n");
+    }
+    lines.push("当前启用模型：".to_string());
+    for model in model_configs {
+        lines.push(format!(
+            "- {}: {} ({})。使用场景：{}",
+            model.id,
+            model.name,
+            model.model,
+            model
+                .usage_scenario
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("未填写")
+        ));
+    }
+    lines.join("\n")
+}
+
+fn run_model_config_description_with_options(model_configs: &[ModelConfigRecord]) -> String {
+    let mut lines = vec![generic_run_model_config_description()];
+    if model_configs.is_empty() {
+        lines.push("当前还没有启用中的模型配置。".to_string());
+        return lines.join("\n");
+    }
+    lines.push("当前启用模型：".to_string());
+    for model in model_configs {
+        lines.push(format!(
+            "- {}: {} ({})。使用场景：{}",
+            model.id,
+            model.name,
+            model.model,
+            model
+                .usage_scenario
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("未填写")
+        ));
+    }
+    lines.join("\n")
+}
+
+fn set_tool_property_description(tool: &mut Value, path: &[&str], description: String) {
+    let mut current = tool;
+    for segment in path {
+        let Some(object) = current.as_object_mut() else {
+            return;
+        };
+        let Some(next) = object.get_mut(*segment) else {
+            return;
+        };
+        current = next;
+    }
+    let Some(object) = current.as_object_mut() else {
+        return;
+    };
+    object.insert("description".to_string(), Value::String(description));
+}
+
 fn create_task_schema() -> Value {
     let enabled_builtin_kinds_description = builtin_mcp_kind_schema_description();
     json!({
@@ -1629,7 +1893,10 @@ fn create_task_schema() -> Value {
             "input_payload": { "description": "任务输入数据。可以放结构化 JSON、引用信息或执行所需材料。" },
             "priority": { "type": "integer", "description": "任务优先级，数字越大优先级越高。" },
             "tags": { "type": "array", "items": { "type": "string" }, "description": "任务标签。" },
-            "default_model_config_id": { "type": "string", "description": "指定任务默认使用的模型配置 ID；不确定时不要传。" },
+            "default_model_config_id": {
+                "type": "string",
+                "description": generic_task_model_config_description(false)
+            },
             "schedule": { "type": "object", "description": "任务调度配置；不需要定时或延迟执行时不要传。" },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "enabled_builtin_kinds": {
@@ -1655,7 +1922,10 @@ fn update_task_schema() -> Value {
             "status": { "type": "string", "enum": task_status_values() },
             "priority": { "type": "integer" },
             "tags": { "type": "array", "items": { "type": "string" } },
-            "default_model_config_id": { "type": "string" },
+            "default_model_config_id": {
+                "type": "string",
+                "description": generic_task_model_config_description(true)
+            },
             "schedule": { "type": "object" },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "mcp_config": task_mcp_config_schema()
@@ -1695,7 +1965,10 @@ fn create_tasks_with_prerequisites_schema() -> Value {
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
-                        "default_model_config_id": { "type": "string" },
+                        "default_model_config_id": {
+                            "type": "string",
+                            "description": generic_task_model_config_description(false)
+                        },
                         "schedule": { "type": "object" },
                         "enabled_builtin_kinds": {
                             "type": "array",
@@ -1856,6 +2129,10 @@ fn create_model_config_schema() -> Value {
             "base_url": { "type": "string", "minLength": 1 },
             "api_key": { "type": "string" },
             "model": { "type": "string", "minLength": 1 },
+            "usage_scenario": {
+                "type": "string",
+                "description": "这个模型适合处理的任务场景，例如长文总结、代码修复、多步推理、快速分类等。"
+            },
             "temperature": { "type": "number" },
             "max_output_tokens": { "type": "integer" },
             "thinking_level": { "type": "string" },
@@ -1880,6 +2157,10 @@ fn update_model_config_schema() -> Value {
             "base_url": { "type": "string" },
             "api_key": { "type": "string" },
             "model": { "type": "string" },
+            "usage_scenario": {
+                "type": "string",
+                "description": "更新这个模型适合处理的任务场景说明。"
+            },
             "temperature": { "type": "number" },
             "max_output_tokens": { "type": "integer" },
             "thinking_level": { "type": "string" },
@@ -1974,7 +2255,9 @@ fn _assert_types(
 
 #[cfg(test)]
 mod tests {
-    use super::{agent_tool_allowed, create_task_schema, task_mcp_config_schema};
+    use super::{
+        agent_tool_allowed, create_task_schema, planner_agent_tool_allowed, task_mcp_config_schema,
+    };
 
     #[test]
     fn create_task_schema_hides_memory_scope_fields() {
@@ -2020,5 +2303,20 @@ mod tests {
     #[test]
     fn external_mcp_tools_hide_internal_process_recorder() {
         assert!(!agent_tool_allowed("record_task_process"));
+    }
+
+    #[test]
+    fn async_planner_profile_exposes_only_planning_tools() {
+        assert!(planner_agent_tool_allowed("list_tasks"));
+        assert!(planner_agent_tool_allowed("get_task"));
+        assert!(planner_agent_tool_allowed("create_task"));
+        assert!(planner_agent_tool_allowed(
+            "create_tasks_with_prerequisites"
+        ));
+        assert!(planner_agent_tool_allowed("list_mcp_builtin_catalog"));
+        assert!(!planner_agent_tool_allowed("get_task_stats"));
+        assert!(!planner_agent_tool_allowed("get_task_dependency_graph"));
+        assert!(!planner_agent_tool_allowed("start_task_run"));
+        assert!(!planner_agent_tool_allowed("list_runs"));
     }
 }

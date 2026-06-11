@@ -44,6 +44,7 @@ export interface InputAreaComposerProps {
   currentAgent: AgentConfig | null;
   availableRemoteConnections: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
+  taskRunnerAsyncContactMode: boolean;
   mcpEnabled: boolean;
   autoCreateTask: boolean;
   onMcpEnabledChange?: (enabled: boolean) => void;

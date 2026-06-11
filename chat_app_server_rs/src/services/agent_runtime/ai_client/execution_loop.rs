@@ -13,7 +13,7 @@ use crate::services::agent_runtime::ai_request_handler::StreamCallbacks;
 use crate::services::ai_common::{
     attach_ai_client_success_extra, build_ai_client_success_payload, completion_failed_error,
     execute_tool_lifecycle, handle_transient_retry, is_retryable_provider_backpressure_error,
-    terminal_empty_response_error,
+    is_task_runner_async_plan_message_mode, terminal_empty_response_error,
 };
 use crate::utils::abort_registry;
 use tokio::time::{sleep, Duration};
@@ -95,7 +95,8 @@ impl AiClient {
         supports_images: Option<bool>,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
-        let persist_tool_messages = purpose != "agent_builder";
+        let persist_tool_messages = purpose != "agent_builder"
+            && !is_task_runner_async_plan_message_mode(message_mode.as_deref());
         let mut input = input;
         let mut force_text_content = force_text_content;
         let mut iteration = iteration;

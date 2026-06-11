@@ -96,22 +96,27 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
           projectContacts.map(({ contact, session }) => {
             const active = selectedContactId === contact.id;
             const switching = switchingContactId === contact.id;
+            const isTaskRunnerAsyncContact = contact.taskRunner?.enabled === true;
             const chatState = session?.id ? sessionChatState?.[session.id] : undefined;
             const runtimeSessionId = session?.id || '';
             const {
               taskReviewCount,
               uiPromptCount,
               pendingCount,
-            } = countPendingSessionPanels({
-              sessionId: runtimeSessionId,
-              taskReviewPanelsBySession,
-              uiPromptPanelsBySession,
-            });
-            const streamingPhase = resolveSessionBusyPhase({
-              chatState,
-              pendingTaskReviewCount: taskReviewCount,
-              pendingUiPromptCount: uiPromptCount,
-            });
+            } = isTaskRunnerAsyncContact
+              ? { taskReviewCount: 0, uiPromptCount: 0, pendingCount: 0 }
+              : countPendingSessionPanels({
+                  sessionId: runtimeSessionId,
+                  taskReviewPanelsBySession,
+                  uiPromptPanelsBySession,
+                });
+            const streamingPhase = isTaskRunnerAsyncContact
+              ? null
+              : resolveSessionBusyPhase({
+                  chatState,
+                  pendingTaskReviewCount: taskReviewCount,
+                  pendingUiPromptCount: uiPromptCount,
+                });
             return (
               <div
                 key={contact.id}
@@ -185,10 +190,10 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
                   ) : (
                     <span className="inline-flex items-center gap-2">
                       <span>{t('teamMembers.sessionLabel', { title: session?.title || t('teamMembers.sessionNotCreated') })}</span>
-                      {session?.id ? (
+                      {session?.id && !isTaskRunnerAsyncContact ? (
                         <SessionBusyBadge phase={streamingPhase} />
                       ) : null}
-                      {pendingCount > 0 ? (
+                      {!isTaskRunnerAsyncContact && pendingCount > 0 ? (
                         <span className="inline-flex items-center gap-1 text-blue-600">
                           <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                           {t('teamMembers.pending', { count: pendingCount })}

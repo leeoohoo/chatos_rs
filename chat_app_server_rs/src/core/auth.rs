@@ -238,6 +238,7 @@ mod tests {
             memory_engine_active_summary_trigger_timeout_ms: 5000,
             memory_engine_active_summary_poll_interval_ms: 10_000,
             memory_engine_active_summary_poll_timeout_ms: 120_000,
+            task_runner_callback_secret: None,
         };
 
         let secrets = auth_token_secrets(&cfg);

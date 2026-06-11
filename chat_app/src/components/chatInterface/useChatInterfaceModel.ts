@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useSessionRuntimeSettings } from '../../features/sessionRuntime/useSessionRuntimeSettings';
 import { useI18n } from '../../i18n/I18nProvider';
+import { isTaskRunnerAsyncMessage } from '../../lib/domain/messages';
 import type { ChatInterfaceProps } from '../../types';
 import { useChatInterfaceController } from './useChatInterfaceController';
 import { useChatInterfaceDerivedState } from './useChatInterfaceDerivedState';
@@ -63,10 +64,26 @@ export const useChatInterfaceModel = ({
     sessionChatState: store.sessionChatState || {},
   });
 
+  const isTaskRunnerAsyncContactMode = useMemo(() => {
+    const currentContactId = typeof derived.currentContactId === 'string'
+      ? derived.currentContactId.trim()
+      : '';
+    if (currentContactId) {
+      const matchedContact = (store.contacts || []).find((contact) => contact?.id === currentContactId) || null;
+      if (matchedContact?.taskRunner?.enabled) {
+        return true;
+      }
+    }
+
+    return Array.isArray(store.messages)
+      && store.messages.some((message) => isTaskRunnerAsyncMessage(message));
+  }, [derived.currentContactId, store.contacts, store.messages]);
+
   const resources = useChatInterfaceSessionResources({
     apiClient: store.apiClient,
     currentSession: store.currentSession,
     currentContactId: derived.currentContactId,
+    isTaskRunnerAsyncContactMode,
     currentChatStateActiveTurnId: derived.currentChatState?.activeTurnId || null,
     currentProject: store.currentProject,
     projects: store.projects,
@@ -131,6 +148,7 @@ export const useChatInterfaceModel = ({
     taskHistoryOpen,
     currentContactName: derived.currentContactName,
     currentContactId: derived.currentContactId,
+    isTaskRunnerAsyncContactMode,
     currentProjectNameForMemory: resources.currentProjectNameForMemory,
     currentProjectIdForMemory: resources.currentProjectIdForMemory,
     messages: store.messages,

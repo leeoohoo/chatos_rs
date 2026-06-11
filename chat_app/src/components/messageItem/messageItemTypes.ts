@@ -9,6 +9,7 @@ export interface MessageItemProps {
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
+  hideHistoryProcessSummary?: boolean;
   derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
   toolResultById?: Map<string, Message>;
   assistantToolCallsById?: Map<string, ToolCall>;

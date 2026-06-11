@@ -130,6 +130,8 @@ export interface SessionMessageResponse {
   conversation_id?: string;
   role: string;
   content: string;
+  message_mode?: string | null;
+  message_source?: string | null;
   rawContent?: string;
   summary?: string;
   tokensUsed?: number;

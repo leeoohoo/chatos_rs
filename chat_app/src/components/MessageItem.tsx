@@ -21,6 +21,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   onEdit,
   onDelete,
   onToggleTurnProcess,
+  hideHistoryProcessSummary = false,
   derivedProcessStatsByUserId,
   toolResultById,
   assistantToolCallsById,
@@ -47,6 +48,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     isAssistant,
     isSystem,
     isTool,
+    isTaskRunnerAsyncAssistant,
     hasHistoryProcess,
     historyToolCount,
     historyThinkingCount,
@@ -63,6 +65,8 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     isStreaming,
     derivedProcessStatsByUserId,
   });
+  const showAssistantChrome = isAssistant && isTaskRunnerAsyncAssistant;
+  const useCompactAssistantLayout = isAssistant && !showAssistantChrome;
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -103,9 +107,9 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       className={cn(
         'group relative rounded-lg transition-colors',
         // 基础布局样式 - 所有消息都使用统一的左对齐布局
-        !isAssistant && 'flex gap-3 px-4 py-4',
+        (!isAssistant || showAssistantChrome) && 'flex gap-3 px-4 py-4',
         // assistant消息使用简化布局（无头像无头部）
-        isAssistant && 'px-4 py-2',
+        useCompactAssistantLayout && 'px-4 py-2',
         // 角色特定样式 - 移除左右对齐差异，统一左对齐
         isUser && 'bg-user-message',
         isSystem && 'bg-muted border-l-4 border-primary',
@@ -114,9 +118,10 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       )}
     >
       {/* 头像 - assistant消息不显示头像 */}
-      {!isAssistant && (
+      {(!isAssistant || showAssistantChrome) && (
         <MessageAvatar
           isUser={isUser}
+          isAssistant={isAssistant}
           isSystem={isSystem}
           isTool={isTool}
         />
@@ -125,16 +130,17 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       {/* 消息内容 */}
       <div className="flex-1 min-w-0">
         {/* 消息头部 - assistant消息不显示头部 */}
-        {!isAssistant && (
+        {(!isAssistant || showAssistantChrome) && (
           <MessageHeader
             message={message}
             isUser={isUser}
+            isAssistant={isAssistant}
             isTool={isTool}
           />
         )}
 
         {/* 特殊渲染：会话摘要提示 */}
-        {isUser && hasHistoryProcess && (
+        {isUser && hasHistoryProcess && !hideHistoryProcessSummary && (
           <HistoryProcessSummary
             userMessageId={message.id}
             historyToolCount={historyToolCount}

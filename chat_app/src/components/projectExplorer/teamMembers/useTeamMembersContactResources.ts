@@ -103,11 +103,16 @@ export const useTeamMembersContactResources = ({
   });
 
   const projectContacts = useMemo<ProjectContactRow[]>(() => {
+    const normalizedContactById = new Map(
+      normalizedContacts.map((contact) => [contact.id, contact]),
+    );
     const rows = projectMembers.map((member) => {
+      const normalizedContact = normalizedContactById.get(member.contactId) || null;
       const contact: ContactItem = {
         id: member.contactId,
         agentId: member.agentId,
         name: member.name,
+        taskRunner: normalizedContact?.taskRunner,
       };
       const session = resolveProjectContactSession({
         currentSession,
@@ -123,7 +128,13 @@ export const useTeamMembersContactResources = ({
     });
     rows.sort((a, b) => b.updatedAt - a.updatedAt);
     return rows;
-  }, [currentSession, findProjectSessionForContact, normalizedProjectId, projectMembers]);
+  }, [
+    currentSession,
+    findProjectSessionForContact,
+    normalizedContacts,
+    normalizedProjectId,
+    projectMembers,
+  ]);
 
   const projectContactsOptions = useMemo(() => normalizedContacts, [normalizedContacts]);
 

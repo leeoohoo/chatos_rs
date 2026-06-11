@@ -4,6 +4,10 @@ import {
 import {
   createDefaultSessionChatState,
 } from '../../lib/store/actions/sendMessage/sessionState';
+import {
+  isTaskRunnerAsyncPlanMessage,
+  isTaskRunnerCallbackMessage,
+} from '../../lib/store/helpers/messageNormalization';
 import type { ChatStoreDraft, ChatStoreSet } from '../../lib/store/types';
 
 type RuntimeRecoveryApiClient = Parameters<typeof recoverStreamingTurnBySnapshot>[0]['apiClient'];
@@ -60,6 +64,12 @@ const findAssistantCandidateForTurn = (
   for (let index = state.messages.length - 1; index >= 0; index -= 1) {
     const message = state.messages[index];
     if (!message || message.role !== 'assistant') {
+      continue;
+    }
+    if (isTaskRunnerCallbackMessage(message)) {
+      continue;
+    }
+    if (isTaskRunnerAsyncPlanMessage(message)) {
       continue;
     }
     if (normalizeId(message.sessionId) !== sessionId) {

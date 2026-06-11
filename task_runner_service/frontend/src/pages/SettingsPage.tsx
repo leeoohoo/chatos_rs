@@ -1,14 +1,33 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Alert, Button, Descriptions, Space, Statistic, Tag, Typography } from 'antd';
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Form,
+  InputNumber,
+  Space,
+  Statistic,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
 
+type RuntimeSettingsFormValues = {
+  task_execution_max_iterations?: number;
+};
+
 export function SettingsPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [messageApi, contextHolder] = message.useMessage();
+  const [form] = Form.useForm<RuntimeSettingsFormValues>();
   const healthQuery = useQuery({
     queryKey: ['health'],
     queryFn: api.health,
@@ -25,6 +44,15 @@ export function SettingsPage() {
     queryKey: ['mcp-catalog'],
     queryFn: api.listMcpCatalog,
   });
+  const updateSystemConfigMutation = useMutation({
+    mutationFn: api.updateSystemConfig,
+    onSuccess: async (nextConfig) => {
+      queryClient.setQueryData(['system-config'], nextConfig);
+      await queryClient.invalidateQueries({ queryKey: ['system-config'] });
+      messageApi.success(t('settings.saved'));
+    },
+    onError: (error: Error) => messageApi.error(error.message),
+  });
 
   const health = healthQuery.data;
   const config = configQuery.data;
@@ -39,8 +67,24 @@ export function SettingsPage() {
         ? 'blue'
         : 'gold';
 
+  useEffect(() => {
+    if (!config) {
+      return;
+    }
+    form.setFieldsValue({
+      task_execution_max_iterations: config.task_execution_max_iterations,
+    });
+  }, [config, form]);
+
+  function handleRuntimeSettingsSubmit(values: RuntimeSettingsFormValues) {
+    updateSystemConfigMutation.mutate({
+      task_execution_max_iterations: values.task_execution_max_iterations,
+    });
+  }
+
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      {contextHolder}
       <Space direction="vertical" size={0}>
         <Typography.Title level={3} style={{ margin: 0 }}>
           {t('settings.title')}
@@ -105,7 +149,53 @@ export function SettingsPage() {
           <Descriptions.Item label="Scheduler Poll Interval">
             {config.scheduler_poll_interval_ms} ms
           </Descriptions.Item>
+          <Descriptions.Item label={t('settings.defaultRoundLimit')}>
+            {config.default_task_execution_max_iterations}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.currentRoundLimit')}>
+            {config.task_execution_max_iterations}
+          </Descriptions.Item>
         </Descriptions>
+      ) : null}
+
+      {config ? (
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Space direction="vertical" size={0}>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              {t('settings.runtimeSection')}
+            </Typography.Title>
+            <Typography.Text type="secondary">
+              {t('settings.roundLimitHelp')}
+            </Typography.Text>
+          </Space>
+          <Form<RuntimeSettingsFormValues>
+            layout="vertical"
+            form={form}
+            onFinish={handleRuntimeSettingsSubmit}
+          >
+            <Space align="end" wrap>
+              <Form.Item
+                name="task_execution_max_iterations"
+                label={t('settings.currentRoundLimit')}
+                rules={[
+                  {
+                    required: true,
+                    message: t('settings.roundLimitRequired'),
+                  },
+                ]}
+              >
+                <InputNumber min={1} style={{ width: 220 }} />
+              </Form.Item>
+              <Button
+                type="primary"
+                onClick={() => form.submit()}
+                loading={updateSystemConfigMutation.isPending}
+              >
+                {t('common.save')}
+              </Button>
+            </Space>
+          </Form>
+        </Space>
       ) : null}
 
       {mcpServer ? (

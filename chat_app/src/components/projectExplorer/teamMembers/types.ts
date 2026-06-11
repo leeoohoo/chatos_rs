@@ -5,6 +5,12 @@ export interface ContactItem {
   id: string;
   agentId: string;
   name: string;
+  taskRunner?: {
+    enabled: boolean;
+    baseUrl: string;
+    username: string;
+    hasPassword: boolean;
+  };
 }
 
 export interface ProjectContactRow {

@@ -195,7 +195,18 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         project_id,
         Some(user_message_id.clone()),
     );
-    let callback_bundle = build_chat_stream_callbacks(&sink, session_id, true);
+    let mut callback_bundle = build_chat_stream_callbacks(
+        &sink,
+        session_id,
+        !runtime_context.task_runner_async_contact_mode,
+    );
+    if runtime_context.task_runner_async_contact_mode {
+        callback_bundle.callbacks.on_chunk = None;
+        callback_bundle.callbacks.on_thinking = None;
+        callback_bundle.callbacks.on_tools_start = None;
+        callback_bundle.callbacks.on_tools_stream = None;
+        callback_bundle.callbacks.on_tools_end = None;
+    }
     let prepared = prepare_chat_execution(
         sink,
         prepared_mcp.unavailable_tools.as_slice(),

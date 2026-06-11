@@ -25,6 +25,7 @@ export interface TeamMemberWorkspaceProps {
   currentAgent: AgentConfig | null;
   selectedProjectSession: Session | null;
   isSelectedSessionActive: boolean;
+  isTaskRunnerAsyncContactMode: boolean;
   sessionSummaryPaneVisible: boolean;
   summaryItems: SessionSummaryItem[];
   summaryLoading: boolean;
@@ -49,7 +50,7 @@ export interface TeamMemberWorkspaceProps {
   currentRemoteConnectionId: string | null;
   onRemoteConnectionChange: (connectionId: string | null) => void;
   onLoadMore: () => void;
-  onToggleTurnProcess: (userMessageId: string) => void;
+  onToggleTurnProcess?: (userMessageId: string) => void;
   turnProcessViewerOpen: boolean;
   turnProcessViewerSessionId: string | null;
   turnProcessViewerUserMessageId: string | null;
@@ -66,8 +67,8 @@ export interface TeamMemberWorkspaceProps {
     attachments?: File[],
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => void | Promise<void>;
-  onGuide: (content: string, attachments?: File[]) => void | Promise<void>;
-  onStop: () => void;
+  onGuide?: (content: string, attachments?: File[]) => void | Promise<void>;
+  onStop?: () => void;
   onModelChange: (modelId: string | null) => void;
   onModelNameChange?: (modelName: string | null) => void;
   onThinkingLevelChange?: (level: string | null) => void;

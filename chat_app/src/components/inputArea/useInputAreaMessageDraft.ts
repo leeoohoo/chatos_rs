@@ -15,6 +15,7 @@ interface UseInputAreaMessageDraftOptions {
   disabled: boolean;
   effectiveAllowAttachments: boolean;
   isGuidingMode: boolean;
+  taskRunnerAsyncContactMode: boolean;
   maxLength: number;
   mcpEnabled: boolean;
   autoCreateTask: boolean;
@@ -38,6 +39,7 @@ export const useInputAreaMessageDraft = ({
   disabled,
   effectiveAllowAttachments,
   isGuidingMode,
+  taskRunnerAsyncContactMode,
   maxLength,
   mcpEnabled,
   autoCreateTask,
@@ -112,9 +114,10 @@ export const useInputAreaMessageDraft = ({
     const runtimeWorkspaceRoot = normalizedWorkspaceRoot || null;
 
     onSend(trimmedMessage, attachments, {
-      mcpEnabled,
-      enabledMcpIds: sanitizedEnabledMcpIds,
-      autoCreateTask,
+      taskRunnerAsyncContactMode,
+      mcpEnabled: taskRunnerAsyncContactMode ? false : mcpEnabled,
+      enabledMcpIds: taskRunnerAsyncContactMode ? [] : sanitizedEnabledMcpIds,
+      autoCreateTask: taskRunnerAsyncContactMode ? false : autoCreateTask,
       modelConfigId: selectedModelId,
       modelName: effectiveModelName,
       thinkingLevel: effectiveThinkingLevel,
@@ -122,8 +125,10 @@ export const useInputAreaMessageDraft = ({
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
       workspaceRoot: runtimeWorkspaceRoot,
-      skillsEnabled,
-      selectedSkillIds: skillsEnabled ? selectedSkillIds : [],
+      skillsEnabled: taskRunnerAsyncContactMode ? false : skillsEnabled,
+      selectedSkillIds: taskRunnerAsyncContactMode
+        ? []
+        : (skillsEnabled ? selectedSkillIds : []),
     });
     resetComposer();
   }, [
@@ -132,6 +137,7 @@ export const useInputAreaMessageDraft = ({
     disabled,
     effectiveAllowAttachments,
     isGuidingMode,
+    taskRunnerAsyncContactMode,
     mcpEnabled,
     autoCreateTask,
     message,

@@ -20,6 +20,7 @@ export const useConversationPaneProps = ({
   taskHistoryOpen: conversation.taskHistoryOpen,
   currentContactName: conversation.currentContactName,
   currentContactId: conversation.currentContactId,
+  isTaskRunnerAsyncContactMode: conversation.isTaskRunnerAsyncContactMode,
   currentProjectNameForMemory: conversation.currentProjectNameForMemory,
   currentProjectIdForMemory: conversation.currentProjectIdForMemory || null,
   messages: conversation.messages,

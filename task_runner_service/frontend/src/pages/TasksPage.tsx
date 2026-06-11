@@ -144,6 +144,27 @@ function taskCreatorLabel(task: TaskRecord): string {
   return displayName || username || '-';
 }
 
+function taskModelOptionLabel(
+  model: {
+    name: string;
+    model: string;
+    usage_scenario?: string | null;
+    enabled?: boolean;
+  },
+  t: TranslateFn,
+): string {
+  const parts = [`${model.name} (${model.model})`];
+  const usageScenario = model.usage_scenario?.trim();
+  if (usageScenario) {
+    parts.push(usageScenario);
+  }
+  let label = parts.join(' - ');
+  if (model.enabled === false) {
+    label = `${label} / ${t('common.disabled')}`;
+  }
+  return label;
+}
+
 export function TasksPage() {
   const { locale, t } = useI18n();
   const DEFAULT_PAGE_SIZE = 8;
@@ -478,11 +499,11 @@ export function TasksPage() {
   const modelOptions = useMemo(
     () =>
       (modelsQuery.data || []).map((model) => ({
-        label: `${model.name} (${model.model})${model.enabled ? '' : ' / disabled'}`,
+        label: taskModelOptionLabel(model, t),
         value: model.id,
         disabled: !model.enabled,
       })),
-    [modelsQuery.data],
+    [modelsQuery.data, t],
   );
 
   const modelNameMap = useMemo(() => {
@@ -492,6 +513,14 @@ export function TasksPage() {
     });
     return map;
   }, [modelsQuery.data]);
+
+  const modelLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (modelsQuery.data || []).forEach((model) => {
+      map.set(model.id, taskModelOptionLabel(model, t));
+    });
+    return map;
+  }, [modelsQuery.data, t]);
 
   const taskSummaryMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1423,13 +1452,13 @@ export function TasksPage() {
                       type="link"
                       size="small"
                       style={{ paddingInline: 0 }}
-                      onClick={() =>
+                    onClick={() =>
                         navigate(
                           `/models?model_id=${encodeURIComponent(selectedTask.default_model_config_id!)}`,
                         )
                       }
                     >
-                      {modelNameMap.get(selectedTask.default_model_config_id) ||
+                      {modelLabelMap.get(selectedTask.default_model_config_id) ||
                         selectedTask.default_model_config_id}
                     </Button>
                   )
@@ -1965,7 +1994,11 @@ export function TasksPage() {
           </Space>
 
           <Form.Item name="default_model_config_id" label={t('tasks.form.defaultModel')}>
-            <Select allowClear options={modelOptions} placeholder={t('tasks.form.modelPlaceholder')} />
+            <Select
+              allowClear
+              options={modelOptions}
+              placeholder={t('tasks.form.modelPlaceholder')}
+            />
           </Form.Item>
           <Form.Item name="prerequisite_task_ids" label="前置任务">
             <Select

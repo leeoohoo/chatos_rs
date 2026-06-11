@@ -10,6 +10,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'currentAgent'
   | 'selectedProjectSession'
   | 'isSelectedSessionActive'
+  | 'isTaskRunnerAsyncContactMode'
   | 'chatIsStreaming'
   | 'chatIsStopping'
   | 'selectedModelId'
@@ -80,6 +81,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   currentAgent,
   selectedProjectSession,
   isSelectedSessionActive,
+  isTaskRunnerAsyncContactMode,
   chatIsStreaming,
   chatIsStopping,
   selectedModelId,
@@ -210,6 +212,8 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       availableRemoteConnections={availableRemoteConnections}
       currentRemoteConnectionId={currentRemoteConnectionId}
       onRemoteConnectionChange={onRemoteConnectionChange}
+      taskRunnerAsyncContactMode={isTaskRunnerAsyncContactMode}
+      legacyTaskPanelsEnabled={!isTaskRunnerAsyncContactMode}
       mcpEnabled={mcpEnabled}
       enabledMcpIds={enabledMcpIds}
       autoCreateTask={autoCreateTask}

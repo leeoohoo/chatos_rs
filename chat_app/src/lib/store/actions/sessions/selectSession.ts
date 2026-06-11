@@ -1,5 +1,6 @@
 import type { Message, Session } from '../../../../types';
 import { debugLog } from '@/lib/utils';
+import { isTaskRunnerAsyncPlanMessage } from '../../../domain/messages';
 import { getRealtimeConnectionStateSnapshot } from '../../../realtime/state';
 import { fetchSession } from '../../helpers/sessions';
 import { fetchSessionMessages } from '../../helpers/messages';
@@ -72,6 +73,7 @@ export function createSelectSessionActions({
 
     const assistantCandidate = [...existingMessages].reverse().find((message) => (
       message?.role === 'assistant'
+      && !isTaskRunnerAsyncPlanMessage(message)
       && readTrimmedString(
         message?.metadata?.historyFinalForTurnId
         || message?.metadata?.conversation_turn_id,

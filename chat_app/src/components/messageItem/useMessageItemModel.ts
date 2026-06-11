@@ -2,6 +2,10 @@ import { useMemo } from 'react';
 
 import type { Message, ToolCall } from '../../types';
 import {
+  isTaskRunnerAsyncPlanMessage,
+  isTaskRunnerCallbackMessage,
+} from '../../lib/domain/messages';
+import {
   EMPTY_DERIVED_PROCESS_STATS,
   normalizeContentSegmentsForRender,
 } from './helpers';
@@ -35,6 +39,13 @@ export const useMessageItemModel = ({
   const isAssistant = message.role === 'assistant';
   const isSystem = message.role === 'system';
   const isTool = message.role === 'tool';
+  const isTaskRunnerAsyncAssistant = Boolean(
+    isAssistant
+    && (
+      isTaskRunnerCallbackMessage(message)
+      || isTaskRunnerAsyncPlanMessage(message)
+    ),
+  );
 
   const derivedProcessStats = useMemo(() => {
     if (!isUser) {
@@ -84,6 +95,7 @@ export const useMessageItemModel = ({
   const collapseAssistantProcessByDefault = (
     isTurnLinkedAssistant
     && !isProcessAssistant
+    && !isTaskRunnerAsyncAssistant
   );
 
   const attachments = message.metadata?.attachments || [];
@@ -131,6 +143,7 @@ export const useMessageItemModel = ({
     isAssistant,
     isSystem,
     isTool,
+    isTaskRunnerAsyncAssistant,
     hasHistoryProcess,
     historyToolCount,
     historyThinkingCount,

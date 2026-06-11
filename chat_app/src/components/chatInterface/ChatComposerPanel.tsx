@@ -53,8 +53,8 @@ interface ChatComposerPanelProps {
   onTaskReviewConfirm: (drafts: TaskReviewDraft[]) => void;
   onTaskReviewCancel: () => void;
   onSend: SendMessageHandler;
-  onGuide: GuideMessageHandler;
-  onStop: () => void;
+  onGuide?: GuideMessageHandler;
+  onStop?: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;
   isStopping: boolean;
@@ -91,6 +91,8 @@ interface ChatComposerPanelProps {
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;
+  taskRunnerAsyncContactMode?: boolean;
+  legacyTaskPanelsEnabled?: boolean;
   mcpEnabled: boolean;
   enabledMcpIds?: string[];
   autoCreateTask?: boolean;
@@ -170,6 +172,8 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   availableRemoteConnections = [],
   onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
+  taskRunnerAsyncContactMode = false,
+  legacyTaskPanelsEnabled = true,
   mcpEnabled,
   enabledMcpIds,
   autoCreateTask = false,
@@ -185,47 +189,49 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
 
   return (
   <div className="border-t border-border">
-    <TaskWorkbar
-      tasks={mergedCurrentTurnTasks}
-      historyTasks={workbarHistoryTasks}
-      historyOpen={taskHistoryOpen}
-      currentTurnId={activeConversationTurnId}
-      isLoading={workbarLoading}
-      historyLoading={workbarHistoryLoading}
-      error={workbarError}
-      historyError={workbarHistoryError}
-      actionLoadingTaskId={workbarActionLoadingTaskId}
-      onRefresh={onRefreshWorkbarTasks}
-      onOpenHistory={() => onOpenHistory(sessionId)}
-      onHistoryOpenChange={onTaskHistoryOpenChange}
-      onOpenUiPromptHistory={onOpenUiPromptHistory ? () => onOpenUiPromptHistory(sessionId) : undefined}
-      onReviewRepair={reviewRepairAvailable ? onReviewRepair : undefined}
-      reviewRepairRunning={reviewRepairRunning}
-      reviewRepairDisabled={reviewRepairDisabled}
-      uiPromptHistoryCount={uiPromptHistoryCount}
-      uiPromptHistoryLoading={uiPromptHistoryLoading}
-      runtimeGuidancePendingCount={runtimeGuidancePendingCount}
-      runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
-      runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
-      runtimeGuidanceItems={runtimeGuidanceItems}
-      onCompleteTask={onCompleteTask}
-      onDeleteTask={onDeleteTask}
-      onEditTask={onEditTask}
-      taskModalOpen={taskModalOpen}
-      taskModalMode={taskModalMode}
-      taskModalTask={taskModalTask}
-      taskModalError={taskModalError}
-      onCloseTaskModal={onCloseTaskModal}
-      onSubmitTaskModal={onSubmitTaskModal}
-    />
-    {activeUiPromptPanel ? (
+    {legacyTaskPanelsEnabled ? (
+      <TaskWorkbar
+        tasks={mergedCurrentTurnTasks}
+        historyTasks={workbarHistoryTasks}
+        historyOpen={taskHistoryOpen}
+        currentTurnId={activeConversationTurnId}
+        isLoading={workbarLoading}
+        historyLoading={workbarHistoryLoading}
+        error={workbarError}
+        historyError={workbarHistoryError}
+        actionLoadingTaskId={workbarActionLoadingTaskId}
+        onRefresh={onRefreshWorkbarTasks}
+        onOpenHistory={() => onOpenHistory(sessionId)}
+        onHistoryOpenChange={onTaskHistoryOpenChange}
+        onOpenUiPromptHistory={onOpenUiPromptHistory ? () => onOpenUiPromptHistory(sessionId) : undefined}
+        onReviewRepair={reviewRepairAvailable ? onReviewRepair : undefined}
+        reviewRepairRunning={reviewRepairRunning}
+        reviewRepairDisabled={reviewRepairDisabled}
+        uiPromptHistoryCount={uiPromptHistoryCount}
+        uiPromptHistoryLoading={uiPromptHistoryLoading}
+        runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+        runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+        runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+        runtimeGuidanceItems={runtimeGuidanceItems}
+        onCompleteTask={onCompleteTask}
+        onDeleteTask={onDeleteTask}
+        onEditTask={onEditTask}
+        taskModalOpen={taskModalOpen}
+        taskModalMode={taskModalMode}
+        taskModalTask={taskModalTask}
+        taskModalError={taskModalError}
+        onCloseTaskModal={onCloseTaskModal}
+        onSubmitTaskModal={onSubmitTaskModal}
+      />
+    ) : null}
+    {legacyTaskPanelsEnabled && activeUiPromptPanel ? (
       <UiPromptPanel
         panel={activeUiPromptPanel}
         onSubmit={onUiPromptSubmit}
         onCancel={onUiPromptCancel}
       />
     ) : null}
-    {activeTaskReviewPanel ? (
+    {legacyTaskPanelsEnabled && activeTaskReviewPanel ? (
       <TaskDraftPanel
         panel={activeTaskReviewPanel}
         onConfirm={onTaskReviewConfirm}
@@ -263,10 +269,11 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       workspaceRoot={workspaceRoot}
       onWorkspaceRootChange={onWorkspaceRootChange}
       currentRemoteConnectionId={currentRemoteConnectionId}
-      currentAgent={currentAgent}
+      currentAgent={taskRunnerAsyncContactMode ? null : currentAgent}
       availableRemoteConnections={availableRemoteConnections}
       onRemoteConnectionChange={onRemoteConnectionChange}
       showWorkspaceRootPicker={showWorkspaceRootPicker}
+      taskRunnerAsyncContactMode={taskRunnerAsyncContactMode}
       mcpEnabled={mcpEnabled}
       enabledMcpIds={enabledMcpIds}
       autoCreateTask={autoCreateTask}

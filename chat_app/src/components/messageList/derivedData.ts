@@ -1,4 +1,5 @@
 import type { ContentSegment, Message } from '../../types';
+import { isTaskRunnerCallbackMessage } from '../../lib/domain/messages';
 import type { DerivedProcessStats } from '../messageItem/types';
 import {
   getMessageAllToolCalls,
@@ -38,6 +39,7 @@ type ParsedMessageForList = {
   historyFinalForUserMessageId: string;
   historyFinalForTurnId: string;
   historyProcessPlaceholder: boolean;
+  isTaskRunnerCallbackAssistant: boolean;
   userTurnId: string;
   userFinalAssistantMessageId: string;
 };
@@ -69,6 +71,9 @@ const readMessageContentLength = (message: Message): number => (
 
 const readNonProcessAssistantDedupKey = (parsed: ParsedMessageForList): string => {
   if (parsed.role !== 'assistant') {
+    return '';
+  }
+  if (parsed.isTaskRunnerCallbackAssistant) {
     return '';
   }
   if (parsed.historyProcessUserMessageId || parsed.historyProcessTurnId) {
@@ -128,6 +133,9 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
   const historyFinalForUserMessageId = getMessageHistoryFinalForUserMessageId(message);
   const historyFinalForTurnId = getMessageHistoryFinalForTurnId(message);
   const historyProcessPlaceholder = isMessageHistoryProcessPlaceholder(message);
+  const isTaskRunnerCallbackAssistant = Boolean(
+    message.role === 'assistant' && isTaskRunnerCallbackMessage(message),
+  );
   const userTurnId = normalizeTurnId(
     conversationTurnId || historyProcessTurnId,
   );
@@ -153,6 +161,7 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
     historyFinalForUserMessageId,
     historyFinalForTurnId,
     historyProcessPlaceholder,
+    isTaskRunnerCallbackAssistant,
     userTurnId,
     userFinalAssistantMessageId,
   };
@@ -234,6 +243,9 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
 
   const resolveLinkedUserMessageId = (parsed: ParsedMessageForList): string => {
     if (parsed.role === 'assistant') {
+      if (parsed.isTaskRunnerCallbackAssistant) {
+        return '';
+      }
       let linkedUserMessageId = parsed.historyProcessUserMessageId;
       if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
         const processTurnId = parsed.historyProcessTurnId || parsed.conversationTurnId;

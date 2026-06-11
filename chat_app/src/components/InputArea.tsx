@@ -55,6 +55,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   availableRemoteConnections = [],
   onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
+  taskRunnerAsyncContactMode = false,
   mcpEnabled = true,
   enabledMcpIds = [],
   autoCreateTask = false,
@@ -185,6 +186,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     onWorkspaceRootChange,
     currentRemoteConnectionId,
     currentAgent,
+    taskRunnerAsyncContactMode,
     mcpEnabled,
     enabledMcpIds,
     autoCreateTask,
@@ -229,6 +231,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           currentAgent={currentAgentForSkills}
           availableRemoteConnections={availableRemoteConnections}
           onRemoteConnectionChange={onRemoteConnectionChange}
+          taskRunnerAsyncContactMode={taskRunnerAsyncContactMode}
           mcpEnabled={mcpEnabled}
           autoCreateTask={autoCreateTask}
           onMcpEnabledChange={onMcpEnabledChange}

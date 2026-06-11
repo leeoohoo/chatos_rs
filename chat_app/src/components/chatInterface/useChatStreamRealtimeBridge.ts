@@ -37,6 +37,7 @@ export const useChatStreamRealtimeBridge = () => {
   const activeStreamingSessionIds = useChatStoreSelector((state) => (
     collectActiveStreamingSessionIds(state.sessionChatState)
   ), shallow);
+  const currentSessionId = useChatStoreSelector((state) => state.currentSessionId || null);
   const processedCompletionKeysRef = useRef<Set<string>>(new Set());
   const previousConnectionStateRef = useRef(realtimeConnectionState);
   const disconnectRecoveryInflightRef = useRef<Set<string>>(new Set());
@@ -50,14 +51,22 @@ export const useChatStreamRealtimeBridge = () => {
     [store],
   );
 
+  const subscribedConversationIds = useMemo(() => {
+    const ids = new Set<string>(activeStreamingSessionIds);
+    if (currentSessionId) {
+      ids.add(currentSessionId);
+    }
+    return Array.from(ids);
+  }, [activeStreamingSessionIds, currentSessionId]);
+
   const enabled = useMemo(
     () => realtimeConnectionState === 'connected',
     [realtimeConnectionState],
   );
 
   useRealtimeTopics(
-    activeStreamingSessionIds.map((sessionId) => ({ scope: 'conversation' as const, id: sessionId })),
-    enabled && activeStreamingSessionIds.length > 0,
+    subscribedConversationIds.map((sessionId) => ({ scope: 'conversation' as const, id: sessionId })),
+    enabled && subscribedConversationIds.length > 0,
   );
 
   useEffect(() => {
@@ -135,6 +144,14 @@ export const useChatStreamRealtimeBridge = () => {
   useConversationChatStreamRealtime({
     enabled,
     onEvent: async (payload) => {
+      if (payload.stream_type === 'task_runner_callback') {
+        const payloadSessionId = String(payload.conversation_id || '').trim();
+        const state = store.getState();
+        if (payloadSessionId && state.currentSessionId === payloadSessionId) {
+          await state.syncSessionMessagesInBackground(payloadSessionId);
+        }
+        return;
+      }
       await handleChatStreamRealtimeCompletion({
         payload,
         storeGetState: () => store.getState() as ChatStoreDraft,

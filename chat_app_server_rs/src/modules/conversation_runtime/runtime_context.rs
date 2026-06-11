@@ -44,6 +44,8 @@ pub struct ConversationRuntimeRequest {
     pub auto_create_task: Option<bool>,
     pub skills_enabled: Option<bool>,
     pub selected_skill_ids: Option<Vec<String>>,
+    pub conversation_turn_id: Option<String>,
+    pub source_user_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub mcp_server_bundle: McpServerBundle,
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
+    pub task_runner_async_contact_mode: bool,
 }
 
 pub type ToolMetadataMap = std::collections::HashMap<String, ToolInfo>;
@@ -191,7 +194,6 @@ pub async fn resolve_runtime_context(
         .clone()
         .unwrap_or_else(|| runtime_metadata.enabled_mcp_ids.clone());
     let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
-    let enabled_mcp_ids_for_snapshot = normalized_mcp_ids.clone();
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
         .or_else(|| runtime_metadata.remote_connection_id.clone());
     let workspace_root = runtime_metadata.workspace_root.clone();
@@ -204,11 +206,30 @@ pub async fn resolve_runtime_context(
         .or(runtime_metadata.auto_create_task)
         .unwrap_or(false);
 
-    let (mut http_servers, stdio_servers, mut builtin_servers) = if mcp_enabled {
+    let mut task_runner_skill_prompt = None;
+    let task_runner_runtime = build_contact_task_runner_runtime(
+        effective_user_id.as_deref(),
+        runtime_metadata.contact_id.as_deref(),
+        contact_agent_id.as_deref(),
+        Some(session_id),
+        workspace_root
+            .as_deref()
+            .or(resolved_project_root.as_deref()),
+        default_remote_connection_id.as_deref(),
+        req.conversation_turn_id.as_deref(),
+        req.source_user_message_id.as_deref(),
+        internal_context_locale,
+    )
+    .await;
+    let task_runner_async_contact_mode = task_runner_runtime.is_some();
+
+    let (mut http_servers, stdio_servers, mut builtin_servers) = if task_runner_async_contact_mode {
+        empty_mcp_server_bundle()
+    } else if mcp_enabled {
         load_mcp_servers_by_selection(
             effective_user_id.clone(),
             !normalized_mcp_ids.is_empty(),
-            normalized_mcp_ids,
+            normalized_mcp_ids.clone(),
             resolved_project_root.as_deref(),
             resolved_project_id.as_deref(),
         )
@@ -217,30 +238,12 @@ pub async fn resolve_runtime_context(
         empty_mcp_server_bundle()
     };
 
-    let mut task_runner_skill_prompt = None;
-    if mcp_enabled
-        && !http_servers
-            .iter()
-            .any(|server| server.name == TASK_RUNNER_CONTACT_MCP_SERVER_NAME)
-    {
-        if let Some(runtime) = build_contact_task_runner_runtime(
-            effective_user_id.as_deref(),
-            runtime_metadata.contact_id.as_deref(),
-            contact_agent_id.as_deref(),
-            workspace_root
-                .as_deref()
-                .or(resolved_project_root.as_deref()),
-            default_remote_connection_id.as_deref(),
-            internal_context_locale,
-        )
-        .await
-        {
-            task_runner_skill_prompt = runtime.skill_prompt;
-            http_servers.push(runtime.server);
-        }
+    if let Some(runtime) = task_runner_runtime {
+        task_runner_skill_prompt = runtime.skill_prompt;
+        http_servers.push(runtime.server);
     }
 
-    if should_attach_contact_reader_tools {
+    if should_attach_contact_reader_tools && !task_runner_async_contact_mode {
         if let Some(agent_id) = contact_runtime_context
             .as_ref()
             .map(|context| context.agent_id.as_str())
@@ -273,6 +276,11 @@ pub async fn resolve_runtime_context(
         server.auto_create_task = auto_create_task;
     }
 
+    let enabled_mcp_ids_for_snapshot = if task_runner_async_contact_mode {
+        vec![TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string()]
+    } else {
+        normalized_mcp_ids.clone()
+    };
     let builtin_mcp_system_prompt =
         compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
@@ -299,11 +307,12 @@ pub async fn resolve_runtime_context(
         resolved_project_root,
         default_remote_connection_id,
         workspace_root,
-        mcp_enabled,
+        mcp_enabled: task_runner_async_contact_mode || mcp_enabled,
         enabled_mcp_ids_for_snapshot,
         mcp_server_bundle: (http_servers, stdio_servers, builtin_servers),
         use_tools,
         memory_summary_prompt,
+        task_runner_async_contact_mode,
     }
 }
 
@@ -317,8 +326,11 @@ async fn build_contact_task_runner_runtime(
     effective_user_id: Option<&str>,
     contact_id: Option<&str>,
     contact_agent_id: Option<&str>,
+    source_session_id: Option<&str>,
     workspace_dir: Option<&str>,
     remote_connection_id: Option<&str>,
+    conversation_turn_id: Option<&str>,
+    source_user_message_id: Option<&str>,
     locale: InternalContextLocale,
 ) -> Option<ContactTaskRunnerRuntime> {
     let config = match chatos_memory_mappings::get_contact_task_runner_runtime_config(
@@ -357,6 +369,19 @@ async fn build_contact_task_runner_runtime(
 
     let mut headers = HashMap::new();
     headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+    headers.insert(
+        "X-Task-Runner-Tool-Profile".to_string(),
+        "chatos_async_planner".to_string(),
+    );
+    if let Some(session_id) = normalize_optional_text(source_session_id) {
+        headers.insert("X-Chatos-Session-Id".to_string(), session_id);
+    }
+    if let Some(turn_id) = normalize_optional_text(conversation_turn_id) {
+        headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
+    }
+    if let Some(user_message_id) = normalize_optional_text(source_user_message_id) {
+        headers.insert("X-Chatos-User-Message-Id".to_string(), user_message_id);
+    }
     if let Some(workspace_dir) = normalize_optional_text(workspace_dir) {
         headers.insert("X-Task-Runner-Workspace-Dir".to_string(), workspace_dir);
     }

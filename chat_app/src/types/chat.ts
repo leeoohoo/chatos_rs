@@ -83,6 +83,26 @@ export interface MessageMetadata extends UnknownRecord {
     rounds?: number;
     [key: string]: unknown;
   };
+  task_runner_async?: {
+    mode?: string;
+    message_kind?: string;
+    overall_status?: 'pending' | 'processing' | 'completed' | string;
+    source_user_message_id?: string;
+    source_turn_id?: string;
+    task_id?: string;
+    run_id?: string;
+    event?: string;
+    status?: string;
+    task_title?: string;
+    created_task_ids?: string[];
+    running_task_ids?: string[];
+    terminal_task_ids?: string[];
+    succeeded_task_ids?: string[];
+    failed_task_ids?: string[];
+    blocked_task_ids?: string[];
+    cancelled_task_ids?: string[];
+    [key: string]: unknown;
+  };
 }
 
 export interface Message {
@@ -90,6 +110,8 @@ export interface Message {
   sessionId: string;
   role: MessageRole;
   content: string;
+  messageMode?: string | null;
+  messageSource?: string | null;
   rawContent?: string;
   summary?: string;
   tokensUsed?: number;

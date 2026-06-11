@@ -40,6 +40,7 @@ type UseInputAreaControllerParams = Pick<
   | 'onWorkspaceRootChange'
   | 'currentRemoteConnectionId'
   | 'currentAgent'
+  | 'taskRunnerAsyncContactMode'
   | 'mcpEnabled'
   | 'enabledMcpIds'
   | 'autoCreateTask'
@@ -82,6 +83,7 @@ export function useInputAreaController({
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
   currentAgent = null,
+  taskRunnerAsyncContactMode = false,
   mcpEnabled = true,
   enabledMcpIds = [],
   autoCreateTask = false,
@@ -89,7 +91,7 @@ export function useInputAreaController({
   onEnabledMcpIdsChange,
 }: UseInputAreaControllerParams) {
   const { t } = useI18n();
-  const isGuidingMode = isStreaming && !isStopping;
+  const isGuidingMode = !taskRunnerAsyncContactMode && isStreaming && !isStopping;
   const effectiveAllowAttachments = allowAttachments;
 
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -401,6 +403,7 @@ export function useInputAreaController({
     disabled,
     effectiveAllowAttachments,
     isGuidingMode,
+    taskRunnerAsyncContactMode,
     mcpEnabled,
     autoCreateTask,
     maxLength,

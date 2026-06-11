@@ -5,7 +5,10 @@ use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
-use crate::services::ai_common::{build_assistant_message_metadata, build_tool_result_metadata};
+use crate::services::ai_common::{
+    build_assistant_message_metadata, build_tool_result_metadata,
+    TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE,
+};
 use crate::services::{chatos_memory_engine, chatos_sessions};
 
 #[derive(Clone, Default)]
@@ -42,7 +45,11 @@ impl MessageManagerCore {
         }
         message.message_mode = message_mode;
         message.message_source = message_source;
-        message.metadata = metadata;
+        message.metadata = normalize_user_message_metadata(
+            metadata,
+            message.message_mode.as_deref(),
+            message.id.as_str(),
+        );
         self.persist_message(message).await
     }
 
@@ -241,6 +248,52 @@ impl MessageManagerCore {
             }
         }
     }
+}
+
+fn normalize_user_message_metadata(
+    metadata: Option<Value>,
+    message_mode: Option<&str>,
+    message_id: &str,
+) -> Option<Value> {
+    let is_task_runner_async_plan = message_mode
+        .map(str::trim)
+        .is_some_and(|value| value == TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE);
+    if !is_task_runner_async_plan {
+        return metadata;
+    }
+
+    let mut root = match metadata {
+        Some(Value::Object(map)) => map,
+        Some(_) | None => serde_json::Map::new(),
+    };
+    let turn_id = root
+        .get("conversation_turn_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let task_runner_async = root
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if let Value::Object(task_runner_async_map) = task_runner_async {
+        task_runner_async_map
+            .entry("mode".to_string())
+            .or_insert_with(|| Value::String("contact_async".to_string()));
+        task_runner_async_map
+            .entry("overall_status".to_string())
+            .or_insert_with(|| Value::String("pending".to_string()));
+        task_runner_async_map
+            .entry("source_user_message_id".to_string())
+            .or_insert_with(|| Value::String(message_id.to_string()));
+        if let Some(turn_id) = turn_id {
+            task_runner_async_map
+                .entry("source_turn_id".to_string())
+                .or_insert_with(|| Value::String(turn_id));
+        }
+    }
+
+    Some(Value::Object(root))
 }
 
 async fn try_get_memory_chat_history_context_from_memory_engine(

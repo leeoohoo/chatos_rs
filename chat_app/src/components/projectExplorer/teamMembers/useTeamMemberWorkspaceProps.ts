@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { ComponentProps } from 'react';
 
+import { isTaskRunnerAsyncMessage } from '../../../lib/domain/messages';
 import TeamMemberWorkspace from './TeamMemberWorkspace';
 import type { UseTeamMembersPaneViewPropsOptions } from './teamMembersPaneViewPropTypes';
 
@@ -19,6 +20,8 @@ export const useTeamMemberWorkspaceProps = ({
     selectedRuntimeModelId
     && (store.aiModelConfigs || []).find((item) => item.id === selectedRuntimeModelId)?.supports_reasoning === true,
   );
+  const isTaskRunnerAsyncContactMode = resources.isTaskRunnerAsyncContactMode
+    || (Array.isArray(store.messages) && store.messages.some((message) => isTaskRunnerAsyncMessage(message)));
 
   return ({
   project,
@@ -26,6 +29,7 @@ export const useTeamMemberWorkspaceProps = ({
   currentAgent: resources.conversation.selectedContactAgent,
   selectedProjectSession: resources.conversation.selectedProjectSession,
   isSelectedSessionActive: resources.conversation.isSelectedSessionActive,
+  isTaskRunnerAsyncContactMode,
   sessionSummaryPaneVisible: resources.conversation.sessionSummaryPaneVisible,
   summaryItems: resources.summary.summaryItems,
   summaryLoading: resources.summary.summaryLoading,
@@ -50,7 +54,9 @@ export const useTeamMemberWorkspaceProps = ({
   currentRemoteConnectionId: resources.composer.currentRemoteConnection?.id || null,
   onRemoteConnectionChange: resources.composer.handleComposerRemoteConnectionChange,
   onLoadMore: resources.conversation.handleLoadMore,
-  onToggleTurnProcess: resources.conversation.handleToggleTurnProcess,
+  onToggleTurnProcess: isTaskRunnerAsyncContactMode
+    ? undefined
+    : resources.conversation.handleToggleTurnProcess,
   turnProcessViewerOpen: store.turnProcessViewer.open,
   turnProcessViewerSessionId: store.turnProcessViewer.sessionId,
   turnProcessViewerUserMessageId: store.turnProcessViewer.userMessageId,
@@ -77,8 +83,12 @@ export const useTeamMemberWorkspaceProps = ({
     void resources.conversation.handleDeleteSummary(summaryId);
   },
   onSend: resources.conversation.handleSendMessage,
-  onGuide: resources.composer.handleRuntimeGuidanceSend,
-  onStop: store.abortCurrentConversation,
+  onGuide: isTaskRunnerAsyncContactMode
+    ? undefined
+    : resources.composer.handleRuntimeGuidanceSend,
+  onStop: isTaskRunnerAsyncContactMode
+    ? undefined
+    : store.abortCurrentConversation,
   onModelChange: resources.composer.handleComposerSelectedModelChange,
   onModelNameChange: resources.composer.handleComposerSelectedModelNameChange,
   onThinkingLevelChange: resources.composer.handleComposerSelectedThinkingLevelChange,
@@ -163,6 +173,7 @@ export const useTeamMemberWorkspaceProps = ({
   resources.conversation.selectedContactAgent,
   resources.conversation.selectedProjectSession,
   resources.conversation.sessionSummaryPaneVisible,
+  resources.isTaskRunnerAsyncContactMode,
   resources.summary.clearingSummaries,
   resources.summary.deletingSummaryId,
   resources.summary.loadSessionSummaries,

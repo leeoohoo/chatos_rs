@@ -13,6 +13,7 @@ export const createDraftUserMessage = ({
   selectedModel,
   previewAttachments,
   createdAt,
+  taskRunnerAsyncContactMode = false,
 }: {
   sessionId: string;
   content: string;
@@ -20,6 +21,7 @@ export const createDraftUserMessage = ({
   selectedModel: AiModelConfig;
   previewAttachments: PreviewAttachment[];
   createdAt: Date;
+  taskRunnerAsyncContactMode?: boolean;
 }): Message => ({
   id: `temp_user_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
   sessionId,
@@ -37,6 +39,15 @@ export const createDraftUserMessage = ({
       turnId: conversationTurnId,
       finalAssistantMessageId: null,
     }),
+    ...(taskRunnerAsyncContactMode
+      ? {
+        task_runner_async: {
+          mode: 'contact_async',
+          overall_status: 'pending',
+          source_turn_id: conversationTurnId,
+        },
+      }
+      : {}),
   },
 });
 

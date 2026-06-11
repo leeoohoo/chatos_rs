@@ -26,6 +26,7 @@ interface ChatConversationPaneProps {
   taskHistoryOpen: boolean;
   currentContactName: string;
   currentContactId: string;
+  isTaskRunnerAsyncContactMode: boolean;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
@@ -133,6 +134,7 @@ interface ChatMessagesPaneProps {
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
   currentContactId: string;
+  isTaskRunnerAsyncContactMode: boolean;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
@@ -163,6 +165,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   sessionSummaryPaneVisible,
   currentContactName,
   currentContactId,
+  isTaskRunnerAsyncContactMode,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
@@ -193,6 +196,11 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   void reviewRepairRunning;
   void reviewRepairPendingCount;
   void reviewRepairDisabled;
+  const effectiveLoading = isTaskRunnerAsyncContactMode ? false : chatIsLoading;
+  const effectiveStreaming = isTaskRunnerAsyncContactMode ? false : chatIsStreaming;
+  const effectiveStopping = isTaskRunnerAsyncContactMode ? false : chatIsStopping;
+  const effectiveStreamingPhase = isTaskRunnerAsyncContactMode ? null : chatStreamingPhase;
+  const effectiveStreamingPreviewText = isTaskRunnerAsyncContactMode ? '' : chatStreamingPreviewText;
 
   if (!currentSession) {
     return (
@@ -224,14 +232,14 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
         projectName={currentProjectNameForMemory}
         projectId={currentProjectIdForMemory || null}
         messages={messages}
-        isLoading={chatIsLoading}
-        isStreaming={chatIsStreaming}
-        isStopping={chatIsStopping}
-        streamingPhase={chatStreamingPhase}
-        streamingPreviewText={chatStreamingPreviewText}
+        isLoading={effectiveLoading}
+        isStreaming={effectiveStreaming}
+        isStopping={effectiveStopping}
+        streamingPhase={effectiveStreamingPhase}
+        streamingPreviewText={effectiveStreamingPreviewText}
         hasMore={hasMoreMessages}
         onLoadMore={onLoadMore}
-        onToggleTurnProcess={onToggleTurnProcess}
+        onToggleTurnProcess={isTaskRunnerAsyncContactMode ? (() => {}) : onToggleTurnProcess}
         customRenderer={customRenderer}
         sessionSummaries={sessionMemorySummaries}
         agentRecalls={agentRecalls}
@@ -248,14 +256,15 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
       key={`messages-${currentSession?.id || 'none'}-chat`}
       sessionId={currentSession?.id}
       messages={messages}
-      isLoading={chatIsLoading}
-      isStreaming={chatIsStreaming}
-      isStopping={chatIsStopping}
-      streamingPhase={chatStreamingPhase}
-      streamingPreviewText={chatStreamingPreviewText}
+      isLoading={effectiveLoading}
+      isStreaming={effectiveStreaming}
+      isStopping={effectiveStopping}
+      streamingPhase={effectiveStreamingPhase}
+      streamingPreviewText={effectiveStreamingPreviewText}
       hasMore={hasMoreMessages}
       onLoadMore={onLoadMore}
-      onToggleTurnProcess={onToggleTurnProcess}
+      onToggleTurnProcess={isTaskRunnerAsyncContactMode ? undefined : onToggleTurnProcess}
+      hideHistoryProcessSummary={isTaskRunnerAsyncContactMode}
       customRenderer={customRenderer}
     />
   );
@@ -269,6 +278,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   taskHistoryOpen,
   currentContactName,
   currentContactId,
+  isTaskRunnerAsyncContactMode,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
@@ -374,6 +384,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           sessionSummaryPaneVisible={sessionSummaryPaneVisible}
           currentContactName={currentContactName}
           currentContactId={currentContactId}
+          isTaskRunnerAsyncContactMode={isTaskRunnerAsyncContactMode}
           currentProjectNameForMemory={currentProjectNameForMemory}
           currentProjectIdForMemory={currentProjectIdForMemory}
           messages={messages}
@@ -434,11 +445,11 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onTaskReviewConfirm={onTaskReviewConfirm}
           onTaskReviewCancel={onTaskReviewCancel}
           onSend={onSend}
-          onGuide={onGuide}
-          onStop={onStop}
+          onGuide={isTaskRunnerAsyncContactMode ? undefined : onGuide}
+          onStop={isTaskRunnerAsyncContactMode ? undefined : onStop}
           inputDisabled={inputDisabled}
-          isStreaming={isStreaming}
-          isStopping={isStopping}
+          isStreaming={isTaskRunnerAsyncContactMode ? false : isStreaming}
+          isStopping={isTaskRunnerAsyncContactMode ? false : isStopping}
           supportedFileTypes={supportedFileTypes}
           reasoningSupported={supportsReasoning}
           reasoningEnabled={reasoningEnabled}
@@ -468,6 +479,8 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           availableRemoteConnections={availableRemoteConnections}
           onRemoteConnectionChange={onRemoteConnectionChange}
           showWorkspaceRootPicker={true}
+          taskRunnerAsyncContactMode={isTaskRunnerAsyncContactMode}
+          legacyTaskPanelsEnabled={!isTaskRunnerAsyncContactMode}
           mcpEnabled={mcpEnabled}
           enabledMcpIds={enabledMcpIds}
           autoCreateTask={autoCreateTask}
@@ -481,7 +494,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
         />
       )}
 
-      {turnProcessApiClient && (
+      {turnProcessApiClient && !isTaskRunnerAsyncContactMode && (
         <TurnProcessModal
           open={turnProcessViewerOpen}
           sessionId={turnProcessViewerSessionId}

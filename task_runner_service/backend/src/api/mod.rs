@@ -31,7 +31,8 @@ use crate::models::{
     TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatsResponse, TaskStatus,
     TaskSummaryRecord, TestModelConfigRequest, TestRemoteServerRequest, UiPromptRecord,
     UiPromptStatus, UiPromptTaskCountRecord, UpdateModelConfigRequest, UpdateRemoteServerRequest,
-    UpdateTaskMcpRequest, UpdateTaskRequest, UpdateUserRequest, UserSummaryRecord,
+    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskRequest, UpdateUserRequest,
+    UserSummaryRecord,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
@@ -44,6 +45,7 @@ pub fn build_router(state: AppState) -> Router {
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/auth/logout", post(logout_handler))
+        .route("/api/system/config", patch(update_system_config_handler))
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/:id", patch(update_user).delete(delete_user))
         .route("/api/tasks", get(list_tasks).post(create_task))
@@ -188,8 +190,33 @@ async fn health_handler() -> Json<HealthResponse> {
     Json(health())
 }
 
-async fn system_config_handler(State(state): State<AppState>) -> Json<SystemConfigResponse> {
-    Json(system_config(&state.config))
+async fn system_config_handler(
+    State(state): State<AppState>,
+) -> Result<Json<SystemConfigResponse>, ApiError> {
+    let task_execution_max_iterations = state
+        .task_service
+        .effective_task_execution_max_iterations()
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(system_config(
+        &state.config,
+        task_execution_max_iterations,
+    )))
+}
+
+async fn update_system_config_handler(
+    State(state): State<AppState>,
+    Json(input): Json<UpdateRuntimeSettingsRequest>,
+) -> Result<Json<SystemConfigResponse>, ApiError> {
+    let settings = state
+        .task_service
+        .update_runtime_settings(input)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(system_config(
+        &state.config,
+        settings.task_execution_max_iterations,
+    )))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1616,11 +1643,13 @@ fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
         source_session_id: header_text(headers, "x-chatos-session-id")
             .or_else(|| header_text(headers, "x-chatos-conversation-id")),
         source_turn_id: header_text(headers, "x-chatos-turn-id"),
+        source_user_message_id: header_text(headers, "x-chatos-user-message-id"),
         workspace_dir: header_text(headers, "x-task-runner-workspace-dir")
             .or_else(|| header_text(headers, "x-chatos-workspace-dir"))
             .or_else(|| header_text(headers, "x-chatos-workspace-root")),
         remote_server_config: header_text(headers, "x-task-runner-remote-server-config")
             .or_else(|| header_text(headers, "x-task-runner-remote-server-json")),
+        tool_profile: header_text(headers, "x-task-runner-tool-profile"),
     }
 }
 

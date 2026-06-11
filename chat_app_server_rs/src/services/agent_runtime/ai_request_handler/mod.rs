@@ -27,10 +27,13 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tracing::{error, info, warn};
 
+use crate::core::tool_call::tool_calls_value_has_items;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{
-    build_abort_token, persist_assistant_response_with_policy, should_persist_assistant_message,
-    validate_request_payload_size, AiStreamCallbacks, AssistantResponsePersistenceRequest,
+    build_abort_token, is_task_runner_async_plan_message_mode,
+    normalize_task_runner_async_plan_metadata, persist_assistant_response_with_policy,
+    should_persist_assistant_message, validate_request_payload_size, AiStreamCallbacks,
+    AssistantResponsePersistenceRequest,
 };
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";
@@ -415,6 +418,27 @@ pub(super) async fn persist_assistant_response_if_needed(
     finish_reason: Option<String>,
     skip_log_label: &str,
 ) {
+    let task_runner_async_plan = is_task_runner_async_plan_message_mode(message_mode.as_deref());
+    if task_runner_async_plan && tool_calls_value_has_items(tool_calls.as_ref()) {
+        return;
+    }
+
+    let metadata = if task_runner_async_plan {
+        normalize_task_runner_async_plan_metadata(metadata)
+    } else {
+        metadata
+    };
+    let reasoning = if task_runner_async_plan {
+        None
+    } else {
+        reasoning
+    };
+    let tool_calls = if task_runner_async_plan {
+        None
+    } else {
+        tool_calls
+    };
+
     let request = AssistantResponsePersistenceRequest {
         session_id,
         turn_id,

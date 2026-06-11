@@ -7,6 +7,9 @@ use crate::core::messages::{
 use crate::core::tool_call::extract_tool_call_id;
 use crate::models::message::Message;
 
+const TASK_RUNNER_CALLBACK_MESSAGE_MODE: &str = "task_runner_callback";
+const TASK_RUNNER_TERMINAL_UPDATE_MESSAGE_KIND: &str = "task_terminal_update";
+
 fn parse_content_segments_value(value: &Value) -> Vec<Value> {
     match value {
         Value::Array(items) => items.clone(),
@@ -21,6 +24,26 @@ fn parse_content_segments_value(value: &Value) -> Vec<Value> {
 
 pub(super) fn extract_tool_calls_from_message(message: &Message) -> Vec<Value> {
     extract_message_tool_calls_for_display(message)
+}
+
+pub(super) fn is_task_runner_callback_message(message: &Message) -> bool {
+    if message
+        .message_mode
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| value == TASK_RUNNER_CALLBACK_MESSAGE_MODE)
+    {
+        return true;
+    }
+
+    message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .and_then(|value| value.get("message_kind"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| value == TASK_RUNNER_TERMINAL_UPDATE_MESSAGE_KIND)
 }
 
 fn extract_content_segments_from_message(message: &Message) -> Vec<Value> {
@@ -178,6 +201,32 @@ pub(super) fn enrich_assistant_message_for_display(message: &mut Message) {
     }
 }
 
+pub(super) fn normalize_task_runner_callback_for_display(message: &mut Message) {
+    if !is_task_runner_callback_message(message) {
+        return;
+    }
+
+    let source_turn_id = message_turn_id(message).map(|value| value.to_string());
+    let metadata = ensure_message_metadata_object(message);
+    metadata.remove("conversation_turn_id");
+    metadata.remove("conversationTurnId");
+    metadata.remove("historyFinalForUserMessageId");
+    metadata.remove("historyFinalForTurnId");
+    metadata.remove("historyProcessUserMessageId");
+    metadata.remove("historyProcessTurnId");
+    metadata.remove("historyProcessPlaceholder");
+    if let Some(source_turn_id) = source_turn_id {
+        let task_runner_async = metadata
+            .entry("task_runner_async".to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if let Value::Object(task_runner_async_map) = task_runner_async {
+            task_runner_async_map
+                .entry("source_turn_id".to_string())
+                .or_insert_with(|| Value::String(source_turn_id));
+        }
+    }
+}
+
 pub(super) fn select_final_assistant_index(
     messages: &[Message],
     start: usize,
@@ -187,7 +236,10 @@ pub(super) fn select_final_assistant_index(
 
     for index in (start..end).rev() {
         let message = &messages[index];
-        if message.role != "assistant" || is_session_summary(message) {
+        if message.role != "assistant"
+            || is_session_summary(message)
+            || is_task_runner_callback_message(message)
+        {
             continue;
         }
 

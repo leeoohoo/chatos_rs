@@ -40,6 +40,7 @@ type ModelFormValues = {
   base_url: string;
   api_key: string;
   model: string;
+  usage_scenario?: string;
   temperature?: number;
   max_output_tokens?: number;
   thinking_level?: string;
@@ -356,9 +357,8 @@ export function ModelsPage() {
       if (!keyword) {
         return true;
       }
-      return [model.name, model.model, model.provider, model.base_url]
-        .filter(Boolean)
-        .some((value) => value.toLowerCase().includes(keyword));
+      return [model.name, model.model, model.provider, model.base_url, model.usage_scenario]
+        .some((value) => value?.toLowerCase().includes(keyword));
     });
   }, [enabledFilter, keywordFilter, modelsQuery.data, providerFilter]);
   const filteredTaskCount = useMemo(
@@ -389,6 +389,13 @@ export function ModelsPage() {
       title: 'Provider',
       dataIndex: 'provider',
       width: 140,
+    },
+    {
+      title: t('models.column.usageScenario'),
+      dataIndex: 'usage_scenario',
+      width: 240,
+      ellipsis: true,
+      render: (value?: string | null) => value || '-',
     },
     {
       title: 'Base URL',
@@ -481,6 +488,7 @@ export function ModelsPage() {
       base_url: defaultBaseUrlForProvider(provider),
       api_key: '',
       model: '',
+      usage_scenario: '',
       supports_responses: true,
       include_prompt_cache_retention: false,
       enabled: true,
@@ -512,6 +520,7 @@ export function ModelsPage() {
       base_url: model.base_url,
       api_key: model.api_key,
       model: model.model,
+      usage_scenario: model.usage_scenario || undefined,
       temperature: model.temperature || undefined,
       max_output_tokens: model.max_output_tokens || undefined,
       thinking_level: model.thinking_level || undefined,
@@ -686,6 +695,16 @@ export function ModelsPage() {
           <Form.Item name="name" label={t('models.column.name')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
+          <Form.Item
+            name="usage_scenario"
+            label={t('models.column.usageScenario')}
+            extra={t('models.form.usageScenarioHint')}
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder={t('models.form.usageScenarioPlaceholder')}
+            />
+          </Form.Item>
           <Space size="middle" style={{ width: '100%' }} align="start">
             <Form.Item name="provider" label="Provider" style={{ flex: 1 }} rules={[{ required: true }]}>
               <Select options={SUPPORTED_PROVIDER_OPTIONS} />
@@ -812,6 +831,9 @@ export function ModelsPage() {
               <Descriptions.Item label={t('models.detail.modelId')}>{selectedModel.id}</Descriptions.Item>
               <Descriptions.Item label="Provider">{selectedModel.provider}</Descriptions.Item>
               <Descriptions.Item label="Model">{selectedModel.model}</Descriptions.Item>
+              <Descriptions.Item label={t('models.column.usageScenario')}>
+                {selectedModel.usage_scenario || '-'}
+              </Descriptions.Item>
               <Descriptions.Item label="Base URL">{selectedModel.base_url}</Descriptions.Item>
               <Descriptions.Item label={t('common.status')}>
                 <Tag color={selectedModel.enabled ? 'success' : 'default'}>

@@ -4,7 +4,8 @@ use crate::models::message::Message;
 use super::history_process_support::{
     attach_user_history_process_metadata, build_embedded_process_message,
     count_assistant_thinking_steps, enrich_assistant_message_for_display,
-    extract_tool_calls_from_message, mark_process_message_loaded, select_final_assistant_index,
+    extract_tool_calls_from_message, is_task_runner_callback_message, mark_process_message_loaded,
+    normalize_task_runner_callback_for_display, select_final_assistant_index,
     strip_assistant_for_compact_history,
 };
 
@@ -40,9 +41,15 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
         let mut tool_call_count = 0usize;
         let mut thinking_count = 0usize;
         let mut process_message_count = 0usize;
+        let mut callback_updates = Vec::new();
 
         for index in (user_index + 1)..next_user_index {
             let message = &messages[index];
+            if is_task_runner_callback_message(message) {
+                callback_updates.push(index);
+                continue;
+            }
+
             if message.role == "assistant" && !is_session_summary(message) {
                 tool_call_count += extract_tool_calls_from_message(message).len();
                 thinking_count += count_assistant_thinking_steps(message);
@@ -75,6 +82,12 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
                 strip_assistant_for_compact_history(&mut assistant, &user_message_id);
                 compact.push(assistant);
             }
+        }
+
+        for index in callback_updates {
+            let mut assistant = messages[index].clone();
+            normalize_task_runner_callback_for_display(&mut assistant);
+            compact.push(assistant);
         }
     }
 
@@ -111,6 +124,9 @@ pub(super) fn build_turn_process_messages(messages: &[Message], user_index: usiz
         }
 
         let source = &messages[index];
+        if is_task_runner_callback_message(source) {
+            continue;
+        }
         if source.role == "assistant" && !is_session_summary(source) {
             let mut assistant = source.clone();
             enrich_assistant_message_for_display(&mut assistant);
@@ -152,9 +168,15 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
     let mut tool_call_count = 0usize;
     let mut thinking_count = 0usize;
     let mut process_message_count = 0usize;
+    let mut callback_updates = Vec::new();
 
     for index in (user_index + 1)..next_user_index {
         let message = &messages[index];
+        if is_task_runner_callback_message(message) {
+            callback_updates.push(index);
+            continue;
+        }
+
         if message.role == "assistant" && !is_session_summary(message) {
             tool_call_count += extract_tool_calls_from_message(message).len();
             thinking_count += count_assistant_thinking_steps(message);
@@ -187,5 +209,102 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
         display_messages.push(assistant);
     }
 
+    for index in callback_updates {
+        let mut assistant = messages[index].clone();
+        normalize_task_runner_callback_for_display(&mut assistant);
+        display_messages.push(assistant);
+    }
+
     display_messages
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{build_compact_history_messages, build_turn_display_messages};
+    use crate::models::message::Message;
+
+    fn build_message(role: &str, content: &str) -> Message {
+        Message::new(
+            "session-1".to_string(),
+            role.to_string(),
+            content.to_string(),
+        )
+    }
+
+    #[test]
+    fn compact_history_keeps_task_runner_callbacks_visible_after_plan_summary() {
+        let mut user = build_message("user", "help");
+        user.id = "user-1".to_string();
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1"
+        }));
+
+        let mut plan = build_message("assistant", "I created the tasks.");
+        plan.id = "assistant-plan".to_string();
+        plan.metadata = Some(json!({
+            "conversation_turn_id": "turn-1"
+        }));
+
+        let mut callback = build_message("assistant", "Task A completed.");
+        callback.id = "assistant-callback".to_string();
+        callback.message_mode = Some("task_runner_callback".to_string());
+        callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update"
+            }
+        }));
+
+        let compact = build_compact_history_messages(vec![user, plan, callback]);
+        assert_eq!(compact.len(), 3);
+        assert_eq!(compact[0].role, "user");
+        assert_eq!(compact[1].id, "assistant-plan");
+        assert_eq!(compact[2].id, "assistant-callback");
+        assert_eq!(
+            compact[2]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("conversation_turn_id")),
+            None
+        );
+    }
+
+    #[test]
+    fn turn_display_keeps_task_runner_callbacks_out_of_process_bucket() {
+        let mut user = build_message("user", "help");
+        user.id = "user-1".to_string();
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1"
+        }));
+
+        let mut plan = build_message("assistant", "I created the tasks.");
+        plan.id = "assistant-plan".to_string();
+        plan.metadata = Some(json!({
+            "conversation_turn_id": "turn-1"
+        }));
+
+        let mut callback = build_message("assistant", "Task A completed.");
+        callback.id = "assistant-callback".to_string();
+        callback.message_mode = Some("task_runner_callback".to_string());
+        callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update"
+            }
+        }));
+
+        let display = build_turn_display_messages(&[user, plan, callback], 0);
+        assert_eq!(display.len(), 3);
+        assert_eq!(display[1].id, "assistant-plan");
+        assert_eq!(display[2].id, "assistant-callback");
+        assert_eq!(
+            display[2]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("historyProcessUserMessageId")),
+            None
+        );
+    }
 }

@@ -27,6 +27,10 @@ pub struct AppConfig {
     pub execution_timeout: Duration,
     pub scheduler_poll_interval: Duration,
     pub auto_memory_summary: bool,
+    pub default_task_execution_max_iterations: usize,
+    pub chatos_callback_url: Option<String>,
+    pub chatos_callback_secret: Option<String>,
+    pub callback_timeout: Duration,
     pub admin_username: String,
     pub admin_password: String,
     pub admin_display_name: String,
@@ -71,6 +75,17 @@ impl AppConfig {
                 )
             })
             .unwrap_or(false);
+        let default_task_execution_max_iterations = std::env::var(
+            "TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS",
+        )
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(25)
+        .max(1);
+        let callback_timeout_ms = std::env::var("TASK_RUNNER_CALLBACK_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(10_000);
         let admin_username =
             normalized_env("TASK_RUNNER_ADMIN_USERNAME").unwrap_or_else(|| "admin".to_string());
         let admin_password = normalized_env("TASK_RUNNER_ADMIN_PASSWORD")
@@ -104,6 +119,10 @@ impl AppConfig {
             execution_timeout: Duration::from_millis(execution_timeout_ms),
             scheduler_poll_interval: Duration::from_millis(scheduler_poll_interval_ms.max(1_000)),
             auto_memory_summary,
+            default_task_execution_max_iterations,
+            chatos_callback_url: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_URL"),
+            chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
+            callback_timeout: Duration::from_millis(callback_timeout_ms.max(1_000)),
             admin_username,
             admin_password,
             admin_display_name,

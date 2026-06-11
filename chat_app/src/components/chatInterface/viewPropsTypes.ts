@@ -16,6 +16,7 @@ export interface ChatInterfaceConversationState {
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   currentContactId: string;
+  isTaskRunnerAsyncContactMode: boolean;
   messages: ComponentProps<typeof ChatConversationPane>['messages'];
   chatIsLoading: boolean;
   chatIsStreaming: boolean;

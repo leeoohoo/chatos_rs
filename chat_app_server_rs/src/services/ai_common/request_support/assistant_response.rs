@@ -22,6 +22,8 @@ pub(crate) struct AssistantResponsePersistenceRequest {
     pub response_status: Option<String>,
 }
 
+pub(crate) const TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE: &str = "task_runner_async_plan";
+
 pub(crate) fn build_ai_client_success_payload(
     content: String,
     reasoning: Option<String>,
@@ -146,6 +148,46 @@ pub(crate) fn should_persist_assistant_message(
         return true;
     }
     false
+}
+
+pub(crate) fn is_task_runner_async_plan_message_mode(message_mode: Option<&str>) -> bool {
+    matches!(
+        message_mode
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE)
+    )
+}
+
+pub(crate) fn normalize_task_runner_async_plan_metadata(metadata: Option<Value>) -> Option<Value> {
+    let mut root = match metadata {
+        Some(Value::Object(map)) => map,
+        Some(_) | None => serde_json::Map::new(),
+    };
+
+    let task_runner_async = root
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Value::Object(task_runner_async_map) = task_runner_async else {
+        root.insert(
+            "task_runner_async".to_string(),
+            serde_json::json!({
+                "mode": "contact_async",
+                "message_kind": "plan_summary"
+            }),
+        );
+        return Some(Value::Object(root));
+    };
+
+    task_runner_async_map.insert(
+        "mode".to_string(),
+        Value::String("contact_async".to_string()),
+    );
+    task_runner_async_map.insert(
+        "message_kind".to_string(),
+        Value::String("plan_summary".to_string()),
+    );
+    Some(Value::Object(root))
 }
 
 pub(crate) fn build_assistant_message_metadata(

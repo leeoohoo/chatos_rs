@@ -57,6 +57,7 @@ import type {
   UiPromptTaskCountRecord,
   UpdateModelConfigPayload,
   UpdateRemoteServerPayload,
+  UpdateRuntimeSettingsPayload,
   UpdateTaskPayload,
   UpdateUserPayload,
   SystemConfigResponse,
@@ -165,6 +166,11 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 export const api = {
   health: () => request<HealthResponse>('/api/health'),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
+  updateSystemConfig: (payload: UpdateRuntimeSettingsPayload) =>
+    request<SystemConfigResponse>('/api/system/config', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   login: (payload: LoginPayload) =>
     request<LoginResponse>('/api/auth/login', {
       method: 'POST',

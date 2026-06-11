@@ -33,6 +33,7 @@ export function InputAreaComposerControls({
   currentAgent,
   availableRemoteConnections,
   onRemoteConnectionChange,
+  taskRunnerAsyncContactMode,
   mcpEnabled,
   autoCreateTask,
   onMcpEnabledChange,
@@ -210,68 +211,74 @@ export function InputAreaComposerControls({
         isStopping={isStopping}
       />
 
-      <InputAreaSkillPicker
-        currentAgent={currentAgent}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        skillsEnabled={skillsEnabled}
-        onSkillsEnabledChange={onSkillsEnabledChange}
-        skillsLoading={skillsLoading}
-        availableSkillOptions={availableSkillOptions}
-        selectedSkillIds={selectedSkillIds}
-        onToggleSelectedSkill={onToggleSelectedSkill}
-        onClearSelectedSkills={onClearSelectedSkills}
-      />
+      {!taskRunnerAsyncContactMode && (
+        <InputAreaSkillPicker
+          currentAgent={currentAgent}
+          disabled={disabled}
+          isStreaming={isStreaming}
+          isStopping={isStopping}
+          skillsEnabled={skillsEnabled}
+          onSkillsEnabledChange={onSkillsEnabledChange}
+          skillsLoading={skillsLoading}
+          availableSkillOptions={availableSkillOptions}
+          selectedSkillIds={selectedSkillIds}
+          onToggleSelectedSkill={onToggleSelectedSkill}
+          onClearSelectedSkills={onClearSelectedSkills}
+        />
+      )}
 
-      <InputAreaMcpPicker
-        mcpPickerRef={mcpPickerRef}
-        mcpEnabled={mcpEnabled}
-        onMcpEnabledChange={onMcpEnabledChange}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        onToggleMcpPicker={() => { void handleToggleMcpPicker(); }}
-        mcpPickerOpen={mcpPickerOpen}
-        isAllMcpSelected={isAllMcpSelected}
-        selectableMcpIds={selectableMcpIds}
-        selectedMcpCount={selectedMcpCount}
-        mcpConfigsLoading={mcpConfigsLoading}
-        mcpConfigsError={mcpConfigsError}
-        availableMcpConfigs={availableMcpConfigs}
-        builtinMcpConfigs={builtinMcpConfigs}
-        customMcpConfigs={customMcpConfigs}
-        mcpToolsetPresets={mcpToolsetPresets}
-        projectScopeKey={projectScopeKey}
-        hasProjectMcpDefault={hasProjectMcpDefault}
-        hasDirectoryContext={hasDirectoryContext}
-        hasRemoteContext={hasRemoteContext}
-        isProjectRequiredMcpId={isProjectRequiredMcpId}
-        isRemoteRequiredMcpId={isRemoteRequiredMcpId}
-        sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-        onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs({ forceRefresh: true }); }}
-        onSelectAllMcp={handleSelectAllMcp}
-        onToggleMcpSelection={handleToggleMcpSelection}
-        onApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
-        onSaveProjectMcpDefault={handleSaveProjectMcpDefault}
-        onApplyProjectMcpDefault={handleApplyProjectMcpDefault}
-      />
+      {!taskRunnerAsyncContactMode && (
+        <InputAreaMcpPicker
+          mcpPickerRef={mcpPickerRef}
+          mcpEnabled={mcpEnabled}
+          onMcpEnabledChange={onMcpEnabledChange}
+          disabled={disabled}
+          isStreaming={isStreaming}
+          isStopping={isStopping}
+          onToggleMcpPicker={() => { void handleToggleMcpPicker(); }}
+          mcpPickerOpen={mcpPickerOpen}
+          isAllMcpSelected={isAllMcpSelected}
+          selectableMcpIds={selectableMcpIds}
+          selectedMcpCount={selectedMcpCount}
+          mcpConfigsLoading={mcpConfigsLoading}
+          mcpConfigsError={mcpConfigsError}
+          availableMcpConfigs={availableMcpConfigs}
+          builtinMcpConfigs={builtinMcpConfigs}
+          customMcpConfigs={customMcpConfigs}
+          mcpToolsetPresets={mcpToolsetPresets}
+          projectScopeKey={projectScopeKey}
+          hasProjectMcpDefault={hasProjectMcpDefault}
+          hasDirectoryContext={hasDirectoryContext}
+          hasRemoteContext={hasRemoteContext}
+          isProjectRequiredMcpId={isProjectRequiredMcpId}
+          isRemoteRequiredMcpId={isRemoteRequiredMcpId}
+          sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
+          onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs({ forceRefresh: true }); }}
+          onSelectAllMcp={handleSelectAllMcp}
+          onToggleMcpSelection={handleToggleMcpSelection}
+          onApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
+          onSaveProjectMcpDefault={handleSaveProjectMcpDefault}
+          onApplyProjectMcpDefault={handleApplyProjectMcpDefault}
+        />
+      )}
 
-      <button
-        type="button"
-        onClick={() => onAutoCreateTaskChange?.(!autoCreateTask)}
-        disabled={disabled || isStreaming || isStopping}
-        className={cn(
-          'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
-          autoCreateTask
-            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-            : 'bg-muted text-muted-foreground hover:text-foreground',
-          (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
-        )}
-        title={autoCreateTask ? t('composer.autoCreateTask.onTitle') : t('composer.autoCreateTask.offTitle')}
-      >
-        {t('composer.autoCreateTask.label', { state: autoCreateTask ? onText : offText })}
-      </button>
+      {!taskRunnerAsyncContactMode && (
+        <button
+          type="button"
+          onClick={() => onAutoCreateTaskChange?.(!autoCreateTask)}
+          disabled={disabled || isStreaming || isStopping}
+          className={cn(
+            'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
+            autoCreateTask
+              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+              : 'bg-muted text-muted-foreground hover:text-foreground',
+            (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
+          )}
+          title={autoCreateTask ? t('composer.autoCreateTask.onTitle') : t('composer.autoCreateTask.offTitle')}
+        >
+          {t('composer.autoCreateTask.label', { state: autoCreateTask ? onText : offText })}
+        </button>
+      )}
 
       {reasoningSupported && (
         <button

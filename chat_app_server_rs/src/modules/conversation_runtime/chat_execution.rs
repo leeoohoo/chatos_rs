@@ -6,6 +6,7 @@ use crate::services::agent_runtime::ai_server::{
     AiServer as AgentAiServer, ChatOptions as AgentChatOptions,
 };
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute as AgentMcpToolExecute;
+use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
 use crate::services::user_settings::apply_settings_to_ai_client;
 use crate::utils::attachments::Attachment;
 
@@ -150,7 +151,11 @@ pub fn build_agent_chat_options(
         callbacks: Some(input.callbacks),
         turn_id: Some(input.turn_id),
         user_message_id: Some(input.user_message_id),
-        message_mode: Some("model".to_string()),
+        message_mode: Some(if runtime_context.task_runner_async_contact_mode {
+            TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string()
+        } else {
+            "model".to_string()
+        }),
         message_source: Some(input.message_source),
         prefixed_input_items: Some(prefixed_input_items),
         request_cwd: if model_runtime.use_codex_gateway_mcp_passthrough {

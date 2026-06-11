@@ -168,6 +168,45 @@ fn should_persist_assistant_message_skips_empty_non_terminal_responses() {
 }
 
 #[test]
+fn task_runner_async_plan_message_mode_matches_expected_value() {
+    assert!(is_task_runner_async_plan_message_mode(Some(
+        TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE
+    )));
+    assert!(is_task_runner_async_plan_message_mode(Some(
+        " task_runner_async_plan "
+    )));
+    assert!(!is_task_runner_async_plan_message_mode(Some("model")));
+    assert!(!is_task_runner_async_plan_message_mode(None));
+}
+
+#[test]
+fn normalize_task_runner_async_plan_metadata_marks_plan_summary_mode() {
+    let metadata = normalize_task_runner_async_plan_metadata(Some(json!({
+        "response_id": "resp_1"
+    })))
+    .expect("metadata");
+
+    assert_eq!(
+        metadata.get("response_id").and_then(|value| value.as_str()),
+        Some("resp_1")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("mode"))
+            .and_then(|value| value.as_str()),
+        Some("contact_async")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("message_kind"))
+            .and_then(|value| value.as_str()),
+        Some("plan_summary")
+    );
+}
+
+#[test]
 fn build_ai_client_success_payload_preserves_response_shape() {
     let payload = build_ai_client_success_payload(
         "hello".to_string(),

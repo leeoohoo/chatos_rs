@@ -39,6 +39,9 @@ pub struct CommonChatBootstrap {
 }
 
 pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> CommonChatBootstrap {
+    let user_message_id = Uuid::new_v4().to_string();
+    let resolved_turn_id =
+        normalize_turn_id(input.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
     let user_context = load_runtime_user_context(input.user_id.clone(), &input.session_id).await;
     let effective_settings = if user_context.effective_settings.is_null() {
         json!({})
@@ -59,6 +62,8 @@ pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> Comm
             auto_create_task: input.auto_create_task,
             skills_enabled: input.skills_enabled,
             selected_skill_ids: input.selected_skill_ids,
+            conversation_turn_id: Some(resolved_turn_id.clone()),
+            source_user_message_id: Some(user_message_id.clone()),
         },
         input.default_system_prompt,
         input.use_active_system_context,
@@ -66,9 +71,6 @@ pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> Comm
     )
     .await;
     let attachments = attachments::parse_attachments(&input.attachments.unwrap_or_default());
-    let user_message_id = Uuid::new_v4().to_string();
-    let resolved_turn_id =
-        normalize_turn_id(input.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
     let max_tokens = chat_max_tokens_from_settings(&effective_settings);
 
     CommonChatBootstrap {

@@ -3,6 +3,7 @@ import type ApiClient from '../../../api/client';
 import { debugLog } from '@/lib/utils';
 import {
   getConversationTurnId,
+  isTaskRunnerCallbackMessage,
   isMeaningfulReasoning,
   isNonEmptyString,
   normalizeRawMessages,
@@ -33,6 +34,40 @@ const isSessionSummaryMessage = (message: Message): boolean => (
   message.role === 'assistant' && message.metadata?.type === 'session_summary'
 );
 
+const stripTaskRunnerCallbackTurnLinkage = (message: Message): Message => {
+  if (!isTaskRunnerCallbackMessage(message)) {
+    return message;
+  }
+
+  const sourceTurnId = normalizeTurnId(
+    message.metadata?.task_runner_async?.source_turn_id
+      || message.metadata?.conversation_turn_id
+      || message.metadata?.conversationTurnId
+      || message.metadata?.historyFinalForTurnId
+      || message.metadata?.historyProcessTurnId
+      || message.metadata?.historyProcess?.turnId,
+  );
+  const metadata = { ...(message.metadata || {}) };
+  delete metadata.conversation_turn_id;
+  delete metadata.conversationTurnId;
+  delete metadata.historyFinalForUserMessageId;
+  delete metadata.historyFinalForTurnId;
+  delete metadata.historyProcessUserMessageId;
+  delete metadata.historyProcessTurnId;
+  delete metadata.historyProcessPlaceholder;
+  if (sourceTurnId) {
+    metadata.task_runner_async = {
+      ...(metadata.task_runner_async || {}),
+      source_turn_id: sourceTurnId,
+    };
+  }
+
+  return {
+    ...message,
+    metadata,
+  };
+};
+
 const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
   if (!Array.isArray(messages) || messages.length === 0) {
     return messages;
@@ -45,6 +80,10 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
     return messages
       .filter((message) => message.metadata?.historyProcessPlaceholder !== true)
       .map((message) => {
+        if (isTaskRunnerCallbackMessage(message)) {
+          return stripTaskRunnerCallbackTurnLinkage(message);
+        }
+
         if (message.role === 'user') {
           const process = message.metadata?.historyProcess;
           if (!process || typeof process !== 'object') {
@@ -104,11 +143,16 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
     const userMessage = messages[userIndex];
     const userMessageId = userMessage.id;
     const conversationTurnId = getConversationTurnId(userMessage);
+    const callbackUpdates: Message[] = [];
 
     let finalAssistantIndex = -1;
     for (let i = nextUserIndex - 1; i > userIndex; i -= 1) {
       const candidate = messages[i];
-      if (candidate.role !== 'assistant' || isSessionSummaryMessage(candidate)) {
+      if (
+        candidate.role !== 'assistant'
+        || isSessionSummaryMessage(candidate)
+        || isTaskRunnerCallbackMessage(candidate)
+      ) {
         continue;
       }
       finalAssistantIndex = i;
@@ -123,6 +167,11 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
 
     for (let i = userIndex + 1; i < nextUserIndex; i += 1) {
       const message = messages[i];
+      if (isTaskRunnerCallbackMessage(message)) {
+        callbackUpdates.push(stripTaskRunnerCallbackTurnLinkage(message));
+        continue;
+      }
+
       if (message.role === 'assistant' && !isSessionSummaryMessage(message)) {
         toolCallCount += message.metadata?.toolCalls?.length || 0;
         thinkingCount += countThinkingSegments(message);
@@ -167,6 +216,7 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
     });
 
     if (finalAssistantIndex < 0) {
+      result.push(...callbackUpdates);
       return;
     }
 
@@ -186,6 +236,8 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
         ...(conversationTurnId ? { historyFinalForTurnId: conversationTurnId } : {}),
       },
     });
+
+    result.push(...callbackUpdates);
   });
 
   return result;

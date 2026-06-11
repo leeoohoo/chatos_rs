@@ -23,10 +23,6 @@ use super::history::{
     build_turn_display_messages, compact_messages_for_display, parse_bool_query_flag,
 };
 use super::history_process::find_user_index_by_turn_id;
-use super::history_process_support::{
-    attach_user_history_process_metadata, ensure_message_turn_id,
-    strip_assistant_for_compact_history,
-};
 use super::support::list_all_session_messages;
 
 async fn load_chatos_session(conversation_id: &str) -> Result<Session, String> {
@@ -34,6 +30,42 @@ async fn load_chatos_session(conversation_id: &str) -> Result<Session, String> {
         Some(session) => Ok(session),
         None => Err(format!("session not found: {conversation_id}")),
     }
+}
+
+fn parse_compact_history_offset(
+    before: Option<&str>,
+    compact_messages: &[crate::models::message::Message],
+) -> i64 {
+    let Some(before) = before.map(str::trim).filter(|value| !value.is_empty()) else {
+        return 0;
+    };
+
+    if let Some(raw_offset) = before.strip_prefix("offset:") {
+        return raw_offset.trim().parse::<i64>().ok().unwrap_or(0).max(0);
+    }
+
+    let user_indexes: Vec<usize> = compact_messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .collect();
+    for (position, user_index) in user_indexes.iter().enumerate() {
+        if crate::core::messages::message_turn_id(&compact_messages[*user_index]) != Some(before) {
+            continue;
+        }
+        let next_user_index = if position + 1 < user_indexes.len() {
+            user_indexes[position + 1]
+        } else {
+            compact_messages.len()
+        };
+        return compact_messages.len().saturating_sub(next_user_index) as i64;
+    }
+
+    if let Some(message_index) = compact_messages.iter().position(|message| message.id == before) {
+        return compact_messages.len().saturating_sub(message_index) as i64;
+    }
+
+    0
 }
 
 fn annotate_runtime_activity(conversation_id: &str, value: Value) -> Value {
@@ -135,10 +167,8 @@ pub(super) async fn get_session_compact_history(
     }
 
     let limit = parse_positive_limit(query.limit);
-    let before = query.before.as_deref();
-
-    let session = match load_chatos_session(&conversation_id).await {
-        Ok(session) => session,
+    let all_messages = match list_all_session_messages(&conversation_id).await {
+        Ok(messages) => messages,
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -149,59 +179,25 @@ pub(super) async fn get_session_compact_history(
             );
         }
     };
+    let compact_all = compact_messages_for_display(all_messages.clone(), None, 0);
+    let offset = parse_compact_history_offset(query.before.as_deref(), &compact_all);
+    let page_messages = compact_messages_for_display(all_messages, limit, offset);
+    let next_offset = offset + page_messages.len() as i64;
+    let has_more = next_offset < compact_all.len() as i64;
+    let next_before = has_more.then(|| format!("offset:{next_offset}"));
 
-    match chatos_memory_engine::list_chatos_compact_turns(&session, limit, before).await {
-        Ok(page) => {
-            let mut items: Vec<Value> = Vec::with_capacity(page.items.len() * 2);
-            for turn in page.items {
-                let mut user_message =
-                    chatos_memory_engine::engine_record_to_message(turn.user_record);
-                let user_message_id = user_message.id.clone();
-                ensure_message_turn_id(&mut user_message, turn.turn_id.as_str());
-
-                let final_assistant_message_id = turn
-                    .final_assistant_record
-                    .as_ref()
-                    .map(|record| record.id.clone());
-                attach_user_history_process_metadata(
-                    &mut user_message,
-                    turn.has_process,
-                    turn.tool_call_count,
-                    turn.thinking_count,
-                    turn.process_message_count,
-                    final_assistant_message_id,
-                );
-                items.push(
-                    serde_json::to_value(MessageOut::from(user_message)).unwrap_or(Value::Null),
-                );
-                if let Some(final_assistant_record) = turn.final_assistant_record {
-                    let mut assistant_message =
-                        chatos_memory_engine::engine_record_to_message(final_assistant_record);
-                    ensure_message_turn_id(&mut assistant_message, turn.turn_id.as_str());
-                    strip_assistant_for_compact_history(&mut assistant_message, &user_message_id);
-                    items.push(
-                        serde_json::to_value(MessageOut::from(assistant_message))
-                            .unwrap_or(Value::Null),
-                    );
-                }
-            }
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "items": items,
-                    "has_more": page.has_more,
-                    "next_before": page.next_before,
-                })),
-            )
-        }
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "Failed to get compact history",
-                "detail": err,
-            })),
-        ),
-    }
+    let items: Vec<Value> = page_messages
+        .into_iter()
+        .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
+        .collect();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "items": items,
+            "has_more": has_more,
+            "next_before": next_before,
+        })),
+    )
 }
 
 pub(super) async fn get_session_turn_process_messages(
@@ -444,4 +440,57 @@ pub(super) async fn create_session_message(
         StatusCode::CREATED,
         Json(serde_json::to_value(MessageOut::from(saved)).unwrap_or(Value::Null)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::parse_compact_history_offset;
+    use crate::models::message::Message;
+
+    fn build_message(id: &str, role: &str, content: &str) -> Message {
+        let mut message = Message::new(
+            "session-1".to_string(),
+            role.to_string(),
+            content.to_string(),
+        );
+        message.id = id.to_string();
+        message
+    }
+
+    #[test]
+    fn parse_compact_history_offset_accepts_callback_message_ids() {
+        let mut user = build_message("user-1", "user", "help");
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1"
+        }));
+
+        let mut plan = build_message("assistant-plan", "assistant", "I created the task.");
+        plan.metadata = Some(json!({
+            "conversation_turn_id": "turn-1"
+        }));
+
+        let mut callback = build_message(
+            "task_runner_callback::user-1::task-1::task.completed::run-1",
+            "assistant",
+            "Task complete.",
+        );
+        callback.message_mode = Some("task_runner_callback".to_string());
+        callback.metadata = Some(json!({
+            "task_runner_async": {
+                "message_kind": "task_terminal_update"
+            }
+        }));
+
+        let compact_messages = vec![user, plan, callback];
+
+        assert_eq!(
+            parse_compact_history_offset(
+                Some("task_runner_callback::user-1::task-1::task.completed::run-1"),
+                &compact_messages,
+            ),
+            1
+        );
+    }
 }

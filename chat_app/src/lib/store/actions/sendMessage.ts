@@ -184,11 +184,16 @@ export function createSendMessageHandler({
         selectedModel: selectedModelForRequest,
         previewAttachments,
         createdAt: userMessageTime,
+        taskRunnerAsyncContactMode: runtimeOptionsWithContactFallback.taskRunnerAsyncContactMode === true,
       });
       const turnProcessKey = conversationTurnId || userMessage.id;
       if (userMessage.metadata?.historyProcess) {
         userMessage.metadata.historyProcess.userMessageId = userMessage.id;
         userMessage.metadata.historyProcess.turnId = turnProcessKey;
+      }
+      if (userMessage.metadata?.task_runner_async) {
+        userMessage.metadata.task_runner_async.source_user_message_id = userMessage.id;
+        userMessage.metadata.task_runner_async.source_turn_id = turnProcessKey;
       }
 
       set((state) => {

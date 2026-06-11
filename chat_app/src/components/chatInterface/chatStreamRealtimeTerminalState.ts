@@ -2,6 +2,7 @@ import {
   reconcilePersistedTurnMessages,
   shouldReloadMessagesAfterTerminalState,
 } from '../../lib/store/actions/sendMessage/persistedTurnMessages';
+import { isTaskRunnerAsyncPlanMessage } from '../../lib/domain/messages';
 import {
   failSendMessageState,
   finalizeStreamingSessionState,
@@ -132,7 +133,12 @@ export const recoverMessagesAfterRealtimeTerminalEvent = async (
 const shouldRecoverRunningTerminalSession = async (
   apiClient: RealtimeTerminalRecoveryApiClient,
   context: TerminalEventContext,
+  persisted: TerminalEventPersistedMessages,
 ): Promise<boolean> => {
+  if (isTaskRunnerAsyncPlanMessage(persisted.persistedAssistantMessage)) {
+    return false;
+  }
+
   try {
     const snapshot = await apiClient.getConversationTurnRuntimeContextByTurn(
       context.sessionId,
@@ -157,7 +163,7 @@ export const settleRealtimeTerminalEvent = async (
   outcome: RealtimeTerminalOutcome,
 ): Promise<void> => {
   const shouldRecoverRunning = outcome.kind === 'success'
-    ? await shouldRecoverRunningTerminalSession(apiClient, context)
+    ? await shouldRecoverRunningTerminalSession(apiClient, context, persisted)
     : false;
 
   if (outcome.kind === 'success') {

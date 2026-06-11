@@ -238,6 +238,8 @@ pub struct TaskRecord {
     #[serde(default)]
     pub source_turn_id: Option<String>,
     #[serde(default)]
+    pub source_user_message_id: Option<String>,
+    #[serde(default)]
     pub prerequisite_task_ids: Vec<String>,
     #[serde(default)]
     pub task_tool_state: TaskToolState,
@@ -316,6 +318,8 @@ pub struct ModelConfigRecord {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    #[serde(default)]
+    pub usage_scenario: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
@@ -566,6 +570,7 @@ pub struct CreateTaskRequest {
 pub struct TaskSourceContext {
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
+    pub source_user_message_id: Option<String>,
     pub workspace_dir: Option<String>,
     pub remote_server_config: Option<CreateRemoteServerRequest>,
 }
@@ -688,6 +693,7 @@ pub struct CreateModelConfigRequest {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    pub usage_scenario: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
@@ -706,6 +712,7 @@ pub struct UpdateModelConfigRequest {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model: Option<String>,
+    pub usage_scenario: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
@@ -736,6 +743,19 @@ pub struct ProviderModelRecord {
     pub supports_reasoning: bool,
     pub supports_responses: bool,
     pub raw: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeSettingsRecord {
+    pub id: String,
+    pub task_execution_max_iterations: usize,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateRuntimeSettingsRequest {
+    pub task_execution_max_iterations: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1199,6 +1219,8 @@ pub struct SystemConfigResponse {
     pub execution_timeout_ms: u64,
     pub scheduler_poll_interval_ms: u64,
     pub auto_memory_summary: bool,
+    pub default_task_execution_max_iterations: usize,
+    pub task_execution_max_iterations: usize,
 }
 
 pub fn now_rfc3339() -> String {

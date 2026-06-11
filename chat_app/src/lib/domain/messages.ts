@@ -21,6 +21,8 @@ type NormalizedRawMessage = {
   content: string;
   createdAt: Date;
   id: string;
+  messageMode?: string | null;
+  messageSource?: string | null;
   metadata: UnknownRecord | null;
   reasoning: unknown;
   role: Message['role'];
@@ -161,10 +163,22 @@ const normalizeMessageStatus = (value: unknown): Message['status'] => {
   if (normalized === 'streaming') {
     return 'streaming';
   }
-  if (normalized === 'error' || normalized === 'failed' || normalized === 'cancelled' || normalized === 'canceled') {
+  if (
+    normalized === 'error'
+    || normalized === 'failed'
+    || normalized === 'blocked'
+    || normalized === 'cancelled'
+    || normalized === 'canceled'
+  ) {
     return 'error';
   }
-  if (normalized === 'completed' || normalized === 'complete' || normalized === 'done') {
+  if (
+    normalized === 'completed'
+    || normalized === 'complete'
+    || normalized === 'done'
+    || normalized === 'succeeded'
+    || normalized === 'success'
+  ) {
     return 'completed';
   }
   return 'completed';
@@ -179,6 +193,81 @@ export const getConversationTurnId = (message: { metadata?: unknown }): string =
   return normalizeTurnId(
     readValue(metadataRecord, 'conversation_turn_id') || readValue(metadataRecord, 'conversationTurnId'),
   );
+};
+
+export const readTaskRunnerAsyncMode = (
+  message: { metadata?: unknown } | null | undefined,
+): string => {
+  const metadataRecord = asRecord(message?.metadata);
+  const taskRunnerAsync = asRecord(readValue(metadataRecord, 'task_runner_async'));
+  return typeof readValue(taskRunnerAsync, 'mode') === 'string'
+    ? String(readValue(taskRunnerAsync, 'mode')).trim()
+    : '';
+};
+
+export const readTaskRunnerAsyncMessageKind = (
+  message: { metadata?: unknown } | null | undefined,
+): string => {
+  const metadataRecord = asRecord(message?.metadata);
+  const taskRunnerAsync = asRecord(readValue(metadataRecord, 'task_runner_async'));
+  return typeof readValue(taskRunnerAsync, 'message_kind') === 'string'
+    ? String(readValue(taskRunnerAsync, 'message_kind')).trim()
+    : '';
+};
+
+export const isTaskRunnerAsyncPlanMessage = (
+  message: { messageMode?: unknown; metadata?: unknown } | null | undefined,
+): boolean => {
+  const messageMode = typeof message?.messageMode === 'string'
+    ? message.messageMode.trim()
+    : '';
+  if (messageMode === 'task_runner_async_plan') {
+    return true;
+  }
+
+  return (
+    readTaskRunnerAsyncMode(message) === 'contact_async'
+    && readTaskRunnerAsyncMessageKind(message) === 'plan_summary'
+  );
+};
+
+export const isTaskRunnerCallbackMessage = (
+  message: { messageMode?: unknown; metadata?: unknown } | null | undefined,
+): boolean => {
+  const messageMode = typeof message?.messageMode === 'string'
+    ? message.messageMode.trim()
+    : '';
+  if (messageMode === 'task_runner_callback') {
+    return true;
+  }
+  return readTaskRunnerAsyncMessageKind(message) === 'task_terminal_update';
+};
+
+export const isTaskRunnerAsyncMessage = (
+  message: { messageMode?: unknown; metadata?: unknown } | null | undefined,
+): boolean => (
+  isTaskRunnerAsyncPlanMessage(message)
+  || isTaskRunnerCallbackMessage(message)
+  || readTaskRunnerAsyncMode(message) === 'contact_async'
+);
+
+const sanitizeTaskRunnerCallbackMetadata = (
+  messageMode: string | null | undefined,
+  metadata: UnknownRecord | null,
+): UnknownRecord | null => {
+  if (!isTaskRunnerCallbackMessage({ messageMode, metadata }) || metadata === null) {
+    return metadata;
+  }
+
+  const nextMetadata = { ...metadata };
+  delete nextMetadata.conversation_turn_id;
+  delete nextMetadata.conversationTurnId;
+  delete nextMetadata.historyFinalForUserMessageId;
+  delete nextMetadata.historyFinalForTurnId;
+  delete nextMetadata.historyProcessUserMessageId;
+  delete nextMetadata.historyProcessTurnId;
+  delete nextMetadata.historyProcessPlaceholder;
+  return nextMetadata;
 };
 
 const normalizeAttachments = (
@@ -230,6 +319,7 @@ export const normalizeRawMessages = (
   const parsedMessages: NormalizedRawMessage[] = rawMessages.map((message) => {
     const messageRecord = asRecord(message) ?? {};
     const metadata = parseMessageMetadata(readValue(messageRecord, 'metadata'));
+    const taskRunnerAsyncMetadata = asRecord(readValue(metadata, 'task_runner_async'));
     const topLevelToolCalls = normalizeToolCallsArray(
       readValue(messageRecord, 'toolCalls') ?? readValue(messageRecord, 'tool_calls'),
     );
@@ -241,12 +331,20 @@ export const normalizeRawMessages = (
       sessionId: typeof conversationId === 'string' ? conversationId : sessionId,
       role: readValue(messageRecord, 'role') as Message['role'],
       content: typeof rawContent === 'string' ? rawContent : String(rawContent ?? ''),
+      messageMode: typeof readValue(messageRecord, 'message_mode') === 'string'
+        ? String(readValue(messageRecord, 'message_mode')).trim()
+        : null,
+      messageSource: typeof readValue(messageRecord, 'message_source') === 'string'
+        ? String(readValue(messageRecord, 'message_source')).trim()
+        : null,
       status: normalizeMessageStatus(
-        readValue(metadata, 'response_status')
+        readValue(messageRecord, 'status')
+        ?? readValue(metadata, 'response_status')
         ?? readValue(metadata, 'responseStatus')
+        ?? readValue(metadata, 'status')
         ?? readValue(metadata, 'finish_reason')
         ?? readValue(metadata, 'finishReason')
-        ?? readValue(metadata, 'status'),
+        ?? readValue(taskRunnerAsyncMetadata, 'status'),
       ),
       summary: readValue(messageRecord, 'summary') as string | undefined,
       summaryStatus: typeof readValue(messageRecord, 'summary_status') === 'string'
@@ -380,13 +478,19 @@ export const normalizeRawMessages = (
       fallbackContentSegments.push({ type: 'text', content: message.content });
     }
 
-    const attachments = normalizeAttachments(message.metadata, message.id, message.createdAt);
+    const normalizedMetadata = sanitizeTaskRunnerCallbackMetadata(
+      message.messageMode,
+      message.metadata,
+    );
+    const attachments = normalizeAttachments(normalizedMetadata, message.id, message.createdAt);
 
     return {
       id: message.id,
       sessionId: message.sessionId,
       role: message.role,
       content: message.content,
+      messageMode: message.messageMode ?? null,
+      messageSource: message.messageSource ?? null,
       rawContent: message.summary,
       tokensUsed: undefined,
       status: message.status,
@@ -397,8 +501,8 @@ export const normalizeRawMessages = (
       summarizedAt: message.summarizedAt,
       toolCallId: message.toolCallId,
       metadata: {
-        ...((message.metadata !== null && typeof message.metadata === 'object')
-          ? message.metadata as Record<string, unknown>
+        ...((normalizedMetadata !== null && typeof normalizedMetadata === 'object')
+          ? normalizedMetadata as Record<string, unknown>
           : {}),
         ...(attachments ? { attachments } : {}),
         toolCalls: toolCalls as MessageMetadata['toolCalls'],

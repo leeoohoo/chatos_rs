@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { resolveSessionProjectScopeId } from '../../../features/contactSession/sessionResolver';
 import { useI18n } from '../../../i18n/I18nProvider';
 import { countPendingReviewRepairMessages } from '../../../lib/domain/reviewRepair';
+import { isTaskRunnerAsyncMessage } from '../../../lib/domain/messages';
 import { useSessionRuntimeSettings } from '../../../features/sessionRuntime/useSessionRuntimeSettings';
 import { useSessionWorkbarPanels } from '../../chatInterface/useSessionWorkbarPanels';
 import type { ContactItem } from './types';
@@ -99,10 +100,22 @@ export const useTeamMembersRuntimeResources = ({
     setTaskHistoryOpen(false);
   }, [conversation.isSelectedSessionActive, conversation.selectedProjectSession?.id]);
 
+  const isTaskRunnerAsyncContactMode = useMemo(() => {
+    if (conversation.selectedContact?.taskRunner?.enabled) {
+      return true;
+    }
+    return Array.isArray(messages)
+      && messages.some((message) => isTaskRunnerAsyncMessage(message));
+  }, [conversation.selectedContact?.taskRunner?.enabled, messages]);
+
   const workbar = useSessionWorkbarPanels({
     apiClient,
     session: conversation.isSelectedSessionActive ? conversation.selectedProjectSession : null,
-    enabled: Boolean(conversation.isSelectedSessionActive && conversation.selectedProjectSession?.id),
+    enabled: Boolean(
+      conversation.isSelectedSessionActive
+      && conversation.selectedProjectSession?.id
+      && !isTaskRunnerAsyncContactMode,
+    ),
     messages,
     selectedSessionActiveTurnId,
     taskHistoryOpen,
@@ -134,6 +147,9 @@ export const useTeamMembersRuntimeResources = ({
   });
 
   const handleRuntimeGuidanceSend = useCallback(async (content: string, attachments?: File[]) => {
+    if (isTaskRunnerAsyncContactMode) {
+      return;
+    }
     if (!conversation.selectedProjectSession) {
       return;
     }
@@ -159,6 +175,7 @@ export const useTeamMembersRuntimeResources = ({
     }
   }, [
     conversation.selectedProjectSession,
+    isTaskRunnerAsyncContactMode,
     normalizedProjectId,
     sessionChatState,
     submitRuntimeGuidance,
@@ -197,7 +214,10 @@ export const useTeamMembersRuntimeResources = ({
   } = useReviewRepairRealtime({
     apiClient,
     sessionId: conversation.selectedProjectSession?.id || null,
-    enabled: Boolean(conversation.selectedProjectSession?.id),
+    enabled: Boolean(
+      conversation.selectedProjectSession?.id
+      && !isTaskRunnerAsyncContactMode,
+    ),
     autoLoad: false,
     messageCountHint: conversation.selectedProjectSession?.id
       ? messages.length
@@ -244,6 +264,9 @@ export const useTeamMembersRuntimeResources = ({
     );
 
   const handleRunReviewRepair = useCallback(async (sessionId: string) => {
+    if (isTaskRunnerAsyncContactMode) {
+      return;
+    }
     if (!sessionId) {
       return;
     }
@@ -264,6 +287,7 @@ export const useTeamMembersRuntimeResources = ({
   }, [
     apiClient,
     clearError,
+    isTaskRunnerAsyncContactMode,
     markReviewRepairStarting,
     refreshReviewRepairStatus,
     setError,
@@ -295,6 +319,7 @@ export const useTeamMembersRuntimeResources = ({
   ]);
 
   return {
+    isTaskRunnerAsyncContactMode,
     composer: {
       composerSelectedModelId,
       composerSelectedModelName,

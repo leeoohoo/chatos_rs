@@ -95,6 +95,7 @@ interface UseChatInterfaceSessionResourcesParams {
   apiClient: SessionResourcesApiClient;
   currentSession: Session | null;
   currentContactId: string;
+  isTaskRunnerAsyncContactMode: boolean;
   currentChatStateActiveTurnId: string | null;
   currentProject: Project | null;
   projects: Project[];
@@ -115,6 +116,7 @@ export const useChatInterfaceSessionResources = ({
   apiClient,
   currentSession,
   currentContactId,
+  isTaskRunnerAsyncContactMode,
   currentChatStateActiveTurnId,
   currentProject,
   projects,
@@ -178,7 +180,7 @@ export const useChatInterfaceSessionResources = ({
   const workbar = useSessionWorkbarPanels({
     apiClient,
     session: currentSession,
-    enabled: activePanel === 'chat',
+    enabled: activePanel === 'chat' && !isTaskRunnerAsyncContactMode,
     messages,
     selectedSessionActiveTurnId: currentChatStateActiveTurnId,
     taskHistoryOpen,

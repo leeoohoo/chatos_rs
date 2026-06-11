@@ -10,6 +10,7 @@ type TeamMemberWorkspaceContentProps = Pick<
   | 'selectedContact'
   | 'selectedProjectSession'
   | 'isSelectedSessionActive'
+  | 'isTaskRunnerAsyncContactMode'
   | 'sessionSummaryPaneVisible'
   | 'summaryItems'
   | 'summaryLoading'
@@ -33,6 +34,7 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
   selectedContact,
   selectedProjectSession,
   isSelectedSessionActive,
+  isTaskRunnerAsyncContactMode,
   sessionSummaryPaneVisible,
   summaryItems,
   summaryLoading,
@@ -52,6 +54,9 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
   onDeleteSummary,
 }) => {
   const { t } = useI18n();
+  const effectiveLoading = isTaskRunnerAsyncContactMode ? false : chatIsLoading;
+  const effectiveStreaming = isTaskRunnerAsyncContactMode ? false : chatIsStreaming;
+  const effectiveStopping = isTaskRunnerAsyncContactMode ? false : chatIsStopping;
 
   if (!selectedContact) {
     return (
@@ -87,11 +92,12 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
         deletingSummaryId={deletingSummaryId}
         messages={messages}
         hasMoreMessages={hasMoreMessages}
-        chatIsLoading={chatIsLoading}
-        chatIsStreaming={chatIsStreaming}
-        chatIsStopping={chatIsStopping}
+        chatIsLoading={effectiveLoading}
+        chatIsStreaming={effectiveStreaming}
+        chatIsStopping={effectiveStopping}
+        isTaskRunnerAsyncContactMode={isTaskRunnerAsyncContactMode}
         onLoadMore={onLoadMore}
-        onToggleTurnProcess={onToggleTurnProcess}
+        onToggleTurnProcess={isTaskRunnerAsyncContactMode ? undefined : onToggleTurnProcess}
         onClearSummaries={onClearSummaries}
         onRefreshSummaries={onRefreshSummaries}
         onCloseSummary={onCloseSummary}
@@ -105,12 +111,13 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
       key={`project-team-messages-${selectedProjectSession.id}`}
       sessionId={selectedProjectSession.id}
       messages={messages}
-      isLoading={chatIsLoading}
-      isStreaming={chatIsStreaming}
-      isStopping={chatIsStopping}
+      isLoading={effectiveLoading}
+      isStreaming={effectiveStreaming}
+      isStopping={effectiveStopping}
       hasMore={hasMoreMessages}
       onLoadMore={onLoadMore}
-      onToggleTurnProcess={onToggleTurnProcess}
+      onToggleTurnProcess={isTaskRunnerAsyncContactMode ? undefined : onToggleTurnProcess}
+      hideHistoryProcessSummary={isTaskRunnerAsyncContactMode}
     />
   );
 };
