@@ -5,25 +5,28 @@ mod tools_panel;
 
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::Path,
     http::HeaderMap,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+use tracing::{info, warn};
 
 use self::runtime_guidance::submit_runtime_guidance;
 use self::tools_panel::{agent_status, agent_tools};
-use crate::api::chat_stream_common::{validate_chat_stream_request, ChatStreamRequest};
+use crate::api::chat_stream_common::{ChatStreamRequest, validate_chat_stream_request};
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
 use crate::core::auth::AuthUser;
+use crate::core::chat_runtime::{ChatRuntimeMetadata, metadata_string};
 use crate::core::messages::ensure_message_metadata_object;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::models::message::Message;
-use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
+use crate::models::session::Session;
+use crate::modules::conversation_runtime::chat_usecase::{RunChatUsecaseInput, run_chat_usecase};
 use crate::modules::conversation_runtime::guidance;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::access_token_scope;
@@ -82,6 +85,9 @@ struct TaskRunnerCallbackResponse {
     user_message_id: String,
     event: String,
 }
+
+const TASK_RUNNER_CALLBACK_CONTENT_DETAIL_MAX_CHARS: usize = 2_400;
+const TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS: usize = 4_000;
 
 async fn agent_chat_send(
     auth: AuthUser,
@@ -196,31 +202,13 @@ async fn task_runner_callback(
             Json(json!({ "accepted": false, "error": "missing source_user_message_id" })),
         );
     };
-
-    let mut user_message =
-        match conversation_messages::get_message_by_id(user_message_id.as_str()).await {
-            Ok(Some(message)) => message,
-            Ok(None) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(json!({ "accepted": false, "error": "user message not found" })),
-                );
-            }
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "accepted": false, "error": err })),
-                );
-            }
-        };
-    let session_id = normalize_callback_value(payload.source_session_id.as_deref())
-        .unwrap_or_else(|| user_message.session_id.clone());
-    if user_message.session_id != session_id {
+    let Some(session_id) = normalize_callback_value(payload.source_session_id.as_deref()) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "accepted": false, "error": "message session mismatch" })),
+            Json(json!({ "accepted": false, "error": "missing source_session_id" })),
         );
-    }
+    };
+
     let session = match chatos_sessions::get_session_by_id(session_id.as_str()).await {
         Ok(Some(session)) => session,
         Ok(None) => {
@@ -236,11 +224,37 @@ async fn task_runner_callback(
             );
         }
     };
+    let mut user_message = match conversation_messages::get_message_by_id_in_session(
+        &session,
+        user_message_id.as_str(),
+    )
+    .await
+    {
+        Ok(Some(message)) => message,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "accepted": false, "error": "user message not found" })),
+            );
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "accepted": false, "error": err })),
+            );
+        }
+    };
+    if user_message.session_id != session.id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "accepted": false, "error": "message session mismatch" })),
+        );
+    }
 
     let user_message_changed =
         apply_task_runner_callback_to_user_message(&mut user_message, &payload);
     let saved_user_message = if user_message_changed {
-        match conversation_messages::upsert_message(&user_message).await {
+        match conversation_messages::upsert_message_in_session(&session, &user_message).await {
             Ok(message) => Some(message),
             Err(err) => {
                 return (
@@ -253,14 +267,27 @@ async fn task_runner_callback(
         Some(user_message.clone())
     };
 
-    let (saved_assistant_message, assistant_message_changed) =
-        if is_task_runner_terminal_event(payload.event.as_str()) {
-        let assistant_message = build_task_runner_callback_assistant_message(&session.id, &payload);
-        match conversation_messages::get_message_by_id(assistant_message.id.as_str()).await {
+    let (saved_assistant_message, assistant_message_changed) = if is_task_runner_terminal_event(
+        payload.event.as_str(),
+    ) {
+        let contact_display = build_task_runner_callback_contact_display(&session);
+        let assistant_message = build_task_runner_callback_assistant_message_with_contact(
+            &session.id,
+            &payload,
+            Some(&contact_display),
+        );
+        match conversation_messages::get_message_by_id_in_session(
+            &session,
+            assistant_message.id.as_str(),
+        )
+        .await
+        {
             Ok(Some(existing_message)) if existing_message.session_id != session.id => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    Json(json!({ "accepted": false, "error": "assistant message session mismatch" })),
+                    Json(
+                        json!({ "accepted": false, "error": "assistant message session mismatch" }),
+                    ),
                 );
             }
             Ok(Some(existing_message))
@@ -268,15 +295,19 @@ async fn task_runner_callback(
             {
                 (Some(existing_message), false)
             }
-            Ok(_) => match conversation_messages::upsert_message(&assistant_message).await {
-                Ok(message) => (Some(message), true),
-                Err(err) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "accepted": false, "error": err })),
-                    );
+            Ok(_) => {
+                match conversation_messages::upsert_message_in_session(&session, &assistant_message)
+                    .await
+                {
+                    Ok(message) => (Some(message), true),
+                    Err(err) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "accepted": false, "error": err })),
+                        );
+                    }
                 }
-            },
+            }
             Err(err) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -331,7 +362,25 @@ async fn task_runner_callback(
                 refreshed_session,
             );
         }
+    } else {
+        warn!(
+            session_id = realtime_session_id.as_str(),
+            task_id = payload.task_id.as_str(),
+            event = payload.event.as_str(),
+            "task runner callback persisted without realtime user id; skipped realtime publish"
+        );
     }
+
+    info!(
+        session_id = session_id.as_str(),
+        user_message_id = user_message_id.as_str(),
+        task_id = payload.task_id.as_str(),
+        run_id = payload.run_id.as_deref().unwrap_or_default(),
+        event = payload.event.as_str(),
+        user_message_changed,
+        assistant_message_changed,
+        "accepted task runner callback"
+    );
 
     (
         StatusCode::OK,
@@ -405,18 +454,19 @@ fn apply_task_runner_callback_to_user_message(
     let mut failed_task_ids = read_string_set(task_runner_meta.get("failed_task_ids"));
     let mut blocked_task_ids = read_string_set(task_runner_meta.get("blocked_task_ids"));
     let mut cancelled_task_ids = read_string_set(task_runner_meta.get("cancelled_task_ids"));
-    let reset_task_terminal_state = |task_id: &str,
-                                     terminal_task_ids: &mut std::collections::BTreeSet<String>,
-                                     succeeded_task_ids: &mut std::collections::BTreeSet<String>,
-                                     failed_task_ids: &mut std::collections::BTreeSet<String>,
-                                     blocked_task_ids: &mut std::collections::BTreeSet<String>,
-                                     cancelled_task_ids: &mut std::collections::BTreeSet<String>| {
-        terminal_task_ids.remove(task_id);
-        succeeded_task_ids.remove(task_id);
-        failed_task_ids.remove(task_id);
-        blocked_task_ids.remove(task_id);
-        cancelled_task_ids.remove(task_id);
-    };
+    let reset_task_terminal_state =
+        |task_id: &str,
+         terminal_task_ids: &mut std::collections::BTreeSet<String>,
+         succeeded_task_ids: &mut std::collections::BTreeSet<String>,
+         failed_task_ids: &mut std::collections::BTreeSet<String>,
+         blocked_task_ids: &mut std::collections::BTreeSet<String>,
+         cancelled_task_ids: &mut std::collections::BTreeSet<String>| {
+            terminal_task_ids.remove(task_id);
+            succeeded_task_ids.remove(task_id);
+            failed_task_ids.remove(task_id);
+            blocked_task_ids.remove(task_id);
+            cancelled_task_ids.remove(task_id);
+        };
 
     match payload.event.as_str() {
         "task.created" => {
@@ -447,6 +497,7 @@ fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             succeeded_task_ids.insert(payload.task_id.clone());
+            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         "task.failed" => {
             created_task_ids.insert(payload.task_id.clone());
@@ -461,6 +512,7 @@ fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             failed_task_ids.insert(payload.task_id.clone());
+            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         "task.blocked" => {
             created_task_ids.insert(payload.task_id.clone());
@@ -475,6 +527,7 @@ fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             blocked_task_ids.insert(payload.task_id.clone());
+            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         "task.cancelled" => {
             created_task_ids.insert(payload.task_id.clone());
@@ -489,6 +542,7 @@ fn apply_task_runner_callback_to_user_message(
             );
             terminal_task_ids.insert(payload.task_id.clone());
             cancelled_task_ids.insert(payload.task_id.clone());
+            upsert_string(task_runner_meta, "overall_status", "completed");
         }
         _ => {}
     }
@@ -501,18 +555,6 @@ fn apply_task_runner_callback_to_user_message(
     write_string_set(task_runner_meta, "blocked_task_ids", &blocked_task_ids);
     write_string_set(task_runner_meta, "cancelled_task_ids", &cancelled_task_ids);
 
-    let has_started_or_terminal_activity =
-        !running_task_ids.is_empty() || !terminal_task_ids.is_empty();
-    let overall_status = if created_task_ids.is_empty() {
-        "pending"
-    } else if terminal_task_ids.len() >= created_task_ids.len() {
-        "completed"
-    } else if has_started_or_terminal_activity {
-        "processing"
-    } else {
-        "pending"
-    };
-    upsert_string(task_runner_meta, "overall_status", overall_status);
     message.metadata != original_metadata
 }
 
@@ -580,16 +622,77 @@ fn upsert_string(root: &mut serde_json::Map<String, Value>, key: &str, value: &s
     root.insert(key.to_string(), Value::String(value.to_string()));
 }
 
+fn normalized_callback_text(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn truncate_callback_text(value: &str, _max_chars: usize) -> String {
+    value.to_string()
+}
+
+fn preferred_callback_detail<'a>(
+    payload: &'a TaskRunnerCallbackRequest,
+) -> Option<(&'static str, &'static str, &'a str)> {
+    if let Some(value) = normalized_callback_text(payload.result_summary.as_deref()) {
+        return Some(("结果摘要", "result_summary", value));
+    }
+    if let Some(value) = normalized_callback_text(payload.report_content.as_deref()) {
+        return Some(("关键输出", "report_content", value));
+    }
+    if let Some(value) = normalized_callback_text(payload.error_message.as_deref()) {
+        return Some(("错误信息", "error_message", value));
+    }
+    None
+}
+
 fn is_task_runner_terminal_event(event: &str) -> bool {
-    matches!(
-        event,
-        "task.completed" | "task.failed" | "task.blocked" | "task.cancelled"
+    matches!(event, "task.completed")
+}
+
+#[derive(Debug, Clone, Default)]
+struct TaskRunnerCallbackContactDisplay {
+    contact_id: Option<String>,
+    contact_agent_id: Option<String>,
+    display_name: Option<String>,
+}
+
+fn build_task_runner_callback_contact_display(
+    session: &Session,
+) -> TaskRunnerCallbackContactDisplay {
+    let runtime = ChatRuntimeMetadata::from_metadata(session.metadata.as_ref());
+    let display_name = metadata_string(
+        session.metadata.as_ref(),
+        &["contact", "agent_name_snapshot"],
     )
+    .or_else(|| metadata_string(session.metadata.as_ref(), &["contact", "name"]))
+    .or_else(|| {
+        metadata_string(
+            session.metadata.as_ref(),
+            &["ui_contact", "agent_name_snapshot"],
+        )
+    })
+    .or_else(|| metadata_string(session.metadata.as_ref(), &["ui_contact", "name"]))
+    .or_else(|| metadata_string(session.metadata.as_ref(), &["chat_runtime", "contact_name"]))
+    .or_else(|| normalize_callback_value(Some(session.title.as_str())));
+
+    TaskRunnerCallbackContactDisplay {
+        contact_id: runtime.contact_id,
+        contact_agent_id: runtime.contact_agent_id,
+        display_name,
+    }
 }
 
 fn build_task_runner_callback_assistant_message(
     session_id: &str,
     payload: &TaskRunnerCallbackRequest,
+) -> Message {
+    build_task_runner_callback_assistant_message_with_contact(session_id, payload, None)
+}
+
+fn build_task_runner_callback_assistant_message_with_contact(
+    session_id: &str,
+    payload: &TaskRunnerCallbackRequest,
+    contact_display: Option<&TaskRunnerCallbackContactDisplay>,
 ) -> Message {
     let mut message = Message::new(
         session_id.to_string(),
@@ -606,6 +709,18 @@ fn build_task_runner_callback_assistant_message(
     let task_runner_meta = ensure_object_field(metadata, "task_runner_async");
     upsert_string(task_runner_meta, "mode", "contact_async");
     upsert_string(task_runner_meta, "message_kind", "task_terminal_update");
+    if let Some(contact_display) = contact_display {
+        if let Some(contact_id) = contact_display.contact_id.as_deref() {
+            upsert_string(task_runner_meta, "contact_id", contact_id);
+        }
+        if let Some(contact_agent_id) = contact_display.contact_agent_id.as_deref() {
+            upsert_string(task_runner_meta, "contact_agent_id", contact_agent_id);
+        }
+        if let Some(display_name) = contact_display.display_name.as_deref() {
+            upsert_string(task_runner_meta, "contact_display_name", display_name);
+            upsert_string(task_runner_meta, "agent_name_snapshot", display_name);
+        }
+    }
     upsert_string(task_runner_meta, "event", payload.event.as_str());
     upsert_string(task_runner_meta, "task_id", payload.task_id.as_str());
     upsert_string(task_runner_meta, "status", payload.status.as_str());
@@ -637,6 +752,33 @@ fn build_task_runner_callback_assistant_message(
     if let Some(callback_at) = normalize_callback_value(payload.callback_at.as_deref()) {
         upsert_string(task_runner_meta, "callback_at", callback_at.as_str());
     }
+    if let Some(result_summary) = normalized_callback_text(payload.result_summary.as_deref()) {
+        let preview = truncate_callback_text(
+            result_summary,
+            TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS,
+        );
+        upsert_string(task_runner_meta, "result_summary", preview.as_str());
+    }
+    if let Some(error_message) = normalized_callback_text(payload.error_message.as_deref()) {
+        let preview = truncate_callback_text(
+            error_message,
+            TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS,
+        );
+        upsert_string(task_runner_meta, "error_message", preview.as_str());
+    }
+    if let Some(report_content) = normalized_callback_text(payload.report_content.as_deref()) {
+        let preview = truncate_callback_text(
+            report_content,
+            TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS,
+        );
+        upsert_string(task_runner_meta, "report_excerpt", preview.as_str());
+    }
+    if let Some((_, detail_source, detail)) = preferred_callback_detail(payload) {
+        upsert_string(task_runner_meta, "detail_source", detail_source);
+        let preview =
+            truncate_callback_text(detail, TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS);
+        upsert_string(task_runner_meta, "detail_preview", preview.as_str());
+    }
     message
 }
 
@@ -661,16 +803,12 @@ fn build_task_runner_callback_message_content(payload: &TaskRunnerCallbackReques
         "task.cancelled" => format!("任务「{}」已取消", title),
         _ => format!("任务「{}」状态更新", title),
     };
-    let detail = payload
-        .result_summary
-        .as_deref()
-        .or(payload.report_content.as_deref())
-        .or(payload.error_message.as_deref())
-        .or(payload.process_log.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match detail {
-        Some(detail) => format!("{headline}\n\n{detail}"),
+    match preferred_callback_detail(payload) {
+        Some((label, _, detail)) => {
+            let detail =
+                truncate_callback_text(detail, TASK_RUNNER_CALLBACK_CONTENT_DETAIL_MAX_CHARS);
+            format!("{headline}\n\n{label}：\n{detail}")
+        }
         None => headline,
     }
 }
@@ -710,8 +848,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_task_runner_callback_to_user_message, build_task_runner_callback_assistant_message,
-        build_task_runner_callback_message_id, TaskRunnerCallbackRequest,
+        TaskRunnerCallbackRequest, apply_task_runner_callback_to_user_message,
+        build_task_runner_callback_assistant_message, build_task_runner_callback_message_id,
     };
     use crate::models::message::Message;
 
@@ -778,42 +916,71 @@ mod tests {
     }
 
     #[test]
-    fn user_message_overall_status_stays_processing_until_all_created_tasks_finish() {
+    fn callback_updates_task_tracking_without_overwriting_existing_message_status() {
         let mut message = Message::new(
             "session-1".to_string(),
             "user".to_string(),
             "please handle this".to_string(),
         );
         message.id = "user-1".to_string();
-        message.metadata = Some(json!({}));
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "completed"
+            }
+        }));
 
         let mut payload = sample_callback_payload();
         payload.event = "task.created".to_string();
         payload.task_id = "task-1".to_string();
         apply_task_runner_callback_to_user_message(&mut message, &payload);
 
-        payload.task_id = "task-2".to_string();
-        apply_task_runner_callback_to_user_message(&mut message, &payload);
-
-        payload.event = "task.run.started".to_string();
-        payload.task_id = "task-1".to_string();
-        apply_task_runner_callback_to_user_message(&mut message, &payload);
-
         payload.event = "task.completed".to_string();
         apply_task_runner_callback_to_user_message(&mut message, &payload);
+
+        let task_runner_async = message
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
         assert_eq!(
-            message
-                .metadata
-                .as_ref()
-                .and_then(|value| value.get("task_runner_async"))
-                .and_then(|value| value.get("overall_status"))
+            task_runner_async
+                .get("overall_status")
                 .and_then(|value| value.as_str()),
-            Some("processing")
+            Some("completed")
         );
+        assert_eq!(
+            task_runner_async
+                .get("created_task_ids")
+                .and_then(|value| value.as_array())
+                .map(|value| value.len()),
+            Some(1)
+        );
+        assert_eq!(
+            task_runner_async
+                .get("succeeded_task_ids")
+                .and_then(|value| value.as_array())
+                .map(|value| value.len()),
+            Some(1)
+        );
+    }
 
-        payload.task_id = "task-2".to_string();
-        payload.event = "task.completed".to_string();
+    #[test]
+    fn terminal_callback_marks_source_user_message_completed() {
+        let mut message = Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "please handle this".to_string(),
+        );
+        message.id = "user-1".to_string();
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "processing"
+            }
+        }));
+
+        let payload = sample_callback_payload();
         apply_task_runner_callback_to_user_message(&mut message, &payload);
 
         assert_eq!(
@@ -828,23 +995,11 @@ mod tests {
     }
 
     #[test]
-    fn rerun_started_clears_stale_terminal_state_for_same_task() {
-        let mut message = Message::new(
-            "session-1".to_string(),
-            "user".to_string(),
-            "please retry this".to_string(),
-        );
-        message.id = "user-1".to_string();
-        message.metadata = Some(json!({}));
-
+    fn callback_message_content_keeps_full_detail() {
         let mut payload = sample_callback_payload();
-        payload.task_id = "task-1".to_string();
-        payload.event = "task.failed".to_string();
-        apply_task_runner_callback_to_user_message(&mut message, &payload);
-
-        payload.event = "task.run.started".to_string();
-        apply_task_runner_callback_to_user_message(&mut message, &payload);
-
+        payload.result_summary = None;
+        payload.report_content = Some("A".repeat(5_000));
+        let message = build_task_runner_callback_assistant_message("session-1", &payload);
         let task_runner_async = message
             .metadata
             .as_ref()
@@ -852,25 +1007,20 @@ mod tests {
             .cloned()
             .unwrap_or_else(|| json!({}));
 
+        assert!(!message.content.contains("[内容已截断]"));
+        assert!(message.content.chars().count() > 5_000);
         assert_eq!(
             task_runner_async
-                .get("overall_status")
+                .get("detail_source")
                 .and_then(|value| value.as_str()),
-            Some("processing")
+            Some("report_content")
         );
         assert_eq!(
             task_runner_async
-                .get("terminal_task_ids")
-                .and_then(|value| value.as_array())
-                .map(|value| value.len()),
-            Some(0)
-        );
-        assert_eq!(
-            task_runner_async
-                .get("failed_task_ids")
-                .and_then(|value| value.as_array())
-                .map(|value| value.len()),
-            Some(0)
+                .get("detail_preview")
+                .and_then(|value| value.as_str())
+                .map(|value| value.chars().count()),
+            Some(5_000)
         );
     }
 }

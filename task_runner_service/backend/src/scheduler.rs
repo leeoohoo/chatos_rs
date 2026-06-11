@@ -60,7 +60,7 @@ pub fn spawn_task_scheduler(
                         }
 
                         match run_service
-                            .start_run(&task.id, StartTaskRunRequest::default())
+                            .start_scheduled_run(&task.id, StartTaskRunRequest::default())
                             .await
                         {
                             Ok(run) => {

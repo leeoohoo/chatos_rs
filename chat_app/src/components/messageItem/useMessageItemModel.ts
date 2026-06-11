@@ -129,7 +129,7 @@ export const useMessageItemModel = ({
   const hasVisibleToolCallSegment = renderContentSegments.some((segment) => segment.type === 'tool_call');
   const shouldHideEmptyStreamingAssistant = Boolean(
     isAssistant
-    && isStreaming
+    && (isStreaming || isTaskRunnerAsyncAssistant)
     && message.status === 'streaming'
     && (!message.content || message.content.trim().length === 0)
     && !hasVisibleTextSegment

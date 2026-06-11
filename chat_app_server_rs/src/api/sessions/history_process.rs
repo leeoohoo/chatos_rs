@@ -4,7 +4,9 @@ use crate::models::message::Message;
 use super::history_process_support::{
     attach_user_history_process_metadata, build_embedded_process_message,
     count_assistant_thinking_steps, enrich_assistant_message_for_display,
-    extract_tool_calls_from_message, is_task_runner_callback_message, mark_process_message_loaded,
+    extract_tool_calls_from_message, is_task_runner_async_plan_summary_message,
+    is_task_runner_callback_message, mark_process_message_loaded,
+    normalize_task_runner_async_user_status_for_display,
     normalize_task_runner_callback_for_display, select_final_assistant_index,
     strip_assistant_for_compact_history,
 };
@@ -65,6 +67,9 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
 
         let final_assistant_message_id =
             final_assistant_index.map(|index| messages[index].id.clone());
+        let task_runner_async_turn_completed = final_assistant_index
+            .is_some_and(|index| is_task_runner_async_plan_summary_message(&messages[index]))
+            || !callback_updates.is_empty();
         attach_user_history_process_metadata(
             &mut user_message,
             process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
@@ -72,6 +77,10 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
             thinking_count,
             process_message_count,
             final_assistant_message_id,
+        );
+        normalize_task_runner_async_user_status_for_display(
+            &mut user_message,
+            task_runner_async_turn_completed,
         );
         compact.push(user_message);
 
@@ -191,6 +200,9 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
     }
 
     let final_assistant_message_id = final_assistant_index.map(|index| messages[index].id.clone());
+    let task_runner_async_turn_completed = final_assistant_index
+        .is_some_and(|index| is_task_runner_async_plan_summary_message(&messages[index]))
+        || !callback_updates.is_empty();
     attach_user_history_process_metadata(
         &mut user_message,
         process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
@@ -198,6 +210,10 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
         thinking_count,
         process_message_count,
         final_assistant_message_id,
+    );
+    normalize_task_runner_async_user_status_for_display(
+        &mut user_message,
+        task_runner_async_turn_completed,
     );
 
     let mut display_messages = vec![user_message];
@@ -268,6 +284,66 @@ mod tests {
                 .as_ref()
                 .and_then(|value| value.get("conversation_turn_id")),
             None
+        );
+    }
+
+    #[test]
+    fn compact_history_marks_task_runner_user_completed_after_plan_summary() {
+        let mut user = build_message("user", "help");
+        user.id = "user-1".to_string();
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "overall_status": "processing"
+            }
+        }));
+
+        let mut plan = build_message("assistant", "I created the tasks.");
+        plan.id = "assistant-plan".to_string();
+        plan.message_mode = Some("task_runner_async_plan".to_string());
+        plan.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "message_kind": "plan_summary"
+            }
+        }));
+
+        let compact = build_compact_history_messages(vec![user, plan]);
+        assert_eq!(
+            compact[0]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("task_runner_async"))
+                .and_then(|value| value.get("overall_status"))
+                .and_then(|value| value.as_str()),
+            Some("completed")
+        );
+    }
+
+    #[test]
+    fn compact_history_repairs_stale_processing_status_from_terminal_tracking() {
+        let mut user = build_message("user", "help");
+        user.id = "user-1".to_string();
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "overall_status": "processing",
+                "terminal_task_ids": ["task-1"]
+            }
+        }));
+
+        let compact = build_compact_history_messages(vec![user]);
+        assert_eq!(
+            compact[0]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("task_runner_async"))
+                .and_then(|value| value.get("overall_status"))
+                .and_then(|value| value.as_str()),
+            Some("completed")
         );
     }
 

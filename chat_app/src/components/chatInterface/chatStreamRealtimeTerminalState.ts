@@ -6,6 +6,7 @@ import { isTaskRunnerAsyncPlanMessage } from '../../lib/domain/messages';
 import {
   failSendMessageState,
   finalizeStreamingSessionState,
+  setTaskRunnerAsyncUserMessageStatus,
 } from '../../lib/store/actions/sendMessage/sessionState';
 import { recoverStreamingTurnBySnapshot } from '../../lib/store/actions/sendMessage/turnRecovery';
 import type { Message } from '../../types';
@@ -56,6 +57,11 @@ export const applyRealtimeTerminalMessages = (
       persisted.persistedUserMessage,
       persisted.persistedAssistantMessage,
     );
+    setTaskRunnerAsyncUserMessageStatus(
+      state,
+      persisted.persistedUserMessage?.id || context.tempUserId,
+      'completed',
+    );
     finalizeStreamingSessionState(state, {
       sessionId: context.sessionId,
       assistantMessageId: resolvedAssistantMessageId,
@@ -80,6 +86,11 @@ export const applyRealtimeTerminalFailure = (
       context.tempUserId,
       persisted.persistedUserMessage,
       persisted.persistedAssistantMessage,
+    );
+    setTaskRunnerAsyncUserMessageStatus(
+      state,
+      persisted.persistedUserMessage?.id || context.tempUserId,
+      'completed',
     );
     failSendMessageState(state, {
       sessionId: context.sessionId,

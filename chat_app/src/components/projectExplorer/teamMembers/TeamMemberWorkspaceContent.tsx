@@ -114,6 +114,7 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
       isLoading={effectiveLoading}
       isStreaming={effectiveStreaming}
       isStopping={effectiveStopping}
+      assistantContactName={selectedContact.name}
       hasMore={hasMoreMessages}
       onLoadMore={onLoadMore}
       onToggleTurnProcess={isTaskRunnerAsyncContactMode ? undefined : onToggleTurnProcess}

@@ -261,6 +261,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
       isStopping={effectiveStopping}
       streamingPhase={effectiveStreamingPhase}
       streamingPreviewText={effectiveStreamingPreviewText}
+      assistantContactName={currentContactName}
       hasMore={hasMoreMessages}
       onLoadMore={onLoadMore}
       onToggleTurnProcess={isTaskRunnerAsyncContactMode ? undefined : onToggleTurnProcess}

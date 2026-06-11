@@ -1,4 +1,4 @@
-use serde_json::{json, Number, Value};
+use serde_json::{Number, Value, json};
 
 use crate::core::messages::{
     ensure_message_metadata_object, extract_message_tool_calls_for_display,
@@ -6,9 +6,11 @@ use crate::core::messages::{
 };
 use crate::core::tool_call::extract_tool_call_id;
 use crate::models::message::Message;
+use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
 
 const TASK_RUNNER_CALLBACK_MESSAGE_MODE: &str = "task_runner_callback";
 const TASK_RUNNER_TERMINAL_UPDATE_MESSAGE_KIND: &str = "task_terminal_update";
+const TASK_RUNNER_ASYNC_PLAN_SUMMARY_MESSAGE_KIND: &str = "plan_summary";
 
 fn parse_content_segments_value(value: &Value) -> Vec<Value> {
     match value {
@@ -44,6 +46,93 @@ pub(super) fn is_task_runner_callback_message(message: &Message) -> bool {
         .and_then(Value::as_str)
         .map(str::trim)
         .is_some_and(|value| value == TASK_RUNNER_TERMINAL_UPDATE_MESSAGE_KIND)
+}
+
+pub(super) fn is_task_runner_async_plan_summary_message(message: &Message) -> bool {
+    let is_task_runner_async_plan_mode = message
+        .message_mode
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| value == TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE);
+
+    let message_kind = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .and_then(|value| value.get("message_kind"))
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if message_kind.is_some_and(|value| value == TASK_RUNNER_ASYNC_PLAN_SUMMARY_MESSAGE_KIND) {
+        return true;
+    }
+    if message_kind.is_some() {
+        return false;
+    }
+
+    is_task_runner_async_plan_mode && message_has_text_content(message)
+}
+
+pub(super) fn normalize_task_runner_async_user_status_for_display(
+    message: &mut Message,
+    completed_by_turn_messages: bool,
+) {
+    if message.role != "user" {
+        return;
+    }
+
+    let Some(Value::Object(metadata)) = message.metadata.as_mut() else {
+        return;
+    };
+    let Some(Value::Object(task_runner_async)) = metadata.get_mut("task_runner_async") else {
+        return;
+    };
+    let mode = task_runner_async
+        .get("mode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if mode != "contact_async" {
+        return;
+    }
+    let current_status = task_runner_async
+        .get("overall_status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if current_status == "completed" {
+        return;
+    }
+    let has_terminal_tracking = [
+        "terminal_task_ids",
+        "succeeded_task_ids",
+        "failed_task_ids",
+        "blocked_task_ids",
+        "cancelled_task_ids",
+    ]
+    .iter()
+    .any(|key| {
+        task_runner_async
+            .get(*key)
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    });
+    let last_event_is_terminal = task_runner_async
+        .get("last_event")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| {
+            matches!(
+                value,
+                "task.completed" | "task.failed" | "task.blocked" | "task.cancelled"
+            )
+        });
+
+    if completed_by_turn_messages || has_terminal_tracking || last_event_is_terminal {
+        task_runner_async.insert(
+            "overall_status".to_string(),
+            Value::String("completed".to_string()),
+        );
+    }
 }
 
 fn extract_content_segments_from_message(message: &Message) -> Vec<Value> {

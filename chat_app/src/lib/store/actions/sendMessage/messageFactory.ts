@@ -57,17 +57,20 @@ export const createDraftAssistantMessage = ({
   selectedModel,
   userMessage,
   userMessageTime,
+  taskRunnerAsyncContactMode = false,
 }: {
   sessionId: string;
   conversationTurnId: string;
   selectedModel: AiModelConfig;
   userMessage: Message;
   userMessageTime: Date;
+  taskRunnerAsyncContactMode?: boolean;
 }): StreamingMessage => ({
   id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
   sessionId,
   role: 'assistant' as const,
   content: '',
+  messageMode: taskRunnerAsyncContactMode ? 'task_runner_async_plan' : undefined,
   status: 'streaming' as const,
   createdAt: new Date(userMessageTime.getTime() + 1),
   metadata: {
@@ -81,6 +84,16 @@ export const createDraftAssistantMessage = ({
       content: userMessage.content,
       createdAt: userMessageTime.toISOString(),
     },
+    ...(taskRunnerAsyncContactMode
+      ? {
+        task_runner_async: {
+          mode: 'contact_async',
+          message_kind: 'plan_summary',
+          source_turn_id: conversationTurnId,
+          source_user_message_id: userMessage.id,
+        },
+      }
+      : {}),
     toolCalls: [],
     contentSegments: [{ content: '', type: 'text' as const }],
     currentSegmentIndex: 0,

@@ -73,6 +73,7 @@ export const handleChatStreamRealtimeCompletion = async ({
       currentSessionId: active.sessionId,
       conversationTurnId: active.conversationTurnId,
       tempAssistantMessageId: active.tempAssistantMessageId,
+      tempUserId: active.tempUserId,
       streamedTextRef: active.streamedTextRef,
       helpers,
     });

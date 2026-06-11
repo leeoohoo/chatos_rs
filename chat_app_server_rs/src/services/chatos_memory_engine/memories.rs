@@ -11,7 +11,7 @@ use super::client::build_client;
 use super::mappers::{
     engine_subject_memory_to_agent_recall, engine_subject_memory_to_project_memory,
 };
-use super::mapping::{resolve_session_project_scope, CHATOS_COMPAT_SOURCE_ID};
+use super::mapping::{CHATOS_COMPAT_SOURCE_ID, resolve_session_project_scope};
 use super::normalize_non_empty;
 
 pub async fn list_contact_project_memories(

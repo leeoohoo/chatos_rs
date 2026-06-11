@@ -1,13 +1,13 @@
 use chatos_mcp_runtime::ToolCallerModelRuntime;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::info;
 
 use crate::core::tool_call::tool_calls_value_has_items;
 use crate::modules::conversation_runtime::task_board::{
-    build_hidden_task_turn_review_metadata, build_task_turn_follow_up_directive,
-    build_task_turn_follow_up_message, build_task_turn_review_retry_guidance,
-    parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
-    TaskTurnReviewOutcome,
+    TaskTurnFollowUpMode, TaskTurnReviewOutcome, build_hidden_task_turn_review_metadata,
+    build_task_turn_follow_up_directive, build_task_turn_follow_up_message,
+    build_task_turn_review_retry_guidance, parse_task_turn_review_outcome,
+    strip_task_turn_review_marker,
 };
 use crate::services::agent_runtime::ai_request_handler::StreamCallbacks;
 use crate::services::ai_common::{
@@ -16,7 +16,7 @@ use crate::services::ai_common::{
     is_task_runner_async_plan_message_mode, terminal_empty_response_error,
 };
 use crate::utils::abort_registry;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::warn;
 
 use super::compat::{log_usage_snapshot, rewrite_system_messages_to_user};
@@ -26,7 +26,24 @@ use super::prev_context::base_url_disallows_system_messages;
 use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
 };
-use super::{build_current_input_items, AiClient, AiClientCallbacks};
+use super::{AiClient, AiClientCallbacks, build_current_input_items};
+
+const TASK_RUNNER_ASYNC_PLANNER_FINAL_SUMMARY_PROMPT: &str = "Task planning is complete. Do not call any more tools. Reply to the user now with a concise final summary that confirms the tasks were created or adjusted, summarizes the execution plan and prerequisite relationships, and states that the tasks will run automatically in the background and results will be sent later when completed.\n任务安排已经完成。不要再调用任何工具。现在直接给用户简要总结：确认任务已创建或调整，概括执行计划和前置关系，并说明任务会在后台自动执行，完成后会再把结果发送给用户。";
+
+fn task_runner_async_planner_requested_final_summary(
+    tool_results: &[crate::core::mcp_tools::ToolResult],
+) -> bool {
+    tool_results
+        .iter()
+        .any(|result| result.success && result.name.as_str() == "wait_for_task_completion")
+}
+
+fn should_persist_tool_messages_for_turn(
+    purpose: &str,
+    _task_runner_async_plan_mode: bool,
+) -> bool {
+    purpose != "agent_builder"
+}
 
 fn emit_turn_phase_event(
     callbacks: &AiClientCallbacks,
@@ -95,11 +112,14 @@ impl AiClient {
         supports_images: Option<bool>,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
-        let persist_tool_messages = purpose != "agent_builder"
-            && !is_task_runner_async_plan_message_mode(message_mode.as_deref());
+        let task_runner_async_plan_mode =
+            is_task_runner_async_plan_message_mode(message_mode.as_deref());
+        let persist_tool_messages =
+            should_persist_tool_messages_for_turn(purpose, task_runner_async_plan_mode);
         let mut input = input;
         let mut force_text_content = force_text_content;
         let mut iteration = iteration;
+        let mut tools_enabled_for_iteration = true;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
         let mut pending_tool_calls: Option<Vec<Value>> = None;
         let mut no_system_messages =
@@ -245,7 +265,7 @@ impl AiClient {
                         model.clone(),
                         system_prompt.clone(),
                         prompt_cache_key.clone(),
-                        if tools.is_empty() {
+                        if tools.is_empty() || !tools_enabled_for_iteration {
                             None
                         } else {
                             Some(tools.clone())
@@ -334,10 +354,7 @@ impl AiClient {
                     let backoff_ms = 150_u64 * completion_retry_count as u64;
                     warn!(
                         "[Agent Runtime] completion failed with retryable provider backpressure; retry {}/{} after {}ms: {}",
-                        completion_retry_count,
-                        max_completion_retry_retries,
-                        backoff_ms,
-                        err
+                        completion_retry_count, max_completion_retry_retries, backoff_ms, err
                     );
                     sleep(Duration::from_millis(backoff_ms)).await;
                     continue;
@@ -626,8 +643,39 @@ impl AiClient {
                 )
                 .await;
 
+            if task_runner_async_plan_mode
+                && task_runner_async_planner_requested_final_summary(persisted_results.as_slice())
+            {
+                input = next_input;
+                tools_enabled_for_iteration = false;
+                pending_follow_up_input_items = Some(build_current_input_items(
+                    &Value::String(TASK_RUNNER_ASYNC_PLANNER_FINAL_SUMMARY_PROMPT.to_string()),
+                    force_text_content,
+                ));
+                iteration += 1;
+                continue;
+            }
+
             input = next_input;
             iteration += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_persist_tool_messages_for_turn;
+
+    #[test]
+    fn task_runner_async_planner_still_persists_tool_messages() {
+        assert!(should_persist_tool_messages_for_turn("chat", true));
+    }
+
+    #[test]
+    fn agent_builder_keeps_tool_message_persistence_disabled() {
+        assert!(!should_persist_tool_messages_for_turn(
+            "agent_builder",
+            false
+        ));
     }
 }

@@ -131,6 +131,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                 const isArchivedSession = sessionStatus !== 'active';
                 const isArchivingSession = sessionStatus === 'archiving';
                 const runtimeSessionId = displaySessionRuntimeIdMap[session.id] || session.id;
+                const isTaskRunnerAsyncSession = taskRunnerEnabledBySessionId[session.id] === true;
 
                 return (
                   <div
@@ -161,7 +162,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                             <span className={cn('inline-block w-2 h-2 rounded-full', isArchivingSession ? 'bg-amber-500 animate-pulse' : 'bg-slate-400')} />
                             {isArchivingSession ? t('session.archiving') : t('session.archived')}
                           </span>
-                        ) : (
+                        ) : !isTaskRunnerAsyncSession ? (
                           (() => {
                             const chatState = sessionChatState?.[runtimeSessionId];
                             const {
@@ -179,7 +180,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                             });
                             return <SessionBusyBadge phase={phase} />;
                           })()
-                        )}
+                        ) : null}
                         {taskRunnerEnabledBySessionId[session.id] ? (
                           <span className="inline-flex items-center gap-1 text-emerald-600">
                             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
@@ -187,7 +188,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           </span>
                         ) : null}
                         {(() => {
-                          if (isArchivedSession) {
+                          if (isArchivedSession || isTaskRunnerAsyncSession) {
                             return null;
                           }
                           const { pendingCount } = countPendingSessionPanels({

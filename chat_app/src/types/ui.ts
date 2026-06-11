@@ -46,6 +46,7 @@ export interface MessageListProps {
   isStopping?: boolean;
   streamingPhase?: 'thinking' | 'reviewing' | null;
   streamingPreviewText?: string;
+  assistantContactName?: string | null;
   hasMore?: boolean;
   onLoadMore?: () => void;
   onToggleTurnProcess?: (userMessageId: string) => void;

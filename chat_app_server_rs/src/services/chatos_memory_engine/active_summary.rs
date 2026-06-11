@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use memory_engine_sdk::RunThreadActiveSummaryResponse;
-use tokio::time::{sleep, Instant};
+use tokio::time::{Instant, sleep};
 use tracing::{info, warn};
 
 use crate::config::Config;

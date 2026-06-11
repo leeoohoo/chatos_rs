@@ -1,14 +1,17 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
+use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::agent_runtime::ai_client::{AiClient, AiClientCallbacks, ProcessOptions};
 use crate::services::agent_runtime::ai_request_handler::AiRequestHandler;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
+use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
 use crate::services::ai_common::{normalize_turn_id, persist_user_message_and_build_content_parts};
 use crate::services::shared_ai_runtime::{
     build_shared_ai_runtime_with_chatos_records, build_shared_contextual_turn_runner,
 };
 use crate::utils::attachments;
+use tracing::warn;
 
 pub struct AiServer {
     pub message_manager: MessageManager,
@@ -94,8 +97,13 @@ impl AiServer {
         let reasoning_enabled = options.reasoning_enabled.unwrap_or(true);
         let turn_id = normalize_turn_id(options.turn_id.as_deref());
         let user_message_id = options.user_message_id.clone();
+        let user_message_id_for_save = user_message_id.clone();
         let message_mode = options.message_mode.clone();
         let message_source = options.message_source.clone();
+        let task_runner_async_plan = matches!(
+            message_mode.as_deref().map(str::trim),
+            Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE)
+        );
         let prepared = persist_user_message_and_build_content_parts(
             session_id,
             user_message,
@@ -107,7 +115,7 @@ impl AiServer {
                 self.message_manager.save_user_message(
                     session_id,
                     user_message,
-                    user_message_id,
+                    user_message_id_for_save,
                     message_mode,
                     message_source,
                     metadata,
@@ -115,6 +123,30 @@ impl AiServer {
             },
         )
         .await?;
+        if task_runner_async_plan {
+            if let Some(user_message_id) = user_message_id.as_deref() {
+                match set_task_runner_async_overall_status_for_session(
+                    session_id,
+                    user_message_id,
+                    "processing",
+                )
+                .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => warn!(
+                        session_id,
+                        user_message_id,
+                        "task runner async processing status was not persisted: message not found"
+                    ),
+                    Err(err) => warn!(
+                        session_id,
+                        user_message_id,
+                        error = err.as_str(),
+                        "task runner async processing status persist failed"
+                    ),
+                }
+            }
+        }
         let turn_id = prepared.turn_id;
         let content_parts = prepared.content_parts;
 

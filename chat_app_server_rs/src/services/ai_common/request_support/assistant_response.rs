@@ -160,6 +160,19 @@ pub(crate) fn is_task_runner_async_plan_message_mode(message_mode: Option<&str>)
 }
 
 pub(crate) fn normalize_task_runner_async_plan_metadata(metadata: Option<Value>) -> Option<Value> {
+    normalize_task_runner_async_metadata(metadata, "plan_summary")
+}
+
+pub(crate) fn normalize_task_runner_async_tool_call_metadata(
+    metadata: Option<Value>,
+) -> Option<Value> {
+    normalize_task_runner_async_metadata(metadata, "tool_call")
+}
+
+fn normalize_task_runner_async_metadata(
+    metadata: Option<Value>,
+    message_kind: &str,
+) -> Option<Value> {
     let mut root = match metadata {
         Some(Value::Object(map)) => map,
         Some(_) | None => serde_json::Map::new(),
@@ -173,7 +186,7 @@ pub(crate) fn normalize_task_runner_async_plan_metadata(metadata: Option<Value>)
             "task_runner_async".to_string(),
             serde_json::json!({
                 "mode": "contact_async",
-                "message_kind": "plan_summary"
+                "message_kind": message_kind
             }),
         );
         return Some(Value::Object(root));
@@ -185,7 +198,7 @@ pub(crate) fn normalize_task_runner_async_plan_metadata(metadata: Option<Value>)
     );
     task_runner_async_map.insert(
         "message_kind".to_string(),
-        Value::String("plan_summary".to_string()),
+        Value::String(message_kind.to_string()),
     );
     Some(Value::Object(root))
 }
@@ -264,7 +277,10 @@ pub(crate) async fn persist_assistant_response_with_policy<F, Fut>(
             "{} skip assistant message persistence due to {}: session_id={}, turn_id={}, response_id={}, finish_reason={}",
             log_prefix,
             skip_log_label,
-            request.session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            request
+                .session_id
+                .clone()
+                .unwrap_or_else(|| "n/a".to_string()),
             request.turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
             request.response_id.as_deref().unwrap_or("none"),
             request.response_status.as_deref().unwrap_or("none")

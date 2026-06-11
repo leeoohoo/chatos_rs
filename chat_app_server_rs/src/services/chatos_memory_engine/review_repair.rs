@@ -1,12 +1,12 @@
 use memory_engine_sdk::{ListJobRunsRequest, SdkCountThreadRecordsRequest};
 
+use super::CHATOS_COMPAT_SOURCE_ID;
 use super::client::build_client;
 use super::mapping::{build_review_repair_scope, build_thread_mapping};
 use super::types::{
     ChatosReviewRepairRequest, ReviewRepairJobRunResult, ReviewRepairStatusResult,
     ReviewRepairSummaryRunResult,
 };
-use super::CHATOS_COMPAT_SOURCE_ID;
 
 pub async fn run_chatos_review_repair(
     req: &ChatosReviewRepairRequest,

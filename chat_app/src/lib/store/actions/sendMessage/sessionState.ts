@@ -61,6 +61,45 @@ export const applySessionRuntimeMetadata = (
   }
 };
 
+export const setTaskRunnerAsyncUserMessageStatus = (
+  state: ChatStoreDraft,
+  userMessageId: string | null | undefined,
+  overallStatus: 'pending' | 'processing' | 'completed',
+) => {
+  const normalizedUserMessageId = typeof userMessageId === 'string'
+    ? userMessageId.trim()
+    : '';
+  if (!normalizedUserMessageId) {
+    return;
+  }
+
+  const userIndex = state.messages.findIndex((message) => (
+    message.id === normalizedUserMessageId && message.role === 'user'
+  ));
+  if (userIndex < 0) {
+    return;
+  }
+
+  const existingUser = state.messages[userIndex];
+  const existingMetadata = existingUser.metadata || {};
+  const existingTaskRunnerAsync = (
+    existingMetadata.task_runner_async
+    && typeof existingMetadata.task_runner_async === 'object'
+  ) ? existingMetadata.task_runner_async : {};
+
+  state.messages[userIndex] = {
+    ...existingUser,
+    metadata: {
+      ...existingMetadata,
+      task_runner_async: {
+        ...existingTaskRunnerAsync,
+        mode: 'contact_async',
+        overall_status: overallStatus,
+      },
+    },
+  };
+};
+
 export const beginUserTurnInState = (
   state: ChatStoreDraft,
   {

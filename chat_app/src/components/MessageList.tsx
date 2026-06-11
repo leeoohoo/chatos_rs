@@ -42,6 +42,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   isStopping = false,
   streamingPhase = null,
   streamingPreviewText = '',
+  assistantContactName = null,
   hasMore = false,
   onLoadMore,
   onToggleTurnProcess,
@@ -162,6 +163,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             message={message}
             isLast={globalIndex === lastVisibleIndex}
             isStreaming={isStreaming && globalIndex === lastVisibleIndex}
+            assistantContactName={assistantContactName}
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
             onToggleTurnProcess={onToggleTurnProcess}
@@ -233,6 +235,7 @@ const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: Messag
   && (prevProps.isStopping ?? false) === (nextProps.isStopping ?? false)
   && (prevProps.streamingPhase ?? null) === (nextProps.streamingPhase ?? null)
   && (prevProps.streamingPreviewText ?? '') === (nextProps.streamingPreviewText ?? '')
+  && (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null)
   && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
   && prevProps.onLoadMore === nextProps.onLoadMore
   && prevProps.onToggleTurnProcess === nextProps.onToggleTurnProcess

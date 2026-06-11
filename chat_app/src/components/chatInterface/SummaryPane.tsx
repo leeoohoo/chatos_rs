@@ -201,6 +201,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         isStopping={isStopping}
         streamingPhase={streamingPhase}
         streamingPreviewText={streamingPreviewText}
+        assistantContactName={contactName}
         hasMore={hasMore}
         onLoadMore={onLoadMore}
         onToggleTurnProcess={onToggleTurnProcess}

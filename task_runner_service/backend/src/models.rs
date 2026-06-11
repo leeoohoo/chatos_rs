@@ -149,6 +149,7 @@ pub enum TaskScheduleMode {
     Manual,
     Once,
     Interval,
+    ContactAsync,
 }
 
 impl Default for TaskScheduleMode {

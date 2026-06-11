@@ -62,6 +62,19 @@ pub async fn upsert_message(message: &Message) -> Result<Message, String> {
     chatos_memory_engine::upsert_chatos_message(&session, message).await
 }
 
+pub async fn upsert_message_in_session(
+    session: &Session,
+    message: &Message,
+) -> Result<Message, String> {
+    if message.session_id != session.id {
+        return Err(format!(
+            "message session mismatch: message={} session={}",
+            message.session_id, session.id
+        ));
+    }
+    chatos_memory_engine::upsert_chatos_message(session, message).await
+}
+
 pub async fn sync_turn_runtime_snapshot(
     session_id: &str,
     turn_id: &str,
@@ -103,6 +116,13 @@ pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String>
 
 pub async fn get_message_by_id(message_id: &str) -> Result<Option<Message>, String> {
     chatos_memory_engine::get_chatos_message_by_id(message_id).await
+}
+
+pub async fn get_message_by_id_in_session(
+    session: &Session,
+    message_id: &str,
+) -> Result<Option<Message>, String> {
+    chatos_memory_engine::get_chatos_message_by_id_in_session(session, message_id).await
 }
 
 pub async fn delete_message(message_id: &str) -> Result<bool, String> {

@@ -119,12 +119,14 @@ const scheduleModeLabelKeys: Record<TaskScheduleMode, string> = {
   manual: 'tasks.schedule.manual',
   once: 'tasks.schedule.once',
   interval: 'tasks.schedule.interval',
+  contact_async: 'tasks.schedule.contactAsync',
 };
 
 const scheduleModeDescriptionKeys: Record<TaskScheduleMode, string> = {
   manual: 'tasks.schedule.manualDescription',
   once: 'tasks.schedule.onceDescription',
   interval: 'tasks.schedule.intervalDescription',
+  contact_async: 'tasks.schedule.contactAsyncDescription',
 };
 
 const promptStatusColorMap: Record<UiPromptStatus, string> = {
@@ -142,6 +144,23 @@ function taskCreatorLabel(task: TaskRecord): string {
     return `${displayName} (${username})`;
   }
   return displayName || username || '-';
+}
+
+function taskRunReportContent(run?: TaskRunRecord | null): string | null {
+  const report = run?.report;
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return null;
+  }
+  const content = (report as { content?: unknown }).content;
+  if (typeof content !== 'string') {
+    return null;
+  }
+  const trimmed = content.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function isSchedulerOnlyTask(task: Pick<TaskRecord, 'schedule'>): boolean {
+  return task.schedule.mode === 'contact_async';
 }
 
 function taskModelOptionLabel(
@@ -205,22 +224,23 @@ export function TasksPage() {
   const effectiveScheduleMode = scheduleMode ?? 'manual';
   const scheduleModeLabels = useMemo(
     () => (Object.fromEntries(
-      (['manual', 'once', 'interval'] as TaskScheduleMode[])
+      (['manual', 'once', 'interval', 'contact_async'] as TaskScheduleMode[])
         .map((value) => [value, t(scheduleModeLabelKeys[value])]),
     ) as Record<TaskScheduleMode, string>),
     [t],
   );
   const scheduleModeDescriptions = useMemo(
     () => (Object.fromEntries(
-      (['manual', 'once', 'interval'] as TaskScheduleMode[])
+      (['manual', 'once', 'interval', 'contact_async'] as TaskScheduleMode[])
         .map((value) => [value, t(scheduleModeDescriptionKeys[value])]),
     ) as Record<TaskScheduleMode, string>),
     [t],
   );
   const scheduleModeOptions = useMemo(
-    () => (['manual', 'once', 'interval'] as TaskScheduleMode[]).map((value) => ({
+    () => (['manual', 'once', 'interval', 'contact_async'] as TaskScheduleMode[]).map((value) => ({
       label: scheduleModeLabels[value],
       value,
+      disabled: value === 'contact_async',
     })),
     [scheduleModeLabels],
   );
@@ -599,6 +619,10 @@ export function TasksPage() {
     () => selectedTaskQuery.data || detailTaskPreview,
     [detailTaskPreview, selectedTaskQuery.data],
   );
+  const detailResultSummary = useMemo(
+    () => taskRunReportContent(detailLastRunQuery.data) || selectedTask?.result_summary || null,
+    [detailLastRunQuery.data, selectedTask?.result_summary],
+  );
   const detailRemoteOperations = useMemo(
     () =>
       collectTaskRemoteOperations(
@@ -864,7 +888,7 @@ export function TasksPage() {
           <Button
             size="small"
             type="primary"
-            disabled={record.status === 'running'}
+            disabled={record.status === 'running' || isSchedulerOnlyTask(record)}
             onClick={() => openRunModal(record)}
           >
             {t('tasks.action.run')}
@@ -1404,7 +1428,7 @@ export function TasksPage() {
               </Button>
               <Button
                 type="primary"
-                disabled={selectedTask.status === 'running'}
+                disabled={selectedTask.status === 'running' || isSchedulerOnlyTask(selectedTask)}
                 onClick={() => {
                   closeDetailDrawer();
                   openRunModal(selectedTask);
@@ -1529,11 +1553,11 @@ export function TasksPage() {
               </div>
             ) : null}
 
-            {selectedTask.result_summary ? (
+            {detailResultSummary ? (
               <div>
                 <Typography.Title level={5}>{t('tasks.detail.latestSummary')}</Typography.Title>
                 <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
-                  {selectedTask.result_summary}
+                  {detailResultSummary}
                 </Typography.Paragraph>
               </div>
             ) : null}
@@ -1851,7 +1875,7 @@ export function TasksPage() {
                           key="run"
                           size="small"
                           type="primary"
-                          disabled={task.status === 'running'}
+                          disabled={task.status === 'running' || isSchedulerOnlyTask(task)}
                           onClick={() => openRunModal(task)}
                         >
                           {t('tasks.action.run')}
@@ -2030,7 +2054,7 @@ export function TasksPage() {
             <Form.Item
               name="scheduleRunAt"
               label={
-                effectiveScheduleMode === 'once'
+                effectiveScheduleMode === 'once' || effectiveScheduleMode === 'contact_async'
                   ? t('tasks.form.runAt')
                   : t('tasks.form.firstRunAt')
               }
@@ -2038,7 +2062,7 @@ export function TasksPage() {
                 {
                   required: true,
                   message:
-                    effectiveScheduleMode === 'once'
+                    effectiveScheduleMode === 'once' || effectiveScheduleMode === 'contact_async'
                       ? t('tasks.form.runAtRequired')
                       : t('tasks.form.firstRunAtRequired'),
                 },
@@ -2680,6 +2704,13 @@ function buildSchedulePayload(values: TaskFormValues): TaskScheduleConfig | null
   if (values.scheduleMode === 'once') {
     return {
       mode: 'once',
+      run_at: runAt.toISOString(),
+    };
+  }
+
+  if (values.scheduleMode === 'contact_async') {
+    return {
+      mode: 'contact_async',
       run_at: runAt.toISOString(),
     };
   }

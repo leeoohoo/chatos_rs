@@ -37,6 +37,7 @@ export const buildChatRequestLogPayload = ({
   remoteConnectionId,
   projectId,
   projectRoot,
+  workspaceRoot,
   mcpEnabled,
   enabledMcpIds,
   autoCreateTask,
@@ -55,6 +56,7 @@ export const buildChatRequestLogPayload = ({
   remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
+  workspaceRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   autoCreateTask: boolean;
@@ -81,6 +83,7 @@ export const buildChatRequestLogPayload = ({
   remote_connection_id: remoteConnectionId,
   project_id: projectId,
   project_root: projectRoot,
+  workspace_root: workspaceRoot,
   mcp_enabled: mcpEnabled,
   enabled_mcp_ids: enabledMcpIds,
   auto_create_task: autoCreateTask,
@@ -94,6 +97,7 @@ export const buildStreamChatRuntimeOptions = ({
   remoteConnectionId,
   projectId,
   projectRoot,
+  workspaceRoot,
   mcpEnabled,
   enabledMcpIds,
   autoCreateTask,
@@ -105,6 +109,7 @@ export const buildStreamChatRuntimeOptions = ({
   remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
+  workspaceRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   autoCreateTask: boolean;
@@ -116,6 +121,7 @@ export const buildStreamChatRuntimeOptions = ({
   remoteConnectionId,
   projectId,
   projectRoot,
+  workspaceRoot,
   mcpEnabled,
   enabledMcpIds,
   autoCreateTask,

@@ -1,45 +1,61 @@
 ---
 name: task-runner-ai-agent-en-us
-description: English guide for AI agents using Task Runner MCP in async contact mode to create tasks and dependency graphs, then immediately return a concise execution plan summary.
+description: English guide for AI agents using Task Runner MCP in async contact mode to inspect, create, and adjust tasks.
 ---
 
 # Task Runner AI Agent Skill
 
 When Task Runner MCP tools are exposed in the current conversation, you are operating in Task Runner async mode.
 
-Your job has only two parts:
+Your job is to:
 
-1. Understand the request and create the right task or task graph
-2. After creation succeeds, immediately reply with a concise execution-plan summary
+1. Understand the request and inspect existing tasks when needed
+2. Create new tasks, or adjust existing tasks when the user's needs change
+3. After the task-management action succeeds, call `wait_for_task_completion`, then reply with a concise summary
 
-Do not wait for execution to finish in this conversation, and do not poll for progress unless the user explicitly asks for task-management actions.
+Do not poll for progress in this conversation.
 
 ## Core Rules
 
 - Use only the Task Runner MCP tools exposed in the current session.
 - Your role here is to plan and create tasks, not to complete all work synchronously inside the chat.
-- After creating tasks, do not manually start execution. Task Runner handles async scheduling.
-- Do not poll run status, do not inspect run logs repeatedly, and do not treat internal execution details as the user-facing reply.
-- Do not expose account, token, auth, callback, workspace passthrough, or remote-server passthrough implementation details.
-- Never invent `task_id`, `model_config_id`, prerequisite IDs, or server IDs. Use only real values returned by tools.
+- After tasks are created or adjusted, call `wait_for_task_completion` once; completed results will be sent back later.
+- If the user is following up, adding constraints, or changing something that was already planned, first use `list_tasks` / `get_task` / `get_task_dependency_graph` to identify the existing task, then decide whether to update it or create something new.
+- If `update_task` or `set_task_prerequisites` can satisfy the new request, update the existing task instead of creating a duplicate task with the same meaning.
+- Once task creation, updates, and dependency checks for this turn are complete, call `wait_for_task_completion`, then stop calling Task Runner tools.
+- Never invent `task_id`, `model_config_id`, or prerequisite IDs. Use only real values returned by tools.
+- Do not change task execution status. Task Runner maintains execution status.
 
 ## Preferred Workflow
+
+### Case 0: The user is following up on or changing an existing task
+
+Use `list_tasks` to find the relevant task; if you already know the task ID, use `get_task`.
+
+If prerequisites matter, use `get_task_dependency_graph` to inspect the dependency chain.
+
+Then:
+
+- use `update_task` to change title, objective, input, model, tags, priority, or MCP capabilities
+- use `set_task_prerequisites` to change prerequisite relationships
+- if an existing task already covers the user's new request, do not create another task; explain the existing plan
 
 ### Case 1: One task is enough
 
 Use `create_task`.
 
-Minimum fields:
+Required fields:
 
 - `title`
 - `objective`
+- `default_model_config_id`
+- `enabled_builtin_kinds`
 
 Common optional fields:
 
 - `description`
 - `priority`
 - `tags`
-- `enabled_builtin_kinds`
 
 ### Case 2: The work has natural phases or dependencies
 
@@ -98,11 +114,13 @@ So:
 - if the request is naturally multi-stage, model it explicitly as dependent tasks
 - do not force distinct phases into one oversized task when dependencies are clearer
 
-## What To Reply After Creation
+## How To Close The Turn
 
-Once task creation succeeds, immediately reply with a concise summary covering:
+Once task creation or update succeeds, call `wait_for_task_completion`.
 
-- what task or tasks were created
+Then reply with a concise summary covering:
+
+- what task or tasks were created or adjusted
 - the expected execution order
 - the expected deliverables
 - whether there are prerequisite stages or dependency chains
@@ -127,12 +145,11 @@ Example 2:
 
 ## Do Not Do These
 
-- do not call `start_task_run`
-- do not call batch run-start tools
-- do not repeatedly call `list_runs`, `get_run`, or `list_run_events`
+- do not call any Task Runner tools after `wait_for_task_completion`
 - do not use internal execution traces as the final user-facing answer
 - do not promise to wait inside the current request until execution fully completes
+- do not repeatedly inspect tasks just to confirm execution completion; completed results will be sent back by Task Runner
 
 ## One-Line Principle
 
-In this mode, you are a task planner and task creator, not the synchronous executor inside the live chat turn.
+In this mode, you plan, create, and adjust async tasks; you are not the synchronous executor inside the live chat turn.

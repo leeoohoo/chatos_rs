@@ -6,9 +6,10 @@ use tracing::warn;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::chat_stream::{
-    build_chat_stream_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
-    send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
+    ChatEventSink, ChatRealtimeStreamContext, build_chat_stream_callbacks,
+    enrich_chat_result_with_persisted_messages, handle_chat_result, send_tools_unavailable_event,
 };
+use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::agent_runtime::ai_server::AiServer as AgentAiServer;
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
@@ -17,11 +18,11 @@ use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution, ChatExecutionInput,
+    ChatExecutionInput, build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::snapshot::{
-    sync_chat_turn_snapshot, wire_implicit_command_tracking, LiveRequestSnapshotContext,
+    LiveRequestSnapshotContext, sync_chat_turn_snapshot, wire_implicit_command_tracking,
 };
 use super::turn_lifecycle::ActiveConversationTurn;
 
@@ -271,6 +272,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         session_id,
         resolved_turn_id.as_str(),
         user_message_id.as_str(),
+        runtime_context.task_runner_async_contact_mode,
         &prepared.chunk_sent,
         &prepared.streamed_content,
         result,
@@ -318,6 +320,7 @@ pub async fn finalize_chat_result<FC, FE>(
     session_id: &str,
     turn_id: &str,
     user_message_id: &str,
+    mark_task_runner_async_completed: bool,
     chunk_sent: &Arc<AtomicBool>,
     streamed_content: &Arc<Mutex<String>>,
     result: Result<Value, String>,
@@ -328,6 +331,28 @@ pub async fn finalize_chat_result<FC, FE>(
     FC: FnMut(),
     FE: FnMut(&str),
 {
+    if mark_task_runner_async_completed {
+        match set_task_runner_async_overall_status_for_session(
+            session_id,
+            user_message_id,
+            "completed",
+        )
+        .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => warn!(
+                session_id,
+                user_message_id,
+                "task runner async completed status was not persisted: message not found"
+            ),
+            Err(err) => warn!(
+                session_id,
+                user_message_id,
+                error = err.as_str(),
+                "task runner async completed status persist failed"
+            ),
+        }
+    }
     let result = match result {
         Ok(value) => Ok(enrich_chat_result_with_persisted_messages(
             session_id,

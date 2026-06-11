@@ -182,6 +182,7 @@ export interface StreamChatOptions {
   remoteConnectionId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
+  workspaceRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
   autoCreateTask?: boolean;

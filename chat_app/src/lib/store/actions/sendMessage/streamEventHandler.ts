@@ -8,6 +8,7 @@ import {
   handleThinkingEvent,
   handleTurnPhaseEvent,
 } from './streamLifecycleEvents';
+import { setTaskRunnerAsyncUserMessageStatus } from './sessionState';
 import {
   handleAppliedRuntimeGuidanceEvent,
   handleQueuedRuntimeGuidanceEvent,
@@ -36,6 +37,7 @@ interface HandleStreamEventParams {
   currentSessionId: string;
   conversationTurnId: string;
   tempAssistantMessageId: string;
+  tempUserId?: string | null;
   streamedTextRef: { value: string };
   helpers: StreamingMessageStateHelpers;
 }
@@ -52,6 +54,7 @@ export const handleStreamEvent = ({
   currentSessionId,
   conversationTurnId,
   tempAssistantMessageId,
+  tempUserId,
   streamedTextRef,
   helpers,
 }: HandleStreamEventParams): HandleStreamEventResult => {
@@ -75,6 +78,18 @@ export const handleStreamEvent = ({
     return {
       ...EMPTY_RESULT,
       sawMeaningfulStreamData: handleThinkingEvent(parsed, { helpers }),
+    };
+  }
+
+  if (parsed.type === 'start') {
+    if (tempUserId) {
+      set((state) => {
+        setTaskRunnerAsyncUserMessageStatus(state, tempUserId, 'processing');
+      });
+    }
+    return {
+      ...EMPTY_RESULT,
+      sawMeaningfulStreamData: true,
     };
   }
 

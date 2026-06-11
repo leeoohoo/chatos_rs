@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::request_support::{format_error_response, truncate_log};
@@ -207,6 +207,33 @@ fn normalize_task_runner_async_plan_metadata_marks_plan_summary_mode() {
 }
 
 #[test]
+fn normalize_task_runner_async_tool_call_metadata_marks_tool_call_mode() {
+    let metadata = normalize_task_runner_async_tool_call_metadata(Some(json!({
+        "response_id": "resp_1"
+    })))
+    .expect("metadata");
+
+    assert_eq!(
+        metadata.get("response_id").and_then(|value| value.as_str()),
+        Some("resp_1")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("mode"))
+            .and_then(|value| value.as_str()),
+        Some("contact_async")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("message_kind"))
+            .and_then(|value| value.as_str()),
+        Some("tool_call")
+    );
+}
+
+#[test]
 fn build_ai_client_success_payload_preserves_response_shape() {
     let payload = build_ai_client_success_payload(
         "hello".to_string(),
@@ -385,12 +412,16 @@ fn build_aborted_tool_results_only_adds_missing_calls() {
     let merged = build_aborted_tool_results(&tool_calls, Some(existing.as_slice()));
 
     assert_eq!(merged.len(), 2);
-    assert!(merged
-        .iter()
-        .any(|item| item.tool_call_id == "call_existing" && item.success));
-    assert!(merged
-        .iter()
-        .any(|item| item.tool_call_id == "call_missing" && !item.success && item.is_error));
+    assert!(
+        merged
+            .iter()
+            .any(|item| item.tool_call_id == "call_existing" && item.success)
+    );
+    assert!(
+        merged
+            .iter()
+            .any(|item| item.tool_call_id == "call_missing" && !item.success && item.is_error)
+    );
 }
 
 #[test]
@@ -757,7 +788,7 @@ async fn consume_sse_stream_parses_trailing_plain_json_response() {
 #[tokio::test]
 async fn consume_sse_stream_returns_aborted_immediately_when_token_cancelled() {
     use futures::stream;
-    use tokio::time::{sleep, timeout, Duration};
+    use tokio::time::{Duration, sleep, timeout};
 
     let token = CancellationToken::new();
     let cancel_token = token.clone();

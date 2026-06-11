@@ -343,6 +343,23 @@ pub async fn get_chatos_message_by_id(message_id: &str) -> Result<Option<Message
     Ok(message.filter(|message| !message_is_hidden(message)))
 }
 
+pub async fn get_chatos_message_by_id_in_session(
+    session: &Session,
+    message_id: &str,
+) -> Result<Option<Message>, String> {
+    let mapping = build_thread_mapping(session)?;
+    let client = build_client()?;
+    let message = client
+        .get_record(
+            message_id,
+            Some(mapping.tenant_id.as_str()),
+            Some(mapping.thread_id.as_str()),
+        )
+        .await?
+        .map(engine_record_to_message);
+    Ok(message.filter(|message| !message_is_hidden(message)))
+}
+
 async fn select_visible_final_assistant_record(
     session: &Session,
     turn_id: &str,

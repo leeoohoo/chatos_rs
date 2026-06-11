@@ -14,10 +14,30 @@ import { useMessageItemModel } from './messageItem/useMessageItemModel';
 export type { DerivedProcessStats } from './messageItem/types';
 export type { MessageItemProps } from './messageItem/messageItemTypes';
 
+const readDisplayName = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const resolveTaskRunnerAssistantDisplayName = (
+  message: MessageItemProps['message'],
+  fallbackContactName: string | null | undefined,
+): string | null => {
+  const taskRunnerAsync = message.metadata?.task_runner_async;
+  return readDisplayName(taskRunnerAsync?.contact_display_name)
+    || readDisplayName(taskRunnerAsync?.agent_name_snapshot)
+    || readDisplayName(taskRunnerAsync?.contact_name)
+    || readDisplayName(fallbackContactName);
+};
+
 const MessageItemComponent: React.FC<MessageItemProps> = ({
   message,
   isLast = false,
   isStreaming = false,
+  assistantContactName = null,
   onEdit,
   onDelete,
   onToggleTurnProcess,
@@ -67,6 +87,9 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   });
   const showAssistantChrome = isAssistant && isTaskRunnerAsyncAssistant;
   const useCompactAssistantLayout = isAssistant && !showAssistantChrome;
+  const assistantDisplayName = showAssistantChrome
+    ? resolveTaskRunnerAssistantDisplayName(message, assistantContactName)
+    : null;
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -124,6 +147,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           isAssistant={isAssistant}
           isSystem={isSystem}
           isTool={isTool}
+          assistantDisplayName={assistantDisplayName}
         />
       )}
 
@@ -136,6 +160,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             isUser={isUser}
             isAssistant={isAssistant}
             isTool={isTool}
+            assistantDisplayName={assistantDisplayName}
           />
         )}
 
@@ -225,6 +250,7 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.message === nextProps.message &&
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
+    (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null) &&
     (prevProps.processSignal ?? "") === (nextProps.processSignal ?? "") &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")

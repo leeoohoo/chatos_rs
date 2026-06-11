@@ -85,6 +85,7 @@ export interface StreamChatLogPayload {
   remote_connection_id: string | null;
   project_id: string;
   project_root: string | null;
+  workspace_root: string | null;
   mcp_enabled: boolean;
   enabled_mcp_ids: string[];
   auto_create_task: boolean;
@@ -98,6 +99,7 @@ export interface StreamChatRuntimeOptions {
   remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
+  workspaceRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   autoCreateTask: boolean;

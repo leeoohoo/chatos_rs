@@ -4,21 +4,21 @@ mod parser;
 #[cfg(test)]
 mod tests;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+pub use chatos_ai_runtime::AiResponse;
 use chatos_ai_runtime::request_payload::{
+    CHAT_PROMPT_CACHE_RETENTION,
     build_chat_completions_request_payload as build_shared_chat_completions_request_payload,
     build_responses_request_payload as build_shared_responses_request_payload,
-    CHAT_PROMPT_CACHE_RETENTION,
 };
 #[cfg(test)]
 use chatos_ai_runtime::request_retry::is_prompt_cache_retention_unsupported_error;
 use chatos_ai_runtime::request_retry::{
     base_url_supports_prompt_cache_retention, should_retry_without_prompt_cache_retention,
 };
-pub use chatos_ai_runtime::AiResponse;
 use chatos_ai_runtime::{
     AiRequestHandler as SharedAiRequestHandler, AiRequestOptions as SharedAiRequestOptions,
     AiTransport as SharedAiTransport, StreamCallbacks as SharedStreamCallbacks,
@@ -30,10 +30,10 @@ use tracing::{error, info, warn};
 use crate::core::tool_call::tool_calls_value_has_items;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{
-    build_abort_token, is_task_runner_async_plan_message_mode,
-    normalize_task_runner_async_plan_metadata, persist_assistant_response_with_policy,
-    should_persist_assistant_message, validate_request_payload_size, AiStreamCallbacks,
-    AssistantResponsePersistenceRequest,
+    AiStreamCallbacks, AssistantResponsePersistenceRequest, build_abort_token,
+    is_task_runner_async_plan_message_mode, normalize_task_runner_async_plan_metadata,
+    normalize_task_runner_async_tool_call_metadata, persist_assistant_response_with_policy,
+    should_persist_assistant_message, validate_request_payload_size,
 };
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";
@@ -204,7 +204,10 @@ impl AiRequestHandler {
                 .and_then(|value| value.as_array())
                 .map(|items| items.len())
                 .unwrap_or(0),
-            payload.get("cwd").and_then(|value| value.as_str()).unwrap_or("")
+            payload
+                .get("cwd")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
         );
         log_request_fingerprint(
             purpose,
@@ -375,8 +378,7 @@ fn build_http_client() -> (reqwest::Client, u64, u64) {
         Err(err) => {
             warn!(
                 "{} failed to build reqwest client with timeout config; fallback default client: {}",
-                AGENT_RUNTIME_LOG_PREFIX,
-                err
+                AGENT_RUNTIME_LOG_PREFIX, err
             );
             (reqwest::Client::new(), connect_timeout_ms, read_timeout_ms)
         }
@@ -419,11 +421,12 @@ pub(super) async fn persist_assistant_response_if_needed(
     skip_log_label: &str,
 ) {
     let task_runner_async_plan = is_task_runner_async_plan_message_mode(message_mode.as_deref());
-    if task_runner_async_plan && tool_calls_value_has_items(tool_calls.as_ref()) {
-        return;
-    }
+    let task_runner_async_tool_call =
+        task_runner_async_plan && tool_calls_value_has_items(tool_calls.as_ref());
 
-    let metadata = if task_runner_async_plan {
+    let metadata = if task_runner_async_tool_call {
+        normalize_task_runner_async_tool_call_metadata(metadata)
+    } else if task_runner_async_plan {
         normalize_task_runner_async_plan_metadata(metadata)
     } else {
         metadata
@@ -433,7 +436,7 @@ pub(super) async fn persist_assistant_response_if_needed(
     } else {
         reasoning
     };
-    let tool_calls = if task_runner_async_plan {
+    let tool_calls = if task_runner_async_plan && !task_runner_async_tool_call {
         None
     } else {
         tool_calls

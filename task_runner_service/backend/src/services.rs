@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 
@@ -11,28 +11,29 @@ use chatos_ai_runtime::model_config::{
     default_base_url_for_provider, normalize_provider, normalize_thinking_level,
 };
 use chatos_ai_runtime::{
-    build_responses_text_input, run_compatible_prompt_with, select_preferred_response_text,
     AiRequestHandler, AiRuntimeOptions, AiTurnReport, MemoryContextComposer, MemoryRecordScope,
     MemoryScope, RuntimeCallbacks, RuntimeRecordOptions, SaveRecordInput, SimplePromptOptions,
     TaskBuiltinMcpPromptMode, TaskMemoryRuntimeConfig, TaskRunExecution, TaskRunReport,
-    TaskRunSpec, TaskRuntimeConfig,
+    TaskRunSpec, TaskRuntimeConfig, build_responses_text_input, run_compatible_prompt_with,
+    select_preferred_response_text,
 };
 use chatos_builtin_tools::{
-    build_shared_builtin_tool_service, NotepadBuiltinService, NotepadOptions, NotepadStore,
-    NotepadStoreRef, RemoteConnectionControllerOptions, RemoteConnectionControllerService,
-    RemoteConnectionControllerStoreRef, SharedBuiltinToolService, TaskDraft as SharedTaskDraft,
-    TaskManagerOptions, TaskManagerService, TaskManagerStore, TaskManagerStoreRef,
+    NotepadBuiltinService, NotepadOptions, NotepadStore, NotepadStoreRef,
+    REVIEW_TIMEOUT_MS_DEFAULT, RemoteConnectionControllerOptions,
+    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef,
+    SharedBuiltinToolService, TASK_NOT_FOUND_ERR, TaskDraft as SharedTaskDraft, TaskManagerOptions,
+    TaskManagerService, TaskManagerStore, TaskManagerStoreRef,
     TaskOutcomeItem as SharedTaskOutcomeItem, TaskStreamChunkCallback,
     TaskUpdatePatch as SharedTaskUpdatePatch, TerminalControllerContext, TerminalControllerOptions,
     TerminalControllerService, TerminalControllerStore, TerminalControllerStoreRef,
-    UiPrompterOptions, UiPrompterService, UiPrompterStoreRef, REVIEW_TIMEOUT_MS_DEFAULT,
-    TASK_NOT_FOUND_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    UI_PROMPT_TIMEOUT_MS_DEFAULT, UiPrompterOptions, UiPrompterService, UiPrompterStoreRef,
+    build_shared_builtin_tool_service,
 };
 use chatos_mcp_runtime::{
+    BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider, BuiltinToolRegistry,
+    McpBuiltinServer, McpExecutorBuilder, ToolCallContext, ToolStreamChunkCallback,
     builtin_kind_by_any, builtin_servers_from_kinds, configurable_builtin_kinds,
-    default_runtime_builtin_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
-    BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer, McpExecutorBuilder,
-    ToolCallContext, ToolStreamChunkCallback,
+    default_runtime_builtin_kinds,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use memory_engine_sdk::{
@@ -40,34 +41,34 @@ use memory_engine_sdk::{
     SdkListThreadRecordsRequest, SdkUpsertThreadRequest,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use serde_json::{Value, json};
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    mcp_builtin_kind_guide, now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem,
-    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
-    CreateModelConfigRequest, CreateRemoteServerRequest, CreateTaskRequest, HealthResponse,
-    McpCatalogEntry, McpPromptPreviewRequest, McpPromptPreviewResponse, McpUnavailableTool,
-    ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
-    PaginatedResponse, PreviewModelCatalogRequest, PromptListFilters, ProviderModelRecord,
-    RecordTaskProcessRequest, RemoteServerRecord, RemoteServerTestResponse, RunListFilters,
-    RunSummaryRecord, RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse,
-    TaskDependencyGraph, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
-    TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
-    TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskProcessLogOperation, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode,
-    TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolOutcomeItem,
-    TaskToolState, TestModelConfigRequest, TestRemoteServerRequest, UpdateModelConfigRequest,
+    BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
+    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CreateModelConfigRequest,
+    CreateRemoteServerRequest, CreateTaskRequest, HealthResponse, McpCatalogEntry,
+    McpPromptPreviewRequest, McpPromptPreviewResponse, McpUnavailableTool, ModelCatalogResponse,
+    ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse,
+    PreviewModelCatalogRequest, PromptListFilters, ProviderModelRecord, RecordTaskProcessRequest,
+    RemoteServerRecord, RemoteServerTestResponse, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskDependencyGraph,
+    TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskMemoryContextOptions,
+    TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
+    TaskMemorySummaryResponse, TaskProcessLogOperation, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolOutcomeItem, TaskToolState,
+    TestModelConfigRequest, TestRemoteServerRequest, UpdateModelConfigRequest,
     UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
-    UpdateTaskRequest,
+    UpdateTaskRequest, mcp_builtin_kind_guide, now_rfc3339,
 };
 use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::remote_server_runtime::{
-    test_remote_server_connectivity, TaskRunnerRemoteConnectionStore,
+    TaskRunnerRemoteConnectionStore, test_remote_server_connectivity,
 };
 use crate::store::AppStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
@@ -78,6 +79,12 @@ const TASK_PROCESS_LOG_MAX_CHARS: usize = 200_000;
 const TASK_PROCESS_LOG_INTERNAL_SERVER_NAME: &str = "task_run_process";
 const TASK_PROCESS_LOG_INTERNAL_TOOL_NAME: &str = "record_process";
 const SYSTEM_RUNTIME_SETTINGS_ID: &str = "system";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunTriggerSource {
+    Manual,
+    Scheduler,
+}
 
 #[derive(Clone)]
 pub struct TaskService {
@@ -202,6 +209,30 @@ impl TaskService {
         let filters = sanitize_task_list_filters(filters);
         self.hydrate_tasks_prerequisites(self.store.list_tasks_filtered(&filters).await?)
             .await
+    }
+
+    pub async fn list_tasks_for_source_user_message(
+        &self,
+        source_user_message_id: &str,
+        creator: Option<&CurrentUser>,
+    ) -> Result<Vec<TaskRecord>, String> {
+        let Some(source_user_message_id) =
+            normalized_optional(Some(source_user_message_id.to_string()))
+        else {
+            return Ok(Vec::new());
+        };
+        let filters = sanitize_task_list_filters(TaskListFilters {
+            creator_user_id: creator.map(|user| user.id.clone()),
+            ..TaskListFilters::default()
+        });
+        let tasks = self.store.list_tasks_filtered(&filters).await?;
+        let tasks = tasks
+            .into_iter()
+            .filter(|task| {
+                task.source_user_message_id.as_deref() == Some(source_user_message_id.as_str())
+            })
+            .collect::<Vec<_>>();
+        self.hydrate_tasks_prerequisites(tasks).await
     }
 
     pub async fn list_tasks_page(
@@ -522,21 +553,7 @@ impl TaskService {
             .set_task_prerequisites(&id, prerequisite_task_ids)
             .await?;
         let hydrated = self.hydrate_task_prerequisites(saved).await?;
-        self.try_send_task_created_callback(&hydrated).await;
         Ok(hydrated)
-    }
-
-    async fn try_send_task_created_callback(&self, task: &TaskRecord) {
-        let Some(payload) = build_chatos_task_callback_payload("task.created", task, None, None)
-        else {
-            return;
-        };
-        if let Err(err) = send_chatos_task_callback(self.config.clone(), payload).await {
-            warn!(
-                "failed to send task created callback for task {}: {}",
-                task.id, err
-            );
-        }
     }
 
     pub async fn update_task(
@@ -1070,7 +1087,6 @@ impl TaskService {
             created_task_status = saved.status.status_string(),
             "task manager auto-created follow-up task during task run"
         );
-        self.try_send_task_created_callback(&saved).await;
         Ok(saved)
     }
 
@@ -2351,6 +2367,25 @@ impl RunService {
         task_id: &str,
         input: StartTaskRunRequest,
     ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Manual)
+            .await
+    }
+
+    pub async fn start_scheduled_run(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+    ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Scheduler)
+            .await
+    }
+
+    async fn start_run_with_trigger(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+        trigger: RunTriggerSource,
+    ) -> Result<TaskRunRecord, String> {
         let start_lock = self.start_lock_for_task(task_id);
         let _guard = start_lock.lock().await;
         let task = self
@@ -2372,6 +2407,11 @@ impl RunService {
                 .is_some_and(|value| !value.trim().is_empty()),
             "task runner received start_run request"
         );
+        if matches!(task.schedule.mode, TaskScheduleMode::ContactAsync)
+            && !matches!(trigger, RunTriggerSource::Scheduler)
+        {
+            return Err("联系人异步任务只能由后台调度器触发执行".to_string());
+        }
         if self.store.has_active_run_for_task(task_id).await? {
             info!(
                 task_id = task.id.as_str(),
@@ -3020,9 +3060,6 @@ impl RunService {
                 warn!("failed to persist running task {}: {}", task.id, err);
             }
         }
-        self.try_send_run_started_callback(task.id.as_str(), &run)
-            .await;
-
         if !prerequisite_context.is_empty() {
             attach_prerequisite_context_to_run(&mut run, &prerequisite_context);
             run.updated_at = now_rfc3339();
@@ -3573,18 +3610,14 @@ impl RunService {
         Ok(())
     }
 
-    async fn try_send_run_started_callback(&self, task_id: &str, run: &TaskRunRecord) {
-        self.try_send_task_callback("task.run.started", task_id, Some(run))
-            .await;
-    }
-
     async fn try_send_terminal_callback(&self, task_id: &str, run: &TaskRunRecord) {
         let event = match run.status {
             TaskRunStatus::Succeeded => "task.completed",
-            TaskRunStatus::Failed => "task.failed",
-            TaskRunStatus::Cancelled => "task.cancelled",
-            TaskRunStatus::Blocked => "task.blocked",
-            TaskRunStatus::Queued | TaskRunStatus::Running => return,
+            TaskRunStatus::Failed
+            | TaskRunStatus::Cancelled
+            | TaskRunStatus::Blocked
+            | TaskRunStatus::Queued
+            | TaskRunStatus::Running => return,
         };
         self.try_send_task_callback(event, task_id, Some(run)).await;
     }
@@ -3607,12 +3640,39 @@ impl RunService {
             }
         };
         let Some(payload) = build_chatos_task_callback_payload(event, &task, run, None) else {
+            if task.source_session_id.is_some()
+                || task.source_turn_id.is_some()
+                || task.source_run_id.is_some()
+            {
+                warn!(
+                    task_id = task.id.as_str(),
+                    task_title = task.title.as_str(),
+                    event,
+                    source_session_id = task.source_session_id.as_deref().unwrap_or_default(),
+                    source_turn_id = task.source_turn_id.as_deref().unwrap_or_default(),
+                    source_user_message_id =
+                        task.source_user_message_id.as_deref().unwrap_or_default(),
+                    "skip task callback because source_user_message_id is missing"
+                );
+            }
             return;
         };
+        let payload_task_id = payload.task_id.clone();
+        let payload_run_id = payload.run_id.clone().unwrap_or_default();
+        let payload_user_message_id = payload.source_user_message_id.clone().unwrap_or_default();
+        let payload_event = payload.event.clone();
         if let Err(err) = send_chatos_task_callback(self.config.clone(), payload).await {
             warn!(
                 "failed to send task callback for task {} and event {}: {}",
                 task_id, event, err
+            );
+        } else {
+            info!(
+                task_id = payload_task_id.as_str(),
+                run_id = payload_run_id.as_str(),
+                event = payload_event.as_str(),
+                source_user_message_id = payload_user_message_id.as_str(),
+                "sent task callback to chatos"
             );
         }
     }
@@ -4114,22 +4174,24 @@ fn extract_report_content(run: &TaskRunRecord) -> Option<String> {
 }
 
 fn prerequisite_context_json(contexts: &[PrerequisiteTaskContext]) -> Value {
-    json!(contexts
-        .iter()
-        .map(|context| {
-            json!({
-                "task_id": context.task_id,
-                "title": context.title,
-                "objective": context.objective,
-                "status": context.status.status_string(),
-                "run_id": context.run_id,
-                "result_summary": context.result_summary,
-                "run_result_summary": context.run_result_summary,
-                "process_log": context.process_log,
-                "report_content": context.report_content,
+    json!(
+        contexts
+            .iter()
+            .map(|context| {
+                json!({
+                    "task_id": context.task_id,
+                    "title": context.title,
+                    "objective": context.objective,
+                    "status": context.status.status_string(),
+                    "run_id": context.run_id,
+                    "result_summary": context.result_summary,
+                    "run_result_summary": context.run_result_summary,
+                    "process_log": context.process_log,
+                    "report_content": context.report_content,
+                })
             })
-        })
-        .collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    )
 }
 
 fn attach_prerequisite_context_to_run(
@@ -4177,12 +4239,19 @@ fn build_chatos_task_callback_payload(
         run_id: run.map(|item| item.id.clone()),
         status: task.status.status_string().to_string(),
         task_title: task.title.clone(),
-        result_summary: run
-            .and_then(|item| item.result_summary.clone())
-            .or_else(|| task.result_summary.clone()),
-        error_message: error_message.or_else(|| run.and_then(|item| item.error_message.clone())),
-        report_content: run.and_then(extract_report_content),
-        process_log: task.process_log.clone(),
+        result_summary: truncate_optional_chars(
+            run.and_then(|item| item.result_summary.clone())
+                .or_else(|| task.result_summary.clone()),
+            2_000,
+        ),
+        error_message: truncate_optional_chars(
+            error_message.or_else(|| run.and_then(|item| item.error_message.clone())),
+            2_000,
+        ),
+        report_content: run
+            .and_then(extract_report_content)
+            .map(|value| truncate_chars(value.as_str(), 2_000)),
+        process_log: None,
         source_session_id: task.source_session_id.clone(),
         source_turn_id: task.source_turn_id.clone(),
         source_user_message_id: task.source_user_message_id.clone(),
@@ -4199,7 +4268,7 @@ async fn send_chatos_task_callback(
     payload: ChatosTaskCallbackPayload,
 ) -> Result<(), String> {
     let Some(url) = config.chatos_callback_url.clone() else {
-        return Ok(());
+        return Err("TASK_RUNNER_CHATOS_CALLBACK_URL not configured".to_string());
     };
     let client = reqwest::Client::builder()
         .timeout(config.callback_timeout)
@@ -4228,21 +4297,23 @@ fn is_terminal_run_status(status: TaskRunStatus) -> bool {
     )
 }
 
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut out = value.chars().take(max_chars).collect::<String>();
-    if value.chars().count() > max_chars {
-        out.push_str("\n[内容已截断]");
-    }
-    out
+fn truncate_chars(value: &str, _max_chars: usize) -> String {
+    value.to_string()
+}
+
+fn truncate_optional_chars(value: Option<String>, max_chars: usize) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_chars(value.as_str(), max_chars))
 }
 
 fn summarized_report_content(content: &Option<String>) -> Option<String> {
-    let content = content
+    content
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let summary = content.chars().take(500).collect::<String>();
-    Some(summary)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn task_process_logging_enabled(mcp_config: &TaskMcpConfig) -> bool {
@@ -5014,6 +5085,15 @@ fn sanitize_task_schedule_config(
                     .or_else(|| Some(now_rfc3339()));
             }
         }
+        TaskScheduleMode::ContactAsync => {
+            let run_at = schedule
+                .run_at
+                .clone()
+                .ok_or_else(|| "联系人异步调度必须提供执行时间".to_string())?;
+            ensure_rfc3339("schedule.run_at", &run_at)?;
+            schedule.interval_seconds = None;
+            schedule.next_run_at = Some(run_at);
+        }
     }
 
     Ok(schedule)
@@ -5101,6 +5181,9 @@ fn advance_task_schedule_after_dispatch(
                 .interval_seconds
                 .ok_or_else(|| "循环调度缺少 interval_seconds".to_string())?;
             next.next_run_at = Some((started_at + ChronoDuration::seconds(seconds)).to_rfc3339());
+        }
+        TaskScheduleMode::ContactAsync => {
+            next.next_run_at = None;
         }
     }
     Ok(next)
@@ -5384,6 +5467,7 @@ impl TaskScheduleModeExt for TaskScheduleMode {
             TaskScheduleMode::Manual => "manual",
             TaskScheduleMode::Once => "once",
             TaskScheduleMode::Interval => "interval",
+            TaskScheduleMode::ContactAsync => "contact_async",
         }
     }
 }
@@ -5391,8 +5475,8 @@ impl TaskScheduleModeExt for TaskScheduleMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_workspace_dir_available, resolve_workspace_dir_with_base, FlushedRunStreamEvent,
-        PendingRunStreamEvent,
+        FlushedRunStreamEvent, PendingRunStreamEvent, ensure_workspace_dir_available,
+        resolve_workspace_dir_with_base,
     };
     use std::fs;
     use std::path::PathBuf;

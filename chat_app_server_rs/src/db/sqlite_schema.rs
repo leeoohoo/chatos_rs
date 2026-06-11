@@ -322,8 +322,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             enabled_mcp_ids TEXT NOT NULL DEFAULT '[]',
             auto_create_task INTEGER NOT NULL DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
         r#"CREATE TABLE IF NOT EXISTS user_settings (
             user_id TEXT PRIMARY KEY,
@@ -355,6 +354,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             .map_err(|e| format!("create table failed: {e}"))?;
     }
 
+    ensure_session_runtime_settings_without_session_fk(pool).await?;
     ensure_legacy_ai_model_config_columns_sqlite(pool)
         .await
         .ok();
@@ -542,6 +542,132 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         let _ = sqlx::query(sql).execute(pool).await;
     }
 
+    Ok(())
+}
+
+async fn ensure_session_runtime_settings_without_session_fk(
+    pool: &SqlitePool,
+) -> Result<(), String> {
+    let table_exists = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='session_runtime_settings' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("read session_runtime_settings existence failed: {e}"))?
+    .is_some();
+    if !table_exists {
+        return Ok(());
+    }
+
+    let rows = sqlx::query("PRAGMA foreign_key_list(session_runtime_settings)")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("read session_runtime_settings foreign keys failed: {e}"))?;
+    let has_session_fk = rows.iter().any(|row| {
+        let target_table: String = row.try_get("table").unwrap_or_default();
+        let from_column: String = row.try_get("from").unwrap_or_default();
+        target_table == "sessions" && from_column == "session_id"
+    });
+    if !has_session_fk {
+        return Ok(());
+    }
+
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| format!("acquire sqlite connection failed: {e}"))?;
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("disable sqlite foreign keys failed: {e}"))?;
+
+    let migration_result = async {
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| format!("begin session_runtime_settings migration failed: {e}"))?;
+        sqlx::query("DROP TABLE IF EXISTS session_runtime_settings_new")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| format!("drop temp session_runtime_settings table failed: {e}"))?;
+        sqlx::query(
+            r#"CREATE TABLE session_runtime_settings_new (
+                session_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                selected_model_id TEXT,
+                selected_model_name TEXT,
+                selected_thinking_level TEXT,
+                remote_connection_id TEXT,
+                workspace_root TEXT,
+                mcp_enabled INTEGER NOT NULL DEFAULT 1,
+                enabled_mcp_ids TEXT NOT NULL DEFAULT '[]',
+                auto_create_task INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("create temp session_runtime_settings table failed: {e}"))?;
+        sqlx::query(
+            r#"INSERT INTO session_runtime_settings_new (
+                session_id,
+                user_id,
+                selected_model_id,
+                selected_model_name,
+                selected_thinking_level,
+                remote_connection_id,
+                workspace_root,
+                mcp_enabled,
+                enabled_mcp_ids,
+                auto_create_task,
+                created_at,
+                updated_at
+            )
+            SELECT
+                session_id,
+                user_id,
+                selected_model_id,
+                selected_model_name,
+                selected_thinking_level,
+                remote_connection_id,
+                workspace_root,
+                mcp_enabled,
+                enabled_mcp_ids,
+                auto_create_task,
+                created_at,
+                updated_at
+            FROM session_runtime_settings"#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("copy session_runtime_settings rows failed: {e}"))?;
+        sqlx::query("DROP TABLE session_runtime_settings")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| format!("drop old session_runtime_settings table failed: {e}"))?;
+        sqlx::query("ALTER TABLE session_runtime_settings_new RENAME TO session_runtime_settings")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| format!("rename session_runtime_settings table failed: {e}"))?;
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| format!("commit session_runtime_settings migration failed: {e}"))?;
+        Ok::<(), String>(())
+    }
+    .await;
+
+    if migration_result.is_err() {
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+    }
+    let restore_result = sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("restore sqlite foreign keys failed: {e}"));
+
+    migration_result?;
+    restore_result?;
     Ok(())
 }
 

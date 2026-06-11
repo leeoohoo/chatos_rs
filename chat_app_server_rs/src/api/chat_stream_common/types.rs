@@ -15,6 +15,8 @@ pub(crate) struct ChatStreamRequest {
     pub contact_agent_id: Option<String>,
     pub project_id: Option<String>,
     pub project_root: Option<String>,
+    #[serde(alias = "workspaceRoot")]
+    pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub mcp_enabled: Option<bool>,
     pub enabled_mcp_ids: Option<Vec<String>>,

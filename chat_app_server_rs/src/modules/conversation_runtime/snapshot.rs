@@ -135,8 +135,11 @@ pub async fn sync_chat_turn_snapshot(
         .lock()
         .map(|items| items.clone())
         .unwrap_or_default();
-    let task_board_prompt =
-        build_task_board_prompt(session_id, Some(turn_id), context.internal_context_locale).await;
+    let task_board_prompt = if context.task_runner_async_contact_mode {
+        None
+    } else {
+        build_task_board_prompt(session_id, Some(turn_id), context.internal_context_locale).await
+    };
     let builtin_prompt_debug = inspect_builtin_mcp_prompt_for_runtime(
         context.mcp_server_bundle.2.as_slice(),
         tool_metadata,

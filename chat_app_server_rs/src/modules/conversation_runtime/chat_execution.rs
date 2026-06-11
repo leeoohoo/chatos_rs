@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
@@ -12,7 +12,7 @@ use crate::utils::attachments::Attachment;
 
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::task_board::{
-    build_runtime_context, load_prefixed_input_items, TaskBoardRuntimeContext,
+    TaskBoardRuntimeContext, build_runtime_context, load_prefixed_input_items,
 };
 
 pub struct PreparedMcpExecution {
@@ -66,7 +66,7 @@ pub async fn prepare_mcp_execution(
         unavailable_tools.as_slice(),
         runtime_context.internal_context_locale,
     );
-    let prefixed_input_items = if let Some(context) =
+    let mut prefixed_input_items = if let Some(context) =
         build_task_board_runtime_context(session_id, turn_id, runtime_context)
     {
         load_prefixed_input_items(&context)
@@ -75,6 +75,9 @@ pub async fn prepare_mcp_execution(
     } else {
         Vec::new()
     };
+    if let Some(workspace_prompt) = build_workspace_global_prompt(runtime_context) {
+        prefixed_input_items.push(system_input_item(workspace_prompt.as_str()));
+    }
     let tool_metadata = executor.tool_metadata().clone();
 
     PreparedMcpExecution {
@@ -90,6 +93,9 @@ pub fn build_task_board_runtime_context(
     turn_id: &str,
     runtime_context: &ResolvedConversationRuntimeContext,
 ) -> Option<TaskBoardRuntimeContext> {
+    if runtime_context.task_runner_async_contact_mode {
+        return None;
+    }
     build_runtime_context(
         Some(session_id.to_string()),
         Some(turn_id.to_string()),
@@ -99,6 +105,43 @@ pub fn build_task_board_runtime_context(
         runtime_context.command_system_prompt.clone(),
         runtime_context.task_runner_skill_prompt.clone(),
     )
+}
+
+fn build_workspace_global_prompt(
+    runtime_context: &ResolvedConversationRuntimeContext,
+) -> Option<String> {
+    let workspace_root = normalize_prompt_text(runtime_context.workspace_root.as_deref());
+    let project_root = normalize_prompt_text(runtime_context.resolved_project_root.as_deref());
+    if workspace_root.is_none() && project_root.is_none() {
+        return None;
+    }
+
+    let mut lines = vec!["[Runtime Workspace]".to_string()];
+    if let Some(workspace_root) = workspace_root {
+        lines.push(format!("Current workspace root: {workspace_root}"));
+    }
+    if let Some(project_root) = project_root {
+        if Some(project_root) != normalize_prompt_text(runtime_context.workspace_root.as_deref()) {
+            lines.push(format!("Current project root: {project_root}"));
+        }
+    }
+    lines.push(
+        "Use the current workspace as the default context for relative project and file references unless the user says otherwise."
+            .to_string(),
+    );
+    Some(lines.join("\n"))
+}
+
+fn normalize_prompt_text(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn system_input_item(text: &str) -> Value {
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{ "type": "input_text", "text": text }],
+    })
 }
 
 pub fn configure_agent_ai_server(

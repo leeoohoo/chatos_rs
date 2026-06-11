@@ -165,6 +165,7 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
           isLoading={chatIsLoading}
           isStreaming={chatIsStreaming}
           isStopping={chatIsStopping}
+          assistantContactName={contactName}
           hasMore={hasMoreMessages}
           onLoadMore={onLoadMore}
           onToggleTurnProcess={isTaskRunnerAsyncContactMode ? undefined : onToggleTurnProcess}

@@ -1,6 +1,7 @@
 use crate::core::messages::message_is_hidden;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotLookupResponseDto;
 use crate::models::message::Message;
+use crate::models::session::Session;
 use crate::services::chatos_sessions;
 use serde_json::Value;
 
@@ -71,8 +72,22 @@ pub async fn get_message_by_id(message_id: &str) -> Result<Option<Message>, Stri
     chatos_sessions::get_message_by_id(message_id).await
 }
 
+pub async fn get_message_by_id_in_session(
+    session: &Session,
+    message_id: &str,
+) -> Result<Option<Message>, String> {
+    chatos_sessions::get_message_by_id_in_session(session, message_id).await
+}
+
 pub async fn upsert_message(message: &Message) -> Result<Message, String> {
     chatos_sessions::upsert_message(message).await
+}
+
+pub async fn upsert_message_in_session(
+    session: &Session,
+    message: &Message,
+) -> Result<Message, String> {
+    chatos_sessions::upsert_message_in_session(session, message).await
 }
 
 pub async fn create_user_message(

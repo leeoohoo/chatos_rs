@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::core::ai_settings::chat_max_tokens_from_settings;
@@ -6,7 +6,7 @@ use crate::services::ai_common::normalize_turn_id;
 use crate::utils::attachments::{self, Attachment};
 
 use super::runtime_context::{
-    resolve_runtime_context, ConversationRuntimeRequest, ResolvedConversationRuntimeContext,
+    ConversationRuntimeRequest, ResolvedConversationRuntimeContext, resolve_runtime_context,
 };
 use super::user_context::load_runtime_user_context;
 
@@ -17,6 +17,7 @@ pub struct CommonChatBootstrapInput {
     pub contact_agent_id: Option<String>,
     pub project_id: Option<String>,
     pub project_root: Option<String>,
+    pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub mcp_enabled: Option<bool>,
     pub enabled_mcp_ids: Option<Vec<String>>,
@@ -56,6 +57,7 @@ pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> Comm
             contact_agent_id: input.contact_agent_id,
             project_id: input.project_id,
             project_root: input.project_root,
+            workspace_root: input.workspace_root,
             remote_connection_id: input.remote_connection_id,
             mcp_enabled: input.mcp_enabled,
             enabled_mcp_ids: input.enabled_mcp_ids,

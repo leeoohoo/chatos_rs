@@ -29,6 +29,7 @@ import {
   beginAssistantDraftInState,
   beginUserTurnInState,
   createDefaultSessionChatState,
+  setTaskRunnerAsyncUserMessageStatus,
 } from './sendMessage/sessionState';
 import {
   mergeSessionRuntimeIntoMetadata,
@@ -211,6 +212,7 @@ export function createSendMessageHandler({
         selectedModel: selectedModelForRequest,
         userMessage,
         userMessageTime,
+        taskRunnerAsyncContactMode: runtimeOptionsWithContactFallback.taskRunnerAsyncContactMode === true,
       });
       tempAssistantId = tempAssistantMessage.id;
 
@@ -236,6 +238,7 @@ export function createSendMessageHandler({
         remoteConnectionId: effectiveRemoteConnectionId,
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
+        workspaceRoot: effectiveWorkspaceRoot,
         mcpEnabled: effectiveMcpEnabled,
         enabledMcpIds: effectiveEnabledMcpIds,
         autoCreateTask: effectiveAutoCreateTask,
@@ -251,6 +254,7 @@ export function createSendMessageHandler({
         remoteConnectionId: effectiveRemoteConnectionId,
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
+        workspaceRoot: effectiveWorkspaceRoot,
         mcpEnabled: effectiveMcpEnabled,
         enabledMcpIds: effectiveEnabledMcpIds,
         autoCreateTask: effectiveAutoCreateTask,
@@ -274,6 +278,7 @@ export function createSendMessageHandler({
           : undefined,
         project_id: streamRuntimeOptions.projectId || undefined,
         project_root: streamRuntimeOptions.projectRoot || undefined,
+        workspace_root: streamRuntimeOptions.workspaceRoot || undefined,
         mcp_enabled: streamRuntimeOptions.mcpEnabled,
         enabled_mcp_ids: streamRuntimeOptions.enabledMcpIds || [],
         auto_create_task: streamRuntimeOptions.autoCreateTask,
@@ -313,6 +318,11 @@ export function createSendMessageHandler({
       );
       if (commandResponse?.accepted === false) {
         throw new Error('聊天命令未被接受');
+      }
+      if (runtimeOptionsWithContactFallback.taskRunnerAsyncContactMode === true) {
+        set((state) => {
+          setTaskRunnerAsyncUserMessageStatus(state, userMessage.id, 'processing');
+        });
       }
 
       debugLog('✅ 消息发送完成');

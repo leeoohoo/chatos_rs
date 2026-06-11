@@ -24,6 +24,8 @@ MAIN_FRONTEND_DIR="$ROOT_DIR/chat_app"
 MAIN_BACKEND_PORT="${MAIN_BACKEND_PORT:-${BACKEND_PORT:-3997}}"
 LEGACY_MAIN_BACKEND_PORT=3001
 MAIN_FRONTEND_PORT="${FRONTEND_PORT:-8088}"
+TASK_RUNNER_CALLBACK_SECRET_DEFAULT="${TASK_RUNNER_CALLBACK_SECRET_DEFAULT:-chatos-task-runner-dev-secret}"
+CHATOS_TASK_RUNNER_CALLBACK_SECRET="${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-$TASK_RUNNER_CALLBACK_SECRET_DEFAULT}}"
 
 if command -v shasum >/dev/null 2>&1; then
   ROOT_HASH="$(printf '%s' "$ROOT_DIR" | shasum | awk '{print substr($1,1,8)}')"
@@ -255,7 +257,7 @@ start_main_backend() {
     "$MAIN_BACKEND_PORT" \
     "$MAIN_BACKEND_PID_FILE" \
     "$MAIN_BACKEND_LOG_FILE" \
-    "cd \"$MAIN_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo build --bin chat_app_server_rs && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" exec \"$MAIN_BACKEND_BINARY\""
+    "cd \"$MAIN_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo build --bin chat_app_server_rs && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" TASK_RUNNER_CHATOS_CALLBACK_SECRET=\"$CHATOS_TASK_RUNNER_CALLBACK_SECRET\" CHATOS_TASK_RUNNER_CALLBACK_SECRET=\"$CHATOS_TASK_RUNNER_CALLBACK_SECRET\" exec \"$MAIN_BACKEND_BINARY\""
 }
 
 start_main_frontend() {

@@ -90,6 +90,84 @@ pub fn ensure_message_metadata_object(
     }
 }
 
+pub async fn set_task_runner_async_overall_status_by_id(
+    message_id: &str,
+    overall_status: &str,
+) -> Result<Option<Message>, String> {
+    let normalized_message_id = message_id.trim();
+    if normalized_message_id.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(mut message) = chatos_sessions::get_message_by_id(normalized_message_id).await? else {
+        return Ok(None);
+    };
+    let metadata = ensure_message_metadata_object(&mut message);
+    let task_runner_async = metadata
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !task_runner_async.is_object() {
+        *task_runner_async = Value::Object(serde_json::Map::new());
+    }
+    if let Value::Object(task_runner_async_map) = task_runner_async {
+        task_runner_async_map.insert(
+            "mode".to_string(),
+            Value::String("contact_async".to_string()),
+        );
+        task_runner_async_map.insert(
+            "overall_status".to_string(),
+            Value::String(overall_status.to_string()),
+        );
+    }
+
+    let saved = chatos_sessions::upsert_message(&message).await?;
+    Ok(Some(saved))
+}
+
+pub async fn set_task_runner_async_overall_status_for_session(
+    session_id: &str,
+    message_id: &str,
+    overall_status: &str,
+) -> Result<Option<Message>, String> {
+    let normalized_session_id = session_id.trim();
+    let normalized_message_id = message_id.trim();
+    if normalized_session_id.is_empty() || normalized_message_id.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(session) = chatos_sessions::get_session_by_id(normalized_session_id).await? else {
+        return Ok(None);
+    };
+    let Some(mut message) =
+        chatos_sessions::get_message_by_id_in_session(&session, normalized_message_id).await?
+    else {
+        return Ok(None);
+    };
+    apply_task_runner_async_overall_status(&mut message, overall_status);
+    let saved = chatos_sessions::upsert_message_in_session(&session, &message).await?;
+    Ok(Some(saved))
+}
+
+fn apply_task_runner_async_overall_status(message: &mut Message, overall_status: &str) {
+    let metadata = ensure_message_metadata_object(message);
+    let task_runner_async = metadata
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !task_runner_async.is_object() {
+        *task_runner_async = Value::Object(serde_json::Map::new());
+    }
+    if let Value::Object(task_runner_async_map) = task_runner_async {
+        task_runner_async_map.insert(
+            "mode".to_string(),
+            Value::String("contact_async".to_string()),
+        );
+        task_runner_async_map.insert(
+            "overall_status".to_string(),
+            Value::String(overall_status.to_string()),
+        );
+    }
+}
+
 pub fn text_has_content(value: &str) -> bool {
     !value.trim().is_empty()
 }
@@ -178,11 +256,7 @@ pub fn flatten_text_value(value: &Value, object_keys: &[&str]) -> String {
 
 pub fn extract_non_empty_text_value(value: &Value, object_keys: &[&str]) -> Option<String> {
     let text = flatten_text_value(value, object_keys);
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 pub fn text_value_or_json(value: &Value, object_keys: &[&str]) -> String {
@@ -234,7 +308,7 @@ pub fn message_turn_id(message: &Message) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::{
         ensure_message_metadata_object, extract_message_tool_calls_for_display,

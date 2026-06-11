@@ -70,6 +70,7 @@ export const sendChatCommand = async (
         : undefined,
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
+      workspace_root: options?.workspaceRoot || undefined,
       mcp_enabled: options?.mcpEnabled,
       enabled_mcp_ids: options?.enabledMcpIds || [],
       auto_create_task: options?.autoCreateTask,

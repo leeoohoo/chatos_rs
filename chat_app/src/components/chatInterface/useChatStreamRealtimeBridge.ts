@@ -9,6 +9,7 @@ import {
 import { useConversationChatStreamRealtime } from '../../lib/realtime/useConversationChatStreamRealtime';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
+  normalizePersistedMessage,
   shouldRecoverStreamingSessionAfterDisconnect,
 } from '../../lib/store/actions/sendMessage/persistedTurnMessages';
 import { recoverStreamingTurnBySnapshot } from '../../lib/store/actions/sendMessage/turnRecovery';
@@ -16,6 +17,7 @@ import {
   useChatStoreContext,
   useChatStoreSelector,
 } from '../../lib/store/ChatStoreContext';
+import type { Message } from '../../types';
 import type {
   ChatStoreDraft,
   ChatStoreSet,
@@ -29,6 +31,64 @@ import { handleChatStreamRealtimeCompletion } from './chatStreamRealtimeCompleti
 
 const DISCONNECT_RECOVERY_COOLDOWN_MS = 4000;
 const DISCONNECT_RECOVERY_GRACE_MS = 1800;
+
+const mergeRealtimeMessage = (
+  existing: Message | undefined,
+  incoming: Message,
+): Message => {
+  const existingMetadata = existing?.metadata || {};
+  const incomingMetadata = incoming.metadata || {};
+  return {
+    ...(existing || {}),
+    ...incoming,
+    metadata: {
+      ...existingMetadata,
+      ...incomingMetadata,
+      historyProcess: existingMetadata.historyProcess || incomingMetadata.historyProcess,
+    },
+  };
+};
+
+const upsertRealtimeMessage = (
+  messages: Message[],
+  incoming: Message | null,
+): Message[] => {
+  if (!incoming) {
+    return messages;
+  }
+
+  const nextMessages = [...messages];
+  const existingIndex = nextMessages.findIndex((message) => message.id === incoming.id);
+  if (existingIndex >= 0) {
+    nextMessages[existingIndex] = mergeRealtimeMessage(nextMessages[existingIndex], incoming);
+    return nextMessages;
+  }
+
+  nextMessages.push(incoming);
+  return nextMessages;
+};
+
+const applyTaskRunnerCallbackRealtimeUpdate = (
+  state: ChatStoreDraft,
+  sessionId: string,
+  persistedUserMessage: Message | null,
+  persistedAssistantMessage: Message | null,
+) => {
+  if (state.currentSessionId === sessionId) {
+    let nextMessages = Array.isArray(state.messages) ? [...state.messages] : [];
+    nextMessages = upsertRealtimeMessage(nextMessages, persistedUserMessage);
+    nextMessages = upsertRealtimeMessage(nextMessages, persistedAssistantMessage);
+    state.messages = nextMessages;
+  }
+
+  const cachedEntry = state.sessionMessagesCache?.[sessionId];
+  if (cachedEntry && Array.isArray(cachedEntry.messages)) {
+    let nextMessages = [...cachedEntry.messages];
+    nextMessages = upsertRealtimeMessage(nextMessages, persistedUserMessage);
+    nextMessages = upsertRealtimeMessage(nextMessages, persistedAssistantMessage);
+    cachedEntry.messages = nextMessages;
+  }
+};
 
 export const useChatStreamRealtimeBridge = () => {
   const store = useChatStoreContext();
@@ -147,7 +207,23 @@ export const useChatStreamRealtimeBridge = () => {
       if (payload.stream_type === 'task_runner_callback') {
         const payloadSessionId = String(payload.conversation_id || '').trim();
         const state = store.getState();
-        if (payloadSessionId && state.currentSessionId === payloadSessionId) {
+        if (payloadSessionId) {
+          const persistedUserMessage = normalizePersistedMessage(
+            payload.raw?.result?.persisted_user_message,
+            payloadSessionId,
+          );
+          const persistedAssistantMessage = normalizePersistedMessage(
+            payload.raw?.result?.persisted_assistant_message,
+            payloadSessionId,
+          );
+          chatStoreSet((draft) => {
+            applyTaskRunnerCallbackRealtimeUpdate(
+              draft,
+              payloadSessionId,
+              persistedUserMessage,
+              persistedAssistantMessage,
+            );
+          });
           await state.syncSessionMessagesInBackground(payloadSessionId);
         }
         return;

@@ -27,7 +27,7 @@ export type UserRole = 'admin' | 'agent';
 
 export type TaskMcpInitMode = 'full' | 'builtin_only' | 'disabled';
 export type TaskBuiltinPromptMode = 'configured' | 'effective';
-export type TaskScheduleMode = 'manual' | 'once' | 'interval';
+export type TaskScheduleMode = 'manual' | 'once' | 'interval' | 'contact_async';
 export type TaskProcessLogOperation = 'append' | 'replace' | 'clear';
 
 export interface AuthUser {

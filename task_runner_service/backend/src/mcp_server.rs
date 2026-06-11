@@ -484,6 +484,11 @@ impl TaskRunnerMcpService {
                 ),
             ),
             tool_definition(
+                "wait_for_task_completion",
+                "Use after the requested Task Runner tasks have been created or adjusted. It confirms that the arranged tasks should continue through Task Runner's normal background execution flow.",
+                empty_object_schema(),
+            ),
+            tool_definition(
                 "get_task_dependency_graph",
                 "Get direct and transitive prerequisite tasks for one Task Runner task.",
                 required_object_schema(
@@ -771,6 +776,11 @@ impl TaskRunnerMcpService {
         let mut tools = self.list_tools();
         if let Ok(model_configs) = self.model_config_service.list_model_configs().await {
             enrich_tool_schemas_with_model_configs(&mut tools, &model_configs);
+            if tool_profile == McpToolProfile::ChatosAsyncPlanner {
+                enrich_tool_schemas_for_async_planner(&mut tools, &model_configs);
+            }
+        } else if tool_profile == McpToolProfile::ChatosAsyncPlanner {
+            enrich_tool_schemas_for_async_planner(&mut tools, &[]);
         }
         if current_user.is_admin() {
             return tools;
@@ -902,16 +912,19 @@ impl TaskRunnerMcpService {
             "create_task" => {
                 let mut input: CreateTaskRequest =
                     decode_args::<CreateTaskArgs>(args)?.into_request()?;
+                let source_context = request_context.task_source_context()?;
                 if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
+                    if let Some(existing) = self
+                        .first_existing_chatos_async_task(current_user, request_context)
+                        .await?
+                    {
+                        return Ok(text_result(task_for_external_mcp(existing)));
+                    }
                     input = planner_root_create_request(input)?;
                 }
                 let task = self
                     .task_service
-                    .create_task(
-                        input,
-                        Some(current_user),
-                        request_context.task_source_context()?,
-                    )
+                    .create_task(input, Some(current_user), source_context)
                     .await?;
                 Ok(text_result(task_for_external_mcp(task)))
             }
@@ -927,7 +940,10 @@ impl TaskRunnerMcpService {
                 Ok(text_result(result))
             }
             "update_task" => {
-                let args: UpdateTaskArgs = decode_args(args)?;
+                let mut args: UpdateTaskArgs = decode_args(args)?;
+                if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
+                    args.patch = planner_update_task_request(args.patch)?;
+                }
                 self.require_task_for_user(args.task_id.as_str(), current_user)
                     .await?;
                 let task = self
@@ -951,6 +967,15 @@ impl TaskRunnerMcpService {
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
                 Ok(text_result(task_for_external_mcp(task)))
+            }
+            "wait_for_task_completion" => {
+                let _ = decode_args::<Value>(args).ok();
+                Ok(text_result(json!({
+                    "accepted": true,
+                    "mode": "background",
+                    "message": "Task Runner accepted the arranged tasks for background execution.",
+                    "message_zh": "任务系统已接收安排好的任务，并会进入后台执行流程。"
+                })))
             }
             "get_task_dependency_graph" => {
                 let args: TaskIdArgs = decode_args(args)?;
@@ -1336,12 +1361,64 @@ impl TaskRunnerMcpService {
         Ok(())
     }
 
+    async fn first_existing_chatos_async_task(
+        &self,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<Option<TaskRecord>, String> {
+        Ok(self
+            .existing_chatos_async_tasks(current_user, request_context)
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    async fn existing_chatos_async_tasks(
+        &self,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<Vec<TaskRecord>, String> {
+        if request_context.tool_profile() != McpToolProfile::ChatosAsyncPlanner {
+            return Ok(Vec::new());
+        }
+        let Some(source_user_message_id) = request_context
+            .source_user_message_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(Vec::new());
+        };
+        self.task_service
+            .list_tasks_for_source_user_message(source_user_message_id, Some(current_user))
+            .await
+    }
+
     async fn create_tasks_with_prerequisites(
         &self,
         args: CreateTasksWithPrerequisitesArgs,
         current_user: &CurrentUser,
         request_context: &McpRequestContext,
     ) -> Result<Value, String> {
+        if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
+            let existing = self
+                .existing_chatos_async_tasks(current_user, request_context)
+                .await?;
+            if !existing.is_empty() {
+                return Ok(json!({
+                    "idempotent_reused": true,
+                    "created_tasks": existing.into_iter().map(|task| {
+                        json!({
+                            "task_id": task.id,
+                            "title": task.title,
+                            "status": task.status,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "dependency_edges": [],
+                }));
+            }
+        }
+
         if args.tasks.is_empty() {
             return Err("tasks 不能为空".to_string());
         }
@@ -1576,6 +1653,7 @@ fn agent_tool_allowed(name: &str) -> bool {
             | "create_tasks_with_prerequisites"
             | "update_task"
             | "set_task_prerequisites"
+            | "wait_for_task_completion"
             | "get_task_dependency_graph"
             | "delete_task"
             | "batch_update_task_status"
@@ -1611,15 +1689,28 @@ fn planner_agent_tool_allowed(name: &str) -> bool {
         name,
         "list_tasks"
             | "get_task"
+            | "get_task_stats"
             | "create_task"
             | "list_mcp_builtin_catalog"
             | "create_tasks_with_prerequisites"
+            | "update_task"
+            | "set_task_prerequisites"
+            | "wait_for_task_completion"
+            | "get_task_dependency_graph"
     )
 }
 
+fn planner_update_task_request(patch: UpdateTaskRequest) -> Result<UpdateTaskRequest, String> {
+    if patch.status.is_some() {
+        return Err("联系人异步模式不能通过 update_task 修改任务执行状态".to_string());
+    }
+    Ok(patch)
+}
+
 fn planner_root_create_request(mut input: CreateTaskRequest) -> Result<CreateTaskRequest, String> {
+    ensure_planner_required_fields(&input)?;
     input.status = Some(TaskStatus::Ready);
-    input.schedule = Some(planner_schedule_once_now(
+    input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
     )?);
     Ok(input)
@@ -1628,6 +1719,7 @@ fn planner_root_create_request(mut input: CreateTaskRequest) -> Result<CreateTas
 fn planner_prerequisite_create_request(
     mut input: CreateTaskRequest,
 ) -> Result<CreateTaskRequest, String> {
+    ensure_planner_required_fields(&input)?;
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(TaskScheduleConfig {
         mode: TaskScheduleMode::Manual,
@@ -1639,10 +1731,31 @@ fn planner_prerequisite_create_request(
     Ok(input)
 }
 
-fn planner_schedule_once_now(
+fn ensure_planner_required_fields(input: &CreateTaskRequest) -> Result<(), String> {
+    if input
+        .default_model_config_id
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(|value| value.is_empty())
+    {
+        return Err("联系人异步任务必须指定 default_model_config_id".to_string());
+    }
+    let has_enabled_builtin_kinds = input.mcp_config.as_ref().is_some_and(|config| {
+        config
+            .enabled_builtin_kinds
+            .iter()
+            .any(|value| !value.trim().is_empty())
+    });
+    if !has_enabled_builtin_kinds {
+        return Err("联系人异步任务必须至少选择一个 enabled_builtin_kinds".to_string());
+    }
+    Ok(())
+}
+
+fn planner_schedule_contact_async_now(
     mut schedule: TaskScheduleConfig,
 ) -> Result<TaskScheduleConfig, String> {
-    schedule.mode = TaskScheduleMode::Once;
+    schedule.mode = TaskScheduleMode::ContactAsync;
     if schedule.interval_seconds.is_some() {
         schedule.interval_seconds = None;
     }
@@ -1865,6 +1978,133 @@ fn run_model_config_description_with_options(model_configs: &[ModelConfigRecord]
     lines.join("\n")
 }
 
+fn enrich_tool_schemas_for_async_planner(tools: &mut [Value], model_configs: &[ModelConfigRecord]) {
+    let enabled_models = model_configs
+        .iter()
+        .filter(|model| model.enabled)
+        .cloned()
+        .collect::<Vec<_>>();
+    let task_model_description = planner_task_model_config_description(&enabled_models);
+    let builtin_description = planner_builtin_mcp_kind_schema_description();
+    for tool in tools {
+        match tool.get("name").and_then(Value::as_str) {
+            Some("create_task") => {
+                set_schema_required_fields(
+                    tool,
+                    &["inputSchema", "required"],
+                    &[
+                        "title",
+                        "objective",
+                        "default_model_config_id",
+                        "enabled_builtin_kinds",
+                    ],
+                );
+                set_tool_property_description(
+                    tool,
+                    &["inputSchema", "properties", "default_model_config_id"],
+                    task_model_description.clone(),
+                );
+                set_tool_property_description(
+                    tool,
+                    &["inputSchema", "properties", "enabled_builtin_kinds"],
+                    builtin_description.clone(),
+                );
+            }
+            Some("create_tasks_with_prerequisites") => {
+                set_schema_required_fields(
+                    tool,
+                    &["inputSchema", "properties", "tasks", "items", "required"],
+                    &[
+                        "client_ref",
+                        "title",
+                        "objective",
+                        "default_model_config_id",
+                        "enabled_builtin_kinds",
+                    ],
+                );
+                set_tool_property_description(
+                    tool,
+                    &[
+                        "inputSchema",
+                        "properties",
+                        "tasks",
+                        "items",
+                        "properties",
+                        "default_model_config_id",
+                    ],
+                    task_model_description.clone(),
+                );
+                set_tool_property_description(
+                    tool,
+                    &[
+                        "inputSchema",
+                        "properties",
+                        "tasks",
+                        "items",
+                        "properties",
+                        "enabled_builtin_kinds",
+                    ],
+                    builtin_description.clone(),
+                );
+            }
+            Some("update_task") => {
+                remove_tool_schema_property(
+                    tool,
+                    &["inputSchema", "properties", "patch", "properties"],
+                    "status",
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+fn planner_task_model_config_description(model_configs: &[ModelConfigRecord]) -> String {
+    let mut lines = vec![
+        "联系人异步任务必须指定模型配置 ID。请直接从当前启用模型中选择一个最合适的 default_model_config_id。"
+            .to_string(),
+    ];
+    if model_configs.is_empty() {
+        lines.push("当前还没有启用中的模型配置。".to_string());
+        return lines.join("\n");
+    }
+    lines.push("当前启用模型：".to_string());
+    for model in model_configs {
+        lines.push(format!(
+            "- {}: {} ({})。使用场景：{}",
+            model.id,
+            model.name,
+            model.model,
+            model
+                .usage_scenario
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("未填写")
+        ));
+    }
+    lines.join("\n")
+}
+
+fn planner_builtin_mcp_kind_schema_description() -> String {
+    let mut lines = vec![
+        "联系人异步任务必须选择至少一个 builtin MCP 能力。只勾选本次执行真正需要的能力；不确定时可先调用 list_mcp_builtin_catalog 查看说明。"
+            .to_string(),
+    ];
+    for value in mcp_builtin_kind_values() {
+        if let Some(kind) = builtin_kind_by_any(value.as_str()) {
+            let guide = mcp_builtin_kind_guide(kind);
+            lines.push(format!(
+                "- {}: {} 使用场景：{}。能力：{}。",
+                value,
+                guide.description,
+                guide.use_cases.join("、"),
+                guide.capabilities.join("、")
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
 fn set_tool_property_description(tool: &mut Value, path: &[&str], description: String) {
     let mut current = tool;
     for segment in path {
@@ -1880,6 +2120,41 @@ fn set_tool_property_description(tool: &mut Value, path: &[&str], description: S
         return;
     };
     object.insert("description".to_string(), Value::String(description));
+}
+
+fn remove_tool_schema_property(tool: &mut Value, path: &[&str], property_name: &str) {
+    let mut current = tool;
+    for segment in path {
+        let Some(object) = current.as_object_mut() else {
+            return;
+        };
+        let Some(next) = object.get_mut(*segment) else {
+            return;
+        };
+        current = next;
+    }
+    if let Some(object) = current.as_object_mut() {
+        object.remove(property_name);
+    }
+}
+
+fn set_schema_required_fields(tool: &mut Value, path: &[&str], required: &[&str]) {
+    let mut current = tool;
+    for segment in path {
+        let Some(object) = current.as_object_mut() else {
+            return;
+        };
+        let Some(next) = object.get_mut(*segment) else {
+            return;
+        };
+        current = next;
+    }
+    *current = Value::Array(
+        required
+            .iter()
+            .map(|value| Value::String((*value).to_string()))
+            .collect(),
+    );
 }
 
 fn create_task_schema() -> Value {
@@ -2256,7 +2531,10 @@ fn _assert_types(
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_tool_allowed, create_task_schema, planner_agent_tool_allowed, task_mcp_config_schema,
+        agent_tool_allowed, create_task_schema, ensure_planner_required_fields,
+        planner_agent_tool_allowed, planner_root_create_request, planner_update_task_request,
+        task_mcp_config_schema, CreateTaskRequest, TaskMcpConfig, TaskScheduleMode, TaskStatus,
+        UpdateTaskRequest,
     };
 
     #[test]
@@ -2309,14 +2587,103 @@ mod tests {
     fn async_planner_profile_exposes_only_planning_tools() {
         assert!(planner_agent_tool_allowed("list_tasks"));
         assert!(planner_agent_tool_allowed("get_task"));
+        assert!(planner_agent_tool_allowed("get_task_stats"));
         assert!(planner_agent_tool_allowed("create_task"));
         assert!(planner_agent_tool_allowed(
             "create_tasks_with_prerequisites"
         ));
         assert!(planner_agent_tool_allowed("list_mcp_builtin_catalog"));
-        assert!(!planner_agent_tool_allowed("get_task_stats"));
-        assert!(!planner_agent_tool_allowed("get_task_dependency_graph"));
+        assert!(planner_agent_tool_allowed("update_task"));
+        assert!(planner_agent_tool_allowed("set_task_prerequisites"));
+        assert!(planner_agent_tool_allowed("get_task_dependency_graph"));
         assert!(!planner_agent_tool_allowed("start_task_run"));
         assert!(!planner_agent_tool_allowed("list_runs"));
+        assert!(!planner_agent_tool_allowed("get_run"));
+        assert!(!planner_agent_tool_allowed("list_run_events"));
+    }
+
+    #[test]
+    fn async_planner_update_task_cannot_change_status() {
+        let patch = UpdateTaskRequest {
+            status: Some(TaskStatus::Ready),
+            ..UpdateTaskRequest::default()
+        };
+        assert!(planner_update_task_request(patch).is_err());
+
+        let patch = UpdateTaskRequest {
+            objective: Some("updated objective".to_string()),
+            ..UpdateTaskRequest::default()
+        };
+        assert!(planner_update_task_request(patch).is_ok());
+    }
+
+    #[test]
+    fn async_planner_tasks_require_model_and_builtin_kinds() {
+        let missing_model = CreateTaskRequest {
+            title: "task".to_string(),
+            description: None,
+            objective: "objective".to_string(),
+            input_payload: None,
+            status: None,
+            priority: None,
+            tags: None,
+            default_model_config_id: None,
+            tenant_id: None,
+            subject_id: None,
+            schedule: None,
+            mcp_config: Some(TaskMcpConfig {
+                enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
+                ..TaskMcpConfig::default()
+            }),
+            prerequisite_task_ids: None,
+        };
+        assert!(ensure_planner_required_fields(&missing_model).is_err());
+
+        let missing_builtin_kinds = CreateTaskRequest {
+            default_model_config_id: Some("model-1".to_string()),
+            mcp_config: Some(TaskMcpConfig {
+                enabled_builtin_kinds: Vec::new(),
+                ..TaskMcpConfig::default()
+            }),
+            ..missing_model.clone()
+        };
+        assert!(ensure_planner_required_fields(&missing_builtin_kinds).is_err());
+
+        let valid = CreateTaskRequest {
+            default_model_config_id: Some("model-1".to_string()),
+            mcp_config: Some(TaskMcpConfig {
+                enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
+                ..TaskMcpConfig::default()
+            }),
+            ..missing_model
+        };
+        assert!(ensure_planner_required_fields(&valid).is_ok());
+    }
+
+    #[test]
+    fn async_planner_root_tasks_are_forced_to_contact_async_schedule() {
+        let request = CreateTaskRequest {
+            title: "task".to_string(),
+            description: None,
+            objective: "objective".to_string(),
+            input_payload: None,
+            status: None,
+            priority: None,
+            tags: None,
+            default_model_config_id: Some("model-1".to_string()),
+            tenant_id: None,
+            subject_id: None,
+            schedule: None,
+            mcp_config: Some(TaskMcpConfig {
+                enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
+                ..TaskMcpConfig::default()
+            }),
+            prerequisite_task_ids: None,
+        };
+        let planned = planner_root_create_request(request).expect("planner request");
+        assert_eq!(
+            planned.schedule.expect("schedule").mode,
+            TaskScheduleMode::ContactAsync
+        );
     }
 }
