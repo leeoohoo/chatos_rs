@@ -4133,17 +4133,17 @@ fn format_prerequisite_context_for_prompt(contexts: &[PrerequisiteTaskContext]) 
             .as_deref()
             .or(context.result_summary.as_deref())
         {
-            item.push(format!("结果摘要:\n{}", truncate_chars(summary, 2_000)));
+            item.push(format!("结果摘要:\n{}", summary));
         }
         if let Some(process_log) = context.process_log.as_deref() {
-            item.push(format!("执行过程:\n{}", truncate_chars(process_log, 4_000)));
+            item.push(format!("执行过程:\n{}", process_log));
         }
         if let Some(content) = context.report_content.as_deref() {
-            item.push(format!("关键输出:\n{}", truncate_chars(content, 4_000)));
+            item.push(format!("关键输出:\n{}", content));
         }
         parts.push(item.join("\n"));
     }
-    truncate_chars(&parts.join("\n\n"), 20_000)
+    parts.join("\n\n")
 }
 
 fn build_prerequisite_context(
@@ -4170,7 +4170,7 @@ fn extract_report_content(run: &TaskRunRecord) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| truncate_chars(value, 4_000))
+        .map(ToOwned::to_owned)
 }
 
 fn prerequisite_context_json(contexts: &[PrerequisiteTaskContext]) -> Value {
@@ -4239,18 +4239,14 @@ fn build_chatos_task_callback_payload(
         run_id: run.map(|item| item.id.clone()),
         status: task.status.status_string().to_string(),
         task_title: task.title.clone(),
-        result_summary: truncate_optional_chars(
+        result_summary: normalize_optional_callback_text(
             run.and_then(|item| item.result_summary.clone())
                 .or_else(|| task.result_summary.clone()),
-            2_000,
         ),
-        error_message: truncate_optional_chars(
+        error_message: normalize_optional_callback_text(
             error_message.or_else(|| run.and_then(|item| item.error_message.clone())),
-            2_000,
         ),
-        report_content: run
-            .and_then(extract_report_content)
-            .map(|value| truncate_chars(value.as_str(), 2_000)),
+        report_content: run.and_then(extract_report_content),
         process_log: None,
         source_session_id: task.source_session_id.clone(),
         source_turn_id: task.source_turn_id.clone(),
@@ -4297,15 +4293,10 @@ fn is_terminal_run_status(status: TaskRunStatus) -> bool {
     )
 }
 
-fn truncate_chars(value: &str, _max_chars: usize) -> String {
-    value.to_string()
-}
-
-fn truncate_optional_chars(value: Option<String>, max_chars: usize) -> Option<String> {
+fn normalize_optional_callback_text(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .map(|value| truncate_chars(value.as_str(), max_chars))
 }
 
 fn summarized_report_content(content: &Option<String>) -> Option<String> {

@@ -86,9 +86,6 @@ struct TaskRunnerCallbackResponse {
     event: String,
 }
 
-const TASK_RUNNER_CALLBACK_CONTENT_DETAIL_MAX_CHARS: usize = 2_400;
-const TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS: usize = 4_000;
-
 async fn agent_chat_send(
     auth: AuthUser,
     Json(mut req): Json<ChatStreamRequest>,
@@ -626,10 +623,6 @@ fn normalized_callback_text(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn truncate_callback_text(value: &str, _max_chars: usize) -> String {
-    value.to_string()
-}
-
 fn preferred_callback_detail<'a>(
     payload: &'a TaskRunnerCallbackRequest,
 ) -> Option<(&'static str, &'static str, &'a str)> {
@@ -753,31 +746,17 @@ fn build_task_runner_callback_assistant_message_with_contact(
         upsert_string(task_runner_meta, "callback_at", callback_at.as_str());
     }
     if let Some(result_summary) = normalized_callback_text(payload.result_summary.as_deref()) {
-        let preview = truncate_callback_text(
-            result_summary,
-            TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS,
-        );
-        upsert_string(task_runner_meta, "result_summary", preview.as_str());
+        upsert_string(task_runner_meta, "result_summary", result_summary);
     }
     if let Some(error_message) = normalized_callback_text(payload.error_message.as_deref()) {
-        let preview = truncate_callback_text(
-            error_message,
-            TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS,
-        );
-        upsert_string(task_runner_meta, "error_message", preview.as_str());
+        upsert_string(task_runner_meta, "error_message", error_message);
     }
     if let Some(report_content) = normalized_callback_text(payload.report_content.as_deref()) {
-        let preview = truncate_callback_text(
-            report_content,
-            TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS,
-        );
-        upsert_string(task_runner_meta, "report_excerpt", preview.as_str());
+        upsert_string(task_runner_meta, "report_excerpt", report_content);
     }
     if let Some((_, detail_source, detail)) = preferred_callback_detail(payload) {
         upsert_string(task_runner_meta, "detail_source", detail_source);
-        let preview =
-            truncate_callback_text(detail, TASK_RUNNER_CALLBACK_METADATA_DETAIL_MAX_CHARS);
-        upsert_string(task_runner_meta, "detail_preview", preview.as_str());
+        upsert_string(task_runner_meta, "detail_preview", detail);
     }
     message
 }
@@ -804,11 +783,7 @@ fn build_task_runner_callback_message_content(payload: &TaskRunnerCallbackReques
         _ => format!("任务「{}」状态更新", title),
     };
     match preferred_callback_detail(payload) {
-        Some((label, _, detail)) => {
-            let detail =
-                truncate_callback_text(detail, TASK_RUNNER_CALLBACK_CONTENT_DETAIL_MAX_CHARS);
-            format!("{headline}\n\n{label}：\n{detail}")
-        }
+        Some((label, _, detail)) => format!("{headline}\n\n{label}：\n{detail}"),
         None => headline,
     }
 }
@@ -1007,7 +982,6 @@ mod tests {
             .cloned()
             .unwrap_or_else(|| json!({}));
 
-        assert!(!message.content.contains("[内容已截断]"));
         assert!(message.content.chars().count() > 5_000);
         assert_eq!(
             task_runner_async
