@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import type { ComponentProps } from 'react';
 
-import { isTaskRunnerAsyncMessage } from '../../../lib/domain/messages';
 import TeamMemberWorkspace from './TeamMemberWorkspace';
 import type { UseTeamMembersPaneViewPropsOptions } from './teamMembersPaneViewPropTypes';
 
@@ -20,8 +19,7 @@ export const useTeamMemberWorkspaceProps = ({
     selectedRuntimeModelId
     && (store.aiModelConfigs || []).find((item) => item.id === selectedRuntimeModelId)?.supports_reasoning === true,
   );
-  const isTaskRunnerAsyncContactMode = resources.isTaskRunnerAsyncContactMode
-    || (Array.isArray(store.messages) && store.messages.some((message) => isTaskRunnerAsyncMessage(message)));
+  const isTaskRunnerAsyncContactMode = resources.isTaskRunnerAsyncContactMode;
 
   return ({
   project,

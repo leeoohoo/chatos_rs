@@ -37,6 +37,8 @@ use crate::models::{
 use crate::services::{health, system_config};
 use crate::state::AppState;
 
+mod chatos_internal;
+
 const RUN_EVENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
 const TASK_RUNNER_SKILL_ZH_CN: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.zh-CN.md");
 const TASK_RUNNER_SKILL_EN_US: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.en-US.md");
@@ -169,6 +171,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/skills/task-runner", get(task_runner_skill_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/agent-token", post(agent_token_handler))
+        .merge(chatos_internal::router())
         .merge(protected_api)
         .route("/mcp", post(mcp_entrypoint))
         .with_state(state)

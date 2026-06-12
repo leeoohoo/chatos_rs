@@ -8,6 +8,7 @@ import {
   collectActiveStreamingSessionIds,
   resolveActiveStreamContext,
   resolveLatestStreamedText,
+  resolvePersistedRealtimeStreamContext,
   resolvePayloadConversationTurnId,
   shouldAttemptDisconnectRecovery,
   shouldRecoverMessagesForActiveSession,
@@ -130,5 +131,87 @@ describe('chatStreamRealtimeBridgeState', () => {
     expect(shouldAttemptDisconnectRecovery(state, 'session_1', 'connected')).toBe(false);
     expect(shouldRecoverMessagesForActiveSession(state, 'session_1')).toBe(true);
     expect(shouldRecoverMessagesForActiveSession(state, 'session_2')).toBe(false);
+  });
+
+  it('reconstructs terminal stream context from persisted realtime messages when live draft state is gone', () => {
+    const state = {
+      currentSessionId: 'session_1',
+      messages: [
+        {
+          id: 'user_temp_1',
+          sessionId: 'session_1',
+          role: 'user',
+          content: 'hello',
+          status: 'completed',
+          createdAt: new Date('2026-05-20T10:00:00.000Z'),
+          metadata: {
+            conversation_turn_id: 'turn_1',
+          },
+        },
+        {
+          id: 'assistant_temp_1',
+          sessionId: 'session_1',
+          role: 'assistant',
+          content: 'draft answer',
+          status: 'streaming',
+          createdAt: new Date('2026-05-20T10:00:01.000Z'),
+          metadata: {
+            conversation_turn_id: 'turn_1',
+            historyDraftUserMessage: {
+              id: 'user_temp_1',
+            },
+          },
+        },
+      ],
+      sessionChatState: {
+        session_1: {
+          isLoading: false,
+          isStreaming: false,
+          isStopping: false,
+          streamingMessageId: null,
+          activeTurnId: null,
+          streamingPreviewText: '',
+          streamingTransport: null,
+          runtimeContextRefreshNonce: 0,
+        },
+      },
+      sessionStreamingMessageDrafts: {
+        session_1: null,
+      },
+    } as unknown as ChatStoreDraft;
+
+    expect(resolvePersistedRealtimeStreamContext(state, 'session_1', {
+      payloadTurnId: 'turn_1',
+      payloadUserMessageId: 'user_1',
+      persistedUserMessage: {
+        id: 'user_1',
+        sessionId: 'session_1',
+        role: 'user',
+        content: 'hello',
+        status: 'completed',
+        createdAt: new Date('2026-05-20T10:00:00.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn_1',
+        },
+      } as never,
+      persistedAssistantMessage: {
+        id: 'assistant_1',
+        sessionId: 'session_1',
+        role: 'assistant',
+        content: 'final answer',
+        status: 'completed',
+        createdAt: new Date('2026-05-20T10:00:02.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn_1',
+          historyFinalForUserMessageId: 'user_1',
+        },
+      } as never,
+    })).toEqual({
+      sessionId: 'session_1',
+      conversationTurnId: 'turn_1',
+      tempAssistantMessageId: 'assistant_temp_1',
+      tempUserId: 'user_temp_1',
+      streamedTextRef: { value: 'draft answer' },
+    });
   });
 });

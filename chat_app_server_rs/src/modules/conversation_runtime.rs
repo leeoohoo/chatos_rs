@@ -45,6 +45,7 @@ pub fn routes() -> Router {
     Router::new()
         .merge(api::agents::router())
         .merge(api::agent_chat::router())
+        .merge(api::message_task_runner::router())
         .merge(api::messages::router())
         .merge(api::realtime::router())
         .merge(api::sessions::router())

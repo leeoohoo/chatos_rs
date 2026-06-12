@@ -248,7 +248,6 @@ export const isTaskRunnerAsyncMessage = (
 ): boolean => (
   isTaskRunnerAsyncPlanMessage(message)
   || isTaskRunnerCallbackMessage(message)
-  || readTaskRunnerAsyncMode(message) === 'contact_async'
 );
 
 const sanitizeTaskRunnerCallbackMetadata = (

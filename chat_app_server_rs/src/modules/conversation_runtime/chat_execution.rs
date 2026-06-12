@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
@@ -12,7 +12,7 @@ use crate::utils::attachments::Attachment;
 
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::task_board::{
-    TaskBoardRuntimeContext, build_runtime_context, load_prefixed_input_items,
+    build_runtime_context, load_prefixed_input_items, TaskBoardRuntimeContext,
 };
 
 pub struct PreparedMcpExecution {

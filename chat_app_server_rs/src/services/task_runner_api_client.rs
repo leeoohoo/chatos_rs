@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct TaskRunnerAgentCredentials {
@@ -90,4 +91,87 @@ pub async fn fetch_task_runner_skill(base_url: &str, lang: &str) -> Result<Strin
         return Err("Task Runner skill request returned empty content".to_string());
     }
     Ok(content.to_string())
+}
+
+async fn get_internal_json(
+    base_url: &str,
+    path: &str,
+    query: &[(&str, &str)],
+) -> Result<Value, String> {
+    let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
+    let response = reqwest::Client::new()
+        .get(endpoint)
+        .query(query)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Task Runner internal request failed: {status} {body}"
+        ));
+    }
+    response
+        .json::<Value>()
+        .await
+        .map_err(|err| err.to_string())
+}
+
+pub async fn list_message_tasks(
+    base_url: &str,
+    source_session_id: &str,
+    source_user_message_id: &str,
+) -> Result<Value, String> {
+    get_internal_json(
+        base_url,
+        "/internal/chatos/message-tasks",
+        &[
+            ("source_session_id", source_session_id),
+            ("source_user_message_id", source_user_message_id),
+        ],
+    )
+    .await
+}
+
+pub async fn get_message_task(
+    base_url: &str,
+    task_id: &str,
+    source_session_id: &str,
+    source_user_message_id: &str,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-tasks/{}",
+        urlencoding::encode(task_id.trim())
+    );
+    get_internal_json(
+        base_url,
+        path.as_str(),
+        &[
+            ("source_session_id", source_session_id),
+            ("source_user_message_id", source_user_message_id),
+        ],
+    )
+    .await
+}
+
+pub async fn get_message_run(
+    base_url: &str,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: &str,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-runs/{}",
+        urlencoding::encode(run_id.trim())
+    );
+    get_internal_json(
+        base_url,
+        path.as_str(),
+        &[
+            ("source_session_id", source_session_id),
+            ("source_user_message_id", source_user_message_id),
+        ],
+    )
+    .await
 }

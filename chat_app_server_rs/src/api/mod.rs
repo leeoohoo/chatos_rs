@@ -38,6 +38,7 @@ pub mod fs;
 pub mod git;
 pub mod memory_compat;
 pub mod memory_mappings;
+pub mod message_task_runner;
 pub mod messages;
 pub mod notepad;
 pub mod projects;

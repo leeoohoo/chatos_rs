@@ -7,6 +7,7 @@ import {
 } from '../../lib/domain/messages';
 import {
   EMPTY_DERIVED_PROCESS_STATS,
+  getCollapsedTextContentForRender,
   normalizeContentSegmentsForRender,
 } from './helpers';
 import type { DerivedProcessStats } from './types';
@@ -127,6 +128,39 @@ export const useMessageItemModel = ({
     && segment.content.trim().length > 0
   ));
   const hasVisibleToolCallSegment = renderContentSegments.some((segment) => segment.type === 'tool_call');
+  const reviewOutcomeRaw = typeof message.metadata?.task_turn_review === 'object'
+    ? (message.metadata?.task_turn_review as { outcome?: unknown }).outcome
+    : null;
+  const reviewOutcome = typeof reviewOutcomeRaw === 'string'
+    ? reviewOutcomeRaw.trim().toLowerCase()
+    : '';
+  const hasVisibleReviewOutcome = (
+    reviewOutcome === 'pass'
+    || reviewOutcome === 'needs_more_work'
+    || reviewOutcome === 'unknown'
+    || reviewOutcome === 'not_attempted'
+  );
+  const hasVisibleCollapsedAssistantText = (
+    collapseAssistantProcessByDefault
+      ? getCollapsedTextContentForRender(renderContentSegments).trim().length > 0
+      : false
+  );
+  const hasRenderableAssistantBody = renderContentSegments.length > 0
+    ? (
+      collapseAssistantProcessByDefault
+        ? (hasVisibleCollapsedAssistantText || hasVisibleReviewOutcome)
+        : (
+          hasVisibleTextSegment
+          || hasVisibleThinkingSegment
+          || hasVisibleToolCallSegment
+          || hasVisibleReviewOutcome
+        )
+    )
+    : (
+      (typeof message.content === 'string' && message.content.trim().length > 0)
+      || (!collapseAssistantProcessByDefault && toolCalls.length > 0)
+      || hasVisibleReviewOutcome
+    );
   const shouldHideEmptyStreamingAssistant = Boolean(
     isAssistant
     && (isStreaming || isTaskRunnerAsyncAssistant)
@@ -136,6 +170,11 @@ export const useMessageItemModel = ({
     && !hasVisibleThinkingSegment
     && !hasVisibleToolCallSegment
     && toolCalls.length === 0
+  );
+  const shouldHideEmptyNonTaskRunnerAssistant = Boolean(
+    isAssistant
+    && !isTaskRunnerAsyncAssistant
+    && !hasRenderableAssistantBody
   );
 
   return {
@@ -155,5 +194,6 @@ export const useMessageItemModel = ({
     renderContentSegments,
     toolCallsById,
     shouldHideEmptyStreamingAssistant,
+    shouldHideEmptyNonTaskRunnerAssistant,
   };
 };

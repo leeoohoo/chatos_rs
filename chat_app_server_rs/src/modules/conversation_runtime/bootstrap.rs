@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::core::ai_settings::chat_max_tokens_from_settings;
@@ -6,7 +6,7 @@ use crate::services::ai_common::normalize_turn_id;
 use crate::utils::attachments::{self, Attachment};
 
 use super::runtime_context::{
-    ConversationRuntimeRequest, ResolvedConversationRuntimeContext, resolve_runtime_context,
+    resolve_runtime_context, ConversationRuntimeRequest, ResolvedConversationRuntimeContext,
 };
 use super::user_context::load_runtime_user_context;
 

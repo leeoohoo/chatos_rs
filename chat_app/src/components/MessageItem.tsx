@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState, memo } from 'react';
+import React, { useEffect, useState, memo } from 'react';
 import { AttachmentRenderer } from './AttachmentRenderer';
 import { cn } from '../lib/utils';
 import type { ToolCall } from '../types';
+import { AssistantMessageBubble } from './messageItem/AssistantMessageBubble';
 import { MessageContentRenderer } from './messageItem/MessageContentRenderer';
 import { HistoryProcessSummary } from './messageItem/HistoryProcessSummary';
 import { MessageActions } from './messageItem/MessageActions';
@@ -9,9 +10,9 @@ import { MessageAvatar } from './messageItem/MessageAvatar';
 import { MessageEditForm } from './messageItem/MessageEditForm';
 import { MessageHeader } from './messageItem/MessageHeader';
 import { SessionSummaryCard } from './messageItem/SessionSummaryCard';
+import { MessageTaskDrawer } from './messageTasks/MessageTaskDrawer';
 import type { MessageItemProps } from './messageItem/messageItemTypes';
 import { useMessageItemModel } from './messageItem/useMessageItemModel';
-import { useI18n } from '../i18n/I18nProvider';
 export type { DerivedProcessStats } from './messageItem/types';
 export type { MessageItemProps } from './messageItem/messageItemTypes';
 
@@ -34,71 +35,6 @@ const resolveTaskRunnerAssistantDisplayName = (
     || readDisplayName(fallbackContactName);
 };
 
-const ASSISTANT_BUBBLE_COLLAPSED_HEIGHT = 520;
-
-const AssistantMessageBubble: React.FC<{
-  children: React.ReactNode;
-  messageId: string;
-}> = ({
-  children,
-  messageId,
-}) => {
-  const { t } = useI18n();
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [canToggle, setCanToggle] = useState(false);
-
-  useEffect(() => {
-    setExpanded(false);
-  }, [messageId]);
-
-  useEffect(() => {
-    const node = contentRef.current;
-    if (!node) {
-      return undefined;
-    }
-
-    const updateOverflow = () => {
-      const hasOverflow = node.scrollHeight > ASSISTANT_BUBBLE_COLLAPSED_HEIGHT + 8;
-      setCanToggle(hasOverflow);
-    };
-
-    updateOverflow();
-    const observer = new ResizeObserver(updateOverflow);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [children]);
-
-  return (
-    <div className="relative rounded-lg border border-border bg-card/70 shadow-sm">
-      <div
-        ref={contentRef}
-        className={cn(
-          'px-4 py-3 overflow-hidden',
-          canToggle && !expanded && 'max-h-[520px]',
-        )}
-      >
-        {children}
-      </div>
-      {canToggle && !expanded && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-10 h-16 bg-gradient-to-t from-card/95 to-transparent" />
-      )}
-      {canToggle && (
-        <div className="border-t border-border bg-card/90 px-4 py-2">
-          <button
-            type="button"
-            className="text-xs font-medium text-primary hover:text-primary/80"
-            onClick={() => setExpanded((value) => !value)}
-            aria-expanded={expanded}
-          >
-            {expanded ? t('taskDraft.collapse') : t('taskDraft.expand')}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const MessageItemComponent: React.FC<MessageItemProps> = ({
   message,
   isLast = false,
@@ -114,6 +50,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   customRenderer,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   useEffect(() => {
     if (!isEditing) {
@@ -146,6 +83,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     renderContentSegments,
     toolCallsById,
     shouldHideEmptyStreamingAssistant,
+    shouldHideEmptyNonTaskRunnerAssistant,
   } = useMessageItemModel({
     message,
     isStreaming,
@@ -156,6 +94,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const assistantDisplayName = showAssistantChrome
     ? resolveTaskRunnerAssistantDisplayName(message, assistantContactName)
     : null;
+  const canOpenMessageTasks = isUser || isAssistant;
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -163,6 +102,14 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   }
 
   if (shouldHideEmptyStreamingAssistant) {
+    return null;
+  }
+
+  if (
+    shouldHideEmptyNonTaskRunnerAssistant
+    && attachments.length === 0
+    && message.metadata?.type !== 'session_summary'
+  ) {
     return null;
   }
 
@@ -272,22 +219,24 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           />
         ) : (
           isAssistant ? (
-            <AssistantMessageBubble messageId={message.id}>
-              <div className="space-y-3">
-                <MessageContentRenderer
-                  message={message}
-                  isLast={isLast}
-                  isStreaming={isStreaming}
-                  renderContentSegments={renderContentSegments}
-                  toolCalls={toolCalls as ToolCall[]}
-                  toolCallsById={toolCallsById}
-                  assistantToolCallsById={assistantToolCallsById}
-                  toolResultById={toolResultById}
-                  collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
-                  onApplyCode={handleApplyCode}
-                />
-              </div>
-            </AssistantMessageBubble>
+            shouldHideEmptyNonTaskRunnerAssistant ? null : (
+              <AssistantMessageBubble messageId={message.id}>
+                <div className="space-y-3">
+                  <MessageContentRenderer
+                    message={message}
+                    isLast={isLast}
+                    isStreaming={isStreaming}
+                    renderContentSegments={renderContentSegments}
+                    toolCalls={toolCalls as ToolCall[]}
+                    toolCallsById={toolCallsById}
+                    assistantToolCallsById={assistantToolCallsById}
+                    toolResultById={toolResultById}
+                    collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
+                    onApplyCode={handleApplyCode}
+                  />
+                </div>
+              </AssistantMessageBubble>
+            )
           ) : (
             <div className="space-y-3">
               <MessageContentRenderer
@@ -320,11 +269,18 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           isUser={isUser}
           canEdit={Boolean(onEdit)}
           canDelete={Boolean(onDelete)}
+          onOpenTasks={canOpenMessageTasks ? () => setTaskDrawerOpen(true) : undefined}
           onCopy={handleCopy}
           onStartEdit={() => setIsEditing(true)}
           onDelete={() => onDelete?.(message.id)}
         />
       )}
+
+      <MessageTaskDrawer
+        open={taskDrawerOpen}
+        message={message}
+        onClose={() => setTaskDrawerOpen(false)}
+      />
     </div>
   );
 };

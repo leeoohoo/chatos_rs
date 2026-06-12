@@ -61,7 +61,10 @@ fn parse_compact_history_offset(
         return compact_messages.len().saturating_sub(next_user_index) as i64;
     }
 
-    if let Some(message_index) = compact_messages.iter().position(|message| message.id == before) {
+    if let Some(message_index) = compact_messages
+        .iter()
+        .position(|message| message.id == before)
+    {
         return compact_messages.len().saturating_sub(message_index) as i64;
     }
 

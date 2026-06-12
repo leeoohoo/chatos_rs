@@ -12,6 +12,24 @@ export interface ActiveStreamContext {
   streamedTextRef: { value: string };
 }
 
+const readMessageTurnId = (
+  message: Partial<StreamingMessage> | null | undefined,
+): string => readTrimmedString(
+  message?.metadata?.historyFinalForTurnId
+  || message?.metadata?.conversation_turn_id
+  || message?.metadata?.conversationTurnId
+  || message?.metadata?.historyProcessTurnId
+  || message?.metadata?.historyProcess?.turnId,
+) || '';
+
+const readLinkedUserMessageId = (
+  message: Partial<StreamingMessage> | null | undefined,
+): string => readTrimmedString(message?.metadata?.historyFinalForUserMessageId) || '';
+
+const readDraftUserMessageId = (
+  message: Partial<StreamingMessage> | null | undefined,
+): string => readTrimmedString(message?.metadata?.historyDraftUserMessage?.id) || '';
+
 export const isStreamingMessage = (value: unknown): value is StreamingMessage => (
   Boolean(value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string')
 );
@@ -81,6 +99,111 @@ export const resolveActiveStreamContext = (
     tempUserId,
     streamedTextRef: {
       value: typeof draft.content === 'string' ? draft.content : '',
+    },
+  };
+};
+
+export const resolvePersistedRealtimeStreamContext = (
+  state: ChatStoreDraft,
+  sessionId: string,
+  {
+    payloadTurnId,
+    payloadUserMessageId,
+    persistedUserMessage,
+    persistedAssistantMessage,
+  }: {
+    payloadTurnId?: string | null;
+    payloadUserMessageId?: string | null;
+    persistedUserMessage: StreamingMessage | null;
+    persistedAssistantMessage: StreamingMessage | null;
+  },
+): ActiveStreamContext | null => {
+  const normalizedPayloadTurnId = readTrimmedString(payloadTurnId);
+  const normalizedPayloadUserMessageId = readTrimmedString(payloadUserMessageId);
+  const draft = state.sessionStreamingMessageDrafts?.[sessionId];
+  const draftMessage = isStreamingMessage(draft) ? draft : null;
+  const conversationTurnId = normalizedPayloadTurnId
+    || readMessageTurnId(draftMessage)
+    || readMessageTurnId(persistedAssistantMessage)
+    || readMessageTurnId(persistedUserMessage)
+    || readTrimmedString(state.sessionChatState?.[sessionId]?.activeTurnId)
+    || '';
+
+  const sessionMessages = Array.isArray(state.messages)
+    ? state.messages.filter((message) => message?.sessionId === sessionId)
+    : [];
+  const reversedSessionMessages = [...sessionMessages].reverse();
+
+  const localUserMessage = reversedSessionMessages.find((message) => (
+    message?.role === 'user' && (
+      (normalizedPayloadUserMessageId && message.id === normalizedPayloadUserMessageId)
+      || (conversationTurnId && readMessageTurnId(message as StreamingMessage) === conversationTurnId)
+    )
+  )) as StreamingMessage | undefined;
+
+  const tempUserId = localUserMessage?.id
+    || normalizedPayloadUserMessageId
+    || readLinkedUserMessageId(persistedAssistantMessage)
+    || readDraftUserMessageId(persistedAssistantMessage)
+    || readTrimmedString(persistedUserMessage?.id)
+    || null;
+
+  const matchesTurnOrUser = (message: StreamingMessage | null | undefined): boolean => {
+    if (!message || message.role !== 'assistant') {
+      return false;
+    }
+    const assistantTurnId = readMessageTurnId(message);
+    if (conversationTurnId && assistantTurnId === conversationTurnId) {
+      return true;
+    }
+    if (!tempUserId) {
+      return false;
+    }
+    return (
+      readLinkedUserMessageId(message) === tempUserId
+      || readDraftUserMessageId(message) === tempUserId
+    );
+  };
+
+  const persistedAssistantId = readTrimmedString(persistedAssistantMessage?.id);
+  const localAssistantMessage = (
+    (draftMessage && matchesTurnOrUser(draftMessage)) ? draftMessage : null
+  ) || reversedSessionMessages.find((message) => (
+    message?.role === 'assistant'
+    && message.status === 'streaming'
+    && matchesTurnOrUser(message as StreamingMessage)
+  )) as StreamingMessage | undefined
+    || reversedSessionMessages.find((message) => (
+      message?.role === 'assistant'
+      && persistedAssistantId
+      && message.id === persistedAssistantId
+    )) as StreamingMessage | undefined
+    || reversedSessionMessages.find((message) => (
+      message?.role === 'assistant'
+      && matchesTurnOrUser(message as StreamingMessage)
+    )) as StreamingMessage | undefined
+    || null;
+
+  const tempAssistantMessageId = localAssistantMessage?.id || persistedAssistantId;
+  if (!tempAssistantMessageId) {
+    return null;
+  }
+
+  const streamedText = typeof localAssistantMessage?.content === 'string'
+    ? localAssistantMessage.content
+    : (
+      typeof persistedAssistantMessage?.content === 'string'
+        ? persistedAssistantMessage.content
+        : ''
+    );
+
+  return {
+    sessionId,
+    conversationTurnId,
+    tempAssistantMessageId,
+    tempUserId,
+    streamedTextRef: {
+      value: streamedText,
     },
   };
 };

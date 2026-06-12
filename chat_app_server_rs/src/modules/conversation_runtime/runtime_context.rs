@@ -1,24 +1,24 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use serde::Serialize;
 use tracing::warn;
 
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
+    compose_contact_command_system_prompt, compose_contact_system_prompt, contact_plugin_ref,
+    contact_skill_ref, normalize_id, parse_contact_command_invocation, resolve_project_runtime,
     ChatRuntimeMetadata, ContactSelectedPluginPrompt, ContactSelectedSkillPrompt,
-    ContactSkillPromptMode, ParsedContactCommandInvocation, compose_contact_command_system_prompt,
-    compose_contact_system_prompt, contact_plugin_ref, contact_skill_ref, normalize_id,
-    parse_contact_command_invocation, resolve_project_runtime,
+    ContactSkillPromptMode, ParsedContactCommandInvocation,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{
-    McpServerBundle, contact_agent_command_reader_server, contact_agent_plugin_reader_server,
+    contact_agent_command_reader_server, contact_agent_plugin_reader_server,
     contact_agent_skill_reader_server, empty_mcp_server_bundle, has_any_mcp_server,
-    load_mcp_servers_by_selection, normalize_mcp_ids,
+    load_mcp_servers_by_selection, normalize_mcp_ids, McpServerBundle,
 };
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto;

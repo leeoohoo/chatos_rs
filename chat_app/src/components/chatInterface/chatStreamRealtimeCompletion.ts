@@ -7,11 +7,15 @@ import {
   buildRealtimeCompletionKey,
   resolveActiveStreamContext,
   resolveLatestStreamedText,
+  resolvePersistedRealtimeStreamContext,
   resolvePersistedTurnMessages,
   resolvePayloadConversationTurnId,
   shouldFinalizeRealtimeTerminalEvent,
 } from './chatStreamRealtimeBridgeState';
-import { settleRealtimeTerminalEvent } from './chatStreamRealtimeTerminalState';
+import {
+  applyRealtimeTerminalMessages,
+  settleRealtimeTerminalEvent,
+} from './chatStreamRealtimeTerminalState';
 
 export const handleChatStreamRealtimeCompletion = async ({
   payload,
@@ -32,14 +36,113 @@ export const handleChatStreamRealtimeCompletion = async ({
   }
   const parsed = asRealtimeParsedEvent(payload);
   const currentState = storeGetState();
-  const active = resolveActiveStreamContext(currentState, payloadSessionId);
+  const payloadTurnId = resolvePayloadConversationTurnId(payload);
+  const persisted = resolvePersistedTurnMessages(payload.raw, payloadSessionId);
+  const active = resolveActiveStreamContext(currentState, payloadSessionId)
+    || (
+      (persisted.persistedUserMessage || persisted.persistedAssistantMessage)
+        ? resolvePersistedRealtimeStreamContext(currentState, payloadSessionId, {
+          payloadTurnId,
+          payloadUserMessageId: payload.user_message_id,
+          persistedUserMessage: persisted.persistedUserMessage,
+          persistedAssistantMessage: persisted.persistedAssistantMessage,
+        })
+        : null
+    );
   if (!active) {
     return;
   }
-  const payloadTurnId = resolvePayloadConversationTurnId(payload);
-  if (payloadTurnId && payloadTurnId !== active.conversationTurnId) {
+  if (payloadTurnId && active.conversationTurnId && payloadTurnId !== active.conversationTurnId) {
     return;
   }
+
+  const terminalKind = parsed.type === 'cancelled'
+    ? 'cancelled'
+    : (
+      parsed.type === 'error'
+        ? 'error'
+        : (
+          parsed.type === 'done' || parsed.type === 'complete'
+            ? 'done'
+            : null
+        )
+    );
+
+  const finalizeWithoutDraft = async () => {
+    if (!terminalKind) {
+      return;
+    }
+    const completionKey = buildRealtimeCompletionKey(
+      active.sessionId,
+      active.tempAssistantMessageId,
+      terminalKind === 'done' ? 'done' : terminalKind,
+      terminalKind === 'done' ? payload.stream_type : null,
+      payload.raw.timestamp,
+    );
+    if (!shouldFinalizeRealtimeTerminalEvent(processedCompletionKeysRef.current, completionKey)) {
+      return;
+    }
+
+    if (!active.conversationTurnId) {
+      if (persisted.persistedUserMessage || persisted.persistedAssistantMessage) {
+        applyRealtimeTerminalMessages(chatStoreSet, {
+          sessionId: active.sessionId,
+          turnId: '',
+          tempAssistantMessageId: active.tempAssistantMessageId,
+          tempUserId: active.tempUserId,
+        }, persisted);
+      }
+      const latest = storeGetState();
+      if (typeof latest.syncSessionMessagesInBackground === 'function') {
+        await latest.syncSessionMessagesInBackground(active.sessionId);
+      }
+      return;
+    }
+
+    const fallbackAssistantMessage = (
+      persisted.persistedAssistantMessage
+      || currentState.sessionStreamingMessageDrafts?.[active.sessionId]
+      || currentState.messages.find((message) => message.id === active.tempAssistantMessageId)
+      || {
+        id: active.tempAssistantMessageId,
+        sessionId: active.sessionId,
+        role: 'assistant' as const,
+        content: '',
+        status: 'error' as const,
+        createdAt: new Date(),
+        metadata: {
+          ...(active.tempUserId ? { historyFinalForUserMessageId: active.tempUserId } : {}),
+          ...(active.conversationTurnId ? { conversation_turn_id: active.conversationTurnId } : {}),
+        },
+      }
+    );
+
+    await settleRealtimeTerminalEvent(
+      apiClient,
+      chatStoreSet,
+      () => storeGetState() as ChatStoreDraft,
+      {
+        sessionId: active.sessionId,
+        turnId: active.conversationTurnId,
+        tempAssistantMessageId: active.tempAssistantMessageId,
+        tempUserId: active.tempUserId,
+      },
+      persisted,
+      terminalKind === 'error' || terminalKind === 'cancelled'
+        ? {
+          kind: 'failure',
+          tempAssistantMessage: fallbackAssistantMessage,
+          failureContent: typeof fallbackAssistantMessage.content === 'string' && fallbackAssistantMessage.content.trim().length > 0
+            ? fallbackAssistantMessage.content
+            : 'Request failed',
+          readableError: typeof payload.raw.message === 'string' && payload.raw.message.trim().length > 0
+            ? payload.raw.message
+            : 'Request failed',
+        }
+        : { kind: 'success' },
+    );
+  };
+
   active.streamedTextRef.value = resolveLatestStreamedText(
     currentState as Pick<ChatStoreDraft, 'sessionStreamingMessageDrafts'>,
     active.sessionId,
@@ -48,6 +151,7 @@ export const handleChatStreamRealtimeCompletion = async ({
 
   const tempAssistantMessage = currentState.sessionStreamingMessageDrafts?.[active.sessionId];
   if (!tempAssistantMessage || typeof tempAssistantMessage !== 'object' || typeof tempAssistantMessage.id !== 'string') {
+    await finalizeWithoutDraft();
     return;
   }
   const terminalContext = {
@@ -87,7 +191,6 @@ export const handleChatStreamRealtimeCompletion = async ({
         payload.raw.timestamp,
       );
       if (shouldFinalizeRealtimeTerminalEvent(processedCompletionKeysRef.current, cancellationKey)) {
-        const persisted = resolvePersistedTurnMessages(payload.raw, active.sessionId);
         void settleRealtimeTerminalEvent(
           apiClient,
           chatStoreSet,
@@ -110,7 +213,6 @@ export const handleChatStreamRealtimeCompletion = async ({
         payload.raw.timestamp,
       );
       if (shouldFinalizeRealtimeTerminalEvent(processedCompletionKeysRef.current, completionKey)) {
-        const persisted = resolvePersistedTurnMessages(payload.raw, active.sessionId);
         void settleRealtimeTerminalEvent(
           apiClient,
           chatStoreSet,
@@ -132,7 +234,6 @@ export const handleChatStreamRealtimeCompletion = async ({
       payload.raw.timestamp,
     );
     if (shouldFinalizeRealtimeTerminalEvent(processedCompletionKeysRef.current, completionKey)) {
-      const persisted = resolvePersistedTurnMessages(payload.raw, active.sessionId);
       const { failureContent, readableError } = buildSendMessageFailure(
         error,
         active.streamedTextRef.value,

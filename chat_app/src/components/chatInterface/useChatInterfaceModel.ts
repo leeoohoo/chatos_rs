@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { useSessionRuntimeSettings } from '../../features/sessionRuntime/useSessionRuntimeSettings';
 import { useI18n } from '../../i18n/I18nProvider';
-import { isTaskRunnerAsyncMessage } from '../../lib/domain/messages';
 import type { ChatInterfaceProps } from '../../types';
 import { useChatInterfaceController } from './useChatInterfaceController';
 import { useChatInterfaceDerivedState } from './useChatInterfaceDerivedState';
@@ -68,16 +67,12 @@ export const useChatInterfaceModel = ({
     const currentContactId = typeof derived.currentContactId === 'string'
       ? derived.currentContactId.trim()
       : '';
-    if (currentContactId) {
-      const matchedContact = (store.contacts || []).find((contact) => contact?.id === currentContactId) || null;
-      if (matchedContact?.taskRunner?.enabled) {
-        return true;
-      }
+    if (!currentContactId) {
+      return false;
     }
-
-    return Array.isArray(store.messages)
-      && store.messages.some((message) => isTaskRunnerAsyncMessage(message));
-  }, [derived.currentContactId, store.contacts, store.messages]);
+    const matchedContact = (store.contacts || []).find((contact) => contact?.id === currentContactId) || null;
+    return matchedContact?.taskRunner?.enabled === true;
+  }, [derived.currentContactId, store.contacts]);
 
   const resources = useChatInterfaceSessionResources({
     apiClient: store.apiClient,
