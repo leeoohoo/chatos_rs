@@ -273,8 +273,13 @@ impl RunService {
             match self.prepare_prerequisite_context(&task, &run, &input).await {
                 Ok(context) => context,
                 Err(err) => {
-                    self.finish_blocked_by_prerequisite(&task, &mut run, err)
-                        .await;
+                    self.finish_blocked_by_prerequisite(
+                        &task,
+                        &mut run,
+                        effective_workspace_dir.as_str(),
+                        err,
+                    )
+                    .await;
                     return;
                 }
             };

@@ -46,6 +46,7 @@ mod task_dependencies;
 mod task_manager_bridge;
 mod task_memory;
 mod task_process_log;
+mod terminal_lifecycle;
 mod tooling_state;
 mod workspace_mcp;
 

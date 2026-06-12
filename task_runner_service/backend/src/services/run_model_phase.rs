@@ -53,7 +53,8 @@ impl RunService {
             "task runner begin execute_run"
         );
         if self.store.is_cancel_requested(&run.id) {
-            self.finish_cancelled_before_start(&task, &mut run).await;
+            self.finish_cancelled_before_start(&task, &mut run, effective_workspace_dir.as_str())
+                .await;
             return;
         }
 
@@ -94,6 +95,8 @@ impl RunService {
                 );
             }
         }
+        self.ensure_task_terminal_started(&task, &run, effective_workspace_dir.as_str())
+            .await;
 
         let prompt = build_task_prompt(
             &task,
@@ -156,6 +159,7 @@ impl RunService {
                 self.finish_failed_before_execution(
                     &task,
                     &mut run,
+                    effective_workspace_dir.as_str(),
                     format!("加载运行时配置失败: {err}"),
                 )
                 .await;
@@ -169,6 +173,7 @@ impl RunService {
                     self.finish_failed_before_execution(
                         &task,
                         &mut run,
+                        effective_workspace_dir.as_str(),
                         format!("加载运行时配置失败: {err}"),
                     )
                     .await;
@@ -206,7 +211,7 @@ impl RunService {
             }
         }
         let selected_builtin_kinds = selected_builtin_kinds(&task.mcp_config);
-        let mut server_options = BuiltinMcpServerOptions::new(effective_workspace_dir)
+        let mut server_options = BuiltinMcpServerOptions::new(effective_workspace_dir.clone())
             .with_user_id(task.subject_id.clone())
             .with_project_id(task.id.clone())
             .with_auto_create_task(true);
@@ -465,6 +470,8 @@ impl RunService {
             }
         }
         self.try_send_terminal_callback(task.id.as_str(), &run)
+            .await;
+        self.cleanup_task_terminals(&task, &run, effective_workspace_dir.as_str())
             .await;
 
         if matches!(run.status, TaskRunStatus::Succeeded)

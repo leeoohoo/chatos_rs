@@ -303,7 +303,7 @@ pub async fn list_chatos_compact_turns(
 ) -> Result<CompactTurnsResponse, String> {
     let mapping = build_thread_mapping(session)?;
     let client = build_client()?;
-    let mut page = client
+    client
         .list_compact_turns(
             mapping.thread_id.as_str(),
             &SdkListCompactTurnsRequest {
@@ -313,22 +313,7 @@ pub async fn list_chatos_compact_turns(
                 before_turn_id: before_turn_id.map(ToOwned::to_owned),
             },
         )
-        .await?;
-
-    for index in 0..page.items.len() {
-        let turn_id = page.items[index].turn_id.clone();
-        let hidden_final = page.items[index]
-            .final_assistant_record
-            .as_ref()
-            .map(|record| message_is_hidden(&engine_record_to_message(record.clone())))
-            .unwrap_or(false);
-        if hidden_final {
-            let visible = select_visible_final_assistant_record(session, turn_id.as_str()).await?;
-            page.items[index].final_assistant_record = visible;
-        }
-    }
-
-    Ok(page)
+        .await
 }
 
 pub async fn get_chatos_turn_process_records(
@@ -376,25 +361,6 @@ pub async fn get_chatos_message_by_id_in_session(
         .await?
         .map(engine_record_to_message);
     Ok(message.filter(|message| !message_is_hidden(message)))
-}
-
-async fn select_visible_final_assistant_record(
-    session: &Session,
-    turn_id: &str,
-) -> Result<Option<memory_engine_sdk::EngineRecord>, String> {
-    let records = get_chatos_turn_process_records(session, turn_id)
-        .await?
-        .items;
-    for record in records.iter().rev() {
-        if record.role != "assistant" {
-            continue;
-        }
-        if record.content.trim().is_empty() {
-            continue;
-        }
-        return Ok(Some(record.clone()));
-    }
-    Ok(None)
 }
 
 pub async fn upsert_chatos_message(

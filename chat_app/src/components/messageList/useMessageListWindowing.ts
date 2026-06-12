@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { Message } from '../../types';
 
@@ -9,6 +9,14 @@ const MESSAGE_WINDOW_MAX_SIZE = 72;
 const MESSAGE_WINDOW_OVERSCAN_ROWS = 6;
 const MESSAGE_WINDOW_THRESHOLD_EXTRA = 8;
 const SESSION_INITIAL_BOTTOM_LOCK_FRAMES = 10;
+
+type ScrollSnapshot = {
+  firstMessageId: string;
+  lastMessageId: string;
+  scrollHeight: number;
+  scrollTop: number;
+  sessionId: string;
+};
 
 interface UseMessageListWindowingParams {
   sessionId?: string | null;
@@ -38,6 +46,7 @@ export const useMessageListWindowing = ({
   const pendingSessionBottomLockFramesRef = useRef<number>(0);
   const expandingWindowRef = useRef(false);
   const prevVisibleCountRef = useRef(0);
+  const scrollSnapshotRef = useRef<ScrollSnapshot | null>(null);
 
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
@@ -66,6 +75,8 @@ export const useMessageListWindowing = ({
   useEffect(() => {
     pendingSessionInitialScrollRef.current = true;
     pendingSessionBottomLockFramesRef.current = SESSION_INITIAL_BOTTOM_LOCK_FRAMES;
+    prevVisibleCountRef.current = 0;
+    scrollSnapshotRef.current = null;
     if (initialScrollRafRef.current !== null) {
       cancelAnimationFrame(initialScrollRafRef.current);
       initialScrollRafRef.current = null;
@@ -177,8 +188,49 @@ export const useMessageListWindowing = ({
       setRenderStartIndex(0);
       return;
     }
+    if (!pendingSessionInitialScrollRef.current && !isStreaming && !autoScroll && !isAtBottom) {
+      return;
+    }
     setRenderStartIndex(Math.max(0, nextCount - windowSize));
-  }, [sessionId, visibleMessages.length, windowSize, windowThreshold]);
+  }, [sessionId, visibleMessages.length, windowSize, windowThreshold, isStreaming, autoScroll, isAtBottom]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) {
+      scrollSnapshotRef.current = null;
+      return;
+    }
+
+    const firstMessageId = visibleMessages[0]?.id || '';
+    const lastMessageId = visibleMessages[visibleMessages.length - 1]?.id || '';
+    const previous = scrollSnapshotRef.current;
+
+    if (
+      previous
+      && previous.sessionId === (sessionId || '')
+      && !pendingSessionInitialScrollRef.current
+      && firstMessageId
+      && previous.firstMessageId
+      && firstMessageId !== previous.firstMessageId
+    ) {
+      const previousFirstIndex = visibleMessages.findIndex((message) => message.id === previous.firstMessageId);
+      const sameTail = !previous.lastMessageId || previous.lastMessageId === lastMessageId;
+      if (previousFirstIndex > 0 && sameTail) {
+        const heightDelta = element.scrollHeight - previous.scrollHeight;
+        if (heightDelta !== 0) {
+          element.scrollTop = previous.scrollTop + heightDelta;
+        }
+      }
+    }
+
+    scrollSnapshotRef.current = {
+      firstMessageId,
+      lastMessageId,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+      sessionId: sessionId || '',
+    };
+  }, [sessionId, visibleMessages, renderedMessages.length, boundedRenderStartIndex]);
 
   const expandRenderedWindow = useCallback(() => {
     if (!shouldWindowMessages || boundedRenderStartIndex <= 0) {

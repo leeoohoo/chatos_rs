@@ -332,6 +332,7 @@ impl RunService {
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
+        workspace_dir: &str,
         message: String,
     ) {
         run.status = TaskRunStatus::Blocked;
@@ -368,12 +369,14 @@ impl RunService {
             }
         }
         self.try_send_terminal_callback(task.id.as_str(), run).await;
+        self.cleanup_task_terminals(task, run, workspace_dir).await;
     }
 
     pub(super) async fn finish_failed_before_execution(
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
+        workspace_dir: &str,
         message: String,
     ) {
         run.status = TaskRunStatus::Failed;
@@ -407,5 +410,6 @@ impl RunService {
             }
         }
         self.try_send_terminal_callback(task.id.as_str(), run).await;
+        self.cleanup_task_terminals(task, run, workspace_dir).await;
     }
 }

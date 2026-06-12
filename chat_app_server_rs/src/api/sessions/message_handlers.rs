@@ -1,14 +1,14 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
 use crate::api::conversation_semantics::rewrite_session_keys_to_conversation;
 use crate::core::auth::AuthUser;
 use crate::core::messages::{
-    build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
+    MessageOut, NewMessageFields, build_message, create_message_and_maybe_rename,
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
@@ -18,7 +18,8 @@ use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use super::contracts::CompactHistoryQuery;
 use super::contracts::{CreateMessageRequest, PageQuery};
 use super::history::{
-    build_turn_display_messages, compact_messages_for_display, parse_bool_query_flag,
+    build_compact_history_messages_from_turn_slices, build_turn_display_messages,
+    compact_messages_for_display, parse_bool_query_flag,
 };
 use super::history_process::find_user_index_by_turn_id;
 use super::support::list_all_session_messages;
@@ -161,26 +162,28 @@ pub(super) async fn get_session_compact_history(
     }
 
     let limit = parse_positive_limit(query.limit);
-    let all_messages = match list_all_session_messages(&conversation_id).await {
-        Ok(messages) => messages,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to get compact history",
-                    "detail": err,
-                })),
-            );
-        }
-    };
-    let compact_all = compact_messages_for_display(all_messages.clone(), None, 0);
-    let offset = parse_compact_history_offset(query.before.as_deref(), &compact_all);
-    let page_messages = compact_messages_for_display(all_messages, limit, offset);
-    let next_offset = offset + page_messages.len() as i64;
-    let has_more = next_offset < compact_all.len() as i64;
-    let next_before = has_more.then(|| format!("offset:{next_offset}"));
+    let before_turn_id = query
+        .before
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let page =
+        match conversation_messages::list_compact_turns(&conversation_id, limit, before_turn_id)
+            .await
+        {
+            Ok(page) => page,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "Failed to get compact history",
+                        "detail": err,
+                    })),
+                );
+            }
+        };
 
-    let items: Vec<Value> = page_messages
+    let items: Vec<Value> = build_compact_history_messages_from_turn_slices(page.items)
         .into_iter()
         .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
         .collect();
@@ -188,8 +191,8 @@ pub(super) async fn get_session_compact_history(
         StatusCode::OK,
         Json(serde_json::json!({
             "items": items,
-            "has_more": has_more,
-            "next_before": next_before,
+            "has_more": page.has_more,
+            "next_before": page.next_before,
         })),
     )
 }

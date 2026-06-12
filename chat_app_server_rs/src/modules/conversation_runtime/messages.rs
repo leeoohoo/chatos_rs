@@ -3,6 +3,7 @@ use crate::models::memory_runtime_types::TurnRuntimeSnapshotLookupResponseDto;
 use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::services::chatos_sessions;
+use memory_engine_sdk::CompactTurnsResponse;
 use serde_json::Value;
 
 const FULL_SESSION_MESSAGES_PAGE_SIZE: i64 = 500;
@@ -33,6 +34,14 @@ pub async fn list_messages(
     asc: bool,
 ) -> Result<Vec<Message>, String> {
     chatos_sessions::list_messages(session_id, limit, offset, asc).await
+}
+
+pub async fn list_compact_turns(
+    session_id: &str,
+    limit: Option<i64>,
+    before_turn_id: Option<&str>,
+) -> Result<CompactTurnsResponse, String> {
+    chatos_sessions::list_compact_turns(session_id, limit, before_turn_id).await
 }
 
 pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String> {
@@ -186,7 +195,7 @@ pub async fn get_turn_runtime_snapshot_by_turn(
 mod tests {
     use serde_json::json;
 
-    use super::{append_visible_message_page, FULL_SESSION_MESSAGES_PAGE_SIZE};
+    use super::{FULL_SESSION_MESSAGES_PAGE_SIZE, append_visible_message_page};
     use crate::models::message::Message;
 
     fn build_message(id: &str, hidden: bool) -> Message {

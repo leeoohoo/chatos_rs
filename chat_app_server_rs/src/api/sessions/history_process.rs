@@ -1,5 +1,8 @@
-use crate::core::messages::{is_session_summary_message as is_session_summary, message_turn_id};
+use crate::core::messages::{
+    is_session_summary_message as is_session_summary, message_is_hidden, message_turn_id,
+};
 use crate::models::message::Message;
+use crate::services::chatos_memory_engine::engine_record_to_message;
 
 use super::history_process_support::{
     attach_user_history_process_metadata, build_embedded_process_message,
@@ -96,6 +99,50 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
         for index in callback_updates {
             let mut assistant = messages[index].clone();
             normalize_task_runner_callback_for_display(&mut assistant);
+            compact.push(assistant);
+        }
+    }
+
+    compact
+}
+
+pub(super) fn build_compact_history_messages_from_turn_slices(
+    slices: Vec<memory_engine_sdk::TurnRecordSlice>,
+) -> Vec<Message> {
+    let mut compact = Vec::new();
+
+    for slice in slices {
+        let mut user_message = engine_record_to_message(slice.user_record);
+        if message_is_hidden(&user_message) {
+            continue;
+        }
+
+        let user_message_id = user_message.id.clone();
+        let final_assistant = slice
+            .final_assistant_record
+            .map(engine_record_to_message)
+            .filter(|message| !message_is_hidden(message));
+        let final_assistant_message_id = final_assistant.as_ref().map(|message| message.id.clone());
+        attach_user_history_process_metadata(
+            &mut user_message,
+            slice.has_process,
+            slice.tool_call_count,
+            slice.thinking_count,
+            slice.process_message_count,
+            final_assistant_message_id,
+        );
+        normalize_task_runner_async_user_status_for_display(
+            &mut user_message,
+            final_assistant.is_some(),
+        );
+        compact.push(user_message);
+
+        if let Some(mut assistant) = final_assistant {
+            if is_task_runner_callback_message(&assistant) {
+                normalize_task_runner_callback_for_display(&mut assistant);
+            } else {
+                strip_assistant_for_compact_history(&mut assistant, &user_message_id);
+            }
             compact.push(assistant);
         }
     }
@@ -238,7 +285,10 @@ pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usiz
 mod tests {
     use serde_json::json;
 
-    use super::{build_compact_history_messages, build_turn_display_messages};
+    use super::{
+        build_compact_history_messages, build_compact_history_messages_from_turn_slices,
+        build_turn_display_messages,
+    };
     use crate::models::message::Message;
 
     fn build_message(role: &str, content: &str) -> Message {
@@ -247,6 +297,32 @@ mod tests {
             role.to_string(),
             content.to_string(),
         )
+    }
+
+    fn build_engine_record(
+        id: &str,
+        role: &str,
+        content: &str,
+        turn_id: &str,
+    ) -> memory_engine_sdk::EngineRecord {
+        memory_engine_sdk::EngineRecord {
+            id: id.to_string(),
+            thread_id: "session-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "chatos".to_string(),
+            external_record_id: None,
+            role: role.to_string(),
+            record_type: "message".to_string(),
+            content: content.to_string(),
+            structured_payload: None,
+            metadata: Some(json!({
+                "conversation_turn_id": turn_id
+            })),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-06-12T00:00:00Z".to_string(),
+        }
     }
 
     #[test]
@@ -319,6 +395,52 @@ mod tests {
                 .and_then(|value| value.get("overall_status"))
                 .and_then(|value| value.as_str()),
             Some("completed")
+        );
+    }
+
+    #[test]
+    fn compact_history_from_turn_slices_adds_process_metadata_and_final_link() {
+        let user = build_engine_record("user-1", "user", "help", "turn-1");
+        let assistant = build_engine_record("assistant-1", "assistant", "done", "turn-1");
+
+        let compact = build_compact_history_messages_from_turn_slices(vec![
+            memory_engine_sdk::TurnRecordSlice {
+                turn_id: "turn-1".to_string(),
+                user_record: user,
+                final_assistant_record: Some(assistant),
+                has_process: true,
+                tool_call_count: 2,
+                thinking_count: 1,
+                process_message_count: 3,
+            },
+        ]);
+
+        assert_eq!(compact.len(), 2);
+        assert_eq!(
+            compact[0]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("historyProcess"))
+                .and_then(|value| value.get("toolCallCount"))
+                .and_then(|value| value.as_u64()),
+            Some(2)
+        );
+        assert_eq!(
+            compact[0]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("historyProcess"))
+                .and_then(|value| value.get("finalAssistantMessageId"))
+                .and_then(|value| value.as_str()),
+            Some("assistant-1")
+        );
+        assert_eq!(
+            compact[1]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("historyFinalForUserMessageId"))
+                .and_then(|value| value.as_str()),
+            Some("user-1")
         );
     }
 

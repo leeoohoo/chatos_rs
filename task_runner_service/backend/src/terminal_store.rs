@@ -49,6 +49,104 @@ static TERMINAL_STATE: OnceLock<Arc<TerminalRuntimeState>> = OnceLock::new();
 #[derive(Debug, Clone, Default)]
 pub struct TaskRunnerTerminalControllerStore;
 
+impl TaskRunnerTerminalControllerStore {
+    pub async fn start_shell_session(
+        &self,
+        context: TerminalControllerContext,
+        path: String,
+    ) -> Result<Value, String> {
+        let project_root = canonicalize_existing(context.root.as_path())?;
+        let target_path = resolve_target_path(project_root.as_path(), path.as_str())?;
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+
+        let child = Command::new(shell.as_str())
+            .current_dir(&target_path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|err| err.to_string())?;
+
+        let session = register_session(
+            context.clone(),
+            target_path.clone(),
+            format!("task terminal shell: {shell}"),
+            child,
+        )
+        .await?;
+        append_log(
+            session.clone(),
+            "system",
+            "[task terminal shell started]\n".to_string(),
+        )
+        .await;
+        let meta = session.meta.lock().await.clone();
+        Ok(json!({
+            "project_root": project_root.to_string_lossy(),
+            "terminal_id": meta.id,
+            "process_id": meta.id,
+            "path": target_path.to_string_lossy(),
+            "command": meta.command,
+            "background": true,
+            "busy": true,
+            "status": meta.status,
+            "started_at": meta.started_at,
+            "project_id": meta.project_id,
+            "user_id": meta.user_id,
+        }))
+    }
+
+    pub async fn kill_sessions_for_context(
+        &self,
+        context: TerminalControllerContext,
+    ) -> Result<Value, String> {
+        let sessions = sessions_for_context(&context).await?;
+        let total = sessions.len();
+        let mut killed = 0usize;
+        let mut already_exited = 0usize;
+        let mut errors = Vec::new();
+        let mut terminal_ids = Vec::new();
+
+        for session in sessions {
+            if let Err(err) = refresh_session_status(&session).await {
+                errors.push(err);
+                continue;
+            }
+            let meta = session.meta.lock().await.clone();
+            terminal_ids.push(meta.id.clone());
+            if meta.status == "exited" {
+                already_exited += 1;
+                continue;
+            }
+            {
+                let mut child = session.child.lock().await;
+                if let Err(err) = child.kill().await {
+                    errors.push(format!("kill {} failed: {}", meta.id, err));
+                    continue;
+                }
+                let _ = child.wait().await;
+            }
+            mark_session_exited(&session, None).await;
+            append_log(
+                session.clone(),
+                "system",
+                "[task terminal cleanup killed process]\n".to_string(),
+            )
+            .await;
+            killed += 1;
+        }
+
+        Ok(json!({
+            "ok": errors.is_empty(),
+            "total": total,
+            "killed": killed,
+            "already_exited": already_exited,
+            "terminal_ids": terminal_ids,
+            "errors": errors,
+        }))
+    }
+}
+
 #[async_trait]
 impl TerminalControllerStore for TaskRunnerTerminalControllerStore {
     async fn execute_command(
@@ -72,41 +170,10 @@ impl TerminalControllerStore for TaskRunnerTerminalControllerStore {
             .spawn()
             .map_err(|err| err.to_string())?;
 
-        let session_id = Uuid::new_v4().to_string();
-        let now = now_rfc3339();
-        let session = Arc::new(TerminalSession {
-            meta: Mutex::new(TerminalSessionMeta {
-                id: session_id.clone(),
-                cwd: target_path.to_string_lossy().to_string(),
-                project_id: context.project_id.clone(),
-                user_id: context.user_id.clone(),
-                command: command.clone(),
-                started_at: now.clone(),
-                last_active_at: now.clone(),
-                finished_at: None,
-                status: "running".to_string(),
-                exit_code: None,
-            }),
-            child: Mutex::new(child),
-            logs: Mutex::new(Vec::new()),
-        });
-
-        {
-            let mut child_guard = session.child.lock().await;
-            if let Some(stdout) = child_guard.stdout.take() {
-                spawn_stream_reader(session.clone(), stdout, "stdout");
-            }
-            if let Some(stderr) = child_guard.stderr.take() {
-                spawn_stream_reader(session.clone(), stderr, "stderr");
-            }
-        }
-
+        let session =
+            register_session(context.clone(), target_path.clone(), command.clone(), child).await?;
         append_log(session.clone(), "command", command.clone()).await;
-        terminal_state()
-            .sessions
-            .write()
-            .await
-            .insert(session_id.clone(), session.clone());
+        let session_id = session.meta.lock().await.id.clone();
 
         if background {
             return Ok(json!({
@@ -414,6 +481,47 @@ fn terminal_state() -> &'static Arc<TerminalRuntimeState> {
     TERMINAL_STATE.get_or_init(|| Arc::new(TerminalRuntimeState::default()))
 }
 
+async fn register_session(
+    context: TerminalControllerContext,
+    target_path: PathBuf,
+    command: String,
+    mut child: Child,
+) -> Result<Arc<TerminalSession>, String> {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let session_id = Uuid::new_v4().to_string();
+    let now = now_rfc3339();
+    let session = Arc::new(TerminalSession {
+        meta: Mutex::new(TerminalSessionMeta {
+            id: session_id.clone(),
+            cwd: target_path.to_string_lossy().to_string(),
+            project_id: context.project_id.clone(),
+            user_id: context.user_id.clone(),
+            command,
+            started_at: now.clone(),
+            last_active_at: now.clone(),
+            finished_at: None,
+            status: "running".to_string(),
+            exit_code: None,
+        }),
+        child: Mutex::new(child),
+        logs: Mutex::new(Vec::new()),
+    });
+
+    if let Some(stdout) = stdout {
+        spawn_stream_reader(session.clone(), stdout, "stdout");
+    }
+    if let Some(stderr) = stderr {
+        spawn_stream_reader(session.clone(), stderr, "stderr");
+    }
+    terminal_state()
+        .sessions
+        .write()
+        .await
+        .insert(session_id, session.clone());
+    Ok(session)
+}
+
 fn spawn_stream_reader<R>(session: Arc<TerminalSession>, mut reader: R, kind: &'static str)
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -685,4 +793,63 @@ fn resolve_target_path(root: &Path, path_input: &str) -> Result<PathBuf, String>
 
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use chatos_builtin_tools::TerminalControllerStore;
+
+    use super::*;
+
+    fn unique_id(prefix: &str) -> String {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or(0);
+        format!("{prefix}-{}-{unique}", std::process::id())
+    }
+
+    fn test_context(root: PathBuf, project_id: String) -> TerminalControllerContext {
+        TerminalControllerContext {
+            root,
+            user_id: Some(unique_id("user")),
+            project_id: Some(project_id),
+            idle_timeout_ms: 1_000,
+            max_wait_ms: 1_000,
+            max_output_chars: 4_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn kill_sessions_for_context_stops_running_task_sessions() {
+        let root = std::env::temp_dir().join(unique_id("task-terminal-cleanup"));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let store = TaskRunnerTerminalControllerStore;
+        let context = test_context(root, unique_id("project"));
+
+        let started = store
+            .execute_command(
+                context.clone(),
+                ".".to_string(),
+                "sleep 60".to_string(),
+                true,
+            )
+            .await
+            .expect("start background command");
+        assert_eq!(started.get("busy").and_then(Value::as_bool), Some(true));
+
+        let cleanup = store
+            .kill_sessions_for_context(context.clone())
+            .await
+            .expect("cleanup sessions");
+        assert_eq!(cleanup.get("killed").and_then(Value::as_u64), Some(1));
+
+        let listed = store
+            .process_list(context, false, 10)
+            .await
+            .expect("list running sessions");
+        assert_eq!(listed.get("process_count").and_then(Value::as_u64), Some(0));
+    }
 }

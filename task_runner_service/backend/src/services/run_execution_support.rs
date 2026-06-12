@@ -70,6 +70,7 @@ impl RunService {
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
+        workspace_dir: &str,
     ) {
         run.status = TaskRunStatus::Cancelled;
         run.cancel_requested = false;
@@ -104,6 +105,7 @@ impl RunService {
             }
         }
         self.try_send_terminal_callback(task.id.as_str(), run).await;
+        self.cleanup_task_terminals(task, run, workspace_dir).await;
         self.store.clear_cancel_requested(&run.id);
     }
 

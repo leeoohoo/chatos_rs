@@ -8,6 +8,7 @@ use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::chatos_memory_engine;
+use memory_engine_sdk::CompactTurnsResponse;
 
 pub async fn list_sessions(
     user_id: Option<&str>,
@@ -117,6 +118,15 @@ pub async fn list_messages_including_hidden(
 ) -> Result<Vec<Message>, String> {
     let session = get_required_session(session_id).await?;
     chatos_memory_engine::list_chatos_messages_including_hidden(&session, limit, offset, asc).await
+}
+
+pub async fn list_compact_turns(
+    session_id: &str,
+    limit: Option<i64>,
+    before_turn_id: Option<&str>,
+) -> Result<CompactTurnsResponse, String> {
+    let session = get_required_session(session_id).await?;
+    chatos_memory_engine::list_chatos_compact_turns(&session, limit, before_turn_id).await
 }
 
 pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String> {
