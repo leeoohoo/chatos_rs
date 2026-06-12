@@ -53,13 +53,13 @@ pub(in super::super) async fn download_entry(
         let content_length = match fs::metadata(&path) {
             Ok(metadata) => Some(metadata.len()),
             Err(err) => {
-                return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
             }
         };
         let file = match tokio::fs::File::open(&path).await {
             Ok(file) => file,
             Err(err) => {
-                return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
             }
         };
         let name = infer_download_name(&path);
@@ -82,7 +82,7 @@ pub(in super::super) async fn download_entry(
                 return json_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("目录打包失败: {err}"),
-                )
+                );
             }
         };
         let content_length = match fs::metadata(&archive_path) {

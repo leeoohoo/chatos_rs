@@ -368,9 +368,6 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
 };
 
 interface InputAreaSendButtonProps {
-  isStreaming: boolean;
-  isStopping: boolean;
-  onStop?: () => void;
   onSend: () => void;
   disabled: boolean;
   canSend: boolean;
@@ -379,9 +376,6 @@ interface InputAreaSendButtonProps {
 }
 
 export const InputAreaSendButton: React.FC<InputAreaSendButtonProps> = ({
-  isStreaming,
-  isStopping,
-  onStop,
   onSend,
   disabled,
   canSend,
@@ -389,38 +383,6 @@ export const InputAreaSendButton: React.FC<InputAreaSendButtonProps> = ({
   selectedModelId,
 }) => {
   const { t } = useI18n();
-
-  if (isStreaming) {
-    return (
-      <button
-        onClick={() => {
-          if (onStop && !isStopping) {
-            onStop();
-          }
-        }}
-        disabled={isStopping}
-        className={cn(
-          'flex-shrink-0 p-2 rounded-md transition-colors',
-          isStopping
-            ? 'bg-amber-500 text-white'
-            : 'bg-red-500 text-white hover:bg-red-600',
-          'disabled:opacity-50 disabled:cursor-not-allowed'
-        )}
-        title={isStopping ? t('inputArea.send.stopping') : t('inputArea.send.stop')}
-        style={{ backgroundColor: isStopping ? '#f59e0b' : '#ef4444', color: 'white' }}
-      >
-        {isStopping ? (
-          <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3a9 9 0 109 9" />
-          </svg>
-        ) : (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
-          </svg>
-        )}
-      </button>
-    );
-  }
 
   return (
     <button

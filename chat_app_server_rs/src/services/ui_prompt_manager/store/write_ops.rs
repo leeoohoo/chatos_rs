@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
 
 use crate::repositories::db::with_db;
@@ -7,7 +7,7 @@ use crate::services::realtime::{publish_ui_prompt_updated, resolve_conversation_
 use crate::services::session_mirror::ensure_sqlite_session_present;
 use crate::services::ui_prompt_manager::normalizer::{redact_prompt_payload, trimmed_non_empty};
 use crate::services::ui_prompt_manager::types::{
-    UiPromptPayload, UiPromptRecord, UiPromptStatus, UI_PROMPT_NOT_FOUND_ERR,
+    UI_PROMPT_NOT_FOUND_ERR, UiPromptPayload, UiPromptRecord, UiPromptStatus,
 };
 
 use super::codec::{ui_prompt_record_from_doc, ui_prompt_record_to_doc};

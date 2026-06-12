@@ -86,11 +86,6 @@ export interface StreamChatLogPayload {
   project_id: string;
   project_root: string | null;
   workspace_root: string | null;
-  mcp_enabled: boolean;
-  enabled_mcp_ids: string[];
-  auto_create_task: boolean;
-  skills_enabled: boolean;
-  selected_skill_ids: string[];
 }
 
 export interface StreamChatRuntimeOptions {
@@ -100,11 +95,6 @@ export interface StreamChatRuntimeOptions {
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  autoCreateTask: boolean;
-  skillsEnabled: boolean;
-  selectedSkillIds: string[];
 }
 
 export interface StreamEventPayload {

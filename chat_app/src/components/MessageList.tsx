@@ -45,8 +45,6 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   assistantContactName = null,
   hasMore = false,
   onLoadMore,
-  onToggleTurnProcess,
-  hideHistoryProcessSummary = false,
   onMessageEdit,
   onMessageDelete,
   customRenderer,
@@ -56,8 +54,6 @@ const MessageListComponent: React.FC<MessageListProps> = ({
     dedupedVisibleMessages,
     toolResultById,
     assistantToolCallById,
-    derivedProcessStatsByUserId,
-    processSignalByUserMessageId,
     toolResultKeyByMessageId,
     toolCallLookupKeyByMessageId,
   } = useMessageListDerivedState(messages || []);
@@ -166,14 +162,10 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             assistantContactName={assistantContactName}
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
-            onToggleTurnProcess={onToggleTurnProcess}
-            hideHistoryProcessSummary={hideHistoryProcessSummary}
-            derivedProcessStatsByUserId={derivedProcessStatsByUserId}
             toolResultById={toolResultById}
             assistantToolCallsById={assistantToolCallById}
             toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
             toolCallLookupKey={toolCallLookupKeyByMessageId.get(message.id) || ''}
-            processSignal={processSignalByUserMessageId.get(message.id) || ''}
             customRenderer={customRenderer}
           />
           );
@@ -238,8 +230,6 @@ const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: Messag
   && (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null)
   && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
   && prevProps.onLoadMore === nextProps.onLoadMore
-  && prevProps.onToggleTurnProcess === nextProps.onToggleTurnProcess
-  && (prevProps.hideHistoryProcessSummary ?? false) === (nextProps.hideHistoryProcessSummary ?? false)
   && prevProps.onMessageEdit === nextProps.onMessageEdit
   && prevProps.onMessageDelete === nextProps.onMessageDelete
   && prevProps.customRenderer === nextProps.customRenderer

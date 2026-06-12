@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
@@ -11,9 +11,6 @@ use crate::services::user_settings::apply_settings_to_ai_client;
 use crate::utils::attachments::Attachment;
 
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
-use super::task_board::{
-    build_runtime_context, load_prefixed_input_items, TaskBoardRuntimeContext,
-};
 
 pub struct PreparedMcpExecution {
     pub executor: AgentMcpToolExecute,
@@ -66,15 +63,16 @@ pub async fn prepare_mcp_execution(
         unavailable_tools.as_slice(),
         runtime_context.internal_context_locale,
     );
-    let mut prefixed_input_items = if let Some(context) =
-        build_task_board_runtime_context(session_id, turn_id, runtime_context)
-    {
-        load_prefixed_input_items(&context)
-            .await
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    let _ = (session_id, turn_id);
+    let mut prefixed_input_items = Vec::new();
+    push_optional_system_prompt(
+        &mut prefixed_input_items,
+        runtime_context.contact_system_prompt.as_deref(),
+    );
+    push_optional_system_prompt(
+        &mut prefixed_input_items,
+        runtime_context.task_runner_skill_prompt.as_deref(),
+    );
     if let Some(workspace_prompt) = build_workspace_global_prompt(runtime_context) {
         prefixed_input_items.push(system_input_item(workspace_prompt.as_str()));
     }
@@ -88,23 +86,11 @@ pub async fn prepare_mcp_execution(
     }
 }
 
-pub fn build_task_board_runtime_context(
-    session_id: &str,
-    turn_id: &str,
-    runtime_context: &ResolvedConversationRuntimeContext,
-) -> Option<TaskBoardRuntimeContext> {
-    if runtime_context.task_runner_async_contact_mode {
-        return None;
-    }
-    build_runtime_context(
-        Some(session_id.to_string()),
-        Some(turn_id.to_string()),
-        runtime_context.internal_context_locale,
-        runtime_context.contact_system_prompt.clone(),
-        runtime_context.builtin_mcp_system_prompt.clone(),
-        runtime_context.command_system_prompt.clone(),
-        runtime_context.task_runner_skill_prompt.clone(),
-    )
+fn push_optional_system_prompt(items: &mut Vec<Value>, content: Option<&str>) {
+    let Some(content) = normalize_prompt_text(content) else {
+        return;
+    };
+    items.push(system_input_item(content));
 }
 
 fn build_workspace_global_prompt(
@@ -146,8 +132,8 @@ fn system_input_item(text: &str) -> Value {
 
 pub fn configure_agent_ai_server(
     ai_server: &mut AgentAiServer,
-    session_id: &str,
-    turn_id: &str,
+    _session_id: &str,
+    _turn_id: &str,
     runtime_context: &ResolvedConversationRuntimeContext,
     effective_settings: &Value,
     executor: AgentMcpToolExecute,
@@ -156,21 +142,6 @@ pub fn configure_agent_ai_server(
         ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
     }
     ai_server.set_mcp_tool_execute(executor);
-    let Some(refresh_context) =
-        build_task_board_runtime_context(session_id, turn_id, runtime_context)
-    else {
-        apply_settings_to_ai_client(&mut ai_server.ai_client, effective_settings);
-        return;
-    };
-    ai_server.ai_client.set_task_board_refresh_context(
-        Some(refresh_context.session_id),
-        refresh_context.turn_id,
-        refresh_context.locale,
-        refresh_context.contact_system_prompt,
-        refresh_context.builtin_mcp_system_prompt,
-        refresh_context.command_system_prompt,
-        refresh_context.task_runner_skill_prompt,
-    );
     apply_settings_to_ai_client(&mut ai_server.ai_client, effective_settings);
 }
 
@@ -194,11 +165,7 @@ pub fn build_agent_chat_options(
         callbacks: Some(input.callbacks),
         turn_id: Some(input.turn_id),
         user_message_id: Some(input.user_message_id),
-        message_mode: Some(if runtime_context.task_runner_async_contact_mode {
-            TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string()
-        } else {
-            "model".to_string()
-        }),
+        message_mode: Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string()),
         message_source: Some(input.message_source),
         prefixed_input_items: Some(prefixed_input_items),
         request_cwd: if model_runtime.use_codex_gateway_mcp_passthrough {

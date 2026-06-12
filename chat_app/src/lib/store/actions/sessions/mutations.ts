@@ -22,23 +22,14 @@ export function createSessionMutationActions({
 }: SessionActionDeps) {
   const removeSessionStateLocally = (state: ChatStoreDraft, sessionId: string) => {
     state.sessions = (state.sessions || []).filter((session) => session.id !== sessionId);
-    if (state.sessionStreamingMessageDrafts && sessionId in state.sessionStreamingMessageDrafts) {
-      delete state.sessionStreamingMessageDrafts[sessionId];
-    }
     if (state.sessionChatState && sessionId in state.sessionChatState) {
       delete state.sessionChatState[sessionId];
-    }
-    if (state.sessionTurnProcessCache && sessionId in state.sessionTurnProcessCache) {
-      delete state.sessionTurnProcessCache[sessionId];
     }
     if (state.sessionAiSelectionBySession && sessionId in state.sessionAiSelectionBySession) {
       delete state.sessionAiSelectionBySession[sessionId];
     }
     if (state.sessionMessagePaginationState && sessionId in state.sessionMessagePaginationState) {
       delete state.sessionMessagePaginationState[sessionId];
-    }
-    if (state.sessionRuntimeGuidanceState && sessionId in state.sessionRuntimeGuidanceState) {
-      delete state.sessionRuntimeGuidanceState[sessionId];
     }
     if (state.currentSessionId === sessionId) {
       resetCurrentSessionViewState(state);
@@ -172,14 +163,8 @@ export function createSessionMutationActions({
               updatedAt: now,
             };
           }
-          if (state.sessionStreamingMessageDrafts && sessionId in state.sessionStreamingMessageDrafts) {
-            delete state.sessionStreamingMessageDrafts[sessionId];
-          }
           if (state.sessionChatState && sessionId in state.sessionChatState) {
             delete state.sessionChatState[sessionId];
-          }
-          if (state.sessionTurnProcessCache && sessionId in state.sessionTurnProcessCache) {
-            delete state.sessionTurnProcessCache[sessionId];
           }
           if (state.sessionAiSelectionBySession && sessionId in state.sessionAiSelectionBySession) {
             delete state.sessionAiSelectionBySession[sessionId];

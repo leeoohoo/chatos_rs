@@ -293,10 +293,6 @@ const toolFamilyLabels: Record<ToolFamily, Record<UiLocale, string>> = {
     'zh-CN': '任务管理',
     'en-US': 'Tasks',
   },
-  ui: {
-    'zh-CN': '交互确认',
-    'en-US': 'Prompts',
-  },
   agent: {
     'zh-CN': '智能体构建',
     'en-US': 'Agent builder',
@@ -339,10 +335,6 @@ const toolFamilyDescriptions: Record<ToolFamily, Record<UiLocale, string>> = {
   task: {
     'zh-CN': '任务创建、列表与状态变更结果',
     'en-US': 'Task creation, lists, and status updates',
-  },
-  ui: {
-    'zh-CN': '用户确认、表单填写与选择结果',
-    'en-US': 'User confirmation, forms, and selections',
   },
   agent: {
     'zh-CN': '智能体建议、技能列表与上下文预览',

@@ -68,28 +68,6 @@ describe('createChatStoreWithBackend persistence', () => {
           runtimeContextRefreshNonce: 3,
         },
       },
-      sessionStreamingMessageDrafts: {
-        session_1: {
-          id: 'assistant_temp_1',
-          sessionId: 'session_1',
-          role: 'assistant',
-          content: 'partial answer',
-          status: 'streaming',
-          createdAt: new Date('2026-05-25T10:00:00.000Z'),
-          metadata: {
-            conversation_turn_id: 'turn_1',
-            toolCalls: [{
-              id: 'tool_1',
-              messageId: 'assistant_temp_1',
-              name: 'browser_inspect',
-              arguments: '{}',
-              result: { huge: 'payload' },
-              createdAt: new Date('2026-05-25T10:00:01.000Z'),
-            }],
-            contentSegments: [{ type: 'text', content: 'partial answer' }],
-          },
-        },
-      },
     });
 
     const persistedCalls = localStorageMock.setItem.mock.calls
@@ -111,6 +89,7 @@ describe('createChatStoreWithBackend persistence', () => {
     });
     expect(persisted.state.sessionChatState).toBeUndefined();
     expect(persisted.state.sessionStreamingMessageDrafts).toBeUndefined();
+    expect(persisted.state.sessionTurnProcessCache).toBeUndefined();
   });
 
   it('migrates legacy persisted runtime state into the user-scoped store during rehydrate', async () => {
@@ -153,6 +132,11 @@ describe('createChatStoreWithBackend persistence', () => {
               },
             },
           },
+          sessionTurnProcessCache: {
+            session_1: {
+              turn_1: [],
+            },
+          },
         },
         version: 1,
       }),
@@ -172,7 +156,6 @@ describe('createChatStoreWithBackend persistence', () => {
       },
     });
     expect(store.getState().sessionChatState).toEqual({});
-    expect(store.getState().sessionStreamingMessageDrafts).toEqual({});
 
     const persisted = JSON.parse(
       String(localStorageMock.getItem(persistKey)),
@@ -180,6 +163,7 @@ describe('createChatStoreWithBackend persistence', () => {
     expect(persisted.version).toBe(2);
     expect(persisted.state.sessionChatState).toBeUndefined();
     expect(persisted.state.sessionStreamingMessageDrafts).toBeUndefined();
+    expect(persisted.state.sessionTurnProcessCache).toBeUndefined();
     expect(localStorageMock.getItem(LEGACY_CHAT_STORE_PERSIST_KEY)).toBeNull();
   });
 });

@@ -1,7 +1,4 @@
 import type {
-  RuntimeGuidanceSubmitPayload,
-  RuntimeGuidanceSubmitResponse,
-  StopChatResponse,
   StreamChatAttachmentPayload,
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
@@ -11,7 +8,6 @@ import {
   ApiRequestError,
   buildParsedJsonErrorPayload,
 } from './shared';
-import type { ApiRequestFn } from './workspace';
 
 export interface StreamApiContext {
   baseUrl: string;
@@ -71,11 +67,6 @@ export const sendChatCommand = async (
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
       workspace_root: options?.workspaceRoot || undefined,
-      mcp_enabled: options?.mcpEnabled,
-      enabled_mcp_ids: options?.enabledMcpIds || [],
-      auto_create_task: options?.autoCreateTask,
-      skills_enabled: options?.skillsEnabled === true,
-      selected_skill_ids: options?.selectedSkillIds || [],
       model_config_id: modelConfig.id,
       ai_model_config: {
         temperature: modelConfig.temperature || 0.7,
@@ -108,34 +99,4 @@ export const sendChatCommand = async (
       turn_id: options?.turnId || null,
     };
   }
-};
-
-export const stopChat = (
-  request: ApiRequestFn,
-  conversationId: string,
-  turnId?: string | null,
-): Promise<StopChatResponse> => {
-  return request<StopChatResponse>('/agent/chat/stop', {
-    method: 'POST',
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      ...(typeof turnId === 'string' && turnId.trim() ? { turn_id: turnId.trim() } : {}),
-    }),
-  });
-};
-
-export const submitRuntimeGuidance = (
-  request: ApiRequestFn,
-  payload: RuntimeGuidanceSubmitPayload,
-): Promise<RuntimeGuidanceSubmitResponse> => {
-  return request<RuntimeGuidanceSubmitResponse>('/agent/chat/guide', {
-    method: 'POST',
-    body: JSON.stringify({
-      conversation_id: payload.conversationId,
-      turn_id: payload.turnId,
-      content: payload.content,
-      project_id: payload.projectId,
-      attachments: payload.attachments || [],
-    }),
-  });
 };

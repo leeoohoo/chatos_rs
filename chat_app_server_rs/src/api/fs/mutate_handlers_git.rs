@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use axum::http::StatusCode;
 use axum::Json;
-use serde_json::{json, Value};
+use axum::http::StatusCode;
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
@@ -181,7 +181,7 @@ pub(in super::super) async fn append_gitignore_entry(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "当前路径不在 Git 仓库内，无法写入 .gitignore" })),
-            )
+            );
         }
         Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))),
     };
@@ -208,7 +208,7 @@ pub(in super::super) async fn append_gitignore_entry(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": message })),
-            )
+            );
         }
     };
 
@@ -329,7 +329,7 @@ pub(in super::super) async fn discard_git_changes(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "当前路径不在 Git 仓库内，无法回滚变更" })),
-            )
+            );
         }
         Err(message) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": message }))),
     };
@@ -339,7 +339,7 @@ pub(in super::super) async fn discard_git_changes(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "无法解析仓库相对路径" })),
-            )
+            );
         }
     };
 

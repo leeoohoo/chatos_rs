@@ -29,8 +29,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     activePanel,
     showSystemContextEditor,
     setShowSystemContextEditor,
-    showMcpManager,
-    setShowMcpManager,
     showAiModelManager,
     setShowAiModelManager,
     showAgentManager,
@@ -49,7 +47,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     handleToggleSessionSummary,
     sessionListProps,
     conversationPaneProps,
-    uiPromptHistoryProps,
     runtimeContextProps,
   } = useChatInterfaceModel({
     onMessageSend,
@@ -79,7 +76,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onToggleSidebar={toggleSidebar}
         onOpenNotepad={() => setShowNotepadPanel(true)}
         onOpenApplications={() => setShowApplicationsPanel(true)}
-        onOpenMcpManager={() => setShowMcpManager(true)}
         onOpenAiModelManager={() => setShowAiModelManager(true)}
         onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
@@ -106,10 +102,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       />
 
       <ChatInterfaceOverlays
-        uiPromptHistoryProps={uiPromptHistoryProps}
         runtimeContextProps={runtimeContextProps}
-        showMcpManager={showMcpManager}
-        setShowMcpManager={setShowMcpManager}
         showNotepadPanel={showNotepadPanel}
         setShowNotepadPanel={setShowNotepadPanel}
         showAiModelManager={showAiModelManager}

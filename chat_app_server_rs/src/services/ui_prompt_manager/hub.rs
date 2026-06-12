@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 use super::normalizer::trimmed_non_empty;
 use super::types::{
-    UiPromptDecision, UiPromptPayload, UiPromptResponseSubmission, UiPromptStatus,
-    UI_PROMPT_NOT_FOUND_ERR, UI_PROMPT_TIMEOUT_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    UI_PROMPT_NOT_FOUND_ERR, UI_PROMPT_TIMEOUT_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT, UiPromptDecision,
+    UiPromptPayload, UiPromptResponseSubmission, UiPromptStatus,
 };
 
 #[derive(Debug)]

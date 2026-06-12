@@ -11,10 +11,7 @@ import {
   prepareAttachmentsForStreaming,
 } from './sendMessage/attachments';
 import { createInternalId } from './sendMessage/internalId';
-import {
-  createDraftAssistantMessage,
-  createDraftUserMessage,
-} from './sendMessage/messageFactory';
+import { createDraftUserMessage } from './sendMessage/messageFactory';
 import {
   buildChatRequestLogPayload,
   buildStreamChatRuntimeOptions,
@@ -26,7 +23,6 @@ import {
 } from './sendMessage/runtime';
 import {
   applySessionRuntimeMetadata,
-  beginAssistantDraftInState,
   beginUserTurnInState,
   createDefaultSessionChatState,
   setTaskRunnerAsyncUserMessageStatus,
@@ -117,16 +113,7 @@ export function createSendMessageHandler({
       effectiveProjectRoot,
       effectiveWorkspaceRoot,
       effectiveExecutionRoot,
-      effectiveMcpEnabled,
-      effectiveEnabledMcpIds,
-      effectiveAutoCreateTask,
     } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsWithContactFallback);
-    const effectiveSkillsEnabled = runtimeOptionsWithContactFallback.skillsEnabled === true;
-    const effectiveSelectedSkillIds = Array.isArray(runtimeOptionsWithContactFallback.selectedSkillIds)
-      ? runtimeOptionsWithContactFallback.selectedSkillIds
-        .map((item: string) => (typeof item === 'string' ? item.trim() : ''))
-        .filter((item: string, index: number, arr: string[]) => item.length > 0 && arr.indexOf(item) === index)
-      : [];
     const selectedModel = resolveSelectedModelOrThrow(
       effectiveSelectedModelId,
       aiModelConfigs,
@@ -146,9 +133,6 @@ export function createSendMessageHandler({
       projectId: effectiveProjectId,
       projectRoot: effectiveProjectRoot,
       workspaceRoot: effectiveWorkspaceRoot,
-      mcpEnabled: effectiveMcpEnabled,
-      enabledMcpIds: effectiveEnabledMcpIds,
-      autoCreateTask: effectiveAutoCreateTask,
     });
     set((state) => {
       applySessionRuntimeMetadata(state, currentSessionId, runtimeMetadata);
@@ -185,13 +169,8 @@ export function createSendMessageHandler({
         selectedModel: selectedModelForRequest,
         previewAttachments,
         createdAt: userMessageTime,
-        taskRunnerAsyncContactMode: runtimeOptionsWithContactFallback.taskRunnerAsyncContactMode === true,
       });
       const turnProcessKey = conversationTurnId || userMessage.id;
-      if (userMessage.metadata?.historyProcess) {
-        userMessage.metadata.historyProcess.userMessageId = userMessage.id;
-        userMessage.metadata.historyProcess.turnId = turnProcessKey;
-      }
       if (userMessage.metadata?.task_runner_async) {
         userMessage.metadata.task_runner_async.source_user_message_id = userMessage.id;
         userMessage.metadata.task_runner_async.source_turn_id = turnProcessKey;
@@ -201,26 +180,6 @@ export function createSendMessageHandler({
         beginUserTurnInState(state, {
           sessionId: currentSessionId,
           userMessage,
-          conversationTurnId,
-        });
-      });
-
-      // 创建临时的助手消息用于UI显示，但不保存到数据库
-      tempAssistantMessage = createDraftAssistantMessage({
-        sessionId: currentSessionId,
-        conversationTurnId,
-        selectedModel: selectedModelForRequest,
-        userMessage,
-        userMessageTime,
-        taskRunnerAsyncContactMode: runtimeOptionsWithContactFallback.taskRunnerAsyncContactMode === true,
-      });
-      tempAssistantId = tempAssistantMessage.id;
-
-      set((state) => {
-        beginAssistantDraftInState(state, {
-          sessionId: currentSessionId,
-          userMessageId: userMessage.id,
-          assistantMessage: tempAssistantMessage,
           conversationTurnId,
         });
       });
@@ -239,11 +198,6 @@ export function createSendMessageHandler({
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
-        mcpEnabled: effectiveMcpEnabled,
-        enabledMcpIds: effectiveEnabledMcpIds,
-        autoCreateTask: effectiveAutoCreateTask,
-        skillsEnabled: effectiveSkillsEnabled,
-        selectedSkillIds: effectiveSelectedSkillIds,
       });
 
       debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
@@ -255,11 +209,6 @@ export function createSendMessageHandler({
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
-        mcpEnabled: effectiveMcpEnabled,
-        enabledMcpIds: effectiveEnabledMcpIds,
-        autoCreateTask: effectiveAutoCreateTask,
-        skillsEnabled: effectiveSkillsEnabled,
-        selectedSkillIds: effectiveSelectedSkillIds,
       });
       const userId = getUserIdParam();
       assertPayloadWithinTransportBudget({
@@ -279,11 +228,6 @@ export function createSendMessageHandler({
         project_id: streamRuntimeOptions.projectId || undefined,
         project_root: streamRuntimeOptions.projectRoot || undefined,
         workspace_root: streamRuntimeOptions.workspaceRoot || undefined,
-        mcp_enabled: streamRuntimeOptions.mcpEnabled,
-        enabled_mcp_ids: streamRuntimeOptions.enabledMcpIds || [],
-        auto_create_task: streamRuntimeOptions.autoCreateTask,
-        skills_enabled: streamRuntimeOptions.skillsEnabled === true,
-        selected_skill_ids: streamRuntimeOptions.selectedSkillIds || [],
         model_config_id: selectedModelForRequest.id,
         ai_model_config: {
           temperature: 0.7,
@@ -319,11 +263,9 @@ export function createSendMessageHandler({
       if (commandResponse?.accepted === false) {
         throw new Error('聊天命令未被接受');
       }
-      if (runtimeOptionsWithContactFallback.taskRunnerAsyncContactMode === true) {
-        set((state) => {
-          setTaskRunnerAsyncUserMessageStatus(state, userMessage.id, 'processing');
-        });
-      }
+      set((state) => {
+        setTaskRunnerAsyncUserMessageStatus(state, userMessage.id, 'processing');
+      });
 
       debugLog('✅ 消息发送完成');
     } catch (error) {

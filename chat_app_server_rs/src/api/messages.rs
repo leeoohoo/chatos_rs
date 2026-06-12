@@ -1,15 +1,15 @@
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::{Path, Query},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
 use crate::core::messages::{
-    build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
+    MessageOut, NewMessageFields, build_message, create_message_and_maybe_rename,
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
@@ -114,7 +114,7 @@ async fn create_message(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "创建对话消息失败", "detail": err})),
-            )
+            );
         }
     };
 
@@ -157,13 +157,13 @@ async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, 
             return (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({"error": "消息不存在"})),
-            )
+            );
         }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": err})),
-            )
+            );
         }
     };
     if let Err(err) = ensure_owned_session(&message.session_id, &auth).await {

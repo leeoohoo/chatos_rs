@@ -15,8 +15,8 @@ use crate::core::remote_connection_access::{
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
 use super::{
-    get_remote_terminal_manager, resolve_jump_connection_snapshot, ws_error_output,
-    RemoteTerminalEvent, WsInput, WsOutput,
+    RemoteTerminalEvent, WsInput, WsOutput, get_remote_terminal_manager,
+    resolve_jump_connection_snapshot, ws_error_output,
 };
 
 pub(super) async fn send_startup_error_and_shutdown(

@@ -1,4 +1,4 @@
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{Json, extract::Path, http::StatusCode};
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
@@ -176,7 +176,7 @@ pub(super) async fn update_session_runtime_settings(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": err})),
-            )
+            );
         }
     };
     next.session_id = conversation_id;

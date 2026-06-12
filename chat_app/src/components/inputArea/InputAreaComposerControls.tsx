@@ -3,18 +3,14 @@ import { cn } from '../../lib/utils';
 import { InputAreaFloatingModelPicker } from './InlineWidgets';
 import type { InputAreaComposerProps } from './InputAreaComposerTypes';
 import {
-  InputAreaMcpPicker,
   InputAreaProjectFilePicker,
   InputAreaProjectSelector,
   InputAreaRemoteConnectionPicker,
-  InputAreaSkillPicker,
   InputAreaWorkspacePicker,
 } from './PickerWidgets';
 
 export function InputAreaComposerControls({
   disabled,
-  isStreaming,
-  isStopping,
   effectiveAllowAttachments,
   showModelSelector,
   selectedModelId,
@@ -30,19 +26,12 @@ export function InputAreaComposerControls({
   showProjectSelector,
   showWorkspaceRootPicker,
   currentRemoteConnectionId,
-  currentAgent,
   availableRemoteConnections,
   onRemoteConnectionChange,
-  taskRunnerAsyncContactMode,
-  mcpEnabled,
-  autoCreateTask,
-  onMcpEnabledChange,
-  onAutoCreateTaskChange,
   reasoningSupported,
   reasoningEnabled,
   onReasoningToggle,
   pickerRef,
-  mcpPickerRef,
   workspacePickerRef,
   projectFilePickerRef,
   fileInputRef,
@@ -80,37 +69,6 @@ export function InputAreaComposerControls({
   handleToggleWorkspacePicker,
   loadWorkspaceDirectories,
   handleSelectWorkspaceRoot,
-  mcpPickerOpen,
-  handleToggleMcpPicker,
-  isAllMcpSelected,
-  selectableMcpIds,
-  selectedMcpCount,
-  mcpConfigsLoading,
-  mcpConfigsError,
-  availableMcpConfigs,
-  builtinMcpConfigs,
-  customMcpConfigs,
-  mcpToolsetPresets,
-  projectScopeKey,
-  hasProjectMcpDefault,
-  hasDirectoryContext,
-  hasRemoteContext,
-  isProjectRequiredMcpId,
-  isRemoteRequiredMcpId,
-  sanitizedEnabledMcpIds,
-  loadAvailableMcpConfigs,
-  handleSelectAllMcp,
-  handleToggleMcpSelection,
-  handleApplyMcpToolsetPreset,
-  handleSaveProjectMcpDefault,
-  handleApplyProjectMcpDefault,
-  skillsEnabled,
-  onSkillsEnabledChange,
-  skillsLoading,
-  availableSkillOptions,
-  selectedSkillIds,
-  onToggleSelectedSkill,
-  onClearSelectedSkills,
 }: InputAreaComposerProps) {
   const { t } = useI18n();
   const onText = t('composer.toggle.on');
@@ -179,16 +137,16 @@ export function InputAreaComposerControls({
         selectedProjectId={selectedProjectId}
         onProjectChange={onProjectChange}
         disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
+        isStreaming={false}
+        isStopping={false}
       />
 
       <InputAreaWorkspacePicker
         showWorkspaceRootPicker={showWorkspaceRootPicker}
         workspacePickerRef={workspacePickerRef}
         disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
+        isStreaming={false}
+        isStopping={false}
         onToggleWorkspacePicker={() => { void handleToggleWorkspacePicker(); }}
         normalizedWorkspaceRoot={normalizedWorkspaceRoot}
         workspaceRootDisplayName={workspaceRootDisplayName}
@@ -207,90 +165,21 @@ export function InputAreaComposerControls({
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
         disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
+        isStreaming={false}
+        isStopping={false}
       />
-
-      {!taskRunnerAsyncContactMode && (
-        <InputAreaSkillPicker
-          currentAgent={currentAgent}
-          disabled={disabled}
-          isStreaming={isStreaming}
-          isStopping={isStopping}
-          skillsEnabled={skillsEnabled}
-          onSkillsEnabledChange={onSkillsEnabledChange}
-          skillsLoading={skillsLoading}
-          availableSkillOptions={availableSkillOptions}
-          selectedSkillIds={selectedSkillIds}
-          onToggleSelectedSkill={onToggleSelectedSkill}
-          onClearSelectedSkills={onClearSelectedSkills}
-        />
-      )}
-
-      {!taskRunnerAsyncContactMode && (
-        <InputAreaMcpPicker
-          mcpPickerRef={mcpPickerRef}
-          mcpEnabled={mcpEnabled}
-          onMcpEnabledChange={onMcpEnabledChange}
-          disabled={disabled}
-          isStreaming={isStreaming}
-          isStopping={isStopping}
-          onToggleMcpPicker={() => { void handleToggleMcpPicker(); }}
-          mcpPickerOpen={mcpPickerOpen}
-          isAllMcpSelected={isAllMcpSelected}
-          selectableMcpIds={selectableMcpIds}
-          selectedMcpCount={selectedMcpCount}
-          mcpConfigsLoading={mcpConfigsLoading}
-          mcpConfigsError={mcpConfigsError}
-          availableMcpConfigs={availableMcpConfigs}
-          builtinMcpConfigs={builtinMcpConfigs}
-          customMcpConfigs={customMcpConfigs}
-          mcpToolsetPresets={mcpToolsetPresets}
-          projectScopeKey={projectScopeKey}
-          hasProjectMcpDefault={hasProjectMcpDefault}
-          hasDirectoryContext={hasDirectoryContext}
-          hasRemoteContext={hasRemoteContext}
-          isProjectRequiredMcpId={isProjectRequiredMcpId}
-          isRemoteRequiredMcpId={isRemoteRequiredMcpId}
-          sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-          onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs({ forceRefresh: true }); }}
-          onSelectAllMcp={handleSelectAllMcp}
-          onToggleMcpSelection={handleToggleMcpSelection}
-          onApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
-          onSaveProjectMcpDefault={handleSaveProjectMcpDefault}
-          onApplyProjectMcpDefault={handleApplyProjectMcpDefault}
-        />
-      )}
-
-      {!taskRunnerAsyncContactMode && (
-        <button
-          type="button"
-          onClick={() => onAutoCreateTaskChange?.(!autoCreateTask)}
-          disabled={disabled || isStreaming || isStopping}
-          className={cn(
-            'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
-            autoCreateTask
-              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-              : 'bg-muted text-muted-foreground hover:text-foreground',
-            (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
-          )}
-          title={autoCreateTask ? t('composer.autoCreateTask.onTitle') : t('composer.autoCreateTask.offTitle')}
-        >
-          {t('composer.autoCreateTask.label', { state: autoCreateTask ? onText : offText })}
-        </button>
-      )}
 
       {reasoningSupported && (
         <button
           type="button"
           onClick={() => onReasoningToggle?.(!reasoningEnabled)}
-          disabled={disabled || isStreaming || isStopping}
+          disabled={disabled}
           className={cn(
             'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
             reasoningEnabled
               ? 'bg-primary text-primary-foreground hover:bg-primary/90'
               : 'bg-muted text-muted-foreground hover:text-foreground',
-            (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
+            disabled && 'opacity-50 cursor-not-allowed',
           )}
           title={reasoningEnabled ? t('composer.reasoning.onTitle') : t('composer.reasoning.offTitle')}
         >

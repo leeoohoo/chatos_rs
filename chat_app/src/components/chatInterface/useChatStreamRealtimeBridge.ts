@@ -1,18 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
 
 import {
-  getRealtimeConnectionStateSnapshot,
   useRealtimeConnectionState,
   useRealtimeTopics,
 } from '../../lib/realtime/RealtimeProvider';
 import { useConversationChatStreamRealtime } from '../../lib/realtime/useConversationChatStreamRealtime';
-import { useApiClient } from '../../lib/api/ApiClientContext';
-import {
-  normalizePersistedMessage,
-  shouldRecoverStreamingSessionAfterDisconnect,
-} from '../../lib/store/actions/sendMessage/persistedTurnMessages';
-import { recoverStreamingTurnBySnapshot } from '../../lib/store/actions/sendMessage/turnRecovery';
+import { normalizePersistedMessage } from '../../lib/store/actions/sendMessage/persistedTurnMessages';
+import { createDefaultSessionChatState } from '../../lib/store/actions/sendMessage/sessionState';
 import {
   useChatStoreContext,
   useChatStoreSelector,
@@ -22,15 +17,21 @@ import type {
   ChatStoreDraft,
   ChatStoreSet,
 } from '../../lib/store/types';
-import {
-  collectActiveStreamingSessionIds,
-  resolveActiveStreamContext,
-  shouldAttemptDisconnectRecovery,
-} from './chatStreamRealtimeBridgeState';
-import { handleChatStreamRealtimeCompletion } from './chatStreamRealtimeCompletion';
 
-const DISCONNECT_RECOVERY_COOLDOWN_MS = 4000;
-const DISCONNECT_RECOVERY_GRACE_MS = 1800;
+const readTurnId = (message: Message | null | undefined): string => {
+  const metadata = message?.metadata || {};
+  const taskRunnerAsync = metadata.task_runner_async;
+  const taskRunnerRecord = taskRunnerAsync && typeof taskRunnerAsync === 'object'
+    ? taskRunnerAsync as Record<string, unknown>
+    : {};
+  const value = (
+    metadata.conversation_turn_id
+    || metadata.conversationTurnId
+    || taskRunnerRecord.source_turn_id
+    || taskRunnerRecord.sourceTurnId
+  );
+  return typeof value === 'string' ? value.trim() : '';
+};
 
 const mergeRealtimeMessage = (
   existing: Message | undefined,
@@ -64,6 +65,19 @@ const upsertRealtimeMessage = (
     return nextMessages;
   }
 
+  const incomingTurnId = readTurnId(incoming);
+  const optimisticIndex = incomingTurnId
+    ? nextMessages.findIndex((message) => (
+      message.role === incoming.role
+      && readTurnId(message) === incomingTurnId
+      && String(message.id || '').startsWith('temp_')
+    ))
+    : -1;
+  if (optimisticIndex >= 0) {
+    nextMessages[optimisticIndex] = mergeRealtimeMessage(nextMessages[optimisticIndex], incoming);
+    return nextMessages;
+  }
+
   nextMessages.push(incoming);
   return nextMessages;
 };
@@ -74,6 +88,7 @@ const applyTaskRunnerCallbackRealtimeUpdate = (
   persistedUserMessage: Message | null,
   persistedAssistantMessage: Message | null,
 ) => {
+  const turnId = readTurnId(persistedUserMessage) || readTurnId(persistedAssistantMessage);
   if (state.currentSessionId === sessionId) {
     let nextMessages = Array.isArray(state.messages) ? [...state.messages] : [];
     nextMessages = upsertRealtimeMessage(nextMessages, persistedUserMessage);
@@ -88,20 +103,105 @@ const applyTaskRunnerCallbackRealtimeUpdate = (
     nextMessages = upsertRealtimeMessage(nextMessages, persistedAssistantMessage);
     cachedEntry.messages = nextMessages;
   }
+
+  const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
+  const isTerminalPlannerMessage = Boolean(persistedUserMessage || persistedAssistantMessage);
+  if (isTerminalPlannerMessage) {
+    state.sessionChatState[sessionId] = {
+      ...prev,
+      isLoading: false,
+      isStreaming: false,
+      isStopping: false,
+      streamingPhase: null,
+      streamingMessageId: null,
+      activeTurnId: null,
+      streamingPreviewText: '',
+      streamingTransport: null,
+    };
+    if (state.currentSessionId === sessionId) {
+      state.isLoading = false;
+      state.isStreaming = false;
+      state.streamingMessageId = null;
+    }
+  } else if (turnId && prev.activeTurnId === turnId) {
+    state.sessionChatState[sessionId] = {
+      ...prev,
+      activeTurnId: null,
+      isLoading: false,
+      isStreaming: false,
+      streamingTransport: null,
+    };
+  }
+};
+
+const applyTaskRunnerRealtimeError = (
+  state: ChatStoreDraft,
+  sessionId: string,
+  message: string | null,
+) => {
+  const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
+  state.sessionChatState[sessionId] = {
+    ...prev,
+    isLoading: false,
+    isStreaming: false,
+    isStopping: false,
+    streamingPhase: null,
+    streamingMessageId: null,
+    activeTurnId: null,
+    streamingPreviewText: '',
+    streamingTransport: null,
+  };
+  if (state.currentSessionId === sessionId) {
+    state.isLoading = false;
+    state.isStreaming = false;
+    state.streamingMessageId = null;
+    if (message) {
+      state.error = message;
+    }
+  }
+};
+
+const collectPendingPlannerSessionIds = (
+  sessionChatState: ChatStoreDraft['sessionChatState'] | null | undefined,
+): string[] => (
+  Object.entries(sessionChatState || {})
+    .filter(([sessionId, chatState]) => (
+      sessionId.trim().length > 0
+      && (
+        chatState?.isLoading === true
+        || Boolean(String(chatState?.activeTurnId || '').trim())
+      )
+    ))
+    .map(([sessionId]) => sessionId)
+    .sort()
+);
+
+const normalizeRealtimePersistedMessages = (
+  payload: Parameters<Parameters<typeof useConversationChatStreamRealtime>[0]['onEvent']>[0],
+): {
+  sessionId: string;
+  persistedUserMessage: Message | null;
+  persistedAssistantMessage: Message | null;
+} => {
+  const sessionId = String(payload.conversation_id || '').trim();
+  return {
+    sessionId,
+    persistedUserMessage: sessionId
+      ? normalizePersistedMessage(payload.raw?.result?.persisted_user_message, sessionId)
+      : null,
+    persistedAssistantMessage: sessionId
+      ? normalizePersistedMessage(payload.raw?.result?.persisted_assistant_message, sessionId)
+      : null,
+  };
 };
 
 export const useChatStreamRealtimeBridge = () => {
   const store = useChatStoreContext();
-  const apiClient = useApiClient();
   const realtimeConnectionState = useRealtimeConnectionState();
-  const activeStreamingSessionIds = useChatStoreSelector((state) => (
-    collectActiveStreamingSessionIds(state.sessionChatState)
+  const pendingPlannerSessionIds = useChatStoreSelector((state) => (
+    collectPendingPlannerSessionIds(state.sessionChatState)
   ), shallow);
   const currentSessionId = useChatStoreSelector((state) => state.currentSessionId || null);
-  const processedCompletionKeysRef = useRef<Set<string>>(new Set());
-  const previousConnectionStateRef = useRef(realtimeConnectionState);
-  const disconnectRecoveryInflightRef = useRef<Set<string>>(new Set());
-  const disconnectRecoveryLastRunAtRef = useRef<Map<string, number>>(new Map());
   const chatStoreSet = useMemo<ChatStoreSet>(
     () => ((fn) => {
       store.setState((state) => {
@@ -112,12 +212,12 @@ export const useChatStreamRealtimeBridge = () => {
   );
 
   const subscribedConversationIds = useMemo(() => {
-    const ids = new Set<string>(activeStreamingSessionIds);
+    const ids = new Set<string>(pendingPlannerSessionIds);
     if (currentSessionId) {
       ids.add(currentSessionId);
     }
     return Array.from(ids);
-  }, [activeStreamingSessionIds, currentSessionId]);
+  }, [currentSessionId, pendingPlannerSessionIds]);
 
   const enabled = useMemo(
     () => realtimeConnectionState === 'connected',
@@ -129,112 +229,42 @@ export const useChatStreamRealtimeBridge = () => {
     enabled && subscribedConversationIds.length > 0,
   );
 
-  useEffect(() => {
-    const previousState = previousConnectionStateRef.current;
-    previousConnectionStateRef.current = realtimeConnectionState;
-
-    const lostRealtimeAfterConnected = (
-      previousState === 'connected'
-      && (realtimeConnectionState === 'disconnected' || realtimeConnectionState === 'error')
-    );
-    if (!lostRealtimeAfterConnected || activeStreamingSessionIds.length === 0) {
-      return;
-    }
-
-    const now = Date.now();
-    activeStreamingSessionIds.forEach((sessionId) => {
-      if (disconnectRecoveryInflightRef.current.has(sessionId)) {
-        return;
-      }
-      const lastRunAt = disconnectRecoveryLastRunAtRef.current.get(sessionId) || 0;
-      if (now - lastRunAt < DISCONNECT_RECOVERY_COOLDOWN_MS) {
-        return;
-      }
-
-      disconnectRecoveryInflightRef.current.add(sessionId);
-      disconnectRecoveryLastRunAtRef.current.set(sessionId, now);
-
-      window.setTimeout(() => {
-        const latest = store.getState();
-        const latestChatState = latest.sessionChatState?.[sessionId];
-        if (
-          !latestChatState?.isStreaming
-          || !shouldAttemptDisconnectRecovery(
-            latest as Pick<ChatStoreDraft, 'sessionChatState' | 'sessionStreamingMessageDrafts'>,
-            sessionId,
-            getRealtimeConnectionStateSnapshot(),
-          )
-          || !shouldRecoverStreamingSessionAfterDisconnect(latest, sessionId)
-        ) {
-          disconnectRecoveryInflightRef.current.delete(sessionId);
-          return;
-        }
-
-        const latestActive = resolveActiveStreamContext(latest as ChatStoreDraft, sessionId);
-        if (!latestActive) {
-          disconnectRecoveryInflightRef.current.delete(sessionId);
-          return;
-        }
-
-        void recoverStreamingTurnBySnapshot({
-          apiClient,
-          set: chatStoreSet,
-          sessionId,
-          turnId: latestActive.conversationTurnId,
-          tempAssistantMessageId: latestActive.tempAssistantMessageId,
-          tempUserId: latestActive.tempUserId,
-          preferredUserMessageId: latestActive.tempUserId,
-        })
-          .then((result) => {
-            if (result.recovered) {
-              return;
-            }
-            return store.getState().syncSessionMessagesInBackground(sessionId);
-          })
-          .catch((error) => {
-            console.error('Failed to recover streaming session after realtime disconnect:', error);
-          })
-          .finally(() => {
-            disconnectRecoveryInflightRef.current.delete(sessionId);
-          });
-      }, DISCONNECT_RECOVERY_GRACE_MS);
-    });
-  }, [activeStreamingSessionIds, apiClient, chatStoreSet, realtimeConnectionState, store]);
-
   useConversationChatStreamRealtime({
     enabled,
     onEvent: async (payload) => {
-      if (payload.stream_type === 'task_runner_callback') {
-        const payloadSessionId = String(payload.conversation_id || '').trim();
-        const state = store.getState();
-        if (payloadSessionId) {
-          const persistedUserMessage = normalizePersistedMessage(
-            payload.raw?.result?.persisted_user_message,
-            payloadSessionId,
-          );
-          const persistedAssistantMessage = normalizePersistedMessage(
-            payload.raw?.result?.persisted_assistant_message,
-            payloadSessionId,
-          );
-          chatStoreSet((draft) => {
-            applyTaskRunnerCallbackRealtimeUpdate(
-              draft,
-              payloadSessionId,
-              persistedUserMessage,
-              persistedAssistantMessage,
-            );
-          });
-          await state.syncSessionMessagesInBackground(payloadSessionId);
-        }
+      const {
+        sessionId,
+        persistedUserMessage,
+        persistedAssistantMessage,
+      } = normalizeRealtimePersistedMessages(payload);
+      if (!sessionId) {
         return;
       }
-      await handleChatStreamRealtimeCompletion({
-        payload,
-        storeGetState: () => store.getState() as ChatStoreDraft,
-        chatStoreSet,
-        apiClient,
-        processedCompletionKeysRef,
-      });
+
+      if (persistedUserMessage || persistedAssistantMessage) {
+        const state = store.getState();
+        chatStoreSet((draft) => {
+          applyTaskRunnerCallbackRealtimeUpdate(
+            draft,
+            sessionId,
+            persistedUserMessage,
+            persistedAssistantMessage,
+          );
+        });
+        await state.syncSessionMessagesInBackground(sessionId);
+        return;
+      }
+
+      const eventType = String(payload.raw?.type || payload.stream_type || '').trim().toLowerCase();
+      if (eventType === 'error' || eventType === 'cancelled') {
+        chatStoreSet((draft) => {
+          applyTaskRunnerRealtimeError(
+            draft,
+            sessionId,
+            typeof payload.raw?.message === 'string' ? payload.raw.message : null,
+          );
+        });
+      }
     },
   });
 };

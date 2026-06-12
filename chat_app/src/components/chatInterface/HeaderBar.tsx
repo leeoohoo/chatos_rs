@@ -9,7 +9,6 @@ interface HeaderBarProps {
   onToggleSidebar: () => void;
   onOpenNotepad: () => void;
   onOpenApplications: () => void;
-  onOpenMcpManager: () => void;
   onOpenAiModelManager: () => void;
   onOpenAgentManager: () => void;
   onOpenSystemContextEditor: () => void;
@@ -24,7 +23,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   onToggleSidebar,
   onOpenNotepad,
   onOpenApplications,
-  onOpenMcpManager,
   onOpenAiModelManager,
   onOpenAgentManager,
   onOpenSystemContextEditor,
@@ -131,15 +129,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                   {user?.username || user?.email || user?.id}
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  setShowUserMenu(false);
-                  onOpenMcpManager();
-                }}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-              >
-                {t('header.mcpManager')}
-              </button>
               <button
                 onClick={() => {
                   setShowUserMenu(false);

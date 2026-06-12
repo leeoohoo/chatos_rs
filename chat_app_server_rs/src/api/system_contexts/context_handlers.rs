@@ -1,9 +1,9 @@
 use axum::http::StatusCode;
 use axum::{
-    extract::{Path, Query},
     Json,
+    extract::{Path, Query},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::core::auth::AuthUser;
@@ -31,7 +31,7 @@ pub(super) async fn list_system_contexts(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "获取系统上下文失败", "detail": err})),
-            )
+            );
         }
     };
     let mut out = Vec::new();
@@ -42,7 +42,7 @@ pub(super) async fn list_system_contexts(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "获取系统上下文失败", "detail": err})),
-                )
+                );
             }
         };
         out.push(system_context_value(&ctx, Some(app_ids)));
@@ -64,7 +64,7 @@ pub(super) async fn get_active_system_context(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "获取活跃系统上下文失败", "detail": err})),
-            )
+            );
         }
     };
     if let Some(ctx) = ctx {
@@ -74,7 +74,7 @@ pub(super) async fn get_active_system_context(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "获取活跃系统上下文失败", "detail": err})),
-                )
+                );
             }
         };
         return (
@@ -135,13 +135,13 @@ pub(super) async fn create_system_context(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建系统上下文失败"})),
-            )
+            );
         }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建系统上下文失败", "detail": err})),
-            )
+            );
         }
     };
     let app_ids = match ctx_repo::get_app_ids_for_system_context(&id).await {
@@ -150,7 +150,7 @@ pub(super) async fn create_system_context(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建系统上下文失败", "detail": err})),
-            )
+            );
         }
     };
     let obj = system_context_value(&ctx, Some(app_ids));
@@ -195,13 +195,13 @@ pub(super) async fn update_system_context(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新系统上下文失败"})),
-            )
+            );
         }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新系统上下文失败", "detail": err})),
-            )
+            );
         }
     };
     let app_ids = match ctx_repo::get_app_ids_for_system_context(&context_id).await {
@@ -210,7 +210,7 @@ pub(super) async fn update_system_context(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新系统上下文失败", "detail": err})),
-            )
+            );
         }
     };
     let obj = system_context_value(&ctx, Some(app_ids));
@@ -260,7 +260,7 @@ pub(super) async fn activate_system_context(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "激活系统上下文失败", "detail": err})),
-            )
+            );
         }
     };
     let activated = list.into_iter().find(|c| c.id == context_id);

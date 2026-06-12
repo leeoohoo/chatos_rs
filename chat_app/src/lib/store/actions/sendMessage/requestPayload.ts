@@ -38,11 +38,6 @@ export const buildChatRequestLogPayload = ({
   projectId,
   projectRoot,
   workspaceRoot,
-  mcpEnabled,
-  enabledMcpIds,
-  autoCreateTask,
-  skillsEnabled,
-  selectedSkillIds,
 }: {
   sessionId: string;
   turnId: string;
@@ -57,11 +52,6 @@ export const buildChatRequestLogPayload = ({
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  autoCreateTask: boolean;
-  skillsEnabled: boolean;
-  selectedSkillIds: string[];
 }): StreamChatLogPayload => ({
   conversation_id: sessionId,
   turn_id: turnId,
@@ -84,11 +74,6 @@ export const buildChatRequestLogPayload = ({
   project_id: projectId,
   project_root: projectRoot,
   workspace_root: workspaceRoot,
-  mcp_enabled: mcpEnabled,
-  enabled_mcp_ids: enabledMcpIds,
-  auto_create_task: autoCreateTask,
-  skills_enabled: skillsEnabled,
-  selected_skill_ids: selectedSkillIds,
 });
 
 export const buildStreamChatRuntimeOptions = ({
@@ -98,11 +83,6 @@ export const buildStreamChatRuntimeOptions = ({
   projectId,
   projectRoot,
   workspaceRoot,
-  mcpEnabled,
-  enabledMcpIds,
-  autoCreateTask,
-  skillsEnabled,
-  selectedSkillIds,
 }: {
   turnId: string;
   contactAgentId: string | null;
@@ -110,11 +90,6 @@ export const buildStreamChatRuntimeOptions = ({
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  autoCreateTask: boolean;
-  skillsEnabled: boolean;
-  selectedSkillIds: string[];
 }): StreamChatRuntimeOptions => ({
   turnId,
   contactAgentId,
@@ -122,9 +97,4 @@ export const buildStreamChatRuntimeOptions = ({
   projectId,
   projectRoot,
   workspaceRoot,
-  mcpEnabled,
-  enabledMcpIds,
-  autoCreateTask,
-  skillsEnabled,
-  selectedSkillIds,
 });

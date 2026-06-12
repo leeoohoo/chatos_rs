@@ -1,27 +1,18 @@
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::{Path, Query},
     routing::{get, patch, post},
-    Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::task_manager::{
-    complete_task_by_id, delete_task_by_id, get_task_review_payload,
-    list_task_review_payloads_for_conversation, list_tasks_for_context,
-    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem, TaskReviewAction,
-    TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
+    TASK_NOT_FOUND_ERR, TaskOutcomeItem, TaskUpdatePatch, complete_task_by_id, delete_task_by_id,
+    list_tasks_for_context, update_task_by_id,
 };
-
-#[derive(Debug, Deserialize)]
-struct ReviewDecisionRequest {
-    action: TaskReviewAction,
-    tasks: Option<Vec<TaskDraft>>,
-    reason: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct TaskListQuery {
@@ -29,13 +20,6 @@ struct TaskListQuery {
     conversation_id: String,
     conversation_turn_id: Option<String>,
     include_done: Option<bool>,
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PendingReviewListQuery {
-    #[serde(rename = "conversation_id", alias = "conversationId")]
-    conversation_id: String,
     limit: Option<usize>,
 }
 
@@ -85,14 +69,6 @@ struct CompleteTaskRequest {
 
 pub fn router() -> Router {
     Router::new()
-        .route(
-            "/api/task-manager/reviews/pending",
-            get(list_pending_reviews),
-        )
-        .route(
-            "/api/task-manager/reviews/:review_id/decision",
-            post(submit_review_decision),
-        )
         .route("/api/task-manager/tasks", get(list_tasks))
         .route(
             "/api/task-manager/tasks/:task_id",
@@ -102,33 +78,6 @@ pub fn router() -> Router {
             "/api/task-manager/tasks/:task_id/complete",
             post(complete_task),
         )
-}
-
-async fn list_pending_reviews(
-    auth: AuthUser,
-    Query(query): Query<PendingReviewListQuery>,
-) -> (StatusCode, Json<Value>) {
-    if query.conversation_id.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "conversation_id is required" })),
-        );
-    }
-    if let Err(err) = ensure_owned_session(query.conversation_id.as_str(), &auth).await {
-        return map_session_access_error_with_success(err);
-    }
-
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
-    let reviews =
-        list_task_review_payloads_for_conversation(query.conversation_id.as_str(), limit).await;
-    let payload = json!({
-        "success": true,
-        "conversation_id": query.conversation_id,
-        "conversationId": query.conversation_id,
-        "count": reviews.len(),
-        "reviews": reviews,
-    });
-    (StatusCode::OK, Json(payload))
 }
 
 async fn list_tasks(
@@ -346,68 +295,6 @@ async fn delete_task(
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({ "success": false, "deleted": false, "error": TASK_NOT_FOUND_ERR })),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": err })),
-        ),
-    }
-}
-
-async fn submit_review_decision(
-    auth: AuthUser,
-    Path(review_id): Path<String>,
-    Json(req): Json<ReviewDecisionRequest>,
-) -> (StatusCode, Json<Value>) {
-    if review_id.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "review_id is required" })),
-        );
-    }
-
-    let review_payload = match get_task_review_payload(review_id.as_str()).await {
-        Some(payload) => payload,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "success": false, "error": REVIEW_NOT_FOUND_ERR })),
-            )
-        }
-    };
-    if let Err(err) = ensure_owned_session(review_payload.conversation_id.as_str(), &auth).await {
-        return map_session_access_error_with_success(err);
-    }
-
-    if matches!(req.action, TaskReviewAction::Confirm) {
-        let empty = req
-            .tasks
-            .as_ref()
-            .map(|tasks| tasks.is_empty())
-            .unwrap_or(true);
-        if empty {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "tasks is required for confirm action" })),
-            );
-        }
-    }
-
-    match submit_task_review_decision(review_id.as_str(), req.action, req.tasks, req.reason).await {
-        Ok(payload) => {
-            let response = json!({
-                "success": true,
-                "review_id": payload.review_id,
-                "conversation_id": payload.conversation_id,
-                "conversationId": payload.conversation_id,
-                "conversation_turn_id": payload.conversation_turn_id,
-                "action": req.action.as_str(),
-            });
-            (StatusCode::OK, Json(response))
-        }
-        Err(err) if err == REVIEW_NOT_FOUND_ERR => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "success": false, "error": err })),
         ),
         Err(err) => (
             StatusCode::BAD_REQUEST,

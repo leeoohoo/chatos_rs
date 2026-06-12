@@ -16,12 +16,7 @@ interface TeamMemberSummaryViewProps {
   deletingSummaryId: string | null;
   messages: Message[];
   hasMoreMessages: boolean;
-  chatIsLoading: boolean;
-  chatIsStreaming: boolean;
-  chatIsStopping: boolean;
-  isTaskRunnerAsyncContactMode: boolean;
   onLoadMore: () => void;
-  onToggleTurnProcess?: (userMessageId: string) => void;
   onClearSummaries: () => void;
   onRefreshSummaries: () => void;
   onCloseSummary: () => void;
@@ -50,12 +45,7 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
   deletingSummaryId,
   messages,
   hasMoreMessages,
-  chatIsLoading,
-  chatIsStreaming,
-  chatIsStopping,
-  isTaskRunnerAsyncContactMode,
   onLoadMore,
-  onToggleTurnProcess,
   onClearSummaries,
   onRefreshSummaries,
   onCloseSummary,
@@ -162,14 +152,12 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
           key={`project-team-messages-${sessionId}-summary`}
           sessionId={sessionId}
           messages={messages}
-          isLoading={chatIsLoading}
-          isStreaming={chatIsStreaming}
-          isStopping={chatIsStopping}
+          isLoading={false}
+          isStreaming={false}
+          isStopping={false}
           assistantContactName={contactName}
           hasMore={hasMoreMessages}
           onLoadMore={onLoadMore}
-          onToggleTurnProcess={isTaskRunnerAsyncContactMode ? undefined : onToggleTurnProcess}
-          hideHistoryProcessSummary={isTaskRunnerAsyncContactMode}
         />
       </div>
     </div>

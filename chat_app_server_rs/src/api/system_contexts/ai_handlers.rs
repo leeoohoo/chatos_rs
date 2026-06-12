@@ -1,13 +1,13 @@
-use axum::http::StatusCode;
 use axum::Json;
+use axum::http::StatusCode;
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::modules::platform_admin::system_context_ai::{
-    evaluate_system_context_draft_usecase, generate_system_context_draft_usecase,
-    optimize_system_context_draft_usecase, EvaluateSystemContextDraftUsecaseInput,
-    GenerateSystemContextDraftUsecaseInput, OptimizeSystemContextDraftUsecaseInput,
+    EvaluateSystemContextDraftUsecaseInput, GenerateSystemContextDraftUsecaseInput,
+    OptimizeSystemContextDraftUsecaseInput, evaluate_system_context_draft_usecase,
+    generate_system_context_draft_usecase, optimize_system_context_draft_usecase,
 };
 
 use super::contracts::{

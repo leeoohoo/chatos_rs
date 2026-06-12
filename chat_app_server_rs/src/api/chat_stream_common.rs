@@ -71,9 +71,11 @@ mod tests {
             items[1]["content"][0]["text"].as_str(),
             Some("routing prompt")
         );
-        assert!(items[2]["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("[Task Board]"));
+        assert!(
+            items[2]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("[Task Board]")
+        );
     }
 }

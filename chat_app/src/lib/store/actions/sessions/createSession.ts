@@ -134,8 +134,6 @@ export function createSessionCreateActions({
           selectedModelId,
           projectId: effectiveProjectId,
           projectRoot: effectiveProjectRoot,
-          mcpEnabled: payloadObject.mcpEnabled ?? true,
-          enabledMcpIds: payloadObject.enabledMcpIds ?? [],
         });
 
         debugLog('🔍 createSession 使用参数:', { userId, projectId: effectiveProjectId, title });
@@ -186,10 +184,6 @@ export function createSessionCreateActions({
             selectedModelId: effectiveSelection.selectedModelId,
             selectedAgentId: effectiveSelection.selectedAgentId,
           };
-          if (!state.sessionStreamingMessageDrafts) {
-            state.sessionStreamingMessageDrafts = {};
-          }
-          state.sessionStreamingMessageDrafts[formattedSession.id] = null;
           if (shouldActivateSession) {
             state.currentSessionId = formattedSession.id;
             state.currentSession = formattedSession;

@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
@@ -69,7 +69,7 @@ pub(super) async fn create_project(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": err})),
-            )
+            );
         }
     };
 
@@ -142,7 +142,7 @@ pub(super) async fn update_project(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": err})),
-            )
+            );
         }
     };
 

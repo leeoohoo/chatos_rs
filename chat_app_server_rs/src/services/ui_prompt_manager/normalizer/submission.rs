@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 
 use super::choice::{
-    normalize_choice_limits, normalize_choice_options, normalize_choice_selection, ChoiceLimits,
-    ChoiceOption, LimitMode,
+    ChoiceLimits, ChoiceOption, LimitMode, normalize_choice_limits, normalize_choice_options,
+    normalize_choice_selection,
 };
-use super::fields::{normalize_kv_fields, KvField};
+use super::fields::{KvField, normalize_kv_fields};
 use super::values::normalize_kv_values;
 use super::{UiPromptPayload, UiPromptResponseSubmission};
 

@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
@@ -11,9 +11,8 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::sessions::{
-    archive_session, create_session as create_conversation_session,
+    CreateConversationSessionInput, archive_session, create_session as create_conversation_session,
     list_sessions as list_conversation_sessions, update_session as update_conversation_session,
-    CreateConversationSessionInput,
 };
 use crate::services::chatos_sessions;
 

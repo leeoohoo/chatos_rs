@@ -7,8 +7,8 @@ use walkdir::WalkDir;
 use crate::models::remote_connection::RemoteConnection;
 
 use super::super::{
-    connect_ssh2_session_with_verification, join_remote_path, normalize_remote_path,
-    remote_parent_path, SftpTransferManager,
+    SftpTransferManager, connect_ssh2_session_with_verification, join_remote_path,
+    normalize_remote_path, remote_parent_path,
 };
 use super::errors::TransferJobError;
 
@@ -91,7 +91,7 @@ fn ensure_remote_dir_recursive(sftp: &ssh2::Sftp, dir_path: &str) -> Result<(), 
                             return Err(TransferJobError::remote(format!(
                                 "创建远端目录失败 ({}): {err}",
                                 current
-                            )))
+                            )));
                         }
                     }
                 }

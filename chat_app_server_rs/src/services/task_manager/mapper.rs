@@ -1,4 +1,4 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 
 use super::normalizer::{
     normalize_priority, normalize_status, normalize_tags, parse_tags_json, trimmed_non_empty,

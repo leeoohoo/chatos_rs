@@ -15,10 +15,7 @@ import type {
   SystemContext,
 } from './config';
 import type { ChatError, UnknownRecord } from './common';
-import type {
-  GuideMessageHandler,
-  SendMessageHandler,
-} from './runtime';
+import type { SendMessageHandler } from './runtime';
 import type {
   ContactRecord,
   Project,
@@ -49,8 +46,6 @@ export interface MessageListProps {
   assistantContactName?: string | null;
   hasMore?: boolean;
   onLoadMore?: () => void;
-  onToggleTurnProcess?: (userMessageId: string) => void;
-  hideHistoryProcessSummary?: boolean;
   onMessageEdit?: (messageId: string, content: string) => void;
   onMessageDelete?: (messageId: string) => void;
   customRenderer?: {
@@ -59,21 +54,10 @@ export interface MessageListProps {
   };
 }
 
-export interface TurnProcessViewerState {
-  open: boolean;
-  sessionId: string | null;
-  userMessageId: string | null;
-  turnId: string | null;
-}
-
 export interface InputAreaProps {
   conversationId?: string | null;
   onSend: SendMessageHandler;
-  onGuide?: GuideMessageHandler;
-  onStop?: () => void;
   disabled?: boolean;
-  isStreaming?: boolean;
-  isStopping?: boolean;
   placeholder?: string;
   maxLength?: number;
   allowAttachments?: boolean;
@@ -103,17 +87,9 @@ export interface InputAreaProps {
   workspaceRoot?: string | null;
   onWorkspaceRootChange?: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
-  currentAgent?: AgentConfig | null;
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;
-  taskRunnerAsyncContactMode?: boolean;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
-  autoCreateTask?: boolean;
-  onMcpEnabledChange?: (enabled: boolean) => void;
-  onEnabledMcpIdsChange?: (ids: string[]) => void;
-  onAutoCreateTaskChange?: (enabled: boolean) => void;
 }
 
 export interface SessionListProps {

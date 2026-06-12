@@ -7,7 +7,7 @@ mod ws_handlers;
 #[cfg(test)]
 mod tests;
 
-use axum::{routing::get, routing::post, Router};
+use axum::{Router, routing::get, routing::post};
 
 use self::contracts::{
     CreateTerminalRequest, DispatchTerminalCommandRequest, TerminalLogQuery, TerminalQuery,

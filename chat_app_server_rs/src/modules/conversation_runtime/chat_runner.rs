@@ -6,8 +6,8 @@ use tracing::warn;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::chat_stream::{
-    build_chat_stream_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
-    send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
+    ChatEventSink, ChatRealtimeStreamContext, build_chat_stream_callbacks,
+    enrich_chat_result_with_persisted_messages, handle_chat_result, send_tools_unavailable_event,
 };
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::agent_runtime::ai_server::AiServer as AgentAiServer;
@@ -18,12 +18,10 @@ use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution, ChatExecutionInput,
+    ChatExecutionInput, build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
-use super::snapshot::{
-    sync_chat_turn_snapshot, wire_implicit_command_tracking, LiveRequestSnapshotContext,
-};
+use super::snapshot::{LiveRequestSnapshotContext, sync_chat_turn_snapshot};
 use super::turn_lifecycle::ActiveConversationTurn;
 
 pub struct PreparedChatExecution {
@@ -95,7 +93,7 @@ pub fn prepare_chat_execution(
     sink: ChatEventSink,
     unavailable_tools: &[Value],
     mcp_tool_metadata: ToolMetadataMap,
-    runtime_context: &ResolvedConversationRuntimeContext,
+    _runtime_context: &ResolvedConversationRuntimeContext,
     mut callbacks: AiClientCallbacks,
     chunk_sent: Arc<AtomicBool>,
     streamed_content: Arc<Mutex<String>>,
@@ -103,10 +101,6 @@ pub fn prepare_chat_execution(
     actual_context_mode: &'static str,
 ) -> PreparedChatExecution {
     send_tools_unavailable_event(&sink, unavailable_tools);
-    wire_implicit_command_tracking(
-        &mut callbacks,
-        runtime_context.selected_commands_for_snapshot.clone(),
-    );
     let live_request_snapshot_for_context = live_request_snapshot.clone();
     callbacks.on_before_model_request = Some(Arc::new(
         move |request_input, _, override_context| {
@@ -181,13 +175,6 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
     } = bootstrap;
 
     let use_tools = runtime_context.use_tools;
-    let prepared_mcp = prepare_mcp_execution(
-        session_id,
-        resolved_turn_id.as_str(),
-        &mut runtime_context,
-        model_runtime.use_codex_gateway_mcp_passthrough,
-    )
-    .await;
     let sink = build_chat_event_sink(
         sender,
         user_id,
@@ -196,18 +183,40 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         project_id,
         Some(user_message_id.clone()),
     );
-    let mut callback_bundle = build_chat_stream_callbacks(
-        &sink,
-        session_id,
-        !runtime_context.task_runner_async_contact_mode,
-    );
-    if runtime_context.task_runner_async_contact_mode {
-        callback_bundle.callbacks.on_chunk = None;
-        callback_bundle.callbacks.on_thinking = None;
-        callback_bundle.callbacks.on_tools_start = None;
-        callback_bundle.callbacks.on_tools_stream = None;
-        callback_bundle.callbacks.on_tools_end = None;
+
+    if let Some(runtime_error) = runtime_context.runtime_error.clone() {
+        let empty_chunk_sent = Arc::new(AtomicBool::new(false));
+        let empty_streamed_content = Arc::new(Mutex::new(String::new()));
+        finalize_chat_result(
+            &sink,
+            session_id,
+            resolved_turn_id.as_str(),
+            user_message_id.as_str(),
+            false,
+            &empty_chunk_sent,
+            &empty_streamed_content,
+            Err(runtime_error),
+            true,
+            || crate::utils::log_helpers::log_chat_cancelled(session_id),
+            |err| crate::utils::log_helpers::log_chat_error(err),
+        )
+        .await;
+        return;
     }
+
+    let prepared_mcp = prepare_mcp_execution(
+        session_id,
+        resolved_turn_id.as_str(),
+        &mut runtime_context,
+        model_runtime.use_codex_gateway_mcp_passthrough,
+    )
+    .await;
+    let mut callback_bundle = build_chat_stream_callbacks(&sink, session_id, false);
+    callback_bundle.callbacks.on_chunk = None;
+    callback_bundle.callbacks.on_thinking = None;
+    callback_bundle.callbacks.on_tools_start = None;
+    callback_bundle.callbacks.on_tools_stream = None;
+    callback_bundle.callbacks.on_tools_end = None;
     let prepared = prepare_chat_execution(
         sink,
         prepared_mcp.unavailable_tools.as_slice(),
@@ -272,7 +281,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         session_id,
         resolved_turn_id.as_str(),
         user_message_id.as_str(),
-        runtime_context.task_runner_async_contact_mode,
+        true,
         &prepared.chunk_sent,
         &prepared.streamed_content,
         result,
@@ -364,13 +373,23 @@ pub async fn finalize_chat_result<FC, FE>(
         Err(error) => Err(error),
     };
 
+    let chunk_sent_for_result = if mark_task_runner_async_completed {
+        None
+    } else {
+        Some(chunk_sent)
+    };
+    let streamed_content_for_result = if mark_task_runner_async_completed {
+        None
+    } else {
+        Some(streamed_content)
+    };
     let should_send_done = handle_chat_result(
         sink,
         session_id,
         Some(turn_id),
         Some(user_message_id),
-        Some(chunk_sent),
-        Some(streamed_content),
+        chunk_sent_for_result,
+        streamed_content_for_result,
         result,
         on_cancelled,
         on_error,

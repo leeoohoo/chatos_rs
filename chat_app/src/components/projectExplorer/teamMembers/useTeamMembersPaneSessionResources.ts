@@ -23,11 +23,9 @@ export const useTeamMembersPaneSessionResources = ({
       ...contactResources.members,
       handleRemoveMember: runtimeResources.handleRemoveMember,
     },
-    isTaskRunnerAsyncContactMode: runtimeResources.isTaskRunnerAsyncContactMode,
     conversation: contactResources.conversation,
     summary: contactResources.summary,
     composer: runtimeResources.composer,
-    workbar: runtimeResources.workbar,
     runtimeContext: runtimeResources.runtimeContext,
   };
 };

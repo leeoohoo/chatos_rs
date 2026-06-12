@@ -2,13 +2,9 @@ import React from 'react';
 import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { Session } from '../../../types';
-import type { TaskReviewPanelState, UiPromptPanelState } from '../../../lib/store/types';
 import { ChatIcon, DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
 import SessionBusyBadge from '../../chat/SessionBusyBadge';
-import {
-  countPendingSessionPanels,
-  resolveSessionBusyPhase,
-} from '../../chat/sessionBusyState';
+import { resolveSessionBusyPhase } from '../../chat/sessionBusyState';
 
 type SessionStatus = 'active' | 'archiving' | 'archived';
 
@@ -30,8 +26,6 @@ interface SessionSectionProps {
   displaySessionRuntimeIdMap?: Record<string, string>;
   taskRunnerEnabledBySessionId?: Record<string, boolean>;
   sessionChatState?: SessionChatStateMap;
-  taskReviewPanelsBySession?: Record<string, TaskReviewPanelState[]>;
-  uiPromptPanelsBySession?: Record<string, UiPromptPanelState[]>;
   hasMore: boolean;
   isRefreshing: boolean;
   isLoadingMore: boolean;
@@ -59,8 +53,6 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   displaySessionRuntimeIdMap = {},
   taskRunnerEnabledBySessionId = {},
   sessionChatState,
-  taskReviewPanelsBySession = {},
-  uiPromptPanelsBySession = {},
   hasMore,
   isRefreshing,
   isLoadingMore,
@@ -165,18 +157,8 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         ) : !isTaskRunnerAsyncSession ? (
                           (() => {
                             const chatState = sessionChatState?.[runtimeSessionId];
-                            const {
-                              taskReviewCount,
-                              uiPromptCount,
-                            } = countPendingSessionPanels({
-                              sessionId: runtimeSessionId,
-                              taskReviewPanelsBySession,
-                              uiPromptPanelsBySession,
-                            });
                             const phase = resolveSessionBusyPhase({
                               chatState,
-                              pendingTaskReviewCount: taskReviewCount,
-                              pendingUiPromptCount: uiPromptCount,
                             });
                             return <SessionBusyBadge phase={phase} />;
                           })()
@@ -187,25 +169,6 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                             {t('session.taskRunner')}
                           </span>
                         ) : null}
-                        {(() => {
-                          if (isArchivedSession || isTaskRunnerAsyncSession) {
-                            return null;
-                          }
-                          const { pendingCount } = countPendingSessionPanels({
-                            sessionId: runtimeSessionId,
-                            taskReviewPanelsBySession,
-                            uiPromptPanelsBySession,
-                          });
-                          if (pendingCount <= 0) {
-                            return null;
-                          }
-                          return (
-                            <span className="inline-flex items-center gap-1 text-blue-600">
-                              <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                              {t('session.pendingCount', { count: pendingCount })}
-                            </span>
-                          );
-                        })()}
                       </div>
                     </div>
 

@@ -1,7 +1,7 @@
 use crate::core::auth::AuthUser;
 use axum::http::StatusCode;
-use axum::{extract::Query, Json};
-use serde_json::{json, Value};
+use axum::{Json, extract::Query};
+use serde_json::{Value, json};
 
 use super::super::contracts::FsQuery;
 use super::super::helpers::read_dir_entries;
@@ -70,7 +70,7 @@ async fn list_entries_impl(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": err })),
-            )
+            );
         }
     };
     let parent = policy.parent_for(&path);

@@ -1,11 +1,11 @@
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::{Path, Query},
     routing::{get, post, put},
-    Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::core::auth::AuthUser;
@@ -110,7 +110,7 @@ async fn list_mcp_configs(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "获取MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let mut out = Vec::new();
@@ -123,7 +123,7 @@ async fn list_mcp_configs(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "获取MCP配置失败", "detail": err})),
-                )
+                );
             }
         };
         out.push(json!({
@@ -212,13 +212,13 @@ async fn create_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建MCP配置失败"})),
-            )
+            );
         }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let app_ids = match mcp_repo::get_app_ids_for_mcp_config(&id).await {
@@ -227,7 +227,7 @@ async fn create_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let mut obj = mcp_config_value(&saved_cfg);
@@ -303,13 +303,13 @@ async fn update_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新MCP配置失败"})),
-            )
+            );
         }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let app_ids = match mcp_repo::get_app_ids_for_mcp_config(&config_id).await {
@@ -318,7 +318,7 @@ async fn update_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let mut obj = mcp_config_value(&cfg);

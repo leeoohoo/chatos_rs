@@ -183,11 +183,6 @@ export interface StreamChatOptions {
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
-  autoCreateTask?: boolean;
-  skillsEnabled?: boolean;
-  selectedSkillIds?: string[];
 }
 
 export interface StreamChatCommandResponse {
@@ -251,14 +246,6 @@ export interface ConversationMcpServersResponse {
   };
 }
 
-export interface RuntimeGuidanceSubmitPayload {
-  conversationId: string;
-  turnId: string;
-  content: string;
-  projectId?: string | null;
-  attachments?: StreamChatAttachmentPayload[];
-}
-
 export interface AgentToolDefinition {
   name: string;
   description?: string | null;
@@ -276,16 +263,6 @@ export interface AgentToolsResponse {
   }>;
   owner?: string | null;
   service?: string | null;
-}
-
-export interface RuntimeGuidanceSubmitResponse {
-  success: boolean;
-  guidance_id?: string;
-  status?: 'queued' | 'applied' | 'dropped';
-  pending_count?: number;
-  turn_id?: string;
-  error?: string;
-  code?: string;
 }
 
 export interface TurnRuntimeSnapshotSystemMessage {
@@ -419,60 +396,4 @@ export interface TaskManagerTaskResponse {
   created_at?: string;
   updated_at?: string;
   conversation_turn_id?: string | null;
-}
-
-export interface TaskReviewTaskDraft {
-  id?: string;
-  title?: string;
-  details?: string;
-  priority?: 'high' | 'medium' | 'low';
-  status?: 'todo' | 'doing' | 'blocked' | 'done';
-  tags?: string[];
-  due_at?: string | null;
-  outcome_summary?: string;
-  outcome_items?: Array<{
-    kind?: string;
-    text?: string;
-    importance?: 'high' | 'medium' | 'low';
-    refs?: string[];
-  }>;
-  resume_hint?: string;
-  blocker_reason?: string;
-  blocker_needs?: string[];
-  blocker_kind?: string;
-  [key: string]: unknown;
-}
-
-export interface TaskReviewItemResponse {
-  review_id: string;
-  conversation_id?: string;
-  conversation_turn_id?: string | null;
-  draft_tasks?: TaskReviewTaskDraft[] | null;
-  timeout_ms?: number | null;
-}
-
-export interface TaskReviewDecisionPayload {
-  action: 'confirm' | 'cancel';
-  tasks?: TaskReviewTaskDraft[];
-  reason?: string;
-}
-
-export interface UiPromptResponsePayload {
-  status: 'ok' | 'canceled' | 'timeout';
-  values?: Record<string, string>;
-  selection?: string | string[];
-  reason?: string;
-}
-
-export interface UiPromptItemResponse {
-  id: string;
-  conversation_id?: string;
-  conversation_turn_id?: string | null;
-  status?: string;
-  title?: string | null;
-  message?: string | null;
-  schema?: Record<string, unknown> | null;
-  values?: Record<string, unknown> | null;
-  created_at?: string;
-  updated_at?: string;
 }

@@ -1,32 +1,29 @@
-#[path = "agent_chat/runtime_guidance.rs"]
-mod runtime_guidance;
 #[path = "agent_chat/tools_panel.rs"]
 mod tools_panel;
 
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::Path,
     http::HeaderMap,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{info, warn};
 
-use self::runtime_guidance::submit_runtime_guidance;
 use self::tools_panel::{agent_status, agent_tools};
-use crate::api::chat_stream_common::{validate_chat_stream_request, ChatStreamRequest};
+use crate::api::chat_stream_common::{ChatStreamRequest, validate_chat_stream_request};
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
 use crate::core::auth::AuthUser;
-use crate::core::chat_runtime::{metadata_string, ChatRuntimeMetadata};
+use crate::core::chat_runtime::{ChatRuntimeMetadata, metadata_string};
 use crate::core::messages::ensure_message_metadata_object;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::models::message::Message;
 use crate::models::session::Session;
-use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
+use crate::modules::conversation_runtime::chat_usecase::{RunChatUsecaseInput, run_chat_usecase};
 use crate::modules::conversation_runtime::guidance;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::access_token_scope;
@@ -40,7 +37,6 @@ pub fn router() -> Router {
     Router::new()
         .route("/api/agent/chat/send", post(agent_chat_send))
         .route("/api/agent/chat/stop", post(stop_chat))
-        .route("/api/agent/chat/guide", post(submit_runtime_guidance))
         .route("/api/agent/tools", get(agent_tools))
         .route("/api/agent/status", get(agent_status))
         .route(
@@ -823,8 +819,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_task_runner_callback_to_user_message, build_task_runner_callback_assistant_message,
-        build_task_runner_callback_message_id, TaskRunnerCallbackRequest,
+        TaskRunnerCallbackRequest, apply_task_runner_callback_to_user_message,
+        build_task_runner_callback_assistant_message, build_task_runner_callback_message_id,
     };
     use crate::models::message::Message;
 

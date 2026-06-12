@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
-use axum::Json;
 use serde_json::Value;
 use std::path::Path as FsPath;
 
@@ -8,7 +8,7 @@ use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::{normalize_non_empty, validate_existing_dir};
-use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
+use crate::models::terminal::{TERMINAL_KIND_SHARED, Terminal, TerminalService};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::project_run::validate_command_preflight;
 use crate::services::realtime::publish_terminal_list_invalidated;
@@ -16,8 +16,8 @@ use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::InterruptTerminalRequest;
 use super::{
-    attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest,
-    TerminalQuery,
+    CreateTerminalRequest, DispatchTerminalCommandRequest, TerminalQuery, attach_busy,
+    derive_terminal_name,
 };
 
 pub(super) async fn list_terminals(

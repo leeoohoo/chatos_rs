@@ -1,6 +1,5 @@
 import type { Message, Session } from '../../../../types';
 import { debugLog } from '@/lib/utils';
-import { isTaskRunnerAsyncPlanMessage } from '../../../domain/messages';
 import { getRealtimeConnectionStateSnapshot } from '../../../realtime/state';
 import { fetchSession } from '../../helpers/sessions';
 import { fetchSessionMessages } from '../../helpers/messages';
@@ -24,26 +23,10 @@ import {
   writeSessionMessagesCache,
 } from '../sessionsUtils';
 import { applySelectSessionState } from '../sessionsSelectHelpers';
-import { recoverStreamingTurnBySnapshot } from '../sendMessage/turnRecovery';
-import { createDefaultSessionChatState } from '../sendMessage/sessionState';
 import type { SessionActionDeps } from './types';
 
 let latestSelectRequestSeq = 0;
 const SESSION_MESSAGES_BACKGROUND_SYNC_MAX_AGE_MS = 30_000;
-const RUNNING_SNAPSHOT_STATUSES = new Set(['running', 'in_progress', 'processing']);
-
-const readTrimmedString = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
-
-const readStreamingTempUserId = (message: Message | null | undefined): string | null => {
-  const linkedUserId = readTrimmedString(message?.metadata?.historyFinalForUserMessageId);
-  if (linkedUserId) {
-    return linkedUserId;
-  }
-  const draftUserId = readTrimmedString(message?.metadata?.historyDraftUserMessage?.id);
-  return draftUserId || null;
-};
 
 export function createSelectSessionActions({
   set,
@@ -51,90 +34,6 @@ export function createSelectSessionActions({
   client,
   getSessionParams,
 }: SessionActionDeps) {
-  const recoverRunningSessionState = async (
-    sessionId: string,
-    existingMessages: Message[],
-  ): Promise<boolean> => {
-    if (
-      typeof client.getConversationLatestTurnRuntimeContext !== 'function'
-      || typeof client.getConversationTurnRuntimeContextByTurn !== 'function'
-      || typeof client.getConversationTurnMessagesByTurn !== 'function'
-      || typeof client.getConversationTurnMessages !== 'function'
-    ) {
-      return false;
-    }
-
-    const latestSnapshot = await client.getConversationLatestTurnRuntimeContext(sessionId);
-    const snapshotStatus = readTrimmedString(latestSnapshot?.status).toLowerCase();
-    const turnId = readTrimmedString(latestSnapshot?.turn_id);
-    if (!turnId || !RUNNING_SNAPSHOT_STATUSES.has(snapshotStatus)) {
-      return false;
-    }
-
-    const assistantCandidate = [...existingMessages].reverse().find((message) => (
-      message?.role === 'assistant'
-      && !isTaskRunnerAsyncPlanMessage(message)
-      && readTrimmedString(
-        message?.metadata?.historyFinalForTurnId
-        || message?.metadata?.conversation_turn_id,
-      ) === turnId
-    )) || null;
-    const tempAssistantMessageId = assistantCandidate?.id || `recovered_streaming_${turnId}`;
-    const tempUserId = readStreamingTempUserId(assistantCandidate);
-
-    let recovered = false;
-    await recoverStreamingTurnBySnapshot({
-      apiClient: client,
-      set,
-      sessionId,
-      turnId,
-      tempAssistantMessageId,
-      tempUserId,
-      preferredUserMessageId: tempUserId,
-    }).then((result) => {
-      recovered = result.recovered;
-    }).catch((error) => {
-      console.error('Failed to recover running session state during selectSession:', error);
-    });
-
-    if (!recovered && assistantCandidate) {
-      set((state: ChatStoreDraft) => {
-        const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
-        state.sessionChatState[sessionId] = {
-          ...prev,
-          isLoading: true,
-          isStreaming: true,
-          isStopping: false,
-          activeTurnId: turnId,
-          streamingMessageId: assistantCandidate.id,
-          streamingPreviewText: typeof assistantCandidate.content === 'string' ? assistantCandidate.content : '',
-          streamingTransport: 'realtime',
-        };
-        if (!state.sessionStreamingMessageDrafts) {
-          state.sessionStreamingMessageDrafts = {};
-        }
-        state.sessionStreamingMessageDrafts[sessionId] = {
-          ...assistantCandidate,
-          status: 'streaming',
-          metadata: {
-            ...(assistantCandidate.metadata || {}),
-            conversation_turn_id: turnId,
-            historyFinalForTurnId: turnId,
-            ...(tempUserId ? { historyFinalForUserMessageId: tempUserId } : {}),
-          },
-        };
-        if (state.currentSessionId === sessionId) {
-          state.isLoading = true;
-          state.isStreaming = true;
-          state.streamingMessageId = assistantCandidate.id;
-        }
-      });
-      return true;
-    }
-
-    return recovered;
-  };
-
   return {
     selectSession: async (
       sessionId: string,
@@ -164,10 +63,6 @@ export function createSelectSessionActions({
             state.activePanel = 'chat';
           });
         }
-        void recoverRunningSessionState(
-          sessionId,
-          (beforeSelect.messages || []).filter((message: Message) => message?.sessionId === sessionId),
-        );
         debugLog('🔍 当前会话正在流式中，忽略重复切换请求:', sessionId);
         return;
       }
@@ -245,13 +140,6 @@ export function createSelectSessionActions({
             });
           }
           const cachedSessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(existingSession?.metadata);
-          const stateSnapshot = get();
-          const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
-          const localStreamingMessage = snapshotChatState?.streamingMessageId
-            ? stateSnapshot.messages.find((message: Message) => (
-              message.id === snapshotChatState.streamingMessageId && message.sessionId === sessionId
-            )) ?? null
-            : null;
 
           set((state: ChatStoreDraft) => {
             applySelectSessionState({
@@ -260,7 +148,6 @@ export function createSelectSessionActions({
               session: existingSession,
               messages: sessionSnapshot.messages,
               previousSessionId,
-              localStreamingMessage,
               sessionAiSelectionFromMetadata: cachedSessionAiSelectionFromMetadata,
               keepActivePanel: options.keepActivePanel,
             });
@@ -281,7 +168,6 @@ export function createSelectSessionActions({
             }
             state.isLoading = false;
           });
-          void recoverRunningSessionState(sessionId, sessionSnapshot.messages);
           const shouldBackgroundSync = (() => {
             if (options.skipBackgroundSync) {
               return false;
@@ -352,12 +238,6 @@ export function createSelectSessionActions({
             };
           });
         }
-        const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
-        const localStreamingMessage = snapshotChatState?.streamingMessageId
-          ? stateSnapshot.messages.find((message: Message) => (
-            message.id === snapshotChatState.streamingMessageId && message.sessionId === sessionId
-          )) ?? null
-          : null;
 
         set((state: ChatStoreDraft) => {
           applySelectSessionState({
@@ -366,7 +246,6 @@ export function createSelectSessionActions({
             session,
             messages,
             previousSessionId,
-            localStreamingMessage,
             sessionAiSelectionFromMetadata,
             keepActivePanel: options.keepActivePanel,
           });
@@ -379,7 +258,6 @@ export function createSelectSessionActions({
           };
           state.hasMoreMessages = Boolean(effectiveNextBefore);
         });
-        void recoverRunningSessionState(sessionId, messages);
 
         if (session) {
           const { userId, projectId } = getSessionParams();

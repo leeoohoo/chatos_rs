@@ -1,11 +1,11 @@
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::{Path, Query},
     routing::{delete, get, post, put},
-    Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::resolve_user_id;
@@ -230,10 +230,10 @@ async fn sync_session(
     {
         Ok(session) => session,
         Err(compat_runtime::CompatSyncSessionError::Internal(err)) => {
-            return compat_internal_error("sync session failed", err)
+            return compat_internal_error("sync session failed", err);
         }
         Err(err) => {
-            return compat_session_access_error(compat_runtime::map_compat_sync_session_error(err))
+            return compat_session_access_error(compat_runtime::map_compat_sync_session_error(err));
         }
     };
 

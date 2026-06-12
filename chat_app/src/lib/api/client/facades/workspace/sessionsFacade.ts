@@ -39,8 +39,6 @@ export interface WorkspaceSessionFacade {
     params?: { limit?: number; before?: string | null },
   ): Promise<CompactHistoryResponse>;
   getConversationTurnMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
-  getConversationTurnProcessMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
-  getConversationTurnProcessMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
   getConversationTurnMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
   getConversationLatestTurnRuntimeContext(conversationId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
   getConversationTurnRuntimeContextByTurn(
@@ -80,12 +78,6 @@ export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient
   },
   async getConversationTurnMessages(conversationId, userMessageId) {
     return workspaceApi.getConversationTurnMessages(this.getRequestFn(), conversationId, userMessageId);
-  },
-  async getConversationTurnProcessMessages(conversationId, userMessageId) {
-    return workspaceApi.getConversationTurnProcessMessages(this.getRequestFn(), conversationId, userMessageId);
-  },
-  async getConversationTurnProcessMessagesByTurn(conversationId, turnId) {
-    return workspaceApi.getConversationTurnProcessMessagesByTurn(this.getRequestFn(), conversationId, turnId);
   },
   async getConversationTurnMessagesByTurn(conversationId, turnId) {
     return workspaceApi.getConversationTurnMessagesByTurn(this.getRequestFn(), conversationId, turnId);

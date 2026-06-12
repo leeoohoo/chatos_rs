@@ -1,26 +1,19 @@
-use std::sync::{Arc, Mutex};
-
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::builtin_mcp_prompt::{
-    builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
+    BuiltinMcpPromptBuildResult, builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
     inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
-    BuiltinMcpPromptBuildResult,
 };
-use crate::core::chat_runtime::parse_implicit_command_selections_from_tools_end;
 use crate::core::messages::join_text_lines_or_json;
 use crate::core::turn_runtime_snapshot::{
-    build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
+    BuildTurnRuntimeSnapshotInput, build_turn_runtime_snapshot_payload,
 };
 use crate::models::memory_runtime_types::{
     TurnRuntimeSnapshotContextItemDto, TurnRuntimeSnapshotLookupResponseDto,
-    TurnRuntimeSnapshotSelectedCommandDto,
 };
-use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::chatos_sessions;
 
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
-use super::task_board::build_task_board_prompt;
 
 #[derive(Debug, Clone, Default)]
 pub struct ActualTurnRequestContext {
@@ -51,33 +44,6 @@ pub fn actual_context_items_from_v3_input(input: &Value) -> Vec<TurnRuntimeSnaps
                 .collect()
         })
         .unwrap_or_default()
-}
-
-pub fn wire_implicit_command_tracking(
-    callbacks: &mut AiClientCallbacks,
-    selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
-) {
-    let original_on_tools_end = callbacks.on_tools_end.clone();
-    callbacks.on_tools_end = Some(Arc::new(move |result: Value| {
-        let implicit_items = parse_implicit_command_selections_from_tools_end(&result);
-        if !implicit_items.is_empty() {
-            if let Ok(mut snapshot_items) = selected_commands_for_snapshot.lock() {
-                for item in implicit_items {
-                    snapshot_items.push(TurnRuntimeSnapshotSelectedCommandDto {
-                        command_ref: item.command_ref,
-                        name: item.name,
-                        plugin_source: item.plugin_source,
-                        source_path: item.source_path,
-                        trigger: Some("implicit".to_string()),
-                        arguments: None,
-                    });
-                }
-            }
-        }
-        if let Some(callback) = original_on_tools_end.as_ref() {
-            callback(result);
-        }
-    }));
 }
 
 pub async fn sync_chat_turn_snapshot(
@@ -135,11 +101,7 @@ pub async fn sync_chat_turn_snapshot(
         .lock()
         .map(|items| items.clone())
         .unwrap_or_default();
-    let task_board_prompt = if context.task_runner_async_contact_mode {
-        None
-    } else {
-        build_task_board_prompt(session_id, Some(turn_id), context.internal_context_locale).await
-    };
+    let task_board_prompt: Option<String> = None;
     let builtin_prompt_debug = inspect_builtin_mcp_prompt_for_runtime(
         context.mcp_server_bundle.2.as_slice(),
         tool_metadata,

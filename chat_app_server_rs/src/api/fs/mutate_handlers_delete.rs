@@ -1,8 +1,8 @@
 use std::fs;
 
-use axum::http::StatusCode;
 use axum::Json;
-use serde_json::{json, Value};
+use axum::http::StatusCode;
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
@@ -54,7 +54,7 @@ pub(in super::super) async fn delete_entry(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": err.to_string() })),
-            )
+            );
         }
     };
     let is_symlink = metadata.file_type().is_symlink();

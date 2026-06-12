@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
@@ -6,20 +6,15 @@ import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { InputAreaProps } from '../../types';
 import { useAttachmentsInput } from './useAttachmentsInput';
 import { useDismissiblePopover } from './useDismissiblePopover';
-import { useMcpSelection } from './useMcpSelection';
 import { useProjectFilePicker } from './useProjectFilePicker';
 import { useWorkspaceDirectoryPicker } from './useWorkspaceDirectoryPicker';
-import { useAgentSkillSelection } from './useAgentSkillSelection';
 import { useInputAreaContextModel } from './useInputAreaContextModel';
 import { useInputAreaMessageDraft } from './useInputAreaMessageDraft';
 
 type UseInputAreaControllerParams = Pick<
   InputAreaProps,
   | 'onSend'
-  | 'onGuide'
   | 'disabled'
-  | 'isStreaming'
-  | 'isStopping'
   | 'maxLength'
   | 'allowAttachments'
   | 'supportedFileTypes'
@@ -39,14 +34,6 @@ type UseInputAreaControllerParams = Pick<
   | 'workspaceRoot'
   | 'onWorkspaceRootChange'
   | 'currentRemoteConnectionId'
-  | 'currentAgent'
-  | 'taskRunnerAsyncContactMode'
-  | 'mcpEnabled'
-  | 'enabledMcpIds'
-  | 'autoCreateTask'
-  | 'onMcpEnabledChange'
-  | 'onEnabledMcpIdsChange'
-  | 'onAutoCreateTaskChange'
 >;
 
 const DEFAULT_SUPPORTED_FILE_TYPES = [
@@ -59,10 +46,7 @@ const DEFAULT_SUPPORTED_FILE_TYPES = [
 
 export function useInputAreaController({
   onSend,
-  onGuide,
   disabled = false,
-  isStreaming = false,
-  isStopping = false,
   maxLength = 4000,
   allowAttachments = false,
   supportedFileTypes = DEFAULT_SUPPORTED_FILE_TYPES,
@@ -82,16 +66,8 @@ export function useInputAreaController({
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
-  currentAgent = null,
-  taskRunnerAsyncContactMode = false,
-  mcpEnabled = true,
-  enabledMcpIds = [],
-  autoCreateTask = false,
-  onMcpEnabledChange,
-  onEnabledMcpIdsChange,
 }: UseInputAreaControllerParams) {
   const { t } = useI18n();
-  const isGuidingMode = !taskRunnerAsyncContactMode && isStreaming && !isStopping;
   const effectiveAllowAttachments = allowAttachments;
 
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -202,20 +178,6 @@ export function useInputAreaController({
   ]);
 
   const {
-    currentAgentForSkills,
-    skillsEnabled,
-    setSkillsEnabled,
-    skillsLoading,
-    availableSkillOptions,
-    selectedSkillIds,
-    handleToggleSelectedSkill,
-    handleClearSelectedSkills,
-  } = useAgentSkillSelection({
-    client,
-    currentAgent,
-  });
-
-  const {
     attachments,
     attachError,
     isDragging,
@@ -255,7 +217,7 @@ export function useInputAreaController({
     selectedThinkingLevel: localSelectedThinkingLevel,
     selectedProjectId,
     workspaceRoot,
-    isGuidingMode,
+    isGuidingMode: false,
     showProjectFileButton,
   });
 
@@ -275,73 +237,13 @@ export function useInputAreaController({
     client,
     showWorkspaceRootPicker,
     disabled,
-    isStreaming,
-    isStopping,
+    isStreaming: false,
+    isStopping: false,
     normalizedWorkspaceRoot,
     onWorkspaceRootChange,
   });
 
-  const hasRuntimeProject = Boolean(selectedRuntimeProject?.id && selectedRuntimeProject?.rootPath);
-  const hasDirectoryContext = hasRuntimeProject || Boolean(normalizedWorkspaceRoot);
-  const hasRemoteContext = Boolean(
-    typeof currentRemoteConnectionId === 'string' && currentRemoteConnectionId.trim().length > 0,
-  );
-  const mcpProjectScopeKey = useMemo(() => {
-    const projectId = typeof selectedRuntimeProject?.id === 'string'
-      ? selectedRuntimeProject.id.trim()
-      : '';
-    if (projectId) {
-      return `project:${projectId}`;
-    }
-    if (normalizedWorkspaceRoot) {
-      return `workspace:${normalizedWorkspaceRoot}`;
-    }
-    return null;
-  }, [normalizedWorkspaceRoot, selectedRuntimeProject?.id]);
-
-  const {
-    mcpPickerOpen,
-    setMcpPickerOpen,
-    availableMcpConfigs,
-    mcpConfigsLoading,
-    mcpConfigsError,
-    builtinMcpConfigs,
-    customMcpConfigs,
-    mcpToolsetPresets,
-    projectScopeKey,
-    hasProjectMcpDefault,
-    selectableMcpIds,
-    sanitizedEnabledMcpIds,
-    isAllMcpSelected,
-    selectedMcpCount,
-    isProjectRequiredMcpId,
-    isRemoteRequiredMcpId,
-    loadAvailableMcpConfigs,
-    handleToggleMcpPicker,
-    handleSelectAllMcp,
-    handleToggleMcpSelection,
-    handleApplyMcpToolsetPreset,
-    handleSaveProjectMcpDefault,
-    handleApplyProjectMcpDefault,
-  } = useMcpSelection({
-    client,
-    mcpEnabled,
-    enabledMcpIds,
-    projectScopeKey: mcpProjectScopeKey,
-    hasDirectoryContext,
-    hasRemoteContext,
-    disabled,
-    isStreaming,
-    isStopping,
-    onMcpEnabledChange,
-    onEnabledMcpIdsChange,
-  });
-
   const pickerRef = useDismissiblePopover<HTMLDivElement>(pickerOpen, () => setPickerOpen(false));
-  const mcpPickerRef = useDismissiblePopover<HTMLDivElement>(
-    mcpPickerOpen,
-    () => setMcpPickerOpen(false),
-  );
   const workspacePickerRef = useDismissiblePopover<HTMLDivElement>(
     workspacePickerOpen,
     () => setWorkspacePickerOpen(false),
@@ -402,26 +304,17 @@ export function useInputAreaController({
     currentRemoteConnectionId,
     disabled,
     effectiveAllowAttachments,
-    isGuidingMode,
-    taskRunnerAsyncContactMode,
-    mcpEnabled,
-    autoCreateTask,
     maxLength,
     normalizedWorkspaceRoot,
-    onGuide,
     onSend,
     requireModelSelection,
-    sanitizedEnabledMcpIds,
     selectedModelId,
-    selectedSkillIds,
     selectedRuntimeProject,
     effectiveModelName,
     effectiveThinkingLevel,
-    skillsEnabled,
   });
 
   return {
-    isGuidingMode,
     effectiveAllowAttachments,
     message,
     setPickerOpen,
@@ -437,7 +330,6 @@ export function useInputAreaController({
     handleDragLeave,
     handleDrop,
     pickerRef,
-    mcpPickerRef,
     workspacePickerRef,
     projectFilePickerRef,
     pickerOpen,
@@ -453,38 +345,6 @@ export function useInputAreaController({
     loadWorkspaceDirectories,
     handleToggleWorkspacePicker,
     handleSelectWorkspaceRoot,
-    hasDirectoryContext,
-    hasRemoteContext,
-    mcpPickerOpen,
-    availableMcpConfigs,
-    mcpConfigsLoading,
-    mcpConfigsError,
-    builtinMcpConfigs,
-    customMcpConfigs,
-    mcpToolsetPresets,
-    projectScopeKey,
-    hasProjectMcpDefault,
-    selectableMcpIds,
-    sanitizedEnabledMcpIds,
-    isAllMcpSelected,
-    selectedMcpCount,
-    isProjectRequiredMcpId,
-    isRemoteRequiredMcpId,
-    loadAvailableMcpConfigs,
-    handleToggleMcpPicker,
-    handleSelectAllMcp,
-    handleToggleMcpSelection,
-    handleApplyMcpToolsetPreset,
-    handleSaveProjectMcpDefault,
-    handleApplyProjectMcpDefault,
-    currentAgentForSkills,
-    skillsEnabled,
-    setSkillsEnabled,
-    skillsLoading,
-    availableSkillOptions,
-    selectedSkillIds,
-    handleToggleSelectedSkill,
-    handleClearSelectedSkills,
     selectedModel,
     enabledModels,
     selectedModelName: localSelectedModelName,

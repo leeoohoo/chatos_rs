@@ -50,12 +50,6 @@ describe('syncSessionMessagesInBackground', () => {
         historyFinalForTurnId: 'turn_2',
       },
     } as Message;
-    const draft = {
-      ...createMessage('assistant_temp', 'stale local draft', 'streaming'),
-      metadata: {
-        conversation_turn_id: 'turn_2',
-      },
-    } as Message;
     const state = {
       currentSessionId: 'session_1',
       messages: [],
@@ -76,10 +70,6 @@ describe('syncSessionMessagesInBackground', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {
-        session_2: draft,
-      },
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -103,15 +93,11 @@ describe('syncSessionMessagesInBackground', () => {
     expect(state.isLoading).toBe(true);
     expect(state.error).toBe('keep-existing-error');
     expect(state.messages).toEqual([]);
-    expect(state.sessionStreamingMessageDrafts.session_2).toBeNull();
-    expect(state.sessionChatState.session_2).toMatchObject({
-      isLoading: false,
-      isStreaming: false,
-      isStopping: false,
-      streamingMessageId: null,
-      activeTurnId: null,
-      streamingPreviewText: '',
+    expect(readCache(state, 'session_2')).toMatchObject({
+      nextBefore: null,
+      loaded: true,
     });
+    expect(readCache(state, 'session_2')?.messages.map((message) => message.id)).toEqual(['assistant_final']);
   });
 
   it('preserves already loaded older compact history during background sync of latest page', async () => {
@@ -138,8 +124,6 @@ describe('syncSessionMessagesInBackground', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -197,8 +181,6 @@ describe('syncSessionMessagesInBackground', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -256,8 +238,6 @@ describe('syncSessionMessagesInBackground', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -311,8 +291,6 @@ describe('syncSessionMessagesInBackground', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -366,8 +344,6 @@ describe('syncSessionMessagesInBackground', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -431,8 +407,6 @@ describe('syncSessionMessagesInBackground', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       state = produce(state, (draft) => {

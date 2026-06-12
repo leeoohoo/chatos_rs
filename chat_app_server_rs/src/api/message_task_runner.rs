@@ -1,6 +1,6 @@
 use axum::http::StatusCode;
-use axum::{extract::Path, routing::get, Json, Router};
-use serde_json::{json, Value};
+use axum::{Json, Router, extract::Path, routing::get};
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 use crate::core::chat_runtime::ChatRuntimeMetadata;

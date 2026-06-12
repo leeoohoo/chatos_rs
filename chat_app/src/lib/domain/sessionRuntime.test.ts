@@ -38,9 +38,8 @@ describe('sessionRuntime metadata helpers', () => {
       contactId: 'contact_1',
       remoteConnectionId: null,
       selectedModelId: 'model_1',
-      mcpEnabled: true,
-      enabledMcpIds: ['mcp_a'],
-      autoCreateTask: true,
+      selectedModelName: null,
+      selectedThinkingLevel: null,
       projectId: null,
       projectRoot: null,
       workspaceRoot: '/tmp/workspace',
@@ -62,7 +61,6 @@ describe('sessionRuntime metadata helpers', () => {
 
     const merged = mergeSessionRuntimeIntoMetadata(metadata, {
       selectedModelId: 'model_new',
-      autoCreateTask: true,
       workspaceRoot: '/tmp/next-workspace',
     });
 
@@ -73,7 +71,6 @@ describe('sessionRuntime metadata helpers', () => {
       source_metadata: {
         chat_runtime: {
           selected_model_id: 'model_new',
-          auto_create_task: true,
           workspace_root: '/tmp/next-workspace',
         },
         ui_chat_selection: {
@@ -99,7 +96,6 @@ describe('sessionRuntime metadata helpers', () => {
 
     const merged = mergeSessionRuntimeIntoMetadata(metadata, {
       selectedModelId: 'model_new',
-      autoCreateTask: true,
       workspaceRoot: '/tmp/next-workspace',
     });
 
@@ -110,7 +106,6 @@ describe('sessionRuntime metadata helpers', () => {
       source_metadata: {
         chat_runtime: {
           selected_model_id: 'model_new',
-          auto_create_task: true,
           workspace_root: '/tmp/next-workspace',
         },
       },

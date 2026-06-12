@@ -1,4 +1,4 @@
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::warn;
 
 use crate::models::memory_runtime_types::{
@@ -144,8 +144,7 @@ fn spawn_review_repair_run(
                             Err(status_err) => {
                                 warn!(
                                     "review repair failed and fallback status refresh also failed for conversation {}: {}",
-                                    conversation_id,
-                                    status_err
+                                    conversation_id, status_err
                                 );
                                 initial_pending_count
                             }

@@ -28,8 +28,6 @@ export const useSessionListStoreState = (storeToUse: SessionListStoreHook) => {
     refreshSessionById: state.refreshSessionById,
     loadAgents: state.loadAgents,
     sessionChatState: state.sessionChatState,
-    taskReviewPanelsBySession: state.taskReviewPanelsBySession,
-    uiPromptPanelsBySession: state.uiPromptPanelsBySession,
     projects: state.projects,
     currentProject: state.currentProject,
     loadProjects: state.loadProjects,

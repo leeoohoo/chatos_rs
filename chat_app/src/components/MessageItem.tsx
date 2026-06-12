@@ -4,7 +4,6 @@ import { cn } from '../lib/utils';
 import type { ToolCall } from '../types';
 import { AssistantMessageBubble } from './messageItem/AssistantMessageBubble';
 import { MessageContentRenderer } from './messageItem/MessageContentRenderer';
-import { HistoryProcessSummary } from './messageItem/HistoryProcessSummary';
 import { MessageActions } from './messageItem/MessageActions';
 import { MessageAvatar } from './messageItem/MessageAvatar';
 import { MessageEditForm } from './messageItem/MessageEditForm';
@@ -13,7 +12,6 @@ import { SessionSummaryCard } from './messageItem/SessionSummaryCard';
 import { MessageTaskDrawer } from './messageTasks/MessageTaskDrawer';
 import type { MessageItemProps } from './messageItem/messageItemTypes';
 import { useMessageItemModel } from './messageItem/useMessageItemModel';
-export type { DerivedProcessStats } from './messageItem/types';
 export type { MessageItemProps } from './messageItem/messageItemTypes';
 
 const readDisplayName = (value: unknown): string | null => {
@@ -42,9 +40,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   assistantContactName = null,
   onEdit,
   onDelete,
-  onToggleTurnProcess,
-  hideHistoryProcessSummary = false,
-  derivedProcessStatsByUserId,
   toolResultById,
   assistantToolCallsById,
   customRenderer,
@@ -72,10 +67,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     isSystem,
     isTool,
     isTaskRunnerAsyncAssistant,
-    hasHistoryProcess,
-    historyToolCount,
-    historyThinkingCount,
-    historyUnavailableToolCount,
     collapseAssistantProcessByDefault,
     attachments,
     keepLastN,
@@ -87,7 +78,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   } = useMessageItemModel({
     message,
     isStreaming,
-    derivedProcessStatsByUserId,
   });
   const showAssistantChrome = isAssistant && isTaskRunnerAsyncAssistant;
   const useCompactAssistantLayout = isAssistant && !showAssistantChrome;
@@ -174,17 +164,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             isAssistant={isAssistant}
             isTool={isTool}
             assistantDisplayName={assistantDisplayName}
-          />
-        )}
-
-        {/* 特殊渲染：会话摘要提示 */}
-        {isUser && hasHistoryProcess && !hideHistoryProcessSummary && (
-          <HistoryProcessSummary
-            userMessageId={message.id}
-            historyToolCount={historyToolCount}
-            historyThinkingCount={historyThinkingCount}
-            historyUnavailableToolCount={historyUnavailableToolCount}
-            onToggleTurnProcess={onToggleTurnProcess}
           />
         )}
 
@@ -292,7 +271,6 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
     (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null) &&
-    (prevProps.processSignal ?? "") === (nextProps.processSignal ?? "") &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
   );

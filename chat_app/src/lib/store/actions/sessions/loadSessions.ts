@@ -155,8 +155,6 @@ export function createLoadSessionActions({
               selectedModelId: null,
               projectId: '0',
               projectRoot: null,
-              mcpEnabled: true,
-              enabledMcpIds: [],
             });
             try {
               const created = await client.createSession({

@@ -6,35 +6,27 @@ import {
   isTaskRunnerCallbackMessage,
 } from '../../lib/domain/messages';
 import {
-  EMPTY_DERIVED_PROCESS_STATS,
   getCollapsedTextContentForRender,
   normalizeContentSegmentsForRender,
 } from './helpers';
-import type { DerivedProcessStats } from './types';
 import {
   getMessageContentSegments,
   getMessageHistoryFinalForTurnId,
   getMessageHistoryFinalForUserMessageId,
-  getMessageHistoryProcessThinkingCount,
-  getMessageHistoryProcessToolCount,
   getMessageHistoryProcessTurnId,
-  getMessageHistoryProcessUnavailableToolCount,
   getMessageHistoryProcessUserMessageId,
   getMessageKeepLastN,
   getMessagePrimaryToolCalls,
-  hasMessageHistoryProcess,
 } from './messageReaders';
 
 interface UseMessageItemModelOptions {
   message: Message;
   isStreaming: boolean;
-  derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
 }
 
 export const useMessageItemModel = ({
   message,
   isStreaming,
-  derivedProcessStatsByUserId,
 }: UseMessageItemModelOptions) => {
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
@@ -47,38 +39,6 @@ export const useMessageItemModel = ({
       || isTaskRunnerAsyncPlanMessage(message)
     ),
   );
-
-  const derivedProcessStats = useMemo(() => {
-    if (!isUser) {
-      return EMPTY_DERIVED_PROCESS_STATS;
-    }
-
-    return derivedProcessStatsByUserId?.get(message.id) || EMPTY_DERIVED_PROCESS_STATS;
-  }, [
-    isUser,
-    message.id,
-    derivedProcessStatsByUserId,
-  ]);
-
-  const hasHistoryProcess = Boolean(
-    (isUser && (
-      hasMessageHistoryProcess(message)
-      || getMessageHistoryProcessToolCount(message) > 0
-      || getMessageHistoryProcessThinkingCount(message) > 0
-    ))
-    || derivedProcessStats.hasProcess
-    || derivedProcessStats.hasStreamingAssistant
-    || derivedProcessStats.processMessageCount > 0
-  );
-  const historyToolCount = Math.max(
-    getMessageHistoryProcessToolCount(message),
-    derivedProcessStats.toolCallCount,
-  );
-  const historyThinkingCount = Math.max(
-    getMessageHistoryProcessThinkingCount(message),
-    derivedProcessStats.thinkingCount,
-  );
-  const historyUnavailableToolCount = getMessageHistoryProcessUnavailableToolCount(message);
 
   const isProcessAssistant = (
     isAssistant
@@ -183,10 +143,6 @@ export const useMessageItemModel = ({
     isSystem,
     isTool,
     isTaskRunnerAsyncAssistant,
-    hasHistoryProcess,
-    historyToolCount,
-    historyThinkingCount,
-    historyUnavailableToolCount,
     collapseAssistantProcessByDefault,
     attachments,
     keepLastN,

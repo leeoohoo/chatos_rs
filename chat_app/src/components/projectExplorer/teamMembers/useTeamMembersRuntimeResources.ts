@@ -1,19 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 
-import { resolveSessionProjectScopeId } from '../../../features/contactSession/sessionResolver';
-import { useI18n } from '../../../i18n/I18nProvider';
-import { countPendingReviewRepairMessages } from '../../../lib/domain/reviewRepair';
 import { useSessionRuntimeSettings } from '../../../features/sessionRuntime/useSessionRuntimeSettings';
-import { useSessionWorkbarPanels } from '../../chatInterface/useSessionWorkbarPanels';
 import type { ContactItem } from './types';
 import { useTeamMemberRuntimeContext } from './useTeamMemberRuntimeContext';
 import { useTeamMembersContactResources } from './useTeamMembersContactResources';
 import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
-import { useReviewRepairRealtime } from '../../../lib/realtime/useReviewRepairRealtime';
 import { useConversationSummariesRealtime } from '../../../lib/realtime/useConversationSummariesRealtime';
-import {
-  pickFirstSessionPanel,
-} from '../../chatInterface/panelStateSync';
 
 interface UseTeamMembersRuntimeResourcesOptions {
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
@@ -24,27 +16,14 @@ export const useTeamMembersRuntimeResources = ({
   store,
   contacts,
 }: UseTeamMembersRuntimeResourcesOptions) => {
-  const { t } = useI18n();
-  const [taskHistoryOpen, setTaskHistoryOpen] = useState(false);
   const {
     apiClient,
     sessions,
     remoteConnections,
     currentRemoteConnection,
-    messages,
     sessionChatState,
     selectRemoteConnection,
     updateSession,
-    submitRuntimeGuidance,
-    clearError,
-    setError,
-    sessionRuntimeGuidanceState,
-    taskReviewPanelsBySession,
-    uiPromptPanelsBySession,
-    upsertTaskReviewPanel,
-    removeTaskReviewPanel,
-    upsertUiPromptPanel,
-    removeUiPromptPanel,
   } = store;
   const {
     normalizedProjectId,
@@ -53,15 +32,6 @@ export const useTeamMembersRuntimeResources = ({
     summary,
     members,
   } = contacts;
-
-  const selectedSessionActiveTurnId = useMemo(() => {
-    if (!conversation.selectedProjectSession?.id) {
-      return null;
-    }
-    const raw = sessionChatState?.[conversation.selectedProjectSession.id]?.activeTurnId;
-    const normalized = typeof raw === 'string' ? raw.trim() : '';
-    return normalized || null;
-  }, [conversation.selectedProjectSession?.id, sessionChatState]);
 
   const runtimeContextRefreshNonce = useMemo(() => {
     if (!conversation.selectedProjectSession?.id) {
@@ -73,64 +43,14 @@ export const useTeamMembersRuntimeResources = ({
     selectedModelId: composerSelectedModelId,
     selectedModelName: composerSelectedModelName,
     selectedThinkingLevel: composerSelectedThinkingLevel,
-    mcpEnabled: composerMcpEnabled,
-    enabledMcpIds: composerEnabledMcpIds,
-    autoCreateTask: composerAutoCreateTask,
     setSelectedModelId: handleComposerSelectedModelChange,
     setSelectedModelName: handleComposerSelectedModelNameChange,
     setSelectedThinkingLevel: handleComposerSelectedThinkingLevelChange,
     setModelRuntimeSelection: handleComposerModelRuntimeSelectionChange,
-    setMcpEnabled: handleComposerMcpEnabledChange,
-    setEnabledMcpIds: handleComposerEnabledMcpIdsChange,
-    setAutoCreateTask: handleComposerAutoCreateTaskChange,
   } = useSessionRuntimeSettings({
     session: conversation.selectedProjectSession,
     updateSession,
   });
-
-  const loadWorkbarSummaries = useCallback(async (sessionId: string, _force = false) => {
-    if (!sessionId) {
-      return;
-    }
-    await summary.loadSessionSummaries(sessionId, { silent: true, force: _force });
-  }, [summary.loadSessionSummaries]);
-
-  useEffect(() => {
-    setTaskHistoryOpen(false);
-  }, [conversation.isSelectedSessionActive, conversation.selectedProjectSession?.id]);
-
-  const isTaskRunnerAsyncContactMode = useMemo(() => {
-    return conversation.selectedContact?.taskRunner?.enabled === true;
-  }, [conversation.selectedContact?.taskRunner?.enabled]);
-
-  const workbar = useSessionWorkbarPanels({
-    apiClient,
-    session: conversation.isSelectedSessionActive ? conversation.selectedProjectSession : null,
-    enabled: Boolean(
-      conversation.isSelectedSessionActive
-      && conversation.selectedProjectSession?.id
-      && !isTaskRunnerAsyncContactMode,
-    ),
-    messages,
-    selectedSessionActiveTurnId,
-    taskHistoryOpen,
-    sessionRuntimeGuidanceState,
-    taskReviewPanelsBySession,
-    uiPromptPanelsBySession,
-    upsertTaskReviewPanel,
-    removeTaskReviewPanel,
-    upsertUiPromptPanel,
-    removeUiPromptPanel,
-    loadWorkbarSummaries,
-  });
-
-  const handleOpenTeamWorkbarHistory = useCallback((sessionId: string) => {
-    if (!sessionId) {
-      return;
-    }
-    setTaskHistoryOpen(true);
-    workbar.handleOpenWorkbarHistory(sessionId, { forceHistory: false, forceSummaries: false });
-  }, [workbar.handleOpenWorkbarHistory]);
 
   const runtimeContext = useTeamMemberRuntimeContext({
     apiClient,
@@ -140,41 +60,6 @@ export const useTeamMembersRuntimeResources = ({
     ensureContactSession,
     setSelectedContactId: conversation.setSelectedContactId,
   });
-
-  const handleRuntimeGuidanceSend = useCallback(async (content: string, attachments?: File[]) => {
-    if (isTaskRunnerAsyncContactMode) {
-      return;
-    }
-    if (!conversation.selectedProjectSession) {
-      return;
-    }
-    if (resolveSessionProjectScopeId(conversation.selectedProjectSession) !== normalizedProjectId) {
-      console.warn('Blocked runtime guidance for cross-project session in team pane.');
-      return;
-    }
-
-    const sessionId = conversation.selectedProjectSession.id;
-    const turnId = String(sessionChatState?.[sessionId]?.activeTurnId || '').trim();
-    if (!sessionId || !turnId) {
-      return;
-    }
-    try {
-      await submitRuntimeGuidance(content, {
-        attachments,
-        conversationId: sessionId,
-        turnId,
-        projectId: normalizedProjectId,
-      });
-    } catch (error) {
-      console.error('Failed to submit runtime guidance in team pane:', error);
-    }
-  }, [
-    conversation.selectedProjectSession,
-    isTaskRunnerAsyncContactMode,
-    normalizedProjectId,
-    sessionChatState,
-    submitRuntimeGuidance,
-  ]);
 
   const handleComposerRemoteConnectionChange = useCallback((connectionId: string | null) => {
     void selectRemoteConnection(connectionId, { activatePanel: false });
@@ -201,94 +86,6 @@ export const useTeamMembersRuntimeResources = ({
     },
   });
 
-  const {
-    reviewRepairRunning,
-    reviewRepairPendingCount,
-    refreshReviewRepairStatus,
-    markReviewRepairStarting,
-  } = useReviewRepairRealtime({
-    apiClient,
-    sessionId: conversation.selectedProjectSession?.id || null,
-    enabled: Boolean(
-      conversation.selectedProjectSession?.id
-      && !isTaskRunnerAsyncContactMode,
-    ),
-    autoLoad: false,
-    messageCountHint: conversation.selectedProjectSession?.id
-      ? messages.length
-      : undefined,
-    onFailed: (errorMessage) => {
-      setError?.(errorMessage);
-    },
-    onCompleted: async () => {
-      const selectedSessionId = conversation.selectedProjectSession?.id || null;
-      if (!selectedSessionId) {
-        return;
-      }
-      await store.loadMessages(selectedSessionId);
-      await refreshReviewRepairStatus(selectedSessionId).catch((error) => {
-        console.error('Failed to refresh team review repair status after completion:', error);
-      });
-    },
-  });
-
-  const loadedReviewRepairPendingCount = useMemo(() => {
-    const selectedSessionId = conversation.selectedProjectSession?.id || null;
-    if (!selectedSessionId) {
-      return 0;
-    }
-    return countPendingReviewRepairMessages(messages, selectedSessionId);
-  }, [conversation.selectedProjectSession?.id, messages]);
-  const activeTaskReviewPanel = useMemo(
-    () => pickFirstSessionPanel(taskReviewPanelsBySession, conversation.selectedProjectSession?.id || null),
-    [conversation.selectedProjectSession?.id, taskReviewPanelsBySession],
-  );
-  const activeUiPromptPanel = useMemo(
-    () => pickFirstSessionPanel(uiPromptPanelsBySession, conversation.selectedProjectSession?.id || null),
-    [conversation.selectedProjectSession?.id, uiPromptPanelsBySession],
-  );
-  const pendingWorkbarPanelCount = (activeTaskReviewPanel ? 1 : 0) + (activeUiPromptPanel ? 1 : 0);
-  const effectiveReviewRepairPendingCount = reviewRepairPendingCount ?? 0;
-  const reviewRepairDisabled = !conversation.isSelectedSessionActive
-    || (
-      !reviewRepairRunning
-      && effectiveReviewRepairPendingCount === 0
-    && loadedReviewRepairPendingCount === 0
-    && pendingWorkbarPanelCount === 0
-      && !store.sessionMessagePaginationState?.[conversation.selectedProjectSession?.id || '']?.nextBefore
-    );
-
-  const handleRunReviewRepair = useCallback(async (sessionId: string) => {
-    if (isTaskRunnerAsyncContactMode) {
-      return;
-    }
-    if (!sessionId) {
-      return;
-    }
-    markReviewRepairStarting();
-    try {
-      clearError?.();
-      const result = await apiClient.runConversationReviewRepair(sessionId);
-      if (result?.success === false) {
-        throw new Error(result.detail || result.error || t('taskWorkbar.reviewRepairFailed'));
-      }
-    } catch (error) {
-      await refreshReviewRepairStatus(sessionId).catch((statusError) => {
-        console.error('Failed to refresh team review repair status after run error:', statusError);
-      });
-      setError?.(error instanceof Error ? error.message : t('taskWorkbar.reviewRepairFailed'));
-      throw error;
-    }
-  }, [
-    apiClient,
-    clearError,
-    isTaskRunnerAsyncContactMode,
-    markReviewRepairStarting,
-    refreshReviewRepairStatus,
-    setError,
-    t,
-  ]);
-
   const handleRemoveMember = useCallback(async (contact: ContactItem) => {
     const targetSessionId = members.projectContacts.find(
       (item) => item.contact.id === contact.id,
@@ -314,35 +111,17 @@ export const useTeamMembersRuntimeResources = ({
   ]);
 
   return {
-    isTaskRunnerAsyncContactMode,
     composer: {
       composerSelectedModelId,
       composerSelectedModelName,
       composerSelectedThinkingLevel,
-      composerMcpEnabled,
-      composerEnabledMcpIds,
-      composerAutoCreateTask,
       handleComposerSelectedModelChange,
       handleComposerSelectedModelNameChange,
       handleComposerSelectedThinkingLevelChange,
       handleComposerModelRuntimeSelectionChange,
-      handleComposerMcpEnabledChange,
-      handleComposerEnabledMcpIdsChange,
-      handleComposerAutoCreateTaskChange,
       handleComposerRemoteConnectionChange,
-      handleRuntimeGuidanceSend,
       remoteConnections,
       currentRemoteConnection,
-    },
-    workbar: {
-      ...workbar,
-      taskHistoryOpen,
-      setTaskHistoryOpen,
-      handleOpenTeamWorkbarHistory,
-      handleRunReviewRepair,
-      reviewRepairRunning,
-      reviewRepairPendingCount,
-      reviewRepairDisabled,
     },
     runtimeContext,
     handleRemoveMember,

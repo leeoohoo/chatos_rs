@@ -44,8 +44,6 @@ const baseProps = {
   runtimeContextSessionId: null,
   openingRuntimeContextContactId: null,
   removingContactId: null,
-  taskReviewPanelsBySession: {},
-  uiPromptPanelsBySession: {},
   onOpenAddMember: vi.fn(),
   onSelectContact: vi.fn(),
   onOpenSummary: vi.fn(),
@@ -53,59 +51,35 @@ const baseProps = {
   onRemoveMember: vi.fn(),
 };
 
-describe('TeamMembersSidebar session status', () => {
+describe('TeamMembersSidebar task runner mode', () => {
   afterEach(() => {
     window.localStorage.removeItem('chat_ui_locale');
     cleanup();
   });
 
-  it('shows reviewing when session streaming phase is reviewing', () => {
+  it('shows the member session without normal chat busy badges', () => {
     window.localStorage.setItem('chat_ui_locale', 'en-US');
 
     render(
       <I18nProvider>
-        <TeamMembersSidebar
-          {...baseProps}
-          sessionChatState={{
-            'session-1': {
-              isLoading: true,
-              isStreaming: true,
-              streamingPhase: 'reviewing',
-            },
-          }}
-        />
+        <TeamMembersSidebar {...baseProps} />
       </I18nProvider>,
     );
 
-    expect(screen.getByText('Reviewing')).toBeInTheDocument();
+    expect(screen.getByText(/会话一/)).toBeInTheDocument();
+    expect(screen.queryByText('Reviewing')).not.toBeInTheDocument();
+    expect(screen.queryByText('Thinking')).not.toBeInTheDocument();
   });
 
-  it('shows thinking when pending runtime panels exist without streaming flags', () => {
+  it('does not render pending runtime panel badges', () => {
     window.localStorage.setItem('chat_ui_locale', 'en-US');
 
     render(
       <I18nProvider>
-        <TeamMembersSidebar
-          {...baseProps}
-          sessionChatState={{
-            'session-1': {
-              isLoading: false,
-              isStreaming: false,
-              streamingPhase: null,
-            },
-          }}
-          taskReviewPanelsBySession={{
-            'session-1': [{
-              reviewId: 'review-1',
-              sessionId: 'session-1',
-              conversationTurnId: 'turn-1',
-              drafts: [],
-            }],
-          }}
-        />
+        <TeamMembersSidebar {...baseProps} />
       </I18nProvider>,
     );
 
-    expect(screen.getByText('Thinking')).toBeInTheDocument();
+    expect(screen.queryByText(/pending/i)).not.toBeInTheDocument();
   });
 });

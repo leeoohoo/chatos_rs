@@ -1,8 +1,8 @@
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::{Path, Query},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
 use uuid::Uuid;

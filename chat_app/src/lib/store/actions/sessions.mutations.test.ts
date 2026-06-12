@@ -48,18 +48,7 @@ describe('applyRealtimeSessionSnapshot', () => {
       selectedModelId: null,
       selectedAgentId: null,
       sessionAiSelectionBySession: {},
-      sessionStreamingMessageDrafts: {},
       sessionChatState: {},
-      sessionTurnProcessCache: {},
-      sessionRuntimeGuidanceState: {
-        session_1: {
-          pendingCount: 1,
-          appliedCount: 0,
-          lastGuidanceAt: null,
-          lastAppliedAt: null,
-          items: [],
-        },
-      },
       sessionMessagePaginationState: {
         session_1: {
           nextBefore: 'turn_older',
@@ -90,7 +79,6 @@ describe('applyRealtimeSessionSnapshot', () => {
     actions.removeSessionLocally('session_1');
 
     expect(state.sessionMessagePaginationState.session_1).toBeUndefined();
-    expect(state.sessionRuntimeGuidanceState.session_1).toBeUndefined();
     expect(readSessionMessagesCache(state, 'session_1')).toBeNull();
     expect(state.currentSessionId).toBeNull();
     expect(state.currentSession).toBeNull();

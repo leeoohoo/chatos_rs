@@ -13,9 +13,6 @@ import { createProjectActions } from './actions/projects';
 import { createTerminalActions } from './actions/terminals';
 import { createRemoteConnectionActions } from './actions/remoteConnections';
 import { createMessageActions } from './actions/messages';
-import { createRuntimeGuidanceActions } from './actions/runtimeGuidance';
-import { createStreamingActions } from './actions/streaming';
-import { createRuntimePanelActions } from './actions/runtimePanels';
 import { createAgentActions } from './actions/agents';
 import { createSystemContextActions } from './actions/systemContexts';
 import { createUiActions } from './actions/ui';
@@ -80,10 +77,7 @@ export function createChatStoreWithBackend(customApiClient: ApiClient, config?: 
                     ...createTerminalActions({ set, get, client, getUserIdParam }),
                     ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
-                    ...createRuntimePanelActions({ set }),
-                    ...createRuntimeGuidanceActions({ set, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
-                    ...createStreamingActions({ set, get, client }),
                     ...createUiActions({ set }),
 
                     // 配置操作（拆分到独立模块）
@@ -126,8 +120,9 @@ export function createChatStoreWithBackend(customApiClient: ApiClient, config?: 
                         const nextState = {...(persistedState as Record<string, unknown>)};
                         if (version < 2) {
                             delete nextState.sessionChatState;
-                            delete nextState.sessionStreamingMessageDrafts;
                         }
+                        delete nextState.sessionStreamingMessageDrafts;
+                        delete nextState.sessionTurnProcessCache;
                         return nextState;
                     },
                     partialize: (state) => ({

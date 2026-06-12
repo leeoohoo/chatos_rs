@@ -5,9 +5,6 @@ export interface SessionRuntimeMetadata {
   selectedModelId: string | null;
   selectedModelName: string | null;
   selectedThinkingLevel: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  autoCreateTask: boolean;
   projectId: string | null;
   projectRoot: string | null;
   workspaceRoot: string | null;
@@ -21,20 +18,6 @@ const normalizeId = (value: unknown): string | null => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-};
-
-const normalizeIdArray = (value: unknown): string[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const out: string[] = [];
-  for (const item of value) {
-    const normalized = normalizeId(item);
-    if (!normalized) continue;
-    if (out.includes(normalized)) continue;
-    out.push(normalized);
-  }
-  return out;
 };
 
 const asMetadataRecord = (value: unknown): MetadataRecord => (
@@ -131,12 +114,6 @@ export const readSessionRuntimeFromMetadata = (
   const workspaceRoot = normalizeId(
     runtime.workspace_root ?? runtime.workspaceRoot,
   );
-  const mcpEnabledRaw = runtime.mcp_enabled ?? runtime.mcpEnabled;
-  const mcpEnabled = typeof mcpEnabledRaw === 'boolean' ? mcpEnabledRaw : true;
-  const enabledMcpIds = normalizeIdArray(runtime.enabled_mcp_ids ?? runtime.enabledMcpIds);
-  const autoCreateTaskRaw = runtime.auto_create_task ?? runtime.autoCreateTask;
-  const autoCreateTask = typeof autoCreateTaskRaw === 'boolean' ? autoCreateTaskRaw : false;
-
   if (
     !selectedModelId
     && !selectedModelName
@@ -147,9 +124,6 @@ export const readSessionRuntimeFromMetadata = (
     && !projectId
     && !projectRoot
     && !workspaceRoot
-    && enabledMcpIds.length === 0
-    && mcpEnabled
-    && !autoCreateTask
   ) {
     return null;
   }
@@ -161,9 +135,6 @@ export const readSessionRuntimeFromMetadata = (
     selectedModelId,
     selectedModelName,
     selectedThinkingLevel,
-    mcpEnabled,
-    enabledMcpIds,
-    autoCreateTask,
     projectId,
     projectRoot,
     workspaceRoot,
@@ -210,25 +181,12 @@ export const mergeSessionRuntimeIntoMetadata = (
   const workspaceRoot = normalizeId(
     hasOwn('workspaceRoot') ? runtime.workspaceRoot : existingRuntime?.workspaceRoot,
   );
-  const mcpEnabled = typeof runtime.mcpEnabled === 'boolean'
-    ? runtime.mcpEnabled
-    : (existingRuntime?.mcpEnabled ?? true);
-  const enabledMcpIds = runtime.enabledMcpIds
-    ? normalizeIdArray(runtime.enabledMcpIds)
-    : (existingRuntime?.enabledMcpIds ?? []);
-  const autoCreateTask = typeof runtime.autoCreateTask === 'boolean'
-    ? runtime.autoCreateTask
-    : (existingRuntime?.autoCreateTask ?? false);
-
   source.chat_runtime = {
     selected_model_id: selectedModelId,
     selected_model_name: selectedModelName,
     selected_thinking_level: selectedThinkingLevel,
     contact_agent_id: contactAgentId,
     remote_connection_id: remoteConnectionId,
-    mcp_enabled: mcpEnabled,
-    enabled_mcp_ids: enabledMcpIds,
-    auto_create_task: autoCreateTask,
     project_id: projectId,
     project_root: projectRoot,
     workspace_root: workspaceRoot,

@@ -92,8 +92,6 @@ export const useContactSessionCreator = ({
           selectedModelId: null,
           projectId: CONTACT_CHAT_PROJECT_ID,
           projectRoot: null,
-          mcpEnabled: true,
-          enabledMcpIds: [],
         });
         await updateSession(ensuredSessionId, { metadata } as Partial<Session>);
         if (currentSessionId !== ensuredSessionId) {

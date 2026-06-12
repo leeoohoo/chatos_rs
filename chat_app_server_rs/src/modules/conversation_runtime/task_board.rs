@@ -449,18 +449,12 @@ fn build_task_turn_follow_up_guidance(
             if locale.is_english() {
                 format!(
                     "The previous assistant response ended too early. Continue in the same turn and finish every non-blocked task before you summarize again. Unfinished tasks: {}. Blocked tasks (ignored for this check): {}. Done tasks: {}.\n\nLatest task board:\n{}",
-                    unfinished_count,
-                    blocked_count,
-                    done_count,
-                    task_board_prompt
+                    unfinished_count, blocked_count, done_count, task_board_prompt
                 )
             } else {
                 format!(
                     "上一轮助手已经提前总结了，但当前轮还有未完成任务。请继续在同一轮内执行，先把所有非阻塞任务做完，再重新总结。未完成任务：{}。阻塞任务（本次检查忽略）：{}。已完成任务：{}。\n\n最新任务看板：\n{}",
-                    unfinished_count,
-                    blocked_count,
-                    done_count,
-                    task_board_prompt
+                    unfinished_count, blocked_count, done_count, task_board_prompt
                 )
             }
         }
@@ -498,10 +492,9 @@ fn is_done_status(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_hidden_task_turn_review_metadata, build_runtime_context,
-        classify_task_turn_follow_up, parse_task_turn_review_outcome,
-        strip_task_turn_review_marker, upsert_task_board_system_messages, TaskTurnFollowUpMode,
-        TaskTurnReviewOutcome,
+        TaskTurnFollowUpMode, TaskTurnReviewOutcome, build_hidden_task_turn_review_metadata,
+        build_runtime_context, classify_task_turn_follow_up, parse_task_turn_review_outcome,
+        strip_task_turn_review_marker, upsert_task_board_system_messages,
     };
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::models::memory_runtime_types::TurnRuntimeSnapshotSystemMessageDto;

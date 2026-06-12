@@ -6,10 +6,6 @@ import type {
   SessionMessagePaginationState,
 } from '../types';
 import {
-  ensureSessionTurnMaps,
-  mergeMessagesWithStreamingDraft,
-} from './messagesState';
-import {
   extractCompactHistoryMessages,
   mergeLatestCompactHistorySnapshot,
   readSessionMessagesCache,
@@ -56,11 +52,8 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
       preservedSnapshot,
     );
     set((state) => {
-      ensureSessionTurnMaps(state, sessionId);
-      const mergedMessages = mergeMessagesWithStreamingDraft(state, sessionId, mergedSnapshot.messages);
-
       if (options.updateVisibleMessages || state.currentSessionId === sessionId) {
-        state.messages = mergedMessages;
+        state.messages = mergedSnapshot.messages;
         state.hasMoreMessages = Boolean(mergedSnapshot.nextBefore);
       }
       if (!state.sessionMessagePaginationState) {
@@ -165,7 +158,6 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
         const page = result.messages;
         let mergedSnapshotMessages = extractCompactHistoryMessages(current.messages);
         set((state) => {
-          ensureSessionTurnMaps(state, sessionId);
           if (!state.sessionMessagePaginationState) {
             state.sessionMessagePaginationState = {};
           }

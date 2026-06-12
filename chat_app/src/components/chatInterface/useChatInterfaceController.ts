@@ -1,59 +1,32 @@
 import { useCallback } from 'react';
 
-import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
-import { countPendingReviewRepairMessages } from '../../lib/domain/reviewRepair';
 import type {
   SendMessageHandler,
   SendMessageRuntimeOptions,
-  Message,
   Session,
 } from '../../types';
-import { useChatSessionEffects } from './useChatSessionEffects';
-import { useRuntimeContextState } from './useRuntimeContextState';
-import { useChatInterfaceOverlayState } from './useChatInterfaceOverlayState';
-import { useReviewRepairRealtime } from '../../lib/realtime/useReviewRepairRealtime';
 import { useConversationSummariesRealtime } from '../../lib/realtime/useConversationSummariesRealtime';
 import type { RealtimeConversationSummariesUpdatedPayloadWrapper } from '../../lib/realtime/types';
+import { useChatInterfaceOverlayState } from './useChatInterfaceOverlayState';
+import { useChatSessionEffects } from './useChatSessionEffects';
+import { useRuntimeContextState } from './useRuntimeContextState';
 
 interface UseChatInterfaceControllerParams {
   apiClient: ApiClient;
   activePanel: string;
   currentSession: Session | null;
-  messages: Message[];
-  currentMessageCount: number;
-  currentSessionHasMoreMessages: boolean;
   runtimeContextRefreshNonce: number;
-  currentChatStateActiveTurnId: string | null | undefined;
-  activeConversationTurnId: string | null | undefined;
   currentRemoteConnectionId: string | null;
-  uiPromptHistoryOpen: boolean;
-  setUiPromptHistoryOpen: (value: boolean) => void;
   summaryPaneSessionId: string | null;
   setSummaryPaneSessionId: (value: string | null | ((prev: string | null) => string | null)) => void;
-  closeTurnProcessViewer: () => void;
-  setTaskHistoryOpen?: (value: boolean) => void;
   onMessageSend?: (content: string, attachments?: File[]) => void;
   sendMessage: SendMessageHandler;
   selectRemoteConnection: (
     connectionId: string | null,
     options?: { activatePanel?: boolean },
   ) => Promise<void>;
-  submitRuntimeGuidance: (
-    content: string,
-    options: {
-      attachments?: File[];
-      conversationId: string;
-      turnId: string;
-      projectId?: string | null;
-    },
-  ) => Promise<unknown>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
-  openTurnProcessViewer: (
-    sessionId: string,
-    userMessageId: string,
-    options?: { turnId?: string | null },
-  ) => void;
   loadProjects: () => Promise<unknown>;
   loadAiModelConfigs: () => Promise<void>;
   loadAgents: () => Promise<void>;
@@ -67,41 +40,20 @@ interface UseChatInterfaceControllerParams {
   markContactMemoryContextStale: (sessionId: string) => void;
   resetMemoryState: () => void;
   cancelPendingMemoryLoad: () => void;
-  loadUiPromptHistory: (sessionId: string, force?: boolean) => Promise<unknown>;
-  hydrateUiPromptHistoryFromCache: (sessionId: string) => void;
-  resetUiPromptHistoryState: () => void;
-  cancelPendingUiPromptHistoryLoad: () => void;
-  resetAllWorkbarState: () => void;
-  resetHistoryWorkbarState: () => void;
-  handleOpenWorkbarHistory: (
-    sessionId: string,
-    options?: { forceHistory?: boolean; forceSummaries?: boolean },
-  ) => void;
 }
 
 export const useChatInterfaceController = ({
   apiClient,
   activePanel,
   currentSession,
-  messages,
-  currentMessageCount,
-  currentSessionHasMoreMessages,
   runtimeContextRefreshNonce,
-  currentChatStateActiveTurnId,
-  activeConversationTurnId,
   currentRemoteConnectionId,
-  uiPromptHistoryOpen,
-  setUiPromptHistoryOpen,
   summaryPaneSessionId,
   setSummaryPaneSessionId,
-  closeTurnProcessViewer,
-  setTaskHistoryOpen,
   onMessageSend,
   sendMessage,
   selectRemoteConnection,
-  submitRuntimeGuidance,
   loadMoreMessages,
-  openTurnProcessViewer,
   loadProjects,
   loadAiModelConfigs,
   loadAgents,
@@ -112,24 +64,13 @@ export const useChatInterfaceController = ({
   markContactMemoryContextStale,
   resetMemoryState,
   cancelPendingMemoryLoad,
-  loadUiPromptHistory,
-  hydrateUiPromptHistoryFromCache,
-  resetUiPromptHistoryState,
-  cancelPendingUiPromptHistoryLoad,
-  resetAllWorkbarState,
-  resetHistoryWorkbarState,
-  handleOpenWorkbarHistory,
 }: UseChatInterfaceControllerParams) => {
-  const { t } = useI18n();
   const overlayState = useChatInterfaceOverlayState();
 
   const { sessionSummaryPaneVisible } = useChatSessionEffects({
     activePanel,
     currentSession,
-    uiPromptHistoryOpen,
     summaryPaneSessionId,
-    closeTurnProcessViewer,
-    setTaskHistoryOpen,
     loadProjects,
     loadAiModelConfigs,
     loadAgents,
@@ -137,14 +78,8 @@ export const useChatInterfaceController = ({
     hydrateContactMemoryContextFromCache,
     resetMemoryState,
     cancelPendingMemoryLoad,
-    loadUiPromptHistory,
-    hydrateUiPromptHistoryFromCache,
-    resetUiPromptHistoryState,
-    cancelPendingUiPromptHistoryLoad,
-    resetAllWorkbarState,
-    resetHistoryWorkbarState,
-    setUiPromptHistoryOpen,
   });
+
   const {
     runtimeContextOpen,
     setRuntimeContextOpen,
@@ -159,45 +94,6 @@ export const useChatInterfaceController = ({
     currentSession,
     runtimeContextRefreshNonce,
   });
-
-  const reviewRepairAutoLoad = Boolean(
-    activePanel === 'chat'
-    && currentSession?.id
-    && summaryPaneSessionId === currentSession.id,
-  );
-
-  const {
-    reviewRepairRunning,
-    reviewRepairPendingCount,
-    refreshReviewRepairStatus,
-    markReviewRepairStarting,
-  } = useReviewRepairRealtime({
-    apiClient,
-    sessionId: activePanel === 'chat' ? (currentSession?.id || null) : null,
-    enabled: activePanel === 'chat',
-    autoLoad: reviewRepairAutoLoad,
-    messageCountHint: activePanel === 'chat' && currentSession?.id
-      ? currentMessageCount
-      : undefined,
-    onCompleted: async () => {
-      if (!currentSession?.id) {
-        return;
-      }
-      await loadMoreMessages(currentSession.id);
-      await refreshReviewRepairStatus(currentSession.id).catch((error) => {
-        console.error('Failed to refresh review repair status after completion:', error);
-      });
-    },
-  });
-
-  const loadedReviewRepairPendingCount = activePanel === 'chat' && currentSession?.id
-    ? countPendingReviewRepairMessages(messages, currentSession.id)
-    : 0;
-  const effectiveReviewRepairPendingCount = reviewRepairPendingCount ?? 0;
-  const reviewRepairDisabled = !reviewRepairRunning
-    && effectiveReviewRepairPendingCount === 0
-    && loadedReviewRepairPendingCount === 0
-    && !currentSessionHasMoreMessages;
 
   const handleMessageSend = useCallback(async (
     content: string,
@@ -226,7 +122,6 @@ export const useChatInterfaceController = ({
     }
   }, [
     currentRemoteConnectionId,
-    currentSession?.id,
     onMessageSend,
     sendMessage,
   ]);
@@ -235,57 +130,11 @@ export const useChatInterfaceController = ({
     void selectRemoteConnection(connectionId, { activatePanel: false });
   }, [selectRemoteConnection]);
 
-  const handleRuntimeGuidanceSend = useCallback(async (content: string, attachments?: File[]) => {
-    const sessionId = currentSession?.id;
-    const projectId = currentSession?.projectId || currentSession?.project_id || null;
-    const turnId = (
-      currentChatStateActiveTurnId
-      || activeConversationTurnId
-      || ''
-    ).trim();
-    if (!sessionId || !turnId) {
-      return;
-    }
-    try {
-      await submitRuntimeGuidance(content, {
-        attachments,
-        conversationId: sessionId,
-        turnId,
-        projectId,
-      });
-    } catch (error) {
-      console.error('Failed to submit runtime guidance:', error);
-    }
-  }, [
-    activeConversationTurnId,
-    currentChatStateActiveTurnId,
-    currentSession,
-    submitRuntimeGuidance,
-  ]);
-
   const handleLoadMore = useCallback(() => {
     if (currentSession) {
       void loadMoreMessages(currentSession.id);
     }
   }, [currentSession, loadMoreMessages]);
-
-  const handleToggleTurnProcess = useCallback((userMessageId: string) => {
-    const sessionId = currentSession?.id || '';
-    const normalizedUserMessageId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
-    if (!sessionId || !normalizedUserMessageId) {
-      return;
-    }
-    const userMessage = messages.find((message) => (
-      message.role === 'user' && message.id === normalizedUserMessageId
-    ));
-    const turnId = typeof userMessage?.metadata?.conversation_turn_id === 'string'
-      ? userMessage.metadata.conversation_turn_id.trim()
-      : (typeof userMessage?.metadata?.historyProcess?.turnId === 'string'
-        ? userMessage.metadata.historyProcess.turnId.trim()
-        : '');
-
-    openTurnProcessViewer(sessionId, normalizedUserMessageId, { turnId: turnId || null });
-  }, [currentSession?.id, messages, openTurnProcessViewer]);
 
   const handleRefreshMemory = useCallback((sessionId: string) => {
     void loadContactMemoryContext(sessionId, true);
@@ -312,52 +161,15 @@ export const useChatInterfaceController = ({
     },
   });
 
-  const handleRunReviewRepair = useCallback(async (sessionId: string) => {
-    if (!sessionId) {
-      return;
-    }
-    markReviewRepairStarting();
-    try {
-      const result = await apiClient.runConversationReviewRepair(sessionId);
-      if (result?.success === false) {
-        throw new Error(result.detail || result.error || t('taskWorkbar.reviewRepairFailed'));
-      }
-    } catch (error) {
-      await refreshReviewRepairStatus(sessionId).catch((statusError) => {
-        console.error('Failed to refresh review repair status after run error:', statusError);
-      });
-      throw error;
-    }
-  }, [
-    apiClient,
-    markReviewRepairStarting,
-    refreshReviewRepairStatus,
-    t,
-  ]);
-
   const handleCloseSummary = useCallback(() => {
     setSummaryPaneSessionId(null);
-  }, []);
-
-  const handleOpenHistory = useCallback((sessionId: string) => {
-    handleOpenWorkbarHistory(sessionId, { forceHistory: false, forceSummaries: false });
-  }, [handleOpenWorkbarHistory]);
-
-  const handleOpenUiPromptHistory = useCallback((sessionId: string) => {
-    setUiPromptHistoryOpen(true);
-    void loadUiPromptHistory(sessionId);
-  }, [loadUiPromptHistory]);
+  }, [setSummaryPaneSessionId]);
 
   return {
     ...overlayState,
     summaryPaneSessionId,
     setSummaryPaneSessionId,
     sessionSummaryPaneVisible,
-    uiPromptHistoryOpen,
-    setUiPromptHistoryOpen,
-    reviewRepairRunning,
-    reviewRepairPendingCount,
-    reviewRepairDisabled,
     runtimeContextOpen,
     setRuntimeContextOpen,
     runtimeContextSessionId,
@@ -366,14 +178,9 @@ export const useChatInterfaceController = ({
     runtimeContextError,
     handleMessageSend,
     handleComposerRemoteConnectionChange,
-    handleRuntimeGuidanceSend,
     handleLoadMore,
-    handleToggleTurnProcess,
     handleRefreshMemory,
-    handleRunReviewRepair,
     handleCloseSummary,
-    handleOpenHistory,
-    handleOpenUiPromptHistory,
     handleOpenRuntimeContext,
     handleRefreshRuntimeContext,
   };

@@ -87,8 +87,6 @@ export const useSessionListController = ({
     refreshSessionById,
     loadAgents,
     sessionChatState,
-    taskReviewPanelsBySession = {},
-    uiPromptPanelsBySession = {},
     projects,
     currentProject,
     loadProjects,
@@ -543,11 +541,9 @@ export const useSessionListController = ({
     taskRunnerSaving,
     closeTaskRunnerConfig,
     saveTaskRunnerConfig,
-    taskReviewPanelsBySession,
     terminals,
     terminalError,
     terminalModalOpen,
     terminalRoot,
-    uiPromptPanelsBySession,
   };
 };

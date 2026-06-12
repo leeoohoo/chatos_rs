@@ -1,32 +1,25 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Serialize;
 use tracing::warn;
 
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
-    compose_contact_command_system_prompt, compose_contact_system_prompt, contact_plugin_ref,
-    contact_skill_ref, normalize_id, parse_contact_command_invocation, resolve_project_runtime,
-    ChatRuntimeMetadata, ContactSelectedPluginPrompt, ContactSelectedSkillPrompt,
-    ContactSkillPromptMode, ParsedContactCommandInvocation,
+    ChatRuntimeMetadata, ContactSkillPromptMode, compose_contact_system_prompt, normalize_id,
+    resolve_project_runtime,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::mcp_runtime::{
-    contact_agent_command_reader_server, contact_agent_plugin_reader_server,
-    contact_agent_skill_reader_server, empty_mcp_server_bundle, has_any_mcp_server,
-    load_mcp_servers_by_selection, normalize_mcp_ids, McpServerBundle,
-};
+use crate::core::mcp_runtime::{McpServerBundle, empty_mcp_server_bundle};
 use crate::core::mcp_tools::ToolInfo;
-use crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
-    chatos_agents, chatos_memory_engine, chatos_memory_mappings, chatos_sessions, chatos_skills,
+    chatos_agents, chatos_memory_engine, chatos_memory_mappings, chatos_sessions,
     task_runner_api_client,
 };
 
@@ -40,11 +33,6 @@ pub struct ConversationRuntimeRequest {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    pub mcp_enabled: Option<bool>,
-    pub enabled_mcp_ids: Option<Vec<String>>,
-    pub auto_create_task: Option<bool>,
-    pub skills_enabled: Option<bool>,
-    pub selected_skill_ids: Option<Vec<String>>,
     pub conversation_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
 }
@@ -58,7 +46,6 @@ pub struct ResolvedConversationRuntimeContext {
     pub base_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
-    pub command_system_prompt: Option<String>,
     pub task_runner_skill_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub resolved_project_id: Option<String>,
@@ -70,14 +57,14 @@ pub struct ResolvedConversationRuntimeContext {
     pub mcp_server_bundle: McpServerBundle,
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
-    pub task_runner_async_contact_mode: bool,
+    pub runtime_error: Option<String>,
 }
 
 pub type ToolMetadataMap = std::collections::HashMap<String, ToolInfo>;
 
 pub async fn resolve_runtime_context(
     session_id: &str,
-    content: &str,
+    _content: &str,
     req: &ConversationRuntimeRequest,
     default_system_prompt: Option<String>,
     use_active_system_context: bool,
@@ -150,29 +137,12 @@ pub async fn resolve_runtime_context(
         effective_user_id.clone(),
     )
     .await;
-    let requested_skill_ids =
-        normalize_string_list(req.selected_skill_ids.as_deref().unwrap_or(&[]));
-    let skills_enabled = req.skills_enabled.unwrap_or(false);
-    let skill_prompt_mode = build_contact_skill_prompt_mode(
-        contact_runtime_context.as_ref(),
-        skills_enabled,
-        requested_skill_ids.as_slice(),
-    )
-    .await;
-    let should_attach_contact_reader_tools =
-        matches!(skill_prompt_mode, ContactSkillPromptMode::Summary { .. });
     let contact_system_prompt = compose_contact_system_prompt(
         contact_runtime_context.as_ref(),
-        &skill_prompt_mode,
+        &ContactSkillPromptMode::Disabled,
         internal_context_locale,
     );
-    let selected_command =
-        parse_contact_command_invocation(content, contact_runtime_context.as_ref());
-    let command_system_prompt =
-        compose_contact_command_system_prompt(selected_command.as_ref(), internal_context_locale);
-    let selected_commands_for_snapshot = Arc::new(Mutex::new(seed_selected_commands(
-        selected_command.as_ref(),
-    )));
+    let selected_commands_for_snapshot = Arc::new(Mutex::new(Vec::new()));
 
     let requested_project_id = normalize_id(req.project_id.clone())
         .or_else(|| runtime_metadata.project_id.clone())
@@ -190,23 +160,10 @@ pub async fn resolve_runtime_context(
     )
     .await;
 
-    let requested_mcp_ids = req
-        .enabled_mcp_ids
-        .clone()
-        .unwrap_or_else(|| runtime_metadata.enabled_mcp_ids.clone());
-    let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
         .or_else(|| runtime_metadata.remote_connection_id.clone());
     let workspace_root = normalize_id(req.workspace_root.clone())
         .or_else(|| runtime_metadata.workspace_root.clone());
-    let mcp_enabled = req
-        .mcp_enabled
-        .or(runtime_metadata.mcp_enabled)
-        .unwrap_or(true);
-    let auto_create_task = req
-        .auto_create_task
-        .or(runtime_metadata.auto_create_task)
-        .unwrap_or(false);
 
     let mut task_runner_skill_prompt = None;
     let task_runner_runtime = build_contact_task_runner_runtime(
@@ -223,21 +180,12 @@ pub async fn resolve_runtime_context(
         internal_context_locale,
     )
     .await;
-    let task_runner_async_contact_mode = task_runner_runtime.is_some();
 
-    let (mut http_servers, stdio_servers, mut builtin_servers) = if task_runner_async_contact_mode {
-        empty_mcp_server_bundle()
-    } else if mcp_enabled {
-        load_mcp_servers_by_selection(
-            effective_user_id.clone(),
-            !normalized_mcp_ids.is_empty(),
-            normalized_mcp_ids.clone(),
-            resolved_project_root.as_deref(),
-            resolved_project_id.as_deref(),
-        )
-        .await
+    let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
+    let runtime_error = if task_runner_runtime.is_none() {
+        Some("当前联系人未配置 Task Runner，无法创建任务。".to_string())
     } else {
-        empty_mcp_server_bundle()
+        None
     };
 
     if let Some(runtime) = task_runner_runtime {
@@ -245,47 +193,11 @@ pub async fn resolve_runtime_context(
         http_servers.push(runtime.server);
     }
 
-    if should_attach_contact_reader_tools && !task_runner_async_contact_mode {
-        if let Some(agent_id) = contact_runtime_context
-            .as_ref()
-            .map(|context| context.agent_id.as_str())
-        {
-            if let Some(server) = contact_agent_skill_reader_server(
-                effective_user_id.clone(),
-                resolved_project_id.clone(),
-                agent_id,
-            ) {
-                builtin_servers.push(server);
-            }
-            if let Some(server) = contact_agent_command_reader_server(
-                effective_user_id.clone(),
-                resolved_project_id.clone(),
-                agent_id,
-            ) {
-                builtin_servers.push(server);
-            }
-            if let Some(server) = contact_agent_plugin_reader_server(
-                effective_user_id.clone(),
-                resolved_project_id.clone(),
-                agent_id,
-            ) {
-                builtin_servers.push(server);
-            }
-        }
-    }
-    for server in &mut builtin_servers {
-        server.remote_connection_id = default_remote_connection_id.clone();
-        server.auto_create_task = auto_create_task;
-    }
-
-    let enabled_mcp_ids_for_snapshot = if task_runner_async_contact_mode {
-        vec![TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string()]
-    } else {
-        normalized_mcp_ids.clone()
-    };
+    let enabled_mcp_ids_for_snapshot = vec![TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string()];
     let builtin_mcp_system_prompt =
         compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
-    let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
+    let use_tools =
+        !http_servers.is_empty() || !stdio_servers.is_empty() || !builtin_servers.is_empty();
     let memory_summary_prompt = match memory_session.as_ref() {
         Some(session) => chatos_memory_engine::compose_chatos_context(session, true)
             .await
@@ -302,19 +214,18 @@ pub async fn resolve_runtime_context(
         base_system_prompt,
         contact_system_prompt,
         builtin_mcp_system_prompt,
-        command_system_prompt,
         task_runner_skill_prompt,
         selected_commands_for_snapshot,
         resolved_project_id,
         resolved_project_root,
         default_remote_connection_id,
         workspace_root,
-        mcp_enabled: task_runner_async_contact_mode || mcp_enabled,
+        mcp_enabled: true,
         enabled_mcp_ids_for_snapshot,
         mcp_server_bundle: (http_servers, stdio_servers, builtin_servers),
         use_tools,
         memory_summary_prompt,
-        task_runner_async_contact_mode,
+        runtime_error,
     }
 }
 
@@ -522,216 +433,9 @@ fn task_runner_remote_server_config_from_connection(
     }
 }
 
-async fn build_contact_skill_prompt_mode(
-    runtime_context: Option<&ChatosAgentRuntimeContextDto>,
-    skills_enabled: bool,
-    selected_skill_ids: &[String],
-) -> ContactSkillPromptMode {
-    let Some(agent) = runtime_context else {
-        return ContactSkillPromptMode::Disabled;
-    };
-    if !skills_enabled {
-        return ContactSkillPromptMode::Disabled;
-    }
-    if selected_skill_ids.is_empty() {
-        return ContactSkillPromptMode::Summary {
-            force_skill_first: true,
-        };
-    }
-
-    let selected_set = selected_skill_ids
-        .iter()
-        .map(|item| item.trim())
-        .filter(|item| !item.is_empty())
-        .collect::<HashSet<_>>();
-    let mut selected_skills = Vec::new();
-    let mut selected_plugin_sources: Vec<String> = Vec::new();
-
-    for (index, runtime_skill) in agent.runtime_skills.iter().enumerate() {
-        let skill_id = runtime_skill.id.trim();
-        if skill_id.is_empty() || !selected_set.contains(skill_id) {
-            continue;
-        }
-        let prompt_skill = if runtime_skill.source_type.trim() == "inline" {
-            agent
-                .skills
-                .iter()
-                .find(|item| item.id.trim() == skill_id)
-                .map(|inline_skill| ContactSelectedSkillPrompt {
-                    skill_ref: contact_skill_ref(index),
-                    id: inline_skill.id.clone(),
-                    name: inline_skill.name.clone(),
-                    description: runtime_skill.description.clone(),
-                    content: inline_skill.content.clone(),
-                    plugin_source: runtime_skill.plugin_source.clone(),
-                    source_path: runtime_skill.source_path.clone(),
-                    source_type: runtime_skill.source_type.clone(),
-                    updated_at: runtime_skill.updated_at.clone(),
-                })
-        } else {
-            match chatos_skills::get_skill(agent.user_id.as_str(), skill_id).await {
-                Ok(Some(full_skill)) => Some(ContactSelectedSkillPrompt {
-                    skill_ref: contact_skill_ref(index),
-                    id: full_skill.id,
-                    name: full_skill.name,
-                    description: full_skill
-                        .description
-                        .or_else(|| runtime_skill.description.clone()),
-                    content: full_skill.content,
-                    plugin_source: runtime_skill
-                        .plugin_source
-                        .clone()
-                        .or_else(|| Some(full_skill.plugin_source.clone())),
-                    source_path: runtime_skill
-                        .source_path
-                        .clone()
-                        .or_else(|| Some(full_skill.source_path.clone())),
-                    source_type: runtime_skill.source_type.clone(),
-                    updated_at: runtime_skill
-                        .updated_at
-                        .clone()
-                        .or_else(|| Some(full_skill.updated_at.clone())),
-                }),
-                Ok(None) => None,
-                Err(err) => {
-                    warn!(
-                        "load selected contact skill failed: agent_id={} skill_id={} detail={}",
-                        agent.agent_id, skill_id, err
-                    );
-                    None
-                }
-            }
-        };
-
-        if let Some(prompt_skill) = prompt_skill {
-            if let Some(plugin_source) = prompt_skill
-                .plugin_source
-                .as_deref()
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-            {
-                if !selected_plugin_sources
-                    .iter()
-                    .any(|item: &String| item == plugin_source)
-                {
-                    selected_plugin_sources.push(plugin_source.to_string());
-                }
-            }
-            selected_skills.push(prompt_skill);
-        }
-    }
-
-    for (index, inline_skill) in agent.skills.iter().enumerate() {
-        let skill_id = inline_skill.id.trim();
-        if skill_id.is_empty()
-            || !selected_set.contains(skill_id)
-            || selected_skills
-                .iter()
-                .any(|item| item.id.trim() == skill_id)
-        {
-            continue;
-        }
-        selected_skills.push(ContactSelectedSkillPrompt {
-            skill_ref: contact_skill_ref(index),
-            id: inline_skill.id.clone(),
-            name: inline_skill.name.clone(),
-            description: None,
-            content: inline_skill.content.clone(),
-            plugin_source: None,
-            source_path: None,
-            source_type: "inline".to_string(),
-            updated_at: Some(agent.updated_at.clone()),
-        });
-    }
-
-    if selected_skills.is_empty() {
-        return ContactSkillPromptMode::Summary {
-            force_skill_first: true,
-        };
-    }
-
-    let mut selected_plugins = Vec::new();
-    for plugin_source in selected_plugin_sources {
-        match chatos_skills::get_skill_plugin(agent.user_id.as_str(), plugin_source.as_str()).await
-        {
-            Ok(Some(plugin)) => {
-                let runtime_plugin_index = agent
-                    .runtime_plugins
-                    .iter()
-                    .position(|item| item.source.trim() == plugin_source.as_str())
-                    .unwrap_or(selected_plugins.len());
-                let runtime_plugin = agent
-                    .runtime_plugins
-                    .iter()
-                    .find(|item| item.source.trim() == plugin_source.as_str());
-                selected_plugins.push(ContactSelectedPluginPrompt {
-                    plugin_ref: contact_plugin_ref(runtime_plugin_index),
-                    source: plugin.source,
-                    name: plugin.name,
-                    category: runtime_plugin
-                        .and_then(|item| item.category.clone())
-                        .or(plugin.category),
-                    description: runtime_plugin
-                        .and_then(|item| item.description.clone())
-                        .or(plugin.description),
-                    version: plugin.version,
-                    repository: plugin.repository,
-                    branch: plugin.branch,
-                    content: plugin.content,
-                    commands: plugin.commands,
-                    updated_at: runtime_plugin
-                        .and_then(|item| item.updated_at.clone())
-                        .or(Some(plugin.updated_at)),
-                });
-            }
-            Ok(None) => {}
-            Err(err) => {
-                warn!(
-                    "load selected contact skill plugin failed: agent_id={} plugin_source={} detail={}",
-                    agent.agent_id, plugin_source, err
-                );
-            }
-        }
-    }
-
-    ContactSkillPromptMode::SelectedFull {
-        skills: selected_skills,
-        plugins: selected_plugins,
-    }
-}
-
-fn seed_selected_commands(
-    selected_command: Option<&ParsedContactCommandInvocation>,
-) -> Vec<TurnRuntimeSnapshotSelectedCommandDto> {
-    selected_command
-        .map(|command| {
-            vec![TurnRuntimeSnapshotSelectedCommandDto {
-                command_ref: Some(command.command_ref.clone()),
-                name: Some(command.name.clone()),
-                plugin_source: command.plugin_source.clone(),
-                source_path: command.source_path.clone(),
-                trigger: Some("explicit".to_string()),
-                arguments: command.arguments.clone(),
-            }]
-        })
-        .unwrap_or_default()
-}
-
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn normalize_string_list(values: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() || out.iter().any(|item: &String| item == trimmed) {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    out
 }

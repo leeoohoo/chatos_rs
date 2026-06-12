@@ -32,8 +32,6 @@ type CreateSessionFn = (
     selectedModelId: string | null;
     projectId: string;
     projectRoot: string | null;
-    mcpEnabled: boolean;
-    enabledMcpIds: string[];
   },
   options?: { keepActivePanel?: boolean },
 ) => Promise<string | undefined | null>;
@@ -99,8 +97,6 @@ export const useContactSessionListState = ({
       title: contact.name || translateSessionListMessage(t, 'contactModal.fallbackName'),
       selectedModelId: null,
       projectRoot: null,
-      mcpEnabled: true,
-      enabledMcpIds: [],
     });
   }, [ensureContactSession, t]);
 
@@ -134,8 +130,6 @@ export const useContactSessionListState = ({
           selectedModelId: null,
           projectId: CONTACT_CHAT_PROJECT_ID,
           projectRoot: null,
-          mcpEnabled: true,
-          enabledMcpIds: [],
         }),
       } as Session;
     });

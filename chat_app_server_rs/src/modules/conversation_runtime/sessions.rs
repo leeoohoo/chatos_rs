@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
-use crate::core::session_access::{is_owned_session, SessionAccessError};
+use crate::core::session_access::{SessionAccessError, is_owned_session};
 use crate::models::memory_mapping_types::{
     SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
 };

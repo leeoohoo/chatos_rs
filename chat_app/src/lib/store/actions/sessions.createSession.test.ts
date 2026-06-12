@@ -79,7 +79,6 @@ describe('createSession', () => {
       selectedModelId: 'model_current',
       selectedAgentId: null,
       sessionAiSelectionBySession: {},
-      sessionStreamingMessageDrafts: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;

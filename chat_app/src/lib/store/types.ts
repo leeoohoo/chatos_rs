@@ -31,21 +31,10 @@ export type {
 export type {
   ConversationRuntimeSliceActions,
   ConversationRuntimeSliceState,
-  RuntimeGuidanceItem,
   SessionChatState,
   SessionMessagePaginationState,
   SessionMessagesCacheEntry,
   SessionMessagesSnapshot,
-  SessionRuntimeGuidanceState,
-  TaskReviewDraft,
-  TaskReviewPanelState,
-  UiPromptChoice,
-  UiPromptChoiceOption,
-  UiPromptField,
-  UiPromptKind,
-  UiPromptPanelState,
-  UiPromptPayloadShape,
-  UiPromptResponsePayload,
 } from './slices/conversationRuntimeSlice';
 export type {
   RemoteConnectionCreatePayload,

@@ -75,8 +75,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             displaySessionRuntimeIdMap={controller.contactSessionState.displaySessionRuntimeIdMap}
             taskRunnerEnabledBySessionId={controller.contactSessionState.taskRunnerEnabledBySessionId}
             sessionChatState={controller.sessionChatState}
-            taskReviewPanelsBySession={controller.taskReviewPanelsBySession}
-            uiPromptPanelsBySession={controller.uiPromptPanelsBySession}
             hasMore={false}
             isRefreshing={controller.isRefreshing}
             isLoadingMore={false}

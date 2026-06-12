@@ -25,8 +25,6 @@ type CreateSessionFn = (
     selectedModelId: string | null;
     projectId: string;
     projectRoot: string | null;
-    mcpEnabled: boolean;
-    enabledMcpIds: string[];
   },
   options?: { keepActivePanel?: boolean },
 ) => Promise<string | undefined | null>;
@@ -57,8 +55,6 @@ interface EnsureContactSessionOptions {
   title?: string;
   selectedModelId?: string | null;
   projectRoot?: string | null;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
   createSessionOptions?: { keepActivePanel?: boolean; activateSession?: boolean };
 }
 
@@ -69,24 +65,6 @@ interface DisplayRuntimeSessionOptions {
 interface BuildDisplayRuntimeMapOptions extends DisplayRuntimeSessionOptions {
   keyPrefix?: string;
 }
-
-const sanitizeMcpIds = (ids: unknown): string[] => {
-  if (!Array.isArray(ids)) {
-    return [];
-  }
-  const out: string[] = [];
-  for (const item of ids) {
-    if (typeof item !== 'string') {
-      continue;
-    }
-    const trimmed = item.trim();
-    if (!trimmed || out.includes(trimmed)) {
-      continue;
-    }
-    out.push(trimmed);
-  }
-  return out;
-};
 
 const readStringField = (value: unknown, key: string): string => {
   if (!value || typeof value !== 'object') {
@@ -313,8 +291,6 @@ export const useContactSessionResolver = ({
       selectedModelId: options?.selectedModelId ?? null,
       projectId: normalizedProjectId,
       projectRoot: options?.projectRoot ?? null,
-      mcpEnabled: options?.mcpEnabled ?? true,
-      enabledMcpIds: sanitizeMcpIds(options?.enabledMcpIds ?? []),
     }, options?.createSessionOptions);
 
     const resolvedCreatedSessionId = typeof createdSessionId === 'string' ? createdSessionId.trim() : '';

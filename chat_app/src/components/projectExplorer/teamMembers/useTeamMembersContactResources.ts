@@ -10,7 +10,7 @@ import {
 } from '../../../features/contactSession/sessionResolver';
 import { useSessionSummaryPanel } from '../../../features/sessionSummary/useSessionSummaryPanel';
 import { normalizeProjectMemberContactsFromRecords } from '../../../lib/domain/projectMembers';
-import type { AgentConfig, Project, Session } from '../../../types';
+import type { Project, Session } from '../../../types';
 import type { ContactItem, ProjectContactRow } from './types';
 import { useProjectMembersManager } from './useProjectMembersManager';
 import { useTeamMemberConversation } from './useTeamMemberConversation';
@@ -51,16 +51,12 @@ export const useTeamMembersContactResources = ({
     currentSession,
     sessions,
     contacts,
-    agents,
     loadContacts,
-    sessionChatState,
     sendMessage,
     loadMoreMessages,
     createSession,
     selectSession,
-    aiModelConfigs,
     selectedModelId,
-    messages,
   } = store;
 
   const normalizedProjectId = normalizeProjectScopeId(project.id || null);
@@ -164,8 +160,6 @@ export const useTeamMembersContactResources = ({
       title: contact.name || t('teamMembers.contactFallback'),
       selectedModelId: selectedModelId ?? null,
       projectRoot: project.rootPath || null,
-      mcpEnabled: true,
-      enabledMcpIds: [],
       createSessionOptions: { keepActivePanel: true, activateSession: false },
     });
   }, [
@@ -182,9 +176,6 @@ export const useTeamMembersContactResources = ({
     currentSession,
     projectContacts,
     normalizedContacts,
-    selectedModelId,
-    aiModelConfigs,
-    sessionChatState,
     summaryPaneSessionId,
     setSummaryPaneSessionId,
     setSummaryError,
@@ -196,20 +187,8 @@ export const useTeamMembersContactResources = ({
     ensureContactSession,
     selectSession,
     sendMessage,
-    messages,
-    openTurnProcessViewer: store.openTurnProcessViewer,
     loadMoreMessages,
   });
-
-  const selectedContactAgent = useMemo<AgentConfig | null>(() => {
-    const agentId = typeof conversation.selectedContact?.agentId === 'string'
-      ? conversation.selectedContact.agentId.trim()
-      : '';
-    if (!agentId) {
-      return null;
-    }
-    return (agents || []).find((agent: AgentConfig) => agent?.id === agentId) || null;
-  }, [agents, conversation.selectedContact?.agentId]);
 
   const handleOpenAddMember = useCallback(async () => {
     await openAddMemberFromManager();
@@ -242,10 +221,7 @@ export const useTeamMembersContactResources = ({
       handleOpenAddMember,
       handleConfirmAddMember,
     },
-    conversation: {
-      ...conversation,
-      selectedContactAgent,
-    },
+    conversation,
     summary: {
       summaryPaneSessionId,
       summaryItems,

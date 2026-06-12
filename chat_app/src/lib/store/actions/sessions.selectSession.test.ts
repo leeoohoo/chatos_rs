@@ -112,8 +112,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     installBackgroundSyncSpy(state);
 
@@ -182,8 +180,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     installBackgroundSyncSpy(state);
 
@@ -242,8 +238,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     installBackgroundSyncSpy(state);
 
@@ -333,8 +327,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     installBackgroundSyncSpy(state);
 
@@ -422,8 +414,6 @@ describe('selectSession', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     installBackgroundSyncSpy(state);
 
@@ -510,8 +500,6 @@ describe('selectSession', () => {
       },
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     installBackgroundSyncSpy(state);
 
@@ -570,8 +558,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const backgroundSync = installBackgroundSyncSpy(state);
 
@@ -648,8 +634,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const backgroundSync = installBackgroundSyncSpy(state);
 
@@ -737,8 +721,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const backgroundSync = installBackgroundSyncSpy(state);
 
@@ -830,8 +812,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     installBackgroundSyncSpy(state);
 
@@ -898,8 +878,6 @@ describe('selectSession', () => {
       sessionMessagePaginationState: {},
       sessionMessagesCache: {},
       sessionMessagesCacheOrder: [],
-      sessionStreamingMessageDrafts: {},
-      sessionTurnProcessCache: {},
     } as unknown as ChatStoreShape;
     const backgroundSync = installBackgroundSyncSpy(state);
 

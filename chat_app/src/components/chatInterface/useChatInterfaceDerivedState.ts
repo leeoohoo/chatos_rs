@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 
 import type {
-  AgentConfig,
   AiModelConfig,
   ContactRecord,
   Project,
@@ -11,19 +10,15 @@ import type {
 } from '../../types';
 import type { SessionChatState } from '../../lib/store/types';
 
-import { resolveCurrentAgent } from './currentAgent';
 import {
   buildSupportedFileTypes,
   resolveModelSupportFlags,
 } from './viewHelpers';
 import { useSessionHeaderMeta } from './useSessionHeaderMeta';
-import { useI18n } from '../../i18n/I18nProvider';
 
 interface UseChatInterfaceDerivedStateParams {
   currentSession: Session | null;
   contacts: ContactRecord[];
-  agents: AgentConfig[];
-  selectedAgentId: string | null;
   selectedModelId: string | null;
   aiModelConfigs: AiModelConfig[];
   activePanel: string;
@@ -36,8 +31,6 @@ interface UseChatInterfaceDerivedStateParams {
 export const useChatInterfaceDerivedState = ({
   currentSession,
   contacts,
-  agents,
-  selectedAgentId,
   selectedModelId,
   aiModelConfigs,
   activePanel,
@@ -46,7 +39,6 @@ export const useChatInterfaceDerivedState = ({
   currentRemoteConnection,
   sessionChatState,
 }: UseChatInterfaceDerivedStateParams) => {
-  const { t } = useI18n();
   const { supportsImages, supportsReasoning } = useMemo(
     () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
     [aiModelConfigs, selectedModelId],
@@ -58,13 +50,6 @@ export const useChatInterfaceDerivedState = ({
   const currentChatState = useMemo(() => (
     currentSession ? sessionChatState[currentSession.id] : undefined
   ), [currentSession, sessionChatState]);
-  const currentAgent = useMemo(() => resolveCurrentAgent({
-    currentSession,
-    contacts,
-    agents,
-    selectedAgentId,
-    fallbackAgentName: t('currentAgent.fallback'),
-  }), [agents, contacts, currentSession, selectedAgentId, t]);
   const {
     currentContactName,
     currentContactId,
@@ -81,16 +66,9 @@ export const useChatInterfaceDerivedState = ({
   return {
     supportedFileTypes,
     supportsReasoning,
-    currentChatState,
-    currentAgent,
     currentContactName,
     currentContactId,
     headerTitle,
-    chatIsLoading: currentChatState?.isLoading ?? false,
-    chatIsStreaming: currentChatState?.isStreaming ?? false,
-    chatIsStopping: currentChatState?.isStopping ?? false,
-    chatStreamingPhase: currentChatState?.streamingPhase ?? null,
-    chatStreamingPreviewText: currentChatState?.streamingPreviewText || '',
     runtimeContextRefreshNonce: currentChatState?.runtimeContextRefreshNonce || 0,
   };
 };

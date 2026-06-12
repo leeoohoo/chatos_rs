@@ -516,43 +516,6 @@ describe('ToolCallRenderer summaries', () => {
     expect(screen.queryByText('/tmp/chatos/notepad/notes-index.json')).not.toBeInTheDocument();
   });
 
-  it('renders ui prompt cards with separated form values and chosen options', () => {
-    renderWithEnglishI18n(
-      <ToolCallRenderer
-        toolCall={buildToolCall({
-          name: 'builtin_ui_prompter_prompt_mixed_form',
-          arguments: {
-            title: 'Confirm deploy',
-          },
-          result: {
-            status: 'submitted',
-            values: {
-              reason: 'Need one more review',
-              urgent: true,
-            },
-            selection: ['deploy', 'notify'],
-          },
-        })}
-      />,
-    );
-
-    expect(screen.getByText('Prompts')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
-
-    expect(screen.getByText('Mixed form result')).toBeInTheDocument();
-    const formValuesCard = screen.getByText('Form values').closest('.tool-detail-card') as HTMLElement;
-    expect(formValuesCard).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('reason')).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('Need one more review')).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('urgent')).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('yes')).toBeInTheDocument();
-    expect(screen.getByText('Selection')).toBeInTheDocument();
-    expect(screen.getByText('deploy')).toBeInTheDocument();
-    expect(screen.getByText('notify')).toBeInTheDocument();
-    expect(screen.queryByText('Process summary')).not.toBeInTheDocument();
-  });
-
   it('renders remote connectivity summary without exposing connection ids', () => {
     renderWithEnglishI18n(
       <ToolCallRenderer

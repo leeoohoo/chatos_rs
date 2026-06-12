@@ -1,21 +1,16 @@
 import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
-import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
 import { useI18n } from '../../i18n/I18nProvider';
 
 const AiModelManager = lazy(() => import('../AiModelManager'));
 const AgentManager = lazy(() => import('../AgentManager'));
 const ApplicationsPanel = lazy(() => import('../ApplicationsPanel'));
-const McpManager = lazy(() => import('../McpManager'));
 const NotepadPanel = lazy(() => import('../NotepadPanel'));
 const UserSettingsPanel = lazy(() => import('../UserSettingsPanel'));
 
 interface ChatInterfaceOverlaysProps {
-  uiPromptHistoryProps: ComponentProps<typeof UiPromptHistoryDrawer>;
   runtimeContextProps: ComponentProps<typeof TurnRuntimeContextDrawer>;
-  showMcpManager: boolean;
-  setShowMcpManager: (value: boolean) => void;
   showNotepadPanel: boolean;
   setShowNotepadPanel: (value: boolean) => void;
   showAiModelManager: boolean;
@@ -47,10 +42,7 @@ const LazyOverlay = ({ children, open }: LazyOverlayProps) => {
 };
 
 export default function ChatInterfaceOverlays({
-  uiPromptHistoryProps,
   runtimeContextProps,
-  showMcpManager,
-  setShowMcpManager,
   showNotepadPanel,
   setShowNotepadPanel,
   showAiModelManager,
@@ -66,12 +58,7 @@ export default function ChatInterfaceOverlays({
 
   return (
     <>
-      <UiPromptHistoryDrawer {...uiPromptHistoryProps} />
       <TurnRuntimeContextDrawer {...runtimeContextProps} />
-
-      <LazyOverlay open={showMcpManager}>
-        <McpManager onClose={() => setShowMcpManager(false)} />
-      </LazyOverlay>
 
       <LazyOverlay open={showNotepadPanel}>
         <NotepadPanel

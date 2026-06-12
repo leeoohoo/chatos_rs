@@ -1,20 +1,18 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
 use crate::api::conversation_semantics::rewrite_session_keys_to_conversation;
 use crate::core::auth::AuthUser;
 use crate::core::messages::{
-    build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
+    MessageOut, NewMessageFields, build_message, create_message_and_maybe_rename,
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
-use crate::models::session::Session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
-use crate::services::chatos_memory_engine;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 
 use super::contracts::CompactHistoryQuery;
@@ -24,13 +22,6 @@ use super::history::{
 };
 use super::history_process::find_user_index_by_turn_id;
 use super::support::list_all_session_messages;
-
-async fn load_chatos_session(conversation_id: &str) -> Result<Session, String> {
-    match chatos_memory_engine::get_chatos_session(conversation_id, None).await? {
-        Some(session) => Ok(session),
-        None => Err(format!("session not found: {conversation_id}")),
-    }
-}
 
 fn parse_compact_history_offset(
     before: Option<&str>,
@@ -203,46 +194,6 @@ pub(super) async fn get_session_compact_history(
     )
 }
 
-pub(super) async fn get_session_turn_process_messages(
-    auth: AuthUser,
-    Path((conversation_id, user_message_id)): Path<(String, String)>,
-) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
-        return map_session_access_error(err);
-    }
-    let session = match load_chatos_session(&conversation_id).await {
-        Ok(session) => session,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::json!({"error": "Failed to get turn process messages", "detail": err}),
-                ),
-            );
-        }
-    };
-
-    match chatos_memory_engine::get_chatos_turn_process_records(&session, &user_message_id).await {
-        Ok(resp) => {
-            let out: Vec<Value> = resp
-                .items
-                .into_iter()
-                .map(|message| {
-                    let message = chatos_memory_engine::engine_record_to_message(message);
-                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
-                })
-                .collect();
-            (StatusCode::OK, Json(Value::Array(out)))
-        }
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(
-                serde_json::json!({"error": "Failed to get turn process messages", "detail": err}),
-            ),
-        ),
-    }
-}
-
 pub(super) async fn get_session_turn_display_messages(
     auth: AuthUser,
     Path((conversation_id, user_message_id)): Path<(String, String)>,
@@ -275,46 +226,6 @@ pub(super) async fn get_session_turn_display_messages(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(
                 serde_json::json!({"error": "Failed to get turn display messages", "detail": err}),
-            ),
-        ),
-    }
-}
-
-pub(super) async fn get_session_turn_process_messages_by_turn(
-    auth: AuthUser,
-    Path((conversation_id, turn_id)): Path<(String, String)>,
-) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
-        return map_session_access_error(err);
-    }
-    let session = match load_chatos_session(&conversation_id).await {
-        Ok(session) => session,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::json!({"error": "Failed to get turn process messages", "detail": err}),
-                ),
-            );
-        }
-    };
-
-    match chatos_memory_engine::get_chatos_turn_process_records(&session, &turn_id).await {
-        Ok(resp) => {
-            let out: Vec<Value> = resp
-                .items
-                .into_iter()
-                .map(|message| {
-                    let message = chatos_memory_engine::engine_record_to_message(message);
-                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
-                })
-                .collect();
-            (StatusCode::OK, Json(Value::Array(out)))
-        }
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(
-                serde_json::json!({"error": "Failed to get turn process messages", "detail": err}),
             ),
         ),
     }
@@ -435,7 +346,7 @@ pub(super) async fn create_session_message(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "创建消息失败", "detail": err})),
-            )
+            );
         }
     };
 

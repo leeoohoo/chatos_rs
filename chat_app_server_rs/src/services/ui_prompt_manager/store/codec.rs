@@ -1,4 +1,4 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 use serde_json::json;
 
 use crate::services::ui_prompt_manager::normalizer::trimmed_non_empty;

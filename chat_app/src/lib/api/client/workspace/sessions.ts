@@ -117,16 +117,6 @@ export const getConversationCompactHistory = (
   return request<CompactHistoryResponse>(`/conversations/${conversationId}/compact-history${query}`);
 };
 
-export const getConversationTurnProcessMessages = (
-  request: ApiRequestFn,
-  conversationId: string,
-  userMessageId: string,
-): Promise<SessionMessageResponse[]> => {
-  return request<SessionMessageResponse[]>(
-    `/conversations/${conversationId}/turns/${encodeURIComponent(userMessageId)}/process`,
-  );
-};
-
 export const getConversationTurnMessages = (
   request: ApiRequestFn,
   conversationId: string,
@@ -134,16 +124,6 @@ export const getConversationTurnMessages = (
 ): Promise<SessionMessageResponse[]> => {
   return request<SessionMessageResponse[]>(
     `/conversations/${conversationId}/turns/${encodeURIComponent(userMessageId)}/messages`,
-  );
-};
-
-export const getConversationTurnProcessMessagesByTurn = (
-  request: ApiRequestFn,
-  conversationId: string,
-  turnId: string,
-): Promise<SessionMessageResponse[]> => {
-  return request<SessionMessageResponse[]>(
-    `/conversations/${conversationId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
   );
 };
 

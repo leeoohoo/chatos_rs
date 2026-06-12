@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
@@ -73,7 +73,7 @@ pub(super) async fn add_project_contact(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({"error": "load contacts failed", "detail": err})),
-                )
+                );
             }
         };
         if let Some(contact) = rows.into_iter().find(|item| item.id == contact_id) {
@@ -135,7 +135,7 @@ pub(super) async fn remove_project_contact(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "load project contacts failed", "detail": err})),
-            )
+            );
         }
     };
 

@@ -42,10 +42,3 @@ export interface UserSettingsUpdatePayload {
   user_id: string;
   settings: Record<string, unknown>;
 }
-
-export interface StopChatResponse {
-  success?: boolean;
-  message?: string;
-  conversation_id?: string;
-  turn_id?: string | null;
-}

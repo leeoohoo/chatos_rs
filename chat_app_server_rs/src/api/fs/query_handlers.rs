@@ -7,10 +7,10 @@ mod query_handlers_read;
 #[path = "query_handlers_search.rs"]
 mod query_handlers_search;
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::Json;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::policy::FsPolicyError;
 use super::response::json_error_response;
@@ -39,7 +39,7 @@ mod tests {
     use crate::core::auth::AuthUser;
     use axum::body::to_bytes;
     use axum::extract::Query;
-    use axum::http::{header, StatusCode};
+    use axum::http::{StatusCode, header};
     use serde_json::Value;
     use std::fs;
     use std::path::PathBuf;
@@ -213,12 +213,14 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("text/plain")
         );
-        assert!(response
-            .headers()
-            .get(header::CONTENT_DISPOSITION)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .contains("sample.txt"));
+        assert!(
+            response
+                .headers()
+                .get(header::CONTENT_DISPOSITION)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .contains("sample.txt")
+        );
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("read response body");

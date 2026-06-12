@@ -11,11 +11,8 @@ import {
   resolveSessionTimestamp as resolveSessionTimestampDomain,
   splitSessionsByMappedContacts as splitSessionsByMappedContactsDomain,
 } from '../../domain/contactSessions';
-import { normalizeTurnId as normalizeMessageTurnId } from '../../domain/messages';
 import {
-  asRecord,
   normalizeDate as normalizeUnknownDate,
-  readValue,
 } from '../helpers/normalizerUtils';
 import type {
   ChatState,
@@ -450,21 +447,9 @@ export const mergeLatestCompactHistorySnapshot = (
   };
 };
 
-type SessionTurnMapsState = Pick<ChatState, 'sessionTurnProcessCache'>;
 type SessionProjectSyncState = Pick<ChatState, 'projects' | 'currentProjectId' | 'currentProject'>;
 
-export const ensureSessionTurnMaps = (state: SessionTurnMapsState, sessionId: string) => {
-  if (!state.sessionTurnProcessCache) {
-    state.sessionTurnProcessCache = {};
-  }
-  if (!state.sessionTurnProcessCache[sessionId]) {
-    state.sessionTurnProcessCache[sessionId] = {};
-  }
-};
-
 export const normalizeDate = normalizeUnknownDate;
-
-export const normalizeTurnId = normalizeMessageTurnId;
 
 export const resolveSessionTimestamp = resolveSessionTimestampDomain;
 
@@ -495,76 +480,6 @@ export const syncCurrentProjectFromSession = (
 
   state.currentProjectId = projectId;
   state.currentProject = (state.projects || []).find((project) => project.id === projectId) || null;
-};
-
-export const resolveUserByTurnId = (messages: Message[], turnId: string): Message | null => {
-  if (!turnId) {
-    return null;
-  }
-
-  return messages.find((message) => {
-    if (message?.role !== 'user') {
-      return false;
-    }
-    const messageTurnId = normalizeTurnId(
-      message?.metadata?.conversation_turn_id || message?.metadata?.historyProcess?.turnId,
-    );
-    return messageTurnId === turnId;
-  }) || null;
-};
-
-export const buildDraftUserMessageForStreaming = (
-  sessionId: string,
-  draftMessage: Message | unknown,
-  finalAssistantMessageId: string,
-): Message | null => {
-  const draftRecord = asRecord(draftMessage);
-  const metadata = asRecord(readValue(draftRecord, 'metadata'));
-  const draftUserRecord = asRecord(readValue(metadata, 'historyDraftUserMessage'));
-  const linkedUserMessageId = normalizeTurnId(
-    typeof readValue(metadata, 'historyFinalForUserMessageId') === 'string'
-      ? readValue(metadata, 'historyFinalForUserMessageId')
-      : (
-        typeof readValue(draftUserRecord, 'id') === 'string'
-          ? readValue(draftUserRecord, 'id')
-          : ''
-      )
-  );
-  const turnId = typeof readValue(metadata, 'conversation_turn_id') === 'string'
-    ? readValue(metadata, 'conversation_turn_id') as string
-    : '';
-  const effectiveUserMessageId = linkedUserMessageId || (turnId ? `temp_user_turn_${turnId}` : '');
-  if (!effectiveUserMessageId) {
-    return null;
-  }
-
-  return {
-    id: effectiveUserMessageId,
-    sessionId,
-    role: 'user' as const,
-    content: typeof readValue(draftUserRecord, 'content') === 'string'
-      ? readValue(draftUserRecord, 'content') as string
-      : '',
-    status: 'completed' as const,
-    createdAt: normalizeDate(
-      readValue(draftUserRecord, 'createdAt') || readValue(draftRecord, 'createdAt') || Date.now(),
-    ),
-    metadata: {
-      ...(turnId ? { conversation_turn_id: turnId } : {}),
-      historyProcess: {
-        hasProcess: false,
-        toolCallCount: 0,
-        thinkingCount: 0,
-        processMessageCount: 0,
-        userMessageId: effectiveUserMessageId,
-        turnId,
-        finalAssistantMessageId: finalAssistantMessageId || null,
-        expanded: false,
-        loaded: false,
-        loading: false,
-      },
-    },
-  };
 };
 
 export type { MemoryContact } from '../../domain/contactSessions';

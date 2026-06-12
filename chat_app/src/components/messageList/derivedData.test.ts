@@ -168,11 +168,6 @@ describe('buildVisibleMessageState', () => {
     const state = buildVisibleMessageState(messages.map(parseMessageForList));
 
     expect(state.visibleMessages.map((message) => message.id)).toEqual(['user-9', 'assistant-final-9']);
-    expect(state.derivedProcessStatsByUserId.get('user-9')).toMatchObject({
-      hasProcess: true,
-      toolCallCount: 2,
-      thinkingCount: 2,
-    });
   });
 
   it('filters inline process assistant messages from the main visible message list', () => {
@@ -225,14 +220,9 @@ describe('buildVisibleMessageState', () => {
       'user-inline-1',
       'assistant-final-inline-1',
     ]);
-    expect(state.derivedProcessStatsByUserId.get('user-inline-1')).toMatchObject({
-      hasProcess: true,
-      thinkingCount: 1,
-      processMessageCount: 1,
-    });
   });
 
-  it('marks process as present when turn only has hidden tool messages', () => {
+  it('filters hidden tool messages from the main visible message list', () => {
     const messages: Message[] = [
       buildUser({
         id: 'user-tool-only-1',
@@ -284,10 +274,5 @@ describe('buildVisibleMessageState', () => {
       'user-tool-only-1',
       'assistant-final-tool-only-1',
     ]);
-    expect(state.derivedProcessStatsByUserId.get('user-tool-only-1')).toMatchObject({
-      hasProcess: true,
-      toolCallCount: 1,
-      processMessageCount: 1,
-    });
   });
 });

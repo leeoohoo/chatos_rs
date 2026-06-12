@@ -10,7 +10,6 @@ import NotepadToolDetails from './toolCards/notepad/NotepadToolDetails';
 import ProcessToolDetails, { isProcessToolName } from './toolCards/process/ProcessToolDetails';
 import RemoteToolDetails from './toolCards/remote/RemoteToolDetails';
 import TaskManagerToolDetails from './toolCards/taskManager/TaskManagerToolDetails';
-import UiPrompterToolDetails from './toolCards/uiPrompter/UiPrompterToolDetails';
 import WebToolDetails from './toolCards/web/WebToolDetails';
 import { asRecord } from './toolCards/shared/value';
 
@@ -84,10 +83,6 @@ export const BuiltinToolDetails: React.FC<BuiltinToolDetailsProps> = ({
 
   if (family === 'task') {
     return <TaskManagerToolDetails displayName={displayName} result={result} />;
-  }
-
-  if (family === 'ui') {
-    return <UiPrompterToolDetails displayName={displayName} result={result} />;
   }
 
   if (family === 'agent') {

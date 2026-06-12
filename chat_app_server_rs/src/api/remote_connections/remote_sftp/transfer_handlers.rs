@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::Path,
     http::{HeaderMap, StatusCode},
-    Json,
 };
 use serde_json::Value;
 use std::path::Path as FsPath;
@@ -48,7 +48,7 @@ pub(crate) async fn start_sftp_transfer(
                 remote_sftp_codes::INVALID_ARGUMENT,
                 err,
             )
-            .into_response()
+            .into_response();
         }
     };
 

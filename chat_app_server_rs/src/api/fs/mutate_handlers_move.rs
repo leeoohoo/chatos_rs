@@ -1,8 +1,8 @@
 use std::fs;
 
-use axum::http::StatusCode;
 use axum::Json;
-use serde_json::{json, Value};
+use axum::http::StatusCode;
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
@@ -123,7 +123,7 @@ pub(in super::super) async fn move_entry(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": err.to_string() })),
-            )
+            );
         }
     };
     let source_is_dir = source_meta.is_dir() && !source_meta.file_type().is_symlink();
@@ -135,7 +135,7 @@ pub(in super::super) async fn move_entry(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": err.to_string() })),
-                )
+                );
             }
         };
         let target_parent_canonical = match target_parent.path.canonicalize() {
@@ -144,7 +144,7 @@ pub(in super::super) async fn move_entry(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": err.to_string() })),
-                )
+                );
             }
         };
         if target_parent_canonical.starts_with(&source_canonical) {
@@ -170,7 +170,7 @@ pub(in super::super) async fn move_entry(
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": err.to_string() })),
-                )
+                );
             }
         };
         let remove_result = if target_meta.is_dir() && !target_meta.file_type().is_symlink() {

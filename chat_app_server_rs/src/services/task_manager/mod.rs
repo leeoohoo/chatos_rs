@@ -4,6 +4,7 @@ mod review_hub;
 mod store;
 mod types;
 
+#[allow(unused_imports)]
 pub use review_hub::{
     create_task_review, get_task_review_payload, list_task_review_payloads_for_conversation,
     submit_task_review_decision, wait_for_task_review_decision,
@@ -14,17 +15,17 @@ pub use store::{
 };
 #[allow(unused_imports)]
 pub use types::{
+    REVIEW_NOT_FOUND_ERR, REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
     TaskCreateReviewPayload, TaskDraft, TaskOutcomeItem, TaskRecord, TaskReviewAction,
-    TaskReviewDecision, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, REVIEW_TIMEOUT_ERR,
-    REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
+    TaskReviewDecision, TaskUpdatePatch,
 };
 
 #[cfg(test)]
 mod tests {
     use super::normalizer::normalize_task_draft;
     use super::{
-        create_task_review, submit_task_review_decision, wait_for_task_review_decision, TaskDraft,
-        TaskReviewAction, TaskUpdatePatch,
+        TaskDraft, TaskReviewAction, TaskUpdatePatch, create_task_review,
+        submit_task_review_decision, wait_for_task_review_decision,
     };
 
     #[test]

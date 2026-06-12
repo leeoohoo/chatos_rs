@@ -138,8 +138,8 @@ pub fn compose_contact_system_prompt(
             lines.push(String::new());
             lines.push(text(
                 locale,
-                "技能上下文：本轮用户未开启技能，不要假设可用技能/插件内容，也不要为了技能详情调用技能或插件查询工具。",
-                "Skill context: the user did not enable skills in this turn. Do not assume any skill or plugin content is available, and do not call skill or plugin reader tools just to inspect them.",
+                "技能上下文：本轮只使用任务系统提供的能力，不加载联系人技能或插件内容。",
+                "Skill context: this turn only uses Task Runner capabilities; contact skills and plugin content are not loaded.",
             ));
         }
         ContactSkillPromptMode::Summary { force_skill_first } => {

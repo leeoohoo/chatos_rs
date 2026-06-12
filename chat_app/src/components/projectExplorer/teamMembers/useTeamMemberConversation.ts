@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { isSessionMatchedContactAndProject } from '../../../features/contactSession/sessionResolver';
-import type { Session, AiModelConfig, Message } from '../../../types';
+import type { Session } from '../../../types';
 import type { SendMessageRuntimeOptions, SessionSelectOptions } from '../../../lib/store/types';
-import type { ContactItem, ProjectContactRow, SessionChatStateMap } from './types';
+import type { ContactItem, ProjectContactRow } from './types';
 
 interface UseTeamMemberConversationParams {
   projectId: string;
@@ -12,9 +12,6 @@ interface UseTeamMemberConversationParams {
   currentSession: Session | null;
   projectContacts: ProjectContactRow[];
   normalizedContacts: ContactItem[];
-  selectedModelId: string | null;
-  aiModelConfigs: AiModelConfig[];
-  sessionChatState: SessionChatStateMap;
   summaryPaneSessionId: string | null;
   setSummaryPaneSessionId: (sessionId: string | null) => void;
   setSummaryError: (error: string | null) => void;
@@ -33,12 +30,6 @@ interface UseTeamMemberConversationParams {
     attachments?: File[],
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => Promise<void>;
-  messages: Message[];
-  openTurnProcessViewer: (
-    sessionId: string,
-    userMessageId: string,
-    options?: { turnId?: string | null },
-  ) => void;
   loadMoreMessages: (sessionId: string) => Promise<void>;
 }
 
@@ -48,9 +39,6 @@ export const useTeamMemberConversation = ({
   currentSession,
   projectContacts,
   normalizedContacts,
-  selectedModelId,
-  aiModelConfigs,
-  sessionChatState,
   summaryPaneSessionId,
   setSummaryPaneSessionId,
   setSummaryError,
@@ -62,8 +50,6 @@ export const useTeamMemberConversation = ({
   ensureContactSession,
   selectSession,
   sendMessage,
-  messages,
-  openTurnProcessViewer,
   loadMoreMessages,
 }: UseTeamMemberConversationParams) => {
   const { t } = useI18n();
@@ -137,25 +123,6 @@ export const useTeamMemberConversation = ({
     && summaryPaneSessionId
     && selectedProjectSession.id === summaryPaneSessionId,
   );
-
-  const selectedSessionChatState = useMemo(() => {
-    if (!selectedProjectSession?.id) {
-      return undefined;
-    }
-    return sessionChatState[selectedProjectSession.id];
-  }, [selectedProjectSession?.id, sessionChatState]);
-
-  const chatIsLoading = selectedSessionChatState?.isLoading ?? false;
-  const chatIsStreaming = selectedSessionChatState?.isStreaming ?? false;
-  const chatIsStopping = selectedSessionChatState?.isStopping ?? false;
-
-  const supportsReasoning = useMemo(() => {
-    if (!selectedModelId) {
-      return false;
-    }
-    const matched = (aiModelConfigs || []).find((item) => item.id === selectedModelId);
-    return matched?.supports_reasoning === true;
-  }, [aiModelConfigs, selectedModelId]);
 
   const handleSelectContact = useCallback(async (contactId: string) => {
     const contact = projectContacts.find((item) => item.contact.id === contactId)?.contact
@@ -260,23 +227,6 @@ export const useTeamMemberConversation = ({
     }
   }, [loadMoreMessages, selectedProjectSession?.id]);
 
-  const handleToggleTurnProcess = useCallback((userMessageId: string) => {
-    const sessionId = selectedProjectSession?.id || '';
-    const normalizedUserMessageId = typeof userMessageId === 'string' ? userMessageId.trim() : '';
-    if (!sessionId || !normalizedUserMessageId) {
-      return;
-    }
-    const userMessage = messages.find((message) => (
-      message.role === 'user' && message.id === normalizedUserMessageId
-    ));
-    const turnId = typeof userMessage?.metadata?.conversation_turn_id === 'string'
-      ? userMessage.metadata.conversation_turn_id.trim()
-      : (typeof userMessage?.metadata?.historyProcess?.turnId === 'string'
-        ? userMessage.metadata.historyProcess.turnId.trim()
-        : '');
-    openTurnProcessViewer(sessionId, normalizedUserMessageId, { turnId: turnId || null });
-  }, [messages, openTurnProcessViewer, selectedProjectSession?.id]);
-
   const handleSendMessage = useCallback(async (
     content: string,
     attachments?: File[],
@@ -299,8 +249,6 @@ export const useTeamMemberConversation = ({
         });
       }
       await sendMessage(content, attachments, {
-        mcpEnabled: runtimeOptions?.mcpEnabled,
-        enabledMcpIds: runtimeOptions?.enabledMcpIds,
         remoteConnectionId: runtimeOptions?.remoteConnectionId,
         modelConfigId: runtimeOptions?.modelConfigId,
         modelName: runtimeOptions?.modelName,
@@ -382,14 +330,9 @@ export const useTeamMemberConversation = ({
     selectedProjectSession,
     isSelectedSessionActive,
     sessionSummaryPaneVisible,
-    chatIsLoading,
-    chatIsStreaming,
-    chatIsStopping,
-    supportsReasoning,
     setSelectedContactId,
     handleSelectContact,
     handleLoadMore,
-    handleToggleTurnProcess,
     handleSendMessage,
     handleOpenSummary,
     handleDeleteSummary,

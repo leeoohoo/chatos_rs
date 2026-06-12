@@ -36,8 +36,6 @@ const GENERIC_BUILTIN_SERVER_PREFIXES = [
   'task_manager_',
   'builtin_agent_builder_',
   'agent_builder_',
-  'builtin_ui_prompter_',
-  'ui_prompter_',
   'builtin_memory_command_reader_',
   'memory_command_reader_',
   'builtin_memory_plugin_reader_',

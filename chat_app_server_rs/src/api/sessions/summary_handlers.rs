@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
@@ -31,7 +31,7 @@ pub(super) async fn list_session_memory_summaries(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({"error": "获取对话线程总结失败", "detail": err})),
-                )
+                );
             }
         };
 
@@ -94,7 +94,7 @@ pub(super) async fn clear_session_memory_summaries(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "清空对话线程总结失败", "detail": err})),
-            )
+            );
         }
     };
 

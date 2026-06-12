@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  getPendingTaskReviews,
-  getPendingUiPrompts,
   getTaskManagerTasks,
-  getUiPromptHistory,
 } from './tasks';
 
 describe('tasks api client helpers', () => {
@@ -12,9 +9,6 @@ describe('tasks api client helpers', () => {
     const request = vi.fn();
 
     await expect(getTaskManagerTasks(request as never, '   ')).resolves.toEqual([]);
-    await expect(getPendingTaskReviews(request as never, '\n')).resolves.toEqual([]);
-    await expect(getPendingUiPrompts(request as never, '\t')).resolves.toEqual([]);
-    await expect(getUiPromptHistory(request as never, '')).resolves.toEqual([]);
 
     expect(request).not.toHaveBeenCalled();
   });

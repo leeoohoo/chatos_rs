@@ -40,14 +40,8 @@ interface SummaryPaneProps {
   projectName: string;
   projectId: string | null;
   messages: Message[];
-  isLoading: boolean;
-  isStreaming: boolean;
-  isStopping: boolean;
-  streamingPhase?: 'thinking' | 'reviewing' | null;
-  streamingPreviewText?: string;
   hasMore: boolean;
   onLoadMore: () => void;
-  onToggleTurnProcess: (userMessageId: string) => void;
   customRenderer?: ChatInterfaceProps['customRenderer'];
   sessionSummaries: SessionSummaryViewItem[];
   agentRecalls: AgentRecallViewItem[];
@@ -75,14 +69,8 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
   projectName,
   projectId,
   messages,
-  isLoading,
-  isStreaming,
-  isStopping,
-  streamingPhase = null,
-  streamingPreviewText = '',
   hasMore,
   onLoadMore,
-  onToggleTurnProcess,
   customRenderer,
   sessionSummaries,
   agentRecalls,
@@ -196,15 +184,12 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         key={`messages-${sessionId || 'none'}-summary`}
         sessionId={sessionId}
         messages={messages}
-        isLoading={isLoading}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        streamingPhase={streamingPhase}
-        streamingPreviewText={streamingPreviewText}
+        isLoading={false}
+        isStreaming={false}
+        isStopping={false}
         assistantContactName={contactName}
         hasMore={hasMore}
         onLoadMore={onLoadMore}
-        onToggleTurnProcess={onToggleTurnProcess}
         customRenderer={customRenderer}
       />
     </div>

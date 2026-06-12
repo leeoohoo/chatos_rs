@@ -8,7 +8,6 @@ export type ToolFamily =
   | 'remote'
   | 'notepad'
   | 'task'
-  | 'ui'
   | 'agent'
   | 'memory'
   | 'generic';
@@ -91,12 +90,6 @@ const TASK_TOOL_NAMES = new Set([
   'delete_task',
 ]);
 
-const UI_TOOL_NAMES = new Set([
-  'prompt_key_values',
-  'prompt_choices',
-  'prompt_mixed_form',
-]);
-
 const AGENT_TOOL_NAMES = new Set([
   'recommend_agent_profile',
   'list_available_skills',
@@ -126,7 +119,6 @@ const RAW_PREFIXES: Record<Exclude<ToolFamily, 'generic'>, string[]> = {
   remote: ['builtin_remote_connection_controller_', 'remote_connection_controller_'],
   notepad: ['builtin_notepad_', 'notepad_'],
   task: ['builtin_task_manager_', 'task_manager_'],
-  ui: ['builtin_ui_prompter_', 'ui_prompter_'],
   agent: ['builtin_agent_builder_', 'agent_builder_'],
   memory: [
     'builtin_memory_command_reader_',
@@ -171,10 +163,6 @@ export const resolveToolFamily = (
     return 'task';
   }
 
-  if (startsWithAny(normalizedRaw, RAW_PREFIXES.ui) || UI_TOOL_NAMES.has(displayName)) {
-    return 'ui';
-  }
-
   if (startsWithAny(normalizedRaw, RAW_PREFIXES.agent) || AGENT_TOOL_NAMES.has(displayName)) {
     return 'agent';
   }
@@ -209,4 +197,3 @@ export const resolveToolRoutingKey = (
   const family = resolveToolFamily(rawName, displayName);
   return `${family}:${displayName}`;
 };
-

@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
-use axum::Json;
 use serde_json::Value;
 use std::time::Instant;
 use tracing::debug;
@@ -9,8 +9,8 @@ use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 
 use super::{
-    list_terminal_logs_before_page, list_terminal_logs_recent_page, normalize_history_before,
-    normalize_history_limit, normalize_history_offset, TerminalLogQuery,
+    TerminalLogQuery, list_terminal_logs_before_page, list_terminal_logs_recent_page,
+    normalize_history_before, normalize_history_limit, normalize_history_offset,
 };
 
 pub(super) async fn list_terminal_logs(

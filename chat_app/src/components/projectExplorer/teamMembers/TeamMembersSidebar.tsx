@@ -2,17 +2,9 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
-import SessionBusyBadge from '../../chat/SessionBusyBadge';
-import {
-  countPendingSessionPanels,
-  resolveSessionBusyPhase,
-} from '../../chat/sessionBusyState';
 import type {
   ContactItem,
   ProjectContactRow,
-  SessionChatStateMap,
-  TaskReviewPanelsBySessionMap,
-  UiPromptPanelsBySessionMap,
 } from './types';
 
 interface TeamMembersSidebarProps {
@@ -28,9 +20,6 @@ interface TeamMembersSidebarProps {
   runtimeContextSessionId: string | null;
   openingRuntimeContextContactId: string | null;
   removingContactId: string | null;
-  sessionChatState?: SessionChatStateMap;
-  taskReviewPanelsBySession?: TaskReviewPanelsBySessionMap;
-  uiPromptPanelsBySession?: UiPromptPanelsBySessionMap;
   onOpenAddMember: () => void;
   onSelectContact: (contactId: string) => void;
   onOpenSummary: (contact: ContactItem) => void;
@@ -51,9 +40,6 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
   runtimeContextSessionId,
   openingRuntimeContextContactId,
   removingContactId,
-  sessionChatState,
-  taskReviewPanelsBySession = {},
-  uiPromptPanelsBySession = {},
   onOpenAddMember,
   onSelectContact,
   onOpenSummary,
@@ -96,27 +82,6 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
           projectContacts.map(({ contact, session }) => {
             const active = selectedContactId === contact.id;
             const switching = switchingContactId === contact.id;
-            const isTaskRunnerAsyncContact = contact.taskRunner?.enabled === true;
-            const chatState = session?.id ? sessionChatState?.[session.id] : undefined;
-            const runtimeSessionId = session?.id || '';
-            const {
-              taskReviewCount,
-              uiPromptCount,
-              pendingCount,
-            } = isTaskRunnerAsyncContact
-              ? { taskReviewCount: 0, uiPromptCount: 0, pendingCount: 0 }
-              : countPendingSessionPanels({
-                  sessionId: runtimeSessionId,
-                  taskReviewPanelsBySession,
-                  uiPromptPanelsBySession,
-                });
-            const streamingPhase = isTaskRunnerAsyncContact
-              ? null
-              : resolveSessionBusyPhase({
-                  chatState,
-                  pendingTaskReviewCount: taskReviewCount,
-                  pendingUiPromptCount: uiPromptCount,
-                });
             return (
               <div
                 key={contact.id}
@@ -190,15 +155,6 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
                   ) : (
                     <span className="inline-flex items-center gap-2">
                       <span>{t('teamMembers.sessionLabel', { title: session?.title || t('teamMembers.sessionNotCreated') })}</span>
-                      {session?.id && !isTaskRunnerAsyncContact ? (
-                        <SessionBusyBadge phase={streamingPhase} />
-                      ) : null}
-                      {!isTaskRunnerAsyncContact && pendingCount > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-blue-600">
-                          <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                          {t('teamMembers.pending', { count: pendingCount })}
-                        </span>
-                      ) : null}
                     </span>
                   )}
                 </div>

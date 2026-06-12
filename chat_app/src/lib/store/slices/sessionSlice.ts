@@ -12,8 +12,6 @@ export interface SessionCreatePayload {
   selectedModelId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
 }
 
 export interface SessionSelectOptions {
