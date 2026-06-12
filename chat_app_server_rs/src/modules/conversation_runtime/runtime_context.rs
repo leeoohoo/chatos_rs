@@ -1,19 +1,19 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use serde::Serialize;
 use tracing::warn;
 
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
-    ChatRuntimeMetadata, ContactSkillPromptMode, compose_contact_system_prompt, normalize_id,
-    resolve_project_runtime,
+    compose_contact_system_prompt, normalize_id, resolve_project_runtime, ChatRuntimeMetadata,
+    ContactSkillPromptMode,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::mcp_runtime::{McpServerBundle, empty_mcp_server_bundle};
+use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};

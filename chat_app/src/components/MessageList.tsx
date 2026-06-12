@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { MessageItem } from './MessageItem';
+import { MessageTaskDrawer } from './messageTasks/MessageTaskDrawer';
 // import { cn } from '../lib/utils';
-import type { MessageListProps } from '../types';
+import type { Message, MessageListProps } from '../types';
 import { useMessageListDerivedState } from './messageList/useMessageListDerivedState';
 import { useMessageListWindowing } from './messageList/useMessageListWindowing';
 import { useI18n } from '../i18n/I18nProvider';
@@ -81,11 +82,17 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   );
   const hasPreviewSentence = previewSentenceQueue.length > 0;
   const [previewSentenceIndex, setPreviewSentenceIndex] = useState(0);
+  const [taskMessage, setTaskMessage] = useState<Message | null>(null);
   const activePreviewSentence = previewSentenceQueue[previewSentenceIndex] || '';
+  const handleCloseMessageTasks = () => setTaskMessage(null);
 
   useEffect(() => {
     setPreviewSentenceIndex(0);
   }, [sessionId, previewSentenceQueue.length]);
+
+  useEffect(() => {
+    setTaskMessage(null);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!isLoading || previewSentenceQueue.length <= 1) {
@@ -123,97 +130,108 @@ const MessageListComponent: React.FC<MessageListProps> = ({
 
 
   return (
-    <div className="flex flex-col h-full relative">
-      <div
-        ref={scrollRef}
-        onScroll={shouldWindowMessages ? handleScroll : undefined}
-        className="flex-1 overflow-y-auto px-4 py-6 space-y-1"
-      >
-        {hasMore && (
-          <div className="flex justify-center mb-2">
-            <button
-              type="button"
-              onClick={onLoadMore}
-              className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
-            >
-              {t('messageList.loadMore')}
-            </button>
-          </div>
-        )}
-        {shouldWindowMessages && boundedRenderStartIndex > 0 && (
-          <div className="flex justify-center mb-2">
-            <button
-              type="button"
-              onClick={expandRenderedWindow}
-              className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
-            >
-              {t('messageList.showEarlier', { count: boundedRenderStartIndex })}
-            </button>
-          </div>
-        )}
-        {renderedMessages.map((message, index) => {
-          const globalIndex = boundedRenderStartIndex + index;
-          return (
-          <MessageItem
-            key={message.id}
-            message={message}
-            isLast={globalIndex === lastVisibleIndex}
-            isStreaming={isStreaming && globalIndex === lastVisibleIndex}
-            assistantContactName={assistantContactName}
-            onEdit={onMessageEdit}
-            onDelete={onMessageDelete}
-            toolResultById={toolResultById}
-            assistantToolCallsById={assistantToolCallById}
-            toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
-            toolCallLookupKey={toolCallLookupKeyByMessageId.get(message.id) || ''}
-            customRenderer={customRenderer}
-          />
-          );
-        })}
-        
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="w-fit min-w-[16rem] max-w-[78vw] rounded-lg border border-border bg-muted/40 px-3 py-3">
-              <span className="block text-[11px] text-muted-foreground">
-                {isStopping
-                  ? t('messageList.aiStopping')
-                  : (streamingPhase === 'reviewing'
-                    ? t('messageList.aiReviewing')
-                    : t('messageList.aiThinking'))}
-              </span>
-              {hasPreviewSentence ? (
-                <div
-                  className="mt-1 min-h-[22px] text-sm leading-6 text-foreground/85 whitespace-nowrap overflow-hidden text-ellipsis"
-                  title={activePreviewSentence}
-                >
-                  {activePreviewSentence}
-                </div>
-              ) : (
-                <div className="mt-2 thinking-marquee-track">
-                  <div className="thinking-marquee-bar" />
-                </div>
-              )}
+    <div className="flex h-full overflow-hidden">
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          onScroll={shouldWindowMessages ? handleScroll : undefined}
+          className="flex-1 overflow-y-auto px-4 py-6 space-y-1"
+        >
+          {hasMore && (
+            <div className="flex justify-center mb-2">
+              <button
+                type="button"
+                onClick={onLoadMore}
+                className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
+              >
+                {t('messageList.loadMore')}
+              </button>
             </div>
-          </div>
-        )}
+          )}
+          {shouldWindowMessages && boundedRenderStartIndex > 0 && (
+            <div className="flex justify-center mb-2">
+              <button
+                type="button"
+                onClick={expandRenderedWindow}
+                className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
+              >
+                {t('messageList.showEarlier', { count: boundedRenderStartIndex })}
+              </button>
+            </div>
+          )}
+          {renderedMessages.map((message, index) => {
+            const globalIndex = boundedRenderStartIndex + index;
+            return (
+              <MessageItem
+                key={message.id}
+                message={message}
+                isLast={globalIndex === lastVisibleIndex}
+                isStreaming={isStreaming && globalIndex === lastVisibleIndex}
+                assistantContactName={assistantContactName}
+                onEdit={onMessageEdit}
+                onDelete={onMessageDelete}
+                onOpenTasks={setTaskMessage}
+                toolResultById={toolResultById}
+                assistantToolCallsById={assistantToolCallById}
+                toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
+                toolCallLookupKey={toolCallLookupKeyByMessageId.get(message.id) || ''}
+                customRenderer={customRenderer}
+              />
+            );
+          })}
 
-        <div ref={bottomRef} />
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="w-fit min-w-[16rem] max-w-[78vw] rounded-lg border border-border bg-muted/40 px-3 py-3">
+                <span className="block text-[11px] text-muted-foreground">
+                  {isStopping
+                    ? t('messageList.aiStopping')
+                    : (streamingPhase === 'reviewing'
+                      ? t('messageList.aiReviewing')
+                      : t('messageList.aiThinking'))}
+                </span>
+                {hasPreviewSentence ? (
+                  <div
+                    className="mt-1 min-h-[22px] text-sm leading-6 text-foreground/85 whitespace-nowrap overflow-hidden text-ellipsis"
+                    title={activePreviewSentence}
+                  >
+                    {activePreviewSentence}
+                  </div>
+                ) : (
+                  <div className="mt-2 thinking-marquee-track">
+                    <div className="thinking-marquee-bar" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+
+        {!isAtBottom && (
+          <button
+            type="button"
+            aria-label={t('messageList.jumpToBottom')}
+            title={t('messageList.jumpToBottom')}
+            onClick={handleJumpToBottom}
+            className="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-full bg-primary text-primary-foreground px-4 py-2 shadow-md hover:bg-primary/90"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v12" />
+              <path d="M19 12l-7 7-7-7" />
+            </svg>
+            <span className="text-sm">{t('messageList.jumpToBottom')}</span>
+          </button>
+        )}
       </div>
 
-      {!isAtBottom && (
-        <button
-          type="button"
-          aria-label={t('messageList.jumpToBottom')}
-          title={t('messageList.jumpToBottom')}
-          onClick={handleJumpToBottom}
-          className="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-full bg-primary text-primary-foreground px-4 py-2 shadow-md hover:bg-primary/90"
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 5v12" />
-            <path d="M19 12l-7 7-7-7" />
-          </svg>
-          <span className="text-sm">{t('messageList.jumpToBottom')}</span>
-        </button>
+      {taskMessage && (
+        <MessageTaskDrawer
+          open
+          message={taskMessage}
+          onClose={handleCloseMessageTasks}
+        />
       )}
     </div>
   );

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use uuid::Uuid;
@@ -11,63 +12,60 @@ use crate::config::AppConfig;
 use crate::models::{
     now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
     BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CreateTaskRequest, HealthResponse,
-    PaginatedResponse, RecordTaskProcessRequest, RunListFilters,
-    RunSummaryRecord, RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse,
-    TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskSourceContext, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
-    UpdateTaskRequest,
+    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse,
+    TaskListFilters, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
+    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskRequest,
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;
 
-mod chatos_callbacks;
-mod builtin_providers;
 mod batch_ops;
+mod builtin_providers;
+mod chatos_callbacks;
 mod chatos_message_tasks;
+mod filter_sanitize;
 mod mcp_catalog_service;
 mod memory_options;
 mod model_catalog;
 mod model_config_service;
 mod prerequisite_context;
-mod remote_servers;
-mod remote_server_service;
-mod schedule_helpers;
-mod filter_sanitize;
-mod status_display;
-mod stream_events;
-mod task_manager_bridge;
-mod task_dependencies;
-mod task_process_log;
-mod task_memory;
 mod process_log_text;
-mod run_execution_support;
+mod remote_server_service;
+mod remote_servers;
 mod run_control;
-mod run_recovery;
+mod run_execution_support;
 mod run_model_phase;
 mod run_prerequisites;
+mod run_recovery;
+mod schedule_helpers;
+mod status_display;
+mod stream_events;
+mod task_dependencies;
+mod task_manager_bridge;
+mod task_memory;
+mod task_process_log;
 mod tooling_state;
 mod workspace_mcp;
 
-use self::builtin_providers::build_builtin_registry;
 use self::batch_ops::{
     normalize_batch_task_ids, normalize_prerequisite_task_ids, normalize_tags, sanitize_id_list,
     summarize_batch_results,
+};
+use self::builtin_providers::build_builtin_registry;
+pub use self::chatos_message_tasks::{
+    ChatosMessageRunDetail, ChatosMessageTaskDetail, ChatosMessageTaskRun,
+    ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
 };
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::build_remote_server_record;
-use self::schedule_helpers::{
-    advance_task_schedule_after_dispatch, sanitize_task_schedule_config,
-};
+use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
 use self::workspace_mcp::{
     ensure_workspace_dir_available, normalize_builtin_kind_names, sanitize_task_mcp_config,
-};
-pub use self::chatos_message_tasks::{
-    ChatosMessageRunDetail, ChatosMessageTaskDetail, ChatosMessageTaskRun,
-    ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
 };
 
 const RUN_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(300);
@@ -131,6 +129,12 @@ impl TaskService {
         if input.task_execution_max_iterations == Some(0) {
             return Err("task_execution_max_iterations 必须大于 0".to_string());
         }
+        if input.tool_result_model_max_chars == Some(0) {
+            return Err("tool_result_model_max_chars 必须大于 0".to_string());
+        }
+        if input.tool_results_model_total_max_chars == Some(0) {
+            return Err("tool_results_model_total_max_chars 必须大于 0".to_string());
+        }
 
         let now = now_rfc3339();
         let mut settings = self
@@ -139,11 +143,21 @@ impl TaskService {
             .unwrap_or(RuntimeSettingsRecord {
                 id: SYSTEM_RUNTIME_SETTINGS_ID.to_string(),
                 task_execution_max_iterations: self.config.default_task_execution_max_iterations,
+                tool_result_model_max_chars: self.config.default_tool_result_model_max_chars,
+                tool_results_model_total_max_chars: self
+                    .config
+                    .default_tool_results_model_total_max_chars,
                 created_at: now.clone(),
                 updated_at: now.clone(),
             });
         if let Some(task_execution_max_iterations) = input.task_execution_max_iterations {
             settings.task_execution_max_iterations = task_execution_max_iterations;
+        }
+        if let Some(tool_result_model_max_chars) = input.tool_result_model_max_chars {
+            settings.tool_result_model_max_chars = tool_result_model_max_chars;
+        }
+        if let Some(tool_results_model_total_max_chars) = input.tool_results_model_total_max_chars {
+            settings.tool_results_model_total_max_chars = tool_results_model_total_max_chars;
         }
         settings.updated_at = now;
         self.store.save_runtime_settings(settings).await
@@ -155,6 +169,26 @@ impl TaskService {
             .await?
             .map(|settings| settings.task_execution_max_iterations.max(1))
             .unwrap_or(self.config.default_task_execution_max_iterations.max(1)))
+    }
+
+    pub async fn effective_tool_result_model_budget_limits(
+        &self,
+    ) -> Result<ToolResultModelBudgetLimits, String> {
+        Ok(self
+            .get_runtime_settings()
+            .await?
+            .map(|settings| {
+                ToolResultModelBudgetLimits::new(
+                    settings.tool_result_model_max_chars,
+                    settings.tool_results_model_total_max_chars,
+                )
+            })
+            .unwrap_or_else(|| {
+                ToolResultModelBudgetLimits::new(
+                    self.config.default_tool_result_model_max_chars,
+                    self.config.default_tool_results_model_total_max_chars,
+                )
+            }))
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskRecord>, String> {
@@ -588,7 +622,6 @@ impl TaskService {
         }
         Ok(())
     }
-
 }
 
 impl RunService {
@@ -612,6 +645,27 @@ impl RunService {
             .await?
             .map(|settings| settings.task_execution_max_iterations.max(1))
             .unwrap_or(self.config.default_task_execution_max_iterations.max(1)))
+    }
+
+    async fn effective_tool_result_model_budget_limits(
+        &self,
+    ) -> Result<ToolResultModelBudgetLimits, String> {
+        Ok(self
+            .store
+            .get_runtime_settings()
+            .await?
+            .map(|settings| {
+                ToolResultModelBudgetLimits::new(
+                    settings.tool_result_model_max_chars,
+                    settings.tool_results_model_total_max_chars,
+                )
+            })
+            .unwrap_or_else(|| {
+                ToolResultModelBudgetLimits::new(
+                    self.config.default_tool_result_model_max_chars,
+                    self.config.default_tool_results_model_total_max_chars,
+                )
+            }))
     }
 
     pub async fn list_runs(&self, task_id: Option<&str>) -> Result<Vec<TaskRunRecord>, String> {
@@ -703,7 +757,6 @@ impl RunService {
     pub async fn list_run_events(&self, run_id: &str) -> Result<Vec<TaskRunEventRecord>, String> {
         self.store.list_run_events(run_id).await
     }
-
 }
 
 pub fn health() -> HealthResponse {
@@ -717,6 +770,7 @@ pub fn health() -> HealthResponse {
 pub fn system_config(
     config: &AppConfig,
     task_execution_max_iterations: usize,
+    tool_result_model_budget_limits: ToolResultModelBudgetLimits,
 ) -> SystemConfigResponse {
     SystemConfigResponse {
         host: config.host.to_string(),
@@ -735,6 +789,11 @@ pub fn system_config(
         auto_memory_summary: config.auto_memory_summary,
         default_task_execution_max_iterations: config.default_task_execution_max_iterations,
         task_execution_max_iterations,
+        default_tool_result_model_max_chars: config.default_tool_result_model_max_chars,
+        tool_result_model_max_chars: tool_result_model_budget_limits.per_result_max_chars,
+        default_tool_results_model_total_max_chars: config
+            .default_tool_results_model_total_max_chars,
+        tool_results_model_total_max_chars: tool_result_model_budget_limits.total_max_chars,
     }
 }
 
@@ -784,9 +843,7 @@ fn validate_required(label: &str, value: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::workspace_mcp::{
-        ensure_workspace_dir_available, resolve_workspace_dir_with_base,
-    };
+    use super::workspace_mcp::{ensure_workspace_dir_available, resolve_workspace_dir_with_base};
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;

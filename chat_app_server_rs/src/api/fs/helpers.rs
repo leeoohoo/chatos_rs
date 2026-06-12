@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
@@ -229,8 +229,8 @@ fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        DownloadBudget, MAX_DOWNLOAD_DEPTH, MAX_DOWNLOAD_FILES, MAX_DOWNLOAD_SINGLE_FILE_BYTES,
-        MAX_DOWNLOAD_TOTAL_BYTES, zip_directory_to_temp_file,
+        zip_directory_to_temp_file, DownloadBudget, MAX_DOWNLOAD_DEPTH, MAX_DOWNLOAD_FILES,
+        MAX_DOWNLOAD_SINGLE_FILE_BYTES, MAX_DOWNLOAD_TOTAL_BYTES,
     };
     use std::fs;
     use std::path::PathBuf;

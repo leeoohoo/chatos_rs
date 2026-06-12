@@ -99,10 +99,7 @@ pub(crate) fn model_configs_for_user(
         .collect()
 }
 
-pub(crate) fn model_config_for_user(
-    model: ModelConfigRecord,
-    current_user: &CurrentUser,
-) -> Value {
+pub(crate) fn model_config_for_user(model: ModelConfigRecord, current_user: &CurrentUser) -> Value {
     if current_user.is_admin() {
         return json!(model);
     }

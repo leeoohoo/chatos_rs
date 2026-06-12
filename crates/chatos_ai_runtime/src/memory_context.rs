@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,6 +11,7 @@ use memory_engine_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::{sleep, Instant};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::input_transform::to_message_item;
@@ -17,7 +19,10 @@ use crate::tool_call::{
     build_function_call_item, build_function_call_output_item, extract_message_tool_calls,
     extract_tool_call_id, extract_tool_call_name, tool_call_arguments_text,
 };
-use crate::traits::{MemoryRecordWriter, SaveRecordInput, SaveToolRecordInput};
+use crate::tool_runtime::{ToolResultModelBudget, ToolResultModelBudgetLimits};
+use crate::traits::{
+    MemoryRecordWriter, SaveAssistantRecordInput, SaveRecordInput, SaveToolRecordInput,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryScope {
@@ -121,6 +126,11 @@ pub struct MemoryEngineRecordWriter {
     source_id: Option<String>,
 }
 
+#[derive(Clone)]
+pub struct BestEffortMemoryRecordWriter {
+    inner: Arc<dyn MemoryRecordWriter>,
+}
+
 impl MemoryContextComposer {
     pub fn new_direct(
         base_url: impl Into<String>,
@@ -163,8 +173,18 @@ impl MemoryContextComposer {
     }
 
     pub async fn compose_input_items(&self, scope: &MemoryScope) -> Result<Vec<Value>, String> {
+        self.compose_input_items_with_budget(scope, None).await
+    }
+
+    pub async fn compose_input_items_with_budget(
+        &self,
+        scope: &MemoryScope,
+        limits: Option<ToolResultModelBudgetLimits>,
+    ) -> Result<Vec<Value>, String> {
         let response = self.compose(scope).await?;
-        Ok(compose_response_to_input_items(&response))
+        Ok(compose_response_to_input_items_with_budget(
+            &response, limits,
+        ))
     }
 
     pub async fn run_active_summary(
@@ -273,21 +293,79 @@ impl MemoryEngineRecordWriter {
     }
 }
 
+impl BestEffortMemoryRecordWriter {
+    pub fn new<T>(inner: T) -> Self
+    where
+        T: MemoryRecordWriter + 'static,
+    {
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+
+    pub fn from_arc(inner: Arc<dyn MemoryRecordWriter>) -> Self {
+        Self { inner }
+    }
+}
+
 #[async_trait]
 impl MemoryRecordWriter for MemoryEngineRecordWriter {
     async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
         let tenant_id = self.tenant_id()?;
         let thread_id = self.thread_id_for_record(&input)?;
         let record = self.upsert_record_input(input)?;
-        self.client
+        let records = vec![record];
+        let summary = summarize_record_batch(records.as_slice());
+        let source_id = self.source_id.as_deref().unwrap_or("");
+        info!(
+            tenant_id = tenant_id.as_str(),
+            source_id,
+            thread_id = thread_id.as_str(),
+            record_count = summary.record_count,
+            record_roles = summary.roles.as_str(),
+            record_ids = summary.record_ids.as_str(),
+            tool_names = summary.tool_names.as_str(),
+            content_bytes = summary.content_bytes,
+            max_content_bytes = summary.max_content_bytes,
+            metadata_bytes = summary.metadata_bytes,
+            structured_payload_bytes = summary.structured_payload_bytes,
+            "memory engine record batch sync start"
+        );
+        let response = self
+            .client
             .batch_sync_records(
                 thread_id.as_str(),
-                &SdkBatchSyncRecordsRequest {
-                    tenant_id,
-                    records: vec![record],
-                },
+                &SdkBatchSyncRecordsRequest { tenant_id, records },
             )
-            .await?;
+            .await;
+        match &response {
+            Ok(response) => {
+                info!(
+                    source_id,
+                    thread_id = thread_id.as_str(),
+                    received_count = response.received_count,
+                    upserted_count = response.upserted_count,
+                    "memory engine record batch sync completed"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    source_id,
+                    thread_id = thread_id.as_str(),
+                    record_count = summary.record_count,
+                    record_roles = summary.roles.as_str(),
+                    record_ids = summary.record_ids.as_str(),
+                    tool_names = summary.tool_names.as_str(),
+                    content_bytes = summary.content_bytes,
+                    max_content_bytes = summary.max_content_bytes,
+                    metadata_bytes = summary.metadata_bytes,
+                    structured_payload_bytes = summary.structured_payload_bytes,
+                    error = err.as_str(),
+                    "memory engine record batch sync failed"
+                );
+            }
+        }
+        response?;
         Ok(())
     }
 
@@ -306,7 +384,24 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         }
 
         for (thread_id, records) in batches {
-            self.client
+            let summary = summarize_record_batch(records.as_slice());
+            let source_id = self.source_id.as_deref().unwrap_or("");
+            info!(
+                tenant_id = tenant_id.as_str(),
+                source_id,
+                thread_id = thread_id.as_str(),
+                record_count = summary.record_count,
+                record_roles = summary.roles.as_str(),
+                record_ids = summary.record_ids.as_str(),
+                tool_names = summary.tool_names.as_str(),
+                content_bytes = summary.content_bytes,
+                max_content_bytes = summary.max_content_bytes,
+                metadata_bytes = summary.metadata_bytes,
+                structured_payload_bytes = summary.structured_payload_bytes,
+                "memory engine tool record batch sync start"
+            );
+            let response = self
+                .client
                 .batch_sync_records(
                     thread_id.as_str(),
                     &SdkBatchSyncRecordsRequest {
@@ -314,9 +409,109 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
                         records,
                     },
                 )
-                .await?;
+                .await;
+            match &response {
+                Ok(response) => {
+                    info!(
+                        source_id,
+                        thread_id = thread_id.as_str(),
+                        received_count = response.received_count,
+                        upserted_count = response.upserted_count,
+                        "memory engine tool record batch sync completed"
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        source_id,
+                        thread_id = thread_id.as_str(),
+                        record_count = summary.record_count,
+                        record_roles = summary.roles.as_str(),
+                        record_ids = summary.record_ids.as_str(),
+                        tool_names = summary.tool_names.as_str(),
+                        content_bytes = summary.content_bytes,
+                        max_content_bytes = summary.max_content_bytes,
+                        metadata_bytes = summary.metadata_bytes,
+                        structured_payload_bytes = summary.structured_payload_bytes,
+                        error = err.as_str(),
+                        "memory engine tool record batch sync failed"
+                    );
+                }
+            }
+            response?;
         }
 
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl MemoryRecordWriter for BestEffortMemoryRecordWriter {
+    async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
+        let summary = summarize_save_record_input(&input);
+        if let Err(err) = self.inner.save_record(input).await {
+            warn!(
+                role = summary.role.as_str(),
+                conversation_id = summary.conversation_id.as_str(),
+                conversation_turn_id = summary.conversation_turn_id.as_str(),
+                message_id = summary.message_id.as_str(),
+                tool_call_id = summary.tool_call_id.as_str(),
+                content_bytes = summary.content_bytes,
+                error = err.as_str(),
+                "best-effort memory record sync failed"
+            );
+        }
+        Ok(())
+    }
+
+    async fn save_assistant_record(&self, input: SaveAssistantRecordInput) -> Result<(), String> {
+        let summary = summarize_assistant_record_input(&input);
+        if let Err(err) = self.inner.save_assistant_record(input).await {
+            warn!(
+                conversation_id = summary.conversation_id.as_str(),
+                conversation_turn_id = summary.conversation_turn_id.as_str(),
+                message_id = summary.message_id.as_str(),
+                response_id = summary.response_id.as_str(),
+                response_status = summary.response_status.as_str(),
+                content_bytes = summary.content_bytes,
+                error = err.as_str(),
+                "best-effort memory assistant record sync failed"
+            );
+        }
+        Ok(())
+    }
+
+    async fn save_tool_record(&self, input: SaveToolRecordInput) -> Result<(), String> {
+        let summary = summarize_tool_record_input(&input);
+        if let Err(err) = self.inner.save_tool_record(input).await {
+            warn!(
+                conversation_id = summary.conversation_id.as_str(),
+                conversation_turn_id = summary.conversation_turn_id.as_str(),
+                message_id = summary.message_id.as_str(),
+                tool_call_id = summary.tool_call_id.as_str(),
+                tool_name = summary.tool_name.as_str(),
+                content_bytes = summary.content_bytes,
+                error = err.as_str(),
+                "best-effort memory tool record sync failed"
+            );
+        }
+        Ok(())
+    }
+
+    async fn save_tool_records(&self, inputs: Vec<SaveToolRecordInput>) -> Result<(), String> {
+        let summary = summarize_tool_record_inputs(inputs.as_slice());
+        if let Err(err) = self.inner.save_tool_records(inputs).await {
+            warn!(
+                record_count = summary.record_count,
+                conversation_ids = summary.conversation_ids.as_str(),
+                conversation_turn_ids = summary.conversation_turn_ids.as_str(),
+                tool_names = summary.tool_names.as_str(),
+                tool_call_ids = summary.tool_call_ids.as_str(),
+                content_bytes = summary.content_bytes,
+                max_content_bytes = summary.max_content_bytes,
+                error = err.as_str(),
+                "best-effort memory tool records sync failed"
+            );
+        }
         Ok(())
     }
 }
@@ -365,8 +560,19 @@ impl MemoryEngineRecordWriter {
 }
 
 pub fn compose_response_to_input_items(response: &ComposeContextResponse) -> Vec<Value> {
+    compose_response_to_input_items_with_budget(response, None)
+}
+
+pub fn compose_response_to_input_items_with_budget(
+    response: &ComposeContextResponse,
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Vec<Value> {
     let mut items = Vec::new();
     let mut seen_tool_call_ids = HashSet::new();
+    let mut remaining_tool_output_ids = collect_tool_output_id_counts(&response.recent_records);
+    let mut tool_result_budget = limits
+        .map(ToolResultModelBudget::from_limits)
+        .unwrap_or_else(ToolResultModelBudget::from_env);
 
     if !response.blocks.is_empty() {
         let text = response
@@ -384,6 +590,8 @@ pub fn compose_response_to_input_items(response: &ComposeContextResponse) -> Vec
         items.extend(engine_record_to_input_items(
             record,
             &mut seen_tool_call_ids,
+            &mut remaining_tool_output_ids,
+            &mut tool_result_budget,
         ));
     }
 
@@ -403,6 +611,8 @@ fn default_compose_policy() -> Option<ComposeContextPolicy> {
 fn engine_record_to_input_items(
     record: &EngineRecord,
     seen_tool_call_ids: &mut HashSet<String>,
+    remaining_tool_output_ids: &mut HashMap<String, usize>,
+    tool_result_budget: &mut ToolResultModelBudget,
 ) -> Vec<Value> {
     let role = record.role.trim();
     if role.is_empty() {
@@ -411,22 +621,27 @@ fn engine_record_to_input_items(
     let mut items = Vec::new();
 
     if role == "tool" {
-        let tool_call_id = record
-            .metadata
-            .as_ref()
-            .and_then(|value| {
-                value
-                    .get("tool_call_id")
-                    .or_else(|| value.get("toolCallId"))
-                    .or_else(|| value.get("tool_callId"))
-            })
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if !tool_call_id.trim().is_empty() && seen_tool_call_ids.contains(tool_call_id) {
-            items.push(build_function_call_output_item(
-                tool_call_id,
-                record.content.as_str(),
-            ));
+        if let Some(tool_call_id) = engine_record_tool_call_id(record) {
+            if seen_tool_call_ids.contains(tool_call_id.as_str()) {
+                let tool_name = record
+                    .metadata
+                    .as_ref()
+                    .and_then(|value| {
+                        value
+                            .get("name")
+                            .or_else(|| value.get("tool_name"))
+                            .or_else(|| value.get("toolName"))
+                    })
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let output =
+                    tool_result_budget.sanitize_content(tool_name, record.content.as_str());
+                items.push(build_function_call_output_item(
+                    tool_call_id.as_str(),
+                    output.as_str(),
+                ));
+            }
+            decrement_remaining_tool_output_id(remaining_tool_output_ids, tool_call_id.as_str());
         }
         return items;
     }
@@ -454,6 +669,9 @@ fn engine_record_to_input_items(
             if name.is_empty() {
                 continue;
             }
+            if !has_remaining_tool_output(remaining_tool_output_ids, call_id) {
+                continue;
+            }
             let arguments = tool_call_arguments_text(&tool_call);
             items.push(build_function_call_item(call_id, name, arguments.as_str()));
             seen_tool_call_ids.insert(call_id.to_string());
@@ -471,6 +689,51 @@ fn engine_record_to_input_items(
     items
 }
 
+fn collect_tool_output_id_counts(records: &[EngineRecord]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for record in records {
+        if record.role.trim() != "tool" {
+            continue;
+        }
+        if let Some(tool_call_id) = engine_record_tool_call_id(record) {
+            *counts.entry(tool_call_id).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn engine_record_tool_call_id(record: &EngineRecord) -> Option<String> {
+    record
+        .metadata
+        .as_ref()
+        .and_then(|value| {
+            value
+                .get("tool_call_id")
+                .or_else(|| value.get("toolCallId"))
+                .or_else(|| value.get("tool_callId"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn has_remaining_tool_output(counts: &HashMap<String, usize>, call_id: &str) -> bool {
+    counts.get(call_id).copied().unwrap_or_default() > 0
+}
+
+fn decrement_remaining_tool_output_id(counts: &mut HashMap<String, usize>, call_id: &str) {
+    let should_remove = if let Some(count) = counts.get_mut(call_id) {
+        *count = count.saturating_sub(1);
+        *count == 0
+    } else {
+        false
+    };
+    if should_remove {
+        counts.remove(call_id);
+    }
+}
+
 fn normalized(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -478,6 +741,199 @@ fn normalized(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RecordBatchLogSummary {
+    record_count: usize,
+    roles: String,
+    record_ids: String,
+    tool_names: String,
+    content_bytes: usize,
+    max_content_bytes: usize,
+    metadata_bytes: usize,
+    structured_payload_bytes: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SaveRecordLogSummary {
+    role: String,
+    conversation_id: String,
+    conversation_turn_id: String,
+    message_id: String,
+    tool_call_id: String,
+    content_bytes: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SaveAssistantRecordLogSummary {
+    conversation_id: String,
+    conversation_turn_id: String,
+    message_id: String,
+    response_id: String,
+    response_status: String,
+    content_bytes: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SaveToolRecordLogSummary {
+    conversation_id: String,
+    conversation_turn_id: String,
+    message_id: String,
+    tool_call_id: String,
+    tool_name: String,
+    content_bytes: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SaveToolRecordsLogSummary {
+    record_count: usize,
+    conversation_ids: String,
+    conversation_turn_ids: String,
+    tool_call_ids: String,
+    tool_names: String,
+    content_bytes: usize,
+    max_content_bytes: usize,
+}
+
+fn summarize_record_batch(records: &[UpsertRecordInput]) -> RecordBatchLogSummary {
+    let mut roles = Vec::new();
+    let mut record_ids = Vec::new();
+    let mut tool_names = Vec::new();
+    let mut content_bytes = 0usize;
+    let mut max_content_bytes = 0usize;
+    let mut metadata_bytes = 0usize;
+    let mut structured_payload_bytes = 0usize;
+
+    for record in records {
+        roles.push(record.role.as_str());
+        record_ids.push(record.id.as_str());
+        if let Some(tool_name) = record.metadata.as_ref().and_then(metadata_tool_name) {
+            tool_names.push(tool_name);
+        }
+        let current_content_bytes = record.content.len();
+        content_bytes += current_content_bytes;
+        max_content_bytes = max_content_bytes.max(current_content_bytes);
+        metadata_bytes += optional_json_bytes(&record.metadata);
+        structured_payload_bytes += optional_json_bytes(&record.structured_payload);
+    }
+
+    RecordBatchLogSummary {
+        record_count: records.len(),
+        roles: summarize_values(roles),
+        record_ids: summarize_values(record_ids),
+        tool_names: summarize_values(tool_names),
+        content_bytes,
+        max_content_bytes,
+        metadata_bytes,
+        structured_payload_bytes,
+    }
+}
+
+fn summarize_save_record_input(input: &SaveRecordInput) -> SaveRecordLogSummary {
+    SaveRecordLogSummary {
+        role: input.role.clone(),
+        conversation_id: input.conversation_id.clone(),
+        conversation_turn_id: input.conversation_turn_id.clone().unwrap_or_default(),
+        message_id: input.message_id.clone().unwrap_or_default(),
+        tool_call_id: input.tool_call_id.clone().unwrap_or_default(),
+        content_bytes: input.content.len(),
+    }
+}
+
+fn summarize_assistant_record_input(
+    input: &SaveAssistantRecordInput,
+) -> SaveAssistantRecordLogSummary {
+    SaveAssistantRecordLogSummary {
+        conversation_id: input.conversation_id.clone(),
+        conversation_turn_id: input.conversation_turn_id.clone().unwrap_or_default(),
+        message_id: input.message_id.clone().unwrap_or_default(),
+        response_id: input.response_id.clone().unwrap_or_default(),
+        response_status: input.response_status.clone().unwrap_or_default(),
+        content_bytes: input.content.len(),
+    }
+}
+
+fn summarize_tool_record_input(input: &SaveToolRecordInput) -> SaveToolRecordLogSummary {
+    SaveToolRecordLogSummary {
+        conversation_id: input.conversation_id.clone(),
+        conversation_turn_id: input.conversation_turn_id.clone().unwrap_or_default(),
+        message_id: input.message_id.clone().unwrap_or_default(),
+        tool_call_id: input.tool_call_id.clone(),
+        tool_name: input.tool_name.clone(),
+        content_bytes: input.content.len(),
+    }
+}
+
+fn summarize_tool_record_inputs(inputs: &[SaveToolRecordInput]) -> SaveToolRecordsLogSummary {
+    let mut conversation_ids = Vec::new();
+    let mut conversation_turn_ids = Vec::new();
+    let mut tool_call_ids = Vec::new();
+    let mut tool_names = Vec::new();
+    let mut content_bytes = 0usize;
+    let mut max_content_bytes = 0usize;
+
+    for input in inputs {
+        conversation_ids.push(input.conversation_id.as_str());
+        if let Some(turn_id) = input.conversation_turn_id.as_deref() {
+            conversation_turn_ids.push(turn_id);
+        }
+        tool_call_ids.push(input.tool_call_id.as_str());
+        tool_names.push(input.tool_name.as_str());
+        let current_content_bytes = input.content.len();
+        content_bytes += current_content_bytes;
+        max_content_bytes = max_content_bytes.max(current_content_bytes);
+    }
+
+    SaveToolRecordsLogSummary {
+        record_count: inputs.len(),
+        conversation_ids: summarize_values(conversation_ids),
+        conversation_turn_ids: summarize_values(conversation_turn_ids),
+        tool_call_ids: summarize_values(tool_call_ids),
+        tool_names: summarize_values(tool_names),
+        content_bytes,
+        max_content_bytes,
+    }
+}
+
+fn metadata_tool_name(metadata: &Value) -> Option<&str> {
+    metadata
+        .get("toolName")
+        .or_else(|| metadata.get("tool_name"))
+        .or_else(|| metadata.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn optional_json_bytes(value: &Option<Value>) -> usize {
+    value
+        .as_ref()
+        .and_then(|value| serde_json::to_vec(value).ok())
+        .map(|bytes| bytes.len())
+        .unwrap_or_default()
+}
+
+fn summarize_values(values: Vec<&str>) -> String {
+    const LIMIT: usize = 8;
+    let mut unique = Vec::<&str>::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() || unique.contains(&value) {
+            continue;
+        }
+        unique.push(value);
+    }
+
+    let omitted = unique.len().saturating_sub(LIMIT);
+    let mut summary = unique.into_iter().take(LIMIT).collect::<Vec<_>>().join(",");
+    if omitted > 0 {
+        if !summary.is_empty() {
+            summary.push(',');
+        }
+        summary.push_str(format!("+{omitted} more").as_str());
+    }
+    summary
 }
 
 #[cfg(test)]
@@ -672,6 +1128,125 @@ mod tests {
 
         let items = compose_response_to_input_items(&response);
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn compose_response_to_input_items_skips_orphan_tool_calls() {
+        let response = ComposeContextResponse {
+            thread_id: "thread-1".to_string(),
+            blocks: Vec::new(),
+            recent_records: vec![EngineRecord {
+                id: "rec-1".to_string(),
+                thread_id: "thread-1".to_string(),
+                tenant_id: "tenant-1".to_string(),
+                source_id: "task".to_string(),
+                external_record_id: None,
+                role: "assistant".to_string(),
+                record_type: "message".to_string(),
+                content: "calling tool".to_string(),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "demo.search",
+                            "arguments": "{\"q\":\"rust\"}"
+                        }
+                    }]
+                })),
+                summary_status: "pending".to_string(),
+                summary_id: None,
+                summarized_at: None,
+                created_at: "2026-06-08T00:00:00Z".to_string(),
+            }],
+            meta: ComposeContextMeta {
+                summary_count: 0,
+                recent_record_count: 1,
+            },
+        };
+
+        let items = compose_response_to_input_items(&response);
+
+        assert!(items.iter().any(|item| {
+            item.get("type").and_then(|value| value.as_str()) == Some("message")
+                && item.get("role").and_then(|value| value.as_str()) == Some("assistant")
+        }));
+        assert!(!items.iter().any(|item| {
+            item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+        }));
+    }
+
+    #[test]
+    fn compose_response_to_input_items_omits_large_tool_outputs() {
+        let response = ComposeContextResponse {
+            thread_id: "thread-1".to_string(),
+            blocks: Vec::new(),
+            recent_records: vec![
+                EngineRecord {
+                    id: "rec-1".to_string(),
+                    thread_id: "thread-1".to_string(),
+                    tenant_id: "tenant-1".to_string(),
+                    source_id: "task".to_string(),
+                    external_record_id: None,
+                    role: "assistant".to_string(),
+                    record_type: "message".to_string(),
+                    content: "calling tool".to_string(),
+                    structured_payload: None,
+                    metadata: Some(json!({
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "code.read_file",
+                                "arguments": "{\"path\":\"big.log\"}"
+                            }
+                        }]
+                    })),
+                    summary_status: "pending".to_string(),
+                    summary_id: None,
+                    summarized_at: None,
+                    created_at: "2026-06-08T00:00:00Z".to_string(),
+                },
+                EngineRecord {
+                    id: "rec-2".to_string(),
+                    thread_id: "thread-1".to_string(),
+                    tenant_id: "tenant-1".to_string(),
+                    source_id: "task".to_string(),
+                    external_record_id: None,
+                    role: "tool".to_string(),
+                    record_type: "message".to_string(),
+                    content: "x".repeat(9_000),
+                    structured_payload: None,
+                    metadata: Some(json!({
+                        "tool_call_id": "call_1",
+                        "name": "code.read_file"
+                    })),
+                    summary_status: "pending".to_string(),
+                    summary_id: None,
+                    summarized_at: None,
+                    created_at: "2026-06-08T00:00:01Z".to_string(),
+                },
+            ],
+            meta: ComposeContextMeta {
+                summary_count: 0,
+                recent_record_count: 2,
+            },
+        };
+
+        let items = compose_response_to_input_items(&response);
+        let output = items
+            .iter()
+            .find(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+            })
+            .and_then(|item| item.get("output"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+
+        assert!(output.contains("Tool result omitted"));
+        assert!(output.contains("code.read_file"));
+        assert!(output.len() < 1_000);
     }
 
     #[test]

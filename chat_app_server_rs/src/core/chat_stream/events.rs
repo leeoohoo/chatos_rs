@@ -12,6 +12,8 @@ use crate::utils::abort_registry;
 use crate::utils::events::Events;
 use crate::utils::sse::SseSender;
 
+const PERSISTED_TURN_MESSAGES_PAGE_SIZE: i64 = 200;
+
 #[derive(Clone, Debug, Default)]
 pub struct ChatRealtimeStreamContext {
     pub user_id: Option<String>,
@@ -126,42 +128,93 @@ async fn resolve_persisted_turn_messages(
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
 
-    let messages = chatos_sessions::list_messages(conversation_id, None, 0, true)
+    let normalized_user_message_id = user_message_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut user_message =
+        resolve_persisted_user_message_by_id(conversation_id, normalized_user_message_id).await;
+    let mut assistant_message = None;
+    let mut offset = 0_i64;
+
+    loop {
+        let batch = chatos_sessions::list_messages_including_hidden(
+            conversation_id,
+            Some(PERSISTED_TURN_MESSAGES_PAGE_SIZE),
+            offset,
+            false,
+        )
         .await
         .ok()?;
-    if messages.is_empty() {
-        return None;
+        let batch_len = batch.len();
+        if batch_len == 0 {
+            break;
+        }
+
+        select_persisted_turn_messages_from_desc_page(
+            batch.into_iter(),
+            turn_id,
+            normalized_user_message_id,
+            &mut user_message,
+            &mut assistant_message,
+        );
+        if user_message.is_some() && assistant_message.is_some() {
+            break;
+        }
+
+        offset += batch_len as i64;
+        if batch_len < PERSISTED_TURN_MESSAGES_PAGE_SIZE as usize {
+            break;
+        }
     }
 
-    let user_message = if let Some(user_id) = user_message_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        messages
-            .iter()
-            .find(|message| message.id == user_id && message.role == "user")
-            .cloned()
-    } else {
-        None
+    user_message.map(|user_message| (user_message, assistant_message))
+}
+
+async fn resolve_persisted_user_message_by_id(
+    conversation_id: &str,
+    user_message_id: Option<&str>,
+) -> Option<Message> {
+    let user_message_id = user_message_id?;
+    let session = chatos_sessions::get_session_by_id(conversation_id)
+        .await
+        .ok()
+        .flatten()?;
+    chatos_sessions::get_message_by_id_in_session(&session, user_message_id)
+        .await
+        .ok()
+        .flatten()
+        .filter(|message| message.role == "user" && !message_hidden(message))
+}
+
+pub(super) fn select_persisted_turn_messages_from_desc_page(
+    messages: impl IntoIterator<Item = Message>,
+    turn_id: &str,
+    user_message_id: Option<&str>,
+    user_message: &mut Option<Message>,
+    assistant_message: &mut Option<Message>,
+) {
+    for message in messages {
+        if message_hidden(&message) {
+            continue;
+        }
+
+        let role = message.role.as_str();
+        let message_matches_turn = message_turn_id(&message) == Some(turn_id);
+        if user_message.is_none()
+            && role == "user"
+            && (user_message_id == Some(message.id.as_str()) || message_matches_turn)
+        {
+            *user_message = Some(message.clone());
+        }
+
+        if assistant_message.is_none() && role == "assistant" && message_matches_turn {
+            *assistant_message = Some(message);
+        }
+
+        if user_message.is_some() && assistant_message.is_some() {
+            break;
+        }
     }
-    .or_else(|| {
-        messages
-            .iter()
-            .find(|message| message.role == "user" && message_turn_id(message) == Some(turn_id))
-            .cloned()
-    })?;
-
-    let assistant_message = messages
-        .iter()
-        .rev()
-        .find(|message| {
-            message.role == "assistant"
-                && message_turn_id(message) == Some(turn_id)
-                && !message_hidden(message)
-        })
-        .cloned();
-
-    Some((user_message, assistant_message))
 }
 
 fn message_hidden(message: &Message) -> bool {

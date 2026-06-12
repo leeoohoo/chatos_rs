@@ -34,7 +34,8 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Deserialize)]
 struct ChatosMessageTaskQuery {
     source_session_id: String,
-    source_user_message_id: String,
+    source_user_message_id: Option<String>,
+    source_turn_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -90,25 +91,41 @@ struct ErrorBody {
 
 fn validate_chatos_message_query(
     query: &ChatosMessageTaskQuery,
-) -> Result<(&str, &str), InternalApiError> {
+) -> Result<(&str, Option<&str>, Option<&str>), InternalApiError> {
     let source_session_id = query.source_session_id.trim();
-    let source_user_message_id = query.source_user_message_id.trim();
-    if source_session_id.is_empty() || source_user_message_id.is_empty() {
+    let source_user_message_id = query
+        .source_user_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let source_turn_id = query
+        .source_turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if source_session_id.is_empty()
+        || (source_user_message_id.is_none() && source_turn_id.is_none())
+    {
         return Err(InternalApiError::bad_request(
-            "source_session_id and source_user_message_id are required",
+            "source_session_id and source_user_message_id or source_turn_id are required",
         ));
     }
-    Ok((source_session_id, source_user_message_id))
+    Ok((source_session_id, source_user_message_id, source_turn_id))
 }
 
 async fn list_chatos_message_tasks(
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageTaskQuery>,
 ) -> Result<Json<ChatosMessageTasksResponse>, InternalApiError> {
-    let (source_session_id, source_user_message_id) = validate_chatos_message_query(&query)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
     let items = state
         .task_service
-        .list_message_task_summaries_for_chatos_message(source_session_id, source_user_message_id)
+        .list_message_task_summaries_for_chatos_source(
+            source_session_id,
+            source_user_message_id,
+            source_turn_id,
+        )
         .await
         .map_err(InternalApiError::internal)?;
     Ok(Json(ChatosMessageTasksResponse { items }))
@@ -119,13 +136,15 @@ async fn get_chatos_message_task(
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageTaskQuery>,
 ) -> Result<Json<ChatosMessageTaskDetail>, InternalApiError> {
-    let (source_session_id, source_user_message_id) = validate_chatos_message_query(&query)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
     state
         .task_service
-        .get_message_task_detail_for_chatos_message(
+        .get_message_task_detail_for_chatos_source(
             task_id.trim(),
             source_session_id,
             source_user_message_id,
+            source_turn_id,
         )
         .await
         .map_err(InternalApiError::internal)?
@@ -138,7 +157,8 @@ async fn get_chatos_message_run(
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageTaskQuery>,
 ) -> Result<Json<ChatosMessageRunDetail>, InternalApiError> {
-    let (source_session_id, source_user_message_id) = validate_chatos_message_query(&query)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
     let run = state
         .run_service
         .get_run(run_id.trim())
@@ -147,10 +167,11 @@ async fn get_chatos_message_run(
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
     let task = state
         .task_service
-        .get_message_task_detail_for_chatos_message(
+        .get_message_task_detail_for_chatos_source(
             run.task_id.as_str(),
             source_session_id,
             source_user_message_id,
+            source_turn_id,
         )
         .await
         .map_err(InternalApiError::internal)?

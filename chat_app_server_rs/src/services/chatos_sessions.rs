@@ -109,6 +109,16 @@ pub async fn list_messages(
     chatos_memory_engine::list_chatos_messages(&session, limit, offset, asc).await
 }
 
+pub async fn list_messages_including_hidden(
+    session_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+    asc: bool,
+) -> Result<Vec<Message>, String> {
+    let session = get_required_session(session_id).await?;
+    chatos_memory_engine::list_chatos_messages_including_hidden(&session, limit, offset, asc).await
+}
+
 pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String> {
     let session = get_required_session(session_id).await?;
     chatos_memory_engine::delete_all_chatos_messages(&session).await

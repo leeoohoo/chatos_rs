@@ -1,6 +1,6 @@
 use std::path::Path as FsPath;
 use std::process::Stdio;
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
 
 use crate::models::remote_connection::RemoteConnection;
 

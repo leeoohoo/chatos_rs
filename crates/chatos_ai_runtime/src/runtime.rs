@@ -9,11 +9,16 @@ use chatos_mcp_runtime::{
 };
 use tracing::{info, warn};
 
-use crate::error_policy::{is_context_length_exceeded_error, is_request_body_too_large_error};
+use crate::error_policy::{
+    is_context_length_exceeded_error, is_missing_tool_call_error, is_request_body_too_large_error,
+};
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::request::{AiRequestHandler, AiRequestOptions, StreamCallbacks};
 use crate::tool_call::{extract_tool_call_name, tool_calls_value_has_items};
-use crate::tool_runtime::append_tool_results;
+use crate::tool_runtime::{
+    append_tool_results_with_budget, build_tool_call_items, build_tool_output_items_with_budget,
+    merge_pending_tool_turn_items, ToolResultModelBudgetLimits,
+};
 use crate::traits::{
     MemoryRecordWriter, ModelRequest, RuntimeCallbacks, RuntimeRecordOptions,
     SaveAssistantRecordInput, SaveRecordInput, SaveToolRecordInput, ToolExecutor,
@@ -26,6 +31,9 @@ pub struct AiRuntime {
     max_iterations: usize,
 }
 
+const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请不要继续调用工具，直接基于目前对话上下文、已执行步骤和已有工具结果，输出本次任务的最终结果；如果无法完成，请明确说明阻塞原因、已完成事项和下一步建议。";
+const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
+
 #[derive(Clone)]
 pub struct AiRuntimeOptions {
     pub conversation_id: Option<String>,
@@ -33,6 +41,7 @@ pub struct AiRuntimeOptions {
     pub caller_model: Option<String>,
     pub caller_model_runtime: Option<ToolCallerModelRuntime>,
     pub abort_checker: Option<ToolAbortCheckCallback>,
+    pub tool_result_model_budget_limits: Option<ToolResultModelBudgetLimits>,
     pub callbacks: RuntimeCallbacks,
     pub record_options: RuntimeRecordOptions,
     pub iterative_context_refresh: Option<IterativeContextRefresh>,
@@ -44,6 +53,7 @@ pub struct IterativeContextRefresh {
     memory_scope: Option<MemoryScope>,
     prefixed_input_items: Vec<Value>,
     sticky_input_items: Vec<Value>,
+    tool_result_model_budget_limits: Option<ToolResultModelBudgetLimits>,
     context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
 }
 
@@ -65,12 +75,21 @@ impl IterativeContextRefresh {
             memory_scope,
             prefixed_input_items,
             sticky_input_items: Vec::new(),
+            tool_result_model_budget_limits: None,
             context_overflow_recovery: None,
         }
     }
 
     pub fn with_sticky_input_items(mut self, sticky_input_items: Vec<Value>) -> Self {
         self.sticky_input_items = sticky_input_items;
+        self
+    }
+
+    pub fn with_tool_result_model_budget_limits(
+        mut self,
+        limits: Option<ToolResultModelBudgetLimits>,
+    ) -> Self {
+        self.tool_result_model_budget_limits = limits;
         self
     }
 
@@ -89,7 +108,11 @@ impl IterativeContextRefresh {
         if let (Some(composer), Some(scope)) =
             (self.memory_composer.as_ref(), self.memory_scope.as_ref())
         {
-            items.extend(composer.compose_input_items(scope).await?);
+            items.extend(
+                composer
+                    .compose_input_items_with_budget(scope, self.tool_result_model_budget_limits)
+                    .await?,
+            );
         }
 
         items.extend(self.sticky_input_items.iter().cloned());
@@ -171,6 +194,7 @@ impl AiRuntimeOptions {
             caller_model: None,
             caller_model_runtime: None,
             abort_checker: None,
+            tool_result_model_budget_limits: None,
             callbacks: RuntimeCallbacks::default(),
             record_options: RuntimeRecordOptions::default(),
             iterative_context_refresh: None,
@@ -207,6 +231,14 @@ impl AiRuntimeOptions {
 
     pub fn with_abort_checker(mut self, abort_checker: Option<ToolAbortCheckCallback>) -> Self {
         self.abort_checker = abort_checker;
+        self
+    }
+
+    pub fn with_tool_result_model_budget_limits(
+        mut self,
+        limits: Option<ToolResultModelBudgetLimits>,
+    ) -> Self {
+        self.tool_result_model_budget_limits = limits;
         self
     }
 
@@ -421,7 +453,13 @@ impl AiRuntime {
     ) -> Result<AiRuntimeResult, String> {
         let mut iteration = 0usize;
         let mut context_overflow_recovery_attempted = false;
+        let mut missing_tool_turn_replay_attempted = false;
         let mut iteration_reason = "initial".to_string();
+        let mut pending_tool_calls: Option<Vec<Value>> = None;
+        let mut pending_tool_outputs: Option<Vec<Value>> = None;
+        let mut empty_final_response_followup_attempted = false;
+        let mut runtime_followup_items: Vec<Value> = Vec::new();
+        let mut runtime_followup_appended_to_request = false;
         loop {
             if options.is_aborted() {
                 return Err("aborted".to_string());
@@ -438,9 +476,25 @@ impl AiRuntime {
             }
             iteration += 1;
 
+            let mut input_rebuilt_for_iteration = false;
             if iteration > 1 {
                 if let Some(refresh) = &options.iterative_context_refresh {
                     request.input = refresh.compose_input().await?;
+                    request.input = merge_pending_tool_turn_into_input(
+                        request.input,
+                        pending_tool_calls.as_deref(),
+                        pending_tool_outputs.as_deref(),
+                    );
+                    input_rebuilt_for_iteration = true;
+                }
+            }
+            if !runtime_followup_items.is_empty()
+                && (input_rebuilt_for_iteration || !runtime_followup_appended_to_request)
+            {
+                request.input =
+                    append_runtime_input_items(request.input, runtime_followup_items.as_slice());
+                if !input_rebuilt_for_iteration {
+                    runtime_followup_appended_to_request = true;
                 }
             }
 
@@ -521,6 +575,30 @@ impl AiRuntime {
             let response = match response {
                 Ok(response) => response,
                 Err(err) => {
+                    if !missing_tool_turn_replay_attempted
+                        && request.supports_responses
+                        && is_missing_tool_call_error(err.as_str())
+                    {
+                        let repaired_input = merge_pending_tool_turn_into_input(
+                            request.input.clone(),
+                            pending_tool_calls.as_deref(),
+                            pending_tool_outputs.as_deref(),
+                        );
+                        if repaired_input != request.input {
+                            warn!(
+                                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                                conversation_turn_id =
+                                    options.conversation_turn_id.as_deref().unwrap_or(""),
+                                iteration,
+                                error = err.as_str(),
+                                "ai runtime replaying pending tool turn after provider rejected incomplete tool exchange"
+                            );
+                            request.input = repaired_input;
+                            missing_tool_turn_replay_attempted = true;
+                            iteration_reason = "missing_tool_turn_replay".to_string();
+                            continue;
+                        }
+                    }
                     let should_try_context_recovery = !context_overflow_recovery_attempted
                         && (is_context_length_exceeded_error(err.as_str())
                             || is_request_body_too_large_error(err.as_str()));
@@ -556,6 +634,7 @@ impl AiRuntime {
                     return Err(err);
                 }
             };
+            missing_tool_turn_replay_attempted = false;
 
             if options.is_aborted() {
                 return Err("aborted".to_string());
@@ -566,6 +645,34 @@ impl AiRuntime {
                 .clone()
                 .filter(|value| tool_calls_value_has_items(Some(value)))
             else {
+                if response.content.trim().is_empty() {
+                    if !empty_final_response_followup_attempted && iteration < self.max_iterations {
+                        warn!(
+                            conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                            conversation_turn_id =
+                                options.conversation_turn_id.as_deref().unwrap_or(""),
+                            iteration,
+                            response_id = response.response_id.as_deref().unwrap_or(""),
+                            finish_reason = response.finish_reason.as_deref().unwrap_or(""),
+                            "ai runtime received empty final response; asking model for final result"
+                        );
+                        empty_final_response_followup_attempted = true;
+                        runtime_followup_items = vec![empty_final_response_followup_item()];
+                        runtime_followup_appended_to_request = false;
+                        iteration_reason = "empty_final_response_followup".to_string();
+                        continue;
+                    }
+                    warn!(
+                        conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                        conversation_turn_id =
+                            options.conversation_turn_id.as_deref().unwrap_or(""),
+                        iteration,
+                        response_id = response.response_id.as_deref().unwrap_or(""),
+                        finish_reason = response.finish_reason.as_deref().unwrap_or(""),
+                        "ai runtime failed after empty final response"
+                    );
+                    return Err(EMPTY_FINAL_RESPONSE_ERROR.to_string());
+                }
                 info!(
                     conversation_id = options.conversation_id.as_deref().unwrap_or(""),
                     conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
@@ -641,6 +748,12 @@ impl AiRuntime {
             }
             let tool_result_count = tool_results.len();
             let tool_result_names = summarize_tool_result_names(tool_results.as_slice(), 8);
+            let tool_call_items =
+                build_tool_call_items(tool_calls.as_array().map(Vec::as_slice).unwrap_or(&[]));
+            let tool_output_items = build_tool_output_items_with_budget(
+                tool_results.as_slice(),
+                options.tool_result_model_budget_limits,
+            );
             info!(
                 conversation_id = options.conversation_id.as_deref().unwrap_or(""),
                 conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
@@ -651,13 +764,16 @@ impl AiRuntime {
             );
             self.save_tool_records(&options, tool_results.as_slice())
                 .await?;
+            pending_tool_calls = Some(tool_call_items);
+            pending_tool_outputs = Some(tool_output_items);
             if options.iterative_context_refresh.is_none() {
-                request.input = append_tool_results(
+                request.input = append_tool_results_with_budget(
                     request.input,
                     request.supports_responses,
                     &response.content,
                     &tool_calls,
                     tool_results,
+                    options.tool_result_model_budget_limits,
                 );
             }
             iteration_reason = "tool_results".to_string();
@@ -720,6 +836,7 @@ impl AiRuntime {
         };
         let records = tool_results
             .iter()
+            .filter(|result| should_persist_tool_result(result))
             .map(|result| {
                 let mut input = SaveToolRecordInput::from_tool_result(
                     conversation_id.clone(),
@@ -732,8 +849,27 @@ impl AiRuntime {
                 input
             })
             .collect::<Vec<_>>();
+        if records.is_empty() {
+            return Ok(());
+        }
         writer.save_tool_records(records).await
     }
+}
+
+fn should_persist_tool_result(result: &ToolResult) -> bool {
+    if !result.success || result.is_error || result.is_stream {
+        return true;
+    }
+
+    let structured_empty_array = matches!(
+        result.result.as_ref(),
+        Some(Value::Array(items)) if items.is_empty()
+    );
+    if !structured_empty_array {
+        return true;
+    }
+
+    result.content.trim() != "[]"
 }
 
 fn notify_context_overflow_recovery(callbacks: &RuntimeCallbacks, message: &str) {
@@ -772,6 +908,51 @@ fn attach_runtime_debug(mut payload: Value, runtime_debug: &Value) -> Value {
     }
 }
 
+fn merge_pending_tool_turn_into_input(
+    input: Value,
+    pending_tool_calls: Option<&[Value]>,
+    pending_tool_outputs: Option<&[Value]>,
+) -> Value {
+    if pending_tool_calls.is_none() && pending_tool_outputs.is_none() {
+        return input;
+    }
+
+    let mut items = input.as_array().cloned().unwrap_or_else(|| {
+        if input.is_null() {
+            Vec::new()
+        } else {
+            vec![input]
+        }
+    });
+    merge_pending_tool_turn_items(&mut items, pending_tool_calls, pending_tool_outputs);
+    Value::Array(items)
+}
+
+fn append_runtime_input_items(input: Value, items: &[Value]) -> Value {
+    if items.is_empty() {
+        return input;
+    }
+    let mut input_items = runtime_input_value_to_items(input);
+    input_items.extend(items.iter().cloned());
+    Value::Array(input_items)
+}
+
+fn runtime_input_value_to_items(input: Value) -> Vec<Value> {
+    match input {
+        Value::Array(items) => items,
+        Value::String(text) => vec![json!({"role": "user", "content": text})],
+        Value::Null => Vec::new(),
+        other => vec![json!({"role": "user", "content": other})],
+    }
+}
+
+fn empty_final_response_followup_item() -> Value {
+    json!({
+        "role": "user",
+        "content": EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
+    })
+}
+
 fn summarize_tool_call_names(tool_calls: &Value, limit: usize) -> Vec<String> {
     tool_calls
         .as_array()
@@ -794,12 +975,15 @@ fn summarize_tool_result_names(tool_results: &[ToolResult], limit: usize) -> Vec
 mod tests {
     use std::sync::Arc;
 
-    use serde_json::json;
+    use serde_json::{json, Value};
 
-    use chatos_mcp_runtime::ToolCallerModelRuntime;
+    use chatos_mcp_runtime::{ToolCallerModelRuntime, ToolResult};
 
     use super::{
-        AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus, IterativeContextRefresh,
+        append_runtime_input_items, empty_final_response_followup_item,
+        merge_pending_tool_turn_into_input, should_persist_tool_result, AiRuntimeOptions,
+        AiRuntimeResult, AiTurnReport, AiTurnStatus, IterativeContextRefresh,
+        EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
     };
 
     #[test]
@@ -880,5 +1064,115 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["content"].as_str(), Some("prefix"));
         assert_eq!(items[1]["content"].as_str(), Some("current"));
+    }
+
+    #[test]
+    fn merge_pending_tool_turn_into_input_repairs_refreshed_context() {
+        let input = json!([
+            {"type":"message","role":"user","content":[]},
+            {"type":"function_call","call_id":"call_1","name":"search","arguments":"{}"}
+        ]);
+        let pending_calls = vec![
+            json!({"type":"function_call","call_id":"call_1","name":"search","arguments":"{}"}),
+        ];
+        let pending_outputs =
+            vec![json!({"type":"function_call_output","call_id":"call_1","output":"done"})];
+
+        let merged = merge_pending_tool_turn_into_input(
+            input,
+            Some(pending_calls.as_slice()),
+            Some(pending_outputs.as_slice()),
+        );
+        let items = merged.as_array().expect("items");
+
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                })
+                .count(),
+            1
+        );
+        assert!(items.iter().any(|item| {
+            item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                && item.get("call_id").and_then(|value| value.as_str()) == Some("call_1")
+        }));
+    }
+
+    #[test]
+    fn append_runtime_input_items_wraps_string_input_for_empty_final_followup() {
+        let followup = empty_final_response_followup_item();
+        let merged =
+            append_runtime_input_items(Value::String("do the task".to_string()), &[followup]);
+        let items = merged.as_array().expect("items");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["role"].as_str(), Some("user"));
+        assert_eq!(items[0]["content"].as_str(), Some("do the task"));
+        assert_eq!(items[1]["role"].as_str(), Some("user"));
+        assert_eq!(
+            items[1]["content"].as_str(),
+            Some(EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT)
+        );
+    }
+
+    #[test]
+    fn append_runtime_input_items_preserves_existing_items_for_empty_final_followup() {
+        let followup = empty_final_response_followup_item();
+        let merged = append_runtime_input_items(
+            json!([
+                {"role":"system","content":"rules"},
+                {"role":"user","content":"run"}
+            ]),
+            &[followup],
+        );
+        let items = merged.as_array().expect("items");
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["role"].as_str(), Some("system"));
+        assert_eq!(items[1]["role"].as_str(), Some("user"));
+        assert_eq!(items[2]["role"].as_str(), Some("user"));
+        assert_eq!(
+            items[2]["content"].as_str(),
+            Some(EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT)
+        );
+    }
+
+    #[test]
+    fn should_persist_tool_result_skips_successful_empty_arrays_only() {
+        let empty_success = tool_result("[]", Some(json!([])), true, false, false);
+        assert!(!should_persist_tool_result(&empty_success));
+
+        let non_empty_success = tool_result("[1]", Some(json!([1])), true, false, false);
+        assert!(should_persist_tool_result(&non_empty_success));
+
+        let plain_text_brackets = tool_result("[]", None, true, false, false);
+        assert!(should_persist_tool_result(&plain_text_brackets));
+
+        let empty_error = tool_result("[]", Some(json!([])), false, true, false);
+        assert!(should_persist_tool_result(&empty_error));
+
+        let empty_stream = tool_result("[]", Some(json!([])), true, false, true);
+        assert!(should_persist_tool_result(&empty_stream));
+    }
+
+    fn tool_result(
+        content: &str,
+        result: Option<Value>,
+        success: bool,
+        is_error: bool,
+        is_stream: bool,
+    ) -> ToolResult {
+        ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "task_runner_service_list_tasks".to_string(),
+            success,
+            is_error,
+            is_stream,
+            conversation_turn_id: Some("turn_1".to_string()),
+            content: content.to_string(),
+            result,
+        }
     }
 }

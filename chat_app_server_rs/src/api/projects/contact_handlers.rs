@@ -1,7 +1,7 @@
 use axum::{
-    Json,
     extract::{Path, Query},
     http::StatusCode,
+    Json,
 };
 use serde_json::Value;
 

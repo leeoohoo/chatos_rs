@@ -5,6 +5,7 @@ import {
   getMessageTaskRunnerTask,
   getMessageTaskRunnerTasks,
 } from '../../lib/api/client/messages';
+import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerTask,
@@ -14,9 +15,10 @@ import { readString } from './utils';
 interface UseMessageTasksArgs {
   open: boolean;
   messageId: string;
+  lookup?: MessageTaskRunnerLookupOptions;
 }
 
-export function useMessageTasks({ open, messageId }: UseMessageTasksArgs) {
+export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs) {
   const apiClient = useApiClient();
   const [tasks, setTasks] = useState<MessageTaskRunnerTask[]>([]);
   const [sourceUserMessageId, setSourceUserMessageId] = useState<string | null>(null);
@@ -31,9 +33,13 @@ export function useMessageTasks({ open, messageId }: UseMessageTasksArgs) {
     setLoading(true);
     setError(null);
     try {
-      const response = await getMessageTaskRunnerTasks(apiClient.getRequestFn(), messageId);
-      setTasks(Array.isArray(response.items) ? response.items : []);
-      setSourceUserMessageId(readString(response.source_user_message_id));
+      const response = await getMessageTaskRunnerTasks(apiClient.getRequestFn(), messageId, lookup);
+      const nextTasks = Array.isArray(response.items) ? response.items : [];
+      setTasks(nextTasks);
+      setSourceUserMessageId(
+        readString(response.source_user_message_id)
+        || readString(nextTasks[0]?.source_user_message_id),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取任务失败');
       setTasks([]);
@@ -41,20 +47,23 @@ export function useMessageTasks({ open, messageId }: UseMessageTasksArgs) {
     } finally {
       setLoading(false);
     }
-  }, [apiClient, messageId]);
+  }, [apiClient, messageId, lookup]);
 
   const openDetail = useCallback(async (task: MessageTaskRunnerTask) => {
     setLoadingDetailId(task.id);
     setError(null);
     try {
-      const detail = await getMessageTaskRunnerTask(apiClient.getRequestFn(), messageId, task.id);
+      const detailLookup = sourceUserMessageId
+        ? { ...lookup, sourceUserMessageId }
+        : lookup;
+      const detail = await getMessageTaskRunnerTask(apiClient.getRequestFn(), messageId, task.id, detailLookup);
       setDetailTask(detail);
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取任务详情失败');
     } finally {
       setLoadingDetailId(null);
     }
-  }, [apiClient, messageId]);
+  }, [apiClient, messageId, lookup, sourceUserMessageId]);
 
   const openRun = useCallback(async (task: MessageTaskRunnerTask) => {
     const runId = readString(task.last_run_id);
@@ -64,14 +73,17 @@ export function useMessageTasks({ open, messageId }: UseMessageTasksArgs) {
     setLoadingRunId(runId);
     setError(null);
     try {
-      const detail = await getMessageTaskRunnerRun(apiClient.getRequestFn(), messageId, runId);
+      const detailLookup = sourceUserMessageId
+        ? { ...lookup, sourceUserMessageId }
+        : lookup;
+      const detail = await getMessageTaskRunnerRun(apiClient.getRequestFn(), messageId, runId, detailLookup);
       setRunDetail(detail);
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取运行详情失败');
     } finally {
       setLoadingRunId(null);
     }
-  }, [apiClient, messageId]);
+  }, [apiClient, messageId, lookup, sourceUserMessageId]);
 
   useEffect(() => {
     if (!open) {

@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
-use crate::core::session_access::{SessionAccessError, ensure_owned_session};
+use crate::core::session_access::{ensure_owned_session, SessionAccessError};
 use crate::models::memory_compat::MemoryCompatComposeContextResponse;
 use crate::models::memory_runtime_types::{
     DeleteSummaryResultDto, SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotDto,
@@ -18,8 +18,8 @@ use super::summaries;
 
 pub use super::messages::CompatMessageInput;
 pub use super::sessions::{
-    CompatCreateSessionError, CompatCreateSessionInput, CompatSyncSessionError,
-    map_compat_sync_session_error,
+    map_compat_sync_session_error, CompatCreateSessionError, CompatCreateSessionInput,
+    CompatSyncSessionError,
 };
 
 #[derive(Debug)]

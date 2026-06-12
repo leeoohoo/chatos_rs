@@ -184,13 +184,20 @@ const normalizeRealtimePersistedMessages = (
   persistedAssistantMessage: Message | null;
 } => {
   const sessionId = String(payload.conversation_id || '').trim();
+  const rawResult = payload.raw?.result && typeof payload.raw.result === 'object'
+    ? payload.raw.result
+    : null;
+  const persistedUserRaw = rawResult?.persisted_user_message
+    ?? payload.raw?.persisted_user_message;
+  const persistedAssistantRaw = rawResult?.persisted_assistant_message
+    ?? payload.raw?.persisted_assistant_message;
   return {
     sessionId,
     persistedUserMessage: sessionId
-      ? normalizePersistedMessage(payload.raw?.result?.persisted_user_message, sessionId)
+      ? normalizePersistedMessage(persistedUserRaw, sessionId)
       : null,
     persistedAssistantMessage: sessionId
-      ? normalizePersistedMessage(payload.raw?.result?.persisted_assistant_message, sessionId)
+      ? normalizePersistedMessage(persistedAssistantRaw, sessionId)
       : null,
   };
 };

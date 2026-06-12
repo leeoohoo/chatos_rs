@@ -39,7 +39,11 @@ pub fn normalize_kv_fields(
 
         let label = {
             let value = trimmed(field.get("label").and_then(Value::as_str));
-            if value.is_empty() { key.clone() } else { value }
+            if value.is_empty() {
+                key.clone()
+            } else {
+                value
+            }
         };
 
         out.push(KvField {

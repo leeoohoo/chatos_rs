@@ -1,7 +1,7 @@
 use axum::{
-    Json,
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
+    Json,
 };
 use serde_json::Value;
 
@@ -15,11 +15,10 @@ use crate::models::remote_connection::RemoteConnectionService;
 use crate::services::realtime::publish_remote_connections_updated;
 
 use super::{
-    CreateRemoteConnectionRequest, DisconnectReason, RemoteConnectionQuery,
-    UpdateRemoteConnectionRequest, error_payload, get_remote_terminal_manager,
-    internal_error_response, normalize_create_request, normalize_update_request,
-    remote_connectivity_error_response, resolve_jump_connection_snapshot,
-    run_remote_connectivity_test,
+    error_payload, get_remote_terminal_manager, internal_error_response, normalize_create_request,
+    normalize_update_request, remote_connectivity_error_response, resolve_jump_connection_snapshot,
+    run_remote_connectivity_test, CreateRemoteConnectionRequest, DisconnectReason,
+    RemoteConnectionQuery, UpdateRemoteConnectionRequest,
 };
 
 const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";

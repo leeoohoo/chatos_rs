@@ -13,9 +13,8 @@ use crate::models::{
 use crate::store::AppStore;
 
 use super::model_catalog::{
-    fetch_model_catalog_for_record, normalize_model_base_url_input,
-    normalize_model_config_record, normalize_model_provider_input,
-    normalize_model_thinking_level_input,
+    fetch_model_catalog_for_record, normalize_model_base_url_input, normalize_model_config_record,
+    normalize_model_provider_input, normalize_model_thinking_level_input,
 };
 use super::{normalized_optional, validate_required, ModelConfigService};
 

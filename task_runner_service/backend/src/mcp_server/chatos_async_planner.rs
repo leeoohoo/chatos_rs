@@ -6,10 +6,10 @@ use crate::models::{
 };
 use chatos_mcp_runtime::builtin_kind_by_any;
 
-use super::McpRequestContext;
 use super::support::{
     remove_tool_schema_property, set_schema_required_fields, set_tool_property_description,
 };
+use super::McpRequestContext;
 
 pub(super) fn planner_agent_tool_allowed(name: &str) -> bool {
     matches!(
@@ -74,13 +74,9 @@ pub(super) fn planner_prerequisite_create_request(
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
     input.status = Some(TaskStatus::Ready);
-    input.schedule = Some(TaskScheduleConfig {
-        mode: TaskScheduleMode::Manual,
-        run_at: None,
-        interval_seconds: None,
-        next_run_at: None,
-        last_scheduled_at: None,
-    });
+    input.schedule = Some(planner_schedule_contact_async_now(
+        input.schedule.unwrap_or_default(),
+    )?);
     Ok(input)
 }
 

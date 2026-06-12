@@ -79,6 +79,130 @@ pub fn expand_tool_results_with_aliases(
     expanded
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolResultModelBudget {
+    per_result_max_chars: usize,
+    remaining_total_chars: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolResultModelBudgetLimits {
+    pub per_result_max_chars: usize,
+    pub total_max_chars: usize,
+}
+
+pub const DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS: usize = 8_000;
+pub const DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS: usize = 48_000;
+pub const TOOL_RESULT_MODEL_MAX_CHARS_ENV: &str = "AI_RUNTIME_TOOL_RESULT_MODEL_MAX_CHARS";
+pub const TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV: &str =
+    "AI_RUNTIME_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS";
+
+impl ToolResultModelBudget {
+    pub fn from_env() -> Self {
+        Self::from_limits(ToolResultModelBudgetLimits::from_env())
+    }
+
+    pub fn from_limits(limits: ToolResultModelBudgetLimits) -> Self {
+        Self::new(limits.per_result_max_chars, limits.total_max_chars)
+    }
+
+    pub fn new(per_result_max_chars: usize, total_max_chars: usize) -> Self {
+        Self {
+            per_result_max_chars: per_result_max_chars.max(1),
+            remaining_total_chars: total_max_chars.max(1),
+        }
+    }
+
+    pub fn sanitize_content(&mut self, tool_name: &str, content: &str) -> String {
+        let content_chars = content.chars().count();
+        if content_chars <= self.per_result_max_chars && content_chars <= self.remaining_total_chars
+        {
+            self.remaining_total_chars = self.remaining_total_chars.saturating_sub(content_chars);
+            return content.to_string();
+        }
+
+        let reason = if content_chars > self.per_result_max_chars {
+            "single tool result exceeds the per-result model input limit"
+        } else {
+            "combined tool results exceed the model input budget"
+        };
+        self.remaining_total_chars = 0;
+        oversized_tool_result_advisory(tool_name, content_chars, content.len(), reason)
+    }
+}
+
+impl ToolResultModelBudgetLimits {
+    pub fn from_env() -> Self {
+        Self::new(
+            env_usize(
+                TOOL_RESULT_MODEL_MAX_CHARS_ENV,
+                DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
+            ),
+            env_usize(
+                TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
+                DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
+            ),
+        )
+    }
+
+    pub fn new(per_result_max_chars: usize, total_max_chars: usize) -> Self {
+        Self {
+            per_result_max_chars: per_result_max_chars.max(1),
+            total_max_chars: total_max_chars.max(1),
+        }
+    }
+}
+
+pub fn sanitize_tool_results_for_model(results: Vec<ToolResult>) -> Vec<ToolResult> {
+    sanitize_tool_results_for_model_with_budget(results, None)
+}
+
+pub fn sanitize_tool_results_for_model_with_budget(
+    results: Vec<ToolResult>,
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Vec<ToolResult> {
+    let mut budget = limits
+        .map(ToolResultModelBudget::from_limits)
+        .unwrap_or_else(ToolResultModelBudget::from_env);
+    results
+        .into_iter()
+        .map(|mut result| {
+            result.content = budget.sanitize_content(result.name.as_str(), result.content.as_str());
+            result
+        })
+        .collect()
+}
+
+fn env_usize(key: &str, default_value: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_value)
+}
+
+fn oversized_tool_result_advisory(
+    tool_name: &str,
+    content_chars: usize,
+    content_bytes: usize,
+    reason: &str,
+) -> String {
+    let tool_name = tool_name.trim();
+    let tool_display = if tool_name.is_empty() {
+        "unknown"
+    } else {
+        tool_name
+    };
+    format!(
+        "[Tool result omitted before sending to the model]\n\
+Tool: {tool_display}\n\
+Original size: {content_chars} chars, {content_bytes} bytes.\n\
+Reason: {reason}.\n\
+The output is too large for the next model request, so its content was not included. \
+Use a narrower query or read the file by line/range, for example with explicit start and end lines, instead of requesting the whole file."
+    )
+}
+
 pub fn build_tool_call_items(tool_calls: &[Value]) -> Vec<Value> {
     let mut items = Vec::new();
 
@@ -105,6 +229,23 @@ pub fn build_tool_call_items(tool_calls: &[Value]) -> Vec<Value> {
     items
 }
 
+pub fn build_tool_output_items(results: &[ToolResult]) -> Vec<Value> {
+    build_tool_output_items_with_budget(results, None)
+}
+
+pub fn build_tool_output_items_with_budget(
+    results: &[ToolResult],
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Vec<Value> {
+    let results = sanitize_tool_results_for_model_with_budget(results.to_vec(), limits);
+    results
+        .into_iter()
+        .map(|result| {
+            build_function_call_output_item(result.tool_call_id.as_str(), result.content.as_str())
+        })
+        .collect()
+}
+
 pub fn append_tool_results(
     input: Value,
     supports_responses: bool,
@@ -112,10 +253,29 @@ pub fn append_tool_results(
     tool_calls: &Value,
     results: Vec<ToolResult>,
 ) -> Value {
+    append_tool_results_with_budget(
+        input,
+        supports_responses,
+        assistant_content,
+        tool_calls,
+        results,
+        None,
+    )
+}
+
+pub fn append_tool_results_with_budget(
+    input: Value,
+    supports_responses: bool,
+    assistant_content: &str,
+    tool_calls: &Value,
+    results: Vec<ToolResult>,
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Value {
     if supports_responses {
-        return append_responses_tool_results(input, tool_calls, results);
+        return append_responses_tool_results_with_budget(input, tool_calls, results, limits);
     }
 
+    let results = sanitize_tool_results_for_model_with_budget(results, limits);
     let mut items = input.as_array().cloned().unwrap_or_else(|| vec![input]);
     items.push(json!({
         "role": "assistant",
@@ -137,6 +297,16 @@ pub fn append_responses_tool_results(
     tool_calls: &Value,
     results: Vec<ToolResult>,
 ) -> Value {
+    append_responses_tool_results_with_budget(input, tool_calls, results, None)
+}
+
+pub fn append_responses_tool_results_with_budget(
+    input: Value,
+    tool_calls: &Value,
+    results: Vec<ToolResult>,
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Value {
+    let results = sanitize_tool_results_for_model_with_budget(results, limits);
     let mut items = input.as_array().cloned().unwrap_or_else(|| vec![input]);
     if let Some(calls) = tool_calls.as_array() {
         items.extend(build_tool_call_items(calls.as_slice()));
@@ -233,8 +403,10 @@ mod tests {
 
     use super::{
         append_tool_results, append_tool_turn_items, build_tool_call_execution_plan,
-        build_tool_call_items, expand_tool_results_with_aliases, merge_missing_tool_turn_items,
-        merge_pending_tool_turn_items,
+        build_tool_call_items, build_tool_output_items, expand_tool_results_with_aliases,
+        merge_missing_tool_turn_items, merge_pending_tool_turn_items,
+        sanitize_tool_results_for_model, sanitize_tool_results_for_model_with_budget,
+        ToolResultModelBudgetLimits,
     };
 
     #[test]
@@ -346,6 +518,51 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_tool_results_for_model_omits_large_content() {
+        let results = vec![chatos_mcp_runtime::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "code.read_file".to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            conversation_turn_id: None,
+            content: "x".repeat(9_000),
+            result: None,
+        }];
+
+        let sanitized = sanitize_tool_results_for_model(results);
+        let content = sanitized[0].content.as_str();
+
+        assert!(content.contains("Tool result omitted"));
+        assert!(content.contains("code.read_file"));
+        assert!(content.contains("read the file by line/range"));
+        assert!(content.len() < 1_000);
+    }
+
+    #[test]
+    fn sanitize_tool_results_for_model_uses_explicit_budget_limits() {
+        let results = vec![chatos_mcp_runtime::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "code.search".to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            conversation_turn_id: None,
+            content: "x".repeat(101),
+            result: None,
+        }];
+
+        let sanitized = sanitize_tool_results_for_model_with_budget(
+            results,
+            Some(ToolResultModelBudgetLimits::new(100, 500)),
+        );
+
+        assert!(sanitized[0]
+            .content
+            .contains("single tool result exceeds the per-result model input limit"));
+    }
+
+    #[test]
     fn merge_missing_tool_turn_items_deduplicates_and_keeps_matched_outputs() {
         let mut items = vec![
             json!({"type":"function_call","call_id":"call_1","name":"foo","arguments":"{}"}),
@@ -416,5 +633,28 @@ mod tests {
             items[3].get("type").and_then(Value::as_str),
             Some("function_call_output")
         );
+    }
+
+    #[test]
+    fn build_tool_output_items_sanitizes_large_content() {
+        let results = vec![chatos_mcp_runtime::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "code.read_file".to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            conversation_turn_id: None,
+            content: "x".repeat(9_000),
+            result: None,
+        }];
+
+        let items = build_tool_output_items(results.as_slice());
+        let output = items[0]
+            .get("output")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        assert!(output.contains("Tool result omitted"));
+        assert!(output.contains("code.read_file"));
     }
 }

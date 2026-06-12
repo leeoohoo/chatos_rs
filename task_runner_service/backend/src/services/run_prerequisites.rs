@@ -6,8 +6,8 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::models::{
-    now_rfc3339, StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord,
-    TaskRunStatus, TaskStatus,
+    now_rfc3339, StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskStatus,
 };
 
 use super::prerequisite_context::{

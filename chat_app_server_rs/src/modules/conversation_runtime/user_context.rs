@@ -1,8 +1,8 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::core::chat_context::resolve_effective_user_id;
 use crate::core::internal_context_locale::{
-    InternalContextLocale, internal_context_locale_from_settings,
+    internal_context_locale_from_settings, InternalContextLocale,
 };
 use crate::services::user_settings::get_effective_user_settings;
 

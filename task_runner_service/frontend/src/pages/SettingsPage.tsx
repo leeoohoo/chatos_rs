@@ -20,6 +20,8 @@ import { useI18n } from '../i18n/I18nProvider';
 
 type RuntimeSettingsFormValues = {
   task_execution_max_iterations?: number;
+  tool_result_model_max_chars?: number;
+  tool_results_model_total_max_chars?: number;
 };
 
 export function SettingsPage() {
@@ -73,12 +75,16 @@ export function SettingsPage() {
     }
     form.setFieldsValue({
       task_execution_max_iterations: config.task_execution_max_iterations,
+      tool_result_model_max_chars: config.tool_result_model_max_chars,
+      tool_results_model_total_max_chars: config.tool_results_model_total_max_chars,
     });
   }, [config, form]);
 
   function handleRuntimeSettingsSubmit(values: RuntimeSettingsFormValues) {
     updateSystemConfigMutation.mutate({
       task_execution_max_iterations: values.task_execution_max_iterations,
+      tool_result_model_max_chars: values.tool_result_model_max_chars,
+      tool_results_model_total_max_chars: values.tool_results_model_total_max_chars,
     });
   }
 
@@ -155,6 +161,18 @@ export function SettingsPage() {
           <Descriptions.Item label={t('settings.currentRoundLimit')}>
             {config.task_execution_max_iterations}
           </Descriptions.Item>
+          <Descriptions.Item label={t('settings.defaultToolResultLimit')}>
+            {config.default_tool_result_model_max_chars}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.currentToolResultLimit')}>
+            {config.tool_result_model_max_chars}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.defaultToolResultsBudget')}>
+            {config.default_tool_results_model_total_max_chars}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('settings.currentToolResultsBudget')}>
+            {config.tool_results_model_total_max_chars}
+          </Descriptions.Item>
         </Descriptions>
       ) : null}
 
@@ -166,6 +184,9 @@ export function SettingsPage() {
             </Typography.Title>
             <Typography.Text type="secondary">
               {t('settings.roundLimitHelp')}
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              {t('settings.toolResultBudgetHelp')}
             </Typography.Text>
           </Space>
           <Form<RuntimeSettingsFormValues>
@@ -181,6 +202,30 @@ export function SettingsPage() {
                   {
                     required: true,
                     message: t('settings.roundLimitRequired'),
+                  },
+                ]}
+              >
+                <InputNumber min={1} style={{ width: 220 }} />
+              </Form.Item>
+              <Form.Item
+                name="tool_result_model_max_chars"
+                label={t('settings.currentToolResultLimit')}
+                rules={[
+                  {
+                    required: true,
+                    message: t('settings.toolResultLimitRequired'),
+                  },
+                ]}
+              >
+                <InputNumber min={1} style={{ width: 220 }} />
+              </Form.Item>
+              <Form.Item
+                name="tool_results_model_total_max_chars"
+                label={t('settings.currentToolResultsBudget')}
+                rules={[
+                  {
+                    required: true,
+                    message: t('settings.toolResultsBudgetRequired'),
                   },
                 ]}
               >

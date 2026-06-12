@@ -3,27 +3,28 @@ mod tools_panel;
 
 use axum::http::StatusCode;
 use axum::{
-    Json, Router,
     extract::Path,
     http::HeaderMap,
     routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use self::tools_panel::{agent_status, agent_tools};
-use crate::api::chat_stream_common::{ChatStreamRequest, validate_chat_stream_request};
+use crate::api::chat_stream_common::{validate_chat_stream_request, ChatStreamRequest};
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
 use crate::core::auth::AuthUser;
-use crate::core::chat_runtime::{ChatRuntimeMetadata, metadata_string};
+use crate::core::chat_runtime::{metadata_string, ChatRuntimeMetadata};
 use crate::core::messages::ensure_message_metadata_object;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::models::message::Message;
 use crate::models::session::Session;
-use crate::modules::conversation_runtime::chat_usecase::{RunChatUsecaseInput, run_chat_usecase};
+use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::modules::conversation_runtime::guidance;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::access_token_scope;
@@ -92,6 +93,8 @@ async fn agent_chat_send(
     validate_chat_stream_request(&req, false).await?;
     let conversation_id = req.conversation_id.clone().unwrap_or_default();
     let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
+    let user_message_id = Uuid::new_v4().to_string();
+    req.user_message_id = Some(user_message_id.clone());
 
     abort_registry::reset_turn(&conversation_id, accepted_turn_id.as_deref());
     if let Some(turn_id) = accepted_turn_id.as_deref() {
@@ -105,6 +108,8 @@ async fn agent_chat_send(
             "accepted": true,
             "conversation_id": conversation_id,
             "turn_id": accepted_turn_id,
+            "user_message_id": user_message_id,
+            "source_user_message_id": user_message_id,
         })),
     ))
 }
@@ -635,7 +640,10 @@ fn preferred_callback_detail<'a>(
 }
 
 fn is_task_runner_terminal_event(event: &str) -> bool {
-    matches!(event, "task.completed")
+    matches!(
+        event,
+        "task.completed" | "task.failed" | "task.blocked" | "task.cancelled"
+    )
 }
 
 #[derive(Debug, Clone, Default)]
@@ -819,8 +827,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        TaskRunnerCallbackRequest, apply_task_runner_callback_to_user_message,
-        build_task_runner_callback_assistant_message, build_task_runner_callback_message_id,
+        apply_task_runner_callback_to_user_message, build_task_runner_callback_assistant_message,
+        build_task_runner_callback_message_id, is_task_runner_terminal_event,
+        TaskRunnerCallbackRequest,
     };
     use crate::models::message::Message;
 
@@ -962,6 +971,38 @@ mod tests {
                 .and_then(|value| value.get("overall_status"))
                 .and_then(|value| value.as_str()),
             Some("completed")
+        );
+    }
+
+    #[test]
+    fn task_runner_terminal_event_includes_failed_blocked_and_cancelled() {
+        assert!(is_task_runner_terminal_event("task.completed"));
+        assert!(is_task_runner_terminal_event("task.failed"));
+        assert!(is_task_runner_terminal_event("task.blocked"));
+        assert!(is_task_runner_terminal_event("task.cancelled"));
+        assert!(!is_task_runner_terminal_event("task.created"));
+    }
+
+    #[test]
+    fn failed_callback_assistant_message_keeps_error_detail() {
+        let mut payload = sample_callback_payload();
+        payload.event = "task.failed".to_string();
+        payload.status = "failed".to_string();
+        payload.result_summary = None;
+        payload.error_message = Some("memory batch sync failed".to_string());
+
+        let message = build_task_runner_callback_assistant_message("session-1", &payload);
+
+        assert!(message.content.contains("任务「Demo task」执行失败"));
+        assert!(message.content.contains("memory batch sync failed"));
+        assert_eq!(
+            message
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("task_runner_async"))
+                .and_then(|value| value.get("event"))
+                .and_then(|value| value.as_str()),
+            Some("task.failed")
         );
     }
 

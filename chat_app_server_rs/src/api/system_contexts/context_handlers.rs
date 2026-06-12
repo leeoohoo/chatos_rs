@@ -1,9 +1,9 @@
 use axum::http::StatusCode;
 use axum::{
-    Json,
     extract::{Path, Query},
+    Json,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::core::auth::AuthUser;

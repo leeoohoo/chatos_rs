@@ -251,6 +251,28 @@ pub async fn list_chatos_messages(
     offset: i64,
     asc: bool,
 ) -> Result<Vec<Message>, String> {
+    Ok(list_chatos_message_page(session, limit, offset, asc)
+        .await?
+        .into_iter()
+        .filter(|message| !message_is_hidden(message))
+        .collect())
+}
+
+pub async fn list_chatos_messages_including_hidden(
+    session: &Session,
+    limit: Option<i64>,
+    offset: i64,
+    asc: bool,
+) -> Result<Vec<Message>, String> {
+    list_chatos_message_page(session, limit, offset, asc).await
+}
+
+async fn list_chatos_message_page(
+    session: &Session,
+    limit: Option<i64>,
+    offset: i64,
+    asc: bool,
+) -> Result<Vec<Message>, String> {
     let mapping = build_thread_mapping(session)?;
     let client = build_client()?;
     let items = client
@@ -271,11 +293,7 @@ pub async fn list_chatos_messages(
             },
         )
         .await?;
-    Ok(items
-        .into_iter()
-        .map(engine_record_to_message)
-        .filter(|message| !message_is_hidden(message))
-        .collect())
+    Ok(items.into_iter().map(engine_record_to_message).collect())
 }
 
 pub async fn list_chatos_compact_turns(

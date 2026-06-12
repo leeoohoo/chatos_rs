@@ -39,9 +39,7 @@ pub(super) fn task_process_log_builtin_server() -> McpBuiltinServer {
     }
 }
 
-pub(super) fn task_process_log_prefixed_input_items(
-    locale: BuiltinMcpPromptLocale,
-) -> Vec<Value> {
+pub(super) fn task_process_log_prefixed_input_items(locale: BuiltinMcpPromptLocale) -> Vec<Value> {
     let tool_name = format!(
         "{}_{}",
         TASK_PROCESS_LOG_INTERNAL_SERVER_NAME, TASK_PROCESS_LOG_INTERNAL_TOOL_NAME

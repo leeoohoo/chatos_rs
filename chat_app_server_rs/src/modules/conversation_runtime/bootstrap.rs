@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::core::ai_settings::chat_max_tokens_from_settings;
@@ -6,7 +6,7 @@ use crate::services::ai_common::normalize_turn_id;
 use crate::utils::attachments::{self, Attachment};
 
 use super::runtime_context::{
-    ConversationRuntimeRequest, ResolvedConversationRuntimeContext, resolve_runtime_context,
+    resolve_runtime_context, ConversationRuntimeRequest, ResolvedConversationRuntimeContext,
 };
 use super::user_context::load_runtime_user_context;
 
@@ -20,6 +20,7 @@ pub struct CommonChatBootstrapInput {
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub turn_id: Option<String>,
+    pub user_message_id: Option<String>,
     pub attachments: Option<Vec<Value>>,
     pub default_system_prompt: Option<String>,
     pub use_active_system_context: bool,
@@ -35,7 +36,13 @@ pub struct CommonChatBootstrap {
 }
 
 pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> CommonChatBootstrap {
-    let user_message_id = Uuid::new_v4().to_string();
+    let user_message_id = input
+        .user_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let resolved_turn_id =
         normalize_turn_id(input.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
     let user_context = load_runtime_user_context(input.user_id.clone(), &input.session_id).await;

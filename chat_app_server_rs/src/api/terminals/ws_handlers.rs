@@ -9,9 +9,9 @@ use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_er
 use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
-use crate::services::terminal_manager::{TerminalEvent, get_terminal_manager};
+use crate::services::terminal_manager::{get_terminal_manager, TerminalEvent};
 
-use super::{WS_DEFAULT_SNAPSHOT_LINES, WS_MAX_SNAPSHOT_LINES, WsInput, WsOutput};
+use super::{WsInput, WsOutput, WS_DEFAULT_SNAPSHOT_LINES, WS_MAX_SNAPSHOT_LINES};
 
 pub(super) async fn terminal_ws(
     auth: AuthUser,

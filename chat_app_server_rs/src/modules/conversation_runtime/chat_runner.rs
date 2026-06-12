@@ -6,8 +6,8 @@ use tracing::warn;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::chat_stream::{
-    ChatEventSink, ChatRealtimeStreamContext, build_chat_stream_callbacks,
-    enrich_chat_result_with_persisted_messages, handle_chat_result, send_tools_unavailable_event,
+    build_chat_stream_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
+    send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::agent_runtime::ai_server::AiServer as AgentAiServer;
@@ -18,10 +18,10 @@ use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
 use super::chat_execution::{
-    ChatExecutionInput, build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution,
+    build_agent_chat_options, configure_agent_ai_server, prepare_mcp_execution, ChatExecutionInput,
 };
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
-use super::snapshot::{LiveRequestSnapshotContext, sync_chat_turn_snapshot};
+use super::snapshot::{sync_chat_turn_snapshot, LiveRequestSnapshotContext};
 use super::turn_lifecycle::ActiveConversationTurn;
 
 pub struct PreparedChatExecution {

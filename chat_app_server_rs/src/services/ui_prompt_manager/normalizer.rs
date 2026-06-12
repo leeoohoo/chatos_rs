@@ -14,10 +14,10 @@ mod values;
 use super::types::{UiPromptPayload, UiPromptResponseSubmission};
 
 pub use self::choice::{
-    ChoiceLimits, ChoiceOption, LimitMode, normalize_choice_limits, normalize_choice_options,
-    normalize_choice_selection, normalize_default_selection,
+    normalize_choice_limits, normalize_choice_options, normalize_choice_selection,
+    normalize_default_selection, ChoiceLimits, ChoiceOption, LimitMode,
 };
-pub use self::fields::{KvField, normalize_kv_fields};
+pub use self::fields::{normalize_kv_fields, KvField};
 pub use self::redaction::{redact_prompt_payload, redact_response_for_store};
 pub use self::submission::parse_response_submission;
 pub(super) use self::support::trimmed_non_empty;

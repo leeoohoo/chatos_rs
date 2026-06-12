@@ -31,13 +31,8 @@ struct ChatosTaskCallbackPayload {
 
 impl RunService {
     pub(super) async fn try_send_terminal_callback(&self, task_id: &str, run: &TaskRunRecord) {
-        let event = match run.status {
-            TaskRunStatus::Succeeded => "task.completed",
-            TaskRunStatus::Failed
-            | TaskRunStatus::Cancelled
-            | TaskRunStatus::Blocked
-            | TaskRunStatus::Queued
-            | TaskRunStatus::Running => return,
+        let Some(event) = terminal_callback_event_for_status(run.status) else {
+            return;
         };
         self.try_send_task_callback(event, task_id, Some(run)).await;
     }
@@ -95,6 +90,16 @@ impl RunService {
                 "sent task callback to chatos"
             );
         }
+    }
+}
+
+fn terminal_callback_event_for_status(status: TaskRunStatus) -> Option<&'static str> {
+    match status {
+        TaskRunStatus::Succeeded => Some("task.completed"),
+        TaskRunStatus::Failed => Some("task.failed"),
+        TaskRunStatus::Cancelled => Some("task.cancelled"),
+        TaskRunStatus::Blocked => Some("task.blocked"),
+        TaskRunStatus::Queued | TaskRunStatus::Running => None,
     }
 }
 
@@ -181,4 +186,37 @@ fn normalize_optional_callback_text(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{terminal_callback_event_for_status, TaskRunStatus};
+
+    #[test]
+    fn terminal_callback_event_for_status_covers_all_terminal_states() {
+        assert_eq!(
+            terminal_callback_event_for_status(TaskRunStatus::Succeeded),
+            Some("task.completed")
+        );
+        assert_eq!(
+            terminal_callback_event_for_status(TaskRunStatus::Failed),
+            Some("task.failed")
+        );
+        assert_eq!(
+            terminal_callback_event_for_status(TaskRunStatus::Cancelled),
+            Some("task.cancelled")
+        );
+        assert_eq!(
+            terminal_callback_event_for_status(TaskRunStatus::Blocked),
+            Some("task.blocked")
+        );
+        assert_eq!(
+            terminal_callback_event_for_status(TaskRunStatus::Queued),
+            None
+        );
+        assert_eq!(
+            terminal_callback_event_for_status(TaskRunStatus::Running),
+            None
+        );
+    }
 }

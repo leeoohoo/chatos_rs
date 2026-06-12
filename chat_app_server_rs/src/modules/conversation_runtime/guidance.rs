@@ -1,16 +1,16 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::core::chat_runtime::project_id_from_metadata;
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::session_access::{SessionAccessError, ensure_owned_session};
+use crate::core::session_access::{ensure_owned_session, SessionAccessError};
 use crate::services::ai_common::{
     build_user_content_parts, build_user_message_metadata, normalize_turn_id,
 };
-use crate::services::runtime_guidance_manager::{DEFAULT_DRAIN_LIMIT, runtime_guidance_manager};
+use crate::services::runtime_guidance_manager::{runtime_guidance_manager, DEFAULT_DRAIN_LIMIT};
 use crate::utils::abort_registry;
-use crate::utils::attachments::{Attachment, parse_attachments};
+use crate::utils::attachments::{parse_attachments, Attachment};
 
 use super::messages::{self, CreateUserMessageInput};
 use super::session_scope::{normalize_optional_text, normalize_project_scope};

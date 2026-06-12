@@ -6,7 +6,7 @@ use chatos_ai_runtime::model_config::{
 use serde_json::Value;
 use tracing::{info, warn};
 
-use crate::models::{ModelCatalogResponse, ModelConfigRecord, ProviderModelRecord, now_rfc3339};
+use crate::models::{now_rfc3339, ModelCatalogResponse, ModelConfigRecord, ProviderModelRecord};
 
 use super::normalized_optional;
 

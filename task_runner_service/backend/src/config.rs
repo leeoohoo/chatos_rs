@@ -2,6 +2,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use chatos_ai_runtime::{
+    DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS, DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
+    TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV, TOOL_RESULT_MODEL_MAX_CHARS_ENV,
+};
 use memory_engine_sdk::MemoryEngineClient;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +32,8 @@ pub struct AppConfig {
     pub scheduler_poll_interval: Duration,
     pub auto_memory_summary: bool,
     pub default_task_execution_max_iterations: usize,
+    pub default_tool_result_model_max_chars: usize,
+    pub default_tool_results_model_total_max_chars: usize,
     pub chatos_callback_url: Option<String>,
     pub chatos_callback_secret: Option<String>,
     pub callback_timeout: Duration,
@@ -75,13 +81,20 @@ impl AppConfig {
                 )
             })
             .unwrap_or(false);
-        let default_task_execution_max_iterations = std::env::var(
-            "TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS",
-        )
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(25)
-        .max(1);
+        let default_task_execution_max_iterations =
+            std::env::var("TASK_RUNNER_MAX_MODEL_REQUEST_ROUNDS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(25)
+                .max(1);
+        let default_tool_result_model_max_chars = env_usize(
+            TOOL_RESULT_MODEL_MAX_CHARS_ENV,
+            DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
+        );
+        let default_tool_results_model_total_max_chars = env_usize(
+            TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
+            DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
+        );
         let callback_timeout_ms = std::env::var("TASK_RUNNER_CALLBACK_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -120,6 +133,8 @@ impl AppConfig {
             scheduler_poll_interval: Duration::from_millis(scheduler_poll_interval_ms.max(1_000)),
             auto_memory_summary,
             default_task_execution_max_iterations,
+            default_tool_result_model_max_chars,
+            default_tool_results_model_total_max_chars,
             chatos_callback_url: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_URL"),
             chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
             callback_timeout: Duration::from_millis(callback_timeout_ms.max(1_000)),
@@ -180,6 +195,14 @@ fn normalized_env(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn env_usize(key: &str, default_value: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_value)
 }
 
 fn default_workspace_dir() -> String {

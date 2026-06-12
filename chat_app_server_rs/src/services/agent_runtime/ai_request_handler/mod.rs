@@ -4,21 +4,21 @@ mod parser;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-pub use chatos_ai_runtime::AiResponse;
 use chatos_ai_runtime::request_payload::{
-    CHAT_PROMPT_CACHE_RETENTION,
     build_chat_completions_request_payload as build_shared_chat_completions_request_payload,
     build_responses_request_payload as build_shared_responses_request_payload,
+    CHAT_PROMPT_CACHE_RETENTION,
 };
 #[cfg(test)]
 use chatos_ai_runtime::request_retry::is_prompt_cache_retention_unsupported_error;
 use chatos_ai_runtime::request_retry::{
     base_url_supports_prompt_cache_retention, should_retry_without_prompt_cache_retention,
 };
+pub use chatos_ai_runtime::AiResponse;
 use chatos_ai_runtime::{
     AiRequestHandler as SharedAiRequestHandler, AiRequestOptions as SharedAiRequestOptions,
     AiTransport as SharedAiTransport, StreamCallbacks as SharedStreamCallbacks,
@@ -30,10 +30,10 @@ use tracing::{error, info, warn};
 use crate::core::tool_call::tool_calls_value_has_items;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{
-    AiStreamCallbacks, AssistantResponsePersistenceRequest, build_abort_token,
-    is_task_runner_async_plan_message_mode, normalize_task_runner_async_plan_metadata,
-    normalize_task_runner_async_tool_call_metadata, persist_assistant_response_with_policy,
-    should_persist_assistant_message, validate_request_payload_size,
+    build_abort_token, is_task_runner_async_plan_message_mode,
+    normalize_task_runner_async_plan_metadata, normalize_task_runner_async_tool_call_metadata,
+    persist_assistant_response_with_policy, should_persist_assistant_message,
+    validate_request_payload_size, AiStreamCallbacks, AssistantResponsePersistenceRequest,
 };
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";

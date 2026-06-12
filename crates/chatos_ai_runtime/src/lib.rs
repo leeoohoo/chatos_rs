@@ -42,8 +42,8 @@ pub use input_transform::{
 };
 pub use mcp_executor::McpRuntimeToolExecutor;
 pub use memory_context::{
-    compose_response_to_input_items, MemoryContextComposer, MemoryEngineRecordWriter,
-    MemoryRecordScope, MemoryScope,
+    compose_response_to_input_items, compose_response_to_input_items_with_budget,
+    MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
 };
 pub use request::{AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks};
 pub use runtime::{
@@ -66,9 +66,13 @@ pub use task::{
     TaskRuntimeBuilder, TaskRuntimeConfig,
 };
 pub use tool_runtime::{
-    append_responses_tool_results, append_tool_results, append_tool_turn_items,
-    build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
+    append_responses_tool_results, append_tool_results, append_tool_results_with_budget,
+    append_tool_turn_items, build_tool_call_execution_plan, build_tool_call_items,
+    build_tool_output_items, build_tool_output_items_with_budget, expand_tool_results_with_aliases,
     merge_missing_tool_turn_items, merge_pending_tool_turn_items, ToolCallExecutionPlan,
+    ToolResultModelBudgetLimits, DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS,
+    DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS, TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV,
+    TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
 pub use traits::{
     MemoryRecordWriter, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage,

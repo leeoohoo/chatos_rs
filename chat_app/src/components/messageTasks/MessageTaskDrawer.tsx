@@ -1,4 +1,4 @@
-import type { FC } from 'react';
+import { useMemo, type FC } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import type { Message } from '../../types';
 import { useI18n } from '../../i18n/I18nProvider';
@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils';
 import { MessageTaskCard } from './MessageTaskCard';
 import { MessageTaskDetailModal } from './MessageTaskDetailModal';
 import { MessageTaskRunDetailModal } from './MessageTaskRunDetailModal';
-import { formatDateTime } from './utils';
+import { formatDateTime, readString } from './utils';
 import { useMessageTasks } from './useMessageTasks';
 
 interface MessageTaskDrawerProps {
@@ -21,6 +21,19 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
   onClose,
 }) => {
   const { t } = useI18n();
+  const taskLookup = useMemo(() => {
+    const taskRunnerAsync = message.metadata?.task_runner_async;
+    const rawSourceUserMessageId = readString(taskRunnerAsync?.source_user_message_id);
+    const sourceUserMessageId = rawSourceUserMessageId?.startsWith('temp_')
+      ? null
+      : rawSourceUserMessageId;
+    return {
+      sessionId: message.sessionId,
+      turnId: readString(message.metadata?.conversation_turn_id)
+        || readString(taskRunnerAsync?.source_turn_id),
+      sourceUserMessageId,
+    };
+  }, [message.metadata, message.sessionId]);
   const {
     tasks,
     sourceUserMessageId,
@@ -38,6 +51,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
   } = useMessageTasks({
     open,
     messageId: message.id,
+    lookup: taskLookup,
   });
 
   const role = message.role === 'user'
@@ -52,14 +66,8 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/35"
-        aria-label="关闭任务抽屉"
-        onClick={onClose}
-      />
-      <aside className="absolute right-0 top-0 h-full w-full max-w-2xl border-l border-border bg-card shadow-xl">
+    <>
+      <aside className="h-full w-[28rem] max-w-[42vw] shrink-0 border-l border-border bg-card shadow-xl">
         <div className="flex h-full flex-col">
           <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0">
@@ -125,6 +133,6 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
 
       <MessageTaskDetailModal task={detailTask} onClose={closeDetail} />
       <MessageTaskRunDetailModal detail={runDetail} onClose={closeRun} />
-    </div>
+    </>
   );
 };

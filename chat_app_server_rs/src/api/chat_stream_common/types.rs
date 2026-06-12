@@ -18,4 +18,6 @@ pub(crate) struct ChatStreamRequest {
     #[serde(alias = "workspaceRoot")]
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
+    #[serde(skip_deserializing)]
+    pub user_message_id: Option<String>,
 }

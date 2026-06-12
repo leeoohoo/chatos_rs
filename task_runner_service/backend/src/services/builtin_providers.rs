@@ -9,9 +9,8 @@ use chatos_builtin_tools::{
     RemoteConnectionControllerOptions, RemoteConnectionControllerService,
     RemoteConnectionControllerStoreRef, SharedBuiltinToolService, TaskManagerOptions,
     TaskManagerService, TaskManagerStoreRef, TaskStreamChunkCallback, TerminalControllerOptions,
-    TerminalControllerService, TerminalControllerStoreRef, UiPrompterOptions,
-    UiPrompterService, UiPrompterStoreRef, REVIEW_TIMEOUT_MS_DEFAULT,
-    UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    TerminalControllerService, TerminalControllerStoreRef, UiPrompterOptions, UiPrompterService,
+    UiPrompterStoreRef, REVIEW_TIMEOUT_MS_DEFAULT, UI_PROMPT_TIMEOUT_MS_DEFAULT,
 };
 use chatos_mcp_runtime::{
     builtin_kind_by_any, BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer,
@@ -148,7 +147,8 @@ impl BuiltinToolProvider for TaskRunnerBuiltinProvider {
         context: ToolCallContext,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
-        self.service.call_tool(name, args, &context, on_stream_chunk)
+        self.service
+            .call_tool(name, args, &context, on_stream_chunk)
     }
 
     fn unavailable_tools(&self) -> Vec<(String, String)> {
@@ -201,7 +201,7 @@ pub(super) fn build_task_runner_builtin_provider(
         }
         chatos_mcp_runtime::BuiltinMcpKind::TerminalController => {
             let service = TerminalControllerService::new(TerminalControllerOptions {
-                root: PathBuf::from(&task_service.config.default_workspace_dir),
+                root: PathBuf::from(&server.workspace_dir),
                 user_id: server.user_id.clone(),
                 project_id: server.project_id.clone(),
                 idle_timeout_ms: 5_000,

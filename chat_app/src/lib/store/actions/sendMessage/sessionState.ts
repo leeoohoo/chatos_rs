@@ -95,6 +95,47 @@ export const setTaskRunnerAsyncUserMessageStatus = (
   };
 };
 
+export const replaceOptimisticUserMessageId = (
+  state: ChatStoreDraft,
+  tempUserMessageId: string,
+  persistedUserMessageId: string | null | undefined,
+) => {
+  const normalizedPersistedId = typeof persistedUserMessageId === 'string'
+    ? persistedUserMessageId.trim()
+    : '';
+  if (!normalizedPersistedId || normalizedPersistedId === tempUserMessageId) {
+    return tempUserMessageId;
+  }
+
+  const userIndex = state.messages.findIndex((message) => (
+    message.id === tempUserMessageId && message.role === 'user'
+  ));
+  if (userIndex < 0) {
+    return normalizedPersistedId;
+  }
+
+  const existingUser = state.messages[userIndex];
+  const existingMetadata = existingUser.metadata || {};
+  const existingTaskRunnerAsync = (
+    existingMetadata.task_runner_async
+    && typeof existingMetadata.task_runner_async === 'object'
+  ) ? existingMetadata.task_runner_async : {};
+
+  state.messages[userIndex] = {
+    ...existingUser,
+    id: normalizedPersistedId,
+    metadata: {
+      ...existingMetadata,
+      task_runner_async: {
+        ...existingTaskRunnerAsync,
+        source_user_message_id: normalizedPersistedId,
+      },
+    },
+  };
+
+  return normalizedPersistedId;
+};
+
 export const beginUserTurnInState = (
   state: ChatStoreDraft,
   {

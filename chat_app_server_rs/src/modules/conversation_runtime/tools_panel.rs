@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::mcp_runtime::{McpServerBundle, load_mcp_servers_by_selection};
+use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute as AgentMcpToolExecute;
 

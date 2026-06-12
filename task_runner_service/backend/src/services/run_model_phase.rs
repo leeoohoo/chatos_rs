@@ -8,9 +8,7 @@ use chatos_ai_runtime::{
     RuntimeRecordOptions, SaveRecordInput, TaskMemoryRuntimeConfig, TaskRunExecution,
     TaskRunReport, TaskRunSpec, TaskRuntimeConfig,
 };
-use chatos_mcp_runtime::{
-    builtin_servers_from_kinds, BuiltinMcpServerOptions, McpExecutorBuilder,
-};
+use chatos_mcp_runtime::{builtin_servers_from_kinds, BuiltinMcpServerOptions, McpExecutorBuilder};
 use serde_json::json;
 use tracing::{info, warn};
 
@@ -19,7 +17,9 @@ use crate::models::{
     TaskRunRecord, TaskRunStatus, TaskStatus,
 };
 
-use super::prerequisite_context::{attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext};
+use super::prerequisite_context::{
+    attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext,
+};
 use super::stream_events::{
     append_pending_stream_event, flush_pending_stream_event, PendingRunStreamEvent,
 };
@@ -162,6 +162,19 @@ impl RunService {
                 return;
             }
         };
+        let tool_result_model_budget_limits =
+            match self.effective_tool_result_model_budget_limits().await {
+                Ok(value) => value,
+                Err(err) => {
+                    self.finish_failed_before_execution(
+                        &task,
+                        &mut run,
+                        format!("加载运行时配置失败: {err}"),
+                    )
+                    .await;
+                    return;
+                }
+            };
 
         let mut runtime_config = TaskRuntimeConfig::new().with_max_iterations(Some(max_iterations));
         if let Some(memory_engine_base_url) = self.config.memory_engine_base_url.clone() {
@@ -366,6 +379,7 @@ impl RunService {
         let runtime_options = AiRuntimeOptions::new(Some(run.id.clone()), Some(run.id.clone()))
             .with_caller_model(Some(model_config.model.clone()))
             .with_record_options(run_spec.record_options.clone())
+            .with_tool_result_model_budget_limits(Some(tool_result_model_budget_limits))
             .with_callbacks(callbacks)
             .with_abort_checker(Some(Arc::new({
                 let cancel_requested = Arc::clone(&cancel_requested);

@@ -25,6 +25,7 @@ import {
   applySessionRuntimeMetadata,
   beginUserTurnInState,
   createDefaultSessionChatState,
+  replaceOptimisticUserMessageId,
   setTaskRunnerAsyncUserMessageStatus,
 } from './sendMessage/sessionState';
 import {
@@ -263,8 +264,23 @@ export function createSendMessageHandler({
       if (commandResponse?.accepted === false) {
         throw new Error('聊天命令未被接受');
       }
+      const persistedUserMessageId = (
+        commandResponse?.source_user_message_id
+        || commandResponse?.user_message_id
+        || null
+      );
+      let activeUserMessageId = userMessage.id;
+      if (persistedUserMessageId) {
+        set((state) => {
+          activeUserMessageId = replaceOptimisticUserMessageId(
+            state,
+            userMessage.id,
+            persistedUserMessageId,
+          );
+        });
+      }
       set((state) => {
-        setTaskRunnerAsyncUserMessageStatus(state, userMessage.id, 'processing');
+        setTaskRunnerAsyncUserMessageStatus(state, activeUserMessageId, 'processing');
       });
 
       debugLog('✅ 消息发送完成');

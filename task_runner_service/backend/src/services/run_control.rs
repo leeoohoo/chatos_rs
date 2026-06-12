@@ -12,7 +12,9 @@ use crate::models::{
 };
 
 use super::workspace_mcp::ensure_effective_task_workspace_dir;
-use super::{normalized_optional, RunService, RunTriggerSource, TaskScheduleModeExt, TaskStatusExt};
+use super::{
+    normalized_optional, RunService, RunTriggerSource, TaskScheduleModeExt, TaskStatusExt,
+};
 
 impl RunService {
     pub async fn start_run(

@@ -28,8 +28,10 @@ pub fn is_invalid_input_text_error(err: &str) -> bool {
 
 pub fn is_missing_tool_call_error(err: &str) -> bool {
     let message = err.to_lowercase();
-    message.contains("no tool call found")
-        && (message.contains("function call output") || message.contains("function_call_output"))
+    (message.contains("no tool call found")
+        && (message.contains("function call output") || message.contains("function_call_output")))
+        || (message.contains("no tool output found")
+            && (message.contains("function call") || message.contains("function_call")))
 }
 
 pub fn is_context_length_exceeded_error(err: &str) -> bool {
@@ -267,6 +269,13 @@ mod tests {
             replay_request_error_policy(
                 "No tool call found for function call output in previous response",
             ),
+            RequestErrorReplay {
+                rebuild_stateless_on_missing_tool_call: true,
+                input_must_be_list: false,
+            }
+        );
+        assert_eq!(
+            replay_request_error_policy("No tool output found for function call call_123.",),
             RequestErrorReplay {
                 rebuild_stateless_on_missing_tool_call: true,
                 input_must_be_list: false,

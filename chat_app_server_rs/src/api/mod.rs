@@ -1,8 +1,8 @@
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::{
+    header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, UPGRADE},
     Request, StatusCode,
-    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderName, ORIGIN, UPGRADE},
 };
 use axum::middleware;
 use axum::response::IntoResponse;
@@ -17,8 +17,8 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, info_span};
 
 use crate::config::Config;
-use crate::core::auth::{AuthHeaderError, access_token_from_headers, resolve_auth_user_from_token};
-use crate::core::websocket_ticket::{WebSocketTicketRecord, consume_websocket_ticket};
+use crate::core::auth::{access_token_from_headers, resolve_auth_user_from_token, AuthHeaderError};
+use crate::core::websocket_ticket::{consume_websocket_ticket, WebSocketTicketRecord};
 use crate::modules;
 use crate::services::access_token_scope;
 
@@ -302,11 +302,11 @@ fn is_websocket_upgrade(req: &Request<Body>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{WebSocketQueryAuth, sanitize_request_uri, websocket_auth_from_query};
+    use super::{sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth};
     use crate::core::auth::{AuthHeaderError, AuthUser};
     use crate::core::websocket_ticket::issue_websocket_ticket;
     use axum::body::Body;
-    use axum::http::{Request, Uri, header::UPGRADE};
+    use axum::http::{header::UPGRADE, Request, Uri};
 
     fn websocket_request(uri: &str) -> Request<Body> {
         Request::builder()

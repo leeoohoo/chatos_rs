@@ -189,6 +189,8 @@ export interface StreamChatCommandResponse {
   accepted?: boolean;
   conversation_id?: string;
   turn_id?: string | null;
+  user_message_id?: string | null;
+  source_user_message_id?: string | null;
 }
 
 export interface StreamChatModelConfigPayload {

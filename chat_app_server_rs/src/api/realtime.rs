@@ -1,15 +1,15 @@
-use axum::extract::WebSocketUpgrade;
 use axum::extract::ws::{Message, WebSocket};
+use axum::extract::WebSocketUpgrade;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 use crate::core::auth::AuthUser;
 use crate::services::realtime::{
-    RealtimeAckMessage, RealtimeClientControlMessage, RealtimeErrorMessage,
-    RealtimeSubscriptionSet, subscribe_user_events,
+    subscribe_user_events, RealtimeAckMessage, RealtimeClientControlMessage, RealtimeErrorMessage,
+    RealtimeSubscriptionSet,
 };
 
 pub fn router() -> axum::Router {

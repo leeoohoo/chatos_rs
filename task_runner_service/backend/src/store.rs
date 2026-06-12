@@ -3092,7 +3092,13 @@ impl SqliteStore {
 
     async fn get_runtime_settings(&self) -> Result<Option<RuntimeSettingsRecord>, String> {
         let row = sqlx::query(
-            "SELECT id, task_execution_max_iterations, created_at, updated_at
+            "SELECT
+                id,
+                task_execution_max_iterations,
+                tool_result_model_max_chars,
+                tool_results_model_total_max_chars,
+                created_at,
+                updated_at
              FROM runtime_settings
              WHERE id = 'system'
              LIMIT 1",
@@ -3109,15 +3115,24 @@ impl SqliteStore {
     ) -> Result<RuntimeSettingsRecord, String> {
         sqlx::query(
             "INSERT INTO runtime_settings (
-                id, task_execution_max_iterations, created_at, updated_at
-            ) VALUES (?, ?, ?, ?)
+                id,
+                task_execution_max_iterations,
+                tool_result_model_max_chars,
+                tool_results_model_total_max_chars,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_execution_max_iterations = excluded.task_execution_max_iterations,
+                tool_result_model_max_chars = excluded.tool_result_model_max_chars,
+                tool_results_model_total_max_chars = excluded.tool_results_model_total_max_chars,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at",
         )
         .bind(&settings.id)
         .bind(settings.task_execution_max_iterations as i64)
+        .bind(settings.tool_result_model_max_chars as i64)
+        .bind(settings.tool_results_model_total_max_chars as i64)
         .bind(&settings.created_at)
         .bind(&settings.updated_at)
         .execute(&self.pool)
@@ -4030,6 +4045,9 @@ fn runtime_settings_from_row(
     Ok(RuntimeSettingsRecord {
         id: row.get("id"),
         task_execution_max_iterations: row.get::<i64, _>("task_execution_max_iterations") as usize,
+        tool_result_model_max_chars: row.get::<i64, _>("tool_result_model_max_chars") as usize,
+        tool_results_model_total_max_chars: row.get::<i64, _>("tool_results_model_total_max_chars")
+            as usize,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })

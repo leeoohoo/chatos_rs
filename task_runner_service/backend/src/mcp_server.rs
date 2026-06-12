@@ -6,26 +6,24 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::models::{
-    CreateRemoteServerRequest, CreateTaskRequest, TaskMcpConfig, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskSourceContext,
-    TaskStatus, UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest, UpdateTaskRequest,
+    CreateRemoteServerRequest, CreateTaskRequest, TaskMcpConfig, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskSourceContext, TaskStatus,
+    UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest, UpdateTaskRequest,
 };
 use crate::services::{McpCatalogService, ModelConfigService, RunService, TaskService};
 use crate::ui_prompt_service::UiPromptService;
 
-mod chatos_async_planner;
 mod access;
+mod chatos_async_planner;
 mod entrypoints;
 mod model_tools;
-mod prompt_tools;
 mod prerequisite_creation;
+mod prompt_tools;
 mod run_tools;
 mod support;
 mod task_tools;
 
-use self::support::{
-    agent_tool_allowed_for_profile, normalize_mcp_builtin_kind_names,
-};
+use self::support::{agent_tool_allowed_for_profile, normalize_mcp_builtin_kind_names};
 
 const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
 const TASK_RUNNER_MCP_ENDPOINT_PATH: &str = "/mcp";
@@ -84,12 +82,22 @@ impl McpRequestContext {
             value
                 .trim()
                 .eq_ignore_ascii_case(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
-        }) {
+        }) || self.has_chatos_async_message_context()
+        {
             McpToolProfile::ChatosAsyncPlanner
         } else {
             McpToolProfile::Default
         }
     }
+
+    fn has_chatos_async_message_context(&self) -> bool {
+        has_non_empty_text(self.source_session_id.as_deref())
+            && has_non_empty_text(self.source_user_message_id.as_deref())
+    }
+}
+
+fn has_non_empty_text(value: Option<&str>) -> bool {
+    value.map(str::trim).is_some_and(|value| !value.is_empty())
 }
 
 #[derive(Clone)]
@@ -446,7 +454,6 @@ impl TaskRunnerMcpService {
             other => Err(format!("tool not found: {other}")),
         }
     }
-
 }
 
 fn decode_args<T>(args: Value) -> Result<T, String>
@@ -503,6 +510,7 @@ fn _assert_types(
 mod tests {
     use super::chatos_async_planner;
     use super::support::{agent_tool_allowed, create_task_schema, task_mcp_config_schema};
+    use super::{McpRequestContext, McpToolProfile};
     use crate::models::{
         CreateTaskRequest, TaskMcpConfig, TaskScheduleMode, TaskStatus, UpdateTaskRequest,
     };
@@ -555,21 +563,41 @@ mod tests {
 
     #[test]
     fn async_planner_profile_exposes_only_planning_tools() {
-        assert!(chatos_async_planner::planner_agent_tool_allowed("list_tasks"));
+        assert!(chatos_async_planner::planner_agent_tool_allowed(
+            "list_tasks"
+        ));
         assert!(chatos_async_planner::planner_agent_tool_allowed("get_task"));
-        assert!(chatos_async_planner::planner_agent_tool_allowed("get_task_stats"));
-        assert!(chatos_async_planner::planner_agent_tool_allowed("create_task"));
+        assert!(chatos_async_planner::planner_agent_tool_allowed(
+            "get_task_stats"
+        ));
+        assert!(chatos_async_planner::planner_agent_tool_allowed(
+            "create_task"
+        ));
         assert!(chatos_async_planner::planner_agent_tool_allowed(
             "create_tasks_with_prerequisites"
         ));
-        assert!(chatos_async_planner::planner_agent_tool_allowed("list_mcp_builtin_catalog"));
-        assert!(chatos_async_planner::planner_agent_tool_allowed("update_task"));
-        assert!(chatos_async_planner::planner_agent_tool_allowed("set_task_prerequisites"));
-        assert!(chatos_async_planner::planner_agent_tool_allowed("get_task_dependency_graph"));
-        assert!(!chatos_async_planner::planner_agent_tool_allowed("start_task_run"));
-        assert!(!chatos_async_planner::planner_agent_tool_allowed("list_runs"));
+        assert!(chatos_async_planner::planner_agent_tool_allowed(
+            "list_mcp_builtin_catalog"
+        ));
+        assert!(chatos_async_planner::planner_agent_tool_allowed(
+            "update_task"
+        ));
+        assert!(chatos_async_planner::planner_agent_tool_allowed(
+            "set_task_prerequisites"
+        ));
+        assert!(chatos_async_planner::planner_agent_tool_allowed(
+            "get_task_dependency_graph"
+        ));
+        assert!(!chatos_async_planner::planner_agent_tool_allowed(
+            "start_task_run"
+        ));
+        assert!(!chatos_async_planner::planner_agent_tool_allowed(
+            "list_runs"
+        ));
         assert!(!chatos_async_planner::planner_agent_tool_allowed("get_run"));
-        assert!(!chatos_async_planner::planner_agent_tool_allowed("list_run_events"));
+        assert!(!chatos_async_planner::planner_agent_tool_allowed(
+            "list_run_events"
+        ));
     }
 
     #[test]
@@ -617,7 +645,9 @@ mod tests {
             }),
             ..missing_model.clone()
         };
-        assert!(chatos_async_planner::ensure_planner_required_fields(&missing_builtin_kinds).is_err());
+        assert!(
+            chatos_async_planner::ensure_planner_required_fields(&missing_builtin_kinds).is_err()
+        );
 
         let valid = CreateTaskRequest {
             default_model_config_id: Some("model-1".to_string()),
@@ -632,7 +662,45 @@ mod tests {
 
     #[test]
     fn async_planner_root_tasks_are_forced_to_contact_async_schedule() {
-        let request = CreateTaskRequest {
+        let request = valid_planner_create_request();
+        let planned =
+            chatos_async_planner::planner_root_create_request(request).expect("planner request");
+        assert_eq!(
+            planned.schedule.expect("schedule").mode,
+            TaskScheduleMode::ContactAsync
+        );
+    }
+
+    #[test]
+    fn async_planner_prerequisite_tasks_are_forced_to_contact_async_schedule() {
+        let request = valid_planner_create_request();
+        let planned = chatos_async_planner::planner_prerequisite_create_request(request)
+            .expect("planner request");
+        assert_eq!(
+            planned.schedule.expect("schedule").mode,
+            TaskScheduleMode::ContactAsync
+        );
+    }
+
+    #[test]
+    fn mcp_request_context_infers_async_planner_from_chatos_message_context() {
+        let context = McpRequestContext {
+            source_session_id: Some("session-1".to_string()),
+            source_user_message_id: Some("message-1".to_string()),
+            ..McpRequestContext::default()
+        };
+        assert_eq!(context.tool_profile(), McpToolProfile::ChatosAsyncPlanner);
+
+        let missing_user_message = McpRequestContext {
+            source_session_id: Some("session-1".to_string()),
+            source_turn_id: Some("turn-1".to_string()),
+            ..McpRequestContext::default()
+        };
+        assert_eq!(missing_user_message.tool_profile(), McpToolProfile::Default);
+    }
+
+    fn valid_planner_create_request() -> CreateTaskRequest {
+        CreateTaskRequest {
             title: "task".to_string(),
             description: None,
             objective: "objective".to_string(),
@@ -649,12 +717,6 @@ mod tests {
                 ..TaskMcpConfig::default()
             }),
             prerequisite_task_ids: None,
-        };
-        let planned =
-            chatos_async_planner::planner_root_create_request(request).expect("planner request");
-        assert_eq!(
-            planned.schedule.expect("schedule").mode,
-            TaskScheduleMode::ContactAsync
-        );
+        }
     }
 }

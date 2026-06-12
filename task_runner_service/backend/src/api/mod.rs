@@ -201,9 +201,15 @@ async fn system_config_handler(
         .effective_task_execution_max_iterations()
         .await
         .map_err(ApiError::bad_request)?;
+    let tool_result_model_budget_limits = state
+        .task_service
+        .effective_tool_result_model_budget_limits()
+        .await
+        .map_err(ApiError::bad_request)?;
     Ok(Json(system_config(
         &state.config,
         task_execution_max_iterations,
+        tool_result_model_budget_limits,
     )))
 }
 
@@ -219,6 +225,10 @@ async fn update_system_config_handler(
     Ok(Json(system_config(
         &state.config,
         settings.task_execution_max_iterations,
+        chatos_ai_runtime::ToolResultModelBudgetLimits::new(
+            settings.tool_result_model_max_chars,
+            settings.tool_results_model_total_max_chars,
+        ),
     )))
 }
 

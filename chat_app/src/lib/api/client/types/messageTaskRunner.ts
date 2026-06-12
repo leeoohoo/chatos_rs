@@ -33,6 +33,7 @@ export interface MessageTaskRunnerTask {
 export interface MessageTaskRunnerTasksResponse {
   items: MessageTaskRunnerTask[];
   source_session_id?: string | null;
+  source_turn_id?: string | null;
   source_user_message_id?: string | null;
 }
 

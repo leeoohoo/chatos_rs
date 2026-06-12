@@ -1,4 +1,7 @@
-use chatos_ai_runtime::{ModelRuntimeConfig, TaskBuiltinMcpPromptMode, TaskMcpInitMode};
+use chatos_ai_runtime::{
+    ModelRuntimeConfig, TaskBuiltinMcpPromptMode, TaskMcpInitMode,
+    DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS, DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS,
+};
 use chatos_builtin_tools::{UiPromptPayload, UiPromptResponseSubmission};
 use chatos_mcp_runtime::{
     configurable_builtin_kinds, BuiltinMcpKind, BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale,
@@ -750,6 +753,10 @@ pub struct ProviderModelRecord {
 pub struct RuntimeSettingsRecord {
     pub id: String,
     pub task_execution_max_iterations: usize,
+    #[serde(default = "default_tool_result_model_max_chars")]
+    pub tool_result_model_max_chars: usize,
+    #[serde(default = "default_tool_results_model_total_max_chars")]
+    pub tool_results_model_total_max_chars: usize,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -757,6 +764,8 @@ pub struct RuntimeSettingsRecord {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateRuntimeSettingsRequest {
     pub task_execution_max_iterations: Option<usize>,
+    pub tool_result_model_max_chars: Option<usize>,
+    pub tool_results_model_total_max_chars: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1222,10 +1231,22 @@ pub struct SystemConfigResponse {
     pub auto_memory_summary: bool,
     pub default_task_execution_max_iterations: usize,
     pub task_execution_max_iterations: usize,
+    pub default_tool_result_model_max_chars: usize,
+    pub tool_result_model_max_chars: usize,
+    pub default_tool_results_model_total_max_chars: usize,
+    pub tool_results_model_total_max_chars: usize,
 }
 
 pub fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn default_tool_result_model_max_chars() -> usize {
+    DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS
+}
+
+fn default_tool_results_model_total_max_chars() -> usize {
+    DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS
 }
 
 fn default_true() -> bool {

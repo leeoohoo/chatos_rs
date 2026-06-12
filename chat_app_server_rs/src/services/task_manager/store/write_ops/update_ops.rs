@@ -1,11 +1,11 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument};
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::repositories::db::with_db;
 use crate::services::task_manager::mapper::task_record_from_doc;
 use crate::services::task_manager::normalizer::trimmed_non_empty;
-use crate::services::task_manager::types::{TASK_NOT_FOUND_ERR, TaskRecord, TaskUpdatePatch};
+use crate::services::task_manager::types::{TaskRecord, TaskUpdatePatch, TASK_NOT_FOUND_ERR};
 
 use super::super::get_task_by_id;
 use super::super::row::TaskRow;

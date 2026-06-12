@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use super::request_support::{format_error_response, truncate_log};
@@ -412,16 +412,12 @@ fn build_aborted_tool_results_only_adds_missing_calls() {
     let merged = build_aborted_tool_results(&tool_calls, Some(existing.as_slice()));
 
     assert_eq!(merged.len(), 2);
-    assert!(
-        merged
-            .iter()
-            .any(|item| item.tool_call_id == "call_existing" && item.success)
-    );
-    assert!(
-        merged
-            .iter()
-            .any(|item| item.tool_call_id == "call_missing" && !item.success && item.is_error)
-    );
+    assert!(merged
+        .iter()
+        .any(|item| item.tool_call_id == "call_existing" && item.success));
+    assert!(merged
+        .iter()
+        .any(|item| item.tool_call_id == "call_missing" && !item.success && item.is_error));
 }
 
 #[test]
@@ -788,7 +784,7 @@ async fn consume_sse_stream_parses_trailing_plain_json_response() {
 #[tokio::test]
 async fn consume_sse_stream_returns_aborted_immediately_when_token_cancelled() {
     use futures::stream;
-    use tokio::time::{Duration, sleep, timeout};
+    use tokio::time::{sleep, timeout, Duration};
 
     let token = CancellationToken::new();
     let cancel_token = token.clone();

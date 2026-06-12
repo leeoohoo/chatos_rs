@@ -1,4 +1,4 @@
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
 use sqlx::{QueryBuilder, Sqlite};
 

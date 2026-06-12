@@ -3,7 +3,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::core::mcp_tools::{ToolResult, ToolResultCallback};

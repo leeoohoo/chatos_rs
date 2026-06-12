@@ -23,8 +23,9 @@ pub use self::sessions::{
     archive_chatos_session, compose_chatos_context, create_chatos_session,
     delete_all_chatos_messages, delete_chatos_message_by_id, delete_chatos_summary,
     get_chatos_message_by_id, get_chatos_message_by_id_in_session, get_chatos_session,
-    list_chatos_messages, list_chatos_sessions, list_chatos_sessions_by_agent,
-    list_chatos_summaries, sync_chatos_session, update_chatos_session, upsert_chatos_message,
+    list_chatos_messages, list_chatos_messages_including_hidden, list_chatos_sessions,
+    list_chatos_sessions_by_agent, list_chatos_summaries, sync_chatos_session,
+    update_chatos_session, upsert_chatos_message,
 };
 pub use self::snapshots::{
     get_chatos_turn_runtime_snapshot_by_turn, get_latest_chatos_turn_runtime_snapshot,

@@ -11,7 +11,9 @@ use chatos_mcp_runtime::{
 };
 
 use crate::builder::AiRuntimeBuilder;
-use crate::memory_context::{MemoryRecordScope, MemoryScope};
+use crate::memory_context::{
+    BestEffortMemoryRecordWriter, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
+};
 use crate::runtime::{AiRuntimeOptions, AiTurnReport, AiTurnStatus, MemoryContextOverflowRecovery};
 use crate::traits::{
     MemoryRecordWriter, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput, ToolExecutor,
@@ -518,12 +520,13 @@ impl TaskMemoryRuntimeConfig {
             )?;
         }
         if let Some(record_scope) = self.record_scope.clone() {
-            builder = builder.with_memory_engine_record_writer_direct(
+            let writer = MemoryEngineRecordWriter::new_direct(
                 self.base_url.clone(),
                 self.timeout(),
                 self.source_id.clone(),
                 record_scope,
             )?;
+            builder = builder.with_record_writer(BestEffortMemoryRecordWriter::new(writer));
         }
         if self.retry_on_context_overflow {
             builder = builder.with_context_overflow_recovery(Some(

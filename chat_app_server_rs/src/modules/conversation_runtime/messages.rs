@@ -40,7 +40,7 @@ pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String>
     let mut all_messages: Vec<Message> = Vec::new();
 
     loop {
-        let batch = list_messages(
+        let batch = chatos_sessions::list_messages_including_hidden(
             session_id,
             Some(FULL_SESSION_MESSAGES_PAGE_SIZE),
             offset,
@@ -48,17 +48,10 @@ pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String>
         )
         .await?;
 
-        let batch_len = batch.len();
+        let batch_len = append_visible_message_page(&mut all_messages, batch, &mut offset);
         if batch_len == 0 {
             break;
         }
-
-        offset += batch_len as i64;
-        all_messages.extend(
-            batch
-                .into_iter()
-                .filter(|message| !message_is_hidden(message)),
-        );
 
         if batch_len < FULL_SESSION_MESSAGES_PAGE_SIZE as usize {
             break;
@@ -66,6 +59,21 @@ pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String>
     }
 
     Ok(all_messages)
+}
+
+fn append_visible_message_page(
+    all_messages: &mut Vec<Message>,
+    batch: Vec<Message>,
+    offset: &mut i64,
+) -> usize {
+    let raw_batch_len = batch.len();
+    *offset += raw_batch_len as i64;
+    all_messages.extend(
+        batch
+            .into_iter()
+            .filter(|message| !message_is_hidden(message)),
+    );
+    raw_batch_len
 }
 
 pub async fn get_message_by_id(message_id: &str) -> Result<Option<Message>, String> {
@@ -172,4 +180,65 @@ pub async fn get_turn_runtime_snapshot_by_turn(
     turn_id: &str,
 ) -> Result<TurnRuntimeSnapshotLookupResponseDto, String> {
     chatos_sessions::get_turn_runtime_snapshot_by_turn(session_id, turn_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{append_visible_message_page, FULL_SESSION_MESSAGES_PAGE_SIZE};
+    use crate::models::message::Message;
+
+    fn build_message(id: &str, hidden: bool) -> Message {
+        let mut message = Message::new(
+            "session-1".to_string(),
+            "assistant".to_string(),
+            id.to_string(),
+        );
+        message.id = id.to_string();
+        if hidden {
+            message.metadata = Some(json!({ "hidden": true }));
+        }
+        message
+    }
+
+    #[test]
+    fn full_history_pagination_uses_raw_page_len_after_hidden_filtering() {
+        let mut all_messages = Vec::new();
+        let mut offset = 0;
+        let batch = vec![
+            build_message("visible-1", false),
+            build_message("hidden-1", true),
+            build_message("visible-2", false),
+        ];
+
+        let raw_len = append_visible_message_page(&mut all_messages, batch, &mut offset);
+
+        assert_eq!(raw_len, 3);
+        assert_eq!(offset, 3);
+        assert_eq!(all_messages.len(), 2);
+        assert_eq!(all_messages[0].id, "visible-1");
+        assert_eq!(all_messages[1].id, "visible-2");
+    }
+
+    #[test]
+    fn full_history_scan_continues_when_raw_page_is_full_even_if_visible_page_is_short() {
+        let mut all_messages = Vec::new();
+        let mut offset = 0;
+        let page_size = FULL_SESSION_MESSAGES_PAGE_SIZE as usize;
+        let mut batch = Vec::with_capacity(page_size);
+        for index in 0..page_size {
+            batch.push(build_message(
+                format!("message-{index}").as_str(),
+                index % 7 == 0,
+            ));
+        }
+
+        let raw_len = append_visible_message_page(&mut all_messages, batch, &mut offset);
+
+        assert_eq!(raw_len, page_size);
+        assert_eq!(offset, FULL_SESSION_MESSAGES_PAGE_SIZE);
+        assert!(all_messages.len() < page_size);
+        assert_eq!(raw_len, page_size);
+    }
 }

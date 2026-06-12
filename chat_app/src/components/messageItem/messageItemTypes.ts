@@ -12,6 +12,7 @@ export interface MessageItemProps {
   assistantToolCallsById?: Map<string, ToolCall>;
   toolResultKey?: string;
   toolCallLookupKey?: string;
+  onOpenTasks?: (message: Message) => void;
   customRenderer?: {
     renderMessage?: (message: Message) => ReactNode;
     renderAttachment?: (attachment: Attachment) => ReactNode;

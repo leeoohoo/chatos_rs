@@ -5,9 +5,8 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use super::{
-    WsOutput,
     error_support::{remote_connectivity_error_status_and_code, remote_terminal_error_code},
-    internal_error_response, remote_connectivity_error_response, ws_error_output,
+    internal_error_response, remote_connectivity_error_response, ws_error_output, WsOutput,
 };
 use crate::core::remote_connection_error_codes::remote_connection_codes;
 

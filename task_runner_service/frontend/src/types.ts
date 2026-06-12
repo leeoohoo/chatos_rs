@@ -646,6 +646,10 @@ export interface SystemConfigResponse {
   auto_memory_summary: boolean;
   default_task_execution_max_iterations: number;
   task_execution_max_iterations: number;
+  default_tool_result_model_max_chars: number;
+  tool_result_model_max_chars: number;
+  default_tool_results_model_total_max_chars: number;
+  tool_results_model_total_max_chars: number;
 }
 
 export interface CreateTaskPayload {
@@ -727,12 +731,16 @@ export interface UpdateModelConfigPayload extends Partial<CreateModelConfigPaylo
 export interface RuntimeSettingsRecord {
   id: string;
   task_execution_max_iterations: number;
+  tool_result_model_max_chars: number;
+  tool_results_model_total_max_chars: number;
   created_at: string;
   updated_at: string;
 }
 
 export interface UpdateRuntimeSettingsPayload {
   task_execution_max_iterations?: number;
+  tool_result_model_max_chars?: number;
+  tool_results_model_total_max_chars?: number;
 }
 
 export interface PreviewModelCatalogPayload {

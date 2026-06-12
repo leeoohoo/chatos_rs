@@ -143,6 +143,7 @@ impl ContextualTurnRunner {
                 prefixed_input_items.to_vec(),
             )
             .with_sticky_input_items(sticky_input_items)
+            .with_tool_result_model_budget_limits(runtime_options.tool_result_model_budget_limits)
             .with_context_overflow_recovery(self.context_overflow_recovery.clone()),
         )
     }

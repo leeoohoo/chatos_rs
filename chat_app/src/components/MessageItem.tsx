@@ -9,7 +9,6 @@ import { MessageAvatar } from './messageItem/MessageAvatar';
 import { MessageEditForm } from './messageItem/MessageEditForm';
 import { MessageHeader } from './messageItem/MessageHeader';
 import { SessionSummaryCard } from './messageItem/SessionSummaryCard';
-import { MessageTaskDrawer } from './messageTasks/MessageTaskDrawer';
 import type { MessageItemProps } from './messageItem/messageItemTypes';
 import { useMessageItemModel } from './messageItem/useMessageItemModel';
 export type { MessageItemProps } from './messageItem/messageItemTypes';
@@ -40,12 +39,12 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   assistantContactName = null,
   onEdit,
   onDelete,
+  onOpenTasks,
   toolResultById,
   assistantToolCallsById,
   customRenderer,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   useEffect(() => {
     if (!isEditing) {
@@ -84,7 +83,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const assistantDisplayName = showAssistantChrome
     ? resolveTaskRunnerAssistantDisplayName(message, assistantContactName)
     : null;
-  const canOpenMessageTasks = isUser || isAssistant;
+  const canOpenMessageTasks = Boolean(onOpenTasks) && (isUser || isAssistant);
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -248,18 +247,12 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           isUser={isUser}
           canEdit={Boolean(onEdit)}
           canDelete={Boolean(onDelete)}
-          onOpenTasks={canOpenMessageTasks ? () => setTaskDrawerOpen(true) : undefined}
+          onOpenTasks={canOpenMessageTasks ? () => onOpenTasks?.(message) : undefined}
           onCopy={handleCopy}
           onStartEdit={() => setIsEditing(true)}
           onDelete={() => onDelete?.(message.id)}
         />
       )}
-
-      <MessageTaskDrawer
-        open={taskDrawerOpen}
-        message={message}
-        onClose={() => setTaskDrawerOpen(false)}
-      />
     </div>
   );
 };
@@ -271,6 +264,7 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
     (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null) &&
+    prevProps.onOpenTasks === nextProps.onOpenTasks &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
   );

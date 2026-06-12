@@ -153,11 +153,7 @@ pub(crate) fn run_model_config_description_with_options(
     lines.join("\n")
 }
 
-pub(crate) fn set_tool_property_description(
-    tool: &mut Value,
-    path: &[&str],
-    description: String,
-) {
+pub(crate) fn set_tool_property_description(tool: &mut Value, path: &[&str], description: String) {
     let mut current = tool;
     for segment in path {
         let Some(object) = current.as_object_mut() else {

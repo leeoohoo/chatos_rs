@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 
 use crate::auth::CurrentUser;
-use crate::models::{
-    now_rfc3339, TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord,
-};
+use crate::models::{now_rfc3339, TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord};
 
 use super::batch_ops::normalize_prerequisite_task_ids;
 use super::TaskService;
