@@ -104,6 +104,7 @@ pub struct TaskStatsResponse {
     pub follow_up: usize,
     pub draft: usize,
     pub ready: usize,
+    pub queued: usize,
     pub running: usize,
     pub succeeded: usize,
     pub failed: usize,

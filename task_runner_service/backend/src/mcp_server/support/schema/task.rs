@@ -201,6 +201,7 @@ pub(crate) fn task_status_values() -> Vec<&'static str> {
     vec![
         "draft",
         "ready",
+        "queued",
         "running",
         "succeeded",
         "failed",

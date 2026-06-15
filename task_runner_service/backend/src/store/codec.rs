@@ -68,6 +68,7 @@ pub(super) fn task_status_to_str(status: TaskStatus) -> &'static str {
     match status {
         TaskStatus::Draft => "draft",
         TaskStatus::Ready => "ready",
+        TaskStatus::Queued => "queued",
         TaskStatus::Running => "running",
         TaskStatus::Succeeded => "succeeded",
         TaskStatus::Failed => "failed",
@@ -80,6 +81,7 @@ pub(super) fn task_status_to_str(status: TaskStatus) -> &'static str {
 pub(super) fn task_status_from_str(value: &str) -> TaskStatus {
     match value {
         "ready" => TaskStatus::Ready,
+        "queued" => TaskStatus::Queued,
         "running" => TaskStatus::Running,
         "succeeded" => TaskStatus::Succeeded,
         "failed" => TaskStatus::Failed,

@@ -64,6 +64,7 @@ use self::batch_ops::{
 use self::builtin_providers::build_builtin_registry;
 pub use self::chatos_message_tasks::{
     ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
+    ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge, ChatosMessageTaskGraphNode,
     ChatosMessageTaskRun, ChatosMessageTaskRunEvent, ChatosMessageTaskRunSummary,
     ChatosMessageTaskSummary,
 };

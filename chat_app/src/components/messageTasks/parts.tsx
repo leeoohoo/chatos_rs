@@ -6,9 +6,35 @@ import { readString, statusTone, stringifyValue } from './utils';
 
 export const valueOrDash = (value: unknown): string => readString(value) || '-';
 
+const statusLabel = (status?: string | null): string => {
+  const normalized = readString(status)?.toLowerCase();
+  switch (normalized) {
+    case 'draft':
+      return '草稿';
+    case 'ready':
+      return '就绪';
+    case 'queued':
+      return '排队中';
+    case 'running':
+      return '运行中';
+    case 'succeeded':
+      return '成功';
+    case 'failed':
+      return '失败';
+    case 'blocked':
+      return '阻塞';
+    case 'cancelled':
+      return '已取消';
+    case 'archived':
+      return '已归档';
+    default:
+      return valueOrDash(status);
+  }
+};
+
 export const StatusBadge: FC<{ status?: string | null }> = ({ status }) => (
   <span className={cn('rounded border px-1.5 py-0.5 text-[11px]', statusTone(status))}>
-    {valueOrDash(status)}
+    {statusLabel(status)}
   </span>
 );
 

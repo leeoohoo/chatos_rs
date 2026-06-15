@@ -24,12 +24,20 @@ pub fn router() -> Router {
             get(list_message_task_runner_tasks),
         )
         .route(
+            "/api/messages/:id/task-runner/graph",
+            get(get_message_task_runner_graph),
+        )
+        .route(
             "/api/messages/:message_id/task-runner/tasks/:task_id",
             get(get_message_task_runner_task),
         )
         .route(
             "/api/messages/:message_id/task-runner/runs/:run_id",
             get(get_message_task_runner_run),
+        )
+        .route(
+            "/api/messages/:message_id/task-runner/graph/runs/:run_id",
+            get(get_message_task_runner_graph_run),
         )
 }
 
@@ -351,6 +359,47 @@ async fn list_message_task_runner_tasks(
     )
 }
 
+async fn get_message_task_runner_graph(
+    auth: AuthUser,
+    Path(message_id): Path<String>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "root_task_ids": [],
+                    "nodes": [],
+                    "edges": [],
+                    "source_session_id": null,
+                    "source_user_message_id": null,
+                    "source_turn_id": null,
+                })),
+            );
+        }
+        Err(err) => return err,
+    };
+    let payload = match task_runner_api_client::get_message_task_graph(
+        context.base_url.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "读取任务流程图失败", "detail": err})),
+            );
+        }
+    };
+    (StatusCode::OK, Json(payload))
+}
+
 async fn get_message_task_runner_task(
     auth: AuthUser,
     Path((message_id, task_id)): Path<(String, String)>,
@@ -394,6 +443,41 @@ async fn get_message_task_runner_task(
             Json(json!({"error": "任务不属于当前消息"})),
         );
     }
+    (StatusCode::OK, Json(payload))
+}
+
+async fn get_message_task_runner_graph_run(
+    auth: AuthUser,
+    Path((message_id, run_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
+            );
+        }
+        Err(err) => return err,
+    };
+    let payload = match task_runner_api_client::get_message_graph_run(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "读取任务流程运行详情失败", "detail": err})),
+            );
+        }
+    };
     (StatusCode::OK, Json(payload))
 }
 

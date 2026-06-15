@@ -23,6 +23,7 @@ pub(super) fn empty_task_stats() -> TaskStatsResponse {
         follow_up: 0,
         draft: 0,
         ready: 0,
+        queued: 0,
         running: 0,
         succeeded: 0,
         failed: 0,
@@ -33,7 +34,10 @@ pub(super) fn empty_task_stats() -> TaskStatsResponse {
 }
 
 pub(super) fn task_due_for_scheduler(task: &TaskRecord, now: &DateTime<Utc>) -> bool {
-    if matches!(task.status, TaskStatus::Archived | TaskStatus::Running) {
+    if matches!(
+        task.status,
+        TaskStatus::Archived | TaskStatus::Queued | TaskStatus::Running
+    ) {
         return false;
     }
     if matches!(task.schedule.mode, TaskScheduleMode::Manual) {

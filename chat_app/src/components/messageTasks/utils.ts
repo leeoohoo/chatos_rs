@@ -50,7 +50,10 @@ export const statusTone = (status?: string | null): string => {
   if (normalized === 'failed' || normalized === 'error' || normalized === 'cancelled') {
     return 'border-red-200 bg-red-50 text-red-700';
   }
-  if (normalized === 'running' || normalized === 'queued' || normalized === 'processing') {
+  if (normalized === 'running' || normalized === 'processing') {
+    return 'border-sky-200 bg-sky-50 text-sky-700';
+  }
+  if (normalized === 'queued') {
     return 'border-amber-200 bg-amber-50 text-amber-700';
   }
   if (normalized === 'blocked') {

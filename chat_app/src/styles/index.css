@@ -3,6 +3,7 @@
 @import 'tailwindcss/utilities';
 @import 'katex/dist/katex.min.css';
 @import 'highlight.js/styles/github.css';
+@import '@xyflow/react/dist/style.css';
 
 @layer base {
   /* 全局滚动性能优化 */
@@ -232,6 +233,53 @@
   animation: breathing-border 3s ease-in-out infinite;
   /* 添加will-change提示浏览器优化 */
   will-change: box-shadow;
+}
+
+@keyframes message-task-running-border {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.42), 0 0 0 0 rgba(59, 130, 246, 0.1);
+    opacity: 0.75;
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.95), 0 0 0 6px rgba(59, 130, 246, 0.12);
+    opacity: 1;
+  }
+}
+
+@keyframes message-task-running-edge-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+@keyframes message-task-running-arrow-pulse {
+  0%,
+  100% {
+    opacity: 0.78;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.message-task-running-card {
+  box-shadow: 0 20px 45px -34px rgba(37, 99, 235, 0.7);
+}
+
+.message-task-running-card-border {
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  animation: message-task-running-border 1.8s ease-in-out infinite;
+  will-change: box-shadow, opacity;
+}
+
+.message-task-running-edge {
+  stroke-dasharray: 10 8;
+  animation: message-task-running-edge-flow 1s linear infinite;
+}
+
+.message-task-running-arrow {
+  animation: message-task-running-arrow-pulse 1s ease-in-out infinite;
 }
 
 /* 弹框通用样式 */

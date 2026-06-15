@@ -1073,7 +1073,10 @@ export function TasksPage() {
               </Button>
               <Button
                 type="primary"
-                disabled={selectedTask.status === 'running' || isSchedulerOnlyTask(selectedTask)}
+                disabled={
+                  (selectedTask.status === 'queued' || selectedTask.status === 'running')
+                  || isSchedulerOnlyTask(selectedTask)
+                }
                 onClick={() => {
                   closeDetailDrawer();
                   openRunModal(selectedTask);
@@ -1536,7 +1539,10 @@ export function TasksPage() {
                           key="run"
                           size="small"
                           type="primary"
-                          disabled={task.status === 'running' || isSchedulerOnlyTask(task)}
+                          disabled={
+                            (task.status === 'queued' || task.status === 'running')
+                            || isSchedulerOnlyTask(task)
+                          }
                           onClick={() => openRunModal(task)}
                         >
                           {t('tasks.action.run')}

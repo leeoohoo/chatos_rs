@@ -134,6 +134,22 @@ pub async fn list_message_tasks(
     get_internal_json(base_url, "/internal/chatos/message-tasks", query.as_slice()).await
 }
 
+pub async fn get_message_task_graph(
+    base_url: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+) -> Result<Value, String> {
+    let mut query = vec![("source_session_id", source_session_id)];
+    if let Some(source_user_message_id) = source_user_message_id {
+        query.push(("source_user_message_id", source_user_message_id));
+    }
+    if let Some(source_turn_id) = source_turn_id {
+        query.push(("source_turn_id", source_turn_id));
+    }
+    get_internal_json(base_url, "/internal/chatos/message-graph", query.as_slice()).await
+}
+
 pub async fn get_message_task(
     base_url: &str,
     task_id: &str,
@@ -164,6 +180,27 @@ pub async fn get_message_run(
 ) -> Result<Value, String> {
     let path = format!(
         "/internal/chatos/message-runs/{}",
+        urlencoding::encode(run_id.trim())
+    );
+    let mut query = vec![("source_session_id", source_session_id)];
+    if let Some(source_user_message_id) = source_user_message_id {
+        query.push(("source_user_message_id", source_user_message_id));
+    }
+    if let Some(source_turn_id) = source_turn_id {
+        query.push(("source_turn_id", source_turn_id));
+    }
+    get_internal_json(base_url, path.as_str(), query.as_slice()).await
+}
+
+pub async fn get_message_graph_run(
+    base_url: &str,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-graph/runs/{}",
         urlencoding::encode(run_id.trim())
     );
     let mut query = vec![("source_session_id", source_session_id)];

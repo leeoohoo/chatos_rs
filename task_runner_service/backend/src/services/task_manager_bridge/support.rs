@@ -117,7 +117,7 @@ pub(super) fn task_manager_status_from_task_status(status: TaskStatus) -> &'stat
         TaskStatus::Running => "doing",
         TaskStatus::Blocked | TaskStatus::Failed => "blocked",
         TaskStatus::Succeeded | TaskStatus::Cancelled | TaskStatus::Archived => "done",
-        TaskStatus::Draft | TaskStatus::Ready => "todo",
+        TaskStatus::Draft | TaskStatus::Ready | TaskStatus::Queued => "todo",
     }
 }
 

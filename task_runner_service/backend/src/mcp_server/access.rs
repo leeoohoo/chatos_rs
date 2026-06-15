@@ -29,6 +29,7 @@ impl TaskRunnerMcpService {
             follow_up: 0,
             draft: 0,
             ready: 0,
+            queued: 0,
             running: 0,
             succeeded: 0,
             failed: 0,
@@ -47,6 +48,7 @@ impl TaskRunnerMcpService {
             match task.status {
                 TaskStatus::Draft => stats.draft += 1,
                 TaskStatus::Ready => stats.ready += 1,
+                TaskStatus::Queued => stats.queued += 1,
                 TaskStatus::Running => stats.running += 1,
                 TaskStatus::Succeeded => stats.succeeded += 1,
                 TaskStatus::Failed => stats.failed += 1,

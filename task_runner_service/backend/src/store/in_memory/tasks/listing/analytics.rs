@@ -16,6 +16,7 @@ impl InMemoryStore {
             match task.status {
                 TaskStatus::Draft => stats.draft += 1,
                 TaskStatus::Ready => stats.ready += 1,
+                TaskStatus::Queued => stats.queued += 1,
                 TaskStatus::Running => stats.running += 1,
                 TaskStatus::Succeeded => stats.succeeded += 1,
                 TaskStatus::Failed => stats.failed += 1,

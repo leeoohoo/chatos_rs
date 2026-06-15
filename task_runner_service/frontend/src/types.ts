@@ -1,6 +1,7 @@
 export type TaskStatus =
   | 'draft'
   | 'ready'
+  | 'queued'
   | 'running'
   | 'succeeded'
   | 'failed'
@@ -759,6 +760,7 @@ export interface TaskStatsResponse {
   follow_up: number;
   draft: number;
   ready: number;
+  queued: number;
   running: number;
   succeeded: number;
   failed: number;

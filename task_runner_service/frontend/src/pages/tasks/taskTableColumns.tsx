@@ -247,7 +247,10 @@ export function buildTaskTableColumns({
           <Button
             size="small"
             type="primary"
-            disabled={record.status === 'running' || isSchedulerOnlyTask(record)}
+            disabled={
+              (record.status === 'queued' || record.status === 'running')
+              || isSchedulerOnlyTask(record)
+            }
             onClick={() => onOpenRun(record)}
           >
             {t('tasks.action.run')}

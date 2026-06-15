@@ -9,6 +9,7 @@ impl TaskStatusExt for TaskStatus {
         match self {
             TaskStatus::Draft => "draft",
             TaskStatus::Ready => "ready",
+            TaskStatus::Queued => "queued",
             TaskStatus::Running => "running",
             TaskStatus::Succeeded => "succeeded",
             TaskStatus::Failed => "failed",

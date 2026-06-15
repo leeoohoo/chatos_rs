@@ -37,6 +37,11 @@ impl MongoStore {
                                 "$cond": [{ "$eq": ["$status", "ready"] }, 1_i32, 0_i32]
                             }
                         },
+                        "queued": {
+                            "$sum": {
+                                "$cond": [{ "$eq": ["$status", "queued"] }, 1_i32, 0_i32]
+                            }
+                        },
                         "running": {
                             "$sum": {
                                 "$cond": [{ "$eq": ["$status", "running"] }, 1_i32, 0_i32]
@@ -82,6 +87,7 @@ impl MongoStore {
             follow_up: bson_usize_field(row, "follow_up").unwrap_or(0),
             draft: bson_usize_field(row, "draft").unwrap_or(0),
             ready: bson_usize_field(row, "ready").unwrap_or(0),
+            queued: bson_usize_field(row, "queued").unwrap_or(0),
             running: bson_usize_field(row, "running").unwrap_or(0),
             succeeded: bson_usize_field(row, "succeeded").unwrap_or(0),
             failed: bson_usize_field(row, "failed").unwrap_or(0),
@@ -100,7 +106,7 @@ impl MongoStore {
             vec![
                 doc! {
                     "$match": {
-                        "status": { "$nin": ["archived", "running"] },
+                        "status": { "$nin": ["archived", "queued", "running"] },
                         "schedule.mode": { "$ne": "manual" },
                         "schedule.next_run_at": { "$exists": true, "$ne": Bson::Null },
                     }

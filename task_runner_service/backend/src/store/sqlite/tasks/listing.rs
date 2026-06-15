@@ -109,6 +109,7 @@ impl SqliteStore {
                 COALESCE(SUM(CASE WHEN parent_task_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS follow_up,
                 COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END), 0) AS draft,
                 COALESCE(SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END), 0) AS ready,
+                COALESCE(SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
                 COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) AS running,
                 COALESCE(SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END), 0) AS succeeded,
                 COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
@@ -127,6 +128,7 @@ impl SqliteStore {
             follow_up: row.get::<i64, _>("follow_up") as usize,
             draft: row.get::<i64, _>("draft") as usize,
             ready: row.get::<i64, _>("ready") as usize,
+            queued: row.get::<i64, _>("queued") as usize,
             running: row.get::<i64, _>("running") as usize,
             succeeded: row.get::<i64, _>("succeeded") as usize,
             failed: row.get::<i64, _>("failed") as usize,
@@ -142,7 +144,7 @@ impl SqliteStore {
     ) -> Result<Vec<TaskRecord>, String> {
         let rows = sqlx::query(
             "SELECT * FROM tasks
-             WHERE status NOT IN ('archived', 'running')
+             WHERE status NOT IN ('archived', 'queued', 'running')
                AND json_extract(schedule_json, '$.mode') <> 'manual'
                AND json_extract(schedule_json, '$.next_run_at') IS NOT NULL
                AND datetime(json_extract(schedule_json, '$.next_run_at')) <= datetime(?)

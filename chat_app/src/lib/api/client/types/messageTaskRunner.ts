@@ -80,6 +80,29 @@ export interface MessageTaskRunnerTasksResponse {
   source_user_message_id?: string | null;
 }
 
+export interface MessageTaskRunnerGraphNode {
+  task: MessageTaskRunnerTask;
+  depth: number;
+  is_root: boolean;
+  is_current_message: boolean;
+}
+
+export interface MessageTaskRunnerGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind?: string | null;
+}
+
+export interface MessageTaskRunnerGraphResponse {
+  root_task_ids: string[];
+  nodes: MessageTaskRunnerGraphNode[];
+  edges: MessageTaskRunnerGraphEdge[];
+  source_session_id?: string | null;
+  source_turn_id?: string | null;
+  source_user_message_id?: string | null;
+}
+
 export interface MessageTaskRunnerRun {
   id: string;
   task_id: string;

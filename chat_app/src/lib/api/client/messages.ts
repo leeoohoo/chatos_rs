@@ -1,4 +1,5 @@
 import type {
+  MessageTaskRunnerGraphResponse,
   MessageCreatePayload,
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerTask,
@@ -46,6 +47,16 @@ export const getMessageTaskRunnerTasks = (
   );
 };
 
+export const getMessageTaskRunnerGraph = (
+  request: ApiRequestFn,
+  messageId: string,
+  options?: MessageTaskRunnerLookupOptions,
+): Promise<MessageTaskRunnerGraphResponse> => {
+  return request<MessageTaskRunnerGraphResponse>(
+    `/messages/${encodeURIComponent(messageId)}/task-runner/graph${messageTaskRunnerLookupQuery(options)}`,
+  );
+};
+
 export const getMessageTaskRunnerTask = (
   request: ApiRequestFn,
   messageId: string,
@@ -65,5 +76,16 @@ export const getMessageTaskRunnerRun = (
 ): Promise<MessageTaskRunnerRunDetailResponse> => {
   return request<MessageTaskRunnerRunDetailResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
+  );
+};
+
+export const getMessageTaskRunnerGraphRun = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  options?: MessageTaskRunnerLookupOptions,
+): Promise<MessageTaskRunnerRunDetailResponse> => {
+  return request<MessageTaskRunnerRunDetailResponse>(
+    `/messages/${encodeURIComponent(messageId)}/task-runner/graph/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
   );
 };

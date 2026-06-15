@@ -12,8 +12,10 @@ impl TaskService {
         if let Some(model_config_id) = input.default_model_config_id.as_deref() {
             self.ensure_model_config_exists(model_config_id).await?;
         }
-        if matches!(input.status, Some(TaskStatus::Running)) {
-            return Err("任务运行状态由系统维护，请通过执行任务进入 running".to_string());
+        if matches!(input.status, Some(TaskStatus::Queued | TaskStatus::Running)) {
+            return Err(
+                "任务排队/运行状态由系统维护，请通过执行任务进入 queued 或 running".to_string(),
+            );
         }
         let prerequisite_task_ids = normalize_prerequisite_task_ids(
             input.prerequisite_task_ids.clone().unwrap_or_default(),

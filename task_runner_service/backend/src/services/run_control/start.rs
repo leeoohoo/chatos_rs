@@ -127,7 +127,7 @@ impl RunService {
             "task runner queued run"
         );
         if let Ok(Some(mut task_record)) = self.store.get_task(task_id).await {
-            task_record.status = TaskStatus::Running;
+            task_record.status = TaskStatus::Queued;
             task_record.last_run_id = Some(run.id.clone());
             task_record.updated_at = now_rfc3339();
             if let Err(err) = self.store.save_task(task_record).await {

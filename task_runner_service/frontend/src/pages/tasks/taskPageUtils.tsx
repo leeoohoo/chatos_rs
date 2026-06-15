@@ -45,6 +45,7 @@ export type RunTaskFormValues = {
 export const statusColorMap: Record<TaskStatus, string> = {
   draft: 'default',
   ready: 'blue',
+  queued: 'gold',
   running: 'processing',
   succeeded: 'success',
   failed: 'error',
@@ -68,6 +69,7 @@ export const statusFilterValues: Array<'all' | TaskStatus> = [
   'all',
   'draft',
   'ready',
+  'queued',
   'running',
   'succeeded',
   'failed',

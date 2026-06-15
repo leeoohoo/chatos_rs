@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     services::{
         ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
-        ChatosMessageTaskRun, ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
+        ChatosMessageTaskGraph, ChatosMessageTaskRun, ChatosMessageTaskRunEvent,
+        ChatosMessageTaskSummary,
     },
     state::AppState,
 };
@@ -22,12 +23,20 @@ pub fn router() -> Router<AppState> {
             get(list_chatos_message_tasks),
         )
         .route(
+            "/internal/chatos/message-graph",
+            get(get_chatos_message_graph),
+        )
+        .route(
             "/internal/chatos/message-tasks/:task_id",
             get(get_chatos_message_task),
         )
         .route(
             "/internal/chatos/message-runs/:run_id",
             get(get_chatos_message_run),
+        )
+        .route(
+            "/internal/chatos/message-graph/runs/:run_id",
+            get(get_chatos_message_graph_run),
         )
 }
 
@@ -152,6 +161,24 @@ async fn get_chatos_message_task(
         .ok_or_else(|| InternalApiError::not_found("task not found for message"))
 }
 
+async fn get_chatos_message_graph(
+    State(state): State<AppState>,
+    Query(query): Query<ChatosMessageTaskQuery>,
+) -> Result<Json<ChatosMessageTaskGraph>, InternalApiError> {
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
+    let graph = state
+        .task_service
+        .get_message_task_graph_for_chatos_source(
+            source_session_id,
+            source_user_message_id,
+            source_turn_id,
+        )
+        .await
+        .map_err(InternalApiError::internal)?;
+    Ok(Json(graph))
+}
+
 async fn get_chatos_message_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
@@ -176,6 +203,56 @@ async fn get_chatos_message_run(
         .await
         .map_err(InternalApiError::internal)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
+    let events = state
+        .run_service
+        .list_run_events(run.id.as_str())
+        .await
+        .map_err(InternalApiError::internal)?;
+    let model_config = state
+        .model_config_service
+        .get_model_config(run.model_config_id.as_str())
+        .await
+        .map_err(InternalApiError::internal)?
+        .map(ChatosMessageModelConfigSummary::from);
+    Ok(Json(ChatosMessageRunDetail {
+        task,
+        run: ChatosMessageTaskRun::from(run),
+        model_config,
+        events: events
+            .into_iter()
+            .map(ChatosMessageTaskRunEvent::from)
+            .collect(),
+    }))
+}
+
+async fn get_chatos_message_graph_run(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    Query(query): Query<ChatosMessageTaskQuery>,
+) -> Result<Json<ChatosMessageRunDetail>, InternalApiError> {
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
+    let run = state
+        .run_service
+        .get_run(run_id.trim())
+        .await
+        .map_err(InternalApiError::internal)?
+        .ok_or_else(|| InternalApiError::not_found("run not found for graph"))?;
+    let graph = state
+        .task_service
+        .get_message_task_graph_for_chatos_source(
+            source_session_id,
+            source_user_message_id,
+            source_turn_id,
+        )
+        .await
+        .map_err(InternalApiError::internal)?;
+    let task = graph
+        .nodes
+        .into_iter()
+        .find(|node| node.task.id == run.task_id)
+        .map(|node| node.task)
+        .ok_or_else(|| InternalApiError::not_found("run not found for graph"))?;
     let events = state
         .run_service
         .list_run_events(run.id.as_str())

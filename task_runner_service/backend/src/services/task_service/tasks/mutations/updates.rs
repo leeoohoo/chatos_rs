@@ -25,8 +25,10 @@ impl TaskService {
             task.input_payload = Some(input_payload);
         }
         if let Some(status) = patch.status {
-            if status == TaskStatus::Running {
-                return Err("任务运行状态由系统维护，请通过执行任务进入 running".to_string());
+            if matches!(status, TaskStatus::Queued | TaskStatus::Running) {
+                return Err(
+                    "任务排队/运行状态由系统维护，请通过执行任务进入 queued 或 running".to_string(),
+                );
             }
             if self.store.has_active_run_for_task(id).await? {
                 return Err("任务仍有运行中的执行记录，请先取消或等待完成".to_string());

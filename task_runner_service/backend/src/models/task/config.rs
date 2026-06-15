@@ -5,6 +5,7 @@ use super::*;
 pub enum TaskStatus {
     Draft,
     Ready,
+    Queued,
     Running,
     Succeeded,
     Failed,

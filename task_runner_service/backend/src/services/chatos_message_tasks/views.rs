@@ -111,6 +111,32 @@ pub struct ChatosMessageRunDetail {
     pub events: Vec<ChatosMessageTaskRunEvent>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatosMessageTaskGraphNode {
+    pub task: ChatosMessageTaskDetail,
+    pub depth: usize,
+    pub is_root: bool,
+    pub is_current_message: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatosMessageTaskGraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatosMessageTaskGraph {
+    pub root_task_ids: Vec<String>,
+    pub nodes: Vec<ChatosMessageTaskGraphNode>,
+    pub edges: Vec<ChatosMessageTaskGraphEdge>,
+    pub source_session_id: String,
+    pub source_turn_id: Option<String>,
+    pub source_user_message_id: Option<String>,
+}
+
 impl From<TaskRecord> for ChatosMessageTaskSummary {
     fn from(task: TaskRecord) -> Self {
         Self {
