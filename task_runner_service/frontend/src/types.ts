@@ -473,6 +473,19 @@ export interface McpServerInfo {
   tool_names: string[];
 }
 
+export interface TaskRunnerSkillResponse {
+  name: string;
+  locale: string;
+  content: string;
+}
+
+export interface TaskRunnerInternalPromptPreviewResponse {
+  locale: string;
+  task_prompt_template: string;
+  process_log_system_prompt: string;
+  notes: string[];
+}
+
 export interface McpPromptPreviewPayload {
   enabled?: boolean;
   init_mode?: TaskMcpInitMode;

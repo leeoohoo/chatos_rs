@@ -44,15 +44,7 @@ pub(super) fn task_process_log_prefixed_input_items(locale: BuiltinMcpPromptLoca
         "{}_{}",
         TASK_PROCESS_LOG_INTERNAL_SERVER_NAME, TASK_PROCESS_LOG_INTERNAL_TOOL_NAME
     );
-    let text = if locale.is_english() {
-        format!(
-            "[Task Execution Process]\nA private internal tool `{tool_name}` is available during this task run. Use it to append visible progress notes, observations, verification results, blockers, and next steps for the current task only. Do not record hidden chain-of-thought, credentials, secrets, or unrelated drafts. This tool is internal to Task Runner execution and is not part of the external Task Runner MCP API."
-        )
-    } else {
-        format!(
-            "[任务执行过程]\n本次任务执行期间提供内部专用工具 `{tool_name}`。仅用它为当前任务追加可展示的进展、观察、验证结果、阻塞和下一步；不要记录隐藏思维链、凭证、密钥或无关草稿。这个工具只属于 Task Runner 内部执行，不属于对外 Task Runner MCP API。"
-        )
-    };
+    let text = task_process_log_prompt_text(locale, tool_name.as_str());
     vec![json!({
         "type": "message",
         "role": "system",
@@ -61,6 +53,26 @@ pub(super) fn task_process_log_prefixed_input_items(locale: BuiltinMcpPromptLoca
             "text": text
         }]
     })]
+}
+
+pub(super) fn task_process_log_preview_text(locale: BuiltinMcpPromptLocale) -> String {
+    let tool_name = format!(
+        "{}_{}",
+        TASK_PROCESS_LOG_INTERNAL_SERVER_NAME, TASK_PROCESS_LOG_INTERNAL_TOOL_NAME
+    );
+    task_process_log_prompt_text(locale, tool_name.as_str())
+}
+
+fn task_process_log_prompt_text(locale: BuiltinMcpPromptLocale, tool_name: &str) -> String {
+    if locale.is_english() {
+        format!(
+            "[Task Execution Process]\nA private internal tool `{tool_name}` is available during this task run. Use it to append visible progress notes, observations, verification results, blockers, and next steps for the current task only. Do not record hidden chain-of-thought, credentials, secrets, or unrelated drafts. This tool is internal to Task Runner execution and is not part of the external Task Runner MCP API."
+        )
+    } else {
+        format!(
+            "[任务执行过程]\n本次任务执行期间提供内部专用工具 `{tool_name}`。仅用它为当前任务追加可展示的进展、观察、验证结果、阻塞和下一步；不要记录隐藏思维链、凭证、密钥或无关草稿。这个工具只属于 Task Runner 内部执行，不属于对外 Task Runner MCP API。"
+        )
+    }
 }
 
 #[derive(Debug, Deserialize)]

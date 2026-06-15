@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
+use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use uuid::Uuid;
@@ -15,8 +16,9 @@ use crate::models::{
     PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
     RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse,
     TaskListFilters, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
-    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskRequest,
+    TaskRunnerInternalPromptPreviewResponse, TaskSourceContext, TaskStatsResponse, TaskStatus,
+    TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    UpdateTaskRequest,
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;
@@ -152,6 +154,37 @@ pub fn system_config(
         default_tool_results_model_total_max_chars: config
             .default_tool_results_model_total_max_chars,
         tool_results_model_total_max_chars: tool_result_model_budget_limits.total_max_chars,
+    }
+}
+
+pub fn task_runner_internal_prompt_preview(
+    locale: BuiltinMcpPromptLocale,
+) -> TaskRunnerInternalPromptPreviewResponse {
+    let locale_key = if locale.is_english() {
+        BuiltinMcpPromptLocale::ENGLISH_KEY
+    } else {
+        BuiltinMcpPromptLocale::DEFAULT_KEY
+    };
+    let notes = if locale.is_english() {
+        vec![
+            "The prerequisite-task section is injected only when the task declares prerequisite tasks.".to_string(),
+            "Task description and input-data sections appear only when the current task has those values.".to_string(),
+            "The process-log system message is injected only when MCP stays enabled for the task run.".to_string(),
+            "Builtin MCP system prompt content is shown separately and follows the same prompt-language setting.".to_string(),
+        ]
+    } else {
+        vec![
+            "前置任务结果段只会在任务配置了前置任务时注入。".to_string(),
+            "任务说明和输入数据两段只有当前任务存在对应值时才会出现。".to_string(),
+            "过程日志系统提示只会在该次任务运行保持启用 MCP 时注入。".to_string(),
+            "Builtin MCP system prompt 会单独展示，并跟随同一个 prompt 语言设置。".to_string(),
+        ]
+    };
+    TaskRunnerInternalPromptPreviewResponse {
+        locale: locale_key.to_string(),
+        task_prompt_template: prerequisite_context::build_task_prompt_template(locale),
+        process_log_system_prompt: task_process_log::task_process_log_preview_text(locale),
+        notes,
     }
 }
 

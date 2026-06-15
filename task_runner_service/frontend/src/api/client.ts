@@ -32,6 +32,8 @@ import type {
   RunListFilters,
   TaskStatsResponse,
   TaskIndexResponse,
+  TaskRunnerInternalPromptPreviewResponse,
+  TaskRunnerSkillResponse,
   TaskMemoryContextPayload,
   TaskMemoryContextResponse,
   TaskMemoryRecordsPayload,
@@ -166,6 +168,18 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 export const api = {
   health: () => request<HealthResponse>('/api/health'),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
+  getTaskRunnerSkill: (lang: string) =>
+    request<TaskRunnerSkillResponse>(
+      withQuery('/api/skills/task-runner', {
+        lang,
+      }),
+    ),
+  getTaskRunnerInternalPrompts: (lang: string) =>
+    request<TaskRunnerInternalPromptPreviewResponse>(
+      withQuery('/api/system/internal-prompts', {
+        lang,
+      }),
+    ),
   updateSystemConfig: (payload: UpdateRuntimeSettingsPayload) =>
     request<SystemConfigResponse>('/api/system/config', {
       method: 'PATCH',

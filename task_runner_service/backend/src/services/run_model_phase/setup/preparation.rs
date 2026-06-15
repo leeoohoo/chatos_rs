@@ -9,7 +9,12 @@ pub(super) async fn prepare_model_execution(
     effective_workspace_dir: &str,
     prerequisite_context: &[PrerequisiteTaskContext],
 ) -> Result<PreparedModelExecution, String> {
-    let prompt = build_task_prompt(task, input.prompt_override.as_deref(), prerequisite_context);
+    let prompt = build_task_prompt(
+        task,
+        input.prompt_override.as_deref(),
+        prerequisite_context,
+        task.mcp_config.locale(),
+    );
     let metadata = build_execution_metadata(task, run, model_config);
     let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
     let mut run_spec = build_run_spec(

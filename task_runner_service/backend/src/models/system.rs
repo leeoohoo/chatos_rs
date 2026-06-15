@@ -32,6 +32,14 @@ pub struct SystemConfigResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunnerInternalPromptPreviewResponse {
+    pub locale: String,
+    pub task_prompt_template: String,
+    pub process_log_system_prompt: String,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaginatedResponse<T> {
     pub items: Vec<T>,
     pub total: usize,

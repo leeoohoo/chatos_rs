@@ -8,7 +8,8 @@ use tracing::Level;
 use super::core::{
     agent_token_handler, create_user, current_user_handler, delete_user, health_handler,
     list_users, login_handler, logout_handler, require_auth, system_config_handler,
-    task_runner_skill_handler, update_system_config_handler, update_user,
+    task_runner_internal_prompt_preview_handler, task_runner_skill_handler,
+    update_system_config_handler, update_user,
 };
 use super::mcp::{get_mcp_server_info, list_mcp_catalog, mcp_entrypoint, preview_mcp_prompt};
 use super::models::{
@@ -46,6 +47,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/auth/logout", post(logout_handler))
         .route("/api/system/config", patch(update_system_config_handler))
+        .route(
+            "/api/system/internal-prompts",
+            get(task_runner_internal_prompt_preview_handler),
+        )
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/:id", patch(update_user).delete(delete_user))
         .route("/api/tasks", get(list_tasks).post(create_task))

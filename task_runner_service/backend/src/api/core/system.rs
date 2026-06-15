@@ -1,4 +1,6 @@
 use super::*;
+use crate::services::task_runner_internal_prompt_preview;
+use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 
 pub(in crate::api) async fn health_handler() -> Json<HealthResponse> {
     Json(health())
@@ -44,7 +46,7 @@ pub(in crate::api) async fn update_system_config_handler(
 }
 
 #[derive(Debug, Deserialize)]
-pub(in crate::api) struct TaskRunnerSkillQuery {
+pub(in crate::api) struct TaskRunnerLocaleQuery {
     lang: Option<String>,
 }
 
@@ -56,14 +58,10 @@ pub(in crate::api) struct TaskRunnerSkillResponse {
 }
 
 pub(in crate::api) async fn task_runner_skill_handler(
-    Query(query): Query<TaskRunnerSkillQuery>,
+    Query(query): Query<TaskRunnerLocaleQuery>,
 ) -> Json<TaskRunnerSkillResponse> {
-    let lang = query.lang.as_deref().unwrap_or("zh-CN").trim();
-    let english = matches!(
-        lang.to_ascii_lowercase().as_str(),
-        "en" | "en-us" | "english"
-    );
-    Json(if english {
+    let locale = requested_task_runner_locale(query.lang.as_deref());
+    Json(if locale.is_english() {
         TaskRunnerSkillResponse {
             name: "task-runner-ai-agent-en-us",
             locale: "en-US",
@@ -76,4 +74,24 @@ pub(in crate::api) async fn task_runner_skill_handler(
             content: TASK_RUNNER_SKILL_ZH_CN,
         }
     })
+}
+
+pub(in crate::api) async fn task_runner_internal_prompt_preview_handler(
+    Query(query): Query<TaskRunnerLocaleQuery>,
+) -> Json<TaskRunnerInternalPromptPreviewResponse> {
+    Json(task_runner_internal_prompt_preview(
+        requested_task_runner_locale(query.lang.as_deref()),
+    ))
+}
+
+fn requested_task_runner_locale(lang: Option<&str>) -> BuiltinMcpPromptLocale {
+    match lang
+        .map(str::trim)
+        .unwrap_or(BuiltinMcpPromptLocale::DEFAULT_KEY)
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "en" | "en-us" | "english" => BuiltinMcpPromptLocale::EnUs,
+        _ => BuiltinMcpPromptLocale::ZhCn,
+    }
 }
