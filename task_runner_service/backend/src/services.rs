@@ -5,20 +5,21 @@ use std::time::Duration;
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chrono::{DateTime, Utc};
-use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
-    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CreateTaskRequest, HealthResponse,
-    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse,
-    TaskListFilters, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
+    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CreateExternalMcpConfigRequest,
+    CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, PaginatedResponse,
+    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
+    StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
+    TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskRunnerInternalPromptPreviewResponse, TaskSourceContext, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
-    UpdateTaskRequest,
+    TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest,
+    UpdateTaskMcpRequest, UpdateTaskRequest, now_rfc3339,
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;
@@ -27,6 +28,7 @@ mod batch_ops;
 mod builtin_providers;
 mod chatos_callbacks;
 mod chatos_message_tasks;
+mod external_mcp_config_service;
 mod filter_sanitize;
 mod mcp_catalog_service;
 mod memory_options;
@@ -61,8 +63,9 @@ use self::batch_ops::{
 };
 use self::builtin_providers::build_builtin_registry;
 pub use self::chatos_message_tasks::{
-    ChatosMessageRunDetail, ChatosMessageTaskDetail, ChatosMessageTaskRun,
-    ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
+    ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
+    ChatosMessageTaskRun, ChatosMessageTaskRunEvent, ChatosMessageTaskRunSummary,
+    ChatosMessageTaskSummary,
 };
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
@@ -101,6 +104,11 @@ pub struct RemoteServerService {
 }
 
 #[derive(Clone)]
+pub struct ExternalMcpConfigService {
+    store: AppStore,
+}
+
+#[derive(Clone)]
 pub struct RunService {
     config: AppConfig,
     store: AppStore,
@@ -129,6 +137,7 @@ pub fn health() -> HealthResponse {
 
 pub fn system_config(
     config: &AppConfig,
+    execution_timeout_ms: u64,
     task_execution_max_iterations: usize,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
 ) -> SystemConfigResponse {
@@ -144,7 +153,8 @@ pub fn system_config(
         default_subject_id: config.default_subject_id.clone(),
         default_workspace_dir: config.default_workspace_dir.clone(),
         memory_timeout_ms: config.memory_timeout.as_millis() as u64,
-        execution_timeout_ms: config.execution_timeout.as_millis() as u64,
+        default_execution_timeout_ms: config.execution_timeout.as_millis() as u64,
+        execution_timeout_ms,
         scheduler_poll_interval_ms: config.scheduler_poll_interval.as_millis() as u64,
         auto_memory_summary: config.auto_memory_summary,
         default_task_execution_max_iterations: config.default_task_execution_max_iterations,

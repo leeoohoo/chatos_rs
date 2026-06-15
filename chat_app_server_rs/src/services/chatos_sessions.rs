@@ -129,6 +129,19 @@ pub async fn list_compact_turns(
     chatos_memory_engine::list_chatos_compact_turns(&session, limit, before_turn_id).await
 }
 
+pub async fn list_turn_process_messages(
+    session_id: &str,
+    turn_id: &str,
+) -> Result<Vec<Message>, String> {
+    let session = get_required_session(session_id).await?;
+    let resp = chatos_memory_engine::get_chatos_turn_process_records(&session, turn_id).await?;
+    Ok(resp
+        .items
+        .into_iter()
+        .map(chatos_memory_engine::engine_record_to_message)
+        .collect())
+}
+
 pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String> {
     let session = get_required_session(session_id).await?;
     chatos_memory_engine::delete_all_chatos_messages(&session).await

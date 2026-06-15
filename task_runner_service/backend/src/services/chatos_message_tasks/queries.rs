@@ -141,7 +141,7 @@ impl TaskService {
         source_user_message_id: Option<&str>,
         source_turn_id: Option<&str>,
     ) -> Result<Option<ChatosMessageTaskDetail>, String> {
-        Ok(self
+        let Some(task) = self
             .get_task_for_chatos_source(
                 task_id,
                 source_session_id,
@@ -149,6 +149,118 @@ impl TaskService {
                 source_turn_id,
             )
             .await?
-            .map(ChatosMessageTaskDetail::from))
+        else {
+            return Ok(None);
+        };
+        self.build_chatos_message_task_detail(task).await.map(Some)
     }
+
+    async fn build_chatos_message_task_detail(
+        &self,
+        task: TaskRecord,
+    ) -> Result<ChatosMessageTaskDetail, String> {
+        let default_model_config_id = task.default_model_config_id.clone();
+        let last_run_id = task.last_run_id.clone();
+        let parent_task_id = task.parent_task_id.clone();
+        let source_run_id = task.source_run_id.clone();
+        let prerequisite_task_ids = task.prerequisite_task_ids.clone();
+
+        let default_model_config = self
+            .chatos_model_config_summary_for_id(default_model_config_id.as_deref())
+            .await?;
+        let last_run = self
+            .chatos_run_summary_for_id(last_run_id.as_deref())
+            .await?;
+        let parent_task = self
+            .chatos_task_summary_for_id(parent_task_id.as_deref())
+            .await?;
+        let source_run = self
+            .chatos_run_summary_for_id(source_run_id.as_deref())
+            .await?;
+        let prerequisite_tasks = self
+            .chatos_task_summaries_in_id_order(&prerequisite_task_ids)
+            .await?;
+
+        Ok(ChatosMessageTaskDetail::from_parts(
+            task,
+            default_model_config,
+            last_run,
+            parent_task,
+            source_run,
+            prerequisite_tasks,
+        ))
+    }
+
+    async fn chatos_task_summaries_in_id_order(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<TaskSummaryRecord>, String> {
+        let ids = ids
+            .iter()
+            .filter_map(|id| non_empty_chatos_id(id))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut summaries = self.store.get_task_summaries_by_ids(&ids).await?;
+        let mut ordered = Vec::new();
+        for id in ids {
+            if let Some(index) = summaries
+                .iter()
+                .position(|summary| summary.id.as_str() == id.as_str())
+            {
+                ordered.push(summaries.remove(index));
+            }
+        }
+        Ok(ordered)
+    }
+
+    async fn chatos_task_summary_for_id(
+        &self,
+        id: Option<&str>,
+    ) -> Result<Option<TaskSummaryRecord>, String> {
+        let Some(id) = id.and_then(non_empty_chatos_id) else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .get_task_summaries_by_ids(&[id.to_string()])
+            .await?
+            .into_iter()
+            .find(|task| task.id.as_str() == id))
+    }
+
+    async fn chatos_model_config_summary_for_id(
+        &self,
+        id: Option<&str>,
+    ) -> Result<Option<ChatosMessageModelConfigSummary>, String> {
+        let Some(id) = id.and_then(non_empty_chatos_id) else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .get_model_config(id)
+            .await?
+            .map(ChatosMessageModelConfigSummary::from))
+    }
+
+    async fn chatos_run_summary_for_id(
+        &self,
+        id: Option<&str>,
+    ) -> Result<Option<ChatosMessageTaskRunSummary>, String> {
+        let Some(id) = id.and_then(non_empty_chatos_id) else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .get_run(id)
+            .await?
+            .map(ChatosMessageTaskRunSummary::from))
+    }
+}
+
+fn non_empty_chatos_id(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() { None } else { Some(value) }
 }

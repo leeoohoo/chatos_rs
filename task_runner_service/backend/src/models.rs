@@ -3,6 +3,7 @@ use chatos_ai_runtime::{
 };
 use chrono::Utc;
 
+mod external_mcp_config;
 mod mcp;
 mod memory;
 mod model_config;
@@ -12,6 +13,7 @@ mod system;
 mod task;
 mod user;
 
+pub use self::external_mcp_config::*;
 pub use self::mcp::*;
 pub use self::memory::*;
 pub use self::model_config::*;

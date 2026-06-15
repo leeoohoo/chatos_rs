@@ -96,7 +96,6 @@ export const useContactSessionCreator = ({
         await updateSession(ensuredSessionId, { metadata } as Partial<Session>);
         if (currentSessionId !== ensuredSessionId) {
           await selectSession(ensuredSessionId, {
-            initialPageSize: 1,
             skipBackgroundSync: true,
           });
         }

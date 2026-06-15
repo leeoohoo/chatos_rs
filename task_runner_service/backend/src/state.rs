@@ -2,8 +2,8 @@ use crate::auth::AuthService;
 use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::services::{
-    McpCatalogService, ModelConfigService, RemoteServerService, RunService, TaskService,
-    ToolingStateService,
+    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RemoteServerService,
+    RunService, TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;
@@ -15,6 +15,7 @@ pub struct AppState {
     pub task_service: TaskService,
     pub model_config_service: ModelConfigService,
     pub remote_server_service: RemoteServerService,
+    pub external_mcp_config_service: ExternalMcpConfigService,
     pub run_service: RunService,
     pub ui_prompt_service: UiPromptService,
     pub mcp_catalog_service: McpCatalogService,
@@ -31,6 +32,7 @@ impl AppState {
         let task_service = TaskService::new(config.clone(), store.clone());
         let model_config_service = ModelConfigService::new(store.clone());
         let remote_server_service = RemoteServerService::new(store.clone());
+        let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
         let ui_prompt_service = UiPromptService::new(store.clone());
         let run_service = RunService::new(config.clone(), store.clone(), ui_prompt_service.clone());
         match run_service.recover_incomplete_runs().await {
@@ -60,6 +62,7 @@ impl AppState {
             task_service,
             model_config_service,
             remote_server_service,
+            external_mcp_config_service,
             run_service,
             ui_prompt_service,
             mcp_catalog_service,

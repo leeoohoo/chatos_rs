@@ -1,5 +1,6 @@
 import type { FC, ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import { cn } from '../../lib/utils';
 import { readString, statusTone, stringifyValue } from './utils';
 
@@ -26,11 +27,13 @@ export const ModalShell: FC<{
   title: string;
   subtitle?: string;
   onClose: () => void;
+  widthClassName?: string;
   children: ReactNode;
 }> = ({
   title,
   subtitle,
   onClose,
+  widthClassName = 'max-w-3xl',
   children,
 }) => (
   <div className="fixed inset-0 z-[60]">
@@ -40,7 +43,12 @@ export const ModalShell: FC<{
       aria-label="关闭"
       onClick={onClose}
     />
-    <div className="absolute left-1/2 top-1/2 max-h-[86vh] w-[calc(100vw-24px)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+    <div
+      className={cn(
+        'absolute left-1/2 top-1/2 max-h-[88vh] w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-card shadow-xl sm:w-[calc(100vw-40px)]',
+        widthClassName,
+      )}
+    >
       <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <h2 className="break-words text-sm font-semibold text-foreground">{title}</h2>
@@ -57,9 +65,29 @@ export const ModalShell: FC<{
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="max-h-[calc(86vh-58px)] overflow-y-auto px-4 py-4">
+      <div className="max-h-[calc(88vh-58px)] overflow-y-auto px-4 py-4">
         <div className="space-y-3">{children}</div>
       </div>
     </div>
   </div>
 );
+
+export const MarkdownCard: FC<{
+  content?: string | null;
+  emptyText?: string;
+}> = ({
+  content,
+  emptyText = '-',
+}) => {
+  const text = readString(content);
+
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-4">
+      {text ? (
+        <LazyMarkdownRenderer content={text} className="text-sm" />
+      ) : (
+        <p className="text-sm text-muted-foreground">{emptyText}</p>
+      )}
+    </div>
+  );
+};

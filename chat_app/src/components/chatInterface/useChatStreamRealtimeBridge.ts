@@ -258,7 +258,7 @@ export const useChatStreamRealtimeBridge = () => {
             persistedAssistantMessage,
           );
         });
-        await state.syncSessionMessagesInBackground(sessionId);
+        void state.syncSessionMessagesInBackground(sessionId);
         return;
       }
 

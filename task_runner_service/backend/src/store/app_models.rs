@@ -90,6 +90,44 @@ impl AppStore {
         }
     }
 
+    pub async fn list_external_mcp_configs(&self) -> Result<Vec<ExternalMcpConfigRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_external_mcp_configs()),
+            Self::Sqlite(store) => store.list_external_mcp_configs().await,
+            Self::Mongo(store) => store.list_external_mcp_configs().await,
+        }
+    }
+
+    pub async fn get_external_mcp_config(
+        &self,
+        id: &str,
+    ) -> Result<Option<ExternalMcpConfigRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.get_external_mcp_config(id)),
+            Self::Sqlite(store) => store.get_external_mcp_config(id).await,
+            Self::Mongo(store) => store.get_external_mcp_config(id).await,
+        }
+    }
+
+    pub async fn save_external_mcp_config(
+        &self,
+        config: ExternalMcpConfigRecord,
+    ) -> Result<ExternalMcpConfigRecord, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.save_external_mcp_config(config)),
+            Self::Sqlite(store) => store.save_external_mcp_config(config).await,
+            Self::Mongo(store) => store.save_external_mcp_config(config).await,
+        }
+    }
+
+    pub async fn delete_external_mcp_config(&self, id: &str) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.delete_external_mcp_config(id)),
+            Self::Sqlite(store) => store.delete_external_mcp_config(id).await,
+            Self::Mongo(store) => store.delete_external_mcp_config(id).await,
+        }
+    }
+
     pub async fn list_model_config_usage(&self) -> Result<Vec<ModelConfigUsageRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_model_config_usage()),

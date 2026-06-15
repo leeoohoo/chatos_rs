@@ -4,6 +4,7 @@ import type {
   BatchTaskRunPayload,
   BatchTaskStatusUpdatePayload,
   CancelUiPromptPayload,
+  CreateExternalMcpConfigPayload,
   CreateModelConfigPayload,
   CreateTaskPayload,
   CreateUserPayload,
@@ -11,6 +12,7 @@ import type {
   HealthResponse,
   LoginPayload,
   LoginResponse,
+  ExternalMcpConfigRecord,
   McpCatalogEntry,
   McpPromptPreviewPayload,
   McpPromptPreviewResponse,
@@ -58,6 +60,7 @@ import type {
   UiPromptStatus,
   UiPromptTaskCountRecord,
   UpdateModelConfigPayload,
+  UpdateExternalMcpConfigPayload,
   UpdateRemoteServerPayload,
   UpdateRuntimeSettingsPayload,
   UpdateTaskPayload,
@@ -351,6 +354,24 @@ export const api = {
   testRemoteServer: (id: string) =>
     request<RemoteServerTestResponse>(`/api/remote-servers/${id}/test`, {
       method: 'POST',
+    }),
+  listExternalMcpConfigs: () =>
+    request<ExternalMcpConfigRecord[]>('/api/external-mcp-configs'),
+  getExternalMcpConfig: (id: string) =>
+    request<ExternalMcpConfigRecord>(`/api/external-mcp-configs/${id}`),
+  createExternalMcpConfig: (payload: CreateExternalMcpConfigPayload) =>
+    request<ExternalMcpConfigRecord>('/api/external-mcp-configs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateExternalMcpConfig: (id: string, payload: UpdateExternalMcpConfigPayload) =>
+    request<ExternalMcpConfigRecord>(`/api/external-mcp-configs/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteExternalMcpConfig: (id: string) =>
+    request<void>(`/api/external-mcp-configs/${id}`, {
+      method: 'DELETE',
     }),
   listRuns: (filters?: RunListFilters) =>
     request<TaskRunRecord[]>(

@@ -20,6 +20,7 @@ pub struct SystemConfigResponse {
     pub default_subject_id: String,
     pub default_workspace_dir: String,
     pub memory_timeout_ms: u64,
+    pub default_execution_timeout_ms: u64,
     pub execution_timeout_ms: u64,
     pub scheduler_poll_interval_ms: u64,
     pub auto_memory_summary: bool,

@@ -31,6 +31,7 @@ export type TaskFormValues = {
   enabledBuiltinKinds: string[];
   workspaceDir?: string;
   defaultRemoteServerId?: string;
+  externalMcpConfigIds?: string[];
   scheduleMode: TaskScheduleMode;
   scheduleRunAt?: string;
   scheduleIntervalSeconds?: number;

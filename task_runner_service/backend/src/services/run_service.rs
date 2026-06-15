@@ -23,6 +23,18 @@ impl RunService {
             .unwrap_or(self.config.default_task_execution_max_iterations.max(1)))
     }
 
+    pub(super) async fn effective_execution_timeout(&self) -> Result<Duration, String> {
+        Ok(Duration::from_millis(
+            self.store
+                .get_runtime_settings()
+                .await?
+                .and_then(|settings| settings.execution_timeout_ms)
+                .filter(|value| *value > 0)
+                .unwrap_or(self.config.execution_timeout.as_millis() as u64)
+                .max(1),
+        ))
+    }
+
     pub(super) async fn effective_tool_result_model_budget_limits(
         &self,
     ) -> Result<ToolResultModelBudgetLimits, String> {

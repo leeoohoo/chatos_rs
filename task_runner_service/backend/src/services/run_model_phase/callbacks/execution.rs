@@ -14,12 +14,23 @@ impl RunService {
             &prepared_execution.run_spec,
             prepared_execution.tool_result_model_budget_limits,
         );
+        let execution_timeout = match self.effective_execution_timeout().await {
+            Ok(timeout) => timeout,
+            Err(err) => {
+                return TaskRunReport::from_ai_report(
+                    task.id.clone(),
+                    run.id.clone(),
+                    Some(model_config.id.clone()),
+                    AiTurnReport::failed(format!("failed to resolve execution timeout: {err}")),
+                );
+            }
+        };
         let execution = TaskRunExecution::new(
             prepared_execution.runtime_config,
             prepared_execution.run_spec,
         );
         let report = match tokio::time::timeout(
-            self.config.execution_timeout,
+            execution_timeout,
             execution.run_report_with_mcp_builder_and_options(
                 prepared_execution.mcp_builder,
                 runtime_execution.runtime_options,
@@ -34,7 +45,7 @@ impl RunService {
                 Some(model_config.id.clone()),
                 AiTurnReport::failed(format!(
                     "execution timed out after {} seconds",
-                    self.config.execution_timeout.as_secs()
+                    execution_timeout.as_secs()
                 )),
             ),
         };

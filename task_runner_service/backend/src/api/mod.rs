@@ -15,18 +15,19 @@ use crate::mcp_server::{JsonRpcRequest, JsonRpcResponse, McpRequestContext};
 use crate::models::{
     AgentTokenRequest, AgentTokenResponse, BatchTaskDeleteRequest, BatchTaskOperationResponse,
     BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelUiPromptRequest,
-    CreateModelConfigRequest, CreateRemoteServerRequest, CreateTaskRequest, CreateUserRequest,
-    CurrentUserResponse, HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry,
-    McpPromptPreviewRequest, McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse,
-    ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse,
-    PreviewModelCatalogRequest, PromptListFilters, RecordTaskProcessRequest, RemoteServerRecord,
-    RemoteServerTestResponse, RunListFilters, RunSummaryRecord, SetTaskPrerequisitesRequest,
-    StartTaskRunRequest, SubmitUiPromptRequest, SystemConfigResponse, TaskDependencyGraph,
-    TaskIndexResponse, TaskListFilters, TaskMemoryContextOptions, TaskMemoryContextResponse,
-    TaskMemoryRecordsOptions, TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
-    TestRemoteServerRequest, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
+    CreateExternalMcpConfigRequest, CreateModelConfigRequest, CreateRemoteServerRequest,
+    CreateTaskRequest, CreateUserRequest, CurrentUserResponse, ExternalMcpConfigRecord,
+    HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry, McpPromptPreviewRequest,
+    McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse, ModelConfigRecord,
+    ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse, PreviewModelCatalogRequest,
+    PromptListFilters, RecordTaskProcessRequest, RemoteServerRecord, RemoteServerTestResponse,
+    RunListFilters, RunSummaryRecord, SetTaskPrerequisitesRequest, StartTaskRunRequest,
+    SubmitUiPromptRequest, SystemConfigResponse, TaskDependencyGraph, TaskIndexResponse,
+    TaskListFilters, TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
+    TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse, TaskStatsResponse,
+    TaskStatus, TaskSummaryRecord, TestModelConfigRequest, TestRemoteServerRequest, UiPromptRecord,
+    UiPromptStatus, UiPromptTaskCountRecord, UpdateExternalMcpConfigRequest,
     UpdateModelConfigRequest, UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest,
     UpdateTaskMcpRequest, UpdateTaskRequest, UpdateUserRequest, UserSummaryRecord,
 };
@@ -35,6 +36,7 @@ use crate::state::AppState;
 
 mod chatos_internal;
 mod core;
+mod external_mcp_configs;
 mod mcp;
 mod models;
 mod prompts;

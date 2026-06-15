@@ -1,5 +1,43 @@
 type UnknownRecord = Record<string, unknown>;
 
+export interface MessageTaskRunnerTaskSummary {
+  id: string;
+  title?: string | null;
+  status?: string | null;
+  default_model_config_id?: string | null;
+  creator_user_id?: string | null;
+  creator_username?: string | null;
+  creator_display_name?: string | null;
+  last_run_id?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface MessageTaskRunnerModelConfigSummary {
+  id: string;
+  name?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  usage_scenario?: string | null;
+  enabled?: boolean;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface MessageTaskRunnerRunSummary {
+  id: string;
+  task_id?: string | null;
+  model_config_id?: string | null;
+  status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  result_summary?: string | null;
+  error_message?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
 export interface MessageTaskRunnerTask {
   id: string;
   title: string;
@@ -9,19 +47,24 @@ export interface MessageTaskRunnerTask {
   priority?: number | null;
   tags?: string[];
   default_model_config_id?: string | null;
+  default_model_config?: MessageTaskRunnerModelConfigSummary | null;
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;
   result_summary?: string | null;
   process_log?: string | null;
   last_run_id?: string | null;
+  last_run?: MessageTaskRunnerRunSummary | null;
   schedule?: unknown;
   parent_task_id?: string | null;
+  parent_task?: MessageTaskRunnerTaskSummary | null;
   source_run_id?: string | null;
+  source_run?: MessageTaskRunnerRunSummary | null;
   source_session_id?: string | null;
   source_turn_id?: string | null;
   source_user_message_id?: string | null;
   prerequisite_task_ids?: string[];
+  prerequisite_tasks?: MessageTaskRunnerTaskSummary[];
   task_tool_state?: UnknownRecord | null;
   mcp_config?: UnknownRecord | null;
   input_payload?: unknown;
@@ -71,5 +114,6 @@ export interface MessageTaskRunnerRunEvent {
 export interface MessageTaskRunnerRunDetailResponse {
   task: MessageTaskRunnerTask;
   run: MessageTaskRunnerRun;
+  model_config?: MessageTaskRunnerModelConfigSummary | null;
   events: MessageTaskRunnerRunEvent[];
 }

@@ -72,6 +72,38 @@ impl InMemoryStore {
         self.inner.write().remote_servers.remove(id).is_some()
     }
 
+    pub(in crate::store) fn list_external_mcp_configs(&self) -> Vec<ExternalMcpConfigRecord> {
+        let data = self.inner.read();
+        let mut items = data
+            .external_mcp_configs
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        items
+    }
+
+    pub(in crate::store) fn get_external_mcp_config(
+        &self,
+        id: &str,
+    ) -> Option<ExternalMcpConfigRecord> {
+        self.inner.read().external_mcp_configs.get(id).cloned()
+    }
+
+    pub(in crate::store) fn save_external_mcp_config(
+        &self,
+        config: ExternalMcpConfigRecord,
+    ) -> ExternalMcpConfigRecord {
+        let mut data = self.inner.write();
+        data.external_mcp_configs
+            .insert(config.id.clone(), config.clone());
+        config
+    }
+
+    pub(in crate::store) fn delete_external_mcp_config(&self, id: &str) -> bool {
+        self.inner.write().external_mcp_configs.remove(id).is_some()
+    }
+
     pub(in crate::store) fn list_model_config_usage(&self) -> Vec<ModelConfigUsageRecord> {
         let data = self.inner.read();
         let mut usage = BTreeMap::<String, ModelConfigUsageRecord>::new();

@@ -85,6 +85,7 @@ export interface TaskMcpConfig {
   enabled_builtin_kinds: string[];
   workspace_dir?: string | null;
   default_remote_server_id?: string | null;
+  external_mcp_config_ids: string[];
 }
 
 export interface TaskScheduleConfig {
@@ -248,6 +249,50 @@ export interface RemoteServerTestResponse {
   remote_host?: string | null;
   error?: string | null;
   tested_at: string;
+}
+
+export type ExternalMcpTransport = 'stdio' | 'http';
+
+export interface ExternalMcpConfigRecord {
+  id: string;
+  name: string;
+  transport: ExternalMcpTransport | string;
+  command?: string | null;
+  args: string[];
+  url?: string | null;
+  headers: Record<string, string>;
+  env: Record<string, string>;
+  cwd?: string | null;
+  enabled: boolean;
+  creator_user_id?: string | null;
+  creator_username?: string | null;
+  creator_display_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateExternalMcpConfigPayload {
+  name: string;
+  transport: ExternalMcpTransport | string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  cwd?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateExternalMcpConfigPayload {
+  name?: string;
+  transport?: ExternalMcpTransport | string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  cwd?: string;
+  enabled?: boolean;
 }
 
 export interface TaskRunRecord {
@@ -471,6 +516,14 @@ export interface McpServerInfo {
   stdio_command?: string | null;
   stdio_args: string[];
   tool_names: string[];
+  tool_profiles?: McpServerToolProfileInfo[];
+}
+
+export interface McpServerToolProfileInfo {
+  key: string;
+  label: string;
+  description: string;
+  tool_names: string[];
 }
 
 export interface TaskRunnerSkillResponse {
@@ -654,6 +707,7 @@ export interface SystemConfigResponse {
   default_subject_id: string;
   default_workspace_dir: string;
   memory_timeout_ms: number;
+  default_execution_timeout_ms: number;
   execution_timeout_ms: number;
   scheduler_poll_interval_ms: number;
   auto_memory_summary: boolean;
@@ -744,6 +798,7 @@ export interface UpdateModelConfigPayload extends Partial<CreateModelConfigPaylo
 export interface RuntimeSettingsRecord {
   id: string;
   task_execution_max_iterations: number;
+  execution_timeout_ms?: number | null;
   tool_result_model_max_chars: number;
   tool_results_model_total_max_chars: number;
   created_at: string;
@@ -752,6 +807,7 @@ export interface RuntimeSettingsRecord {
 
 export interface UpdateRuntimeSettingsPayload {
   task_execution_max_iterations?: number;
+  execution_timeout_ms?: number;
   tool_result_model_max_chars?: number;
   tool_results_model_total_max_chars?: number;
 }

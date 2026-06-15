@@ -157,7 +157,7 @@ describe('sessionMessagesCache', () => {
     expect(trimmed?.nextBefore).toBe('turn_6');
   });
 
-  it('preserves offset cursors when trimming a snapshot that now starts with a callback message', () => {
+  it('preserves offset cursors without trimming into a callback-only page', () => {
     const sessionId = 'session_1';
     const messages: Message[] = [];
 
@@ -209,8 +209,12 @@ describe('sessionMessagesCache', () => {
       loaded: true,
     }, 1);
 
-    expect(trimmed?.messages[0]?.id).toBe('task_runner_callback::user_22::task_1::task.completed::run_1');
-    expect(trimmed?.messages).toHaveLength(1);
+    expect(trimmed?.messages.map((message) => message.id)).toEqual([
+      `user_${SESSION_MESSAGES_INITIAL_PAGE_SIZE + 2}`,
+      `assistant_${SESSION_MESSAGES_INITIAL_PAGE_SIZE + 2}`,
+      'task_runner_callback::user_22::task_1::task.completed::run_1',
+    ]);
     expect(trimmed?.nextBefore).toBe('offset:44');
   });
+
 });

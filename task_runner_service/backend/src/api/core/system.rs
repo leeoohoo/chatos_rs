@@ -9,6 +9,11 @@ pub(in crate::api) async fn health_handler() -> Json<HealthResponse> {
 pub(in crate::api) async fn system_config_handler(
     State(state): State<AppState>,
 ) -> Result<Json<SystemConfigResponse>, ApiError> {
+    let execution_timeout_ms = state
+        .task_service
+        .effective_execution_timeout_ms()
+        .await
+        .map_err(ApiError::bad_request)?;
     let task_execution_max_iterations = state
         .task_service
         .effective_task_execution_max_iterations()
@@ -21,6 +26,7 @@ pub(in crate::api) async fn system_config_handler(
         .map_err(ApiError::bad_request)?;
     Ok(Json(system_config(
         &state.config,
+        execution_timeout_ms,
         task_execution_max_iterations,
         tool_result_model_budget_limits,
     )))
@@ -35,8 +41,13 @@ pub(in crate::api) async fn update_system_config_handler(
         .update_runtime_settings(input)
         .await
         .map_err(ApiError::bad_request)?;
+    let execution_timeout_ms = settings
+        .execution_timeout_ms
+        .filter(|value| *value > 0)
+        .unwrap_or(state.config.execution_timeout.as_millis() as u64);
     Ok(Json(system_config(
         &state.config,
+        execution_timeout_ms,
         settings.task_execution_max_iterations,
         chatos_ai_runtime::ToolResultModelBudgetLimits::new(
             settings.tool_result_model_max_chars,

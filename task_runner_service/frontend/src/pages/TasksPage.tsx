@@ -63,6 +63,7 @@ import {
 import type {
   BatchTaskOperationResponse,
   CreateTaskPayload,
+  ExternalMcpConfigRecord,
   McpCatalogEntry,
   RemoteServerRecord,
   StartTaskRunPayload,
@@ -239,6 +240,10 @@ export function TasksPage() {
   const remoteServersQuery = useQuery({
     queryKey: ['remote-servers'],
     queryFn: api.listRemoteServers,
+  });
+  const externalMcpConfigsQuery = useQuery({
+    queryKey: ['external-mcp-configs'],
+    queryFn: api.listExternalMcpConfigs,
   });
   const pendingPromptTaskCountsQuery = useQuery({
     queryKey: ['prompt-task-counts', 'pending'],
@@ -502,6 +507,22 @@ export function TasksPage() {
       })),
     [remoteServersQuery.data],
   );
+  const externalMcpConfigMap = useMemo(() => {
+    const map = new Map<string, ExternalMcpConfigRecord>();
+    (externalMcpConfigsQuery.data || []).forEach((config) => {
+      map.set(config.id, config);
+    });
+    return map;
+  }, [externalMcpConfigsQuery.data]);
+  const externalMcpConfigOptions = useMemo(
+    () =>
+      (externalMcpConfigsQuery.data || []).map((config) => ({
+        label: `${config.name} (${config.transport})${config.enabled ? '' : ' / disabled'}`,
+        value: config.id,
+        disabled: !config.enabled,
+      })),
+    [externalMcpConfigsQuery.data],
+  );
   const selectedTask = useMemo(
     () => selectedTaskQuery.data || detailTaskPreview,
     [detailTaskPreview, selectedTaskQuery.data],
@@ -646,6 +667,7 @@ export function TasksPage() {
       enabledBuiltinKinds: mcpOptions.map((item) => String(item.value)),
       workspaceDir: '',
       defaultRemoteServerId: undefined,
+      externalMcpConfigIds: [],
       scheduleMode: 'manual',
       scheduleRunAt: undefined,
       scheduleIntervalSeconds: undefined,
@@ -671,6 +693,7 @@ export function TasksPage() {
       enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
       workspaceDir: task.mcp_config.workspace_dir || '',
       defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
+      externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
       scheduleMode: task.schedule.mode,
       scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
       scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
@@ -841,6 +864,7 @@ export function TasksPage() {
         enabled_builtin_kinds: values.enabledBuiltinKinds || [],
         workspace_dir: values.workspaceDir?.trim() || undefined,
         default_remote_server_id: values.defaultRemoteServerId,
+        external_mcp_config_ids: values.externalMcpConfigIds || [],
       },
     };
   }
@@ -1140,6 +1164,22 @@ export function TasksPage() {
                   ? remoteServerMap.get(selectedTask.mcp_config.default_remote_server_id)?.name ||
                     selectedTask.mcp_config.default_remote_server_id
                   : t('tasks.modelUnbound')}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('tasks.detail.externalMcpConfigs')}>
+                {selectedTask.mcp_config.external_mcp_config_ids?.length ? (
+                  <Space wrap>
+                    {selectedTask.mcp_config.external_mcp_config_ids.map((configId) => {
+                      const config = externalMcpConfigMap.get(configId);
+                      return (
+                        <Tag key={configId} color={config?.enabled === false ? 'default' : 'blue'}>
+                          {config?.name || configId}
+                        </Tag>
+                      );
+                    })}
+                  </Space>
+                ) : (
+                  t('common.noData')
+                )}
               </Descriptions.Item>
               <Descriptions.Item label={t('tasks.detail.createdAt')}>
                 {dayjs(selectedTask.created_at).format('YYYY-MM-DD HH:mm:ss')}
@@ -1808,6 +1848,20 @@ export function TasksPage() {
               />
             </Form.Item>
           ) : null}
+
+          <Form.Item name="externalMcpConfigIds" label={t('tasks.form.externalMcpConfigs')}>
+            <Select
+              mode="multiple"
+              allowClear
+              disabled={!mcpEnabled}
+              options={externalMcpConfigOptions}
+              placeholder={t('tasks.form.externalMcpConfigsPlaceholder')}
+            />
+          </Form.Item>
+
+          <Typography.Text type="secondary">
+            {t('tasks.form.externalMcpConfigsHelp')}
+          </Typography.Text>
 
           {mcpCatalogQuery.data?.length ? (
             <Space direction="vertical" size={4} style={{ width: '100%' }}>

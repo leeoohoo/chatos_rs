@@ -51,7 +51,6 @@ describe('useSessionListActions', () => {
     await result.current.handleSelectSession('contact-placeholder:contact-1');
 
     expect(selectSession).toHaveBeenCalledWith('session-1', {
-      initialPageSize: 1,
       skipBackgroundSync: true,
     });
   });

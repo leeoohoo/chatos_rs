@@ -49,6 +49,8 @@ pub struct TaskMcpConfig {
     pub workspace_dir: Option<String>,
     #[serde(default)]
     pub default_remote_server_id: Option<String>,
+    #[serde(default)]
+    pub external_mcp_config_ids: Vec<String>,
 }
 
 impl Default for TaskMcpConfig {
@@ -61,6 +63,7 @@ impl Default for TaskMcpConfig {
             enabled_builtin_kinds: task_mcp_builtin_kinds_default(),
             workspace_dir: None,
             default_remote_server_id: None,
+            external_mcp_config_ids: Vec::new(),
         }
     }
 }

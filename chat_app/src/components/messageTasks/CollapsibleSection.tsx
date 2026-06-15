@@ -1,5 +1,5 @@
 import type { FC, ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDownIcon } from '../ui/icons';
 import { cn } from '../../lib/utils';
 
@@ -65,6 +65,12 @@ export const CollapsibleText: FC<CollapsibleTextProps> = ({
     : typeof value === 'string'
       ? value
       : JSON.stringify(value, null, 2);
+  const lineCount = text.split(/\r?\n/).length;
+  const canToggle = text.length > 480 || lineCount > 12;
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [text]);
 
   return (
     <div>
@@ -72,18 +78,20 @@ export const CollapsibleText: FC<CollapsibleTextProps> = ({
         className={cn(
           'whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-3 text-xs leading-5 text-foreground',
           code && 'font-mono',
-          !expanded && `${maxHeightClassName} overflow-hidden`,
+          canToggle && !expanded && `${maxHeightClassName} overflow-hidden`,
         )}
       >
         {text || '-'}
       </pre>
-      <button
-        type="button"
-        className="mt-2 text-xs font-medium text-primary hover:text-primary/80"
-        onClick={() => setExpanded((value) => !value)}
-      >
-        {expanded ? '收起' : '展开'}
-      </button>
+      {canToggle ? (
+        <button
+          type="button"
+          className="mt-2 text-xs font-medium text-primary hover:text-primary/80"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? '收起' : '展开'}
+        </button>
+      ) : null}
     </div>
   );
 };

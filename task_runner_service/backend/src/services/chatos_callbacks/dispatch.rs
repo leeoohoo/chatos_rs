@@ -84,7 +84,7 @@ fn terminal_callback_event_for_status(status: TaskRunStatus) -> Option<&'static 
 
 #[cfg(test)]
 mod tests {
-    use super::{terminal_callback_event_for_status, TaskRunStatus};
+    use super::{TaskRunStatus, terminal_callback_event_for_status};
 
     #[test]
     fn terminal_callback_event_for_status_covers_all_terminal_states() {

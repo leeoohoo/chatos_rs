@@ -5,6 +5,7 @@ use chatos_mcp_runtime::builtin_kind_by_any;
 use crate::config::AppConfig;
 use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord};
 
+use super::normalize_strings;
 use super::normalized_optional;
 
 pub(super) fn selected_builtin_kinds(
@@ -35,6 +36,7 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
     config.enabled_builtin_kinds = normalize_builtin_kind_names(config.enabled_builtin_kinds);
     config.workspace_dir = normalized_optional(config.workspace_dir);
     config.default_remote_server_id = normalized_optional(config.default_remote_server_id);
+    config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
     config
 }
 

@@ -8,7 +8,7 @@ use chatos_ai_runtime::{
 };
 
 use super::database::{default_database_url, normalize_database_url};
-use super::{AppConfig, StoreMode};
+use super::{AppConfig, StoreMode, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS};
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
@@ -35,7 +35,7 @@ impl AppConfig {
         let execution_timeout_ms = std::env::var("TASK_RUNNER_EXECUTION_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(1_800_000);
+            .unwrap_or(DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS);
         let scheduler_poll_interval_ms = std::env::var("TASK_RUNNER_SCHEDULER_POLL_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())

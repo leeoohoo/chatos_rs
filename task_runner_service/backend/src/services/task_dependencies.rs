@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use crate::auth::CurrentUser;
-use crate::models::{now_rfc3339, TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord};
+use crate::models::{TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord, now_rfc3339};
 
-use super::batch_ops::normalize_prerequisite_task_ids;
 use super::TaskService;
+use super::batch_ops::normalize_prerequisite_task_ids;
 
 impl TaskService {
     pub async fn list_task_prerequisites(

@@ -120,6 +120,16 @@ pub struct McpServerInfo {
     #[serde(default)]
     pub stdio_args: Vec<String>,
     pub tool_names: Vec<String>,
+    #[serde(default)]
+    pub tool_profiles: Vec<McpServerToolProfileInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerToolProfileInfo {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    pub tool_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -144,7 +144,6 @@ export const useTeamMemberConversation = ({
       if (sessionId && currentSession?.id !== sessionId) {
         await selectSession(sessionId, {
           keepActivePanel: true,
-          initialPageSize: 1,
           skipBackgroundSync: true,
         });
       }
@@ -244,7 +243,6 @@ export const useTeamMemberConversation = ({
       if (currentSession?.id !== sessionId) {
         await selectSession(sessionId, {
           keepActivePanel: true,
-          initialPageSize: 1,
           skipBackgroundSync: true,
         });
       }
@@ -291,7 +289,6 @@ export const useTeamMemberConversation = ({
       if (currentSession?.id !== sessionId) {
         await selectSession(sessionId, {
           keepActivePanel: true,
-          initialPageSize: 1,
           skipBackgroundSync: true,
         });
       }

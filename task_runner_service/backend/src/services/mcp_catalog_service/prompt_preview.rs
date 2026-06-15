@@ -46,6 +46,7 @@ impl McpCatalogService {
             enabled_builtin_kinds: selected_kind_names,
             workspace_dir: normalized_optional(request.workspace_dir),
             default_remote_server_id: normalized_optional(request.default_remote_server_id),
+            external_mcp_config_ids: Vec::new(),
         };
         let selected_builtin_kinds =
             if enabled && !matches!(init_mode, chatos_ai_runtime::TaskMcpInitMode::Disabled) {

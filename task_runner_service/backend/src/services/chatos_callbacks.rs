@@ -2,7 +2,7 @@ use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
-use crate::models::{now_rfc3339, TaskRecord, TaskRunRecord, TaskRunStatus};
+use crate::models::{TaskRecord, TaskRunRecord, TaskRunStatus, now_rfc3339};
 use crate::store::AppStore;
 
 use super::prerequisite_context::extract_report_content;

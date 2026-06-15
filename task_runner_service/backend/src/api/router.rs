@@ -11,6 +11,10 @@ use super::core::{
     task_runner_internal_prompt_preview_handler, task_runner_skill_handler,
     update_system_config_handler, update_user,
 };
+use super::external_mcp_configs::{
+    create_external_mcp_config, delete_external_mcp_config, get_external_mcp_config,
+    list_external_mcp_configs, update_external_mcp_config,
+};
 use super::mcp::{get_mcp_server_info, list_mcp_catalog, mcp_entrypoint, preview_mcp_prompt};
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -126,6 +130,16 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/remote-servers/:id/test",
             post(test_remote_server_saved),
+        )
+        .route(
+            "/api/external-mcp-configs",
+            get(list_external_mcp_configs).post(create_external_mcp_config),
+        )
+        .route(
+            "/api/external-mcp-configs/:id",
+            get(get_external_mcp_config)
+                .patch(update_external_mcp_config)
+                .delete(delete_external_mcp_config),
         )
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))

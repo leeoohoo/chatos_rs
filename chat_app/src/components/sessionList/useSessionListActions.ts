@@ -94,7 +94,6 @@ export const useSessionListActions = ({
         }
         if (currentSession?.id !== ensuredSessionId) {
           await selectSession(ensuredSessionId, {
-            initialPageSize: 1,
             skipBackgroundSync: true,
           });
         } else {

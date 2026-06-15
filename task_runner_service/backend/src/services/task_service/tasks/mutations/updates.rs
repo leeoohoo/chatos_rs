@@ -122,6 +122,9 @@ impl TaskService {
             task.mcp_config.default_remote_server_id =
                 normalized_optional(Some(default_remote_server_id));
         }
+        if let Some(external_mcp_config_ids) = patch.external_mcp_config_ids {
+            task.mcp_config.external_mcp_config_ids = external_mcp_config_ids;
+        }
         task.mcp_config = sanitize_task_mcp_config(task.mcp_config);
         self.validate_task_mcp_config(&task.mcp_config).await?;
         task.updated_at = now_rfc3339();

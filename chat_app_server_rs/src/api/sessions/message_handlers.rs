@@ -1,28 +1,119 @@
+use std::collections::HashMap;
+
 use axum::{
     Json,
     extract::{Path, Query},
     http::StatusCode,
 };
 use serde_json::Value;
+use tracing::warn;
 
 use crate::api::conversation_semantics::rewrite_session_keys_to_conversation;
 use crate::core::auth::AuthUser;
 use crate::core::messages::{
-    MessageOut, NewMessageFields, build_message, create_message_and_maybe_rename,
+    MessageOut, NewMessageFields, build_message, create_message_and_maybe_rename, message_turn_id,
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
+use crate::models::message::Message;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 
 use super::contracts::CompactHistoryQuery;
 use super::contracts::{CreateMessageRequest, PageQuery};
 use super::history::{
-    build_compact_history_messages_from_turn_slices, build_turn_display_messages,
+    build_compact_history_messages_from_turn_slices,
+    build_compact_history_messages_from_turn_slices_with_process, build_turn_display_messages,
     compact_messages_for_display, parse_bool_query_flag,
+    turn_slice_final_assistant_is_task_runner_callback,
 };
 use super::history_process::find_user_index_by_turn_id;
 use super::support::list_all_session_messages;
+
+fn metadata_string_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn compact_history_before_turn_id_from_message(message: &Message) -> Option<String> {
+    message_turn_id(message)
+        .or_else(|| {
+            message.metadata.as_ref().and_then(|metadata| {
+                metadata_string_path(metadata, &["task_runner_async", "source_turn_id"])
+            })
+        })
+        .or_else(|| {
+            message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata_string_path(metadata, &["historyFinalForTurnId"]))
+        })
+        .or_else(|| {
+            message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata_string_path(metadata, &["historyProcessTurnId"]))
+        })
+        .or_else(|| {
+            message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata_string_path(metadata, &["historyProcess", "turnId"]))
+        })
+        .map(ToOwned::to_owned)
+}
+
+async fn resolve_compact_history_before_turn_id(
+    conversation_id: &str,
+    before: &str,
+) -> Option<String> {
+    let normalized_before = before.trim();
+    if normalized_before.is_empty() || normalized_before.starts_with("offset:") {
+        return None;
+    }
+
+    let message = conversation_messages::get_message_by_id(normalized_before)
+        .await
+        .ok()
+        .flatten()?;
+    if message.session_id != conversation_id {
+        return None;
+    }
+
+    compact_history_before_turn_id_from_message(&message)
+        .filter(|turn_id| turn_id != normalized_before)
+}
+
+async fn list_compact_history_page(
+    conversation_id: &str,
+    limit: Option<i64>,
+    before_turn_id: Option<&str>,
+) -> Result<memory_engine_sdk::CompactTurnsResponse, String> {
+    let page =
+        conversation_messages::list_compact_turns(conversation_id, limit, before_turn_id).await?;
+    if !page.items.is_empty() || before_turn_id.is_none() {
+        return Ok(page);
+    }
+
+    let Some(resolved_before_turn_id) =
+        resolve_compact_history_before_turn_id(conversation_id, before_turn_id.unwrap()).await
+    else {
+        return Ok(page);
+    };
+
+    conversation_messages::list_compact_turns(
+        conversation_id,
+        limit,
+        Some(resolved_before_turn_id.as_str()),
+    )
+    .await
+}
 
 fn parse_compact_history_offset(
     before: Option<&str>,
@@ -82,6 +173,39 @@ fn annotate_runtime_activity(conversation_id: &str, value: Value) -> Value {
     }
 
     value
+}
+
+async fn load_task_runner_callback_process_messages(
+    conversation_id: &str,
+    slices: &[memory_engine_sdk::TurnRecordSlice],
+) -> HashMap<String, Vec<Message>> {
+    let mut process_messages_by_turn = HashMap::new();
+    for slice in slices {
+        if !turn_slice_final_assistant_is_task_runner_callback(slice) {
+            continue;
+        }
+
+        match conversation_messages::list_turn_process_messages(
+            conversation_id,
+            slice.turn_id.as_str(),
+        )
+        .await
+        {
+            Ok(messages) => {
+                process_messages_by_turn.insert(slice.turn_id.clone(), messages);
+            }
+            Err(err) => {
+                warn!(
+                    conversation_id = conversation_id,
+                    turn_id = slice.turn_id.as_str(),
+                    error = err.as_str(),
+                    "failed to load task runner callback turn process messages for compact history"
+                );
+            }
+        }
+    }
+
+    process_messages_by_turn
 }
 
 pub(super) async fn get_session_messages(
@@ -167,23 +291,30 @@ pub(super) async fn get_session_compact_history(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let page =
-        match conversation_messages::list_compact_turns(&conversation_id, limit, before_turn_id)
-            .await
-        {
-            Ok(page) => page,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": "Failed to get compact history",
-                        "detail": err,
-                    })),
-                );
-            }
-        };
+    let page = match list_compact_history_page(&conversation_id, limit, before_turn_id).await {
+        Ok(page) => page,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get compact history",
+                    "detail": err,
+                })),
+            );
+        }
+    };
 
-    let items: Vec<Value> = build_compact_history_messages_from_turn_slices(page.items)
+    let process_messages_by_turn =
+        load_task_runner_callback_process_messages(&conversation_id, &page.items).await;
+    let messages = if process_messages_by_turn.is_empty() {
+        build_compact_history_messages_from_turn_slices(page.items)
+    } else {
+        build_compact_history_messages_from_turn_slices_with_process(
+            page.items,
+            &process_messages_by_turn,
+        )
+    };
+    let items: Vec<Value> = messages
         .into_iter()
         .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
         .collect();

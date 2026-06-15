@@ -21,11 +21,11 @@ use tracing::warn;
 
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
-    now_rfc3339, ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
-    RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
-    TaskPrerequisiteRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord, UiPromptRecord,
-    UiPromptStatus, UiPromptTaskCountRecord, UserRecord,
+    now_rfc3339, ExternalMcpConfigRecord, ModelConfigRecord, ModelConfigUsageRecord,
+    PaginatedResponse, PromptListFilters, RemoteServerRecord, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse, TaskStatus,
+    TaskSummaryRecord, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord, UserRecord,
 };
 
 mod app_models;
@@ -52,9 +52,9 @@ use self::mongo_support::{
     is_mongo_active_run_conflict, is_mongo_active_run_index_conflict, mongo_find_options,
 };
 use self::sqlite_rows::{
-    model_config_from_row, remote_server_from_row, run_summary_from_row, runtime_settings_from_row,
-    task_from_row, task_run_event_from_row, task_run_from_row, task_summary_from_row,
-    ui_prompt_from_row, user_from_row,
+    external_mcp_config_from_row, model_config_from_row, remote_server_from_row,
+    run_summary_from_row, runtime_settings_from_row, task_from_row, task_run_event_from_row,
+    task_run_from_row, task_summary_from_row, ui_prompt_from_row, user_from_row,
 };
 use self::sqlite_support::ensure_sqlite_parent_dir;
 use self::task_support::{
@@ -71,6 +71,7 @@ struct StoreData {
     model_configs: BTreeMap<String, ModelConfigRecord>,
     runtime_settings: Option<RuntimeSettingsRecord>,
     remote_servers: BTreeMap<String, RemoteServerRecord>,
+    external_mcp_configs: BTreeMap<String, ExternalMcpConfigRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
     ui_prompts: BTreeMap<String, UiPromptRecord>,
@@ -98,6 +99,7 @@ pub(crate) struct MongoStore {
     model_configs: Collection<ModelConfigRecord>,
     runtime_settings: Collection<RuntimeSettingsRecord>,
     remote_servers: Collection<RemoteServerRecord>,
+    external_mcp_configs: Collection<ExternalMcpConfigRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
     ui_prompts: Collection<UiPromptRecord>,

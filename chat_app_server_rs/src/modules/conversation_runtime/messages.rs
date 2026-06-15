@@ -44,6 +44,13 @@ pub async fn list_compact_turns(
     chatos_sessions::list_compact_turns(session_id, limit, before_turn_id).await
 }
 
+pub async fn list_turn_process_messages(
+    session_id: &str,
+    turn_id: &str,
+) -> Result<Vec<Message>, String> {
+    chatos_sessions::list_turn_process_messages(session_id, turn_id).await
+}
+
 pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String> {
     let mut offset = 0i64;
     let mut all_messages: Vec<Message> = Vec::new();
@@ -195,7 +202,7 @@ pub async fn get_turn_runtime_snapshot_by_turn(
 mod tests {
     use serde_json::json;
 
-    use super::{FULL_SESSION_MESSAGES_PAGE_SIZE, append_visible_message_page};
+    use super::{append_visible_message_page, FULL_SESSION_MESSAGES_PAGE_SIZE};
     use crate::models::message::Message;
 
     fn build_message(id: &str, hidden: bool) -> Message {

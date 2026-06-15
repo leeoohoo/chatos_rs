@@ -134,7 +134,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
       <div className="relative flex min-w-0 flex-1 flex-col">
         <div
           ref={scrollRef}
-          onScroll={shouldWindowMessages ? handleScroll : undefined}
+          onScroll={handleScroll}
           className="flex-1 overflow-y-auto px-4 py-6 space-y-1"
         >
           {hasMore && (

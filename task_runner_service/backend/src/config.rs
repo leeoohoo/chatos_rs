@@ -10,6 +10,8 @@ mod env_support;
 
 pub use self::dotenv::load_task_runner_dotenv;
 
+pub const DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS: u64 = 7_200_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreMode {
     Memory,

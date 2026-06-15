@@ -70,6 +70,7 @@ pub struct UpdateTaskMcpRequest {
     pub enabled_builtin_kinds: Option<Vec<String>>,
     pub workspace_dir: Option<String>,
     pub default_remote_server_id: Option<String>,
+    pub external_mcp_config_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

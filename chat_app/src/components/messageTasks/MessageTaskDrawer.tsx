@@ -131,7 +131,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
         </div>
       </aside>
 
-      <MessageTaskDetailModal task={detailTask} onClose={closeDetail} />
+      <MessageTaskDetailModal task={detailTask} relatedTasks={tasks} onClose={closeDetail} />
       <MessageTaskRunDetailModal detail={runDetail} onClose={closeRun} />
     </>
   );

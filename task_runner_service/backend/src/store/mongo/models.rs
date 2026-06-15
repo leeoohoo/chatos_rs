@@ -98,6 +98,44 @@ impl MongoStore {
         self.delete_by_id(&self.remote_servers, id).await
     }
 
+    pub(in crate::store) async fn list_external_mcp_configs(
+        &self,
+    ) -> Result<Vec<ExternalMcpConfigRecord>, String> {
+        self.load_collection_items_with_query(
+            &self.external_mcp_configs,
+            doc! {},
+            Some(mongo_find_options(
+                doc! { "updated_at": -1, "id": -1 },
+                None,
+                None,
+            )),
+        )
+        .await
+    }
+
+    pub(in crate::store) async fn get_external_mcp_config(
+        &self,
+        id: &str,
+    ) -> Result<Option<ExternalMcpConfigRecord>, String> {
+        self.find_by_id(&self.external_mcp_configs, id).await
+    }
+
+    pub(in crate::store) async fn save_external_mcp_config(
+        &self,
+        config: ExternalMcpConfigRecord,
+    ) -> Result<ExternalMcpConfigRecord, String> {
+        self.upsert_by_id(&self.external_mcp_configs, &config.id, &config)
+            .await?;
+        Ok(config)
+    }
+
+    pub(in crate::store) async fn delete_external_mcp_config(
+        &self,
+        id: &str,
+    ) -> Result<bool, String> {
+        self.delete_by_id(&self.external_mcp_configs, id).await
+    }
+
     pub(in crate::store) async fn list_model_config_usage(
         &self,
     ) -> Result<Vec<ModelConfigUsageRecord>, String> {

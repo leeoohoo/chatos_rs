@@ -9,6 +9,7 @@ const MESSAGE_WINDOW_MAX_SIZE = 72;
 const MESSAGE_WINDOW_OVERSCAN_ROWS = 6;
 const MESSAGE_WINDOW_THRESHOLD_EXTRA = 8;
 const SESSION_INITIAL_BOTTOM_LOCK_FRAMES = 10;
+const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 96;
 
 type ScrollSnapshot = {
   firstMessageId: string;
@@ -46,6 +47,7 @@ export const useMessageListWindowing = ({
   const pendingSessionBottomLockFramesRef = useRef<number>(0);
   const expandingWindowRef = useRef(false);
   const prevVisibleCountRef = useRef(0);
+  const latestAutoScrollKeyRef = useRef('');
   const scrollSnapshotRef = useRef<ScrollSnapshot | null>(null);
 
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
@@ -71,11 +73,29 @@ export const useMessageListWindowing = ({
     [shouldWindowMessages, visibleMessages, boundedRenderStartIndex],
   );
   const lastVisibleIndex = visibleMessages.length - 1;
+  const latestAutoScrollKey = useMemo(() => {
+    const latest = visibleMessages[visibleMessages.length - 1];
+    if (!latest) {
+      return '';
+    }
+    return [
+      latest.id,
+      latest.status || '',
+      latest.content?.length || 0,
+      latest.metadata?.task_runner_async?.status || '',
+      latest.metadata?.task_runner_async?.last_event_status || '',
+    ].join(':');
+  }, [visibleMessages]);
+
+  const isNearBottom = useCallback((element: HTMLDivElement): boolean => (
+    element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+  ), []);
 
   useEffect(() => {
     pendingSessionInitialScrollRef.current = true;
     pendingSessionBottomLockFramesRef.current = SESSION_INITIAL_BOTTOM_LOCK_FRAMES;
     prevVisibleCountRef.current = 0;
+    latestAutoScrollKeyRef.current = '';
     scrollSnapshotRef.current = null;
     if (initialScrollRafRef.current !== null) {
       cancelAnimationFrame(initialScrollRafRef.current);
@@ -86,7 +106,7 @@ export const useMessageListWindowing = ({
       sessionBottomLockRafRef.current = null;
     }
     setIsAtBottom(true);
-    setAutoScroll(false);
+    setAutoScroll(true);
   }, [sessionId]);
 
   useEffect(() => {
@@ -118,7 +138,7 @@ export const useMessageListWindowing = ({
       }
       element.scrollTop = element.scrollHeight;
       setIsAtBottom(true);
-      setAutoScroll(isStreaming);
+      setAutoScroll(true);
       pendingSessionInitialScrollRef.current = false;
     });
 
@@ -280,6 +300,7 @@ export const useMessageListWindowing = ({
     if (!element) {
       return;
     }
+    setIsAtBottom(true);
     if (smooth) {
       element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
       return;
@@ -371,11 +392,28 @@ export const useMessageListWindowing = ({
     return () => observer.disconnect();
   }, [sessionId, isStreaming, renderedMessages.length]);
 
-  useEffect(() => {
-    if (isStreaming && autoScroll) {
+  useLayoutEffect(() => {
+    if (pendingSessionInitialScrollRef.current) {
+      latestAutoScrollKeyRef.current = latestAutoScrollKey;
+      return;
+    }
+
+    const previousKey = latestAutoScrollKeyRef.current;
+    latestAutoScrollKeyRef.current = latestAutoScrollKey;
+    if (!latestAutoScrollKey || !previousKey || latestAutoScrollKey === previousKey) {
+      return;
+    }
+
+    if (autoScroll || isAtBottom || isStreaming) {
       scheduleAutoScrollToBottom();
     }
-  }, [visibleMessages, isStreaming, autoScroll, scheduleAutoScrollToBottom]);
+  }, [
+    latestAutoScrollKey,
+    isStreaming,
+    autoScroll,
+    isAtBottom,
+    scheduleAutoScrollToBottom,
+  ]);
 
   useEffect(() => {
     if (pendingSessionInitialScrollRef.current) {
@@ -417,17 +455,10 @@ export const useMessageListWindowing = ({
   useEffect(() => {
     if (isStreaming && isAtBottom) {
       setAutoScroll((prev) => (prev ? prev : true));
-      return;
-    }
-    if (!isStreaming) {
-      setAutoScroll((prev) => (prev ? false : prev));
     }
   }, [isStreaming, isAtBottom]);
 
   const handleScroll = useCallback(() => {
-    if (!shouldWindowMessages) {
-      return;
-    }
     if (scrollRafRef.current !== null) {
       return;
     }
@@ -437,14 +468,19 @@ export const useMessageListWindowing = ({
       if (!element) {
         return;
       }
+      const nearBottom = isNearBottom(element);
+      setIsAtBottom((prev) => (prev === nearBottom ? prev : nearBottom));
+      setAutoScroll((prev) => (prev === nearBottom ? prev : nearBottom));
       if (
+        shouldWindowMessages
+        &&
         boundedRenderStartIndex > 0
         && element.scrollTop <= MESSAGE_WINDOW_EXPAND_TOP_OFFSET
       ) {
         expandRenderedWindow();
       }
     });
-  }, [boundedRenderStartIndex, expandRenderedWindow, shouldWindowMessages]);
+  }, [boundedRenderStartIndex, expandRenderedWindow, isNearBottom, shouldWindowMessages]);
 
   const handleJumpToBottom = useCallback(() => {
     scrollToBottom(true);

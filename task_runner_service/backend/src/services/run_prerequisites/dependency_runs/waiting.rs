@@ -6,7 +6,7 @@ impl RunService {
         run_id: &str,
         parent_run_id: &str,
     ) -> Result<TaskRunRecord, String> {
-        let timeout = self.config.execution_timeout + Duration::from_secs(30);
+        let timeout = self.effective_execution_timeout().await? + Duration::from_secs(30);
         let started = Instant::now();
         loop {
             let run = self

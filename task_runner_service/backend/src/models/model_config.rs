@@ -109,6 +109,8 @@ pub struct ProviderModelRecord {
 pub struct RuntimeSettingsRecord {
     pub id: String,
     pub task_execution_max_iterations: usize,
+    #[serde(default)]
+    pub execution_timeout_ms: Option<u64>,
     #[serde(default = "default_tool_result_model_max_chars")]
     pub tool_result_model_max_chars: usize,
     #[serde(default = "default_tool_results_model_total_max_chars")]
@@ -120,6 +122,7 @@ pub struct RuntimeSettingsRecord {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateRuntimeSettingsRequest {
     pub task_execution_max_iterations: Option<usize>,
+    pub execution_timeout_ms: Option<u64>,
     pub tool_result_model_max_chars: Option<usize>,
     pub tool_results_model_total_max_chars: Option<usize>,
 }

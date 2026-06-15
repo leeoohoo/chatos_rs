@@ -17,12 +17,24 @@ impl TaskService {
         }
     }
 
+    pub(super) async fn ensure_external_mcp_config_exists(&self, id: &str) -> Result<(), String> {
+        match self.store.get_external_mcp_config(id).await? {
+            Some(config) if config.enabled => Ok(()),
+            Some(_) => Err(format!("外部 MCP 配置未启用: {id}")),
+            None => Err(format!("外部 MCP 配置不存在: {id}")),
+        }
+    }
+
     pub(super) async fn validate_task_mcp_config(
         &self,
         config: &TaskMcpConfig,
     ) -> Result<(), String> {
         if let Some(remote_server_id) = config.default_remote_server_id.as_deref() {
             self.ensure_remote_server_exists(remote_server_id).await?;
+        }
+        for external_mcp_config_id in &config.external_mcp_config_ids {
+            self.ensure_external_mcp_config_exists(external_mcp_config_id)
+                .await?;
         }
         if config.workspace_dir.is_some() {
             let _ = ensure_workspace_dir_available(

@@ -49,8 +49,11 @@ pub(super) async fn prepare_model_execution(
         task_service.clone(),
     )
     .await;
+    let (http_servers, stdio_servers) = load_external_mcp_servers(service, task).await?;
 
     let mcp_builder = McpExecutorBuilder::new()
+        .with_http_servers(http_servers)
+        .with_stdio_servers(stdio_servers)
         .with_builtin_servers(builtin_servers)
         .with_builtin_registry(builtin_registry);
 
@@ -60,6 +63,36 @@ pub(super) async fn prepare_model_execution(
         mcp_builder,
         tool_result_model_budget_limits,
     })
+}
+
+async fn load_external_mcp_servers(
+    service: &RunService,
+    task: &TaskRecord,
+) -> Result<(Vec<McpHttpServer>, Vec<McpStdioServer>), String> {
+    if !task.mcp_config.enabled || task.mcp_config.external_mcp_config_ids.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let mut http_servers = Vec::new();
+    let mut stdio_servers = Vec::new();
+    for config_id in &task.mcp_config.external_mcp_config_ids {
+        let config = service
+            .store
+            .get_external_mcp_config(config_id)
+            .await?
+            .ok_or_else(|| format!("外部 MCP 配置不存在: {config_id}"))?;
+        if !config.enabled {
+            return Err(format!("外部 MCP 配置未启用: {config_id}"));
+        }
+        if let Some(server) = config.to_http_server() {
+            http_servers.push(server);
+        } else if let Some(server) = config.to_stdio_server() {
+            stdio_servers.push(server);
+        } else {
+            return Err(format!("外部 MCP 配置无效: {config_id}"));
+        }
+    }
+    Ok((http_servers, stdio_servers))
 }
 
 fn build_execution_metadata(

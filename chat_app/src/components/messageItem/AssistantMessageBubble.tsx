@@ -44,7 +44,7 @@ export const AssistantMessageBubble: React.FC<AssistantMessageBubbleProps> = ({
       <div
         ref={contentRef}
         className={cn(
-          'overflow-hidden px-4 py-3',
+          'overflow-hidden px-5 py-4 sm:px-6',
           canToggle && !expanded && 'max-h-[520px]',
         )}
       >
@@ -54,7 +54,7 @@ export const AssistantMessageBubble: React.FC<AssistantMessageBubbleProps> = ({
         <div className="pointer-events-none absolute inset-x-0 bottom-10 h-16 bg-gradient-to-t from-card/95 to-transparent" />
       ) : null}
       {canToggle ? (
-        <div className="border-t border-border bg-card/90 px-4 py-2">
+        <div className="border-t border-border bg-card/90 px-5 py-2 sm:px-6">
           <button
             type="button"
             className="text-xs font-medium text-primary hover:text-primary/80"

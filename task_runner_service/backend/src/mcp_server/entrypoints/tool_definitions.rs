@@ -7,6 +7,8 @@ mod tasks;
 
 impl TaskRunnerMcpService {
     pub fn server_info(&self) -> McpServerInfo {
+        let tools = self.list_tools();
+        let tool_names = tool_names_from_tools(&tools);
         McpServerInfo {
             server_name: TASK_RUNNER_MCP_SERVER_NAME.to_string(),
             transports: vec!["http-jsonrpc".to_string(), "stdio-jsonrpc".to_string()],
@@ -16,15 +18,30 @@ impl TaskRunnerMcpService {
                 .iter()
                 .map(|item| item.to_string())
                 .collect(),
-            tool_names: self
-                .list_tools()
-                .into_iter()
-                .filter_map(|tool| {
-                    tool.get("name")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned)
-                })
-                .collect(),
+            tool_names: tool_names.clone(),
+            tool_profiles: vec![
+                McpServerToolProfileInfo {
+                    key: "admin_full".to_string(),
+                    label: "Admin / full metadata".to_string(),
+                    description:
+                        "Complete server metadata list before user/profile access filtering."
+                            .to_string(),
+                    tool_names: tool_names.clone(),
+                },
+                McpServerToolProfileInfo {
+                    key: "agent_default".to_string(),
+                    label: "Agent default".to_string(),
+                    description: "Default non-admin agent allowlist.".to_string(),
+                    tool_names: tool_names_for_profile(&tools, McpToolProfile::Default),
+                },
+                McpServerToolProfileInfo {
+                    key: CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string(),
+                    label: "Chatos async planner".to_string(),
+                    description: "Narrow allowlist used by Chatos async message planning."
+                        .to_string(),
+                    tool_names: tool_names_for_profile(&tools, McpToolProfile::ChatosAsyncPlanner),
+                },
+            ],
         }
     }
 
@@ -62,4 +79,24 @@ impl TaskRunnerMcpService {
             })
             .collect()
     }
+}
+
+fn tool_names_from_tools(tools: &[Value]) -> Vec<String> {
+    tools.iter().filter_map(tool_name).collect()
+}
+
+fn tool_names_for_profile(tools: &[Value], tool_profile: McpToolProfile) -> Vec<String> {
+    tools
+        .iter()
+        .filter_map(|tool| {
+            let name = tool_name(tool)?;
+            agent_tool_allowed_for_profile(&name, tool_profile).then_some(name)
+        })
+        .collect()
+}
+
+fn tool_name(tool: &Value) -> Option<String> {
+    tool.get("name")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }

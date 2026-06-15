@@ -23,6 +23,7 @@ import { useI18n } from '../i18n/I18nProvider';
 
 type RuntimeSettingsFormValues = {
   task_execution_max_iterations?: number;
+  execution_timeout_seconds?: number;
   tool_result_model_max_chars?: number;
   tool_results_model_total_max_chars?: number;
 };
@@ -106,6 +107,7 @@ export function SettingsPage() {
     }
     form.setFieldsValue({
       task_execution_max_iterations: config.task_execution_max_iterations,
+      execution_timeout_seconds: millisecondsToWholeSeconds(config.execution_timeout_ms),
       tool_result_model_max_chars: config.tool_result_model_max_chars,
       tool_results_model_total_max_chars: config.tool_results_model_total_max_chars,
     });
@@ -114,6 +116,10 @@ export function SettingsPage() {
   function handleRuntimeSettingsSubmit(values: RuntimeSettingsFormValues) {
     updateSystemConfigMutation.mutate({
       task_execution_max_iterations: values.task_execution_max_iterations,
+      execution_timeout_ms:
+        values.execution_timeout_seconds === undefined
+          ? undefined
+          : Math.max(1, Math.round(values.execution_timeout_seconds * 1000)),
       tool_result_model_max_chars: values.tool_result_model_max_chars,
       tool_results_model_total_max_chars: values.tool_results_model_total_max_chars,
     });
@@ -170,8 +176,11 @@ export function SettingsPage() {
               <Descriptions.Item label="Memory Timeout">
                 {config.memory_timeout_ms} ms
               </Descriptions.Item>
-              <Descriptions.Item label="Execution Timeout">
-                {config.execution_timeout_ms} ms
+              <Descriptions.Item label={t('settings.defaultExecutionTimeout')}>
+                {formatSecondsFromMs(config.default_execution_timeout_ms)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('settings.currentExecutionTimeout')}>
+                {formatSecondsFromMs(config.execution_timeout_ms)}
               </Descriptions.Item>
               <Descriptions.Item label="Scheduler Poll Interval">
                 {config.scheduler_poll_interval_ms} ms
@@ -207,6 +216,9 @@ export function SettingsPage() {
                   {t('settings.roundLimitHelp')}
                 </Typography.Text>
                 <Typography.Text type="secondary">
+                  {t('settings.executionTimeoutHelp')}
+                </Typography.Text>
+                <Typography.Text type="secondary">
                   {t('settings.toolResultBudgetHelp')}
                 </Typography.Text>
               </Space>
@@ -227,6 +239,18 @@ export function SettingsPage() {
                     ]}
                   >
                     <InputNumber min={1} style={{ width: 220 }} />
+                  </Form.Item>
+                  <Form.Item
+                    name="execution_timeout_seconds"
+                    label={t('settings.currentExecutionTimeout')}
+                    rules={[
+                      {
+                        required: true,
+                        message: t('settings.executionTimeoutRequired'),
+                      },
+                    ]}
+                  >
+                    <InputNumber min={1} precision={0} style={{ width: 220 }} />
                   </Form.Item>
                   <Form.Item
                     name="tool_result_model_max_chars"
@@ -537,4 +561,13 @@ function errorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function millisecondsToWholeSeconds(value: number): number {
+  return Math.max(1, Math.ceil(value / 1000));
+}
+
+function formatSecondsFromMs(value: number): string {
+  const seconds = value / 1000;
+  return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} s`;
 }

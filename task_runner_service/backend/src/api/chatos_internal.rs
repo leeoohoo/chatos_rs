@@ -1,16 +1,16 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     services::{
-        ChatosMessageRunDetail, ChatosMessageTaskDetail, ChatosMessageTaskRun,
-        ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
+        ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
+        ChatosMessageTaskRun, ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
     },
     state::AppState,
 };
@@ -181,9 +181,16 @@ async fn get_chatos_message_run(
         .list_run_events(run.id.as_str())
         .await
         .map_err(InternalApiError::internal)?;
+    let model_config = state
+        .model_config_service
+        .get_model_config(run.model_config_id.as_str())
+        .await
+        .map_err(InternalApiError::internal)?
+        .map(ChatosMessageModelConfigSummary::from);
     Ok(Json(ChatosMessageRunDetail {
         task,
         run: ChatosMessageTaskRun::from(run),
+        model_config,
         events: events
             .into_iter()
             .map(ChatosMessageTaskRunEvent::from)

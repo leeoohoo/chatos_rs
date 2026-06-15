@@ -8,6 +8,7 @@ impl SqliteStore {
             "SELECT
                 id,
                 task_execution_max_iterations,
+                execution_timeout_ms,
                 tool_result_model_max_chars,
                 tool_results_model_total_max_chars,
                 created_at,
@@ -30,13 +31,15 @@ impl SqliteStore {
             "INSERT INTO runtime_settings (
                 id,
                 task_execution_max_iterations,
+                execution_timeout_ms,
                 tool_result_model_max_chars,
                 tool_results_model_total_max_chars,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_execution_max_iterations = excluded.task_execution_max_iterations,
+                execution_timeout_ms = excluded.execution_timeout_ms,
                 tool_result_model_max_chars = excluded.tool_result_model_max_chars,
                 tool_results_model_total_max_chars = excluded.tool_results_model_total_max_chars,
                 created_at = excluded.created_at,
@@ -44,6 +47,7 @@ impl SqliteStore {
         )
         .bind(&settings.id)
         .bind(settings.task_execution_max_iterations as i64)
+        .bind(settings.execution_timeout_ms.map(|value| value as i64))
         .bind(settings.tool_result_model_max_chars as i64)
         .bind(settings.tool_results_model_total_max_chars as i64)
         .bind(&settings.created_at)

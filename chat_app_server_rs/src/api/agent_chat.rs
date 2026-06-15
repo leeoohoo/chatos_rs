@@ -702,7 +702,11 @@ fn build_task_runner_callback_assistant_message_with_contact(
     }
     message.message_mode = Some("task_runner_callback".to_string());
     message.message_source = Some("task_runner_service".to_string());
+    let source_turn_id = normalize_callback_value(payload.source_turn_id.as_deref());
     let metadata = ensure_message_metadata_object(&mut message);
+    if let Some(source_turn_id) = source_turn_id.as_deref() {
+        upsert_string(metadata, "conversation_turn_id", source_turn_id);
+    }
     let task_runner_meta = ensure_object_field(metadata, "task_runner_async");
     upsert_string(task_runner_meta, "mode", "contact_async");
     upsert_string(task_runner_meta, "message_kind", "task_terminal_update");
@@ -722,8 +726,8 @@ fn build_task_runner_callback_assistant_message_with_contact(
     upsert_string(task_runner_meta, "task_id", payload.task_id.as_str());
     upsert_string(task_runner_meta, "status", payload.status.as_str());
     upsert_string(task_runner_meta, "task_title", payload.task_title.as_str());
-    if let Some(source_turn_id) = normalize_callback_value(payload.source_turn_id.as_deref()) {
-        upsert_string(task_runner_meta, "source_turn_id", source_turn_id.as_str());
+    if let Some(source_turn_id) = source_turn_id.as_deref() {
+        upsert_string(task_runner_meta, "source_turn_id", source_turn_id);
     }
     if let Some(source_user_message_id) =
         normalize_callback_value(payload.source_user_message_id.as_deref())
@@ -883,6 +887,23 @@ mod tests {
                 .and_then(|value| value.get("mode"))
                 .and_then(|value| value.as_str()),
             Some("contact_async")
+        );
+        assert_eq!(
+            message
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("conversation_turn_id"))
+                .and_then(|value| value.as_str()),
+            Some("turn-1")
+        );
+        assert_eq!(
+            message
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("task_runner_async"))
+                .and_then(|value| value.get("source_turn_id"))
+                .and_then(|value| value.as_str()),
+            Some("turn-1")
         );
         assert_eq!(
             message

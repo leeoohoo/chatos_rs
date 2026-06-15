@@ -109,4 +109,72 @@ describe('MessageList initial scroll', () => {
 
     expect(scrollContainer.scrollTop).toBe(640);
   });
+
+  it('keeps the list pinned to the bottom when a new message arrives', () => {
+    const { container, rerender } = render(
+      <I18nProvider>
+        <MessageList
+          sessionId="session-1"
+          messages={[]}
+          isLoading
+          hasMore={false}
+        />
+      </I18nProvider>,
+    );
+
+    const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLDivElement;
+    expect(scrollContainer).toBeTruthy();
+
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 640,
+    });
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 420,
+    });
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+
+    rerender(
+      <I18nProvider>
+        <MessageList
+          sessionId="session-1"
+          messages={[
+            buildMessage('user-1', 'user', 'hello'),
+            buildMessage('assistant-1', 'assistant', 'hi'),
+          ]}
+          isLoading={false}
+          hasMore={false}
+        />
+      </I18nProvider>,
+    );
+
+    expect(scrollContainer.scrollTop).toBe(640);
+
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 820,
+    });
+
+    rerender(
+      <I18nProvider>
+        <MessageList
+          sessionId="session-1"
+          messages={[
+            buildMessage('user-1', 'user', 'hello'),
+            buildMessage('assistant-1', 'assistant', 'hi'),
+            buildMessage('assistant-2', 'assistant', 'task callback complete'),
+          ]}
+          isLoading={false}
+          hasMore={false}
+        />
+      </I18nProvider>,
+    );
+
+    expect(scrollContainer.scrollTop).toBe(820);
+  });
 });

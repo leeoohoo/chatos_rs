@@ -1,10 +1,10 @@
 use chatos_ai_runtime::{MemoryContextComposer, MemoryScope, TaskRuntimeConfig};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{info, warn};
 
 use crate::models::{
-    now_rfc3339, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskStatus,
+    TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatus,
+    now_rfc3339,
 };
 
 use super::RunService;
@@ -138,6 +138,10 @@ impl RunService {
             .with_builtin_prompt_mode(mcp_config.builtin_prompt_mode);
         if !mcp_config.enabled {
             runtime_config.with_mcp_init_mode(chatos_ai_runtime::TaskMcpInitMode::Disabled)
+        } else if !mcp_config.external_mcp_config_ids.is_empty()
+            && mcp_config.init_mode == chatos_ai_runtime::TaskMcpInitMode::BuiltinOnly
+        {
+            runtime_config.with_mcp_init_mode(chatos_ai_runtime::TaskMcpInitMode::Full)
         } else {
             runtime_config.with_mcp_init_mode(mcp_config.init_mode)
         }

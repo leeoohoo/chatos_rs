@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::McpServerInfo;
+use crate::models::{McpServerInfo, McpServerToolProfileInfo};
 
 use super::chatos_async_planner::enrich_tool_schemas_for_async_planner;
 use super::support::{
@@ -13,8 +13,8 @@ use super::support::{
 };
 use super::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, McpRequestContext, McpToolProfile,
-    TaskRunnerMcpService, TASK_RUNNER_MCP_ENDPOINT_PATH, TASK_RUNNER_MCP_SERVER_NAME,
-    TASK_RUNNER_MCP_STDIO_ARGS, TASK_RUNNER_MCP_STDIO_COMMAND,
+    TaskRunnerMcpService, CHATOS_ASYNC_PLANNER_TOOL_PROFILE, TASK_RUNNER_MCP_ENDPOINT_PATH,
+    TASK_RUNNER_MCP_SERVER_NAME, TASK_RUNNER_MCP_STDIO_ARGS, TASK_RUNNER_MCP_STDIO_COMMAND,
 };
 
 mod dispatch;

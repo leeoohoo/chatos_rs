@@ -715,26 +715,29 @@ export function RunsPage() {
             <div>
               <Typography.Title level={5}>{t('runs.tools.plan')}</Typography.Title>
               {selectedToolCalls.length ? (
-                <List
-                  bordered
-                  dataSource={selectedToolCalls}
-                  renderItem={(toolCall) => (
-                    <List.Item>
-                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                        <Space wrap>
-                          <Tag color="processing">{toolCall.name}</Tag>
-                          <Typography.Text code>
-                            {toolCall.callId || 'no-call-id'}
-                          </Typography.Text>
-                        </Space>
+                <Collapse
+                  ghost
+                  items={selectedToolCalls.map((toolCall, index) => ({
+                    key: `${toolCall.callId || toolCall.name}-${index}`,
+                    label: (
+                      <Space wrap>
+                        <Tag color="processing">{toolCall.name}</Tag>
+                        <Typography.Text code>
+                          {toolCall.callId || 'no-call-id'}
+                        </Typography.Text>
                         {toolCall.arguments ? (
-                          <CodeParagraph value={toolCall.arguments} />
-                        ) : (
-                          <Typography.Text type="secondary">{t('runs.tools.noArguments')}</Typography.Text>
-                        )}
+                          <Typography.Text type="secondary">
+                            {describeStructuredValueSummary(toolCall.arguments, t('runs.viewPayload'))}
+                          </Typography.Text>
+                        ) : null}
                       </Space>
-                    </List.Item>
-                  )}
+                    ),
+                    children: toolCall.arguments ? (
+                      <CodeParagraph value={toolCall.arguments} />
+                    ) : (
+                      <Typography.Text type="secondary">{t('runs.tools.noArguments')}</Typography.Text>
+                    ),
+                  }))}
                 />
               ) : (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('runs.tools.noCalls')} />

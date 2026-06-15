@@ -1,8 +1,9 @@
 use sqlx::{sqlite::SqliteRow, Row};
 
 use crate::models::{
-    ModelConfigRecord, RemoteServerRecord, RunSummaryRecord, RuntimeSettingsRecord, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord, UiPromptRecord, UserRecord,
+    ExternalMcpConfigRecord, ModelConfigRecord, RemoteServerRecord, RunSummaryRecord,
+    RuntimeSettingsRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord,
+    UiPromptRecord, UserRecord,
 };
 
 use super::codec::{
@@ -104,6 +105,9 @@ pub(super) fn runtime_settings_from_row(row: &SqliteRow) -> Result<RuntimeSettin
     Ok(RuntimeSettingsRecord {
         id: row.get("id"),
         task_execution_max_iterations: row.get::<i64, _>("task_execution_max_iterations") as usize,
+        execution_timeout_ms: row
+            .get::<Option<i64>, _>("execution_timeout_ms")
+            .map(|value| value as u64),
         tool_result_model_max_chars: row.get::<i64, _>("tool_result_model_max_chars") as usize,
         tool_results_model_total_max_chars: row.get::<i64, _>("tool_results_model_total_max_chars")
             as usize,
@@ -134,6 +138,28 @@ pub(super) fn remote_server_from_row(row: &SqliteRow) -> Result<RemoteServerReco
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
         task_id: row.get("task_id"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    })
+}
+
+pub(super) fn external_mcp_config_from_row(
+    row: &SqliteRow,
+) -> Result<ExternalMcpConfigRecord, String> {
+    Ok(ExternalMcpConfigRecord {
+        id: row.get("id"),
+        name: row.get("name"),
+        transport: row.get("transport"),
+        command: row.get("command"),
+        args: decode_json(row.get("args_json"))?,
+        url: row.get("url"),
+        headers: decode_json(row.get("headers_json"))?,
+        env: decode_json(row.get("env_json"))?,
+        cwd: row.get("cwd"),
+        enabled: int_to_bool(row.get::<i64, _>("enabled")),
+        creator_user_id: row.get("creator_user_id"),
+        creator_username: row.get("creator_username"),
+        creator_display_name: row.get("creator_display_name"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })

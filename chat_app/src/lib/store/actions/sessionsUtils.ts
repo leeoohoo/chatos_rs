@@ -21,7 +21,7 @@ import type {
 } from '../types';
 
 export const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
-export const SESSION_MESSAGES_INITIAL_PAGE_SIZE = 20;
+export const SESSION_MESSAGES_INITIAL_PAGE_SIZE = 5;
 
 export const createPerfMeasureStopper = (measureName: string): (() => number | null) => {
   if (typeof performance === 'undefined' || typeof performance.mark !== 'function' || typeof performance.measure !== 'function') {
@@ -246,6 +246,15 @@ const normalizeSnapshotCursor = (value: unknown): string => (
 
 const isOffsetSnapshotCursor = (value: string): boolean => /^offset:\d+$/i.test(value);
 
+const isTaskRunnerCallbackSnapshotMessage = (message: Message): boolean => {
+  const messageMode = normalizeSnapshotCursor(message.messageMode);
+  if (messageMode === 'task_runner_callback') {
+    return true;
+  }
+
+  return normalizeSnapshotCursor(message.metadata?.task_runner_async?.message_kind) === 'task_terminal_update';
+};
+
 const countCompactHistoryUnits = (messages: Message[]): number => {
   let units = 0;
   for (let index = 0; index < messages.length; index += 1) {
@@ -255,6 +264,9 @@ const countCompactHistoryUnits = (messages: Message[]): number => {
     }
     if (message.role === 'user') {
       units += 1;
+      continue;
+    }
+    if (isTaskRunnerCallbackSnapshotMessage(message)) {
       continue;
     }
     const linkedUserMessageId = normalizeSnapshotCursor(message.metadata?.historyFinalForUserMessageId);
@@ -269,6 +281,7 @@ const readMessageTurnCursor = (message: Message): string => (
   normalizeSnapshotCursor(
     message?.metadata?.conversation_turn_id
     || message?.metadata?.historyProcess?.turnId
+    || message?.metadata?.task_runner_async?.source_turn_id
     || message?.metadata?.historyFinalForTurnId
     || message?.id,
   )
@@ -312,6 +325,8 @@ export const trimCompactHistorySnapshotToRecent = (
     let contributesUnit = false;
     if (message.role === 'user') {
       contributesUnit = true;
+    } else if (isTaskRunnerCallbackSnapshotMessage(message)) {
+      contributesUnit = false;
     } else {
       const linkedUserMessageId = normalizeSnapshotCursor(message.metadata?.historyFinalForUserMessageId);
       contributesUnit = !linkedUserMessageId;

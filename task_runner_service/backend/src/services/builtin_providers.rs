@@ -5,16 +5,16 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use chatos_builtin_tools::{
-    build_shared_builtin_tool_service, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
+    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, REVIEW_TIMEOUT_MS_DEFAULT,
     RemoteConnectionControllerOptions, RemoteConnectionControllerService,
     RemoteConnectionControllerStoreRef, SharedBuiltinToolService, TaskManagerOptions,
     TaskManagerService, TaskManagerStoreRef, TaskStreamChunkCallback, TerminalControllerOptions,
-    TerminalControllerService, TerminalControllerStoreRef, UiPrompterOptions, UiPrompterService,
-    UiPrompterStoreRef, REVIEW_TIMEOUT_MS_DEFAULT, UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    TerminalControllerService, TerminalControllerStoreRef, UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    UiPrompterOptions, UiPrompterService, UiPrompterStoreRef, build_shared_builtin_tool_service,
 };
 use chatos_mcp_runtime::{
-    builtin_kind_by_any, BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer,
-    ToolCallContext, ToolStreamChunkCallback,
+    BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer, ToolCallContext,
+    ToolStreamChunkCallback, builtin_kind_by_any,
 };
 
 use crate::notepad_store::TaskRunnerNotepadStore;
@@ -22,8 +22,8 @@ use crate::remote_server_runtime::TaskRunnerRemoteConnectionStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
 use crate::ui_prompt_service::UiPromptService;
 
-use super::task_manager_bridge::TaskRunnerTaskManagerStore;
 use super::TaskService;
+use super::task_manager_bridge::TaskRunnerTaskManagerStore;
 
 mod builders;
 mod provider;
