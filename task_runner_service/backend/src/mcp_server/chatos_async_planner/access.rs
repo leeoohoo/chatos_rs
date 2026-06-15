@@ -1,0 +1,15 @@
+pub(in crate::mcp_server) fn planner_agent_tool_allowed(name: &str) -> bool {
+    matches!(
+        name,
+        "list_tasks"
+            | "get_task"
+            | "get_task_stats"
+            | "create_task"
+            | "list_mcp_builtin_catalog"
+            | "create_tasks_with_prerequisites"
+            | "update_task"
+            | "set_task_prerequisites"
+            | "wait_for_task_completion"
+            | "get_task_dependency_graph"
+    )
+}

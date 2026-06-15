@@ -1,8 +1,6 @@
 use memory_engine_sdk::{
     SdkComposeContextRequest, SdkCountThreadRecordsRequest, SdkListThreadRecordsRequest,
-    SdkUpsertThreadRequest,
 };
-use serde_json::json;
 
 use crate::models::{
     now_rfc3339, TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
@@ -12,7 +10,7 @@ use crate::models::{
 use super::memory_options::{
     sanitize_task_memory_context_policy, sanitize_task_memory_records_options,
 };
-use super::status_display::TaskStatusExt;
+use super::task_threads::ensure_task_thread_for_config;
 use super::TaskService;
 
 impl TaskService {
@@ -170,33 +168,6 @@ impl TaskService {
     }
 
     pub(super) async fn ensure_task_thread(&self, task: &TaskRecord) -> Result<(), String> {
-        let Some(client) = self.config.memory_client()? else {
-            return Ok(());
-        };
-        client
-            .upsert_thread(
-                &task.memory_thread_id,
-                &SdkUpsertThreadRequest {
-                    tenant_id: task.tenant_id.clone(),
-                    subject_id: task.subject_id.clone(),
-                    thread_type: "task".to_string(),
-                    external_thread_id: Some(task.id.clone()),
-                    title: Some(task.title.clone()),
-                    labels: Some(vec![
-                        "task_runner".to_string(),
-                        format!("task_status:{}", task.status.status_string()),
-                    ]),
-                    metadata: Some(json!({
-                        "task_id": task.id,
-                        "service": "task_runner_service",
-                    })),
-                    status: Some("active".to_string()),
-                    created_at: None,
-                    updated_at: None,
-                    archived_at: None,
-                },
-            )
-            .await
-            .map(|_| ())
+        ensure_task_thread_for_config(&self.config, task).await
     }
 }

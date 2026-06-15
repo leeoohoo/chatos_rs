@@ -1,0 +1,211 @@
+use chatos_builtin_tools::{UiPromptPayload, UiPromptResponseSubmission};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+use super::{default_true, now_rfc3339};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRunStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Blocked,
+}
+
+impl Default for TaskRunStatus {
+    fn default() -> Self {
+        Self::Queued
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiPromptStatus {
+    Pending,
+    Submitted,
+    Cancelled,
+    TimedOut,
+    Failed,
+}
+
+impl Default for UiPromptStatus {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunRecord {
+    pub id: String,
+    pub task_id: String,
+    pub model_config_id: String,
+    pub memory_thread_id: String,
+    pub status: TaskRunStatus,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub input_snapshot: Value,
+    pub context_snapshot: Option<Value>,
+    pub result_summary: Option<String>,
+    pub error_message: Option<String>,
+    pub usage: Option<Value>,
+    pub report: Option<Value>,
+    pub cancel_requested: bool,
+    pub summary_job_run_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunEventRecord {
+    pub id: String,
+    pub run_id: String,
+    pub event_type: String,
+    pub message: Option<String>,
+    pub payload: Option<Value>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPromptRecord {
+    pub id: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    pub conversation_id: String,
+    pub conversation_turn_id: String,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    pub kind: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default = "default_true")]
+    pub allow_cancel: bool,
+    pub timeout_ms: u64,
+    pub payload: Value,
+    #[serde(default)]
+    pub response: Option<UiPromptResponseSubmission>,
+    pub status: UiPromptStatus,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+impl UiPromptRecord {
+    pub fn from_payload(
+        payload: UiPromptPayload,
+        task_id: Option<String>,
+        run_id: Option<String>,
+        created_at: String,
+        expires_at: Option<String>,
+    ) -> Self {
+        Self {
+            id: payload.prompt_id,
+            task_id,
+            run_id,
+            conversation_id: payload.conversation_id,
+            conversation_turn_id: payload.conversation_turn_id,
+            tool_call_id: payload.tool_call_id,
+            kind: payload.kind,
+            title: payload.title,
+            message: payload.message,
+            allow_cancel: payload.allow_cancel,
+            timeout_ms: payload.timeout_ms,
+            payload: payload.payload,
+            response: None,
+            status: UiPromptStatus::Pending,
+            created_at: created_at.clone(),
+            updated_at: created_at,
+            expires_at,
+        }
+    }
+}
+
+impl TaskRunEventRecord {
+    pub fn new(
+        run_id: impl Into<String>,
+        event_type: impl Into<String>,
+        message: Option<String>,
+        payload: Option<Value>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            run_id: run_id.into(),
+            event_type: event_type.into(),
+            message,
+            payload,
+            created_at: now_rfc3339(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunListFilters {
+    pub task_id: Option<String>,
+    pub status: Option<TaskRunStatus>,
+    pub model_config_id: Option<String>,
+    pub keyword: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PromptListFilters {
+    pub task_id: Option<String>,
+    pub run_id: Option<String>,
+    pub status: Option<UiPromptStatus>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunSummaryRecord {
+    pub id: String,
+    pub task_id: String,
+    pub status: TaskRunStatus,
+    pub model_config_id: String,
+    pub updated_at: String,
+}
+
+impl From<&TaskRunRecord> for RunSummaryRecord {
+    fn from(value: &TaskRunRecord) -> Self {
+        Self {
+            id: value.id.clone(),
+            task_id: value.task_id.clone(),
+            status: value.status,
+            model_config_id: value.model_config_id.clone(),
+            updated_at: value.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiPromptTaskCountRecord {
+    pub task_id: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StartTaskRunRequest {
+    pub model_config_id: Option<String>,
+    pub prompt_override: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SubmitUiPromptRequest {
+    pub values: Option<Value>,
+    pub selection: Option<Value>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CancelUiPromptRequest {
+    pub reason: Option<String>,
+}

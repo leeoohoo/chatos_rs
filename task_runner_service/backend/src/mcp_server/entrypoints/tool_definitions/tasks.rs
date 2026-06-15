@@ -1,0 +1,130 @@
+use super::*;
+
+pub(super) fn task_tool_definitions() -> Vec<Value> {
+    vec![
+        tool_definition(
+            "list_tasks",
+            "List Task Runner tasks with optional status, keyword, tag, schedule, or parent filters.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "enum": task_status_values() },
+                    "keyword": { "type": "string" },
+                    "tag": { "type": "string" },
+                    "model_config_id": { "type": "string" },
+                    "scheduled_only": { "type": "boolean" },
+                    "parent_task_id": { "type": "string" },
+                    "source_run_id": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        tool_definition(
+            "get_task",
+            "Get one Task Runner task by id.",
+            required_object_schema(
+                json!({
+                    "task_id": { "type": "string", "minLength": 1 }
+                }),
+                &["task_id"],
+            ),
+        ),
+        tool_definition(
+            "get_task_stats",
+            "Get aggregate task counts for the Task Runner workspace.",
+            empty_object_schema(),
+        ),
+        tool_definition(
+            "create_task",
+            "Create a new Task Runner task for the current authenticated agent. Ownership and memory scope are assigned automatically by Task Runner.",
+            create_task_schema(),
+        ),
+        tool_definition(
+            "list_mcp_builtin_catalog",
+            "List builtin MCP capabilities that can be enabled for newly created Task Runner tasks, including use cases, capabilities, and current tool names.",
+            empty_object_schema(),
+        ),
+        tool_definition(
+            "create_tasks_with_prerequisites",
+            "Create multiple Task Runner tasks in one call and connect prerequisite edges using temporary client_ref values plus existing prerequisite_task_ids. Use this when new prerequisite tasks do not have real task ids yet.",
+            create_tasks_with_prerequisites_schema(),
+        ),
+        tool_definition(
+            "update_task",
+            "Update an existing Task Runner task.",
+            required_object_schema(
+                json!({
+                    "task_id": { "type": "string", "minLength": 1 },
+                    "patch": update_task_schema()
+                }),
+                &["task_id", "patch"],
+            ),
+        ),
+        tool_definition(
+            "set_task_prerequisites",
+            "Replace the direct prerequisite task ids for one existing Task Runner task.",
+            required_object_schema(
+                json!({
+                    "task_id": { "type": "string", "minLength": 1 },
+                    "prerequisite_task_ids": prerequisite_task_ids_schema()
+                }),
+                &["task_id", "prerequisite_task_ids"],
+            ),
+        ),
+        tool_definition(
+            "wait_for_task_completion",
+            "Use after the requested Task Runner tasks have been created or adjusted. It confirms that the arranged tasks should continue through Task Runner's normal background execution flow.",
+            empty_object_schema(),
+        ),
+        tool_definition(
+            "get_task_dependency_graph",
+            "Get direct and transitive prerequisite tasks for one Task Runner task.",
+            required_object_schema(
+                json!({
+                    "task_id": { "type": "string", "minLength": 1 }
+                }),
+                &["task_id"],
+            ),
+        ),
+        tool_definition(
+            "delete_task",
+            "Delete a Task Runner task by id.",
+            required_object_schema(
+                json!({
+                    "task_id": { "type": "string", "minLength": 1 }
+                }),
+                &["task_id"],
+            ),
+        ),
+        tool_definition(
+            "batch_update_task_status",
+            "Update the status of multiple Task Runner tasks in one call.",
+            required_object_schema(
+                json!({
+                    "task_ids": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "minItems": 1
+                    },
+                    "status": { "type": "string", "enum": task_status_values() }
+                }),
+                &["task_ids", "status"],
+            ),
+        ),
+        tool_definition(
+            "batch_delete_tasks",
+            "Delete multiple Task Runner tasks by id.",
+            required_object_schema(
+                json!({
+                    "task_ids": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "minItems": 1
+                    }
+                }),
+                &["task_ids"],
+            ),
+        ),
+    ]
+}

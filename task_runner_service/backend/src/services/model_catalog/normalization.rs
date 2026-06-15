@@ -1,0 +1,63 @@
+use super::*;
+
+pub(in crate::services) fn normalize_model_provider_input(
+    provider: &str,
+) -> Result<String, String> {
+    let raw = provider.trim();
+    if raw.is_empty() {
+        return Err("provider 为必填项".to_string());
+    }
+    let normalized = normalize_provider(raw);
+    let provider = match normalized.as_str() {
+        "gpt" | "openai_compatible" => "openai",
+        "deepseek" => "deepseek",
+        "kimi" => "kimik2",
+        "custom_gateway" => "openai",
+        "kiminik2" => "kimik2",
+        other => other,
+    };
+    match provider {
+        "openai" | "deepseek" | "kimik2" => Ok(provider.to_string()),
+        _ => Err("provider 仅支持 openai / deepseek / kimik2".to_string()),
+    }
+}
+
+pub(in crate::services) fn normalize_model_thinking_level_input(
+    provider: &str,
+    level: Option<String>,
+) -> Result<Option<String>, String> {
+    let level = level
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(level) = level else {
+        return Ok(None);
+    };
+    normalize_thinking_level(provider, Some(level.as_str()))
+        .map_err(|_| "思考等级仅支持 none/auto/minimal/low/medium/high/xhigh/max".to_string())
+}
+
+pub(in crate::services) fn normalize_model_base_url_input(
+    provider: &str,
+    base_url: Option<String>,
+) -> String {
+    base_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_base_url_for_provider(provider, "https://api.openai.com/v1"))
+        .trim_end_matches('/')
+        .to_string()
+}
+
+pub(in crate::services) fn normalize_model_config_record(
+    mut record: ModelConfigRecord,
+) -> Result<ModelConfigRecord, String> {
+    let provider = normalize_model_provider_input(&record.provider)?;
+    record.thinking_level =
+        normalize_model_thinking_level_input(provider.as_str(), record.thinking_level.clone())?;
+    record.base_url = normalize_model_base_url_input(provider.as_str(), Some(record.base_url));
+    record.provider = provider;
+    record.usage_scenario = normalized_optional(record.usage_scenario);
+    record.instructions = normalized_optional(record.instructions);
+    record.request_cwd = normalized_optional(record.request_cwd);
+    Ok(record)
+}
