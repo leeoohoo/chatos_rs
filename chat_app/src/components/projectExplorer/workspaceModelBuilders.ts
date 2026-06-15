@@ -201,6 +201,7 @@ export const buildWorkspaceViewModelParams = (
     saveCustomToolchain: runState.saveCustomToolchain,
     setEnvVarsDraft: runState.setEnvVarsDraft,
     saveEnvVarsDraft: runState.saveEnvVarsDraft,
+    setTerminalUiEnabled: runState.setTerminalUiEnabled,
     starting: runState.starting,
     stopping: runState.stopping,
     restarting: runState.restarting,

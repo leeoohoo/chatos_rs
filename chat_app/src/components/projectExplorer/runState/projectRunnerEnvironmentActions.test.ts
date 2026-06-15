@@ -6,6 +6,7 @@ import {
   resolveCustomToolchainEnvironment,
   resolveEnvVarsEnvironment,
   resolveSelectedToolchainEnvironment,
+  resolveTerminalUiEnvironment,
 } from './projectRunnerEnvironmentActions';
 
 const baseEnvironment: ProjectRunEnvironment = {
@@ -20,6 +21,7 @@ const baseEnvironment: ProjectRunEnvironment = {
   envVars: {
     APP_ENV: 'dev',
   },
+  terminalUiEnabled: true,
 };
 
 describe('projectRunnerEnvironmentActions', () => {
@@ -49,7 +51,7 @@ describe('projectRunnerEnvironmentActions', () => {
     expect(resolved.nextCustomToolchains).toEqual({
       python: {
         kind: 'python',
-        label: '手动指定: bin/python',
+        label: 'Manual: bin/python',
         path: '/venv/bin/python',
       },
     });
@@ -61,7 +63,7 @@ describe('projectRunnerEnvironmentActions', () => {
       customToolchains: {
         python: {
           kind: 'python',
-          label: '手动指定: bin/python',
+          label: 'Manual: bin/python',
           path: '/venv/bin/python',
         },
       },
@@ -98,6 +100,7 @@ describe('projectRunnerEnvironmentActions', () => {
         },
       },
       envVars: { APP_ENV: 'dev' },
+      terminalUiEnabled: false,
     })).toEqual({
       selected_toolchains: { python: 'python:/venv/bin/python' },
       custom_toolchains: {
@@ -108,6 +111,17 @@ describe('projectRunnerEnvironmentActions', () => {
         },
       },
       env_vars: { APP_ENV: 'dev' },
+      terminal_ui_enabled: false,
+    });
+  });
+
+  it('applies terminal visibility updates optimistically', () => {
+    expect(resolveTerminalUiEnvironment({
+      environment: baseEnvironment,
+      terminalUiEnabled: false,
+    })).toEqual({
+      ...baseEnvironment,
+      terminalUiEnabled: false,
     });
   });
 });

@@ -15,6 +15,7 @@ import {
   resolveCustomToolchainEnvironment,
   resolveEnvVarsEnvironment,
   resolveSelectedToolchainEnvironment,
+  resolveTerminalUiEnvironment,
 } from './projectRunnerEnvironmentActions';
 
 interface UseProjectRunnerEnvironmentMutationsOptions {
@@ -48,6 +49,7 @@ export const useProjectRunnerEnvironmentMutations = ({
     nextSelectedToolchains: Record<string, string>,
     nextCustomToolchains: Record<string, ProjectRunCustomToolchain>,
     nextEnvVars: Record<string, string>,
+    nextTerminalUiEnabled: boolean,
   ) => {
     if (!enabled || !project?.id) {
       return;
@@ -57,6 +59,7 @@ export const useProjectRunnerEnvironmentMutations = ({
         selectedToolchains: nextSelectedToolchains,
         customToolchains: nextCustomToolchains,
         envVars: nextEnvVars,
+        terminalUiEnabled: nextTerminalUiEnabled,
       }),
     });
     const normalized = normalizeProjectRunEnvironment(raw);
@@ -88,6 +91,7 @@ export const useProjectRunnerEnvironmentMutations = ({
         nextSelectedToolchains,
         runEnvironment?.customToolchains || {},
         runEnvironment?.envVars || {},
+        runEnvironment?.terminalUiEnabled ?? true,
       );
     } catch (error) {
       setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.updateEnvironmentFailed'));
@@ -101,6 +105,7 @@ export const useProjectRunnerEnvironmentMutations = ({
     runEnvironment?.customToolchains,
     runEnvironment?.envVars,
     runEnvironment?.selectedToolchains,
+    runEnvironment?.terminalUiEnabled,
     setRunEnvironment,
     setRunEnvironmentError,
     t,
@@ -126,6 +131,7 @@ export const useProjectRunnerEnvironmentMutations = ({
         nextSelection.nextSelectedToolchains,
         nextSelection.nextCustomToolchains,
         runEnvironment?.envVars || {},
+        runEnvironment?.terminalUiEnabled ?? true,
       );
     } catch (error) {
       setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.saveCustomToolchainFailed'));
@@ -159,6 +165,7 @@ export const useProjectRunnerEnvironmentMutations = ({
         runEnvironment?.selectedToolchains || {},
         runEnvironment?.customToolchains || {},
         nextEnvState.nextEnvVars,
+        runEnvironment?.terminalUiEnabled ?? true,
       );
     } catch (error) {
       setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.saveEnvVarsFailed'));
@@ -176,10 +183,45 @@ export const useProjectRunnerEnvironmentMutations = ({
     t,
   ]);
 
+  const setTerminalUiEnabled = useCallback(async (terminalUiEnabled: boolean) => {
+    if (!enabled || !project?.id) {
+      return;
+    }
+
+    setRunEnvironment((prev) => resolveTerminalUiEnvironment({
+      environment: prev,
+      terminalUiEnabled,
+    }));
+
+    try {
+      await persistEnvironment(
+        runEnvironment?.selectedToolchains || {},
+        runEnvironment?.customToolchains || {},
+        runEnvironment?.envVars || {},
+        terminalUiEnabled,
+      );
+    } catch (error) {
+      setRunEnvironmentError(error instanceof Error ? error.message : t('runSettings.error.updateEnvironmentFailed'));
+      await loadRunEnvironment();
+    }
+  }, [
+    enabled,
+    loadRunEnvironment,
+    persistEnvironment,
+    project?.id,
+    runEnvironment?.customToolchains,
+    runEnvironment?.envVars,
+    runEnvironment?.selectedToolchains,
+    setRunEnvironment,
+    setRunEnvironmentError,
+    t,
+  ]);
+
   return {
     persistEnvironment,
     updateSelectedToolchain,
     saveCustomToolchain,
     saveEnvVarsDraft,
+    setTerminalUiEnabled,
   };
 };

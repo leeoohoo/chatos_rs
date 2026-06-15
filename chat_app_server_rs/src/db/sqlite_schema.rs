@@ -250,6 +250,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             selected_toolchains_json TEXT NOT NULL DEFAULT '{}',
             custom_toolchains_json TEXT NOT NULL DEFAULT '{}',
             env_vars_json TEXT NOT NULL DEFAULT '{}',
+            terminal_ui_enabled INTEGER NOT NULL DEFAULT 1,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
         r#"CREATE TABLE IF NOT EXISTS remote_connections (
@@ -487,6 +488,14 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     ensure_column(pool, "task_manager_tasks", "last_outcome_at", "TEXT")
         .await
         .ok();
+    ensure_column(
+        pool,
+        "project_run_environment_settings",
+        "terminal_ui_enabled",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
+    .await
+    .ok();
     rename_column_if_needed(pool, "ui_prompt_requests", "session_id", "conversation_id")
         .await
         .ok();

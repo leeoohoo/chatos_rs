@@ -8,6 +8,7 @@ interface UseSessionListBootstrapOptions {
   loadTerminals: (options?: { force?: boolean }) => Promise<unknown> | unknown;
   loadRemoteConnections: () => Promise<unknown> | unknown;
   isCollapsed: boolean;
+  terminalsEnabled: boolean;
   terminalsExpanded: boolean;
   remoteExpanded: boolean;
 }
@@ -20,6 +21,7 @@ export const useSessionListBootstrap = ({
   loadTerminals,
   loadRemoteConnections,
   isCollapsed,
+  terminalsEnabled,
   terminalsExpanded,
   remoteExpanded,
 }: UseSessionListBootstrapOptions): void => {
@@ -59,10 +61,11 @@ export const useSessionListBootstrap = ({
   }, [loadContacts]);
 
   useEffect(() => {
+    if (!terminalsEnabled) return;
     if (didLoadTerminalsRef.current) return;
     didLoadTerminalsRef.current = true;
     void loadTerminals();
-  }, [loadTerminals]);
+  }, [loadTerminals, terminalsEnabled]);
 
   useEffect(() => {
     if (didLoadRemoteRef.current) return;
@@ -71,6 +74,7 @@ export const useSessionListBootstrap = ({
   }, [loadRemoteConnections]);
 
   void isCollapsed;
+  void terminalsEnabled;
   void terminalsExpanded;
   void remoteExpanded;
 };

@@ -157,6 +157,7 @@ export const useProjectExplorerWorkspaceView = ({
     envPreview: run.envPreview,
     environmentHints: run.environmentHints,
     envVarsPlaceholder: run.envVarsPlaceholder,
+    terminalUiEnabled: run.runEnvironment?.terminalUiEnabled ?? true,
     selectedRunTargetId: run.selectedRunTargetId,
     starting: run.starting,
     stopping: run.stopping,
@@ -198,6 +199,9 @@ export const useProjectExplorerWorkspaceView = ({
     onEnvVarsDraftChange: run.setEnvVarsDraft,
     onSaveEnvVarsDraft: () => {
       void run.saveEnvVarsDraft();
+    },
+    onTerminalUiEnabledChange: (enabled: boolean) => {
+      void run.setTerminalUiEnabled(enabled);
     },
     onRunnerStart: run.handleRunnerStart,
     onRunnerStop: run.handleRunnerStop,

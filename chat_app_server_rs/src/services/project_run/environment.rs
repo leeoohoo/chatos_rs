@@ -75,6 +75,10 @@ fn build_environment_snapshot(
             .as_ref()
             .map(|value| value.env_vars.clone())
             .unwrap_or_default(),
+        terminal_ui_enabled: selection
+            .as_ref()
+            .map(|value| value.terminal_ui_enabled)
+            .unwrap_or(true),
         updated_at: selection.map(|value| value.updated_at),
     })
 }
@@ -123,6 +127,7 @@ pub(crate) async fn save_environment_selection(
     selected_toolchains: HashMap<String, String>,
     custom_toolchains: HashMap<String, ProjectRunCustomToolchain>,
     env_vars: HashMap<String, String>,
+    terminal_ui_enabled: bool,
 ) -> Result<ProjectRunEnvironmentSelection, String> {
     let normalized_custom_toolchains = custom_toolchains
         .into_iter()
@@ -182,6 +187,7 @@ pub(crate) async fn save_environment_selection(
         selected_toolchains: normalized_selected_toolchains,
         custom_toolchains: normalized_custom_toolchains,
         env_vars: normalized_env_vars,
+        terminal_ui_enabled,
         updated_at: now_rfc3339(),
     };
     let saved = project_run_environment_settings::upsert(&selection).await?;

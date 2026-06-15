@@ -27,6 +27,7 @@ export interface WorkspaceProjectFacade {
       selected_toolchains?: Record<string, string>;
       custom_toolchains?: Record<string, { kind?: string; label?: string; path?: string }>;
       env_vars?: Record<string, string>;
+      terminal_ui_enabled?: boolean;
     },
   ): Promise<ProjectRunEnvironmentResponse>;
   executeProjectRun(

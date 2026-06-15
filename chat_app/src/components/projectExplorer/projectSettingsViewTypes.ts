@@ -30,6 +30,7 @@ export interface ProjectRunSettingsViewProps {
   envPreview: string;
   environmentHints: string[];
   envVarsPlaceholder: string;
+  terminalUiEnabled: boolean;
   selectedRunTargetId: string | null;
   starting: boolean;
   stopping: boolean;
@@ -52,6 +53,7 @@ export interface ProjectRunSettingsViewProps {
   onSaveCustomToolchain: (kind: string) => void;
   onEnvVarsDraftChange: (value: string) => void;
   onSaveEnvVarsDraft: () => void;
+  onTerminalUiEnabledChange: (enabled: boolean) => void;
   onRunnerStart: () => void;
   onRunnerStop: () => void;
   onRunnerRestart: () => void;

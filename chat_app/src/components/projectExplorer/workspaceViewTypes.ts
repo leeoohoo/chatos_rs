@@ -106,6 +106,7 @@ export interface ProjectExplorerWorkspaceRunState {
   saveCustomToolchain: (kind: string) => Promise<void> | void;
   setEnvVarsDraft: (value: string) => void;
   saveEnvVarsDraft: () => Promise<void> | void;
+  setTerminalUiEnabled: (enabled: boolean) => Promise<void> | void;
   starting: boolean;
   stopping: boolean;
   restarting: boolean;

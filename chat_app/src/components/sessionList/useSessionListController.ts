@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
@@ -25,6 +25,7 @@ import { useContactsRealtime } from '../../lib/realtime/useContactsRealtime';
 import { useProjectsRealtime } from '../../lib/realtime/useProjectsRealtime';
 import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnectionsRealtime';
 import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
+import { useProjectTerminalVisibility } from './useProjectTerminalVisibility';
 import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 import type { ContactItem } from './types';
 
@@ -300,6 +301,26 @@ export const useSessionListController = ({
     onFocusRemote: sessionListActions.focusRemotePanel,
   });
 
+  const terminalVisibility = useProjectTerminalVisibility({
+    client: apiClient,
+    project: currentProject,
+  });
+
+  useEffect(() => {
+    if (!terminalVisibility.terminalUiResolved || terminalVisibility.terminalUiEnabled) {
+      return;
+    }
+    if (activePanel === 'terminal') {
+      setActivePanel(currentProject ? 'project' : 'chat');
+    }
+  }, [
+    activePanel,
+    currentProject,
+    setActivePanel,
+    terminalVisibility.terminalUiEnabled,
+    terminalVisibility.terminalUiResolved,
+  ]);
+
   const deleteActions = useSessionListDeleteActions({
     t,
     projects,
@@ -327,12 +348,13 @@ export const useSessionListController = ({
     loadTerminals,
     loadRemoteConnections,
     isCollapsed,
+    terminalsEnabled: terminalVisibility.showTerminalSection,
     terminalsExpanded: sectionExpansion.terminalsExpanded,
     remoteExpanded: sectionExpansion.remoteExpanded,
   });
 
   useTerminalListRealtime({
-    enabled: true,
+    enabled: terminalVisibility.showTerminalSection,
     onInvalidate: (payload) => {
       const reason = String(payload.reason || '').trim();
       const terminalId = String(payload.terminal_id || '').trim();
@@ -542,6 +564,7 @@ export const useSessionListController = ({
     closeTaskRunnerConfig,
     saveTaskRunnerConfig,
     terminals,
+    terminalVisibility,
     terminalError,
     terminalModalOpen,
     terminalRoot,

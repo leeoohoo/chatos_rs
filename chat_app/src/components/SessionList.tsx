@@ -119,24 +119,28 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
           />
 
-          <div className="my-2 border-t border-border" />
+          {controller.terminalVisibility.showTerminalSection && (
+            <>
+              <div className="my-2 border-t border-border" />
 
-          <TerminalSection
-            expanded={controller.sectionExpansion.terminalsExpanded}
-            terminals={controller.terminals}
-            currentTerminalId={controller.currentTerminal?.id}
-            isRefreshing={controller.isRefreshingTerminals}
-            onToggle={controller.sectionExpansion.handleToggleTerminalsSection}
-            onRefresh={controller.sessionListActions.handleRefreshTerminals}
-            onCreate={controller.sessionListActions.openTerminalModal}
-            onSelect={(terminalId) => {
-              void controller.sessionListActions.handleSelectTerminal(terminalId);
-            }}
-            onDelete={controller.deleteActions.handleDeleteTerminal}
-            onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
-            closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgoForLocale}
-          />
+              <TerminalSection
+                expanded={controller.sectionExpansion.terminalsExpanded}
+                terminals={controller.terminals}
+                currentTerminalId={controller.currentTerminal?.id}
+                isRefreshing={controller.isRefreshingTerminals}
+                onToggle={controller.sectionExpansion.handleToggleTerminalsSection}
+                onRefresh={controller.sessionListActions.handleRefreshTerminals}
+                onCreate={controller.sessionListActions.openTerminalModal}
+                onSelect={(terminalId) => {
+                  void controller.sessionListActions.handleSelectTerminal(terminalId);
+                }}
+                onDelete={controller.deleteActions.handleDeleteTerminal}
+                onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
+                closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
+                formatTimeAgo={formatTimeAgoForLocale}
+              />
+            </>
+          )}
 
           <div className="my-2 border-t border-border" />
 

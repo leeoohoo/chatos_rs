@@ -58,4 +58,5 @@ pub(super) struct ProjectRunEnvironmentUpdateRequest {
     pub(super) selected_toolchains: Option<HashMap<String, String>>,
     pub(super) custom_toolchains: Option<HashMap<String, ProjectRunCustomToolchainRequest>>,
     pub(super) env_vars: Option<HashMap<String, String>>,
+    pub(super) terminal_ui_enabled: Option<bool>,
 }

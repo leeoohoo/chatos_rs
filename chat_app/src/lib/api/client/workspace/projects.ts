@@ -100,6 +100,7 @@ export const updateProjectRunEnvironment = (
     selected_toolchains?: Record<string, string>;
     custom_toolchains?: Record<string, { kind?: string; label?: string; path?: string }>;
     env_vars?: Record<string, string>;
+    terminal_ui_enabled?: boolean;
   },
 ): Promise<ProjectRunEnvironmentResponse> => {
   return request<ProjectRunEnvironmentResponse>(`/projects/${encodeURIComponent(projectId)}/run/environment`, {

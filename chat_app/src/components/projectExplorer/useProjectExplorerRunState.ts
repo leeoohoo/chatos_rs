@@ -100,6 +100,7 @@ export const useProjectExplorerRunState = ({
     saveCustomToolchain: runnerCatalog.saveCustomToolchain,
     setEnvVarsDraft: runnerCatalog.setEnvVarsDraft,
     saveEnvVarsDraft: runnerCatalog.saveEnvVarsDraft,
+    setTerminalUiEnabled: runnerCatalog.setTerminalUiEnabled,
     starting: runnerCommands.starting,
     stopping: runnerCommands.stopping,
     restarting: runnerCommands.restarting,

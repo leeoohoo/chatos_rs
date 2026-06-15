@@ -75,6 +75,7 @@ export interface ProjectRunEnvironment {
   selectedToolchains: Record<string, string>;
   customToolchains: Record<string, ProjectRunCustomToolchain>;
   envVars: Record<string, string>;
+  terminalUiEnabled: boolean;
   updatedAt?: string | null;
 }
 

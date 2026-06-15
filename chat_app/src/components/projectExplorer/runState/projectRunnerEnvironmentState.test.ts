@@ -78,6 +78,7 @@ describe('projectRunnerEnvironmentState', () => {
         },
       },
       envVars: {},
+      terminalUiEnabled: true,
     };
 
     expect(buildSelectedToolchainOptions(environment, ['python', 'node'])).toEqual({
@@ -113,9 +114,9 @@ describe('projectRunnerEnvironmentState', () => {
       'APP_ENV=dev\nJAVA_HOME=/jdk\nMVN_BIN=/maven/bin/mvn\nMVN_SETTINGS=/tmp/settings.xml',
     );
     expect(buildEnvironmentHints(target, selectedOptions)).toEqual([
-      '启动前会自动注入 JAVA_HOME=/jdk',
-      'Maven 命令会自动追加 -s /tmp/settings.xml',
-      '系统 Maven 命令会替换为 /maven/bin/mvn',
+      'JAVA_HOME=/jdk will be injected before start',
+      'Maven commands will append -s /tmp/settings.xml',
+      'System Maven commands will be replaced with /maven/bin/mvn',
     ]);
   });
 
@@ -130,7 +131,7 @@ describe('projectRunnerEnvironmentState', () => {
       customToolchains: {
         python: {
           kind: 'python',
-          label: '手动指定: bin/python',
+          label: 'Manual: bin/python',
           path: '/opt/venv/bin/python',
         },
       },

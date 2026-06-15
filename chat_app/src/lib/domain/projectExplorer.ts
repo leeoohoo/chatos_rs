@@ -182,6 +182,7 @@ export const normalizeProjectRunEnvironment = (
       Object.entries(envVars)
         .map(([key, value]) => [key, String(value ?? '')]),
     ),
+    terminalUiEnabled: readBooleanFirst(record, ['terminal_ui_enabled', 'terminalUiEnabled'], true),
     updatedAt: readStringFirst(record, ['updated_at', 'updatedAt']) || null,
   };
 };

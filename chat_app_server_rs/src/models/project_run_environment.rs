@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn default_terminal_ui_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRunToolchainOption {
     pub id: String,
@@ -45,6 +49,8 @@ pub struct ProjectRunEnvironmentSelection {
     pub selected_toolchains: HashMap<String, String>,
     pub custom_toolchains: HashMap<String, ProjectRunCustomToolchain>,
     pub env_vars: HashMap<String, String>,
+    #[serde(default = "default_terminal_ui_enabled")]
+    pub terminal_ui_enabled: bool,
     pub updated_at: String,
 }
 
@@ -58,5 +64,7 @@ pub struct ProjectRunEnvironmentSnapshot {
     pub selected_toolchains: HashMap<String, String>,
     pub custom_toolchains: HashMap<String, ProjectRunCustomToolchain>,
     pub env_vars: HashMap<String, String>,
+    #[serde(default = "default_terminal_ui_enabled")]
+    pub terminal_ui_enabled: bool,
     pub updated_at: Option<String>,
 }

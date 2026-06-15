@@ -76,14 +76,32 @@ export const resolveEnvVarsEnvironment = ({
   };
 };
 
+export const resolveTerminalUiEnvironment = ({
+  environment,
+  terminalUiEnabled,
+}: {
+  environment: ProjectRunEnvironment | null;
+  terminalUiEnabled: boolean;
+}): ProjectRunEnvironment | null => {
+  if (!environment) {
+    return null;
+  }
+  return {
+    ...environment,
+    terminalUiEnabled,
+  };
+};
+
 export const buildProjectRunEnvironmentUpdatePayload = ({
   selectedToolchains,
   customToolchains,
   envVars,
+  terminalUiEnabled,
 }: {
   selectedToolchains: Record<string, string>;
   customToolchains: Record<string, ProjectRunCustomToolchain>;
   envVars: Record<string, string>;
+  terminalUiEnabled: boolean;
 }) => ({
   selected_toolchains: selectedToolchains,
   custom_toolchains: Object.fromEntries(
@@ -97,4 +115,5 @@ export const buildProjectRunEnvironmentUpdatePayload = ({
     ]),
   ),
   env_vars: envVars,
+  terminal_ui_enabled: terminalUiEnabled,
 });

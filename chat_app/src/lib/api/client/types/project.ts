@@ -141,6 +141,8 @@ export interface ProjectRunEnvironmentResponse {
   customToolchains?: Record<string, ProjectRunCustomToolchainResponse>;
   env_vars?: Record<string, string>;
   envVars?: Record<string, string>;
+  terminal_ui_enabled?: boolean;
+  terminalUiEnabled?: boolean;
   updated_at?: string | null;
   updatedAt?: string | null;
 }

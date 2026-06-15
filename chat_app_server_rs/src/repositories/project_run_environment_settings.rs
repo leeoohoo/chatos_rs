@@ -26,6 +26,7 @@ fn normalize_doc(doc: &Document) -> Option<ProjectRunEnvironmentSelection> {
             .cloned()
             .and_then(|value| mongodb::bson::from_bson(value).ok())
             .unwrap_or_default(),
+        terminal_ui_enabled: doc.get_bool("terminal_ui_enabled").unwrap_or(true),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
     })
 }
@@ -49,7 +50,7 @@ pub async fn get_by_project_id(
             let project_id = project_id.to_string();
             Box::pin(async move {
                 let row = sqlx::query(
-                    "SELECT project_id, user_id, selected_toolchains_json, custom_toolchains_json, env_vars_json, updated_at \
+                    "SELECT project_id, user_id, selected_toolchains_json, custom_toolchains_json, env_vars_json, terminal_ui_enabled, updated_at \
                      FROM project_run_environment_settings WHERE project_id = ?",
                 )
                 .bind(&project_id)
@@ -78,6 +79,10 @@ pub async fn get_by_project_id(
                     >(&custom_toolchains_json)
                     .unwrap_or_default(),
                     env_vars: serde_json::from_str(&env_vars_json).unwrap_or_default(),
+                    terminal_ui_enabled: row
+                        .try_get::<i64, _>("terminal_ui_enabled")
+                        .unwrap_or(1)
+                        != 0,
                     updated_at: row.try_get::<String, _>("updated_at").unwrap_or_default(),
                 }))
             })
@@ -118,6 +123,7 @@ pub async fn upsert(
                 set_doc.insert("custom_toolchains_json", custom_toolchains_json);
                 set_doc.insert("env_vars", env_vars_bson);
                 set_doc.insert("env_vars_json", env_vars_json);
+                set_doc.insert("terminal_ui_enabled", selection.terminal_ui_enabled);
                 set_doc.insert("updated_at", selection.updated_at.clone());
 
                 db.collection::<Document>("project_run_environment_settings")
@@ -141,13 +147,14 @@ pub async fn upsert(
             Box::pin(async move {
                 sqlx::query(
                     "INSERT INTO project_run_environment_settings \
-                    (project_id, user_id, selected_toolchains_json, custom_toolchains_json, env_vars_json, updated_at) \
-                    VALUES (?, ?, ?, ?, ?, ?) \
+                    (project_id, user_id, selected_toolchains_json, custom_toolchains_json, env_vars_json, terminal_ui_enabled, updated_at) \
+                    VALUES (?, ?, ?, ?, ?, ?, ?) \
                     ON CONFLICT(project_id) DO UPDATE SET \
                     user_id=excluded.user_id, \
                     selected_toolchains_json=excluded.selected_toolchains_json, \
                     custom_toolchains_json=excluded.custom_toolchains_json, \
                     env_vars_json=excluded.env_vars_json, \
+                    terminal_ui_enabled=excluded.terminal_ui_enabled, \
                     updated_at=excluded.updated_at",
                 )
                 .bind(&selection.project_id)
@@ -155,6 +162,7 @@ pub async fn upsert(
                 .bind(&selected_toolchains_json)
                 .bind(&custom_toolchains_json)
                 .bind(&env_vars_json)
+                .bind(selection.terminal_ui_enabled as i64)
                 .bind(&selection.updated_at)
                 .execute(pool)
                 .await

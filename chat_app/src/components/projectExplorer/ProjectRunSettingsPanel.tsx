@@ -48,6 +48,7 @@ interface ProjectRunSettingsPanelProps {
   envPreview: string;
   environmentHints: string[];
   envVarsPlaceholder: string;
+  terminalUiEnabled: boolean;
   selectedRunTargetId: string | null;
   starting: boolean;
   stopping: boolean;
@@ -70,6 +71,7 @@ interface ProjectRunSettingsPanelProps {
   onSaveCustomToolchain: (kind: string) => void;
   onEnvVarsDraftChange: (value: string) => void;
   onSaveEnvVarsDraft: () => void;
+  onTerminalUiEnabledChange: (enabled: boolean) => void;
   onRunnerStart: () => void;
   onRunnerStop: () => void;
   onRunnerRestart: () => void;
@@ -356,6 +358,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   envPreview,
   environmentHints,
   envVarsPlaceholder,
+  terminalUiEnabled,
   selectedRunTargetId,
   starting,
   stopping,
@@ -378,6 +381,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   onSaveCustomToolchain,
   onEnvVarsDraftChange,
   onSaveEnvVarsDraft,
+  onTerminalUiEnabledChange,
   onRunnerStart,
   onRunnerStop,
   onRunnerRestart,
@@ -892,17 +896,37 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
         </details>
 
         <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.terminal')}</div>
-          <div className="h-[420px] overflow-hidden rounded border border-border/60 bg-card">
-            <EmbeddedTerminalView
-              terminal={projectRunTerminal}
-              emptyText={t('runSettings.terminalEmpty')}
-              client={terminalClient}
-              accessToken={accessToken}
-              actualTheme={actualTheme}
+          <label className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-sm font-medium text-foreground">{t('runSettings.terminalVisibility')}</div>
+              <div className="text-xs text-muted-foreground">
+                {t('runSettings.terminalVisibilityDescription')}
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={terminalUiEnabled}
+              disabled={runEnvironmentLoading || !runEnvironment}
+              onChange={(event) => onTerminalUiEnabledChange(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border border-border text-primary focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
             />
-          </div>
+          </label>
         </div>
+
+        {terminalUiEnabled && runEnvironment && (
+          <div className="rounded border border-border/70 bg-background/50 p-3">
+            <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.terminal')}</div>
+            <div className="h-[420px] overflow-hidden rounded border border-border/60 bg-card">
+              <EmbeddedTerminalView
+                terminal={projectRunTerminal}
+                emptyText={t('runSettings.terminalEmpty')}
+                client={terminalClient}
+                accessToken={accessToken}
+                actualTheme={actualTheme}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

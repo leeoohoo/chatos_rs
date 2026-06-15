@@ -115,6 +115,7 @@ export const useProjectRunnerCatalogState = ({
     updateSelectedToolchain,
     saveCustomToolchain,
     saveEnvVarsDraft,
+    setTerminalUiEnabled,
   } = useProjectRunnerEnvironmentMutations({
     client,
     project,
@@ -201,6 +202,7 @@ export const useProjectRunnerCatalogState = ({
     saveCustomToolchain,
     setEnvVarsDraft,
     saveEnvVarsDraft,
+    setTerminalUiEnabled,
     loadRunCatalog,
     loadRunEnvironment,
     refreshRunnerState,

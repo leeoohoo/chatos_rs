@@ -16,6 +16,7 @@ use crate::services::project_run::{
     resolve_execution, save_environment_selection, validate_project_run_target,
     write_cached_catalog, RunExecutionInput,
 };
+use crate::services::realtime::publish_project_run_catalog_updated;
 use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::{
@@ -401,19 +402,40 @@ pub(super) async fn update_project_run_environment(
         Err(err) => return map_project_access_error(err),
     };
 
+    let terminal_ui_enabled = match load_environment_selection(project.id.as_str()).await {
+        Ok(selection) => req
+            .terminal_ui_enabled
+            .unwrap_or_else(|| selection.map(|value| value.terminal_ui_enabled).unwrap_or(true)),
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": err})),
+            );
+        }
+    };
+
     match save_environment_selection(
         &project,
         req.selected_toolchains.unwrap_or_default(),
         normalize_custom_toolchains(req.custom_toolchains),
         req.env_vars.unwrap_or_default(),
+        terminal_ui_enabled,
     )
     .await
     {
         Ok(_) => match refresh_environment_snapshot(&project).await {
-            Ok(snapshot) => (
-                StatusCode::OK,
-                Json(serde_json::to_value(snapshot).unwrap_or(Value::Null)),
-            ),
+            Ok(snapshot) => {
+                publish_project_run_catalog_updated(
+                    auth.user_id.as_str(),
+                    project.id.as_str(),
+                    "project_run_environment_changed",
+                    None,
+                );
+                (
+                    StatusCode::OK,
+                    Json(serde_json::to_value(snapshot).unwrap_or(Value::Null)),
+                )
+            }
             Err(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": err})),
