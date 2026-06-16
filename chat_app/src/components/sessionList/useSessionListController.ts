@@ -25,7 +25,7 @@ import { useContactsRealtime } from '../../lib/realtime/useContactsRealtime';
 import { useProjectsRealtime } from '../../lib/realtime/useProjectsRealtime';
 import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnectionsRealtime';
 import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
-import { useProjectTerminalVisibility } from './useProjectTerminalVisibility';
+import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
 import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 import type { ContactItem } from './types';
 
@@ -301,10 +301,15 @@ export const useSessionListController = ({
     onFocusRemote: sessionListActions.focusRemotePanel,
   });
 
-  const terminalVisibility = useProjectTerminalVisibility({
-    client: apiClient,
-    project: currentProject,
-  });
+  const {
+    terminalUiEnabled,
+    terminalUiResolved,
+  } = useTerminalUiSetting();
+  const terminalVisibility = useMemo(() => ({
+    terminalUiEnabled,
+    terminalUiResolved,
+    showTerminalSection: terminalUiResolved && terminalUiEnabled,
+  }), [terminalUiEnabled, terminalUiResolved]);
 
   useEffect(() => {
     if (!terminalVisibility.terminalUiResolved || terminalVisibility.terminalUiEnabled) {

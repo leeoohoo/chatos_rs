@@ -194,6 +194,7 @@ export const buildWorkspaceViewModelParams = (
     envPreview: runState.envPreview,
     environmentHints: runState.environmentHints,
     envVarsPlaceholder: runState.envVarsPlaceholder,
+    terminalUiEnabled: runState.terminalUiEnabled,
     selectedRunTargetId: runState.selectedRunTargetId,
     setSelectedRunTargetId: runState.setSelectedRunTargetId,
     updateSelectedToolchain: runState.updateSelectedToolchain,

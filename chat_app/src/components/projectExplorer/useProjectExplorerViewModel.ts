@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { Project } from '../../types';
+import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
 import { useProjectExplorerCodeNav } from './useProjectExplorerCodeNav';
 import { useProjectExplorerDataLoading } from './useProjectExplorerDataLoading';
 import { useProjectExplorerPathHelpers } from './useProjectExplorerPathHelpers';
@@ -24,6 +25,7 @@ export const useProjectExplorerViewModel = ({
   const state = useProjectExplorerState(project?.id);
   const filesTabActive = state.workspaceTab === 'files';
   const settingsTabActive = state.workspaceTab === 'settings';
+  const { terminalUiEnabled } = useTerminalUiSetting();
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
 
@@ -69,6 +71,7 @@ export const useProjectExplorerViewModel = ({
     client,
     project,
     enabled: settingsTabActive,
+    terminalUiEnabled,
   });
 
   const codeNav = useProjectExplorerCodeNav({

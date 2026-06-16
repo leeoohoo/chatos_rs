@@ -14,16 +14,22 @@ interface UseProjectExplorerRunStateParams {
   client: ApiClient;
   project: Project | null;
   enabled: boolean;
+  terminalUiEnabled: boolean;
 }
 
 export const useProjectExplorerRunState = ({
   client,
   project,
   enabled,
+  terminalUiEnabled,
 }: UseProjectExplorerRunStateParams) => {
   const { t } = useI18n();
   const runnerCatalog = useProjectRunnerCatalogState({ client, project, enabled });
-  const runnerTerminal = useProjectRunnerTerminalPolling({ client, project, enabled });
+  const runnerTerminal = useProjectRunnerTerminalPolling({
+    client,
+    project,
+    enabled: enabled && terminalUiEnabled,
+  });
   const runnerCommands = useProjectRunnerCommands({
     client,
     project,
@@ -93,6 +99,7 @@ export const useProjectExplorerRunState = ({
     envPreview: runnerCatalog.envPreview,
     environmentHints: runnerCatalog.environmentHints,
     envVarsPlaceholder: runnerCatalog.envVarsPlaceholder,
+    terminalUiEnabled,
     selectedRunTargetId: runnerCatalog.selectedRunTargetId,
     setSelectedRunTargetId: runnerCatalog.selectRunTarget,
     updateSelectedToolchain: runnerCatalog.updateSelectedToolchain,

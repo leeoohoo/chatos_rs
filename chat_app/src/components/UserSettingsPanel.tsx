@@ -4,6 +4,11 @@ import {
 } from '../lib/store/ChatStoreContext';
 import { useApiClient } from '../lib/api/ApiClientContext';
 import { useI18n } from '../i18n/I18nProvider';
+import {
+  emitTerminalUiSettingChanged,
+  resolveTerminalUiEnabledFromResponse,
+  writeStoredTerminalUiEnabled,
+} from '../hooks/useTerminalUiSetting';
 
 interface Props { onClose: () => void }
 
@@ -14,6 +19,7 @@ interface UserSettingsForm {
   CHAT_MAX_TOKENS?: number | string | null;
   INTERNAL_CONTEXT_LOCALE?: string;
   UI_LOCALE?: string;
+  TERMINAL_UI_ENABLED?: boolean;
   [key: string]: string | number | boolean | null | undefined;
 }
 
@@ -24,7 +30,8 @@ interface UserSettingsPayload {
   CHAT_MAX_TOKENS: number | null;
   INTERNAL_CONTEXT_LOCALE: string;
   UI_LOCALE: string;
-  [key: string]: string | number | null;
+  TERMINAL_UI_ENABLED: boolean;
+  [key: string]: string | number | boolean | null;
 }
 
 const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
@@ -76,7 +83,9 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
       try {
         const settingsResp = await client.getUserSettings(userId);
         if (!mounted) return;
-        setSettings(normalizeUserSettingsForm(settingsResp?.effective));
+        const normalized = normalizeUserSettingsForm(settingsResp?.effective);
+        setSettings(normalized);
+        writeStoredTerminalUiEnabled(resolveTerminalUiEnabledFromResponse(settingsResp));
       } catch (e: unknown) {
         if (mounted) {
           setError(getErrorMessage(e));
@@ -114,11 +123,18 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
           : Number(settings.CHAT_MAX_TOKENS),
         INTERNAL_CONTEXT_LOCALE: String(settings.INTERNAL_CONTEXT_LOCALE || 'zh-CN'),
         UI_LOCALE: nextUiLocale,
+        TERMINAL_UI_ENABLED: settings.TERMINAL_UI_ENABLED !== false,
       };
 
       const savedSettings = await client.updateUserSettings(userId, userSettingsPayload);
+      const nextSettings = normalizeUserSettingsForm(savedSettings?.effective || userSettingsPayload);
+      const nextTerminalUiEnabled = resolveTerminalUiEnabledFromResponse(savedSettings || {
+        effective: nextSettings,
+      });
 
-      setSettings(normalizeUserSettingsForm(savedSettings?.effective || userSettingsPayload));
+      setSettings(nextSettings);
+      writeStoredTerminalUiEnabled(nextTerminalUiEnabled);
+      emitTerminalUiSettingChanged(nextTerminalUiEnabled);
       setLocale(nextUiLocale);
       setNotice(t('settings.saved'));
     } catch (e: unknown) {
@@ -211,6 +227,25 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                       <option value="en-US">{t('language.english')}</option>
                     </select>
                     <p className="text-[11px] text-muted-foreground mt-1">{t('settings.internalContextLocaleHelp')}</p>
+                  </div>
+                  <div className="sm:col-span-2 rounded-lg border border-border/60 bg-background px-3 py-3">
+                    <label className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-medium text-foreground">{t('settings.terminalUiEnabled')}</div>
+                        <p className="mt-1 text-[11px] text-muted-foreground">{t('settings.terminalUiEnabledHelp')}</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={settings.TERMINAL_UI_ENABLED !== false}
+                        onChange={(event) => {
+                          setSettings((current) => ({
+                            ...current,
+                            TERMINAL_UI_ENABLED: event.target.checked,
+                          }));
+                        }}
+                        className="mt-0.5 h-4 w-4 rounded border border-border text-primary focus:ring-2 focus:ring-primary/30"
+                      />
+                    </label>
                   </div>
                 </div>
               </div>

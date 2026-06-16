@@ -156,4 +156,18 @@ describe('useProjectRunnerTerminalPolling', () => {
     });
     expect(screen.getByTestId('active-run')).not.toHaveTextContent('project_1_stale_terminal');
   });
+
+  it('skips loading run state when terminal views are disabled', async () => {
+    const client = {
+      getProjectRunState: vi.fn(async (projectId: string) => buildRunStateResponse(projectId)),
+    };
+
+    renderHarness(<TerminalHarness client={client} project={baseProject} enabled={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('instance-count')).toHaveTextContent('0');
+    });
+
+    expect(client.getProjectRunState).not.toHaveBeenCalled();
+  });
 });

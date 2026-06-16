@@ -12,6 +12,7 @@ pub const USER_SETTING_KEYS: &[&str] = &[
     "CHAT_MAX_TOKENS",
     "INTERNAL_CONTEXT_LOCALE",
     "UI_LOCALE",
+    "TERMINAL_UI_ENABLED",
 ];
 
 fn coerce(value: &Value, key: &str) -> Value {
@@ -41,6 +42,15 @@ fn coerce(value: &Value, key: &str) -> Value {
                 .unwrap_or("zh-CN")
                 .to_string(),
         ),
+        "TERMINAL_UI_ENABLED" => Value::Bool(match value {
+            Value::Bool(flag) => *flag,
+            Value::Number(number) => number.as_i64().unwrap_or(1) != 0,
+            Value::String(text) => {
+                let normalized = text.trim().to_ascii_lowercase();
+                !matches!(normalized.as_str(), "false" | "0" | "off")
+            }
+            _ => true,
+        }),
         _ => value.clone(),
     }
 }
@@ -74,6 +84,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         "CHAT_MAX_TOKENS": chat_max_tokens,
         "INTERNAL_CONTEXT_LOCALE": "zh-CN",
         "UI_LOCALE": "zh-CN",
+        "TERMINAL_UI_ENABLED": true,
     }))
 }
 

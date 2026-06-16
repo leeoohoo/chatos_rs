@@ -99,6 +99,7 @@ export interface ProjectExplorerWorkspaceRunState {
   envPreview: string;
   environmentHints: string[];
   envVarsPlaceholder: string;
+  terminalUiEnabled: boolean;
   selectedRunTargetId: string | null;
   setSelectedRunTargetId: (targetId: string) => Promise<void> | void;
   updateSelectedToolchain: (kind: string, optionId: string) => Promise<void> | void;

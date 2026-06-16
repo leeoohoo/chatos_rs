@@ -48,7 +48,7 @@ interface ProjectRunSettingsPanelProps {
   envPreview: string;
   environmentHints: string[];
   envVarsPlaceholder: string;
-  terminalUiEnabled: boolean;
+  showTerminalUi: boolean;
   selectedRunTargetId: string | null;
   starting: boolean;
   stopping: boolean;
@@ -71,7 +71,6 @@ interface ProjectRunSettingsPanelProps {
   onSaveCustomToolchain: (kind: string) => void;
   onEnvVarsDraftChange: (value: string) => void;
   onSaveEnvVarsDraft: () => void;
-  onTerminalUiEnabledChange: (enabled: boolean) => void;
   onRunnerStart: () => void;
   onRunnerStop: () => void;
   onRunnerRestart: () => void;
@@ -358,7 +357,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   envPreview,
   environmentHints,
   envVarsPlaceholder,
-  terminalUiEnabled,
+  showTerminalUi,
   selectedRunTargetId,
   starting,
   stopping,
@@ -381,7 +380,6 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   onSaveCustomToolchain,
   onEnvVarsDraftChange,
   onSaveEnvVarsDraft,
-  onTerminalUiEnabledChange,
   onRunnerStart,
   onRunnerStop,
   onRunnerRestart,
@@ -642,71 +640,77 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
           )}
         </div>
 
-        <div className="rounded border border-border/70 bg-background/50 p-3">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="text-[11px] text-muted-foreground">{t('runSettings.instances')}</div>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="rounded border border-border px-2 py-1">
-                {t('runSettings.instanceCount', { count: projectRunInstances.length })}
-              </span>
-              <span className="rounded border border-border px-2 py-1">
-                {t('runSettings.projectStatus', { status: projectRunState?.status || 'idle' })}
-              </span>
-            </div>
-          </div>
-
-          {projectRunInstances.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              {t('runSettings.noInstances')}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {projectRunInstances.map((instance, index) => {
-                  const selected = instance.terminalId === selectedRunInstanceId;
-                  return (
-                    <button
-                      key={instance.terminalId}
-                      type="button"
-                      onClick={() => onSelectRunInstance(instance.terminalId)}
-                      className={[
-                        'rounded border px-3 py-2 text-left text-xs transition-colors',
-                        selected
-                          ? 'border-primary bg-primary/10 text-foreground'
-                          : 'border-border bg-card text-muted-foreground hover:bg-accent',
-                      ].join(' ')}
-                    >
-                      <div className="font-medium text-foreground">
-                        {t('runSettings.instance', { index: index + 1 })}
-                      </div>
-                      <div className="mt-1">
-                        {instance.running ? (instance.busy ? t('runSettings.running') : t('runSettings.idle')) : instance.status}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
+        {showTerminalUi ? (
+          <div className="rounded border border-border/70 bg-background/50 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="text-[11px] text-muted-foreground">{t('runSettings.instances')}</div>
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                 <span className="rounded border border-border px-2 py-1">
-                  {t('runSettings.terminalStatus', { status: projectRunTerminal?.status || 'idle' })}
+                  {t('runSettings.instanceCount', { count: projectRunInstances.length })}
                 </span>
                 <span className="rounded border border-border px-2 py-1">
-                  {t('runSettings.process', {
-                    status: projectRunTerminal
-                      ? (projectRunTerminalBusy ? t('runSettings.running') : (projectRunTerminal.status === 'running' ? t('runSettings.idle') : t('runSettings.notRunning')))
-                      : t('runSettings.notRunning'),
-                  })}
+                  {t('runSettings.projectStatus', { status: projectRunState?.status || 'idle' })}
                 </span>
-                {projectRunTerminal?.name && (
-                  <span className="rounded border border-border px-2 py-1">
-                    {projectRunTerminal.name}
-                  </span>
-                )}
               </div>
             </div>
-          )}
-        </div>
+
+            {projectRunInstances.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                {t('runSettings.noInstances')}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {projectRunInstances.map((instance, index) => {
+                    const selected = instance.terminalId === selectedRunInstanceId;
+                    return (
+                      <button
+                        key={instance.terminalId}
+                        type="button"
+                        onClick={() => onSelectRunInstance(instance.terminalId)}
+                        className={[
+                          'rounded border px-3 py-2 text-left text-xs transition-colors',
+                          selected
+                            ? 'border-primary bg-primary/10 text-foreground'
+                            : 'border-border bg-card text-muted-foreground hover:bg-accent',
+                        ].join(' ')}
+                      >
+                        <div className="font-medium text-foreground">
+                          {t('runSettings.instance', { index: index + 1 })}
+                        </div>
+                        <div className="mt-1">
+                          {instance.running ? (instance.busy ? t('runSettings.running') : t('runSettings.idle')) : instance.status}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="rounded border border-border px-2 py-1">
+                    {t('runSettings.terminalStatus', { status: projectRunTerminal?.status || 'idle' })}
+                  </span>
+                  <span className="rounded border border-border px-2 py-1">
+                    {t('runSettings.process', {
+                      status: projectRunTerminal
+                        ? (projectRunTerminalBusy ? t('runSettings.running') : (projectRunTerminal.status === 'running' ? t('runSettings.idle') : t('runSettings.notRunning')))
+                        : t('runSettings.notRunning'),
+                    })}
+                  </span>
+                  {projectRunTerminal?.name && (
+                    <span className="rounded border border-border px-2 py-1">
+                      {projectRunTerminal.name}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="rounded border border-border/70 bg-background/50 p-3 text-sm text-muted-foreground">
+            {t('runSettings.terminalUiDisabledInSettings')}
+          </div>
+        )}
 
         <details className="rounded border border-border/70 bg-background/50" open={false}>
           <summary className="cursor-pointer list-none px-3 py-3">
@@ -895,25 +899,7 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
           </div>
         </details>
 
-        <div className="rounded border border-border/70 bg-background/50 p-3">
-          <label className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <div className="text-sm font-medium text-foreground">{t('runSettings.terminalVisibility')}</div>
-              <div className="text-xs text-muted-foreground">
-                {t('runSettings.terminalVisibilityDescription')}
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={terminalUiEnabled}
-              disabled={runEnvironmentLoading || !runEnvironment}
-              onChange={(event) => onTerminalUiEnabledChange(event.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border border-border text-primary focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </label>
-        </div>
-
-        {terminalUiEnabled && runEnvironment && (
+        {showTerminalUi && runEnvironment && (
           <div className="rounded border border-border/70 bg-background/50 p-3">
             <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.terminal')}</div>
             <div className="h-[420px] overflow-hidden rounded border border-border/60 bg-card">
