@@ -5,8 +5,8 @@ use tracing::{info, warn};
 use crate::models::{TaskRecord, TaskRunEventRecord, TaskRunRecord};
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
 
-use super::RunService;
 use super::workspace_mcp::selected_builtin_kinds;
+use super::RunService;
 
 impl RunService {
     pub(super) async fn ensure_task_terminal_started(

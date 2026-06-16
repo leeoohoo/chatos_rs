@@ -6,6 +6,9 @@ impl RunService {
         task: TaskRecord,
         input: StartTaskRunRequest,
     ) -> Result<TaskRunRecord, String> {
+        if task.status == TaskStatus::Cancelled {
+            return Err(format!("前置任务已取消，不能执行: {}", task.id));
+        }
         if self.store.has_active_run_for_task(task.id.as_str()).await? {
             return self
                 .active_run_for_task(task.id.as_str())
@@ -62,14 +65,16 @@ impl RunService {
         };
         self.store.save_run(run.clone()).await?;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
-            task_record.status = TaskStatus::Queued;
-            task_record.last_run_id = Some(run.id.clone());
-            task_record.updated_at = now_rfc3339();
-            if let Err(err) = self.store.save_task(task_record).await {
-                warn!(
-                    "failed to persist queued prerequisite task state for task {} and run {}: {}",
-                    task.id, run.id, err
-                );
+            if task_record.status != TaskStatus::Cancelled {
+                task_record.status = TaskStatus::Queued;
+                task_record.last_run_id = Some(run.id.clone());
+                task_record.updated_at = now_rfc3339();
+                if let Err(err) = self.store.save_task(task_record).await {
+                    warn!(
+                        "failed to persist queued prerequisite task state for task {} and run {}: {}",
+                        task.id, run.id, err
+                    );
+                }
             }
         }
         self.store

@@ -106,7 +106,7 @@ impl MongoStore {
             vec![
                 doc! {
                     "$match": {
-                        "status": { "$nin": ["archived", "queued", "running"] },
+                        "status": { "$nin": ["archived", "cancelled", "queued", "running"] },
                         "schedule.mode": { "$ne": "manual" },
                         "schedule.next_run_at": { "$exists": true, "$ne": Bson::Null },
                     }

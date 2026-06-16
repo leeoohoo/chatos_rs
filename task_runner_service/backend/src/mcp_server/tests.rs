@@ -76,7 +76,19 @@ fn async_planner_profile_exposes_only_planning_tools() {
         "set_task_prerequisites"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
+        "cancel_task"
+    ));
+    assert!(chatos_async_planner::planner_agent_tool_allowed(
         "get_task_dependency_graph"
+    ));
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
+        "delete_task"
+    ));
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
+        "batch_delete_tasks"
+    ));
+    assert!(!chatos_async_planner::planner_agent_tool_allowed(
+        "batch_update_task_status"
     ));
     assert!(!chatos_async_planner::planner_agent_tool_allowed(
         "start_task_run"

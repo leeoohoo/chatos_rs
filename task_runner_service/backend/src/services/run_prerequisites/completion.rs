@@ -32,16 +32,22 @@ impl RunService {
                 run.id, err
             );
         }
+        let mut task_already_cancelled = false;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
-            task_record.status = TaskStatus::Blocked;
-            task_record.result_summary = Some(message);
-            task_record.last_run_id = Some(run.id.clone());
-            task_record.updated_at = now_rfc3339();
-            if let Err(err) = self.store.save_task(task_record).await {
-                warn!("failed to persist blocked task {}: {}", task.id, err);
+            task_already_cancelled = task_record.status == TaskStatus::Cancelled;
+            if !task_already_cancelled {
+                task_record.status = TaskStatus::Blocked;
+                task_record.result_summary = Some(message);
+                task_record.last_run_id = Some(run.id.clone());
+                task_record.updated_at = now_rfc3339();
+                if let Err(err) = self.store.save_task(task_record).await {
+                    warn!("failed to persist blocked task {}: {}", task.id, err);
+                }
             }
         }
-        self.try_send_terminal_callback(task.id.as_str(), run).await;
+        if !task_already_cancelled {
+            self.try_send_terminal_callback(task.id.as_str(), run).await;
+        }
         self.cleanup_task_terminals(task, run, workspace_dir).await;
     }
 
@@ -73,16 +79,22 @@ impl RunService {
         {
             warn!("failed to append failed event for run {}: {}", run.id, err);
         }
+        let mut task_already_cancelled = false;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
-            task_record.status = TaskStatus::Failed;
-            task_record.result_summary = Some(message);
-            task_record.last_run_id = Some(run.id.clone());
-            task_record.updated_at = now_rfc3339();
-            if let Err(err) = self.store.save_task(task_record).await {
-                warn!("failed to persist failed task {}: {}", task.id, err);
+            task_already_cancelled = task_record.status == TaskStatus::Cancelled;
+            if !task_already_cancelled {
+                task_record.status = TaskStatus::Failed;
+                task_record.result_summary = Some(message);
+                task_record.last_run_id = Some(run.id.clone());
+                task_record.updated_at = now_rfc3339();
+                if let Err(err) = self.store.save_task(task_record).await {
+                    warn!("failed to persist failed task {}: {}", task.id, err);
+                }
             }
         }
-        self.try_send_terminal_callback(task.id.as_str(), run).await;
+        if !task_already_cancelled {
+            self.try_send_terminal_callback(task.id.as_str(), run).await;
+        }
         self.cleanup_task_terminals(task, run, workspace_dir).await;
     }
 }

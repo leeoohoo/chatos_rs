@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use crate::auth::CurrentUser;
-use crate::models::{TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord, now_rfc3339};
+use crate::models::{now_rfc3339, TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord};
 
-use super::TaskService;
 use super::batch_ops::normalize_prerequisite_task_ids;
+use super::TaskService;
 
 impl TaskService {
     pub async fn list_task_prerequisites(
@@ -117,6 +117,11 @@ impl TaskService {
                 .get_task(prerequisite_task_id)
                 .await?
                 .ok_or_else(|| format!("前置任务不存在: {prerequisite_task_id}"))?;
+            if prerequisite.status == TaskStatus::Cancelled {
+                return Err(format!(
+                    "已取消任务不能作为前置任务: {prerequisite_task_id}"
+                ));
+            }
             if let Some(user) = current_user {
                 if !user.is_admin()
                     && prerequisite.creator_user_id.as_deref() != Some(user.id.as_str())

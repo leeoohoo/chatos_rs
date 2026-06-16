@@ -5,21 +5,21 @@ use std::time::Duration;
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chrono::{DateTime, Utc};
-use tokio::sync::{Mutex as AsyncMutex, broadcast};
+use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
-    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CreateExternalMcpConfigRequest,
-    CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, PaginatedResponse,
-    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
-    StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
-    TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
+    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
+    CreateExternalMcpConfigRequest, CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse,
+    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse,
+    TaskListFilters, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskRunnerInternalPromptPreviewResponse, TaskSourceContext, TaskStatsResponse, TaskStatus,
     TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest,
-    UpdateTaskMcpRequest, UpdateTaskRequest, now_rfc3339,
+    UpdateTaskMcpRequest, UpdateTaskRequest,
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;

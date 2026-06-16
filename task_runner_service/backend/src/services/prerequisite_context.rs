@@ -1,5 +1,5 @@
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::models::{TaskRecord, TaskRunRecord, TaskStatus};
 
@@ -226,24 +226,22 @@ pub(super) fn extract_report_content(run: &TaskRunRecord) -> Option<String> {
 }
 
 pub(super) fn prerequisite_context_json(contexts: &[PrerequisiteTaskContext]) -> Value {
-    json!(
-        contexts
-            .iter()
-            .map(|context| {
-                json!({
-                    "task_id": context.task_id,
-                    "title": context.title,
-                    "objective": context.objective,
-                    "status": context.status.status_string(),
-                    "run_id": context.run_id,
-                    "result_summary": context.result_summary,
-                    "run_result_summary": context.run_result_summary,
-                    "process_log": context.process_log,
-                    "report_content": context.report_content,
-                })
+    json!(contexts
+        .iter()
+        .map(|context| {
+            json!({
+                "task_id": context.task_id,
+                "title": context.title,
+                "objective": context.objective,
+                "status": context.status.status_string(),
+                "run_id": context.run_id,
+                "result_summary": context.result_summary,
+                "run_result_summary": context.run_result_summary,
+                "process_log": context.process_log,
+                "report_content": context.report_content,
             })
-            .collect::<Vec<_>>()
-    )
+        })
+        .collect::<Vec<_>>())
 }
 
 pub(super) fn attach_prerequisite_context_to_run(

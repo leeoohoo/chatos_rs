@@ -26,6 +26,31 @@ impl SqliteStore {
             .collect())
     }
 
+    pub(in crate::store) async fn list_task_dependents(
+        &self,
+        prerequisite_task_id: &str,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        let rows = sqlx::query(
+            "SELECT task_id, prerequisite_task_id, created_at
+             FROM task_prerequisites
+             WHERE prerequisite_task_id = ?
+             ORDER BY datetime(created_at) ASC, task_id ASC",
+        )
+        .bind(prerequisite_task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+
+        Ok(rows
+            .iter()
+            .map(|row| TaskPrerequisiteRecord {
+                task_id: row.get("task_id"),
+                prerequisite_task_id: row.get("prerequisite_task_id"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
+    }
+
     pub(in crate::store) async fn set_task_prerequisites(
         &self,
         task_id: &str,

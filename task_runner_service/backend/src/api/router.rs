@@ -34,8 +34,8 @@ use super::runs::{
     list_runs_page, list_task_runs, retry_run, start_task_run, stream_run_events,
 };
 use super::tasks::{
-    batch_delete_tasks, batch_start_task_runs, batch_update_task_status, create_task, delete_task,
-    get_task, get_task_dependency_graph, get_task_index, get_task_memory_context,
+    batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
+    delete_task, get_task, get_task_dependency_graph, get_task_index, get_task_memory_context,
     get_task_memory_records, get_task_stats, list_task_prerequisites, list_task_summaries,
     list_tasks, list_tasks_page, preview_task_mcp_prompt, record_task_process,
     set_task_prerequisites, summarize_task_memory, update_task, update_task_mcp,
@@ -69,6 +69,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/tasks/:id",
             get(get_task).patch(update_task).delete(delete_task),
         )
+        .route("/api/tasks/:id/cancel", post(cancel_task))
         .route(
             "/api/tasks/:id/runs",
             get(list_task_runs).post(start_task_run),

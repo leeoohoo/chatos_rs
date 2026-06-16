@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 
-use crate::models::{TaskScheduleConfig, TaskScheduleMode, now_rfc3339};
+use crate::models::{now_rfc3339, TaskScheduleConfig, TaskScheduleMode};
 
 use super::normalized_optional;
 

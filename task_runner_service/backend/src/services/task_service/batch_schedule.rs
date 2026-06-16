@@ -5,6 +5,9 @@ impl TaskService {
         &self,
         request: BatchTaskStatusUpdateRequest,
     ) -> Result<BatchTaskOperationResponse, String> {
+        if request.status == TaskStatus::Cancelled {
+            return Err("请使用 cancel_task 并提供取消原因".to_string());
+        }
         let task_ids = normalize_batch_task_ids(request.task_ids)?;
         let mut results = Vec::with_capacity(task_ids.len());
 

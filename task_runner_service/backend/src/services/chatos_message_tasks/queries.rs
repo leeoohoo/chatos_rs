@@ -398,12 +398,13 @@ impl TaskService {
 
 fn non_empty_chatos_id(value: &str) -> Option<&str> {
     let value = value.trim();
-    if value.is_empty() { None } else { Some(value) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn task_belongs_to_source_session(task: &TaskRecord, source_session_id: &str) -> bool {
-    task.source_session_id
-        .as_deref()
-        .map(str::trim)
-        == Some(source_session_id.trim())
+    task.source_session_id.as_deref().map(str::trim) == Some(source_session_id.trim())
 }

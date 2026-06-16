@@ -73,6 +73,27 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             ),
         ),
         tool_definition(
+            "cancel_task",
+            "Cancel a pending or running Task Runner task because it conflicts with the user's latest intent. A human-readable reason is required. Dependent pending/running tasks are cancelled automatically by Task Runner.",
+            required_object_schema(
+                json!({
+                    "task_id": { "type": "string", "minLength": 1 },
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000,
+                        "description": "Why this task no longer matches the user's current intent. This reason is sent back to Chatos in the task.cancelled callback."
+                    },
+                    "replacement_task_ids": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "uniqueItems": true
+                    }
+                }),
+                &["task_id", "reason"],
+            ),
+        ),
+        tool_definition(
             "wait_for_task_completion",
             "Use after the requested Task Runner tasks have been created or adjusted. It confirms that the arranged tasks should continue through Task Runner's normal background execution flow.",
             empty_object_schema(),

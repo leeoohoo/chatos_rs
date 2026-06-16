@@ -144,7 +144,7 @@ impl SqliteStore {
     ) -> Result<Vec<TaskRecord>, String> {
         let rows = sqlx::query(
             "SELECT * FROM tasks
-             WHERE status NOT IN ('archived', 'queued', 'running')
+             WHERE status NOT IN ('archived', 'cancelled', 'queued', 'running')
                AND json_extract(schedule_json, '$.mode') <> 'manual'
                AND json_extract(schedule_json, '$.next_run_at') IS NOT NULL
                AND datetime(json_extract(schedule_json, '$.next_run_at')) <= datetime(?)

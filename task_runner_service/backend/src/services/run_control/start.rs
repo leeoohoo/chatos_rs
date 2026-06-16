@@ -59,6 +59,9 @@ impl RunService {
         {
             return Err("联系人异步任务只能由后台调度器触发执行".to_string());
         }
+        if task.status == TaskStatus::Cancelled {
+            return Err(format!("任务已取消，不能再次启动: {task_id}"));
+        }
         if self.store.has_active_run_for_task(task_id).await? {
             info!(
                 task_id = task.id.as_str(),
@@ -127,14 +130,16 @@ impl RunService {
             "task runner queued run"
         );
         if let Ok(Some(mut task_record)) = self.store.get_task(task_id).await {
-            task_record.status = TaskStatus::Queued;
-            task_record.last_run_id = Some(run.id.clone());
-            task_record.updated_at = now_rfc3339();
-            if let Err(err) = self.store.save_task(task_record).await {
-                warn!(
-                    "failed to persist queued task state for task {} and run {}: {}",
-                    task_id, run.id, err
-                );
+            if task_record.status != TaskStatus::Cancelled {
+                task_record.status = TaskStatus::Queued;
+                task_record.last_run_id = Some(run.id.clone());
+                task_record.updated_at = now_rfc3339();
+                if let Err(err) = self.store.save_task(task_record).await {
+                    warn!(
+                        "failed to persist queued task state for task {} and run {}: {}",
+                        task_id, run.id, err
+                    );
+                }
             }
         }
         self.store

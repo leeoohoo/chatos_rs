@@ -115,6 +115,17 @@ impl AppStore {
         }
     }
 
+    pub async fn list_task_dependents(
+        &self,
+        prerequisite_task_id: &str,
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_task_dependents(prerequisite_task_id)),
+            Self::Sqlite(store) => store.list_task_dependents(prerequisite_task_id).await,
+            Self::Mongo(store) => store.list_task_dependents(prerequisite_task_id).await,
+        }
+    }
+
     pub async fn set_task_prerequisites(
         &self,
         task_id: &str,

@@ -1,10 +1,10 @@
 use chatos_ai_runtime::{MemoryContextComposer, MemoryScope, TaskRuntimeConfig};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::models::{
-    TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatus,
-    now_rfc3339,
+    now_rfc3339, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskStatus,
 };
 
 use super::RunService;
@@ -97,14 +97,20 @@ impl RunService {
                 run.id, err
             );
         }
+        let mut task_already_cancelled = false;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
-            task_record.status = TaskStatus::Cancelled;
-            task_record.updated_at = now_rfc3339();
-            if let Err(err) = self.store.save_task(task_record).await {
-                warn!("failed to persist cancelled task {}: {}", task.id, err);
+            task_already_cancelled = task_record.status == TaskStatus::Cancelled;
+            if !task_already_cancelled {
+                task_record.status = TaskStatus::Cancelled;
+                task_record.updated_at = now_rfc3339();
+                if let Err(err) = self.store.save_task(task_record).await {
+                    warn!("failed to persist cancelled task {}: {}", task.id, err);
+                }
             }
         }
-        self.try_send_terminal_callback(task.id.as_str(), run).await;
+        if !task_already_cancelled {
+            self.try_send_terminal_callback(task.id.as_str(), run).await;
+        }
         self.cleanup_task_terminals(task, run, workspace_dir).await;
         self.store.clear_cancel_requested(&run.id);
     }

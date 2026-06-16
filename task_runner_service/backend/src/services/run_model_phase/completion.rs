@@ -49,22 +49,28 @@ impl RunService {
             );
         }
 
+        let mut task_already_cancelled = false;
         if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
-            task_record.status = match run.status {
-                TaskRunStatus::Succeeded => TaskStatus::Succeeded,
-                TaskRunStatus::Failed => TaskStatus::Failed,
-                TaskRunStatus::Cancelled => TaskStatus::Cancelled,
-                TaskRunStatus::Blocked => TaskStatus::Blocked,
-                TaskRunStatus::Queued | TaskRunStatus::Running => TaskStatus::Running,
-            };
-            task_record.result_summary = result_summary;
-            task_record.last_run_id = Some(run.id.clone());
-            task_record.updated_at = now_rfc3339();
-            if let Err(err) = self.store.save_task(task_record).await {
-                warn!("failed to persist completed task {}: {}", task.id, err);
+            task_already_cancelled = task_record.status == TaskStatus::Cancelled;
+            if !task_already_cancelled {
+                task_record.status = match run.status {
+                    TaskRunStatus::Succeeded => TaskStatus::Succeeded,
+                    TaskRunStatus::Failed => TaskStatus::Failed,
+                    TaskRunStatus::Cancelled => TaskStatus::Cancelled,
+                    TaskRunStatus::Blocked => TaskStatus::Blocked,
+                    TaskRunStatus::Queued | TaskRunStatus::Running => TaskStatus::Running,
+                };
+                task_record.result_summary = result_summary;
+                task_record.last_run_id = Some(run.id.clone());
+                task_record.updated_at = now_rfc3339();
+                if let Err(err) = self.store.save_task(task_record).await {
+                    warn!("failed to persist completed task {}: {}", task.id, err);
+                }
             }
         }
-        self.try_send_terminal_callback(task.id.as_str(), run).await;
+        if !task_already_cancelled {
+            self.try_send_terminal_callback(task.id.as_str(), run).await;
+        }
         self.cleanup_task_terminals(task, run, effective_workspace_dir)
             .await;
         self.maybe_trigger_auto_memory_summary(task, run).await;

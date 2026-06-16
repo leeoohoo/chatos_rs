@@ -36,7 +36,7 @@ pub(super) fn empty_task_stats() -> TaskStatsResponse {
 pub(super) fn task_due_for_scheduler(task: &TaskRecord, now: &DateTime<Utc>) -> bool {
     if matches!(
         task.status,
-        TaskStatus::Archived | TaskStatus::Queued | TaskStatus::Running
+        TaskStatus::Archived | TaskStatus::Cancelled | TaskStatus::Queued | TaskStatus::Running
     ) {
         return false;
     }

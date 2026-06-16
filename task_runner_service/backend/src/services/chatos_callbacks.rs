@@ -2,11 +2,11 @@ use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
-use crate::models::{TaskRecord, TaskRunRecord, TaskRunStatus, now_rfc3339};
+use crate::models::{now_rfc3339, TaskRecord, TaskRunRecord, TaskRunStatus};
 use crate::store::AppStore;
 
 use super::prerequisite_context::extract_report_content;
-use super::{RunService, TaskScheduleModeExt, TaskStatusExt};
+use super::{RunService, TaskScheduleModeExt, TaskService, TaskStatusExt};
 
 mod delivery;
 mod dispatch;
@@ -29,6 +29,14 @@ struct ChatosTaskCallbackPayload {
     parent_task_id: Option<String>,
     source_run_id: Option<String>,
     prerequisite_task_ids: Vec<String>,
+    cancel_reason: Option<String>,
+    cancelled_at: Option<String>,
+    cancelled_by_user_id: Option<String>,
+    cancelled_by_username: Option<String>,
+    cancelled_by_display_name: Option<String>,
+    replacement_task_ids: Vec<String>,
+    cancelled_because_task_id: Option<String>,
+    cascade_root_task_id: Option<String>,
     schedule_mode: String,
     callback_at: String,
 }

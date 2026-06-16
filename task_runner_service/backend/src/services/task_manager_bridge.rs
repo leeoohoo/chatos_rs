@@ -1,21 +1,20 @@
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::info;
 use uuid::Uuid;
 
 use chatos_builtin_tools::{
-    TASK_NOT_FOUND_ERR, TaskDraft as SharedTaskDraft, TaskManagerStore,
-    TaskOutcomeItem as SharedTaskOutcomeItem, TaskStreamChunkCallback,
-    TaskUpdatePatch as SharedTaskUpdatePatch,
+    TaskDraft as SharedTaskDraft, TaskManagerStore, TaskOutcomeItem as SharedTaskOutcomeItem,
+    TaskStreamChunkCallback, TaskUpdatePatch as SharedTaskUpdatePatch, TASK_NOT_FOUND_ERR,
 };
 
 use crate::models::{
-    TaskRecord, TaskScheduleConfig, TaskStatus, TaskToolOutcomeItem, TaskToolState, now_rfc3339,
+    now_rfc3339, TaskRecord, TaskScheduleConfig, TaskStatus, TaskToolOutcomeItem, TaskToolState,
 };
 
 use super::{
-    TaskService, TaskStatusExt, normalize_strings, normalized_optional, normalized_optional_nested,
-    validate_required,
+    normalize_strings, normalized_optional, normalized_optional_nested, validate_required,
+    TaskService, TaskStatusExt,
 };
 
 mod store_adapter;

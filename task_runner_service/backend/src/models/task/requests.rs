@@ -52,6 +52,27 @@ pub struct SetTaskPrerequisitesRequest {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CancelTaskRequest {
+    pub reason: String,
+    #[serde(default)]
+    pub replacement_task_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancelTaskResponse {
+    pub cancelled: bool,
+    pub task_id: String,
+    pub status: TaskStatus,
+    pub reason: String,
+    #[serde(default)]
+    pub active_run_ids: Vec<String>,
+    #[serde(default)]
+    pub cascade_cancelled_task_ids: Vec<String>,
+    pub callback_event: String,
+    pub task: TaskRecord,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecordTaskProcessRequest {
     #[serde(default)]
     pub operation: TaskProcessLogOperation,

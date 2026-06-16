@@ -3,15 +3,15 @@ use memory_engine_sdk::{
 };
 
 use crate::models::{
-    TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
-    TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord, now_rfc3339,
+    now_rfc3339, TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
+    TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskRecord,
 };
 
-use super::TaskService;
 use super::memory_options::{
     sanitize_task_memory_context_policy, sanitize_task_memory_records_options,
 };
 use super::task_threads::ensure_task_thread_for_config;
+use super::TaskService;
 
 impl TaskService {
     pub async fn get_task_memory_context(

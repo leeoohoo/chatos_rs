@@ -1,19 +1,19 @@
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::models::{
-    ModelConfigRecord, StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord,
-    TaskRunStatus, TaskScheduleMode, TaskStatus, now_rfc3339,
+    now_rfc3339, ModelConfigRecord, StartTaskRunRequest, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatus,
 };
 
 use super::task_threads::ensure_task_thread_for_config;
 use super::workspace_mcp::ensure_effective_task_workspace_dir;
 use super::{
-    RunService, RunTriggerSource, TaskScheduleModeExt, TaskStatusExt, normalized_optional,
+    normalized_optional, RunService, RunTriggerSource, TaskScheduleModeExt, TaskStatusExt,
 };
 
 mod cancellation;

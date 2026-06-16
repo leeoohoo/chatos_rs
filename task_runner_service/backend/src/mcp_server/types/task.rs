@@ -90,6 +90,23 @@ pub(in crate::mcp_server) struct SetTaskPrerequisitesArgs {
     pub(in crate::mcp_server) prerequisite_task_ids: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(in crate::mcp_server) struct CancelTaskArgs {
+    pub(in crate::mcp_server) task_id: String,
+    pub(in crate::mcp_server) reason: String,
+    #[serde(default)]
+    pub(in crate::mcp_server) replacement_task_ids: Vec<String>,
+}
+
+impl CancelTaskArgs {
+    pub(in crate::mcp_server) fn into_request(self) -> CancelTaskRequest {
+        CancelTaskRequest {
+            reason: self.reason,
+            replacement_task_ids: self.replacement_task_ids,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub(in crate::mcp_server) struct CreateTasksWithPrerequisitesArgs {
     #[serde(default)]

@@ -1,6 +1,6 @@
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
 use chatos_ai_runtime::{
@@ -9,30 +9,30 @@ use chatos_ai_runtime::{
     TaskRunReport, TaskRunSpec, TaskRuntimeConfig, ToolResultModelBudgetLimits,
 };
 use chatos_mcp_runtime::{
-    BuiltinMcpServerOptions, McpExecutorBuilder, McpHttpServer, McpStdioServer,
-    builtin_servers_from_kinds,
+    builtin_servers_from_kinds, BuiltinMcpServerOptions, McpExecutorBuilder, McpHttpServer,
+    McpStdioServer,
 };
 use serde_json::json;
 use tracing::{info, warn};
 
 use crate::models::{
-    ModelConfigRecord, StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord,
-    TaskRunStatus, TaskStatus, now_rfc3339,
+    now_rfc3339, ModelConfigRecord, StartTaskRunRequest, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskStatus,
 };
 
 use super::prerequisite_context::{
-    PrerequisiteTaskContext, attach_prerequisite_context_to_run, build_task_prompt,
+    attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext,
 };
 use super::stream_events::{
-    PendingRunStreamEvent, append_pending_stream_event, flush_pending_stream_event,
+    append_pending_stream_event, flush_pending_stream_event, PendingRunStreamEvent,
 };
 use super::task_process_log::{
-    TASK_PROCESS_LOG_INTERNAL_SERVER_NAME, TaskProcessLogBuiltinProvider,
     task_process_log_builtin_server, task_process_log_prefixed_input_items,
-    task_process_logging_enabled,
+    task_process_logging_enabled, TaskProcessLogBuiltinProvider,
+    TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
 };
 use super::workspace_mcp::selected_builtin_kinds;
-use super::{RunService, TaskService, build_builtin_registry, summarized_report_content};
+use super::{build_builtin_registry, summarized_report_content, RunService, TaskService};
 
 mod callbacks;
 mod completion;

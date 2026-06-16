@@ -10,9 +10,9 @@ use super::chatos_async_planner::{
 };
 use super::support::{task_creator_filter, task_for_external_mcp, tasks_for_external_mcp};
 use super::{
-    decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CreateTaskArgs,
-    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, SetTaskPrerequisitesArgs,
-    TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
+    decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
+    CreateTaskArgs, CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile,
+    SetTaskPrerequisitesArgs, TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
 };
 
 impl TaskRunnerMcpService {
@@ -114,6 +114,18 @@ impl TaskRunnerMcpService {
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
                 Ok(text_result(task_for_external_mcp(task)))
+            }
+            "cancel_task" => {
+                let args: CancelTaskArgs = decode_args(args)?;
+                let task_id = args.task_id.clone();
+                self.require_task_for_user(task_id.as_str(), current_user)
+                    .await?;
+                let result = self
+                    .task_service
+                    .cancel_task(task_id.as_str(), args.into_request(), Some(current_user))
+                    .await?
+                    .ok_or_else(|| format!("任务不存在: {task_id}"))?;
+                Ok(text_result(json!(result)))
             }
             "wait_for_task_completion" => {
                 let _ = decode_args::<Value>(args).ok();

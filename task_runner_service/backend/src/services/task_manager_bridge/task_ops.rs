@@ -34,6 +34,7 @@ impl TaskService {
             blocker_kind: normalized_optional(Some(draft.blocker_kind)),
             completed_at: None,
             last_outcome_at: None,
+            ..TaskToolState::default()
         };
         if result_summary.is_some() || !task_tool_state.outcome_items.is_empty() {
             task_tool_state.last_outcome_at = Some(now.clone());

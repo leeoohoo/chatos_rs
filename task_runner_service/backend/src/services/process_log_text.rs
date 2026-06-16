@@ -1,6 +1,6 @@
 use crate::models::{RecordTaskProcessRequest, TaskProcessLogOperation};
 
-use super::{TASK_PROCESS_LOG_MAX_CHARS, normalized_optional};
+use super::{normalized_optional, TASK_PROCESS_LOG_MAX_CHARS};
 
 pub(super) fn apply_task_process_log_update(
     current: Option<String>,

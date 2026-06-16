@@ -1,7 +1,7 @@
 use crate::auth::CurrentUser;
 use crate::models::{
-    CreateRemoteServerRequest, RemoteServerRecord, RemoteServerTestResponse,
-    TestRemoteServerRequest, UpdateRemoteServerRequest, now_rfc3339,
+    now_rfc3339, CreateRemoteServerRequest, RemoteServerRecord, RemoteServerTestResponse,
+    TestRemoteServerRequest, UpdateRemoteServerRequest,
 };
 use crate::remote_server_runtime::test_remote_server_connectivity;
 use crate::store::AppStore;
@@ -11,7 +11,7 @@ use super::remote_servers::{
     normalize_remote_server_host_key_policy, normalize_remote_server_port,
     validate_remote_server_auth_fields,
 };
-use super::{RemoteServerService, normalized_optional, validate_required};
+use super::{normalized_optional, validate_required, RemoteServerService};
 
 mod crud;
 mod testing;

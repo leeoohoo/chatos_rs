@@ -6,16 +6,16 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::models::{
-    StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatus,
-    now_rfc3339,
+    now_rfc3339, StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskStatus,
 };
 
 use super::prerequisite_context::{
-    PrerequisiteTaskContext, build_prerequisite_context, prerequisite_context_json,
+    build_prerequisite_context, prerequisite_context_json, PrerequisiteTaskContext,
 };
 use super::status_display::TaskStatusExt;
 use super::workspace_mcp::ensure_effective_task_workspace_dir;
-use super::{RunService, TaskService, is_terminal_run_status, normalized_optional};
+use super::{is_terminal_run_status, normalized_optional, RunService, TaskService};
 
 mod completion;
 mod dependency_runs;

@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::models::{
-    CreateRemoteServerRequest, CreateTaskRequest, TaskMcpConfig, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskStatus, UiPromptRecord, UiPromptStatus,
-    UpdateModelConfigRequest, UpdateTaskRequest,
+    CancelTaskRequest, CreateRemoteServerRequest, CreateTaskRequest, TaskMcpConfig, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskStatus,
+    UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest, UpdateTaskRequest,
 };
 
 use super::support::normalize_mcp_builtin_kind_names;
@@ -27,9 +27,9 @@ pub(super) use self::run::{
     GetTaskMemoryContextArgs, ListRunsArgs, ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs,
 };
 pub(super) use self::task::{
-    BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs, CreateTaskArgs,
-    CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs, ListTasksArgs,
-    SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
+    BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
+    CreateTaskArgs, CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs,
+    ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
 };
 
 #[allow(dead_code)]

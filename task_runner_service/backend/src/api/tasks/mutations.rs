@@ -92,6 +92,21 @@ pub(in crate::api) async fn delete_task(
     }
 }
 
+pub(in crate::api) async fn cancel_task(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(input): Json<CancelTaskRequest>,
+) -> Result<Json<CancelTaskResponse>, ApiError> {
+    let result = state
+        .task_service
+        .cancel_task(&id, input, Some(&current_user))
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+    Ok(Json(result))
+}
+
 pub(in crate::api) async fn update_task_mcp(
     Path(id): Path<String>,
     State(state): State<AppState>,

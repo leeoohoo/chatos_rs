@@ -149,4 +149,20 @@ pub struct TaskToolState {
     pub completed_at: Option<String>,
     #[serde(default)]
     pub last_outcome_at: Option<String>,
+    #[serde(default)]
+    pub cancel_reason: Option<String>,
+    #[serde(default)]
+    pub cancelled_at: Option<String>,
+    #[serde(default)]
+    pub cancelled_by_user_id: Option<String>,
+    #[serde(default)]
+    pub cancelled_by_username: Option<String>,
+    #[serde(default)]
+    pub cancelled_by_display_name: Option<String>,
+    #[serde(default)]
+    pub replacement_task_ids: Vec<String>,
+    #[serde(default)]
+    pub cancelled_because_task_id: Option<String>,
+    #[serde(default)]
+    pub cascade_root_task_id: Option<String>,
 }

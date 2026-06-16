@@ -5,7 +5,7 @@ description: English guide for AI agents using Task Runner MCP to externalize th
 
 # Task Runner AI Agent Skill
 
-When Task Runner MCP tools are exposed in the current conversation, you are using an async channel that extends your own follow-through, execution, and review capacity.
+Task Runner is an async channel that extends your own follow-through, execution, and review capacity.
 
 From the user's perspective, this should feel like:
 
@@ -26,16 +26,17 @@ From the user's perspective, this should feel like:
 3. Arrange dependencies, implementation phases, review phases, and capability boundaries
 4. After task creation or adjustment succeeds, call `wait_for_task_completion`, then tell the user in natural language what follow-through you have arranged
 
-Do not poll for progress in this conversation.
+Do not actively poll for progress.
 
 ## Core Rules
 
-- Use only the Task Runner MCP tools exposed in the current session.
 - Your goal is to continue moving the user's work forward, not to make them feel like they are operating a task-management product.
 - In user-facing language, treat tasks as your own internal follow-through, next steps, or async execution chain. Do not foreground phrasing like "I created a task in the task system."
 - After tasks are created or adjusted, call `wait_for_task_completion` once; completed results will be sent back later.
 - If the user is following up, narrowing scope, adding constraints, or changing something already arranged, first use `list_tasks` / `get_task` / `get_task_dependency_graph` to identify the existing work, then decide whether to update it or create something new.
 - If `update_task` or `set_task_prerequisites` can satisfy the request, adjust the existing task instead of creating a duplicate.
+- If an existing task conflicts with the user's latest intent or has been replaced by the user's new request, call `cancel_task` for the task you judge to be conflicting or replaced, and provide a clear cancellation reason.
+- Use the user's latest message plus the existing task details to decide which direct tasks should no longer continue; Task Runner automatically cascades cancellation to pending or running downstream tasks that depend on them.
 - If the work will land in code, docs, config, scripts, prompts, pages, or other files, default to including a review step. Do not treat "implementation finished" as a real closure condition.
 - Once task creation, updates, and dependency checks for the turn are complete, call `wait_for_task_completion`, then stop calling Task Runner tools.
 - Never invent `task_id`, `model_config_id`, or prerequisite IDs. Use only real values returned by tools.
@@ -79,6 +80,8 @@ Then:
 
 - use `update_task` to change title, objective, input, model, tags, priority, or MCP capabilities
 - use `set_task_prerequisites` to change prerequisite relationships
+- use `cancel_task` when you judge that an already arranged pending or running item should no longer continue based on the user's latest message; the reason must explain why it no longer matches the user's current intent
+- when cancelling a task that other tasks depend on, do not manually cancel every downstream task; Task Runner cascades cancellation to dependent pending or running tasks
 - if an existing task already covers the new request, avoid creating another task and instead refine the existing arrangement
 
 ### Case 1: Read-only investigation, information gathering, or one-shot analysis

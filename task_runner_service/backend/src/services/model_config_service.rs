@@ -1,14 +1,14 @@
 use chatos_ai_runtime::{
-    AiRequestHandler, SimplePromptOptions, build_responses_text_input, run_compatible_prompt_with,
-    select_preferred_response_text,
+    build_responses_text_input, run_compatible_prompt_with, select_preferred_response_text,
+    AiRequestHandler, SimplePromptOptions,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::models::{
-    CreateModelConfigRequest, ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse,
-    ModelConfigUsageRecord, PreviewModelCatalogRequest, TestModelConfigRequest,
-    UpdateModelConfigRequest, now_rfc3339,
+    now_rfc3339, CreateModelConfigRequest, ModelCatalogResponse, ModelConfigRecord,
+    ModelConfigTestResponse, ModelConfigUsageRecord, PreviewModelCatalogRequest,
+    TestModelConfigRequest, UpdateModelConfigRequest,
 };
 use crate::store::AppStore;
 
@@ -16,7 +16,7 @@ use super::model_catalog::{
     fetch_model_catalog_for_record, normalize_model_base_url_input, normalize_model_config_record,
     normalize_model_provider_input, normalize_model_thinking_level_input,
 };
-use super::{ModelConfigService, normalized_optional, validate_required};
+use super::{normalized_optional, validate_required, ModelConfigService};
 
 mod catalog;
 mod mutation;

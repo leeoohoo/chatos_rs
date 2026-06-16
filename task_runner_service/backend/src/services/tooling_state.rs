@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use chatos_builtin_tools::{NotepadStore, TerminalControllerContext, TerminalControllerStore};
 
@@ -8,7 +8,7 @@ use crate::config::AppConfig;
 use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
 
-use super::{ToolingStateService, normalized_optional};
+use super::{normalized_optional, ToolingStateService};
 
 impl ToolingStateService {
     pub(crate) fn new(config: AppConfig) -> Self {

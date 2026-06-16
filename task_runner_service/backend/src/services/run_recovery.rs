@@ -1,7 +1,7 @@
 use serde_json::json;
 use tracing::warn;
 
-use crate::models::{RunListFilters, TaskRunEventRecord, TaskRunStatus, TaskStatus, now_rfc3339};
+use crate::models::{now_rfc3339, RunListFilters, TaskRunEventRecord, TaskRunStatus, TaskStatus};
 
 use super::RunService;
 

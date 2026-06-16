@@ -27,7 +27,22 @@ pub(super) async fn initialize_model_phase(
     effective_workspace_dir: &str,
     prerequisite_context: &[PrerequisiteTaskContext],
 ) -> bool {
-    if service.store.is_cancel_requested(&run.id) {
+    if service.store.is_cancel_requested(&run.id)
+        || service
+            .store
+            .get_run(&run.id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|current| current.status == TaskRunStatus::Cancelled)
+        || service
+            .store
+            .get_task(&task.id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|current| current.status == TaskStatus::Cancelled)
+    {
         service
             .finish_cancelled_before_start(task, run, effective_workspace_dir)
             .await;
@@ -66,6 +81,9 @@ async fn mark_run_running(service: &RunService, run: &mut TaskRunRecord) {
 
 async fn mark_task_running(service: &RunService, task: &TaskRecord, run_id: &str) {
     if let Ok(Some(mut task_record)) = service.store.get_task(&task.id).await {
+        if task_record.status == TaskStatus::Cancelled {
+            return;
+        }
         task_record.status = TaskStatus::Running;
         task_record.updated_at = now_rfc3339();
         task_record.last_run_id = Some(run_id.to_string());
