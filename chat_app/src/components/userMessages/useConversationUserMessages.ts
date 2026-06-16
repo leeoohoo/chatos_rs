@@ -2,12 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
-import type { UserMessageTurnResponse } from '../../lib/api/client/types';
+import { getMessageTaskRunnerGraph } from '../../lib/api/client/messages';
+import type {
+  MessageTaskRunnerGraphResponse,
+  MessageTaskRunnerTask,
+  UserMessageTurnResponse,
+} from '../../lib/api/client/types';
 import { normalizeRawMessages } from '../../lib/domain/messages';
 import type { Message } from '../../types';
 import type { UserMessageTaskState, UserMessageTurn } from './types';
 
 const PAGE_SIZE = 10;
+const LIVE_TASK_POLL_INTERVAL_MS = 12000;
+const LIVE_TASK_HYDRATION_CONCURRENCY = 3;
 
 const readRecord = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -38,15 +45,17 @@ const terminalStatus = (value: unknown): boolean => {
   return ['completed', 'succeeded', 'failed', 'blocked', 'cancelled', 'canceled'].includes(status);
 };
 
+const EMPTY_TASK_STATE: UserMessageTaskState = {
+  hasTask: false,
+  running: false,
+  label: null,
+  runningCount: 0,
+};
+
 const taskStateFromMessage = (message: Message | null): UserMessageTaskState => {
   const taskRunnerAsync = readRecord(message?.metadata?.task_runner_async);
   if (!taskRunnerAsync) {
-    return {
-      hasTask: false,
-      running: false,
-      label: null,
-      runningCount: 0,
-    };
+    return EMPTY_TASK_STATE;
   }
 
   const runningIds = readStringArray(taskRunnerAsync['running_task_ids']);
@@ -82,6 +91,28 @@ const taskStateFromMessage = (message: Message | null): UserMessageTaskState => 
   };
 };
 
+const taskRunningFromTask = (task: MessageTaskRunnerTask): boolean => (
+  activeStatus(task.status)
+  || activeStatus(task.last_run?.status)
+);
+
+const taskStateFromGraph = (graph: MessageTaskRunnerGraphResponse): UserMessageTaskState => {
+  const tasks = (Array.isArray(graph.nodes) ? graph.nodes : [])
+    .map((node) => node.task)
+    .filter((task): task is MessageTaskRunnerTask => Boolean(task?.id));
+  if (tasks.length === 0) {
+    return EMPTY_TASK_STATE;
+  }
+  const runningCount = tasks.filter(taskRunningFromTask).length;
+
+  return {
+    hasTask: true,
+    running: runningCount > 0,
+    label: runningCount > 0 ? `${runningCount}` : tasks[0]?.status || null,
+    runningCount,
+  };
+};
+
 const mergeTaskState = (
   user: UserMessageTaskState,
   assistant: UserMessageTaskState,
@@ -91,6 +122,49 @@ const mergeTaskState = (
   label: user.running ? user.label : assistant.label || user.label,
   runningCount: user.runningCount + assistant.runningCount,
 });
+
+const mergeLiveTaskState = (
+  existing: UserMessageTaskState,
+  live: UserMessageTaskState,
+): UserMessageTaskState => {
+  if (!live.hasTask) {
+    return {
+      ...existing,
+      running: false,
+      label: existing.running ? null : existing.label,
+      runningCount: 0,
+    };
+  }
+  return {
+    hasTask: true,
+    running: live.running,
+    label: live.label || existing.label,
+    runningCount: live.runningCount,
+  };
+};
+
+const sameTaskState = (
+  left: UserMessageTaskState,
+  right: UserMessageTaskState,
+): boolean => (
+  left.hasTask === right.hasTask
+  && left.running === right.running
+  && left.label === right.label
+  && left.runningCount === right.runningCount
+);
+
+const runInBatches = async <T, R>(
+  items: T[],
+  batchSize: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> => {
+  const results: R[] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    const batch = items.slice(index, index + batchSize);
+    results.push(...await Promise.all(batch.map(task)));
+  }
+  return results;
+};
 
 const normalizeTurn = (
   sessionId: string,
@@ -132,6 +206,136 @@ export const useConversationUserMessages = (sessionId: string | null | undefined
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestSeqRef = useRef(0);
+  const activeSessionIdRef = useRef<string | null | undefined>(sessionId);
+  const itemsRef = useRef<UserMessageTurn[]>([]);
+  const hydratingLiveTaskStatesRef = useRef(false);
+
+  useEffect(() => {
+    activeSessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  const hydrateLiveTaskStates = useCallback(async (
+    baseItems: UserMessageTurn[],
+    options?: { runningOnly?: boolean },
+  ) => {
+    if (!sessionId || baseItems.length === 0) {
+      return;
+    }
+    if (hydratingLiveTaskStatesRef.current) {
+      return;
+    }
+    const candidates = baseItems.filter((item) => (
+      item.taskState.hasTask
+      && (!options?.runningOnly || item.taskState.running)
+    ));
+    if (candidates.length === 0) {
+      return;
+    }
+    hydratingLiveTaskStatesRef.current = true;
+    const request = apiClient.getRequestFn();
+    try {
+      const hydrated = await runInBatches(candidates, LIVE_TASK_HYDRATION_CONCURRENCY, async (item) => {
+        try {
+          const graph = await getMessageTaskRunnerGraph(request, item.userMessage.id, {
+            sessionId,
+            turnId: item.turnId,
+            sourceUserMessageId: item.userMessage.id,
+          });
+          const liveTaskState = taskStateFromGraph(graph);
+          return {
+            userMessageId: item.userMessage.id,
+            taskState: mergeLiveTaskState(item.taskState, liveTaskState),
+          };
+        } catch (err) {
+          console.warn('Failed to hydrate user message task state:', err);
+          return null;
+        }
+      });
+      if (activeSessionIdRef.current !== sessionId) {
+        return;
+      }
+      const taskStateByMessageId = new Map(
+        hydrated
+          .filter((item): item is { userMessageId: string; taskState: UserMessageTaskState } => Boolean(item))
+          .map((item) => [item.userMessageId, item.taskState]),
+      );
+      if (taskStateByMessageId.size === 0) {
+        return;
+      }
+      setItems((current) => {
+        let changed = false;
+        const nextItems = current.map((item) => {
+          const taskState = taskStateByMessageId.get(item.userMessage.id);
+          if (!taskState || sameTaskState(item.taskState, taskState)) {
+            return item;
+          }
+          changed = true;
+          return { ...item, taskState };
+        });
+        return changed ? nextItems : current;
+      });
+    } finally {
+      hydratingLiveTaskStatesRef.current = false;
+    }
+  }, [apiClient, sessionId]);
+
+  const hydrateInitialLiveTaskStates = useCallback(async (baseItems: UserMessageTurn[]) => {
+    if (!sessionId || baseItems.length === 0) {
+      return;
+    }
+    const candidates = baseItems.filter((item) => item.taskState.hasTask);
+    if (candidates.length === 0) {
+      return;
+    }
+    const request = apiClient.getRequestFn();
+    const hydrated = await runInBatches(candidates, LIVE_TASK_HYDRATION_CONCURRENCY, async (item) => {
+      try {
+        const graph = await getMessageTaskRunnerGraph(request, item.userMessage.id, {
+          sessionId,
+          turnId: item.turnId,
+          sourceUserMessageId: item.userMessage.id,
+        });
+        const liveTaskState = taskStateFromGraph(graph);
+        if (!liveTaskState.hasTask && !item.taskState.running) {
+          return null;
+        }
+        return {
+          userMessageId: item.userMessage.id,
+          taskState: mergeLiveTaskState(item.taskState, liveTaskState),
+        };
+      } catch (err) {
+        console.warn('Failed to hydrate user message task state:', err);
+        return null;
+      }
+    });
+    if (activeSessionIdRef.current !== sessionId) {
+      return;
+    }
+    const taskStateByMessageId = new Map(
+      hydrated
+        .filter((item): item is { userMessageId: string; taskState: UserMessageTaskState } => Boolean(item))
+        .map((item) => [item.userMessageId, item.taskState]),
+    );
+    if (taskStateByMessageId.size === 0) {
+      return;
+    }
+    setItems((current) => {
+      let changed = false;
+      const nextItems = current.map((item) => {
+        const taskState = taskStateByMessageId.get(item.userMessage.id);
+        if (!taskState || sameTaskState(item.taskState, taskState)) {
+          return item;
+        }
+        changed = true;
+        return { ...item, taskState };
+      });
+      return changed ? nextItems : current;
+    });
+  }, [apiClient, sessionId]);
 
   const loadPage = useCallback(async (
     before: string | null,
@@ -166,6 +370,7 @@ export const useConversationUserMessages = (sessionId: string | null | undefined
         .map((item) => normalizeTurn(sessionId, item))
         .filter((item): item is UserMessageTurn => Boolean(item));
       setItems((current) => (mode === 'append' ? [...nextItems, ...current] : nextItems));
+      void hydrateInitialLiveTaskStates(nextItems);
       setNextBefore(response.next_before || null);
       setHasMore(response.has_more === true);
       return nextItems;
@@ -184,11 +389,25 @@ export const useConversationUserMessages = (sessionId: string | null | undefined
         setLoadingMore(false);
       }
     }
-  }, [apiClient, sessionId, t]);
+  }, [apiClient, hydrateInitialLiveTaskStates, sessionId, t]);
 
   useEffect(() => {
     void loadPage(null, 'replace');
   }, [loadPage]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return undefined;
+    }
+    const intervalId = window.setInterval(() => {
+      const currentItems = itemsRef.current;
+      if (!currentItems.some((item) => item.taskState.running)) {
+        return;
+      }
+      void hydrateLiveTaskStates(currentItems, { runningOnly: true });
+    }, LIVE_TASK_POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [hydrateLiveTaskStates, sessionId]);
 
   const reload = useCallback(() => {
     void loadPage(null, 'replace');

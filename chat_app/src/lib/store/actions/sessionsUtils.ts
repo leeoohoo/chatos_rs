@@ -375,6 +375,44 @@ const matchesSnapshotCursor = (message: Message, cursor: string): boolean => {
   return message.id === normalizedCursor || readMessageTurnCursor(message) === normalizedCursor;
 };
 
+const preserveMissingTaskRunnerCallbacks = (
+  baseMessages: Message[],
+  preservedMessages: Message[],
+): Message[] => {
+  const baseMessageIds = new Set(baseMessages.map((message) => message.id));
+  const missingCallbacks = preservedMessages.filter((message) => (
+    isTaskRunnerCallbackSnapshotMessage(message)
+    && !baseMessageIds.has(message.id)
+  ));
+  if (missingCallbacks.length === 0) {
+    return baseMessages;
+  }
+
+  const baseMessageById = new Map(baseMessages.map((message) => [message.id, message]));
+  const mergedMessages: Message[] = [];
+  const consumedBaseIds = new Set<string>();
+
+  for (const preservedMessage of preservedMessages) {
+    const baseMessage = baseMessageById.get(preservedMessage.id);
+    if (baseMessage) {
+      mergedMessages.push(baseMessage);
+      consumedBaseIds.add(baseMessage.id);
+      continue;
+    }
+    if (isTaskRunnerCallbackSnapshotMessage(preservedMessage)) {
+      mergedMessages.push(preservedMessage);
+    }
+  }
+
+  for (const baseMessage of baseMessages) {
+    if (!consumedBaseIds.has(baseMessage.id)) {
+      mergedMessages.push(baseMessage);
+    }
+  }
+
+  return mergedMessages;
+};
+
 export const extractCompactHistoryMessages = (messages: Message[]): Message[] => messages.filter((message) => {
   if (!message || message.role === 'tool') {
     return false;
@@ -438,7 +476,10 @@ export const mergeLatestCompactHistorySnapshot = (
   if (splitIndex > 0) {
     const olderMessages = preservedSnapshot.messages.slice(0, splitIndex);
     return {
-      messages: [...olderMessages, ...compactLatestMessages],
+      messages: preserveMissingTaskRunnerCallbacks(
+        [...olderMessages, ...compactLatestMessages],
+        preservedSnapshot.messages,
+      ),
       nextBefore: preservedSnapshot.nextBefore,
       loaded: true,
     };
@@ -446,7 +487,7 @@ export const mergeLatestCompactHistorySnapshot = (
 
   const latestIds = new Set(compactLatestMessages.map((message) => message.id));
   const overlapIndex = preservedSnapshot.messages.findIndex((message) => latestIds.has(message.id));
-  if (overlapIndex <= 0) {
+  if (overlapIndex < 0) {
     return {
       messages: compactLatestMessages,
       nextBefore: latestNextBefore,
@@ -454,9 +495,23 @@ export const mergeLatestCompactHistorySnapshot = (
     };
   }
 
+  if (overlapIndex === 0) {
+    return {
+      messages: preserveMissingTaskRunnerCallbacks(
+        compactLatestMessages,
+        preservedSnapshot.messages,
+      ),
+      nextBefore: latestNextBefore,
+      loaded: true,
+    };
+  }
+
   const olderMessages = preservedSnapshot.messages.slice(0, overlapIndex);
   return {
-    messages: [...olderMessages, ...compactLatestMessages],
+    messages: preserveMissingTaskRunnerCallbacks(
+      [...olderMessages, ...compactLatestMessages],
+      preservedSnapshot.messages,
+    ),
     nextBefore: preservedSnapshot.nextBefore,
     loaded: true,
   };

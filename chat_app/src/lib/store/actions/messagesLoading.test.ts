@@ -35,6 +35,20 @@ const createMessage = (
   metadata,
 });
 
+const createUserMessage = (
+  id: string,
+  content: string,
+  metadata: Message['metadata'] = undefined,
+): Message => ({
+  id,
+  sessionId: 'session_2',
+  role: 'user',
+  content,
+  status: 'completed',
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  metadata,
+});
+
 describe('syncSessionMessagesInBackground', () => {
   const writeCache = (state: ChatStoreShape, sessionId: string, snapshot: SessionMessagesSnapshot) => {
     writeSessionMessagesCache(state, sessionId, snapshot);
@@ -323,6 +337,77 @@ describe('syncSessionMessagesInBackground', () => {
       loaded: true,
     });
     expect(readCache(state, 'session_2')?.messages.map((message) => message.id)).toEqual(['older', 'newest']);
+  });
+
+  it('keeps a realtime task-runner callback when latest background sync has not caught up yet', async () => {
+    const userMessage = createUserMessage('user_2', 'run async task', {
+      conversation_turn_id: 'turn_2',
+    });
+    const finalAssistant = {
+      ...createMessage('assistant_2', 'plan accepted', 'completed', {
+        conversation_turn_id: 'turn_2',
+        historyFinalForUserMessageId: 'user_2',
+        historyFinalForTurnId: 'turn_2',
+      }),
+      sessionId: 'session_2',
+    } as Message;
+    const callback = {
+      ...createMessage('task_runner_callback::user_2::task_1::task.completed::run_1', 'task completed', 'completed', {
+        task_runner_async: {
+          message_kind: 'task_terminal_update',
+          source_user_message_id: 'user_2',
+          source_turn_id: 'turn_2',
+        },
+      }),
+      messageMode: 'task_runner_callback',
+    } as Message;
+    const state = {
+      currentSessionId: 'session_2',
+      messages: [userMessage, finalAssistant, callback],
+      hasMoreMessages: false,
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      error: null,
+      sessionChatState: {},
+      sessionMessagePaginationState: {
+        session_2: {
+          nextBefore: null,
+          loaded: true,
+        },
+      },
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+    } as unknown as ChatStoreShape;
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [userMessage, finalAssistant],
+      hasMore: false,
+      nextBefore: null,
+    });
+
+    const actions = createMessageLoadingActions({
+      set,
+      get,
+      client: {} as never,
+    });
+
+    await actions.syncSessionMessagesInBackground('session_2');
+
+    expect(state.messages.map((message) => message.id)).toEqual([
+      'user_2',
+      'assistant_2',
+      'task_runner_callback::user_2::task_1::task.completed::run_1',
+    ]);
+    expect(readCache(state, 'session_2')?.messages.map((message) => message.id)).toEqual([
+      'user_2',
+      'assistant_2',
+      'task_runner_callback::user_2::task_1::task.completed::run_1',
+    ]);
   });
 
   it('uses the smaller initial compact-history page size for first load and load-more', async () => {

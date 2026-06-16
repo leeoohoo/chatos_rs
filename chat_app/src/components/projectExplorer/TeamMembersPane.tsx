@@ -21,6 +21,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
   const {
     workspaceProps,
     runtimeContextDrawerProps,
+    userMessageSidebarActions,
   } = useTeamMembersPaneModel({ project });
   const activeSessionId = workspaceProps.selectedProjectSession?.id || null;
   const {
@@ -48,8 +49,15 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     <div className={cn('flex h-full overflow-hidden', className)}>
       <ConversationUserMessagesSidebar
         sessionId={activeSessionId}
-        contactName={workspaceProps.selectedContact?.name || null}
         className="w-[400px]"
+        summaryActive={userMessageSidebarActions.summaryActive}
+        runtimeContextActive={userMessageSidebarActions.runtimeContextActive}
+        summaryLoading={userMessageSidebarActions.summaryLoading}
+        runtimeContextLoading={userMessageSidebarActions.runtimeContextLoading}
+        summaryDisabled={userMessageSidebarActions.summaryDisabled}
+        runtimeContextDisabled={userMessageSidebarActions.runtimeContextDisabled}
+        onOpenSummary={userMessageSidebarActions.onOpenSummary}
+        onOpenRuntimeContext={userMessageSidebarActions.onOpenRuntimeContext}
         onSelectMessage={handleSelectUserMessage}
         onLoadMoreHistory={handleLoadMoreUserMessagesHistory}
         onOpenTasks={setTaskMessage}

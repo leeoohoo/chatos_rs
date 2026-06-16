@@ -9,8 +9,15 @@ import { useConversationUserMessages } from './useConversationUserMessages';
 
 interface ConversationUserMessagesSidebarProps {
   sessionId: string | null | undefined;
-  contactName?: string | null;
   className?: string;
+  summaryActive?: boolean;
+  runtimeContextActive?: boolean;
+  summaryLoading?: boolean;
+  runtimeContextLoading?: boolean;
+  summaryDisabled?: boolean;
+  runtimeContextDisabled?: boolean;
+  onOpenSummary?: () => void | Promise<void>;
+  onOpenRuntimeContext?: () => void | Promise<void>;
   onSelectMessage?: (message: Message) => void;
   onLoadMoreHistory?: (oldestLoadedMessage: Message | null) => void | Promise<void>;
   onOpenTasks: (message: Message) => void;
@@ -36,8 +43,15 @@ const selectOldestLoadedMessage = (loadedItems: Array<{ userMessage: Message }>)
 
 const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarProps> = ({
   sessionId,
-  contactName,
   className,
+  summaryActive = false,
+  runtimeContextActive = false,
+  summaryLoading = false,
+  runtimeContextLoading = false,
+  summaryDisabled,
+  runtimeContextDisabled,
+  onOpenSummary,
+  onOpenRuntimeContext,
   onSelectMessage,
   onLoadMoreHistory,
   onOpenTasks,
@@ -85,28 +99,63 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
     return () => window.cancelAnimationFrame(frame);
   }, [items, sessionId]);
 
+  const buildActionButtonClass = (active: boolean) => cn(
+    'rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+    active
+      ? 'border-primary/30 bg-primary/10 text-primary'
+      : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
+  );
+
+  const isSummaryDisabled = summaryDisabled ?? !sessionId;
+  const isRuntimeContextDisabled = runtimeContextDisabled ?? !sessionId;
+
   return (
     <aside className={cn('flex shrink-0 flex-col border-r border-border bg-background', className)}>
       <div className="border-b border-border px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-foreground">{t('projectUserMessages.title')}</h2>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              {contactName
-                ? t('projectUserMessages.descriptionWithContact', { name: contactName })
-                : t('projectUserMessages.description')}
-            </p>
           </div>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
-            disabled={!sessionId || loading}
-            onClick={reload}
-            aria-label={t('projectUserMessages.refresh')}
-            title={t('projectUserMessages.refresh')}
-          >
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {onOpenSummary ? (
+              <button
+                type="button"
+                className={buildActionButtonClass(summaryActive)}
+                disabled={isSummaryDisabled || summaryLoading}
+                onClick={() => {
+                  void onOpenSummary();
+                }}
+                title={summaryActive ? t('session.summary.close') : t('session.summary.open')}
+              >
+                {summaryLoading
+                  ? t('common.loading')
+                  : (summaryActive ? t('session.summary.closeButton') : t('session.summary.openButton'))}
+              </button>
+            ) : null}
+            {onOpenRuntimeContext ? (
+              <button
+                type="button"
+                className={buildActionButtonClass(runtimeContextActive)}
+                disabled={isRuntimeContextDisabled || runtimeContextLoading}
+                onClick={() => {
+                  void onOpenRuntimeContext();
+                }}
+                title={t('session.runtimeContextTitle')}
+              >
+                {runtimeContextLoading ? t('common.loading') : t('session.runtimeContext')}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+              disabled={!sessionId || loading}
+              onClick={reload}
+              aria-label={t('projectUserMessages.refresh')}
+              title={t('projectUserMessages.refresh')}
+            >
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            </button>
+          </div>
         </div>
         {error ? (
           <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-2 text-xs text-destructive">

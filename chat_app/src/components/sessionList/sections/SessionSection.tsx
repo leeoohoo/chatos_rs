@@ -48,8 +48,6 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   expanded,
   sessions,
   currentSessionId,
-  summarySessionId,
-  runtimeContextSessionId,
   displaySessionRuntimeIdMap = {},
   taskRunnerEnabledBySessionId = {},
   sessionChatState,
@@ -60,8 +58,6 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   onRefresh,
   onCreateSession,
   onSelectSession,
-  onOpenSummary,
-  onOpenRuntimeContext,
   onOpenTaskRunnerConfig = () => {},
   onDeleteSession,
   onLoadMore,
@@ -173,42 +169,6 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        className={cn(
-                          'px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent',
-                          summarySessionId === session.id && 'text-blue-600 border-blue-200',
-                        )}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (isArchivedSession) {
-                            return;
-                          }
-                          onOpenSummary(session.id);
-                        }}
-                        disabled={isArchivedSession}
-                        title={summarySessionId === session.id ? t('session.summary.close') : t('session.summary.open')}
-                      >
-                        {summarySessionId === session.id ? t('session.summary.closeButton') : t('session.summary.openButton')}
-                      </button>
-                      <button
-                        type="button"
-                        className={cn(
-                          'px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent',
-                          runtimeContextSessionId === session.id && 'text-blue-600 border-blue-200',
-                        )}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (isArchivedSession) {
-                            return;
-                          }
-                          onOpenRuntimeContext(session.id);
-                        }}
-                        disabled={isArchivedSession}
-                        title={t('session.runtimeContextTitle')}
-                      >
-                        {t('session.runtimeContext')}
-                      </button>
                       <div className="relative" data-action-menu-root="true">
                         <button
                           className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"

@@ -73,7 +73,13 @@ export default function ChatInterfaceMainContent({
           ) : activePanel === 'remote_sftp' ? (
             <RemoteSftpPanel className="flex-1" />
           ) : (
-            <ChatConversationPane {...conversationPaneProps} />
+            <ChatConversationPane
+              {...conversationPaneProps}
+              runtimeContextOpen={runtimeContextOpen}
+              runtimeContextSessionId={runtimeContextSessionId}
+              onToggleSessionSummary={onToggleSessionSummary}
+              onOpenSessionRuntimeContext={onOpenSessionRuntimeContext}
+            />
           )}
         </Suspense>
       </div>

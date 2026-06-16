@@ -2,6 +2,7 @@ import { memo, useMemo, useState, type FC, type MouseEvent } from 'react';
 import { Activity, FileText } from 'lucide-react';
 import type { Edge, Node } from '@xyflow/react';
 import type {
+  MessageTaskRunnerGraphEdge,
   MessageTaskRunnerGraphNode,
   MessageTaskRunnerGraphResponse,
   MessageTaskRunnerTask,
@@ -11,9 +12,10 @@ import {
   TASK_GRAPH_NODE_HEIGHT,
   TASK_GRAPH_NODE_WIDTH,
   layoutMessageTaskGraph,
+  type TaskGraphLayoutPoint,
 } from './messageTaskGraphLayout';
 import { StatusBadge } from './parts';
-import { readString } from './utils';
+import { readString, readStringArray } from './utils';
 
 interface MessageTaskGraphPanelProps {
   graph: MessageTaskRunnerGraphResponse;
@@ -41,6 +43,7 @@ type TaskGraphEdgeData = {
   stroke: string;
   animated: boolean;
   markerId: string;
+  layoutPoints?: TaskGraphLayoutPoint[];
 };
 type TaskGraphFlowEdge = Edge<TaskGraphEdgeData>;
 
@@ -124,6 +127,85 @@ const walkTaskIds = (originId: string, adjacency: Map<string, string[]>): Set<st
   return visited;
 };
 
+export const normalizeMessageTaskGraphForDisplay = (
+  graph: Pick<MessageTaskRunnerGraphResponse, 'nodes' | 'edges'>,
+): Pick<MessageTaskRunnerGraphResponse, 'nodes' | 'edges'> => {
+  const nodes = graph.nodes
+    .filter((node) => readString(node.task?.id))
+    .map((node) => ({ ...node }));
+  const nodeById = new Map(
+    nodes.map((node) => [node.task.id, node]),
+  );
+
+  const edgeByKey = new Map<string, MessageTaskRunnerGraphEdge>();
+  const addEdge = (
+    source: string | null | undefined,
+    target: string | null | undefined,
+    kind?: string | null,
+  ) => {
+    const normalizedSource = readString(source);
+    const normalizedTarget = readString(target);
+    if (!normalizedSource || !normalizedTarget || normalizedSource === normalizedTarget) {
+      return;
+    }
+    if (!nodeById.has(normalizedSource) || !nodeById.has(normalizedTarget)) {
+      return;
+    }
+    const key = `${normalizedSource}->${normalizedTarget}`;
+    if (edgeByKey.has(key)) {
+      return;
+    }
+    edgeByKey.set(key, {
+      id: key,
+      source: normalizedSource,
+      target: normalizedTarget,
+      kind: kind || 'prerequisite',
+    });
+  };
+
+  nodes.forEach((node) => {
+    readStringArray(node.task?.prerequisite_task_ids)
+      .forEach((prerequisiteTaskId) => addEdge(prerequisiteTaskId, node.task.id, 'prerequisite'));
+  });
+  if (edgeByKey.size === 0) {
+    graph.edges.forEach((edge) => {
+      addEdge(edge.source, edge.target, edge.kind);
+    });
+  }
+
+  const displayEdges = Array.from(edgeByKey.values());
+  const depthById = new Map(nodes.map((node) => [node.task.id, 0]));
+  for (let iteration = 0; iteration < nodes.length; iteration += 1) {
+    let changed = false;
+    displayEdges.forEach(({ source, target }) => {
+      const targetDepth = depthById.get(target) ?? 0;
+      const sourceDepth = depthById.get(source) ?? 0;
+      const nextSourceDepth = targetDepth + 1;
+      if (nextSourceDepth > sourceDepth) {
+        depthById.set(source, nextSourceDepth);
+        changed = true;
+      }
+    });
+    if (!changed) {
+      break;
+    }
+  }
+
+  return {
+    nodes: nodes.map((node) => ({
+      ...node,
+      depth: depthById.get(node.task.id) ?? node.depth,
+    })),
+    edges: displayEdges,
+  };
+};
+
+export const normalizeMessageTaskGraphEdgesForDisplay = (
+  graph: Pick<MessageTaskRunnerGraphResponse, 'nodes' | 'edges'>,
+): MessageTaskRunnerGraphEdge[] => {
+  return normalizeMessageTaskGraphForDisplay(graph).edges;
+};
+
 const getNodeDimensions = (node: TaskGraphFlowNode) => ({
   width: typeof node.style?.width === 'number' ? node.style.width : TASK_GRAPH_NODE_WIDTH,
   height: typeof node.style?.height === 'number' ? node.style.height : TASK_GRAPH_NODE_HEIGHT,
@@ -204,7 +286,60 @@ const buildFlowEdges = (
   })
 );
 
-const edgePath = (source: PositionedTaskNode, target: PositionedTaskNode): string => {
+const roundedPolylinePath = (points: TaskGraphLayoutPoint[]): string => {
+  if (points.length === 0) {
+    return '';
+  }
+  if (points.length === 1) {
+    return `M ${points[0].x} ${points[0].y}`;
+  }
+  const commands = [`M ${points[0].x} ${points[0].y}`];
+  const radius = 18;
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    const previousVector = {
+      x: current.x - previous.x,
+      y: current.y - previous.y,
+    };
+    const nextVector = {
+      x: next.x - current.x,
+      y: next.y - current.y,
+    };
+    const previousLength = Math.hypot(previousVector.x, previousVector.y);
+    const nextLength = Math.hypot(nextVector.x, nextVector.y);
+    if (previousLength < 1 || nextLength < 1) {
+      commands.push(`L ${current.x} ${current.y}`);
+      continue;
+    }
+    const cornerRadius = Math.min(radius, previousLength / 2, nextLength / 2);
+    const beforeCorner = {
+      x: current.x - (previousVector.x / previousLength) * cornerRadius,
+      y: current.y - (previousVector.y / previousLength) * cornerRadius,
+    };
+    const afterCorner = {
+      x: current.x + (nextVector.x / nextLength) * cornerRadius,
+      y: current.y + (nextVector.y / nextLength) * cornerRadius,
+    };
+    commands.push(`L ${beforeCorner.x} ${beforeCorner.y}`);
+    commands.push(`Q ${current.x} ${current.y} ${afterCorner.x} ${afterCorner.y}`);
+  }
+
+  const last = points[points.length - 1];
+  commands.push(`L ${last.x} ${last.y}`);
+  return commands.join(' ');
+};
+
+const edgePath = (
+  source: PositionedTaskNode,
+  target: PositionedTaskNode,
+  layoutPoints?: TaskGraphLayoutPoint[],
+): string => {
+  if (layoutPoints && layoutPoints.length >= 2) {
+    return roundedPolylinePath(layoutPoints);
+  }
   const startX = source.x + source.width / 2;
   const startY = source.y + source.height;
   const endX = target.x + target.width / 2;
@@ -358,15 +493,21 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
 }) => {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
-  const taskById = useMemo(
-    () => new Map(graph.nodes.map((node) => [node.task.id, node])),
-    [graph.nodes],
+  const displayGraph = useMemo(
+    () => normalizeMessageTaskGraphForDisplay(graph),
+    [graph],
   );
+
+  const taskById = useMemo(
+    () => new Map(displayGraph.nodes.map((node) => [node.task.id, node])),
+    [displayGraph.nodes],
+  );
+  const displayEdges = displayGraph.edges;
 
   const { parentMap, childMap } = useMemo(() => {
     const nextParentMap = new Map<string, string[]>();
     const nextChildMap = new Map<string, string[]>();
-    graph.edges.forEach(({ source, target }) => {
+    displayEdges.forEach(({ source, target }) => {
       nextParentMap.set(target, [...(nextParentMap.get(target) || []), source]);
       nextChildMap.set(source, [...(nextChildMap.get(source) || []), target]);
     });
@@ -374,7 +515,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
       parentMap: nextParentMap,
       childMap: nextChildMap,
     };
-  }, [graph.edges]);
+  }, [displayEdges]);
 
   const activeContext = useMemo(() => {
     if (!activeTaskId) {
@@ -396,7 +537,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
 
   const layout = useMemo(() => {
     const flowNodes = buildFlowNodes(
-      graph.nodes,
+      displayGraph.nodes,
       readString(graph.source_user_message_id),
       activeTaskId,
       activeContext?.relatedTaskIds || null,
@@ -406,7 +547,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
       onOpenRun,
     );
     const flowEdges = buildFlowEdges(
-      graph.edges,
+      displayEdges,
       taskById,
       activeTaskId,
       activeContext?.relatedTaskIds || null,
@@ -415,12 +556,13 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
   }, [
     activeContext?.relatedTaskIds,
     activeTaskId,
-    graph.edges,
-    graph.nodes,
+    displayGraph.nodes,
+    displayEdges,
     graph.source_user_message_id,
     loadingRunId,
     onOpenDetail,
     onOpenRun,
+    taskById,
   ]);
 
   const positionedNodes = useMemo(() => (
@@ -587,6 +729,10 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
                 return null;
               }
               const stroke = edge.data?.stroke || 'rgba(100, 116, 139, 0.72)';
+              const layoutPoints = edge.data?.layoutPoints?.map((point) => ({
+                x: point.x + offsetX,
+                y: point.y + offsetY,
+              }));
               return (
                 <path
                   key={edge.id}
@@ -594,6 +740,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
                   d={edgePath(
                     { ...source, x: source.x + offsetX, y: source.y + offsetY },
                     { ...target, x: target.x + offsetX, y: target.y + offsetY },
+                    layoutPoints,
                   )}
                   fill="none"
                   strokeLinecap="round"
@@ -626,7 +773,7 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
         </div>
       </div>
 
-      {graph.edges.length === 0 ? (
+      {displayEdges.length === 0 ? (
         <div className="pointer-events-none absolute bottom-4 left-4 z-20 rounded-xl border border-border/80 bg-background/88 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
           当前图里没有依赖连线，说明这些任务现在是并列根任务，或还没有建立前置关系。
         </div>

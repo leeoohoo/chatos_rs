@@ -4,6 +4,11 @@ import dagre from '@dagrejs/dagre';
 export const TASK_GRAPH_NODE_WIDTH = 320;
 export const TASK_GRAPH_NODE_HEIGHT = 272;
 
+export interface TaskGraphLayoutPoint {
+  x: number;
+  y: number;
+}
+
 export function layoutMessageTaskGraph<NodeType extends Node, EdgeType extends Edge = Edge>(
   nodes: NodeType[],
   edges: EdgeType[],
@@ -27,7 +32,9 @@ export function layoutMessageTaskGraph<NodeType extends Node, EdgeType extends E
   });
 
   edges.forEach((edge) => {
-    graph.setEdge(edge.source, edge.target);
+    graph.setEdge(edge.source, edge.target, {
+      edgeId: edge.id,
+    });
   });
 
   dagre.layout(graph);
@@ -47,6 +54,17 @@ export function layoutMessageTaskGraph<NodeType extends Node, EdgeType extends E
         },
       };
     }),
-    edges,
+    edges: edges.map((edge) => {
+      const layoutEdge = graph.edge(edge.source, edge.target) as
+        | { points?: TaskGraphLayoutPoint[] }
+        | undefined;
+      return {
+        ...edge,
+        data: {
+          ...(edge.data || {}),
+          layoutPoints: layoutEdge?.points,
+        },
+      };
+    }) as EdgeType[],
   };
 }

@@ -36,6 +36,10 @@ interface ChatConversationPaneProps {
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;
   onCloseSummary: () => void;
+  runtimeContextOpen?: boolean;
+  runtimeContextSessionId?: string | null;
+  onToggleSessionSummary?: (sessionId: string) => void;
+  onOpenSessionRuntimeContext?: (sessionId: string) => void;
   toggleSidebar: () => void;
   onSend: SendMessageHandler;
   inputDisabled: boolean;
@@ -196,6 +200,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   memoryError,
   onRefreshMemory,
   onCloseSummary,
+  runtimeContextOpen = false,
+  runtimeContextSessionId = null,
+  onToggleSessionSummary,
+  onOpenSessionRuntimeContext,
   toggleSidebar,
   onSend,
   inputDisabled,
@@ -240,8 +248,19 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
       {userMessageSidebarVisible ? (
         <ConversationUserMessagesSidebar
           sessionId={currentSession?.id || null}
-          contactName={currentContactName || currentSession?.title || null}
           className="w-[360px]"
+          summaryActive={sessionSummaryPaneVisible}
+          runtimeContextActive={Boolean(
+            runtimeContextOpen
+            && runtimeContextSessionId
+            && currentSession?.id === runtimeContextSessionId,
+          )}
+          onOpenSummary={onToggleSessionSummary && currentSession?.id ? () => {
+            onToggleSessionSummary(currentSession.id);
+          } : undefined}
+          onOpenRuntimeContext={onOpenSessionRuntimeContext && currentSession?.id ? () => {
+            onOpenSessionRuntimeContext(currentSession.id);
+          } : undefined}
           onSelectMessage={handleSelectUserMessage}
           onLoadMoreHistory={handleLoadMoreUserMessagesHistory}
           onOpenTasks={setTaskMessage}
