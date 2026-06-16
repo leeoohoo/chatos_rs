@@ -18,6 +18,7 @@ export const useConversationPaneProps = ({
   currentSession: conversation.currentSession,
   sessionSummaryPaneVisible: conversation.sessionSummaryPaneVisible,
   currentContactName: conversation.currentContactName,
+  currentContactId: conversation.currentContactId,
   currentProjectNameForMemory: conversation.currentProjectNameForMemory,
   currentProjectIdForMemory: conversation.currentProjectIdForMemory || null,
   messages: conversation.messages,

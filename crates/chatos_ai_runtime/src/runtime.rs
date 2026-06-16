@@ -10,7 +10,8 @@ use chatos_mcp_runtime::{
 use tracing::{info, warn};
 
 use crate::error_policy::{
-    is_context_length_exceeded_error, is_missing_tool_call_error, is_request_body_too_large_error,
+    handle_transient_retry, is_context_length_exceeded_error, is_missing_tool_call_error,
+    is_request_body_too_large_error,
 };
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::request::{AiRequestHandler, AiRequestOptions, StreamCallbacks};
@@ -33,6 +34,7 @@ pub struct AiRuntime {
 
 const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回任何可展示的最终结果。请不要继续调用工具，直接基于目前对话上下文、已执行步骤和已有工具结果，输出本次任务的最终结果；如果无法完成，请明确说明阻塞原因、已完成事项和下一步建议。";
 const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
+const MAX_TRANSIENT_MODEL_REQUEST_RETRIES: usize = 3;
 
 #[derive(Clone)]
 pub struct AiRuntimeOptions {
@@ -460,7 +462,7 @@ impl AiRuntime {
         let mut empty_final_response_followup_attempted = false;
         let mut runtime_followup_items: Vec<Value> = Vec::new();
         let mut runtime_followup_appended_to_request = false;
-        loop {
+        'runtime_loop: loop {
             if options.is_aborted() {
                 return Err("aborted".to_string());
             }
@@ -543,95 +545,110 @@ impl AiRuntime {
                             cb(attach_runtime_debug(payload, &request_debug));
                         }) as Arc<dyn Fn(Value) + Send + Sync>
                     });
-            let response = self
-                .request_handler
-                .handle_request_with_options(
-                    request.base_url.as_str(),
-                    request.api_key.as_str(),
-                    request.input.clone(),
-                    request.supports_responses,
-                    request.model.clone(),
-                    request.instructions.clone(),
-                    Some(request.tools.clone()),
-                    request.temperature,
-                    request.max_output_tokens,
-                    StreamCallbacks {
-                        on_chunk: options.callbacks.on_chunk.clone(),
-                        on_thinking: options.callbacks.on_thinking.clone(),
-                    },
-                    Some(request.provider.clone()),
-                    request.thinking_level.clone(),
-                    on_before_model_request,
-                    AiRequestOptions {
-                        prompt_cache_key: request.prompt_cache_key.clone(),
-                        request_cwd: request.request_cwd.clone(),
-                        include_prompt_cache_retention: request.include_prompt_cache_retention,
-                        request_body_limit_bytes: request.request_body_limit_bytes,
-                        abort_token: None,
-                        force_identity_encoding: false,
-                    },
-                )
-                .await;
-            let response = match response {
-                Ok(response) => response,
-                Err(err) => {
-                    if !missing_tool_turn_replay_attempted
-                        && request.supports_responses
-                        && is_missing_tool_call_error(err.as_str())
-                    {
-                        let repaired_input = merge_pending_tool_turn_into_input(
-                            request.input.clone(),
-                            pending_tool_calls.as_deref(),
-                            pending_tool_outputs.as_deref(),
-                        );
-                        if repaired_input != request.input {
-                            warn!(
-                                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
-                                conversation_turn_id =
-                                    options.conversation_turn_id.as_deref().unwrap_or(""),
-                                iteration,
-                                error = err.as_str(),
-                                "ai runtime replaying pending tool turn after provider rejected incomplete tool exchange"
+            let mut transient_retry_count = 0usize;
+            let response = loop {
+                let response = self
+                    .request_handler
+                    .handle_request_with_options(
+                        request.base_url.as_str(),
+                        request.api_key.as_str(),
+                        request.input.clone(),
+                        request.supports_responses,
+                        request.model.clone(),
+                        request.instructions.clone(),
+                        Some(request.tools.clone()),
+                        request.temperature,
+                        request.max_output_tokens,
+                        StreamCallbacks {
+                            on_chunk: options.callbacks.on_chunk.clone(),
+                            on_thinking: options.callbacks.on_thinking.clone(),
+                        },
+                        Some(request.provider.clone()),
+                        request.thinking_level.clone(),
+                        on_before_model_request.clone(),
+                        AiRequestOptions {
+                            prompt_cache_key: request.prompt_cache_key.clone(),
+                            request_cwd: request.request_cwd.clone(),
+                            include_prompt_cache_retention: request.include_prompt_cache_retention,
+                            request_body_limit_bytes: request.request_body_limit_bytes,
+                            abort_token: None,
+                            force_identity_encoding: false,
+                        },
+                    )
+                    .await;
+                match response {
+                    Ok(response) => break response,
+                    Err(err) => {
+                        if !missing_tool_turn_replay_attempted
+                            && request.supports_responses
+                            && is_missing_tool_call_error(err.as_str())
+                        {
+                            let repaired_input = merge_pending_tool_turn_into_input(
+                                request.input.clone(),
+                                pending_tool_calls.as_deref(),
+                                pending_tool_outputs.as_deref(),
                             );
-                            request.input = repaired_input;
-                            missing_tool_turn_replay_attempted = true;
-                            iteration_reason = "missing_tool_turn_replay".to_string();
-                            continue;
+                            if repaired_input != request.input {
+                                warn!(
+                                    conversation_id =
+                                        options.conversation_id.as_deref().unwrap_or(""),
+                                    conversation_turn_id =
+                                        options.conversation_turn_id.as_deref().unwrap_or(""),
+                                    iteration,
+                                    error = err.as_str(),
+                                    "ai runtime replaying pending tool turn after provider rejected incomplete tool exchange"
+                                );
+                                request.input = repaired_input;
+                                missing_tool_turn_replay_attempted = true;
+                                iteration_reason = "missing_tool_turn_replay".to_string();
+                                continue 'runtime_loop;
+                            }
                         }
-                    }
-                    let should_try_context_recovery = !context_overflow_recovery_attempted
-                        && (is_context_length_exceeded_error(err.as_str())
-                            || is_request_body_too_large_error(err.as_str()));
-                    if should_try_context_recovery {
-                        if let Some(refresh) = &options.iterative_context_refresh {
-                            info!(
-                                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
-                                conversation_turn_id =
-                                    options.conversation_turn_id.as_deref().unwrap_or(""),
-                                iteration,
-                                error = err.as_str(),
-                                "ai runtime attempting context overflow recovery"
-                            );
-                            context_overflow_recovery_attempted = true;
-                            match refresh
-                                .try_recover_from_context_overflow(&options.callbacks)
-                                .await
-                            {
-                                Ok(true) => {
-                                    iteration_reason = "context_overflow_recovery".to_string();
-                                    continue;
-                                }
-                                Ok(false) => {}
-                                Err(recovery_err) => {
-                                    warn!(
-                                        "memory active summary recovery failed: {}",
-                                        recovery_err
-                                    );
+                        let should_try_context_recovery = !context_overflow_recovery_attempted
+                            && (is_context_length_exceeded_error(err.as_str())
+                                || is_request_body_too_large_error(err.as_str()));
+                        if should_try_context_recovery {
+                            if let Some(refresh) = &options.iterative_context_refresh {
+                                info!(
+                                    conversation_id =
+                                        options.conversation_id.as_deref().unwrap_or(""),
+                                    conversation_turn_id =
+                                        options.conversation_turn_id.as_deref().unwrap_or(""),
+                                    iteration,
+                                    error = err.as_str(),
+                                    "ai runtime attempting context overflow recovery"
+                                );
+                                context_overflow_recovery_attempted = true;
+                                match refresh
+                                    .try_recover_from_context_overflow(&options.callbacks)
+                                    .await
+                                {
+                                    Ok(true) => {
+                                        iteration_reason = "context_overflow_recovery".to_string();
+                                        continue 'runtime_loop;
+                                    }
+                                    Ok(false) => {}
+                                    Err(recovery_err) => {
+                                        warn!(
+                                            "memory active summary recovery failed: {}",
+                                            recovery_err
+                                        );
+                                    }
                                 }
                             }
                         }
+                        if handle_transient_retry(
+                            "ai runtime model request",
+                            err.as_str(),
+                            &mut transient_retry_count,
+                            MAX_TRANSIENT_MODEL_REQUEST_RETRIES,
+                        )
+                        .await?
+                        {
+                            continue;
+                        }
+                        return Err(err);
                     }
-                    return Err(err);
                 }
             };
             missing_tool_turn_replay_attempted = false;

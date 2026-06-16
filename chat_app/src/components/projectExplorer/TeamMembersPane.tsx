@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
-import type { Project } from '../../types';
+import type { Message, Project } from '../../types';
 import TurnRuntimeContextDrawer from '../chatInterface/TurnRuntimeContextDrawer';
-import { ProjectContactPickerModal } from '../sessionList/ProjectContactPickerModal';
-import TeamMembersSidebar from './teamMembers/TeamMembersSidebar';
+import { MessageTaskDrawer } from '../messageTasks/MessageTaskDrawer';
+import ConversationUserMessagesSidebar from '../userMessages/ConversationUserMessagesSidebar';
+import { useUserMessageHistoryAnchor } from '../userMessages/useUserMessageHistoryAnchor';
 import TeamMemberWorkspace from './teamMembers/TeamMemberWorkspace';
 import { useTeamMembersPaneModel } from './teamMembers/useTeamMembersPaneModel';
 
@@ -16,12 +17,24 @@ interface TeamMembersPaneProps {
 
 const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className }) => {
   const { t } = useI18n();
+  const [taskMessage, setTaskMessage] = useState<Message | null>(null);
   const {
-    sidebarProps,
     workspaceProps,
     runtimeContextDrawerProps,
-    memberPickerProps,
   } = useTeamMembersPaneModel({ project });
+  const activeSessionId = workspaceProps.selectedProjectSession?.id || null;
+  const {
+    anchorMessageId,
+    anchorRequestKey,
+    handleSelectUserMessage,
+    handleLoadMoreUserMessagesHistory,
+    handleClearAnchor,
+  } = useUserMessageHistoryAnchor({
+    sessionId: activeSessionId,
+    messages: workspaceProps.messages,
+    hasMoreMessages: workspaceProps.hasMoreMessages,
+    onLoadMore: workspaceProps.onLoadMore,
+  });
 
   if (!project) {
     return (
@@ -33,10 +46,28 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
 
   return (
     <div className={cn('flex h-full overflow-hidden', className)}>
-      <TeamMembersSidebar {...sidebarProps} />
-      <TeamMemberWorkspace {...workspaceProps} />
+      <ConversationUserMessagesSidebar
+        sessionId={activeSessionId}
+        contactName={workspaceProps.selectedContact?.name || null}
+        className="w-[400px]"
+        onSelectMessage={handleSelectUserMessage}
+        onLoadMoreHistory={handleLoadMoreUserMessagesHistory}
+        onOpenTasks={setTaskMessage}
+      />
+      <TeamMemberWorkspace
+        {...workspaceProps}
+        anchorMessageId={anchorMessageId}
+        anchorRequestKey={anchorRequestKey}
+        onAnchorClear={handleClearAnchor}
+      />
       <TurnRuntimeContextDrawer {...runtimeContextDrawerProps} />
-      <ProjectContactPickerModal {...memberPickerProps} />
+      {taskMessage ? (
+        <MessageTaskDrawer
+          open
+          message={taskMessage}
+          onClose={() => setTaskMessage(null)}
+        />
+      ) : null}
     </div>
   );
 };

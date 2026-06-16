@@ -184,9 +184,26 @@ export const useTeamMemberConversation = ({
     if (selectedContactId && projectContacts.some((item) => item.contact.id === selectedContactId)) {
       return;
     }
-    setSelectedContactId(null);
-    setSelectedSessionId(null);
+    const firstContact = projectContacts[0];
+    setSelectedContactId(firstContact.contact.id);
+    setSelectedSessionId(firstContact.session?.id || null);
   }, [currentSession?.id, currentSessionMatchedContactRow, projectContacts, selectedContactId]);
+
+  useEffect(() => {
+    if (!selectedContactId || switchingContactId) {
+      return;
+    }
+    if (selectedProjectSession && isSelectedSessionActive) {
+      return;
+    }
+    void handleSelectContact(selectedContactId);
+  }, [
+    handleSelectContact,
+    isSelectedSessionActive,
+    selectedContactId,
+    selectedProjectSession,
+    switchingContactId,
+  ]);
 
   useEffect(() => {
     if (!selectedContactId) {
@@ -220,9 +237,9 @@ export const useTeamMemberConversation = ({
     switchingContactId,
   ]);
 
-  const handleLoadMore = useCallback(() => {
+  const handleLoadMore = useCallback(async () => {
     if (selectedProjectSession?.id) {
-      loadMoreMessages(selectedProjectSession.id);
+      await loadMoreMessages(selectedProjectSession.id);
     }
   }, [loadMoreMessages, selectedProjectSession?.id]);
 

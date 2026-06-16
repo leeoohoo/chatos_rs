@@ -130,9 +130,9 @@ export const useChatInterfaceController = ({
     void selectRemoteConnection(connectionId, { activatePanel: false });
   }, [selectRemoteConnection]);
 
-  const handleLoadMore = useCallback(() => {
+  const handleLoadMore = useCallback(async () => {
     if (currentSession) {
-      void loadMoreMessages(currentSession.id);
+      await loadMoreMessages(currentSession.id);
     }
   }, [currentSession, loadMoreMessages]);
 

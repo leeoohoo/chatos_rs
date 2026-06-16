@@ -1,6 +1,6 @@
 use axum::{
-    routing::{delete, get, post},
     Router,
+    routing::{delete, get, post},
 };
 
 mod contact_handlers;
@@ -9,7 +9,9 @@ mod crud_handlers;
 mod memory_sync;
 mod run_handlers;
 
-use self::contact_handlers::{add_project_contact, list_project_contacts, remove_project_contact};
+use self::contact_handlers::{
+    add_project_contact, get_project_contact_lock, list_project_contacts, remove_project_contact,
+};
 use self::crud_handlers::{
     create_project, delete_project, get_project, list_projects, update_project,
 };
@@ -28,6 +30,10 @@ pub fn router() -> Router {
         .route(
             "/api/projects/:id/contacts",
             get(list_project_contacts).post(add_project_contact),
+        )
+        .route(
+            "/api/projects/:id/contacts/lock",
+            get(get_project_contact_lock),
         )
         .route(
             "/api/projects/:id/contacts/:contact_id",

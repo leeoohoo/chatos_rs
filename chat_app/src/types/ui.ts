@@ -44,8 +44,12 @@ export interface MessageListProps {
   streamingPhase?: 'thinking' | 'reviewing' | null;
   streamingPreviewText?: string;
   assistantContactName?: string | null;
+  anchorMessageId?: string | null;
+  anchorRequestKey?: number;
+  autoScrollToLatest?: boolean;
+  onAnchorClear?: () => void;
   hasMore?: boolean;
-  onLoadMore?: () => void;
+  onLoadMore?: () => void | Promise<void>;
   onMessageEdit?: (messageId: string, content: string) => void;
   onMessageDelete?: (messageId: string) => void;
   customRenderer?: {

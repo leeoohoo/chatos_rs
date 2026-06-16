@@ -1,6 +1,7 @@
 import { buildQuery } from '../shared';
 import type {
   DeleteSuccessResponse,
+  ProjectContactLockResponse,
   ProjectContactLinkResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
@@ -130,6 +131,15 @@ export const listProjectContacts = (
     offset: paging?.offset,
   });
   return request<ProjectContactLinkResponse[]>(`/projects/${encodeURIComponent(projectId)}/contacts${query}`);
+};
+
+export const getProjectContactLock = (
+  request: ApiRequestFn,
+  projectId: string,
+): Promise<ProjectContactLockResponse> => {
+  return request<ProjectContactLockResponse>(
+    `/projects/${encodeURIComponent(projectId)}/contacts/lock`,
+  );
 };
 
 export const addProjectContact = (

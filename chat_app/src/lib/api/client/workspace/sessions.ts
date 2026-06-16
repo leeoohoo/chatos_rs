@@ -9,6 +9,7 @@ import type {
   SessionRuntimeSettingsPayload,
   SessionRuntimeSettingsResponse,
   TurnRuntimeSnapshotLookupResponse,
+  UserMessageTurnsResponse,
 } from '../types';
 import type { ApiRequestFn, SessionPaging } from './common';
 
@@ -115,6 +116,20 @@ export const getConversationCompactHistory = (
     before: params?.before,
   });
   return request<CompactHistoryResponse>(`/conversations/${conversationId}/compact-history${query}`);
+};
+
+export const getConversationUserMessageTurns = (
+  request: ApiRequestFn,
+  conversationId: string,
+  params?: { limit?: number; before?: string | null },
+): Promise<UserMessageTurnsResponse> => {
+  const query = buildQuery({
+    limit: params?.limit,
+    before: params?.before,
+  });
+  return request<UserMessageTurnsResponse>(
+    `/conversations/${conversationId}/user-message-turns${query}`,
+  );
 };
 
 export const getConversationTurnMessages = (

@@ -12,6 +12,7 @@ import type {
   SessionUpdatePayload,
   SessionUpsertPayload,
   TurnRuntimeSnapshotLookupResponse,
+  UserMessageTurnsResponse,
 } from '../../types';
 import type ApiClient from '../../../client';
 
@@ -38,6 +39,10 @@ export interface WorkspaceSessionFacade {
     conversationId: string,
     params?: { limit?: number; before?: string | null },
   ): Promise<CompactHistoryResponse>;
+  getConversationUserMessageTurns(
+    conversationId: string,
+    params?: { limit?: number; before?: string | null },
+  ): Promise<UserMessageTurnsResponse>;
   getConversationTurnMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
   getConversationTurnMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
   getConversationLatestTurnRuntimeContext(conversationId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
@@ -75,6 +80,9 @@ export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient
   },
   async getConversationCompactHistory(conversationId, params) {
     return workspaceApi.getConversationCompactHistory(this.getRequestFn(), conversationId, params);
+  },
+  async getConversationUserMessageTurns(conversationId, params) {
+    return workspaceApi.getConversationUserMessageTurns(this.getRequestFn(), conversationId, params);
   },
   async getConversationTurnMessages(conversationId, userMessageId) {
     return workspaceApi.getConversationTurnMessages(this.getRequestFn(), conversationId, userMessageId);

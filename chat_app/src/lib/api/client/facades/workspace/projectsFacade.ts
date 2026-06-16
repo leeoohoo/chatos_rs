@@ -2,6 +2,7 @@ import * as workspaceApi from '../../workspace';
 import type {
   DeleteSuccessResponse,
   PagingOptions,
+  ProjectContactLockResponse,
   ProjectContactLinkResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
@@ -42,6 +43,7 @@ export interface WorkspaceProjectFacade {
   ): Promise<ProjectRunExecuteResponse>;
   setProjectRunDefault(projectId: string, targetId: string): Promise<ProjectRunCatalogResponse>;
   listProjectContacts(projectId: string, paging?: PagingOptions): Promise<ProjectContactLinkResponse[]>;
+  getProjectContactLock(projectId: string): Promise<ProjectContactLockResponse>;
   addProjectContact(projectId: string, data: { contact_id: string }): Promise<ProjectContactLinkResponse>;
   removeProjectContact(projectId: string, contactId: string): Promise<DeleteSuccessResponse>;
 }
@@ -85,6 +87,9 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async listProjectContacts(projectId, paging) {
     return workspaceApi.listProjectContacts(this.getRequestFn(), projectId, paging);
+  },
+  async getProjectContactLock(projectId) {
+    return workspaceApi.getProjectContactLock(this.getRequestFn(), projectId);
   },
   async addProjectContact(projectId, data) {
     return workspaceApi.addProjectContact(this.getRequestFn(), projectId, data);

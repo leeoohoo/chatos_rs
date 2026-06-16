@@ -18,6 +18,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   deletingSummaryId,
   messages,
   hasMoreMessages,
+  anchorMessageId,
+  anchorRequestKey,
+  onAnchorClear,
   selectedModelId,
   selectedModelName,
   selectedThinkingLevel,
@@ -64,6 +67,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
           deletingSummaryId={deletingSummaryId}
           messages={messages}
           hasMoreMessages={hasMoreMessages}
+          anchorMessageId={anchorMessageId}
+          anchorRequestKey={anchorRequestKey}
+          onAnchorClear={onAnchorClear}
           onLoadMore={onLoadMore}
           onClearSummaries={onClearSummaries}
           onRefreshSummaries={onRefreshSummaries}

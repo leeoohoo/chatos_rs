@@ -18,6 +18,9 @@ type TeamMemberWorkspaceContentProps = Pick<
   | 'deletingSummaryId'
   | 'messages'
   | 'hasMoreMessages'
+  | 'anchorMessageId'
+  | 'anchorRequestKey'
+  | 'onAnchorClear'
   | 'onLoadMore'
   | 'onClearSummaries'
   | 'onRefreshSummaries'
@@ -37,6 +40,9 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
   deletingSummaryId,
   messages,
   hasMoreMessages,
+  anchorMessageId,
+  anchorRequestKey,
+  onAnchorClear,
   onLoadMore,
   onClearSummaries,
   onRefreshSummaries,
@@ -97,8 +103,10 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
       isStreaming={false}
       isStopping={false}
       assistantContactName={selectedContact.name}
-      hasMore={hasMoreMessages}
-      onLoadMore={onLoadMore}
+      anchorMessageId={anchorMessageId}
+      anchorRequestKey={anchorRequestKey}
+      autoScrollToLatest={false}
+      onAnchorClear={onAnchorClear}
     />
   );
 };

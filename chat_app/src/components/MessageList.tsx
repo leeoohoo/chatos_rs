@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageItem } from './MessageItem';
 import { MessageTaskDrawer } from './messageTasks/MessageTaskDrawer';
 // import { cn } from '../lib/utils';
@@ -35,6 +35,10 @@ const buildPreviewSentenceQueue = (value: string): string[] => {
   return deduped.slice(-8);
 };
 
+const escapeAttributeValue = (value: string): string => (
+  value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+);
+
 const MessageListComponent: React.FC<MessageListProps> = ({
   sessionId,
   messages,
@@ -44,6 +48,10 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   streamingPhase = null,
   streamingPreviewText = '',
   assistantContactName = null,
+  anchorMessageId = null,
+  anchorRequestKey = 0,
+  autoScrollToLatest = true,
+  onAnchorClear,
   hasMore = false,
   onLoadMore,
   onMessageEdit,
@@ -75,6 +83,9 @@ const MessageListComponent: React.FC<MessageListProps> = ({
     isLoading,
     hasMore,
     isStreaming,
+    anchorMessageId,
+    anchorRequestKey,
+    autoScrollToLatest,
   });
   const previewSentenceQueue = useMemo(
     () => buildPreviewSentenceQueue(streamingPreviewText),
@@ -83,8 +94,19 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   const hasPreviewSentence = previewSentenceQueue.length > 0;
   const [previewSentenceIndex, setPreviewSentenceIndex] = useState(0);
   const [taskMessage, setTaskMessage] = useState<Message | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const resolvedAnchorKeyRef = useRef('');
   const activePreviewSentence = previewSentenceQueue[previewSentenceIndex] || '';
   const handleCloseMessageTasks = () => setTaskMessage(null);
+  const handleAnchorClearIntent = () => {
+    if (anchorMessageId) {
+      onAnchorClear?.();
+    }
+  };
+  const handleManualJumpToBottom = () => {
+    onAnchorClear?.();
+    handleJumpToBottom();
+  };
 
   useEffect(() => {
     setPreviewSentenceIndex(0);
@@ -93,6 +115,61 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   useEffect(() => {
     setTaskMessage(null);
   }, [sessionId]);
+
+  useEffect(() => {
+    const normalizedAnchorMessageId = String(anchorMessageId || '').trim();
+    if (!normalizedAnchorMessageId) {
+      setHighlightedMessageId(null);
+      resolvedAnchorKeyRef.current = '';
+      return undefined;
+    }
+    const anchorKey = `${anchorRequestKey}:${normalizedAnchorMessageId}`;
+    if (resolvedAnchorKeyRef.current === anchorKey) {
+      return undefined;
+    }
+
+    const container = scrollRef.current;
+    if (!container) {
+      return undefined;
+    }
+
+    const selector = `[data-message-id="${escapeAttributeValue(normalizedAnchorMessageId)}"]`;
+    let highlightTimer: number | null = null;
+    const scrollToAnchor = () => {
+      const target = container.querySelector<HTMLElement>(selector);
+      if (!target) {
+        return false;
+      }
+      target.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+      setHighlightedMessageId(normalizedAnchorMessageId);
+      resolvedAnchorKeyRef.current = anchorKey;
+      highlightTimer = window.setTimeout(() => {
+        setHighlightedMessageId((current) => (
+          current === normalizedAnchorMessageId ? null : current
+        ));
+      }, 1800);
+      return true;
+    };
+
+    if (!scrollToAnchor()) {
+      const frame = window.requestAnimationFrame(scrollToAnchor);
+      return () => {
+        window.cancelAnimationFrame(frame);
+        if (highlightTimer !== null) {
+          window.clearTimeout(highlightTimer);
+        }
+      };
+    }
+
+    return () => {
+      if (highlightTimer !== null) {
+        window.clearTimeout(highlightTimer);
+      }
+    };
+  }, [anchorMessageId, anchorRequestKey, renderedMessages, scrollRef]);
 
   useEffect(() => {
     if (!isLoading || previewSentenceQueue.length <= 1) {
@@ -135,6 +212,13 @@ const MessageListComponent: React.FC<MessageListProps> = ({
         <div
           ref={scrollRef}
           onScroll={handleScroll}
+          onWheelCapture={handleAnchorClearIntent}
+          onTouchMoveCapture={handleAnchorClearIntent}
+          onPointerDownCapture={(event) => {
+            if (event.target === event.currentTarget) {
+              handleAnchorClearIntent();
+            }
+          }}
           className="flex-1 overflow-y-auto px-4 py-6 space-y-1"
         >
           {hasMore && (
@@ -168,6 +252,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
                 isLast={globalIndex === lastVisibleIndex}
                 isStreaming={isStreaming && globalIndex === lastVisibleIndex}
                 assistantContactName={assistantContactName}
+                highlighted={highlightedMessageId === message.id}
                 onEdit={onMessageEdit}
                 onDelete={onMessageDelete}
                 onOpenTasks={setTaskMessage}
@@ -214,7 +299,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             type="button"
             aria-label={t('messageList.jumpToBottom')}
             title={t('messageList.jumpToBottom')}
-            onClick={handleJumpToBottom}
+            onClick={handleManualJumpToBottom}
             className="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-full bg-primary text-primary-foreground px-4 py-2 shadow-md hover:bg-primary/90"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -246,6 +331,10 @@ const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: Messag
   && (prevProps.streamingPhase ?? null) === (nextProps.streamingPhase ?? null)
   && (prevProps.streamingPreviewText ?? '') === (nextProps.streamingPreviewText ?? '')
   && (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null)
+  && (prevProps.anchorMessageId ?? null) === (nextProps.anchorMessageId ?? null)
+  && (prevProps.anchorRequestKey ?? 0) === (nextProps.anchorRequestKey ?? 0)
+  && (prevProps.autoScrollToLatest ?? true) === (nextProps.autoScrollToLatest ?? true)
+  && prevProps.onAnchorClear === nextProps.onAnchorClear
   && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
   && prevProps.onLoadMore === nextProps.onLoadMore
   && prevProps.onMessageEdit === nextProps.onMessageEdit

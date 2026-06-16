@@ -1,6 +1,6 @@
 use axum::{
-    routing::{delete, get},
     Router,
+    routing::{delete, get},
 };
 
 mod contracts;
@@ -22,6 +22,7 @@ use self::message_handlers::{
     create_session_message, get_session_compact_history, get_session_messages,
     get_session_turn_display_messages, get_session_turn_display_messages_by_turn,
     get_session_turn_runtime_context_by_turn, get_session_turn_runtime_context_latest,
+    get_session_user_message_turns,
 };
 use self::review_handlers::{get_session_review_repair_status, run_session_review_repair};
 use self::runtime_settings_handlers::{
@@ -63,6 +64,10 @@ pub fn router() -> Router {
         .route(
             "/api/conversations/:conversation_id/compact-history",
             get(get_session_compact_history),
+        )
+        .route(
+            "/api/conversations/:conversation_id/user-message-turns",
+            get(get_session_user_message_turns),
         )
         .route(
             "/api/conversations/:conversation_id/turns/:user_message_id/messages",

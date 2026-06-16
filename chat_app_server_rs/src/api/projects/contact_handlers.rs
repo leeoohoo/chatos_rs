@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
@@ -9,10 +9,148 @@ use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::validation::normalize_non_empty;
 use crate::models::memory_mapping_types::{MemoryContactDto, SyncProjectAgentLinkRequestDto};
-use crate::services::chatos_memory_mappings;
+use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::realtime::publish_project_members_updated;
+use crate::services::{chatos_memory_mappings, chatos_sessions};
 
 use super::contracts::{AddProjectContactRequest, ProjectContactsQuery};
+
+fn value_has_items(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::String(raw)) => !raw.trim().is_empty(),
+        _ => false,
+    }
+}
+
+fn task_status(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+fn task_status_is_active(value: Option<&Value>) -> bool {
+    task_status(value).is_some_and(|status| {
+        matches!(
+            status.as_str(),
+            "pending" | "queued" | "running" | "processing" | "in_progress"
+        )
+    })
+}
+
+fn task_status_is_terminal(value: Option<&Value>) -> bool {
+    task_status(value).is_some_and(|status| {
+        matches!(
+            status.as_str(),
+            "completed" | "succeeded" | "failed" | "blocked" | "cancelled" | "canceled"
+        )
+    })
+}
+
+fn metadata_has_running_task_marker(metadata: Option<&Value>) -> bool {
+    let Some(task_runner_async) = metadata.and_then(|value| value.get("task_runner_async")) else {
+        return false;
+    };
+
+    if task_status_is_active(task_runner_async.get("overall_status"))
+        || task_status_is_active(task_runner_async.get("status"))
+    {
+        return true;
+    }
+
+    if task_status_is_terminal(task_runner_async.get("overall_status"))
+        || task_status_is_terminal(task_runner_async.get("status"))
+    {
+        return false;
+    }
+
+    if value_has_items(task_runner_async.get("running_task_ids"))
+        || value_has_items(task_runner_async.get("queued_task_ids"))
+        || value_has_items(task_runner_async.get("pending_task_ids"))
+    {
+        return true;
+    }
+
+    false
+}
+
+fn turn_slice_has_running_task(slice: &memory_engine_sdk::TurnRecordSlice) -> bool {
+    metadata_has_running_task_marker(slice.user_record.metadata.as_ref())
+        || slice
+            .final_assistant_record
+            .as_ref()
+            .is_some_and(|record| metadata_has_running_task_marker(record.metadata.as_ref()))
+}
+
+async fn project_has_running_user_message_tasks(
+    user_id: &str,
+    project_id: &str,
+) -> Result<bool, String> {
+    let sessions =
+        chatos_sessions::list_sessions(Some(user_id), Some(project_id), Some(500), 0, false, false)
+            .await?;
+
+    for session in sessions {
+        let mut before_turn_id: Option<String> = None;
+        for _ in 0..20 {
+            let page = conversation_messages::list_compact_turns(
+                session.id.as_str(),
+                Some(100),
+                before_turn_id.as_deref(),
+            )
+            .await?;
+            if page.items.iter().any(turn_slice_has_running_task) {
+                return Ok(true);
+            }
+            if !page.has_more {
+                break;
+            }
+            let Some(next_before) = page.next_before else {
+                break;
+            };
+            before_turn_id = Some(next_before);
+        }
+    }
+
+    Ok(false)
+}
+
+fn project_contact_locked_response() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "project contact is locked while user-message tasks are running",
+            "locked": true,
+        })),
+    )
+}
+
+pub(super) async fn get_project_contact_lock(
+    auth: AuthUser,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_project(&id, &auth).await {
+        return map_project_access_error(err);
+    }
+
+    match project_has_running_user_message_tasks(auth.user_id.as_str(), id.as_str()).await {
+        Ok(locked) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "locked": locked,
+            })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "check project contact lock failed",
+                "detail": err,
+            })),
+        ),
+    }
+}
 
 pub(super) async fn list_project_contacts(
     auth: AuthUser,
@@ -89,6 +227,65 @@ pub(super) async fn add_project_contact(
         );
     };
 
+    let linked_rows = match chatos_memory_mappings::list_project_contacts(id.as_str(), Some(500), 0)
+        .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "load project contacts failed", "detail": err})),
+            );
+        }
+    };
+    let same_binding =
+        !linked_rows.is_empty() && linked_rows.iter().all(|item| item.contact_id == contact_id);
+    if !same_binding {
+        match project_has_running_user_message_tasks(auth.user_id.as_str(), id.as_str()).await {
+            Ok(false) => {}
+            Ok(true) => return project_contact_locked_response(),
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "check project contact lock failed",
+                        "detail": err,
+                    })),
+                );
+            }
+        }
+    }
+    for linked in linked_rows
+        .into_iter()
+        .filter(|item| item.contact_id != contact_id)
+    {
+        if let Err(err) =
+            chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
+                user_id: Some(auth.user_id.clone()),
+                project_id: Some(id.clone()),
+                agent_id: Some(linked.agent_id.clone()),
+                contact_id: Some(linked.contact_id.clone()),
+                session_id: None,
+                last_message_at: None,
+                status: Some("archived".to_string()),
+            })
+            .await
+        {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    serde_json::json!({"error": "archive existing project contact failed", "detail": err}),
+                ),
+            );
+        }
+        publish_project_members_updated(
+            auth.user_id.as_str(),
+            id.as_str(),
+            "project_contact_removed",
+            Some(linked.contact_id.as_str()),
+        );
+    }
+
     match chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
         user_id: Some(auth.user_id.clone()),
         project_id: Some(id.clone()),
@@ -149,6 +346,20 @@ pub(super) async fn remove_project_contact(
         );
     };
 
+    match project_has_running_user_message_tasks(auth.user_id.as_str(), id.as_str()).await {
+        Ok(false) => {}
+        Ok(true) => return project_contact_locked_response(),
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "check project contact lock failed",
+                    "detail": err,
+                })),
+            );
+        }
+    }
+
     match chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
         user_id: Some(auth.user_id.clone()),
         project_id: Some(id.clone()),
@@ -173,5 +384,45 @@ pub(super) async fn remove_project_contact(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "remove project contact failed", "detail": err})),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn running_marker_detects_active_statuses() {
+        let metadata = json!({
+            "task_runner_async": {
+                "overall_status": "processing"
+            }
+        });
+
+        assert!(metadata_has_running_task_marker(Some(&metadata)));
+    }
+
+    #[test]
+    fn running_marker_uses_running_ids_without_terminal_status() {
+        let metadata = json!({
+            "task_runner_async": {
+                "running_task_ids": ["task-1"]
+            }
+        });
+
+        assert!(metadata_has_running_task_marker(Some(&metadata)));
+    }
+
+    #[test]
+    fn running_marker_does_not_lock_when_status_is_terminal() {
+        let metadata = json!({
+            "task_runner_async": {
+                "overall_status": "completed",
+                "running_task_ids": ["stale-task"]
+            }
+        });
+
+        assert!(!metadata_has_running_task_marker(Some(&metadata)));
     }
 }

@@ -22,6 +22,9 @@ export interface TeamMemberWorkspaceProps {
   deletingSummaryId: string | null;
   messages: Message[];
   hasMoreMessages: boolean;
+  anchorMessageId?: string | null;
+  anchorRequestKey?: number;
+  onAnchorClear?: () => void;
   selectedModelId: string | null;
   selectedModelName?: string | null;
   selectedThinkingLevel?: string | null;
@@ -31,7 +34,7 @@ export interface TeamMemberWorkspaceProps {
   availableRemoteConnections: RemoteConnection[];
   currentRemoteConnectionId: string | null;
   onRemoteConnectionChange: (connectionId: string | null) => void;
-  onLoadMore: () => void;
+  onLoadMore: () => void | Promise<void>;
   onClearSummaries: () => void;
   onRefreshSummaries: () => void;
   onCloseSummary: () => void;

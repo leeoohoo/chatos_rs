@@ -154,6 +154,22 @@ export interface CompactHistoryResponse {
   next_before?: string | null;
 }
 
+export interface UserMessageTurnResponse {
+  turn_id: string;
+  user_message: SessionMessageResponse;
+  final_assistant_message?: SessionMessageResponse | null;
+  has_process?: boolean;
+  tool_call_count?: number;
+  thinking_count?: number;
+  process_message_count?: number;
+}
+
+export interface UserMessageTurnsResponse {
+  items: UserMessageTurnResponse[];
+  has_more?: boolean;
+  next_before?: string | null;
+}
+
 export interface ConversationMessageEnvelope {
   data: {
     message: SessionMessageResponse;

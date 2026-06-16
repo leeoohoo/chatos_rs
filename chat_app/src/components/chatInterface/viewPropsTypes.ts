@@ -8,6 +8,7 @@ export interface ChatInterfaceConversationState {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
+  currentContactId: string | null;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: ComponentProps<typeof ChatConversationPane>['messages'];
@@ -32,7 +33,7 @@ export interface ChatInterfaceConversationState {
 }
 
 export interface ChatInterfaceConversationActions {
-  handleLoadMore: () => void;
+  handleLoadMore: () => void | Promise<void>;
   handleRefreshMemory: (sessionId: string) => void;
   handleCloseSummary: () => void;
   toggleSidebar: () => void;

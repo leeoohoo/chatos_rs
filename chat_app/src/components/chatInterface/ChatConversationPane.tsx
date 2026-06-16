@@ -1,6 +1,9 @@
-import React, { type ComponentProps } from 'react';
+import React, { useState, type ComponentProps } from 'react';
 
 import { MessageList } from '../MessageList';
+import { MessageTaskDrawer } from '../messageTasks/MessageTaskDrawer';
+import ConversationUserMessagesSidebar from '../userMessages/ConversationUserMessagesSidebar';
+import { useUserMessageHistoryAnchor } from '../userMessages/useUserMessageHistoryAnchor';
 import ChatComposerPanel from './ChatComposerPanel';
 import SummaryPane from './SummaryPane';
 import type {
@@ -20,11 +23,12 @@ interface ChatConversationPaneProps {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
+  currentContactId: string | null;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
   hasMoreMessages: boolean;
-  onLoadMore: () => void;
+  onLoadMore: () => void | Promise<void>;
   customRenderer?: ChatInterfaceProps['customRenderer'];
   sessionMemorySummaries: SummaryPaneProps['sessionSummaries'];
   agentRecalls: SummaryPaneProps['agentRecalls'];
@@ -65,11 +69,15 @@ interface ChatMessagesPaneProps {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
+  userMessageSidebarVisible: boolean;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
   hasMoreMessages: boolean;
-  onLoadMore: () => void;
+  onLoadMore: () => void | Promise<void>;
+  anchorMessageId?: string | null;
+  anchorRequestKey?: number;
+  onAnchorClear?: () => void;
   customRenderer?: ChatInterfaceProps['customRenderer'];
   sessionMemorySummaries: SummaryPaneProps['sessionSummaries'];
   agentRecalls: SummaryPaneProps['agentRecalls'];
@@ -84,11 +92,15 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   currentSession,
   sessionSummaryPaneVisible,
   currentContactName,
+  userMessageSidebarVisible,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
   hasMoreMessages,
   onLoadMore,
+  anchorMessageId,
+  anchorRequestKey,
+  onAnchorClear,
   customRenderer,
   sessionMemorySummaries,
   agentRecalls,
@@ -154,6 +166,10 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
       streamingPhase={null}
       streamingPreviewText=""
       assistantContactName={currentContactName}
+      anchorMessageId={anchorMessageId}
+      anchorRequestKey={anchorRequestKey}
+      autoScrollToLatest={!userMessageSidebarVisible}
+      onAnchorClear={onAnchorClear}
       hasMore={hasMoreMessages}
       onLoadMore={onLoadMore}
       customRenderer={customRenderer}
@@ -167,6 +183,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentSession,
   sessionSummaryPaneVisible,
   currentContactName,
+  currentContactId,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
@@ -202,62 +219,101 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentRemoteConnectionId,
   availableRemoteConnections,
   onRemoteConnectionChange,
-}) => (
-  <div className="flex-1 min-h-0 flex overflow-hidden">
-    <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-hidden">
-        <ChatMessagesPane
-          currentSession={currentSession}
-          sessionSummaryPaneVisible={sessionSummaryPaneVisible}
-          currentContactName={currentContactName}
-          currentProjectNameForMemory={currentProjectNameForMemory}
-          currentProjectIdForMemory={currentProjectIdForMemory}
-          messages={messages}
-          hasMoreMessages={hasMoreMessages}
-          onLoadMore={onLoadMore}
-          customRenderer={customRenderer}
-          sessionMemorySummaries={sessionMemorySummaries}
-          agentRecalls={agentRecalls}
-          memoryLoading={memoryLoading}
-          memoryError={memoryError}
-          onRefreshMemory={onRefreshMemory}
-          onCloseSummary={onCloseSummary}
-          toggleSidebar={toggleSidebar}
+}) => {
+  const [taskMessage, setTaskMessage] = useState<Message | null>(null);
+  const userMessageSidebarVisible = Boolean(currentSession?.id && currentContactId);
+  const {
+    anchorMessageId,
+    anchorRequestKey,
+    handleSelectUserMessage,
+    handleLoadMoreUserMessagesHistory,
+    handleClearAnchor,
+  } = useUserMessageHistoryAnchor({
+    sessionId: userMessageSidebarVisible ? currentSession?.id : null,
+    messages,
+    hasMoreMessages,
+    onLoadMore,
+  });
+
+  return (
+    <div className="flex-1 min-h-0 flex overflow-hidden">
+      {userMessageSidebarVisible ? (
+        <ConversationUserMessagesSidebar
+          sessionId={currentSession?.id || null}
+          contactName={currentContactName || currentSession?.title || null}
+          className="w-[360px]"
+          onSelectMessage={handleSelectUserMessage}
+          onLoadMoreHistory={handleLoadMoreUserMessagesHistory}
+          onOpenTasks={setTaskMessage}
         />
+      ) : null}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-hidden">
+          <ChatMessagesPane
+            currentSession={currentSession}
+            sessionSummaryPaneVisible={sessionSummaryPaneVisible}
+            currentContactName={currentContactName}
+            userMessageSidebarVisible={userMessageSidebarVisible}
+            currentProjectNameForMemory={currentProjectNameForMemory}
+            currentProjectIdForMemory={currentProjectIdForMemory}
+            messages={messages}
+            hasMoreMessages={hasMoreMessages}
+            onLoadMore={onLoadMore}
+            anchorMessageId={anchorMessageId}
+            anchorRequestKey={anchorRequestKey}
+            onAnchorClear={handleClearAnchor}
+            customRenderer={customRenderer}
+            sessionMemorySummaries={sessionMemorySummaries}
+            agentRecalls={agentRecalls}
+            memoryLoading={memoryLoading}
+            memoryError={memoryError}
+            onRefreshMemory={onRefreshMemory}
+            onCloseSummary={onCloseSummary}
+            toggleSidebar={toggleSidebar}
+          />
+        </div>
+
+        {currentSession && (
+          <ChatComposerPanel
+            onSend={onSend}
+            inputDisabled={inputDisabled}
+            supportedFileTypes={supportedFileTypes}
+            reasoningSupported={supportsReasoning}
+            reasoningEnabled={reasoningEnabled}
+            onReasoningToggle={onReasoningToggle}
+            selectedModelId={selectedModelId}
+            selectedModelName={selectedModelName}
+            selectedThinkingLevel={selectedThinkingLevel}
+            availableModels={availableModels}
+            onModelChange={onModelChange}
+            onModelNameChange={onModelNameChange}
+            onThinkingLevelChange={onThinkingLevelChange}
+            onModelRuntimeChange={onModelRuntimeChange}
+            availableProjects={availableProjects}
+            currentProject={currentProject}
+            selectedProjectId={null}
+            onProjectChange={onProjectChange}
+            showProjectSelector={false}
+            showProjectFileButton={false}
+            workspaceRoot={workspaceRoot}
+            onWorkspaceRootChange={onWorkspaceRootChange}
+            currentRemoteConnectionId={currentRemoteConnectionId}
+            availableRemoteConnections={availableRemoteConnections}
+            onRemoteConnectionChange={onRemoteConnectionChange}
+            showWorkspaceRootPicker={true}
+          />
+        )}
       </div>
 
-      {currentSession && (
-        <ChatComposerPanel
-          onSend={onSend}
-          inputDisabled={inputDisabled}
-          supportedFileTypes={supportedFileTypes}
-          reasoningSupported={supportsReasoning}
-          reasoningEnabled={reasoningEnabled}
-          onReasoningToggle={onReasoningToggle}
-          selectedModelId={selectedModelId}
-          selectedModelName={selectedModelName}
-          selectedThinkingLevel={selectedThinkingLevel}
-          availableModels={availableModels}
-          onModelChange={onModelChange}
-          onModelNameChange={onModelNameChange}
-          onThinkingLevelChange={onThinkingLevelChange}
-          onModelRuntimeChange={onModelRuntimeChange}
-          availableProjects={availableProjects}
-          currentProject={currentProject}
-          selectedProjectId={null}
-          onProjectChange={onProjectChange}
-          showProjectSelector={false}
-          showProjectFileButton={false}
-          workspaceRoot={workspaceRoot}
-          onWorkspaceRootChange={onWorkspaceRootChange}
-          currentRemoteConnectionId={currentRemoteConnectionId}
-          availableRemoteConnections={availableRemoteConnections}
-          onRemoteConnectionChange={onRemoteConnectionChange}
-          showWorkspaceRootPicker={true}
+      {taskMessage ? (
+        <MessageTaskDrawer
+          open
+          message={taskMessage}
+          onClose={() => setTaskMessage(null)}
         />
-      )}
+      ) : null}
     </div>
-  </div>
-);
+  );
+};
 
 export default ChatConversationPane;

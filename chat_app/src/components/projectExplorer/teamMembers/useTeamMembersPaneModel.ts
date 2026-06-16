@@ -2,22 +2,19 @@ import type { ComponentProps } from 'react';
 
 import type { Project } from '../../../types';
 import TurnRuntimeContextDrawer from '../../chatInterface/TurnRuntimeContextDrawer';
-import { ProjectContactPickerModal } from '../../sessionList/ProjectContactPickerModal';
 import TeamMemberWorkspace from './TeamMemberWorkspace';
-import TeamMembersSidebar from './TeamMembersSidebar';
 import { useTeamMembersPaneSessionResources } from './useTeamMembersPaneSessionResources';
 import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
-import { useTeamMembersPaneViewProps } from './useTeamMembersPaneViewProps';
+import { useTeamMemberRuntimeContextDrawerProps } from './useTeamMemberOverlayProps';
+import { useTeamMemberWorkspaceProps } from './useTeamMemberWorkspaceProps';
 
 interface UseTeamMembersPaneModelOptions {
   project: Project;
 }
 
 interface UseTeamMembersPaneModelResult {
-  sidebarProps: ComponentProps<typeof TeamMembersSidebar>;
   workspaceProps: ComponentProps<typeof TeamMemberWorkspace>;
   runtimeContextDrawerProps: ComponentProps<typeof TurnRuntimeContextDrawer>;
-  memberPickerProps: ComponentProps<typeof ProjectContactPickerModal>;
 }
 
 export const useTeamMembersPaneModel = ({
@@ -25,5 +22,12 @@ export const useTeamMembersPaneModel = ({
 }: UseTeamMembersPaneModelOptions): UseTeamMembersPaneModelResult => {
   const store = useTeamMembersPaneStoreBridge();
   const resources = useTeamMembersPaneSessionResources({ project, store });
-  return useTeamMembersPaneViewProps({ project, store, resources });
+  const options = { project, store, resources };
+  const workspaceProps = useTeamMemberWorkspaceProps(options);
+  const runtimeContextDrawerProps = useTeamMemberRuntimeContextDrawerProps(options);
+
+  return {
+    workspaceProps,
+    runtimeContextDrawerProps,
+  };
 };

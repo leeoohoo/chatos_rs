@@ -157,3 +157,9 @@ export interface ProjectContactLinkResponse {
   updated_at?: string | null;
   updatedAt?: string | null;
 }
+
+export interface ProjectContactLockResponse {
+  locked?: boolean;
+  error?: string;
+  detail?: string;
+}

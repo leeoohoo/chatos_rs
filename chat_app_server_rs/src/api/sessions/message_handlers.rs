@@ -17,6 +17,7 @@ use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::models::message::Message;
 use crate::modules::conversation_runtime::messages as conversation_messages;
+use crate::services::chatos_memory_engine;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 
 use super::contracts::CompactHistoryQuery;
@@ -317,6 +318,69 @@ pub(super) async fn get_session_compact_history(
     let items: Vec<Value> = messages
         .into_iter()
         .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
+        .collect();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "items": items,
+            "has_more": page.has_more,
+            "next_before": page.next_before,
+        })),
+    )
+}
+
+fn turn_slice_to_user_message_item(slice: memory_engine_sdk::TurnRecordSlice) -> Value {
+    let user_message = chatos_memory_engine::engine_record_to_message(slice.user_record);
+    let final_assistant_message = slice
+        .final_assistant_record
+        .map(chatos_memory_engine::engine_record_to_message);
+
+    serde_json::json!({
+        "turn_id": slice.turn_id,
+        "user_message": MessageOut::from(user_message),
+        "final_assistant_message": final_assistant_message.map(MessageOut::from),
+        "has_process": slice.has_process,
+        "tool_call_count": slice.tool_call_count,
+        "thinking_count": slice.thinking_count,
+        "process_message_count": slice.process_message_count,
+    })
+}
+
+pub(super) async fn get_session_user_message_turns(
+    auth: AuthUser,
+    Path(conversation_id): Path<String>,
+    Query(query): Query<CompactHistoryQuery>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
+        return map_session_access_error(err);
+    }
+
+    let limit = parse_positive_limit(query.limit)
+        .unwrap_or(10)
+        .clamp(1, 100);
+    let before_turn_id = query
+        .before
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let page = match list_compact_history_page(&conversation_id, Some(limit), before_turn_id).await
+    {
+        Ok(page) => page,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get user message turns",
+                    "detail": err,
+                })),
+            );
+        }
+    };
+
+    let items: Vec<Value> = page
+        .items
+        .into_iter()
+        .map(turn_slice_to_user_message_item)
         .collect();
     (
         StatusCode::OK,

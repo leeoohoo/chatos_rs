@@ -6,6 +6,7 @@ export interface MessageItemProps {
   isLast?: boolean;
   isStreaming?: boolean;
   assistantContactName?: string | null;
+  highlighted?: boolean;
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
   toolResultById?: Map<string, Message>;

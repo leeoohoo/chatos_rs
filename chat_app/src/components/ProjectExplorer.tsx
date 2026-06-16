@@ -4,6 +4,7 @@ import { useI18n } from '../i18n/I18nProvider';
 import type { Project } from '../types';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
+import ProjectContactSettingsCard from './projectExplorer/ProjectContactSettingsCard';
 import ProjectRunSettingsPanel from './projectExplorer/ProjectRunSettingsPanel';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
@@ -88,6 +89,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           />
         ) : workspaceTab === 'settings' ? (
           <div className="h-full overflow-auto p-4">
+            <ProjectContactSettingsCard project={project} />
             <ProjectRunSettingsPanel {...projectSettingsProps} />
           </div>
         ) : (

@@ -83,6 +83,7 @@ export const useChatInterfaceModel = ({
     currentSession: store.currentSession,
     sessionSummaryPaneVisible: controller.sessionSummaryPaneVisible,
     currentContactName: derived.currentContactName,
+    currentContactId: derived.currentContactId,
     currentProjectNameForMemory: resources.currentProjectNameForMemory,
     currentProjectIdForMemory: resources.currentProjectIdForMemory,
     messages: store.messages,

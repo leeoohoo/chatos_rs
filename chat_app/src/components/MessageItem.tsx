@@ -37,6 +37,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   isLast = false,
   isStreaming = false,
   assistantContactName = null,
+  highlighted = false,
   onEdit,
   onDelete,
   onOpenTasks,
@@ -139,8 +140,10 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
         isUser && 'bg-user-message',
         isSystem && 'bg-muted border-l-4 border-primary',
         isTool && 'bg-blue-50 dark:bg-blue-950/20 border-l-4 border-blue-500',
+        highlighted && 'ring-2 ring-primary/40 bg-primary/10',
         'hover:bg-opacity-80'
       )}
+      data-message-id={message.id}
     >
       {/* 头像 - assistant消息不显示头像 */}
       {(!isAssistant || showAssistantChrome) && (
@@ -264,6 +267,7 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
     (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null) &&
+    (prevProps.highlighted ?? false) === (nextProps.highlighted ?? false) &&
     prevProps.onOpenTasks === nextProps.onOpenTasks &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
