@@ -125,6 +125,14 @@ pub fn append_stream_text(current: &mut String, chunk: &str) {
 }
 
 pub fn join_stream_text(current: &str, chunk: &str) -> String {
+    join_stream_text_with_min_overlap(current, chunk, 1)
+}
+
+pub fn join_stream_text_with_min_overlap(
+    current: &str,
+    chunk: &str,
+    min_overlap: usize,
+) -> String {
     if chunk.is_empty() {
         return current.to_string();
     }
@@ -139,7 +147,8 @@ pub fn join_stream_text(current: &str, chunk: &str) -> String {
     }
 
     let max_overlap = std::cmp::min(current.len(), chunk.len());
-    for overlap in (1..=max_overlap).rev() {
+    let min_overlap = min_overlap.max(1);
+    for overlap in (min_overlap..=max_overlap).rev() {
         let Some(current_tail) = current.get(current.len() - overlap..) else {
             continue;
         };
@@ -181,7 +190,7 @@ mod tests {
 
     use super::{
         extract_output_text, extract_reasoning_from_response, join_stream_text,
-        looks_like_response_id, tool_arguments_to_string,
+        join_stream_text_with_min_overlap, looks_like_response_id, tool_arguments_to_string,
     };
 
     #[test]
@@ -233,6 +242,18 @@ mod tests {
         assert_eq!(
             join_stream_text("你好世界ABCD", "好世界ABCD123"),
             "你好世界ABCD123"
+        );
+    }
+
+    #[test]
+    fn join_stream_text_with_min_overlap_preserves_threshold() {
+        assert_eq!(
+            join_stream_text_with_min_overlap("abcdef", "def123", 3),
+            "abcdef123"
+        );
+        assert_eq!(
+            join_stream_text_with_min_overlap("abcdef", "def123", 4),
+            "abcdefdef123"
         );
     }
 

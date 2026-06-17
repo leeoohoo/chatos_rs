@@ -6,6 +6,7 @@ import {
   readSessionAiSelectionFromMetadata,
 } from '../../helpers/sessionAiSelection';
 import { mergeSessionRuntimeIntoMetadata } from '../../helpers/sessionRuntime';
+import { findBestMatchedSession } from '../../../domain/contactSessions';
 import type {
   ChatStoreDraft,
   SessionAiSelection,
@@ -16,7 +17,6 @@ import {
   deleteSessionMessagesCacheEntry,
   matchSessionContactProjectScope,
   normalizeProjectScopeId,
-  resolveSessionTimestamp,
   syncCurrentProjectFromSession,
 } from '../sessionsUtils';
 import type { SessionActionDeps } from './types';
@@ -66,13 +66,19 @@ export function createSessionCreateActions({
             : null);
 
         if (contactId || contactAgentId) {
-          const existingSession = (stateBeforeCreate.sessions || []).find((session: Session) => (
-            matchSessionContactProjectScope(session, {
-              contactId,
-              contactAgentId,
-              projectId: effectiveProjectId,
-            })
-          ));
+          const existingSession = contactId
+            ? findBestMatchedSession(
+              stateBeforeCreate.sessions || [],
+              { id: contactId, agentId: contactAgentId || '' },
+              effectiveProjectId,
+            )
+            : (stateBeforeCreate.sessions || []).find((session: Session) => (
+              matchSessionContactProjectScope(session, {
+                contactId,
+                contactAgentId,
+                projectId: effectiveProjectId,
+              })
+            ));
           if (existingSession) {
             if (shouldActivateSession) {
               await get().selectSession(existingSession.id, {
@@ -96,12 +102,15 @@ export function createSessionCreateActions({
                   contactAgentId,
                   projectId: effectiveProjectId,
                 })
-              ))
-              .sort((left: Session, right: Session) =>
-                resolveSessionTimestamp(right) - resolveSessionTimestamp(left),
-              );
+              ));
 
-            const remoteExisting = remoteMatched[0];
+            const remoteExisting = contactId
+              ? findBestMatchedSession(
+                remoteMatched,
+                { id: contactId, agentId: contactAgentId || '' },
+                effectiveProjectId,
+              )
+              : remoteMatched[0];
             if (remoteExisting?.id) {
               if (shouldActivateSession) {
                 await get().selectSession(remoteExisting.id, {

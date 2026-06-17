@@ -234,6 +234,20 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .collection::<mongodb::bson::Document>("chatos_project_agent_links")
         .create_index(
             IndexModel::builder()
+                .keys(doc! { "user_id": 1, "project_id": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("chatos_project_agent_links")
+        .create_index(
+            IndexModel::builder()
                 .keys(doc! { "user_id": 1, "project_id": 1, "agent_id": 1 })
                 .options(
                     mongodb::options::IndexOptions::builder()

@@ -8,6 +8,7 @@ import type {
   SessionResponse,
   SessionRuntimeSettingsPayload,
   SessionRuntimeSettingsResponse,
+  ConversationTaskRunnerActiveMessageTasksResponse,
   TurnRuntimeSnapshotLookupResponse,
   UserMessageTurnsResponse,
 } from '../types';
@@ -129,6 +130,23 @@ export const getConversationUserMessageTurns = (
   });
   return request<UserMessageTurnsResponse>(
     `/conversations/${conversationId}/user-message-turns${query}`,
+  );
+};
+
+export const getConversationTaskRunnerActiveMessageTasks = (
+  request: ApiRequestFn,
+  conversationId: string,
+  params?: { sourceUserMessageIds?: string[]; sourceTurnIds?: string[] },
+): Promise<ConversationTaskRunnerActiveMessageTasksResponse> => {
+  return request<ConversationTaskRunnerActiveMessageTasksResponse>(
+    `/conversations/${conversationId}/task-runner/active-message-tasks`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        source_user_message_ids: params?.sourceUserMessageIds || [],
+        source_turn_ids: params?.sourceTurnIds || [],
+      }),
+    },
   );
 };
 

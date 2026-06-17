@@ -241,10 +241,7 @@ impl MessageManagerCore {
                     "get_memory_chat_history_context memory_engine failed: session_id={} error={}",
                     session_id, err
                 );
-                panic!(
-                    "memory engine context unavailable for session {}: {}",
-                    session_id, err
-                );
+                ChatHistoryContext::default()
             }
         }
     }

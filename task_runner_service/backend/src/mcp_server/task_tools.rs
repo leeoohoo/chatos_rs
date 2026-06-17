@@ -39,6 +39,7 @@ impl TaskRunnerMcpService {
                         source_run_id: args.source_run_id,
                         limit: args.limit,
                         offset: None,
+                        ..TaskListFilters::default()
                     })
                     .await?;
                 Ok(text_result(tasks_for_external_mcp(tasks)))

@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use super::choice::{
     normalize_choice_limits, normalize_choice_options, normalize_choice_selection, ChoiceLimits,
-    ChoiceOption, LimitMode,
+    ChoiceOption,
 };
 use super::fields::{normalize_kv_fields, KvField};
 use super::values::normalize_kv_values;
@@ -110,7 +110,6 @@ fn extract_choice(prompt: &UiPromptPayload) -> Result<Option<ChoiceConfig>, Stri
         choice_obj.get("min_selections").and_then(Value::as_i64),
         choice_obj.get("max_selections").and_then(Value::as_i64),
         options.len(),
-        LimitMode::Clamp,
         choice_obj
             .get("single_min_selections")
             .and_then(Value::as_i64),

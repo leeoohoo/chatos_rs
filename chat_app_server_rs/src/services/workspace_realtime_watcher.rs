@@ -338,7 +338,14 @@ async fn scan_project_full(project: &Project, normalized_root: String) -> Result
                             Some(project.id.clone()),
                             None,
                         )?);
-                        store.as_ref().expect("workspace watcher store initialized")
+                        match store.as_ref() {
+                            Some(existing) => existing,
+                            None => {
+                                return Err(
+                                    "workspace watcher store initialization failed".to_string()
+                                )
+                            }
+                        }
                     }
                 };
                 store.log_change(
@@ -484,7 +491,10 @@ fn process_workspace_changes(
                     Some(project.id.clone()),
                     None,
                 )?);
-                store.as_ref().expect("workspace watcher store initialized")
+                match store.as_ref() {
+                    Some(existing) => existing,
+                    None => return Err("workspace watcher store initialization failed".to_string()),
+                }
             }
         };
         store.log_change(

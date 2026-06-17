@@ -170,6 +170,19 @@ export interface UserMessageTurnsResponse {
   next_before?: string | null;
 }
 
+export interface ConversationTaskRunnerActiveMessageTasksItem {
+  source_user_message_id?: string | null;
+  source_turn_id?: string | null;
+  running_count?: number;
+  active_count?: number;
+}
+
+export interface ConversationTaskRunnerActiveMessageTasksResponse {
+  active_source_user_message_ids?: string[];
+  running_source_user_message_ids?: string[];
+  items?: ConversationTaskRunnerActiveMessageTasksItem[];
+}
+
 export interface ConversationMessageEnvelope {
   data: {
     message: SessionMessageResponse;

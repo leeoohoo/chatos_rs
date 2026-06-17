@@ -15,13 +15,21 @@ export interface ContactItem {
 export interface ProjectContactRow {
   contact: ContactItem;
   session: Session | null;
+  latestSessionId: string | null;
+  lastMessageAt: string | null;
   updatedAt: number;
+}
+
+export interface EnsureProjectContactSessionOptions {
+  createIfMissing?: boolean;
 }
 
 export interface ProjectContactLink {
   contactId: string;
   agentId: string;
   name: string;
+  latestSessionId: string | null;
+  lastMessageAt: string | null;
   updatedAt: number;
 }
 

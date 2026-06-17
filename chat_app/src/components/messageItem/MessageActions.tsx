@@ -1,12 +1,9 @@
 import type { FC } from 'react';
-import { ListTodo } from 'lucide-react';
-import { useI18n } from '../../i18n/I18nProvider';
 
 interface MessageActionsProps {
   isUser: boolean;
   canEdit: boolean;
   canDelete: boolean;
-  onOpenTasks?: () => void;
   onCopy: () => void;
   onStartEdit: () => void;
   onDelete: () => void;
@@ -16,26 +13,12 @@ export const MessageActions: FC<MessageActionsProps> = ({
   isUser,
   canEdit,
   canDelete,
-  onOpenTasks,
   onCopy,
   onStartEdit,
   onDelete,
 }) => {
-  const { t } = useI18n();
-
   return (
     <div className="absolute top-2 right-2 flex gap-1 bg-background border rounded-md shadow-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
-      {onOpenTasks && (
-        <button
-          onClick={onOpenTasks}
-          className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title={t('messageTasks.action')}
-        >
-          <ListTodo className="h-4 w-4" />
-          <span>{t('messageTasks.action')}</span>
-        </button>
-      )}
-
       <button
         onClick={onCopy}
         className="p-1.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"

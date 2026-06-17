@@ -2,17 +2,17 @@
 
 ## 项目定位
 `Chatos RS` 是一个面向开发与工程协作场景的 AI 平台。  
-它把对话交互、工具调用、长期记忆、以及 OpenAI 兼容接入统一到一套系统中，目标是让 AI 能稳定地“持续工作”，而不是只做一次性聊天。
+它把对话交互、工具调用和长期记忆统一到一套系统中，目标是让 AI 能稳定地“持续工作”，而不是只做一次性聊天。
 
 ## 这个项目解决什么问题
 传统聊天式 AI 在工程场景常见问题：
 - 上下文只在当前会话内有效，跨会话信息容易丢失
 - 历史越长 token 成本越高，推理效率下降
 - 工具链路分散，接入和维护成本高
-- 外部系统接入协议不统一
+- 工具执行过程不透明时，工程工作流难以维护和排障
 
 `Chatos RS` 的设计就是为了解决这些问题：  
-通过“主对话服务 + 外部记忆平台接入 + 网关层”实现持续上下文、成本控制和可集成性。
+通过“主对话服务 + 外部记忆平台接入 + MCP 风格工具编排”实现持续上下文、成本控制和可集成性。
 
 ## 核心优势
 1. 长期记忆能力
@@ -25,15 +25,14 @@
 - 支持工具调用与 MCP 场景，适合接入工程工作流与外部能力。
 
 4. 架构可扩展
-- 前端、主后端、外部记忆平台、网关解耦，支持独立部署与水平扩展。
+- 前端、主后端、外部记忆平台解耦，支持独立部署与水平扩展。
 
-5. 生态兼容性强
-- 提供 OpenAI 兼容接口，已有客户端和 SDK 可低成本接入。
+5. 工程工作流可运维
+- 让工具调用、任务执行和记忆上下文保持可观察、可维护。
 
 ## 架构分层
 - `chat_app/`：主前端交互层
 - `chat_app_server_rs/`：主后端编排层（会话、消息、工具、流式响应）
-- `openai-codex-gateway/`：OpenAI 兼容网关层
 
 ## 本地一键启动
 在仓库根目录执行：
@@ -54,10 +53,6 @@ make smoke
 `make smoke` 会执行仓库治理检查以及轻量级的跨子系统探测。
 其中也包括根级启动脚本语法检查，以及 Git 关注文件的大文件策略检查。
 
-系统构建矩阵：
-
-- [SYSTEM_BUILD_MATRIX.md](./SYSTEM_BUILD_MATRIX.md)
-
 共享本地配置入口：
 
 - 根目录提供 [`.env.example`](./.env.example)
@@ -76,16 +71,13 @@ make smoke
 - `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
 
 ## 开发方案归档
-方案/评估/契约文档统一收纳在：
-- 本地目录 `docs/plans/`（该目录已配置不上传 git）
+方案/评估/契约文档可能位于根目录历史文档，或本地 `docs/plans/` 归档目录。
 
 ## 子项目文档
 - [chat_app English](./chat_app/README.en.md)
 - [chat_app 中文](./chat_app/README.zh-CN.md)
 - [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
-- [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
 - [db_connection_hub backend](./db_connection_hub/backend/README.md)
 - [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
 

@@ -54,6 +54,24 @@ export const resolveSessionTimestamp = (
   return Number.isFinite(ts) ? ts : 0;
 };
 
+export const resolveSessionMessageCount = (
+  session: unknown,
+): number => {
+  const record = asRecord(session);
+  if (!record) {
+    return 0;
+  }
+  const raw = readValue(record, 'messageCount') ?? readValue(record, 'message_count');
+  const count = typeof raw === 'number'
+    ? raw
+    : Number.parseInt(String(raw ?? ''), 10);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+};
+
+export const hasSessionMessages = (
+  session: unknown,
+): boolean => resolveSessionMessageCount(session) > 0;
+
 export const isSessionActive = (
   session: unknown,
 ): boolean => {
@@ -149,6 +167,37 @@ export const findLatestMatchedSession = (
   }
   candidates.sort((left, right) => resolveSessionTimestamp(right) - resolveSessionTimestamp(left));
   return candidates[0] || null;
+};
+
+export const findBestMatchedSession = (
+  sessions: Session[],
+  contact: ContactSessionRef,
+  projectId: string | null | undefined,
+  preferredSessionId?: string | null,
+): Session | null => {
+  const candidates = (sessions || [])
+    .filter((session: Session) => isSessionMatchedContactAndProject(session, contact, projectId))
+    .sort((left, right) => resolveSessionTimestamp(right) - resolveSessionTimestamp(left));
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const normalizedPreferredSessionId = typeof preferredSessionId === 'string'
+    ? preferredSessionId.trim()
+    : '';
+  const preferredSession = normalizedPreferredSessionId
+    ? candidates.find((session) => session.id === normalizedPreferredSessionId) || null
+    : null;
+  if (preferredSession && hasSessionMessages(preferredSession)) {
+    return preferredSession;
+  }
+
+  const sessionWithMessages = candidates.find(hasSessionMessages) || null;
+  if (sessionWithMessages) {
+    return sessionWithMessages;
+  }
+
+  return preferredSession || candidates[0] || null;
 };
 
 export const splitSessionsByMappedContacts = (

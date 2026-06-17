@@ -270,10 +270,10 @@ mod tests {
     use super::{
         build_function_call_item, build_function_call_output_item, build_function_tool_call,
         clone_tool_call_arguments, collect_ordered_tool_calls, extract_message_tool_calls,
-        extract_tool_call_id, extract_tool_call_name, join_stream_text,
-        merge_indexed_tool_call_parts, merge_tool_call_arguments_piece, merge_tool_call_name_piece,
-        parse_tool_calls_value, remember_tool_call_index, resolve_tool_call_index,
-        tool_call_arguments_text, tool_calls_value_has_items,
+        extract_tool_call_id, extract_tool_call_name, merge_indexed_tool_call_parts,
+        merge_tool_call_arguments_piece, merge_tool_call_name_piece, parse_tool_calls_value,
+        remember_tool_call_index, resolve_tool_call_index, tool_call_arguments_text,
+        tool_calls_value_has_items,
     };
 
     #[test]
@@ -360,10 +360,6 @@ mod tests {
         assert_eq!(
             entry["function"]["arguments"].as_str(),
             Some("{\"q\":\"rust\"}")
-        );
-        assert_eq!(
-            join_stream_text("你好世界ABCD", "好世界ABCD123"),
-            "你好世界ABCD123"
         );
     }
 

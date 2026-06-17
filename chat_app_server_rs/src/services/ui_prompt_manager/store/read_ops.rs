@@ -9,44 +9,6 @@ use crate::services::ui_prompt_manager::types::{UiPromptRecord, UiPromptStatus};
 use super::codec::ui_prompt_record_from_doc;
 use super::row::UiPromptRow;
 
-#[allow(dead_code)]
-pub async fn get_ui_prompt_record_by_id(prompt_id: &str) -> Result<Option<UiPromptRecord>, String> {
-    let prompt_id = trimmed_non_empty(prompt_id)
-        .ok_or_else(|| "prompt_id is required".to_string())?
-        .to_string();
-
-    let prompt_id_for_mongo = prompt_id.clone();
-    let prompt_id_for_sqlite = prompt_id.clone();
-
-    with_db(
-        move |db| {
-            let prompt_id = prompt_id_for_mongo.clone();
-            Box::pin(async move {
-                let document = db
-                    .collection::<Document>("ui_prompt_requests")
-                    .find_one(doc! { "id": prompt_id }, None)
-                    .await
-                    .map_err(|err| err.to_string())?;
-                Ok(document.and_then(|doc| ui_prompt_record_from_doc(&doc)))
-            })
-        },
-        move |pool| {
-            let prompt_id = prompt_id_for_sqlite.clone();
-            Box::pin(async move {
-                let row = sqlx::query_as::<_, UiPromptRow>(
-                    "SELECT id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE id = ? LIMIT 1",
-                )
-                .bind(prompt_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(|err| err.to_string())?;
-                Ok(row.map(UiPromptRow::into_record))
-            })
-        },
-    )
-    .await
-}
-
 pub async fn list_pending_ui_prompt_records(
     conversation_id: &str,
     limit: usize,

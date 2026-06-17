@@ -27,6 +27,8 @@ const buildProjectRows = (): ProjectContactRow[] => ([
       pinned: false,
       archived: false,
     },
+    latestSessionId: 'session-1',
+    lastMessageAt: '2026-05-25T10:00:00.000Z',
     updatedAt: Date.now(),
   },
 ]);

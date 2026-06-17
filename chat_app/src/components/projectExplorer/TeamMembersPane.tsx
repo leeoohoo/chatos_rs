@@ -23,7 +23,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     runtimeContextDrawerProps,
     userMessageSidebarActions,
   } = useTeamMembersPaneModel({ project });
-  const activeSessionId = workspaceProps.selectedProjectSession?.id || null;
+  const activeSessionId = project.latestSessionId || null;
   const {
     anchorMessageId,
     anchorRequestKey,

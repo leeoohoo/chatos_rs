@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub mod agent_builder;
 pub mod browser_command_support;
 pub mod browser_runtime;

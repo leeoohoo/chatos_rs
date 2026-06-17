@@ -1,4 +1,4 @@
-# Memory Engine SDK 使用文档
+# Memory Engine SDK 使用说明
 
 `memory_engine_sdk` 是 Rust 版客户端，用来调用 Memory Engine 的线程、消息记录、总结、记忆、上下文和后台任务接口。
 

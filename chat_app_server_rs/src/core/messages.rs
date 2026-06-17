@@ -90,40 +90,6 @@ pub fn ensure_message_metadata_object(
     }
 }
 
-pub async fn set_task_runner_async_overall_status_by_id(
-    message_id: &str,
-    overall_status: &str,
-) -> Result<Option<Message>, String> {
-    let normalized_message_id = message_id.trim();
-    if normalized_message_id.is_empty() {
-        return Ok(None);
-    }
-
-    let Some(mut message) = chatos_sessions::get_message_by_id(normalized_message_id).await? else {
-        return Ok(None);
-    };
-    let metadata = ensure_message_metadata_object(&mut message);
-    let task_runner_async = metadata
-        .entry("task_runner_async".to_string())
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-    if !task_runner_async.is_object() {
-        *task_runner_async = Value::Object(serde_json::Map::new());
-    }
-    if let Value::Object(task_runner_async_map) = task_runner_async {
-        task_runner_async_map.insert(
-            "mode".to_string(),
-            Value::String("contact_async".to_string()),
-        );
-        task_runner_async_map.insert(
-            "overall_status".to_string(),
-            Value::String(overall_status.to_string()),
-        );
-    }
-
-    let saved = chatos_sessions::upsert_message(&message).await?;
-    Ok(Some(saved))
-}
-
 pub async fn set_task_runner_async_overall_status_for_session(
     session_id: &str,
     message_id: &str,
@@ -176,6 +142,7 @@ pub fn optional_text_has_content(value: Option<&str>) -> bool {
     value.map(text_has_content).unwrap_or(false)
 }
 
+#[cfg(test)]
 pub fn owned_non_empty_text(value: &str) -> Option<String> {
     text_has_content(value).then(|| value.to_string())
 }

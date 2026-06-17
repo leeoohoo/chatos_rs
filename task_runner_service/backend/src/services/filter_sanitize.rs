@@ -9,6 +9,17 @@ pub(super) fn sanitize_task_list_filters(mut filters: TaskListFilters) -> TaskLi
     filters.creator_user_id = normalized_optional(filters.creator_user_id);
     filters.parent_task_id = normalized_optional(filters.parent_task_id);
     filters.source_run_id = normalized_optional(filters.source_run_id);
+    filters.source_session_id = normalized_optional(filters.source_session_id);
+    filters.source_user_message_ids = filters
+        .source_user_message_ids
+        .into_iter()
+        .filter_map(|value| normalized_optional(Some(value)))
+        .collect();
+    filters.source_turn_ids = filters
+        .source_turn_ids
+        .into_iter()
+        .filter_map(|value| normalized_optional(Some(value)))
+        .collect();
     filters.limit = filters.limit.map(|value| value.clamp(1, 500));
     filters.offset = filters.offset.map(|value| value.min(100_000));
     filters

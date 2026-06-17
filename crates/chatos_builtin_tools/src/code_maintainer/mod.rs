@@ -14,3 +14,4 @@ mod utils;
 pub use self::service::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
 };
+pub use self::utils::{generate_id, now_iso, resolve_state_dir};

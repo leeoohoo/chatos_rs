@@ -1,5 +1,8 @@
 use serde_json::Value;
 
+use crate::core::chat_runtime::{
+    contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
+};
 use crate::models::memory_runtime_types::{
     DeleteSummaryResultDto, SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotDto,
     TurnRuntimeSnapshotLookupResponseDto,
@@ -8,6 +11,7 @@ use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::chatos_memory_engine;
+use crate::services::chatos_memory_mappings;
 use memory_engine_sdk::CompactTurnsResponse;
 
 pub async fn list_sessions(
@@ -60,7 +64,9 @@ pub async fn delete_session(session_id: &str) -> Result<bool, String> {
 
 pub async fn upsert_message(message: &Message) -> Result<Message, String> {
     let session = get_required_session(message.session_id.as_str()).await?;
-    chatos_memory_engine::upsert_chatos_message(&session, message).await
+    let saved = chatos_memory_engine::upsert_chatos_message(&session, message).await?;
+    sync_project_agent_link_after_user_message(&session, &saved).await;
+    Ok(saved)
 }
 
 pub async fn upsert_message_in_session(
@@ -73,7 +79,9 @@ pub async fn upsert_message_in_session(
             message.session_id, session.id
         ));
     }
-    chatos_memory_engine::upsert_chatos_message(session, message).await
+    let saved = chatos_memory_engine::upsert_chatos_message(session, message).await?;
+    sync_project_agent_link_after_user_message(session, &saved).await;
+    Ok(saved)
 }
 
 pub async fn sync_turn_runtime_snapshot(
@@ -203,4 +211,47 @@ async fn get_required_session(session_id: &str) -> Result<Session, String> {
     get_session_by_id(session_id)
         .await?
         .ok_or_else(|| format!("session not found: {session_id}"))
+}
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+async fn sync_project_agent_link_after_user_message(session: &Session, message: &Message) {
+    if !message.role.trim().eq_ignore_ascii_case("user") {
+        return;
+    }
+
+    let Some(user_id) = normalize_optional_text(session.user_id.as_deref()) else {
+        return;
+    };
+    let metadata = session.metadata.as_ref();
+    let Some(agent_id) = contact_agent_id_from_metadata(metadata) else {
+        return;
+    };
+    let Some(contact_id) = contact_id_from_metadata(metadata) else {
+        return;
+    };
+    let project_id = normalize_optional_text(session.project_id.as_deref())
+        .or_else(|| project_id_from_metadata(metadata))
+        .unwrap_or_else(|| "0".to_string());
+
+    if let Err(err) = chatos_memory_mappings::touch_current_project_contact_session(
+        user_id.as_str(),
+        project_id.as_str(),
+        agent_id.as_str(),
+        contact_id.as_str(),
+        session.id.as_str(),
+        message.created_at.as_str(),
+    )
+    .await
+    {
+        eprintln!(
+            "[SESSIONS] touch project contact session after user message failed: session_id={} message_id={} err={}",
+            session.id, message.id, err
+        );
+    }
 }

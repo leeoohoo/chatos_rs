@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
@@ -12,11 +12,41 @@ use crate::core::validation::{
     normalize_non_empty, validate_existing_dir, validate_existing_dir_if_present,
 };
 use crate::models::project::{Project, ProjectService};
+use crate::services::chatos_memory_mappings;
 use crate::services::realtime::publish_projects_updated;
 use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::{CreateProjectRequest, ProjectQuery, UpdateProjectRequest};
 use super::memory_sync::{sync_active_project, sync_archived_project};
+use super::session_resolver::resolve_project_contact_session_id;
+
+async fn attach_project_session_id(mut project: Project) -> Project {
+    let project_id = project.id.clone();
+    if let Ok(rows) =
+        chatos_memory_mappings::list_project_contacts(project_id.as_str(), Some(500), 0).await
+    {
+        let Some(user_id) = project.user_id.as_deref() else {
+            return project;
+        };
+        if let Some(row) = rows.into_iter().next() {
+            if let Some((session_id, last_message_at)) =
+                resolve_project_contact_session_id(user_id, &project.id, &row.contact_id).await
+            {
+                project.latest_session_id = Some(session_id);
+                project.last_message_at = row.last_message_at.or(last_message_at);
+            }
+        }
+    }
+    project
+}
+
+async fn attach_project_session_ids(projects: Vec<Project>) -> Vec<Project> {
+    let mut out = Vec::with_capacity(projects.len());
+    for project in projects {
+        out.push(attach_project_session_id(project).await);
+    }
+    out
+}
 
 pub(super) async fn list_projects(
     auth: AuthUser,
@@ -27,10 +57,13 @@ pub(super) async fn list_projects(
         Err(err) => return err,
     };
     match ProjectService::list(Some(user_id)).await {
-        Ok(list) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(list).unwrap_or(Value::Null)),
-        ),
+        Ok(list) => {
+            let list = attach_project_session_ids(list).await;
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(list).unwrap_or(Value::Null)),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),
@@ -112,10 +145,13 @@ pub(super) async fn get_project(
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     match ensure_owned_project(&id, &auth).await {
-        Ok(project) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(project).unwrap_or(Value::Null)),
-        ),
+        Ok(project) => {
+            let project = attach_project_session_id(project).await;
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(project).unwrap_or(Value::Null)),
+            )
+        }
         Err(err) => map_project_access_error(err),
     }
 }

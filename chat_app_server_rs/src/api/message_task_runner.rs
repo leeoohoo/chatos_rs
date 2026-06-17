@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use axum::{
     extract::{Path, Query},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -40,6 +40,10 @@ pub fn router() -> Router {
             "/api/messages/:message_id/task-runner/graph/runs/:run_id",
             get(get_message_task_runner_graph_run),
         )
+        .route(
+            "/api/conversations/:conversation_id/task-runner/active-message-tasks",
+            post(get_conversation_task_runner_active_message_tasks),
+        )
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +52,12 @@ struct MessageTaskRunnerContext {
     source_session_id: String,
     source_user_message_id: Option<String>,
     source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionTaskRunnerContext {
+    base_url: String,
+    source_session_id: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -59,6 +69,12 @@ struct MessageTaskRunnerLookupQuery {
     conversation_turn_id: Option<String>,
     source_turn_id: Option<String>,
     source_user_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ConversationTaskRunnerActiveMessageTasksRequest {
+    source_user_message_ids: Option<Vec<String>>,
+    source_turn_ids: Option<Vec<String>>,
 }
 
 impl MessageTaskRunnerLookupQuery {
@@ -90,6 +106,16 @@ fn normalize_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn normalize_text_items(values: Option<Vec<String>>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    values
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|value| normalize_text(Some(value.as_str())))
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 fn is_temporary_message_id(value: &str) -> bool {
@@ -390,6 +416,7 @@ fn push_normalized_graph_edge(
     ));
 }
 
+#[cfg(test)]
 fn normalize_message_task_graph_payload_edges(payload: Value) -> Value {
     normalize_message_task_graph_payload_edges_with_tasks(payload, &[])
 }
@@ -493,6 +520,42 @@ fn normalize_message_task_graph_payload_edges_with_tasks(
         payload_object.insert("edges".to_string(), Value::Array(normalized_edges));
     }
     payload
+}
+
+async fn resolve_session_task_runner_context(
+    auth: &AuthUser,
+    conversation_id: &str,
+) -> Result<Option<SessionTaskRunnerContext>, (StatusCode, Json<Value>)> {
+    let session = match ensure_owned_session(conversation_id, auth).await {
+        Ok(session) => session,
+        Err(err) => return Err(map_session_access_error(err)),
+    };
+
+    let session_runtime = ChatRuntimeMetadata::from_metadata(session.metadata.as_ref());
+    let contact_id = session_runtime.contact_id;
+    let contact_agent_id = session_runtime
+        .contact_agent_id
+        .or_else(|| normalize_text(session.selected_agent_id.as_deref()));
+    let config = chatos_memory_mappings::get_contact_task_runner_runtime_config(
+        Some(auth.user_id.as_str()),
+        contact_id.as_deref(),
+        contact_agent_id.as_deref(),
+    )
+    .await
+    .map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "读取联系人任务系统配置失败", "detail": err})),
+        )
+    })?;
+    let Some(config) = config else {
+        return Ok(None);
+    };
+
+    Ok(Some(SessionTaskRunnerContext {
+        base_url: config.base_url,
+        source_session_id: session.id,
+    }))
 }
 
 async fn resolve_message_task_runner_context(
@@ -667,6 +730,47 @@ async fn list_message_task_runner_tasks(
             "source_turn_id": context.source_turn_id,
         })),
     )
+}
+
+async fn get_conversation_task_runner_active_message_tasks(
+    auth: AuthUser,
+    Path(conversation_id): Path<String>,
+    Json(req): Json<ConversationTaskRunnerActiveMessageTasksRequest>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_session_task_runner_context(&auth, &conversation_id).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "active_source_user_message_ids": [],
+                    "running_source_user_message_ids": [],
+                    "items": [],
+                    "source_session_id": null,
+                })),
+            );
+        }
+        Err(err) => return err,
+    };
+    let source_user_message_ids = normalize_text_items(req.source_user_message_ids);
+    let source_turn_ids = normalize_text_items(req.source_turn_ids);
+    let payload = match task_runner_api_client::list_session_active_message_tasks(
+        context.base_url.as_str(),
+        context.source_session_id.as_str(),
+        source_user_message_ids.as_slice(),
+        source_turn_ids.as_slice(),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "读取会话任务运行状态失败", "detail": err})),
+            );
+        }
+    };
+    (StatusCode::OK, Json(payload))
 }
 
 async fn get_message_task_runner_graph(

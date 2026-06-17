@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,10 @@ pub fn router() -> Router<AppState> {
             "/internal/chatos/message-graph/runs/:run_id",
             get(get_chatos_message_graph_run),
         )
+        .route(
+            "/internal/chatos/session-active-message-tasks",
+            post(list_chatos_session_active_message_tasks),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +54,31 @@ struct ChatosMessageTaskQuery {
 #[derive(Debug, Serialize)]
 struct ChatosMessageTasksResponse {
     items: Vec<ChatosMessageTaskSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatosSessionActiveMessageTasksRequest {
+    source_session_id: String,
+    #[serde(default)]
+    source_user_message_ids: Vec<String>,
+    #[serde(default)]
+    source_turn_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatosActiveMessageTaskSource {
+    source_user_message_id: Option<String>,
+    source_turn_id: Option<String>,
+    running_count: usize,
+    active_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatosSessionActiveMessageTasksResponse {
+    source_session_id: String,
+    active_source_user_message_ids: Vec<String>,
+    running_source_user_message_ids: Vec<String>,
+    items: Vec<ChatosActiveMessageTaskSource>,
 }
 
 #[derive(Debug)]
@@ -138,6 +167,45 @@ async fn list_chatos_message_tasks(
         .await
         .map_err(InternalApiError::internal)?;
     Ok(Json(ChatosMessageTasksResponse { items }))
+}
+
+async fn list_chatos_session_active_message_tasks(
+    State(state): State<AppState>,
+    Json(request): Json<ChatosSessionActiveMessageTasksRequest>,
+) -> Result<Json<ChatosSessionActiveMessageTasksResponse>, InternalApiError> {
+    let source_session_id = request.source_session_id.trim();
+    if source_session_id.is_empty() {
+        return Err(InternalApiError::bad_request(
+            "source_session_id is required",
+        ));
+    }
+    let items = state
+        .task_service
+        .list_active_message_task_sources_for_chatos_session(
+            source_session_id,
+            request.source_user_message_ids.as_slice(),
+            request.source_turn_ids.as_slice(),
+        )
+        .await
+        .map_err(InternalApiError::internal)?;
+    let active_source_user_message_ids = items
+        .iter()
+        .filter_map(|item| item.source_user_message_id.clone())
+        .collect::<Vec<_>>();
+    Ok(Json(ChatosSessionActiveMessageTasksResponse {
+        source_session_id: source_session_id.to_string(),
+        running_source_user_message_ids: active_source_user_message_ids.clone(),
+        active_source_user_message_ids,
+        items: items
+            .into_iter()
+            .map(|item| ChatosActiveMessageTaskSource {
+                source_user_message_id: item.source_user_message_id,
+                source_turn_id: item.source_turn_id,
+                running_count: item.running_count,
+                active_count: item.active_count,
+            })
+            .collect(),
+    }))
 }
 
 async fn get_chatos_message_task(

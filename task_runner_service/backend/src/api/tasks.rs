@@ -46,6 +46,7 @@ impl TaskListQuery {
             source_run_id: self.source_run_id,
             limit: self.limit,
             offset: self.offset,
+            ..TaskListFilters::default()
         }
     }
 }

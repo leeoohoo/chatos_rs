@@ -211,6 +211,22 @@ pub async fn sync_project_agent_link(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "agent_id is required".to_string())?
         .to_string();
+    let contact_id = payload
+        .contact_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "contact_id is required".to_string())?
+        .to_string();
+    let status = payload
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("active");
+    if status != "active" {
+        return Err("project contact links are deleted instead of archived".to_string());
+    }
 
     if mappings_repo::get_project_by_user_and_project_id(user_id.as_str(), project_id.as_str())
         .await?
@@ -233,7 +249,7 @@ pub async fn sync_project_agent_link(
             user_id,
             project_id,
             agent_id,
-            contact_id: payload.contact_id.clone(),
+            contact_id: Some(contact_id),
             latest_session_id: payload.session_id.clone(),
             last_message_at: payload.last_message_at.clone(),
             status: payload.status.clone(),
@@ -241,6 +257,70 @@ pub async fn sync_project_agent_link(
         .await?
         .ok_or_else(|| "sync project-agent link failed".to_string())?;
     Ok(project_agent_link_to_dto(link))
+}
+
+pub async fn touch_current_project_contact_session(
+    user_id: &str,
+    project_id: &str,
+    agent_id: &str,
+    contact_id: &str,
+    session_id: &str,
+    last_message_at: &str,
+) -> Result<bool, String> {
+    let user_id = user_id.trim();
+    if user_id.is_empty() {
+        return Ok(false);
+    }
+    let agent_id = agent_id.trim();
+    if agent_id.is_empty() {
+        return Ok(false);
+    }
+    let contact_id = contact_id.trim();
+    if contact_id.is_empty() {
+        return Ok(false);
+    }
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Ok(false);
+    }
+    let project_id = project_id.trim();
+    let project_id = if project_id.is_empty() {
+        "0"
+    } else {
+        project_id
+    };
+
+    let updated = mappings_repo::touch_project_agent_link_session(
+        mappings_repo::TouchProjectAgentLinkSessionInput {
+            user_id: user_id.to_string(),
+            project_id: project_id.to_string(),
+            agent_id: agent_id.to_string(),
+            contact_id: contact_id.to_string(),
+            latest_session_id: session_id.to_string(),
+            last_message_at: last_message_at.to_string(),
+        },
+    )
+    .await?;
+    Ok(updated.is_some())
+}
+
+pub async fn delete_project_contact_link(
+    user_id: &str,
+    project_id: &str,
+    contact_id: &str,
+) -> Result<bool, String> {
+    let user_id = user_id.trim();
+    let contact_id = contact_id.trim();
+    if user_id.is_empty() || contact_id.is_empty() {
+        return Ok(false);
+    }
+    let project_id = project_id.trim();
+    let project_id = if project_id.is_empty() {
+        "0"
+    } else {
+        project_id
+    };
+    mappings_repo::delete_project_agent_link(user_id, project_id, Some(contact_id)).await
 }
 
 pub async fn list_project_contacts(

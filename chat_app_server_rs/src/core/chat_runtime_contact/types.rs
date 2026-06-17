@@ -5,6 +5,7 @@ pub const CONTACT_COMMAND_READER_TOOL_NAME: &str = "memory_command_reader_get_co
 pub const CONTACT_PLUGIN_READER_TOOL_NAME: &str = "memory_plugin_reader_get_plugin_detail";
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct ParsedContactCommandInvocation {
     pub command_ref: String,
     pub name: String,
@@ -17,6 +18,7 @@ pub struct ParsedContactCommandInvocation {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct ParsedImplicitCommandSelection {
     pub command_ref: Option<String>,
     pub name: Option<String>,

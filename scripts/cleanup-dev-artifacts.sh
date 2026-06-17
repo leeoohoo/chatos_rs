@@ -19,7 +19,6 @@ Cleanup common local development artifacts:
 - chat_app_server_rs/target
 - target-shared
 - chat_app_server_rs logs and sqlite wal/shm files
-- openai-codex-gateway sqlite wal/shm files
 - python __pycache__ / .pyc
 - common .DS_Store files
 EOF
@@ -69,8 +68,6 @@ remove_glob "$ROOT_DIR/chat_app_server_rs/logs/server.log*"
 remove_glob "$ROOT_DIR/chat_app_server_rs/logs/error.log*"
 remove_path "$ROOT_DIR/chat_app_server_rs/data/chat_app.db-wal"
 remove_path "$ROOT_DIR/chat_app_server_rs/data/chat_app.db-shm"
-remove_path "$ROOT_DIR/openai-codex-gateway/gateway_state.sqlite3-wal"
-remove_path "$ROOT_DIR/openai-codex-gateway/gateway_state.sqlite3-shm"
 
 while IFS= read -r path; do
   remove_path "$path"

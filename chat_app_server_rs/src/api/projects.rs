@@ -8,6 +8,7 @@ mod contracts;
 mod crud_handlers;
 mod memory_sync;
 mod run_handlers;
+mod session_resolver;
 
 use self::contact_handlers::{
     add_project_contact, get_project_contact_lock, list_project_contacts, remove_project_contact,

@@ -94,6 +94,7 @@ pub(super) fn engine_thread_to_session(item: memory_engine_sdk::EngineThread) ->
         selected_agent_id,
         user_id: Some(item.tenant_id),
         project_id,
+        message_count: 0,
         status: item.status.clone(),
         archived_at: item.archived_at.or_else(|| {
             if item.status == "archived" {

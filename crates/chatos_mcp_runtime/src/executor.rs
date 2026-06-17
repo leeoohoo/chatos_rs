@@ -303,6 +303,7 @@ impl McpExecutor {
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         let mut ordered: Vec<Option<ToolResult>> = vec![None; tool_calls.len()];
+        let mut fallbacks: Vec<Option<ToolResult>> = vec![None; tool_calls.len()];
         let mut joins: JoinSet<(usize, ToolResult)> = JoinSet::new();
 
         for (index, tool_call) in tool_calls.iter().enumerate() {
@@ -312,6 +313,11 @@ impl McpExecutor {
 
             let name = extract_tool_call_name(tool_call).unwrap_or("").to_string();
             let call_id = extract_tool_call_id(tool_call).unwrap_or("").to_string();
+            fallbacks[index] = Some(parallel_tool_missing_result(
+                call_id.as_str(),
+                name.as_str(),
+                &context,
+            ));
             let args = match parse_tool_args(clone_tool_call_arguments(tool_call)) {
                 Ok(value) => value,
                 Err(err) => {
@@ -385,11 +391,7 @@ impl McpExecutor {
             }
         }
 
-        let mut results = Vec::new();
-        for item in ordered.into_iter().flatten() {
-            push_tool_result(&mut results, item, &context, on_tool_result.as_ref());
-        }
-        results
+        collect_parallel_tool_results(ordered, fallbacks, &context, on_tool_result.as_ref())
     }
 
     async fn register_http_tools(&mut self) {
@@ -787,6 +789,42 @@ fn push_tool_result(
     results.push(result);
 }
 
+fn collect_parallel_tool_results(
+    ordered: Vec<Option<ToolResult>>,
+    fallbacks: Vec<Option<ToolResult>>,
+    context: &ToolCallContext,
+    on_tool_result: Option<&ToolResultCallback>,
+) -> Vec<ToolResult> {
+    let mut results = Vec::new();
+    for (index, item) in ordered.into_iter().enumerate() {
+        if let Some(item) = item.or_else(|| fallbacks.get(index).cloned().flatten()) {
+            push_tool_result(&mut results, item, context, on_tool_result);
+        }
+    }
+    results
+}
+
+fn parallel_tool_missing_result(
+    call_id: &str,
+    name: &str,
+    context: &ToolCallContext,
+) -> ToolResult {
+    ToolResult {
+        tool_call_id: call_id.to_string(),
+        name: if name.is_empty() {
+            "unknown".to_string()
+        } else {
+            name.to_string()
+        },
+        success: false,
+        is_error: true,
+        is_stream: false,
+        conversation_turn_id: context.conversation_turn_id.clone(),
+        content: "工具执行失败: 工具任务没有返回结果".to_string(),
+        result: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -796,7 +834,7 @@ mod tests {
 
     use crate::{
         BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolRegistry,
-        McpExecutor, ToolCallContext, ToolResultCallback,
+        McpExecutor, ToolCallContext, ToolResult, ToolResultCallback,
     };
 
     #[tokio::test]
@@ -830,6 +868,39 @@ mod tests {
 
         assert!(results.is_empty());
         assert_eq!(callback_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn parallel_tool_result_collection_fills_missing_items() {
+        let context = ToolCallContext::default();
+        let ok = ToolResult {
+            tool_call_id: "call_ok".to_string(),
+            name: "process_poll".to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            conversation_turn_id: None,
+            content: "ok".to_string(),
+            result: None,
+        };
+        let fallback =
+            super::parallel_tool_missing_result("call_missing", "process_poll", &context);
+        let results = super::collect_parallel_tool_results(
+            vec![Some(ok), None],
+            vec![None, Some(fallback)],
+            &context,
+            None,
+        );
+
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .any(|result| { result.tool_call_id == "call_ok" && result.content.contains("ok") }));
+        assert!(results.iter().any(|result| {
+            result.tool_call_id == "call_missing"
+                && result.is_error
+                && result.content.contains("没有返回结果")
+        }));
     }
 
     #[test]

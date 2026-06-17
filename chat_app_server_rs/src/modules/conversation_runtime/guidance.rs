@@ -1,63 +1,19 @@
 use serde_json::{json, Value};
-use tracing::warn;
 
-use crate::core::auth::AuthUser;
-use crate::core::chat_runtime::project_id_from_metadata;
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::session_access::{ensure_owned_session, SessionAccessError};
-use crate::services::ai_common::{
-    build_user_content_parts, build_user_message_metadata, normalize_turn_id,
-};
+use crate::services::ai_common::build_user_content_parts;
 use crate::services::runtime_guidance_manager::{runtime_guidance_manager, DEFAULT_DRAIN_LIMIT};
-use crate::utils::abort_registry;
-use crate::utils::attachments::{parse_attachments, Attachment};
+use crate::utils::attachments::Attachment;
 
-use super::messages::{self, CreateUserMessageInput};
-use super::session_scope::{normalize_optional_text, normalize_project_scope};
 use super::user_context::load_runtime_user_context;
 
 pub use crate::services::runtime_guidance_manager::{EnqueueGuidanceError, RuntimeGuidanceItem};
-
-pub const CONTENT_MAX_LEN: usize = 1000;
-
-#[derive(Debug, Clone)]
-pub struct SubmitRuntimeGuidanceInput {
-    pub conversation_id: Option<String>,
-    pub turn_id: Option<String>,
-    pub content: Option<String>,
-    pub project_id: Option<String>,
-    pub attachments: Option<Vec<Value>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SubmitRuntimeGuidanceOutput {
-    pub conversation_id: String,
-    pub guidance_id: String,
-    pub pending_count: usize,
-    pub turn_id: String,
-}
 
 #[derive(Debug, Clone)]
 pub struct DrainedRuntimeGuidance {
     pub guidance_item: RuntimeGuidanceItem,
     pub applied_item: Option<RuntimeGuidanceItem>,
     pub pending_count: usize,
-}
-
-#[derive(Debug)]
-pub enum SubmitRuntimeGuidanceError {
-    InvalidPayload,
-    TooLong {
-        max_length: usize,
-    },
-    SessionNotFound,
-    Forbidden,
-    SessionLookupFailed,
-    ProjectScopeMismatch {
-        requested_project_id: String,
-        session_project_id: String,
-    },
-    TurnNotRunning,
 }
 
 pub fn register_active_turn(session_id: &str, turn_id: &str) {
@@ -83,103 +39,6 @@ pub fn enqueue_runtime_guidance_with_attachments(
     attachments: Vec<Attachment>,
 ) -> Result<RuntimeGuidanceItem, EnqueueGuidanceError> {
     runtime_guidance_manager().enqueue_guidance(session_id, turn_id, content, attachments)
-}
-
-pub async fn submit_runtime_guidance(
-    auth: &AuthUser,
-    input: SubmitRuntimeGuidanceInput,
-) -> Result<SubmitRuntimeGuidanceOutput, SubmitRuntimeGuidanceError> {
-    let conversation_id =
-        normalize_optional_text(input.conversation_id.as_deref()).unwrap_or_default();
-    let turn_id = normalize_turn_id(input.turn_id.as_deref()).unwrap_or_default();
-    let content = normalize_optional_text(input.content.as_deref()).unwrap_or_default();
-    let requested_project_id = normalize_optional_text(input.project_id.as_deref());
-    let attachments = normalize_runtime_guidance_attachments(input.attachments.as_deref());
-
-    if conversation_id.is_empty()
-        || turn_id.is_empty()
-        || (content.is_empty() && attachments.is_empty())
-    {
-        return Err(SubmitRuntimeGuidanceError::InvalidPayload);
-    }
-    if content.chars().count() > CONTENT_MAX_LEN {
-        return Err(SubmitRuntimeGuidanceError::TooLong {
-            max_length: CONTENT_MAX_LEN,
-        });
-    }
-
-    let target_session = load_owned_session(auth, conversation_id.as_str()).await?;
-    if let Some(requested_project_id) = requested_project_id.as_deref() {
-        let session_project_id = target_session
-            .project_id
-            .clone()
-            .or_else(|| project_id_from_metadata(target_session.metadata.as_ref()));
-        let requested_scope = normalize_project_scope(Some(requested_project_id));
-        let session_scope = normalize_project_scope(session_project_id.as_deref());
-        if requested_scope != session_scope {
-            return Err(SubmitRuntimeGuidanceError::ProjectScopeMismatch {
-                requested_project_id: requested_scope,
-                session_project_id: session_scope,
-            });
-        }
-    }
-
-    if abort_registry::is_aborted(conversation_id.as_str()) {
-        return Err(SubmitRuntimeGuidanceError::TurnNotRunning);
-    }
-
-    let display_content = build_runtime_guidance_display_content(content.as_str(), &attachments);
-    let guidance_item = enqueue_runtime_guidance_with_attachments(
-        conversation_id.as_str(),
-        turn_id.as_str(),
-        content.as_str(),
-        attachments.clone(),
-    )
-    .map_err(|err| match err {
-        EnqueueGuidanceError::TurnNotRunning => SubmitRuntimeGuidanceError::TurnNotRunning,
-    })?;
-
-    let pending_count =
-        runtime_guidance_manager().pending_count(conversation_id.as_str(), turn_id.as_str());
-    let guidance_id = guidance_item.guidance_id.clone();
-
-    let mut metadata = match build_user_message_metadata(&attachments, Some(turn_id.as_str())) {
-        Some(Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
-    };
-    metadata.insert("hidden".to_string(), Value::Bool(true));
-    metadata.insert(
-        "runtime_guidance".to_string(),
-        json!({
-            "guidance_id": guidance_item.guidance_id,
-            "status": "queued",
-            "created_at": guidance_item.created_at,
-        }),
-    );
-    if let Err(err) = messages::create_user_message(
-        conversation_id.as_str(),
-        CreateUserMessageInput {
-            content: display_content,
-            message_id: Some(guidance_id.clone()),
-            message_mode: Some("runtime_guidance".to_string()),
-            message_source: Some("runtime_guidance".to_string()),
-            metadata: Some(Value::Object(metadata)),
-        },
-    )
-    .await
-    {
-        warn!(
-            "persist runtime guidance failed: session_id={} turn_id={} guidance_id={} detail={}",
-            conversation_id, turn_id, guidance_id, err
-        );
-    }
-
-    Ok(SubmitRuntimeGuidanceOutput {
-        conversation_id,
-        guidance_id,
-        pending_count,
-        turn_id,
-    })
 }
 
 pub fn drain_runtime_guidance_items(
@@ -299,84 +158,11 @@ pub fn build_runtime_guidance_applied_event(
     payload
 }
 
-fn normalize_runtime_guidance_attachments(raw: Option<&[Value]>) -> Vec<Attachment> {
-    raw.map(parse_attachments)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(is_meaningful_runtime_guidance_attachment)
-        .collect()
-}
-
-fn is_meaningful_runtime_guidance_attachment(attachment: &Attachment) -> bool {
-    attachment
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some()
-        || attachment
-            .mime_type
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some()
-        || attachment
-            .data_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some()
-        || attachment
-            .text
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some()
-}
-
-fn build_runtime_guidance_display_content(content: &str, attachments: &[Attachment]) -> String {
-    let trimmed = content.trim();
-    if !trimmed.is_empty() {
-        return trimmed.to_string();
-    }
-    if attachments.is_empty() {
-        return String::new();
-    }
-    if attachments.len() == 1 {
-        return format!(
-            "[Runtime Guidance Attachment] {}",
-            attachments[0].name.as_deref().unwrap_or("attachment")
-        );
-    }
-    format!(
-        "[Runtime Guidance Attachments] {} attachments",
-        attachments.len()
-    )
-}
-
 fn format_runtime_guidance_attachment_prelude(locale: InternalContextLocale) -> String {
     if locale.is_english() {
         "[Runtime Guidance]\n- source: user guidance during running turn\n- rule: treat the following text and attachments as a high-priority preference unless conflicts with safety".to_string()
     } else {
         "[Runtime Guidance]\n- source: 用户在运行中追加的指导\n- rule: 将下面的文本和附件视为高优先级偏好，除非与安全要求冲突".to_string()
-    }
-}
-
-async fn load_owned_session(
-    auth: &AuthUser,
-    conversation_id: &str,
-) -> Result<crate::models::session::Session, SubmitRuntimeGuidanceError> {
-    match ensure_owned_session(conversation_id, auth).await {
-        Ok(session) => Ok(session),
-        Err(SessionAccessError::NotFound) => Err(SubmitRuntimeGuidanceError::SessionNotFound),
-        Err(SessionAccessError::Forbidden) => Err(SubmitRuntimeGuidanceError::Forbidden),
-        Err(err) => {
-            warn!(
-                "runtime guidance session lookup failed: session_id={} detail={:?}",
-                conversation_id, err
-            );
-            Err(SubmitRuntimeGuidanceError::SessionLookupFailed)
-        }
     }
 }
 

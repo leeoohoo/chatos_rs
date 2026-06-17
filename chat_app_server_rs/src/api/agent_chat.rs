@@ -63,14 +63,11 @@ struct TaskRunnerCallbackRequest {
     result_summary: Option<String>,
     error_message: Option<String>,
     report_content: Option<String>,
-    process_log: Option<String>,
     source_session_id: Option<String>,
     source_turn_id: Option<String>,
     source_user_message_id: Option<String>,
     parent_task_id: Option<String>,
     source_run_id: Option<String>,
-    #[serde(default)]
-    prerequisite_task_ids: Vec<String>,
     schedule_mode: Option<String>,
     callback_at: Option<String>,
 }
@@ -679,6 +676,7 @@ fn build_task_runner_callback_contact_display(
     }
 }
 
+#[cfg(test)]
 fn build_task_runner_callback_assistant_message(
     session_id: &str,
     payload: &TaskRunnerCallbackRequest,
@@ -847,13 +845,11 @@ mod tests {
             result_summary: Some("done".to_string()),
             error_message: None,
             report_content: None,
-            process_log: None,
             source_session_id: Some("session-1".to_string()),
             source_turn_id: Some("turn-1".to_string()),
             source_user_message_id: Some("user-1".to_string()),
             parent_task_id: None,
             source_run_id: None,
-            prerequisite_task_ids: vec![],
             schedule_mode: Some("once".to_string()),
             callback_at: Some("2026-06-10T10:00:00Z".to_string()),
         }

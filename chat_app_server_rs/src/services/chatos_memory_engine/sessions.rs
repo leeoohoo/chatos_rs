@@ -1,8 +1,8 @@
 use memory_engine_sdk::{
-    CompactTurnsResponse, ComposeContextPolicy, SdkComposeContextRequest,
-    SdkGetTurnProcessRecordsRequest, SdkListCompactTurnsRequest, SdkListThreadRecordsRequest,
-    SdkListThreadSummariesRequest, SdkListThreadsRequest, SdkUpsertThreadRequest,
-    TurnProcessRecordsResponse,
+    CompactTurnsResponse, ComposeContextPolicy, EngineThread, MemoryEngineClient,
+    SdkComposeContextRequest, SdkCountThreadRecordsRequest, SdkGetTurnProcessRecordsRequest,
+    SdkListCompactTurnsRequest, SdkListThreadRecordsRequest, SdkListThreadSummariesRequest,
+    SdkListThreadsRequest, SdkUpsertThreadRequest, TurnProcessRecordsResponse,
 };
 use serde_json::Value;
 
@@ -21,6 +21,54 @@ use super::mapping::{build_thread_mapping, pack_message_metadata, resolve_sessio
 use super::register_subject_memory_scopes;
 use super::types::ComposedChatHistoryContext;
 use memory_engine_sdk::{SdkBatchSyncRecordsRequest, UpsertRecordInput};
+
+async fn count_chatos_message_records(
+    client: &MemoryEngineClient,
+    thread_id: &str,
+    tenant_id: &str,
+) -> Result<i64, String> {
+    client
+        .count_thread_records(
+            thread_id,
+            &SdkCountThreadRecordsRequest {
+                tenant_id: tenant_id.to_string(),
+                role: None,
+                record_type: Some("message".to_string()),
+                summary_status: None,
+            },
+        )
+        .await
+        .map(|count| count.max(0))
+}
+
+async fn engine_thread_to_session_with_message_count(
+    client: &MemoryEngineClient,
+    item: EngineThread,
+) -> Result<Session, String> {
+    let thread_id = item.id.clone();
+    let tenant_id = item.tenant_id.clone();
+    let mut session = engine_thread_to_session(item);
+    session.message_count =
+        count_chatos_message_records(client, thread_id.as_str(), tenant_id.as_str()).await?;
+    Ok(session)
+}
+
+async fn choose_existing_chatos_session(
+    client: &MemoryEngineClient,
+    items: Vec<EngineThread>,
+) -> Result<Option<Session>, String> {
+    let mut fallback: Option<Session> = None;
+    for item in items {
+        let session = engine_thread_to_session_with_message_count(client, item).await?;
+        if session.message_count > 0 {
+            return Ok(Some(session));
+        }
+        if fallback.is_none() {
+            fallback = Some(session);
+        }
+    }
+    Ok(fallback)
+}
 
 pub async fn compose_chatos_context(
     session: &Session,
@@ -151,6 +199,7 @@ pub async fn update_chatos_session(
     updated.id = current.id.clone();
     updated.created_at = current.created_at.clone();
     updated.updated_at = now_rfc3339();
+    updated.message_count = current.message_count;
     updated.status = status.unwrap_or(current.status.clone());
     updated.archived_at = if updated.status == "archived" {
         Some(updated.updated_at.clone())
@@ -176,7 +225,12 @@ pub async fn get_chatos_session(
 ) -> Result<Option<Session>, String> {
     let client = build_client()?;
     let item = client.get_thread(session_id, tenant_id).await?;
-    Ok(item.map(engine_thread_to_session))
+    match item {
+        Some(item) => Ok(Some(
+            engine_thread_to_session_with_message_count(&client, item).await?,
+        )),
+        None => Ok(None),
+    }
 }
 
 pub async fn list_chatos_sessions(
@@ -213,7 +267,11 @@ pub async fn list_chatos_sessions(
     if include_archiving && !include_archived {
         items.retain(|thread| thread.status != "archived");
     }
-    Ok(items.into_iter().map(engine_thread_to_session).collect())
+    let mut sessions = Vec::with_capacity(items.len());
+    for item in items {
+        sessions.push(engine_thread_to_session_with_message_count(&client, item).await?);
+    }
+    Ok(sessions)
 }
 
 pub async fn list_chatos_sessions_by_agent(
@@ -242,7 +300,11 @@ pub async fn list_chatos_sessions_by_agent(
             offset: Some(offset),
         })
         .await?;
-    Ok(items.into_iter().map(engine_thread_to_session).collect())
+    let mut sessions = Vec::with_capacity(items.len());
+    for item in items {
+        sessions.push(engine_thread_to_session_with_message_count(&client, item).await?);
+    }
+    Ok(sessions)
 }
 
 pub async fn list_chatos_messages(
@@ -495,12 +557,12 @@ async fn find_existing_active_chatos_session(
                 mapping_version: None,
                 thread_label: None,
                 status: Some("active".to_string()),
-                limit: Some(1),
+                limit: Some(20),
                 offset: Some(0),
             })
             .await?;
-        if let Some(item) = items.into_iter().next() {
-            return Ok(Some(engine_thread_to_session(item)));
+        if let Some(session) = choose_existing_chatos_session(&client, items).await? {
+            return Ok(Some(session));
         }
     }
 
@@ -518,12 +580,12 @@ async fn find_existing_active_chatos_session(
                 mapping_version: None,
                 thread_label: None,
                 status: Some("active".to_string()),
-                limit: Some(1),
+                limit: Some(20),
                 offset: Some(0),
             })
             .await?;
-        if let Some(item) = items.into_iter().next() {
-            return Ok(Some(engine_thread_to_session(item)));
+        if let Some(session) = choose_existing_chatos_session(&client, items).await? {
+            return Ok(Some(session));
         }
     }
 

@@ -22,6 +22,7 @@ pub(super) fn is_mongo_active_run_conflict(message: &str) -> bool {
 
 pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     let mut filter = Document::new();
+    let mut and_clauses = Vec::<Document>::new();
     if let Some(status) = filters.status {
         filter.insert("status", task_status_to_str(status));
     }
@@ -30,9 +31,8 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
             "$regex": escape_regex_pattern(keyword),
             "$options": "i",
         };
-        filter.insert(
-            "$or",
-            vec![
+        and_clauses.push(doc! {
+            "$or": vec![
                 doc! { "id": regex.clone() },
                 doc! { "title": regex.clone() },
                 doc! { "objective": regex.clone() },
@@ -40,7 +40,7 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
                 doc! { "result_summary": regex.clone() },
                 doc! { "tags": regex },
             ],
-        );
+        });
     }
     if let Some(tag) = filters.tag.as_deref() {
         filter.insert("tags", tag);
@@ -59,6 +59,40 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     }
     if let Some(source_run_id) = filters.source_run_id.as_deref() {
         filter.insert("source_run_id", source_run_id);
+    }
+    if let Some(source_session_id) = filters.source_session_id.as_deref() {
+        filter.insert("source_session_id", source_session_id);
+    }
+    if !filters.source_user_message_ids.is_empty() || !filters.source_turn_ids.is_empty() {
+        let mut source_clauses = Vec::new();
+        if !filters.source_user_message_ids.is_empty() {
+            source_clauses.push(doc! {
+                "source_user_message_id": {
+                    "$in": filters
+                        .source_user_message_ids
+                        .iter()
+                        .cloned()
+                        .map(Bson::String)
+                        .collect::<Vec<_>>()
+                }
+            });
+        }
+        if !filters.source_turn_ids.is_empty() {
+            source_clauses.push(doc! {
+                "source_turn_id": {
+                    "$in": filters
+                        .source_turn_ids
+                        .iter()
+                        .cloned()
+                        .map(Bson::String)
+                        .collect::<Vec<_>>()
+                }
+            });
+        }
+        and_clauses.push(doc! { "$or": source_clauses });
+    }
+    if !and_clauses.is_empty() {
+        filter.insert("$and", and_clauses);
     }
     filter
 }

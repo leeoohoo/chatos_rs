@@ -26,8 +26,6 @@ use serde_json::Value;
 use chatos_mcp_runtime::ToolCallerModelRuntime;
 
 use super::BoundContext;
-pub(super) const DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS: i64 =
-    actions_config::DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS;
 pub(super) const DEFAULT_BROWSER_RESEARCH_REQUEST_TIMEOUT_SECONDS: u64 =
     actions_config::DEFAULT_BROWSER_RESEARCH_REQUEST_TIMEOUT_SECONDS;
 pub(super) const DEFAULT_BROWSER_RESEARCH_LIMIT: usize =

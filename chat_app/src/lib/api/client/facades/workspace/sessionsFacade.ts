@@ -2,6 +2,7 @@ import * as messagesApi from '../../messages';
 import * as workspaceApi from '../../workspace';
 import type {
   CompactHistoryResponse,
+  ConversationTaskRunnerActiveMessageTasksResponse,
   DeleteSuccessResponse,
   MessageCreatePayload,
   SessionMessageResponse,
@@ -43,6 +44,10 @@ export interface WorkspaceSessionFacade {
     conversationId: string,
     params?: { limit?: number; before?: string | null },
   ): Promise<UserMessageTurnsResponse>;
+  getConversationTaskRunnerActiveMessageTasks(
+    conversationId: string,
+    params?: { sourceUserMessageIds?: string[]; sourceTurnIds?: string[] },
+  ): Promise<ConversationTaskRunnerActiveMessageTasksResponse>;
   getConversationTurnMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
   getConversationTurnMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
   getConversationLatestTurnRuntimeContext(conversationId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
@@ -83,6 +88,9 @@ export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient
   },
   async getConversationUserMessageTurns(conversationId, params) {
     return workspaceApi.getConversationUserMessageTurns(this.getRequestFn(), conversationId, params);
+  },
+  async getConversationTaskRunnerActiveMessageTasks(conversationId, params) {
+    return workspaceApi.getConversationTaskRunnerActiveMessageTasks(this.getRequestFn(), conversationId, params);
   },
   async getConversationTurnMessages(conversationId, userMessageId) {
     return workspaceApi.getConversationTurnMessages(this.getRequestFn(), conversationId, userMessageId);

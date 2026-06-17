@@ -99,20 +99,6 @@ where
     })
 }
 
-pub fn async_text_tool_handler_with_optional_string<F, Fut>(
-    builder: F,
-) -> Arc<dyn Fn(Value, Option<&str>) -> Result<Value, String> + Send + Sync>
-where
-    F: Fn(Value, Option<String>) -> Result<Fut, String> + Send + Sync + 'static,
-    Fut: Future<Output = Result<Value, String>>,
-{
-    Arc::new(move |args, optional_string| {
-        let future = builder(args, optional_string.map(str::to_string))?;
-        let result = block_on_result(future)?;
-        Ok(text_result(result))
-    })
-}
-
 pub(crate) fn block_on_result<F, T>(future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>>,

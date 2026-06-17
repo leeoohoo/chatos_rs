@@ -14,6 +14,8 @@ pub struct Session {
     pub selected_agent_id: Option<String>,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub message_count: i64,
     pub status: String,
     pub archived_at: Option<String>,
     pub created_at: String,
@@ -40,6 +42,7 @@ impl Session {
             selected_agent_id,
             user_id,
             project_id,
+            message_count: 0,
             status: "active".to_string(),
             archived_at: None,
             created_at: now.clone(),

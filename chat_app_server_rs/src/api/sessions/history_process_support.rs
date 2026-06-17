@@ -371,6 +371,7 @@ pub(super) fn attach_user_history_process_metadata(
     metadata.insert("historyProcess".to_string(), history_process);
 }
 
+#[cfg(test)]
 pub(super) fn ensure_message_turn_id(message: &mut Message, turn_id: &str) {
     let normalized_turn_id = turn_id.trim();
     if normalized_turn_id.is_empty() {

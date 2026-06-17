@@ -6,14 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../i18n/I18nProvider';
 import { ApiClientProvider } from '../../lib/api/ApiClientContext';
-import { getMessageTaskRunnerGraph } from '../../lib/api/client/messages';
 import { useConversationUserMessages } from './useConversationUserMessages';
-
-vi.mock('../../lib/api/client/messages', () => ({
-  getMessageTaskRunnerGraph: vi.fn(),
-}));
-
-const mockedGetMessageTaskRunnerGraph = vi.mocked(getMessageTaskRunnerGraph);
 
 const wrapperForClient = (client: unknown) => {
   const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -38,10 +31,8 @@ describe('useConversationUserMessages', () => {
     vi.useRealTimers();
   });
 
-  it('hydrates running task state from the live task graph', async () => {
-    const request = vi.fn();
+  it('hydrates active task state from the session task runner status endpoint', async () => {
     const client = {
-      getRequestFn: () => request,
       getConversationUserMessageTurns: vi.fn().mockResolvedValue({
         items: [{
           turn_id: 'turn-1',
@@ -67,26 +58,17 @@ describe('useConversationUserMessages', () => {
         has_more: false,
         next_before: null,
       }),
+      getConversationTaskRunnerActiveMessageTasks: vi.fn().mockResolvedValue({
+        active_source_user_message_ids: ['user-1'],
+        running_source_user_message_ids: ['user-1'],
+        items: [{
+          source_user_message_id: 'user-1',
+          source_turn_id: 'turn-1',
+          running_count: 1,
+          active_count: 1,
+        }],
+      }),
     };
-    mockedGetMessageTaskRunnerGraph.mockResolvedValue({
-      root_task_ids: ['task-1'],
-      nodes: [{
-        depth: 0,
-        is_root: true,
-        is_current_message: true,
-        task: {
-          id: 'task-1',
-          title: '继续处理',
-          status: 'running',
-          last_run: {
-            id: 'run-1',
-            task_id: 'task-1',
-            status: 'running',
-          },
-        },
-      }],
-      edges: [],
-    });
 
     const { result } = renderHook(
       () => useConversationUserMessages('session-1'),
@@ -99,20 +81,14 @@ describe('useConversationUserMessages', () => {
     await waitFor(() => {
       expect(result.current.items[0]?.taskState.running).toBe(true);
     });
-    expect(mockedGetMessageTaskRunnerGraph).toHaveBeenCalledWith(
-      request,
-      'user-1',
-      {
-        sessionId: 'session-1',
-        sourceUserMessageId: 'user-1',
-        turnId: 'turn-1',
-      },
-    );
+    expect(client.getConversationTaskRunnerActiveMessageTasks).toHaveBeenCalledWith('session-1', {
+      sourceUserMessageIds: ['user-1'],
+      sourceTurnIds: ['turn-1'],
+    });
   });
 
-  it('clears stale running state when the live task graph is terminal', async () => {
+  it('clears stale running state when the session task runner status has no active task', async () => {
     const client = {
-      getRequestFn: () => vi.fn(),
       getConversationUserMessageTurns: vi.fn().mockResolvedValue({
         items: [{
           turn_id: 'turn-2',
@@ -138,26 +114,12 @@ describe('useConversationUserMessages', () => {
         has_more: false,
         next_before: null,
       }),
+      getConversationTaskRunnerActiveMessageTasks: vi.fn().mockResolvedValue({
+        active_source_user_message_ids: [],
+        running_source_user_message_ids: [],
+        items: [],
+      }),
     };
-    mockedGetMessageTaskRunnerGraph.mockResolvedValue({
-      root_task_ids: ['task-2'],
-      nodes: [{
-        depth: 0,
-        is_root: true,
-        is_current_message: true,
-        task: {
-          id: 'task-2',
-          title: '检查完成',
-          status: 'completed',
-          last_run: {
-            id: 'run-2',
-            task_id: 'task-2',
-            status: 'succeeded',
-          },
-        },
-      }],
-      edges: [],
-    });
 
     const { result } = renderHook(
       () => useConversationUserMessages('session-1'),
@@ -172,9 +134,8 @@ describe('useConversationUserMessages', () => {
     });
   });
 
-  it('clears stale running state when the live task graph is empty', async () => {
+  it('maps active task status by source turn id when message id is missing', async () => {
     const client = {
-      getRequestFn: () => vi.fn(),
       getConversationUserMessageTurns: vi.fn().mockResolvedValue({
         items: [{
           turn_id: 'turn-empty',
@@ -200,12 +161,17 @@ describe('useConversationUserMessages', () => {
         has_more: false,
         next_before: null,
       }),
+      getConversationTaskRunnerActiveMessageTasks: vi.fn().mockResolvedValue({
+        active_source_user_message_ids: [],
+        running_source_user_message_ids: [],
+        items: [{
+          source_user_message_id: null,
+          source_turn_id: 'turn-empty',
+          running_count: 1,
+          active_count: 1,
+        }],
+      }),
     };
-    mockedGetMessageTaskRunnerGraph.mockResolvedValue({
-      root_task_ids: [],
-      nodes: [],
-      edges: [],
-    });
 
     const { result } = renderHook(
       () => useConversationUserMessages('session-1'),
@@ -216,14 +182,13 @@ describe('useConversationUserMessages', () => {
       expect(result.current.items).toHaveLength(1);
     });
     await waitFor(() => {
-      expect(result.current.items[0]?.taskState.running).toBe(false);
+      expect(result.current.items[0]?.taskState.running).toBe(true);
     });
   });
 
-  it('does not keep polling terminal task graphs', async () => {
+  it('does not keep polling terminal task states', async () => {
     vi.useFakeTimers();
     const client = {
-      getRequestFn: () => vi.fn(),
       getConversationUserMessageTurns: vi.fn().mockResolvedValue({
         items: [{
           turn_id: 'turn-3',
@@ -249,26 +214,12 @@ describe('useConversationUserMessages', () => {
         has_more: false,
         next_before: null,
       }),
+      getConversationTaskRunnerActiveMessageTasks: vi.fn().mockResolvedValue({
+        active_source_user_message_ids: [],
+        running_source_user_message_ids: [],
+        items: [],
+      }),
     };
-    mockedGetMessageTaskRunnerGraph.mockResolvedValue({
-      root_task_ids: ['task-3'],
-      nodes: [{
-        depth: 0,
-        is_root: true,
-        is_current_message: true,
-        task: {
-          id: 'task-3',
-          title: '结束任务',
-          status: 'completed',
-          last_run: {
-            id: 'run-3',
-            task_id: 'task-3',
-            status: 'succeeded',
-          },
-        },
-      }],
-      edges: [],
-    });
 
     const { result, unmount } = renderHook(
       () => useConversationUserMessages('session-1'),
@@ -281,14 +232,14 @@ describe('useConversationUserMessages', () => {
       });
       expect(result.current.items).toHaveLength(1);
       expect(result.current.items[0]?.taskState.running).toBe(false);
-      expect(mockedGetMessageTaskRunnerGraph).toHaveBeenCalledTimes(1);
+      expect(client.getConversationTaskRunnerActiveMessageTasks).toHaveBeenCalledTimes(1);
 
       await act(async () => {
         vi.advanceTimersByTime(12000);
         await flushPromises();
       });
 
-      expect(mockedGetMessageTaskRunnerGraph).toHaveBeenCalledTimes(1);
+      expect(client.getConversationTaskRunnerActiveMessageTasks).toHaveBeenCalledTimes(1);
     } finally {
       unmount();
       vi.useRealTimers();

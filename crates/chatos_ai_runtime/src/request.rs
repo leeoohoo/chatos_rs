@@ -527,8 +527,6 @@ fn validate_request_payload_size(
 mod tests {
     use serde_json::{json, Value};
 
-    use crate::response_parse::join_stream_text;
-
     use super::{
         build_chat_completions_request_payload, build_responses_request_payload,
         response_items_to_chat_messages, AiRequestOptions,
@@ -653,14 +651,6 @@ mod tests {
         assert_eq!(
             payload.get("cwd"),
             Some(&Value::String("/workspace".to_string()))
-        );
-    }
-
-    #[test]
-    fn join_stream_text_handles_unicode_snapshot_overlap() {
-        assert_eq!(
-            join_stream_text("你好世界ABCD", "好世界ABCD123"),
-            "你好世界ABCD123"
         );
     }
 }

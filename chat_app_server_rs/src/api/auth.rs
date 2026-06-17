@@ -23,8 +23,6 @@ struct RegisterRequest {
     #[serde(alias = "email")]
     email: Option<String>,
     password: Option<String>,
-    #[allow(dead_code)]
-    display_name: Option<String>,
 }
 
 pub fn router() -> Router {

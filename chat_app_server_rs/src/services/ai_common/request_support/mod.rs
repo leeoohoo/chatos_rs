@@ -20,6 +20,5 @@ pub(crate) use self::request_transport::{
 };
 pub(crate) use self::request_transport::{build_abort_token, validate_request_payload_size};
 pub(crate) use self::user_message::{
-    build_user_content_parts, build_user_message_metadata, normalize_turn_id,
-    persist_user_message_and_build_content_parts,
+    build_user_content_parts, normalize_turn_id, persist_user_message_and_build_content_parts,
 };

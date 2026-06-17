@@ -13,6 +13,13 @@ const TASK_TAG_FILTER_CLAUSE: &str =
 
 type SqliteQuery<'a> = Query<'a, Sqlite, SqliteArguments<'a>>;
 
+fn sqlite_placeholders(count: usize) -> String {
+    std::iter::repeat("?")
+        .take(count)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 impl SqliteStore {
     fn filtered_task_sql(
         base_sql: &str,
@@ -20,32 +27,51 @@ impl SqliteStore {
         include_order: bool,
         include_pagination: bool,
     ) -> String {
-        let mut clauses = Vec::new();
+        let mut clauses = Vec::<String>::new();
         let mut sql = base_sql.to_string();
 
         if filters.status.is_some() {
-            clauses.push("status = ?");
+            clauses.push("status = ?".to_string());
         }
         if filters.keyword.is_some() {
-            clauses.push(TASK_KEYWORD_FILTER_CLAUSE);
+            clauses.push(TASK_KEYWORD_FILTER_CLAUSE.to_string());
         }
         if filters.tag.is_some() {
-            clauses.push(TASK_TAG_FILTER_CLAUSE);
+            clauses.push(TASK_TAG_FILTER_CLAUSE.to_string());
         }
         if filters.model_config_id.is_some() {
-            clauses.push("default_model_config_id = ?");
+            clauses.push("default_model_config_id = ?".to_string());
         }
         if filters.creator_user_id.is_some() {
-            clauses.push("creator_user_id = ?");
+            clauses.push("creator_user_id = ?".to_string());
         }
         if filters.scheduled_only.unwrap_or(false) {
-            clauses.push("json_extract(schedule_json, '$.mode') <> 'manual'");
+            clauses.push("json_extract(schedule_json, '$.mode') <> 'manual'".to_string());
         }
         if filters.parent_task_id.is_some() {
-            clauses.push("parent_task_id = ?");
+            clauses.push("parent_task_id = ?".to_string());
         }
         if filters.source_run_id.is_some() {
-            clauses.push("source_run_id = ?");
+            clauses.push("source_run_id = ?".to_string());
+        }
+        if filters.source_session_id.is_some() {
+            clauses.push("source_session_id = ?".to_string());
+        }
+        if !filters.source_user_message_ids.is_empty() || !filters.source_turn_ids.is_empty() {
+            let mut source_clauses = Vec::new();
+            if !filters.source_user_message_ids.is_empty() {
+                source_clauses.push(format!(
+                    "source_user_message_id IN ({})",
+                    sqlite_placeholders(filters.source_user_message_ids.len())
+                ));
+            }
+            if !filters.source_turn_ids.is_empty() {
+                source_clauses.push(format!(
+                    "source_turn_id IN ({})",
+                    sqlite_placeholders(filters.source_turn_ids.len())
+                ));
+            }
+            clauses.push(format!("({})", source_clauses.join(" OR ")));
         }
 
         if !clauses.is_empty() {
@@ -98,6 +124,15 @@ impl SqliteStore {
         }
         if let Some(source_run_id) = filters.source_run_id.as_deref() {
             query = query.bind(source_run_id);
+        }
+        if let Some(source_session_id) = filters.source_session_id.as_deref() {
+            query = query.bind(source_session_id);
+        }
+        for source_user_message_id in &filters.source_user_message_ids {
+            query = query.bind(source_user_message_id);
+        }
+        for source_turn_id in &filters.source_turn_ids {
+            query = query.bind(source_turn_id);
         }
         if include_pagination {
             if let Some(limit) = filters.limit {

@@ -104,11 +104,10 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
     if (locked) {
       return;
     }
-    const firstDifferent = contacts.find((contact) => contact.id !== currentContact?.contactId);
-    setSelectedContactId(firstDifferent?.id || null);
+    setSelectedContactId(null);
     setError(null);
     setPickerOpen(true);
-  }, [contacts, currentContact?.contactId, locked]);
+  }, [locked]);
 
   const handleConfirmPicker = useCallback(async () => {
     if (!selectedContactId) {

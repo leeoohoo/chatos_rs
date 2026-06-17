@@ -39,8 +39,6 @@ pub struct ConversationRuntimeRequest {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedConversationRuntimeContext {
-    #[allow(dead_code)]
-    pub effective_user_id: Option<String>,
     pub internal_context_locale: InternalContextLocale,
     pub contact_agent_id: Option<String>,
     pub base_system_prompt: Option<String>,
@@ -208,7 +206,6 @@ pub async fn resolve_runtime_context(
     };
 
     ResolvedConversationRuntimeContext {
-        effective_user_id,
         internal_context_locale,
         contact_agent_id,
         base_system_prompt,

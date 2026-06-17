@@ -260,30 +260,6 @@ jobs:
       - name: hotspot line budgets
         run: bash ../scripts/check-hotspot-line-budgets.sh
 
-  openai-codex-gateway:
-    name: openai-codex-gateway (Python)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: openai-codex-gateway
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
-
-      - name: Gateway unit regression
-        run: make test
-
-      - name: CLI smoke check
-        run: python server.py --help
-
   db-connection-hub-backend:
     name: db_connection_hub backend (Rust)
     runs-on: ubuntu-latest

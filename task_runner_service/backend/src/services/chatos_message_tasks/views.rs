@@ -16,6 +16,14 @@ pub struct ChatosMessageTaskSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ChatosActiveMessageTaskSource {
+    pub source_user_message_id: Option<String>,
+    pub source_turn_id: Option<String>,
+    pub running_count: usize,
+    pub active_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatosMessageTaskDetail {
     pub id: String,
     pub title: String,

@@ -5,31 +5,21 @@ mod chat_runtime_metadata;
 #[path = "chat_runtime_project.rs"]
 mod chat_runtime_project;
 
-#[allow(unused_imports)]
-pub use self::chat_runtime_contact::{
-    compose_contact_command_system_prompt, compose_contact_system_prompt, contact_plugin_ref,
-    contact_skill_ref, parse_contact_command_invocation,
-    parse_implicit_command_selections_from_tools_end, ContactSelectedPluginPrompt,
-    ContactSelectedSkillPrompt, ContactSkillPromptMode, ParsedContactCommandInvocation,
-    ParsedImplicitCommandSelection, CONTACT_COMMAND_READER_TOOL_NAME,
-    CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
-};
-#[allow(unused_imports)]
+pub use self::chat_runtime_contact::{ContactSkillPromptMode, compose_contact_system_prompt};
 pub use self::chat_runtime_metadata::{
-    contact_agent_id_from_metadata, contact_id_from_metadata, metadata_bool, metadata_string,
-    metadata_string_list, normalize_id, project_id_from_metadata, ChatRuntimeMetadata,
+    ChatRuntimeMetadata, contact_agent_id_from_metadata, contact_id_from_metadata, metadata_string,
+    normalize_id, project_id_from_metadata,
 };
 pub use self::chat_runtime_project::resolve_project_runtime;
 
 #[cfg(test)]
 mod tests {
-    use super::ContactSkillPromptMode;
-    use super::{
-        compose_contact_command_system_prompt, compose_contact_system_prompt,
+    use super::chat_runtime_contact::{
+        CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
+        CONTACT_SKILL_READER_TOOL_NAME, compose_contact_command_system_prompt,
         parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-        ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
-        CONTACT_SKILL_READER_TOOL_NAME,
     };
+    use super::{ChatRuntimeMetadata, ContactSkillPromptMode, compose_contact_system_prompt};
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::models::chatos_agent_types::{
         ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,
@@ -222,6 +212,33 @@ mod tests {
         assert_eq!(runtime.mcp_enabled, Some(true));
         assert_eq!(runtime.enabled_mcp_ids, vec!["alpha", "beta"]);
         assert_eq!(runtime.auto_create_task, None);
+    }
+
+    #[test]
+    fn normalizes_runtime_metadata_from_engine_wrapped_metadata() {
+        let metadata = json!({
+            "legacy_session_mapping": {
+                "project_id": " project_1 ",
+                "contact_id": " contact_1 ",
+                "agent_id": " agent_1 "
+            },
+            "source_metadata": {
+                "chat_runtime": {
+                    "projectId": " project_1 ",
+                    "remoteConnectionId": " conn_1 "
+                },
+                "contact": {
+                    "agentId": " agent_1 ",
+                    "contactId": " contact_1 "
+                }
+            }
+        });
+
+        let runtime = ChatRuntimeMetadata::from_metadata(Some(&metadata));
+        assert_eq!(runtime.contact_agent_id.as_deref(), Some("agent_1"));
+        assert_eq!(runtime.contact_id.as_deref(), Some("contact_1"));
+        assert_eq!(runtime.project_id.as_deref(), Some("project_1"));
+        assert_eq!(runtime.remote_connection_id.as_deref(), Some("conn_1"));
     }
 
     #[test]

@@ -84,6 +84,94 @@ impl TaskService {
             .collect())
     }
 
+    pub async fn list_active_message_task_sources_for_chatos_session(
+        &self,
+        source_session_id: &str,
+        source_user_message_ids: &[String],
+        source_turn_ids: &[String],
+    ) -> Result<Vec<ChatosActiveMessageTaskSource>, String> {
+        let Some(source_session_id) = normalize_source_id(source_session_id) else {
+            return Ok(Vec::new());
+        };
+        let source_user_message_ids = source_user_message_ids
+            .iter()
+            .filter_map(|id| normalize_source_id(id.as_str()))
+            .collect::<Vec<_>>();
+        let source_turn_ids = source_turn_ids
+            .iter()
+            .filter_map(|id| normalize_source_id(id.as_str()))
+            .collect::<Vec<_>>();
+        let source_user_message_id_set = source_user_message_ids
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let source_turn_id_set = source_turn_ids.iter().cloned().collect::<HashSet<_>>();
+        let has_source_filters = !source_user_message_ids.is_empty() || !source_turn_ids.is_empty();
+        let mut source_by_key = HashMap::<String, ChatosActiveMessageTaskSource>::new();
+
+        for status in [TaskStatus::Ready, TaskStatus::Queued, TaskStatus::Running] {
+            let tasks = self
+                .store
+                .list_tasks_filtered(&TaskListFilters {
+                    status: Some(status),
+                    source_session_id: Some(source_session_id.clone()),
+                    source_user_message_ids: source_user_message_ids.clone(),
+                    source_turn_ids: source_turn_ids.clone(),
+                    ..TaskListFilters::default()
+                })
+                .await?;
+            for task in tasks {
+                if task.source_session_id.as_deref().map(str::trim)
+                    != Some(source_session_id.as_str())
+                {
+                    continue;
+                }
+                let source_user_message_id = task
+                    .source_user_message_id
+                    .as_deref()
+                    .and_then(normalize_source_id);
+                let source_turn_id = task.source_turn_id.as_deref().and_then(normalize_source_id);
+                if source_user_message_id.is_none() && source_turn_id.is_none() {
+                    continue;
+                }
+                if has_source_filters {
+                    let message_matches = source_user_message_id
+                        .as_ref()
+                        .is_some_and(|id| source_user_message_id_set.contains(id));
+                    let turn_matches = source_turn_id
+                        .as_ref()
+                        .is_some_and(|id| source_turn_id_set.contains(id));
+                    if !message_matches && !turn_matches {
+                        continue;
+                    }
+                }
+                let key = source_user_message_id
+                    .clone()
+                    .or_else(|| source_turn_id.as_ref().map(|id| format!("turn:{id}")))
+                    .unwrap_or_default();
+                let entry =
+                    source_by_key
+                        .entry(key)
+                        .or_insert_with(|| ChatosActiveMessageTaskSource {
+                            source_user_message_id: source_user_message_id.clone(),
+                            source_turn_id: source_turn_id.clone(),
+                            running_count: 0,
+                            active_count: 0,
+                        });
+                entry.running_count += 1;
+                entry.active_count += 1;
+            }
+        }
+
+        let mut items = source_by_key.into_values().collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.source_user_message_id
+                .cmp(&right.source_user_message_id)
+                .then_with(|| left.source_turn_id.cmp(&right.source_turn_id))
+        });
+        Ok(items)
+    }
+
     pub async fn get_task_for_chatos_message(
         &self,
         task_id: &str,

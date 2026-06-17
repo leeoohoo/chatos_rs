@@ -32,7 +32,6 @@ pub struct ToolInfo {
     pub server_url: Option<String>,
     pub server_headers: Option<HashMap<String, String>>,
     pub server_config: Option<McpStdioServer>,
-    #[allow(dead_code)]
     pub tool_info: Value,
 }
 

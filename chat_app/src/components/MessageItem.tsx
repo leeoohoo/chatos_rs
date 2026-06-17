@@ -40,7 +40,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   highlighted = false,
   onEdit,
   onDelete,
-  onOpenTasks,
   toolResultById,
   assistantToolCallsById,
   customRenderer,
@@ -84,7 +83,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const assistantDisplayName = showAssistantChrome
     ? resolveTaskRunnerAssistantDisplayName(message, assistantContactName)
     : null;
-  const canOpenMessageTasks = Boolean(onOpenTasks) && (isUser || isAssistant);
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -250,7 +248,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           isUser={isUser}
           canEdit={Boolean(onEdit)}
           canDelete={Boolean(onDelete)}
-          onOpenTasks={canOpenMessageTasks ? () => onOpenTasks?.(message) : undefined}
           onCopy={handleCopy}
           onStartEdit={() => setIsEditing(true)}
           onDelete={() => onDelete?.(message.id)}
@@ -268,7 +265,6 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.isStreaming === nextProps.isStreaming &&
     (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null) &&
     (prevProps.highlighted ?? false) === (nextProps.highlighted ?? false) &&
-    prevProps.onOpenTasks === nextProps.onOpenTasks &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
   );

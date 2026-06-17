@@ -36,12 +36,6 @@ pub struct TaskTurnFollowUpDirective {
     pub mode: TaskTurnFollowUpMode,
     pub locale: InternalContextLocale,
     pub guidance: String,
-    #[allow(dead_code)]
-    pub unfinished_count: usize,
-    #[allow(dead_code)]
-    pub blocked_count: usize,
-    #[allow(dead_code)]
-    pub done_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -144,9 +138,6 @@ pub fn classify_task_turn_follow_up(
             done_count,
             board_prompt.as_str(),
         ),
-        unfinished_count,
-        blocked_count,
-        done_count,
     })
 }
 
@@ -631,9 +622,9 @@ mod tests {
         let directive = classify_task_turn_follow_up(tasks.as_slice(), InternalContextLocale::ZhCn)
             .expect("directive should exist");
         assert_eq!(directive.mode, TaskTurnFollowUpMode::ContinueExecution);
-        assert_eq!(directive.unfinished_count, 1);
-        assert_eq!(directive.blocked_count, 1);
-        assert_eq!(directive.done_count, 0);
+        assert!(directive.guidance.contains("未完成任务：1"));
+        assert!(directive.guidance.contains("阻塞任务（本次检查忽略）：1"));
+        assert!(directive.guidance.contains("已完成任务：0"));
         assert!(directive.guidance.contains("未完成任务"));
     }
 

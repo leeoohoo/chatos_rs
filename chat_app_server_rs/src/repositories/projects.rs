@@ -1,4 +1,4 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 
 use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
@@ -16,6 +16,8 @@ fn normalize_doc(doc: &Document) -> Option<Project> {
         root_path: doc.get_str("root_path").ok()?.to_string(),
         description: doc.get_str("description").ok().map(|s| s.to_string()),
         user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
+        latest_session_id: None,
+        last_message_at: None,
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
     })

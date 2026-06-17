@@ -50,14 +50,14 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   onReasoningToggle,
   supportedFileTypes,
 }) => {
-  if (!selectedContact || !selectedProjectSession) {
+  if (!selectedContact) {
     return null;
   }
 
   return (
     <ChatComposerPanel
       onSend={onSend}
-      inputDisabled={!isSelectedSessionActive}
+      inputDisabled={selectedProjectSession ? !isSelectedSessionActive : false}
       supportedFileTypes={supportedFileTypes}
       reasoningSupported={supportsReasoning}
       reasoningEnabled={reasoningEnabled}

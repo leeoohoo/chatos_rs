@@ -14,8 +14,8 @@ mod queries;
 mod views;
 
 pub use self::views::{
-    ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
-    ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge, ChatosMessageTaskGraphNode,
-    ChatosMessageTaskRun, ChatosMessageTaskRunEvent, ChatosMessageTaskRunSummary,
-    ChatosMessageTaskSummary,
+    ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
+    ChatosMessageTaskDetail, ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge,
+    ChatosMessageTaskGraphNode, ChatosMessageTaskRun, ChatosMessageTaskRunEvent,
+    ChatosMessageTaskRunSummary, ChatosMessageTaskSummary,
 };

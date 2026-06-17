@@ -118,6 +118,56 @@ async fn get_internal_json(
         .map_err(|err| err.to_string())
 }
 
+async fn post_internal_json<T: Serialize + ?Sized>(
+    base_url: &str,
+    path: &str,
+    body: &T,
+) -> Result<Value, String> {
+    let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
+    let response = reqwest::Client::new()
+        .post(endpoint)
+        .json(body)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Task Runner internal request failed: {status} {body}"
+        ));
+    }
+    response
+        .json::<Value>()
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[derive(Debug, Serialize)]
+struct SessionActiveMessageTasksRequest<'a> {
+    source_session_id: &'a str,
+    source_user_message_ids: &'a [String],
+    source_turn_ids: &'a [String],
+}
+
+pub async fn list_session_active_message_tasks(
+    base_url: &str,
+    source_session_id: &str,
+    source_user_message_ids: &[String],
+    source_turn_ids: &[String],
+) -> Result<Value, String> {
+    post_internal_json(
+        base_url,
+        "/internal/chatos/session-active-message-tasks",
+        &SessionActiveMessageTasksRequest {
+            source_session_id,
+            source_user_message_ids,
+            source_turn_ids,
+        },
+    )
+    .await
+}
+
 pub async fn list_message_tasks(
     base_url: &str,
     source_session_id: &str,

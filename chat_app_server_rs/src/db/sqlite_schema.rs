@@ -113,7 +113,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             status TEXT NOT NULL DEFAULT 'active',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, project_id, agent_id)
+            UNIQUE(user_id, project_id)
         )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_configs (
             id TEXT PRIMARY KEY,
@@ -503,6 +503,14 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         .execute(pool)
         .await
         .ok();
+    cleanup_project_agent_links_sqlite(pool).await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_chatos_project_agent_links_user_project_unique \
+        ON chatos_project_agent_links(user_id, project_id)",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("create project contact unique index failed: {e}"))?;
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)",
@@ -550,6 +558,35 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     for sql in indexes {
         let _ = sqlx::query(sql).execute(pool).await;
     }
+
+    Ok(())
+}
+
+async fn cleanup_project_agent_links_sqlite(pool: &SqlitePool) -> Result<(), String> {
+    sqlx::query(
+        "DELETE FROM chatos_project_agent_links \
+        WHERE status != 'active' OR contact_id IS NULL OR trim(contact_id) = ''",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("cleanup inactive project contact links failed: {e}"))?;
+
+    sqlx::query(
+        "DELETE FROM chatos_project_agent_links \
+        WHERE rowid NOT IN ( \
+            SELECT rowid FROM ( \
+                SELECT rowid, row_number() OVER ( \
+                    PARTITION BY user_id, project_id \
+                    ORDER BY last_bound_at DESC, updated_at DESC, created_at DESC, rowid DESC \
+                ) AS rank \
+                FROM chatos_project_agent_links \
+            ) ranked \
+            WHERE rank = 1 \
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("dedupe project contact links failed: {e}"))?;
 
     Ok(())
 }

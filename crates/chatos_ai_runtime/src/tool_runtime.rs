@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 
@@ -246,6 +246,16 @@ pub fn build_tool_output_items_with_budget(
         .collect()
 }
 
+pub fn build_tool_output_items_for_calls_with_budget(
+    tool_calls: &[Value],
+    results: &[ToolResult],
+    limits: Option<ToolResultModelBudgetLimits>,
+) -> Vec<Value> {
+    let tool_call_items = build_tool_call_items(tool_calls);
+    let tool_output_items = build_tool_output_items_with_budget(results, limits);
+    complete_tool_outputs_for_calls(tool_call_items.as_slice(), tool_output_items.as_slice())
+}
+
 pub fn append_tool_results(
     input: Value,
     supports_responses: bool,
@@ -306,18 +316,91 @@ pub fn append_responses_tool_results_with_budget(
     results: Vec<ToolResult>,
     limits: Option<ToolResultModelBudgetLimits>,
 ) -> Value {
-    let results = sanitize_tool_results_for_model_with_budget(results, limits);
     let mut items = input.as_array().cloned().unwrap_or_else(|| vec![input]);
-    if let Some(calls) = tool_calls.as_array() {
-        items.extend(build_tool_call_items(calls.as_slice()));
+    let tool_call_items = tool_calls
+        .as_array()
+        .map(|calls| build_tool_call_items(calls.as_slice()))
+        .unwrap_or_default();
+    let tool_output_items = build_tool_output_items_with_budget(results.as_slice(), limits);
+    let tool_output_items =
+        complete_tool_outputs_for_calls(tool_call_items.as_slice(), tool_output_items.as_slice());
+    items.extend(tool_call_items);
+    items.extend(tool_output_items);
+    Value::Array(items)
+}
+
+fn complete_tool_outputs_for_calls(
+    tool_call_items: &[Value],
+    tool_outputs: &[Value],
+) -> Vec<Value> {
+    let mut call_ids = Vec::new();
+    let mut call_id_set = HashSet::new();
+    let mut call_names = HashMap::new();
+
+    for item in tool_call_items {
+        let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if call_id.is_empty() {
+            continue;
+        }
+        if call_id_set.insert(call_id.to_string()) {
+            call_ids.push(call_id.to_string());
+        }
+        if let Some(name) = item.get("name").and_then(Value::as_str) {
+            call_names.insert(call_id.to_string(), name.to_string());
+        }
     }
-    for result in results {
-        items.push(build_function_call_output_item(
-            result.tool_call_id.as_str(),
-            result.content.as_str(),
+
+    if call_ids.is_empty() {
+        return Vec::new();
+    }
+
+    let mut output_ids = HashSet::new();
+    let mut completed = Vec::new();
+    for item in tool_outputs {
+        let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if call_id.is_empty() || !call_id_set.contains(call_id) {
+            continue;
+        }
+        if output_ids.insert(call_id.to_string()) {
+            completed.push(item.clone());
+        }
+    }
+
+    for call_id in call_ids {
+        if output_ids.contains(call_id.as_str()) {
+            continue;
+        }
+        let tool_name = call_names
+            .get(call_id.as_str())
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        completed.push(build_function_call_output_item(
+            call_id.as_str(),
+            missing_tool_output_advisory(tool_name).as_str(),
         ));
     }
-    Value::Array(items)
+
+    completed
+}
+
+fn missing_tool_output_advisory(tool_name: &str) -> String {
+    let tool_name = tool_name.trim();
+    let tool_display = if tool_name.is_empty() {
+        "unknown"
+    } else {
+        tool_name
+    };
+    format!(
+        "[Tool result unavailable]\n\
+Tool: {tool_display}\n\
+Reason: the runtime did not receive a final output for this tool call. \
+Treat this as a tool execution failure and continue with the available evidence, \
+or retry the tool with narrower arguments if the missing result is required."
+    )
 }
 
 pub fn merge_missing_tool_turn_items(
@@ -361,7 +444,8 @@ pub fn merge_missing_tool_turn_items(
         })
         .collect();
 
-    for item in tool_outputs {
+    let tool_outputs = complete_tool_outputs_for_calls(tool_call_items, tool_outputs);
+    for item in &tool_outputs {
         let Some(call_id) = item.get("call_id").and_then(|value| value.as_str()) else {
             continue;
         };
@@ -403,7 +487,8 @@ mod tests {
 
     use super::{
         append_tool_results, append_tool_turn_items, build_tool_call_execution_plan,
-        build_tool_call_items, build_tool_output_items, expand_tool_results_with_aliases,
+        build_tool_call_items, build_tool_output_items,
+        build_tool_output_items_for_calls_with_budget, expand_tool_results_with_aliases,
         merge_missing_tool_turn_items, merge_pending_tool_turn_items,
         sanitize_tool_results_for_model, sanitize_tool_results_for_model_with_budget,
         ToolResultModelBudgetLimits,
@@ -563,6 +648,43 @@ mod tests {
     }
 
     #[test]
+    fn build_tool_output_items_for_calls_fills_missing_outputs() {
+        let tool_calls = vec![
+            json!({"id": "call_1", "function": {"name": "process_poll", "arguments": "{}"}}),
+            json!({"id": "call_2", "function": {"name": "process_poll", "arguments": "{}"}}),
+        ];
+        let results = vec![chatos_mcp_runtime::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "process_poll".to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            conversation_turn_id: None,
+            content: "done".to_string(),
+            result: None,
+        }];
+
+        let outputs = build_tool_output_items_for_calls_with_budget(
+            tool_calls.as_slice(),
+            results.as_slice(),
+            None,
+        );
+
+        assert_eq!(outputs.len(), 2);
+        assert!(outputs.iter().any(|item| {
+            item.get("call_id").and_then(Value::as_str) == Some("call_1")
+                && item.get("output").and_then(Value::as_str) == Some("done")
+        }));
+        assert!(outputs.iter().any(|item| {
+            item.get("call_id").and_then(Value::as_str) == Some("call_2")
+                && item
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .is_some_and(|output| output.contains("Tool result unavailable"))
+        }));
+    }
+
+    #[test]
     fn merge_missing_tool_turn_items_deduplicates_and_keeps_matched_outputs() {
         let mut items = vec![
             json!({"type":"function_call","call_id":"call_1","name":"foo","arguments":"{}"}),
@@ -604,6 +726,25 @@ mod tests {
 
         merge_pending_tool_turn_items(&mut items, None, Some(pending_outputs.as_slice()));
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn merge_pending_tool_turn_items_fills_missing_outputs() {
+        let mut items = Vec::new();
+        let pending_calls =
+            vec![json!({"type":"function_call","call_id":"call_1","name":"poll","arguments":"{}"})];
+
+        merge_pending_tool_turn_items(&mut items, Some(pending_calls.as_slice()), None);
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some("call_1")
+                && item
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .is_some_and(|output| output.contains("Tool result unavailable"))
+        }));
     }
 
     #[test]

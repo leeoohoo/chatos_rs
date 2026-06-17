@@ -11,16 +11,8 @@ use self::actions::{
     run_command_with_context, test_connection_with_context,
 };
 
-#[allow(unused_imports)]
-pub use chatos_builtin_tools::{
-    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
-    RemoteConnectionControllerStoreRef, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS,
-    DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
-};
-
 #[derive(Clone)]
 pub(super) struct BoundContext {
-    pub(super) server_name: String,
     pub(super) user_id: Option<String>,
     pub(super) default_remote_connection_id: Option<String>,
     pub(super) command_timeout_seconds: u64,
@@ -92,7 +84,6 @@ impl RemoteConnectionControllerStore for ChatosRemoteConnectionControllerStore {
 
 fn bound_context(context: RemoteConnectionControllerContext) -> BoundContext {
     BoundContext {
-        server_name: context.server_name,
         user_id: context.user_id,
         default_remote_connection_id: context.default_remote_connection_id,
         command_timeout_seconds: context.command_timeout_seconds,

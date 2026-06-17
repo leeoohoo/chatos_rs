@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 pub mod agent;
 pub mod ai_model_config;
 pub mod application;

@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use crate::models::project::ProjectService;
-use serde_json::Value;
 
 use super::BoundContext;
 
@@ -175,19 +174,4 @@ fn shell_quote_path(path: &Path) -> String {
         return format!("\"{}\"", raw.replace('"', "\"\""));
     }
     format!("'{}'", raw.replace('"', "\\\"").replace('\'', "'\"'\"'"))
-}
-
-fn required_string<'a>(args: &'a Value, field: &str) -> Result<&'a str, String> {
-    args.get(field)
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("{field} is required"))
-}
-
-pub(super) fn required_trimmed_string(args: &Value, field: &str) -> Result<String, String> {
-    let value = required_string(args, field)?;
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(format!("{field} is required"));
-    }
-    Ok(trimmed.to_string())
 }

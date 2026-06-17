@@ -3,7 +3,8 @@ import { useCallback, useMemo } from 'react';
 import { useI18n } from '../../../i18n/I18nProvider';
 import { useContactSessionResolver } from '../../../features/contactSession/useContactSessionResolver';
 import {
-  findLatestMatchedSession,
+  findBestMatchedSession,
+  hasSessionMessages,
   isSessionMatchedContactAndProject,
   normalizeProjectScopeId,
   resolveSessionTimestamp,
@@ -11,7 +12,11 @@ import {
 import { useSessionSummaryPanel } from '../../../features/sessionSummary/useSessionSummaryPanel';
 import { normalizeProjectMemberContactsFromRecords } from '../../../lib/domain/projectMembers';
 import type { Project, Session } from '../../../types';
-import type { ContactItem, ProjectContactRow } from './types';
+import type {
+  ContactItem,
+  EnsureProjectContactSessionOptions,
+  ProjectContactRow,
+} from './types';
 import { useProjectMembersManager } from './useProjectMembersManager';
 import { useTeamMemberConversation } from './useTeamMemberConversation';
 import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
@@ -25,20 +30,41 @@ export const resolveProjectContactSession = ({
   currentSession,
   contact,
   normalizedProjectId,
+  preferredSessionId,
+  preferredSessionHasMessages,
   findProjectSessionForContact,
 }: {
   currentSession: Session | null | undefined;
   contact: ContactItem;
   normalizedProjectId: string;
-  findProjectSessionForContact: (contact: ContactItem) => Session | null;
+  preferredSessionId?: string | null;
+  preferredSessionHasMessages?: boolean;
+  findProjectSessionForContact: (contact: ContactItem, preferredSessionId?: string | null) => Session | null;
 }): Session | null => {
+  const normalizedPreferredSessionId = typeof preferredSessionId === 'string'
+    ? preferredSessionId.trim()
+    : '';
   if (
     currentSession
     && isSessionMatchedContactAndProject(currentSession, contact, normalizedProjectId)
+    && (
+      !normalizedPreferredSessionId
+      || currentSession.id === normalizedPreferredSessionId
+      || (preferredSessionHasMessages !== true && hasSessionMessages(currentSession))
+    )
   ) {
     return currentSession;
   }
-  return findProjectSessionForContact(contact);
+  const resolved = findProjectSessionForContact(contact, normalizedPreferredSessionId);
+  if (
+    preferredSessionHasMessages === true
+    && normalizedPreferredSessionId
+    && resolved?.id !== normalizedPreferredSessionId
+    && !hasSessionMessages(resolved)
+  ) {
+    return null;
+  }
+  return resolved;
 };
 
 export const useTeamMembersContactResources = ({
@@ -86,8 +112,11 @@ export const useTeamMembersContactResources = ({
     loadContacts,
   });
 
-  const findProjectSessionForContact = useCallback((contact: ContactItem): Session | null => {
-    return findLatestMatchedSession(sessions || [], contact, normalizedProjectId);
+  const findProjectSessionForContact = useCallback((
+    contact: ContactItem,
+    preferredSessionId?: string | null,
+  ): Session | null => {
+    return findBestMatchedSession(sessions || [], contact, normalizedProjectId, preferredSessionId);
   }, [normalizedProjectId, sessions]);
 
   const { ensureContactSession: ensureContactSessionFromResolver } = useContactSessionResolver({
@@ -114,11 +143,15 @@ export const useTeamMembersContactResources = ({
         currentSession,
         contact,
         normalizedProjectId,
+        preferredSessionId: member.latestSessionId,
+        preferredSessionHasMessages: Boolean(member.lastMessageAt),
         findProjectSessionForContact,
       });
       return {
         contact,
         session,
+        latestSessionId: member.latestSessionId,
+        lastMessageAt: member.lastMessageAt,
         updatedAt: session ? resolveSessionTimestamp(session) : member.updatedAt,
       };
     });
@@ -154,17 +187,25 @@ export const useTeamMembersContactResources = ({
     clearSummaries,
   } = useSessionSummaryPanel(apiClient);
 
-  const ensureContactSession = useCallback(async (contact: ContactItem): Promise<string | null> => {
+  const ensureContactSession = useCallback(async (
+    contact: ContactItem,
+    options?: EnsureProjectContactSessionOptions,
+  ): Promise<string | null> => {
+    const projectMember = projectMembers.find((member) => member.contactId === contact.id) || null;
     return ensureContactSessionFromResolver(contact, {
       projectId: normalizedProjectId,
       title: contact.name || t('teamMembers.contactFallback'),
       selectedModelId: selectedModelId ?? null,
       projectRoot: project.rootPath || null,
+      preferredSessionId: projectMember?.latestSessionId || null,
+      preferredSessionHasMessages: Boolean(projectMember?.lastMessageAt),
+      createIfMissing: options?.createIfMissing,
       createSessionOptions: { keepActivePanel: true, activateSession: false },
     });
   }, [
     ensureContactSessionFromResolver,
     normalizedProjectId,
+    projectMembers,
     project.rootPath,
     selectedModelId,
     t,

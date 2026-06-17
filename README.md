@@ -1,20 +1,19 @@
 # Chatos RS
 
 Chatos RS is an AI platform for engineering workflows.
-It combines conversational collaboration, tool orchestration, long-term memory, and OpenAI-compatible access in one system.
+It combines conversational collaboration, tool orchestration, and long-term memory in one system.
 
-Chatos RS 是一个面向工程协作场景的 AI 平台，统一了对话协作、工具编排、长期记忆和 OpenAI 兼容接入能力。
+Chatos RS 是一个面向工程协作场景的 AI 平台，统一了对话协作、工具编排和长期记忆能力。
 
 ## Why This System
 - Keep context across sessions with memory and summarization.
 - Reduce context cost with layered summaries and scheduled processing.
 - Make tool execution observable and operable in chat workflows.
-- Stay compatible with existing OpenAI-style clients and SDKs.
+- Keep engineering workflows integrated through MCP-style tool orchestration.
 
 ## Architecture
 - `chat_app/`: Frontend interaction layer
 - `chat_app_server_rs/`: Main orchestration backend
-- `openai-codex-gateway/`: OpenAI-compatible gateway
 
 ## Quick Start
 Run from repository root:
@@ -34,10 +33,6 @@ make smoke
 
 `make smoke` runs repo governance checks plus lightweight cross-subproject probes.
 It also validates root startup script syntax and the Git-relevant large-file policy.
-
-System build matrix:
-
-- [SYSTEM_BUILD_MATRIX.md](./SYSTEM_BUILD_MATRIX.md)
 
 Shared local configuration entrypoint:
 
@@ -65,13 +60,11 @@ Default logs:
 - [chat_app 中文](./chat_app/README.zh-CN.md)
 - [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
-- [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
 - [db_connection_hub backend](./db_connection_hub/backend/README.md)
 - [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
 
 ## Note
-Development plan documents are kept under local `docs/plans/` and are intentionally not tracked in git.
+Development plan documents may live in root-level historical files or local `docs/plans/` archives.
 
 ## License
 This project is licensed under the [MIT License](./LICENSE).

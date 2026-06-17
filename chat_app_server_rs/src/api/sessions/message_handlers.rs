@@ -102,8 +102,11 @@ async fn list_compact_history_page(
         return Ok(page);
     }
 
+    let Some(before_turn_id) = before_turn_id else {
+        return Ok(page);
+    };
     let Some(resolved_before_turn_id) =
-        resolve_compact_history_before_turn_id(conversation_id, before_turn_id.unwrap()).await
+        resolve_compact_history_before_turn_id(conversation_id, before_turn_id).await
     else {
         return Ok(page);
     };
@@ -116,6 +119,7 @@ async fn list_compact_history_page(
     .await
 }
 
+#[cfg(test)]
 fn parse_compact_history_offset(
     before: Option<&str>,
     compact_messages: &[crate::models::message::Message],
@@ -346,6 +350,139 @@ fn turn_slice_to_user_message_item(slice: memory_engine_sdk::TurnRecordSlice) ->
     })
 }
 
+fn user_turn_history_process_value<'a>(message: &'a Message, key: &str) -> Option<&'a Value> {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("historyProcess"))
+        .and_then(|history_process| history_process.get(key))
+}
+
+fn user_turn_history_process_bool(message: &Message, key: &str) -> bool {
+    user_turn_history_process_value(message, key)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn user_turn_history_process_usize(message: &Message, key: &str) -> usize {
+    user_turn_history_process_value(message, key)
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(0)
+}
+
+fn user_turn_history_process_string(message: &Message, key: &str) -> Option<String> {
+    user_turn_history_process_value(message, key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn find_user_index_for_turn_cursor(messages: &[Message], cursor: &str) -> Option<usize> {
+    let normalized = cursor.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    messages.iter().position(|message| {
+        message.role == "user"
+            && (message_turn_id(message) == Some(normalized) || message.id == normalized)
+    })
+}
+
+fn fallback_user_turn_item_from_messages(messages: &[Message], user_index: usize) -> Option<Value> {
+    let display_messages = build_turn_display_messages(messages, user_index);
+    let user_message = display_messages.first()?.clone();
+    let final_assistant_message_id =
+        user_turn_history_process_string(&user_message, "finalAssistantMessageId");
+    let final_assistant_message = final_assistant_message_id
+        .as_deref()
+        .and_then(|message_id| {
+            display_messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .or_else(|| {
+            display_messages
+                .iter()
+                .rev()
+                .find(|message| message.role == "assistant")
+        })
+        .cloned();
+    let turn_id = message_turn_id(&user_message)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| user_message.id.clone());
+
+    Some(serde_json::json!({
+        "turn_id": turn_id,
+        "user_message": MessageOut::from(user_message.clone()),
+        "final_assistant_message": final_assistant_message.map(MessageOut::from),
+        "has_process": user_turn_history_process_bool(&user_message, "hasProcess"),
+        "tool_call_count": user_turn_history_process_usize(&user_message, "toolCallCount"),
+        "thinking_count": user_turn_history_process_usize(&user_message, "thinkingCount"),
+        "process_message_count": user_turn_history_process_usize(&user_message, "processMessageCount"),
+    }))
+}
+
+async fn build_fallback_user_message_turns_response(
+    conversation_id: &str,
+    limit: usize,
+    before_turn_id: Option<&str>,
+) -> Result<Option<Value>, String> {
+    let messages = list_all_session_messages(conversation_id).await?;
+    let user_indexes: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| (message.role == "user").then_some(index))
+        .collect();
+    if user_indexes.is_empty() {
+        return Ok(None);
+    }
+
+    let end_position = if let Some(cursor) = before_turn_id {
+        let Some(before_user_index) = find_user_index_for_turn_cursor(&messages, cursor) else {
+            return Ok(None);
+        };
+        user_indexes
+            .iter()
+            .position(|index| *index == before_user_index)
+            .unwrap_or(user_indexes.len())
+    } else {
+        user_indexes.len()
+    };
+    if end_position == 0 {
+        return Ok(Some(serde_json::json!({
+            "items": [],
+            "has_more": false,
+            "next_before": null,
+        })));
+    }
+
+    let start_position = end_position.saturating_sub(limit);
+    let selected_user_indexes = &user_indexes[start_position..end_position];
+    let items: Vec<Value> = selected_user_indexes
+        .iter()
+        .filter_map(|index| fallback_user_turn_item_from_messages(&messages, *index))
+        .collect();
+    if items.is_empty() {
+        return Ok(None);
+    }
+
+    let next_before = selected_user_indexes.first().and_then(|index| {
+        let user_message = &messages[*index];
+        message_turn_id(user_message)
+            .map(ToOwned::to_owned)
+            .or_else(|| Some(user_message.id.clone()))
+    });
+
+    Ok(Some(serde_json::json!({
+        "items": items,
+        "has_more": start_position > 0,
+        "next_before": if start_position > 0 { next_before } else { None },
+    })))
+}
+
 pub(super) async fn get_session_user_message_turns(
     auth: AuthUser,
     Path(conversation_id): Path<String>,
@@ -376,6 +513,26 @@ pub(super) async fn get_session_user_message_turns(
             );
         }
     };
+
+    if page.items.is_empty() {
+        match build_fallback_user_message_turns_response(
+            &conversation_id,
+            limit as usize,
+            before_turn_id,
+        )
+        .await
+        {
+            Ok(Some(value)) => return (StatusCode::OK, Json(value)),
+            Ok(None) => {}
+            Err(err) => {
+                warn!(
+                    conversation_id = conversation_id.as_str(),
+                    error = err.as_str(),
+                    "failed to build fallback user message turns from session messages"
+                );
+            }
+        }
+    }
 
     let items: Vec<Value> = page
         .items

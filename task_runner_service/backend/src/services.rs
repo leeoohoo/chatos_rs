@@ -63,10 +63,10 @@ use self::batch_ops::{
 };
 use self::builtin_providers::build_builtin_registry;
 pub use self::chatos_message_tasks::{
-    ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskDetail,
-    ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge, ChatosMessageTaskGraphNode,
-    ChatosMessageTaskRun, ChatosMessageTaskRunEvent, ChatosMessageTaskRunSummary,
-    ChatosMessageTaskSummary,
+    ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
+    ChatosMessageTaskDetail, ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge,
+    ChatosMessageTaskGraphNode, ChatosMessageTaskRun, ChatosMessageTaskRunEvent,
+    ChatosMessageTaskRunSummary, ChatosMessageTaskSummary,
 };
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};

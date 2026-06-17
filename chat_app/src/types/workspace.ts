@@ -4,6 +4,8 @@ export interface Project {
   rootPath: string;
   description?: string | null;
   userId?: string | null;
+  latestSessionId?: string | null;
+  lastMessageAt?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

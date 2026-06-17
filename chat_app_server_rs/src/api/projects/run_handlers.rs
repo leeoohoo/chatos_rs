@@ -1,5 +1,5 @@
-use axum::{extract::Path, http::StatusCode, Json};
-use serde_json::{json, Value};
+use axum::{Json, extract::Path, http::StatusCode};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use crate::core::auth::AuthUser;
@@ -10,11 +10,11 @@ use crate::models::project_run_environment::ProjectRunCustomToolchain;
 use crate::models::terminal::TerminalService;
 use crate::repositories::project_run_catalogs;
 use crate::services::project_run::{
-    analyze_project, apply_default_target, clear_cached_environment_snapshot, dispatch_command,
-    env_overrides_for_target, load_environment_selection, load_environment_snapshot,
-    read_cached_catalog, refresh_environment_snapshot, resolve_command_with_toolchains,
-    resolve_execution, save_environment_selection, validate_project_run_target,
-    write_cached_catalog, RunExecutionInput,
+    RunExecutionInput, analyze_project, apply_default_target, clear_cached_environment_snapshot,
+    dispatch_command, env_overrides_for_target, load_environment_selection,
+    load_environment_snapshot, read_cached_catalog, refresh_environment_snapshot,
+    resolve_command_with_toolchains, resolve_execution, save_environment_selection,
+    validate_project_run_target, write_cached_catalog,
 };
 use crate::services::realtime::publish_project_run_catalog_updated;
 use crate::services::terminal_manager::get_terminal_manager;
@@ -403,9 +403,11 @@ pub(super) async fn update_project_run_environment(
     };
 
     let terminal_ui_enabled = match load_environment_selection(project.id.as_str()).await {
-        Ok(selection) => req
-            .terminal_ui_enabled
-            .unwrap_or_else(|| selection.map(|value| value.terminal_ui_enabled).unwrap_or(true)),
+        Ok(selection) => req.terminal_ui_enabled.unwrap_or_else(|| {
+            selection
+                .map(|value| value.terminal_ui_enabled)
+                .unwrap_or(true)
+        }),
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,

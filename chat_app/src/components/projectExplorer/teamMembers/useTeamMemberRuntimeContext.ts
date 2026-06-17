@@ -11,7 +11,7 @@ import {
   markRuntimeContextStale,
 } from '../../../lib/runtimeContext/cache';
 import type { Session } from '../../../types';
-import type { ContactItem } from './types';
+import type { ContactItem, EnsureProjectContactSessionOptions } from './types';
 
 interface RuntimeContextApiClient {
   getConversationLatestTurnRuntimeContext: (
@@ -24,7 +24,10 @@ interface UseTeamMemberRuntimeContextOptions {
   sessions: Session[];
   normalizedProjectId: string;
   runtimeContextRefreshNonce: number;
-  ensureContactSession: (contact: ContactItem) => Promise<string | null>;
+  ensureContactSession: (
+    contact: ContactItem,
+    options?: EnsureProjectContactSessionOptions,
+  ) => Promise<string | null>;
   setSelectedContactId: (contactId: string | null) => void;
 }
 
@@ -87,7 +90,7 @@ export const useTeamMemberRuntimeContext = ({
     setOpeningRuntimeContextContactId(contact.id);
     setSelectedContactId(contact.id);
     try {
-      const sessionId = await ensureContactSession(contact);
+      const sessionId = await ensureContactSession(contact, { createIfMissing: false });
       if (latestOpenRequestSeqRef.current !== requestSeq) {
         return;
       }

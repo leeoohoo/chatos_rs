@@ -7,9 +7,9 @@ mod tests;
 pub(crate) use self::request_support::await_with_optional_abort;
 pub(crate) use self::request_support::{
     attach_ai_client_success_extra, build_abort_token, build_ai_client_success_payload,
-    build_assistant_message_metadata, build_user_content_parts, build_user_message_metadata,
-    classify_user_facing_ai_error, completion_failed_error, handle_transient_retry,
-    is_non_terminal_response_status, is_retryable_provider_backpressure_error,
+    build_assistant_message_metadata, build_user_content_parts, classify_user_facing_ai_error,
+    completion_failed_error, handle_transient_retry, is_non_terminal_response_status,
+    is_retryable_provider_backpressure_error,
     is_task_runner_async_plan_message_mode, normalize_task_runner_async_plan_metadata,
     normalize_task_runner_async_tool_call_metadata, normalize_turn_id,
     persist_assistant_response_with_policy, persist_user_message_and_build_content_parts,

@@ -35,7 +35,3 @@ move_runtime_file() {
 move_runtime_file \
   "$ROOT_DIR/chat_app_server_rs/data/chat_app.db" \
   "$ROOT_DIR/.local/chat_app_server/data/chat_app.db"
-
-move_runtime_file \
-  "$ROOT_DIR/openai-codex-gateway/gateway_state.sqlite3" \
-  "$ROOT_DIR/.local/openai-codex-gateway/gateway_state.sqlite3"

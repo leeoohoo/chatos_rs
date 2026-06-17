@@ -19,14 +19,6 @@ pub struct CompatMessageInput {
     pub metadata: Option<Value>,
 }
 
-pub struct CreateUserMessageInput {
-    pub content: String,
-    pub message_id: Option<String>,
-    pub message_mode: Option<String>,
-    pub message_source: Option<String>,
-    pub metadata: Option<Value>,
-}
-
 pub async fn list_messages(
     session_id: &str,
     limit: Option<i64>,
@@ -53,18 +45,18 @@ pub async fn list_turn_process_messages(
 
 pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String> {
     let mut offset = 0i64;
-    let mut all_messages: Vec<Message> = Vec::new();
+    let mut newest_first_messages: Vec<Message> = Vec::new();
 
     loop {
         let batch = chatos_sessions::list_messages_including_hidden(
             session_id,
             Some(FULL_SESSION_MESSAGES_PAGE_SIZE),
             offset,
-            true,
+            false,
         )
         .await?;
 
-        let batch_len = append_visible_message_page(&mut all_messages, batch, &mut offset);
+        let batch_len = append_visible_message_page(&mut newest_first_messages, batch, &mut offset);
         if batch_len == 0 {
             break;
         }
@@ -74,7 +66,8 @@ pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String>
         }
     }
 
-    Ok(all_messages)
+    newest_first_messages.reverse();
+    Ok(newest_first_messages)
 }
 
 fn append_visible_message_page(
@@ -112,20 +105,6 @@ pub async fn upsert_message_in_session(
     message: &Message,
 ) -> Result<Message, String> {
     chatos_sessions::upsert_message_in_session(session, message).await
-}
-
-pub async fn create_user_message(
-    session_id: &str,
-    input: CreateUserMessageInput,
-) -> Result<Message, String> {
-    let mut message = Message::new(session_id.to_string(), "user".to_string(), input.content);
-    if let Some(message_id) = input.message_id {
-        message.id = message_id;
-    }
-    message.message_mode = input.message_mode;
-    message.message_source = input.message_source;
-    message.metadata = input.metadata;
-    upsert_message(&message).await
 }
 
 pub fn build_compat_message(
@@ -202,7 +181,7 @@ pub async fn get_turn_runtime_snapshot_by_turn(
 mod tests {
     use serde_json::json;
 
-    use super::{append_visible_message_page, FULL_SESSION_MESSAGES_PAGE_SIZE};
+    use super::{FULL_SESSION_MESSAGES_PAGE_SIZE, append_visible_message_page};
     use crate::models::message::Message;
 
     fn build_message(id: &str, hidden: bool) -> Message {

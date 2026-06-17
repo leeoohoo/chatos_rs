@@ -1,10 +1,8 @@
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
-use crate::core::session_access::{is_owned_session, SessionAccessError};
-use crate::models::memory_mapping_types::{
-    SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
-};
+use crate::core::session_access::{SessionAccessError, is_owned_session};
+use crate::models::memory_mapping_types::SyncMemoryProjectRequestDto;
 use crate::models::session::Session;
 use crate::repositories::projects as projects_repo;
 use crate::services::chatos_memory_engine;
@@ -12,9 +10,7 @@ use crate::services::chatos_memory_mappings;
 use crate::services::chatos_sessions;
 use crate::services::realtime::publish_sessions_updated;
 
-use super::session_scope::{
-    contact_agent_id_from_metadata, contact_id_from_metadata, normalize_project_scope,
-};
+use super::session_scope::normalize_project_scope;
 
 #[derive(Debug, Clone)]
 pub struct CreateConversationSessionInput {
@@ -259,7 +255,6 @@ pub fn normalize_compat_session_title(title: Option<String>) -> Option<String> {
 }
 
 async fn sync_session_memory_projections(session: &Session, user_id: &str) {
-    let metadata = session.metadata.as_ref();
     let project_scope = normalize_project_scope(session.project_id.as_deref());
 
     if project_scope != "0" {
@@ -305,25 +300,5 @@ async fn sync_session_memory_projections(session: &Session, user_id: &str) {
             "[SESSIONS] sync virtual memory project failed while creating session: err={}",
             err
         );
-    }
-
-    if let Some(agent_id) = contact_agent_id_from_metadata(metadata) {
-        if let Err(err) =
-            chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
-                user_id: Some(user_id.to_string()),
-                project_id: Some(project_scope.clone()),
-                agent_id: Some(agent_id),
-                contact_id: contact_id_from_metadata(metadata),
-                session_id: Some(session.id.clone()),
-                last_message_at: None,
-                status: Some("active".to_string()),
-            })
-            .await
-        {
-            eprintln!(
-                "[SESSIONS] sync project-agent link failed: session_id={} err={}",
-                session.id, err
-            );
-        }
     }
 }

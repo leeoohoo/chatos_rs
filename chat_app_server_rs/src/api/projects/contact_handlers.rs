@@ -14,6 +14,7 @@ use crate::services::realtime::publish_project_members_updated;
 use crate::services::{chatos_memory_mappings, chatos_sessions};
 
 use super::contracts::{AddProjectContactRequest, ProjectContactsQuery};
+use super::session_resolver::resolve_project_contact_session_id;
 
 fn value_has_items(value: Option<&Value>) -> bool {
     match value {
@@ -157,9 +158,11 @@ pub(super) async fn list_project_contacts(
     Path(id): Path<String>,
     Query(query): Query<ProjectContactsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_project(&id, &auth).await {
-        return map_project_access_error(err);
-    }
+    let project = match ensure_owned_project(&id, &auth).await {
+        Ok(project) => project,
+        Err(err) => return map_project_access_error(err),
+    };
+    let project_user_id = project.user_id.as_deref().unwrap_or(auth.user_id.as_str());
 
     match chatos_memory_mappings::list_project_contacts(
         id.as_str(),
@@ -168,10 +171,22 @@ pub(super) async fn list_project_contacts(
     )
     .await
     {
-        Ok(items) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(items).unwrap_or(Value::Null)),
-        ),
+        Ok(mut items) => {
+            for item in &mut items {
+                if let Some((session_id, last_message_at)) =
+                    resolve_project_contact_session_id(project_user_id, &id, &item.contact_id).await
+                {
+                    item.latest_session_id = Some(session_id);
+                    item.last_message_at = item.last_message_at.clone().or(last_message_at);
+                } else {
+                    item.latest_session_id = None;
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(items).unwrap_or(Value::Null)),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "list project contacts failed", "detail": err})),
@@ -255,36 +270,6 @@ pub(super) async fn add_project_contact(
             }
         }
     }
-    for linked in linked_rows
-        .into_iter()
-        .filter(|item| item.contact_id != contact_id)
-    {
-        if let Err(err) =
-            chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
-                user_id: Some(auth.user_id.clone()),
-                project_id: Some(id.clone()),
-                agent_id: Some(linked.agent_id.clone()),
-                contact_id: Some(linked.contact_id.clone()),
-                session_id: None,
-                last_message_at: None,
-                status: Some("archived".to_string()),
-            })
-            .await
-        {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::json!({"error": "archive existing project contact failed", "detail": err}),
-                ),
-            );
-        }
-        publish_project_members_updated(
-            auth.user_id.as_str(),
-            id.as_str(),
-            "project_contact_removed",
-            Some(linked.contact_id.as_str()),
-        );
-    }
 
     match chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
         user_id: Some(auth.user_id.clone()),
@@ -360,18 +345,14 @@ pub(super) async fn remove_project_contact(
         }
     }
 
-    match chatos_memory_mappings::sync_project_agent_link(&SyncProjectAgentLinkRequestDto {
-        user_id: Some(auth.user_id.clone()),
-        project_id: Some(id.clone()),
-        agent_id: Some(linked.agent_id),
-        contact_id: Some(linked.contact_id),
-        session_id: None,
-        last_message_at: None,
-        status: Some("archived".to_string()),
-    })
+    match chatos_memory_mappings::delete_project_contact_link(
+        auth.user_id.as_str(),
+        id.as_str(),
+        linked.contact_id.as_str(),
+    )
     .await
     {
-        Ok(_) => {
+        Ok(true) => {
             publish_project_members_updated(
                 auth.user_id.as_str(),
                 id.as_str(),
@@ -380,6 +361,10 @@ pub(super) async fn remove_project_contact(
             );
             (StatusCode::OK, Json(serde_json::json!({"success": true})))
         }
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "project contact not found"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "remove project contact failed", "detail": err})),

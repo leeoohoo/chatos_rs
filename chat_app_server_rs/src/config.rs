@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use once_cell::sync::OnceCell;
 
 #[derive(Debug, Clone)]
@@ -10,7 +9,6 @@ pub struct Config {
     pub host: String,
     pub log_level: String,
     pub log_max_files: String,
-    pub log_max_size: String,
     pub cors_origins: Vec<String>,
     pub summary_enabled: bool,
     pub summary_message_limit: i64,
@@ -86,7 +84,6 @@ impl Config {
 
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
         let log_max_files = std::env::var("LOG_MAX_FILES").unwrap_or_else(|_| "7d".to_string());
-        let log_max_size = std::env::var("LOG_MAX_SIZE").unwrap_or_else(|_| "10m".to_string());
 
         let cors_origins = match std::env::var("CORS_ORIGINS") {
             Ok(v) => v
@@ -159,7 +156,6 @@ impl Config {
             host,
             log_level,
             log_max_files,
-            log_max_size,
             cors_origins,
             summary_enabled,
             summary_message_limit,

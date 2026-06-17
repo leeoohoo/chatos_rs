@@ -6,6 +6,10 @@ export interface ProjectResponse {
   description?: string | null;
   user_id?: string | null;
   userId?: string | null;
+  latest_session_id?: string | null;
+  latestSessionId?: string | null;
+  last_message_at?: string | null;
+  lastMessageAt?: string | null;
   created_at?: string;
   createdAt?: string;
   updated_at?: string;
@@ -154,6 +158,12 @@ export interface ProjectContactLinkResponse {
   agentId?: string;
   agent_name_snapshot?: string | null;
   agentNameSnapshot?: string | null;
+  latest_session_id?: string | null;
+  latestSessionId?: string | null;
+  last_bound_at?: string | null;
+  lastBoundAt?: string | null;
+  last_message_at?: string | null;
+  lastMessageAt?: string | null;
   updated_at?: string | null;
   updatedAt?: string | null;
 }

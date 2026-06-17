@@ -104,6 +104,9 @@ pub struct TaskListFilters {
     pub scheduled_only: Option<bool>,
     pub parent_task_id: Option<String>,
     pub source_run_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub source_user_message_ids: Vec<String>,
+    pub source_turn_ids: Vec<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }

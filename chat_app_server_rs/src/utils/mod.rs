@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 pub mod abort_registry;
 pub mod attachments;
 pub mod events;

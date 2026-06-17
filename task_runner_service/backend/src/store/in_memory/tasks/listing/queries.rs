@@ -57,6 +57,25 @@ impl InMemoryStore {
                     .as_deref()
                     .is_none_or(|value| task.source_run_id.as_deref() == Some(value))
             })
+            .filter(|task| {
+                filters
+                    .source_session_id
+                    .as_deref()
+                    .is_none_or(|value| task.source_session_id.as_deref() == Some(value))
+            })
+            .filter(|task| {
+                if filters.source_user_message_ids.is_empty() && filters.source_turn_ids.is_empty()
+                {
+                    return true;
+                }
+                task.source_user_message_id
+                    .as_ref()
+                    .is_some_and(|id| filters.source_user_message_ids.contains(id))
+                    || task
+                        .source_turn_id
+                        .as_ref()
+                        .is_some_and(|id| filters.source_turn_ids.contains(id))
+            })
             .cloned()
             .collect::<Vec<_>>();
         items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));

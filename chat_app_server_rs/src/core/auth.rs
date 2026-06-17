@@ -215,7 +215,6 @@ mod tests {
             host: "0.0.0.0".to_string(),
             log_level: "info".to_string(),
             log_max_files: "7d".to_string(),
-            log_max_size: "10m".to_string(),
             cors_origins: vec!["*".to_string()],
             summary_enabled: true,
             summary_message_limit: 40,

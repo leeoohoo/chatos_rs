@@ -17,8 +17,9 @@ use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::request::{AiRequestHandler, AiRequestOptions, StreamCallbacks};
 use crate::tool_call::{extract_tool_call_name, tool_calls_value_has_items};
 use crate::tool_runtime::{
-    append_tool_results_with_budget, build_tool_call_items, build_tool_output_items_with_budget,
-    merge_pending_tool_turn_items, ToolResultModelBudgetLimits,
+    append_tool_results_with_budget, build_tool_call_items,
+    build_tool_output_items_for_calls_with_budget, merge_pending_tool_turn_items,
+    ToolResultModelBudgetLimits,
 };
 use crate::traits::{
     MemoryRecordWriter, ModelRequest, RuntimeCallbacks, RuntimeRecordOptions,
@@ -767,7 +768,8 @@ impl AiRuntime {
             let tool_result_names = summarize_tool_result_names(tool_results.as_slice(), 8);
             let tool_call_items =
                 build_tool_call_items(tool_calls.as_array().map(Vec::as_slice).unwrap_or(&[]));
-            let tool_output_items = build_tool_output_items_with_budget(
+            let tool_output_items = build_tool_output_items_for_calls_with_budget(
+                tool_calls.as_array().map(Vec::as_slice).unwrap_or(&[]),
                 tool_results.as_slice(),
                 options.tool_result_model_budget_limits,
             );

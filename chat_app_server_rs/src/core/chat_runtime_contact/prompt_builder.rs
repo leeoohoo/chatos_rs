@@ -1,12 +1,14 @@
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto;
 
+#[cfg(test)]
+use super::types::ParsedContactCommandInvocation;
 use super::types::{
-    contact_plugin_ref, contact_skill_ref, ContactSkillPromptMode, ParsedContactCommandInvocation,
     CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
-    CONTACT_SKILL_READER_TOOL_NAME,
+    CONTACT_SKILL_READER_TOOL_NAME, ContactSkillPromptMode, contact_plugin_ref, contact_skill_ref,
 };
 
+#[cfg(test)]
 pub fn compose_contact_command_system_prompt(
     command: Option<&ParsedContactCommandInvocation>,
     locale: InternalContextLocale,
@@ -26,7 +28,11 @@ pub fn compose_contact_command_system_prompt(
             "The user explicitly triggered a contact command in this turn. Follow the command content with priority.",
         ),
         format!("command_ref={}", command.command_ref.trim()),
-        format!("{}={}", field(locale, "命令名称", "command_name"), command.name.trim()),
+        format!(
+            "{}={}",
+            field(locale, "命令名称", "command_name"),
+            command.name.trim()
+        ),
         format!("plugin_source={}", command.plugin_source.trim()),
         format!("source_path={}", command.source_path.trim()),
     ];
@@ -658,17 +664,9 @@ fn text(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> St
 }
 
 fn text_ref(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> &'static str {
-    if locale.is_english() {
-        en
-    } else {
-        zh
-    }
+    if locale.is_english() { en } else { zh }
 }
 
 fn field(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> &'static str {
-    if locale.is_english() {
-        en
-    } else {
-        zh
-    }
+    if locale.is_english() { en } else { zh }
 }

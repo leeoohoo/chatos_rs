@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageItem } from './MessageItem';
-import { MessageTaskDrawer } from './messageTasks/MessageTaskDrawer';
 // import { cn } from '../lib/utils';
-import type { Message, MessageListProps } from '../types';
+import type { MessageListProps } from '../types';
 import { useMessageListDerivedState } from './messageList/useMessageListDerivedState';
 import { useMessageListWindowing } from './messageList/useMessageListWindowing';
 import { useI18n } from '../i18n/I18nProvider';
@@ -93,11 +92,9 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   );
   const hasPreviewSentence = previewSentenceQueue.length > 0;
   const [previewSentenceIndex, setPreviewSentenceIndex] = useState(0);
-  const [taskMessage, setTaskMessage] = useState<Message | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const resolvedAnchorKeyRef = useRef('');
   const activePreviewSentence = previewSentenceQueue[previewSentenceIndex] || '';
-  const handleCloseMessageTasks = () => setTaskMessage(null);
   const handleAnchorClearIntent = () => {
     if (anchorMessageId) {
       onAnchorClear?.();
@@ -111,10 +108,6 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   useEffect(() => {
     setPreviewSentenceIndex(0);
   }, [sessionId, previewSentenceQueue.length]);
-
-  useEffect(() => {
-    setTaskMessage(null);
-  }, [sessionId]);
 
   useEffect(() => {
     const normalizedAnchorMessageId = String(anchorMessageId || '').trim();
@@ -255,7 +248,6 @@ const MessageListComponent: React.FC<MessageListProps> = ({
                 highlighted={highlightedMessageId === message.id}
                 onEdit={onMessageEdit}
                 onDelete={onMessageDelete}
-                onOpenTasks={setTaskMessage}
                 toolResultById={toolResultById}
                 assistantToolCallsById={assistantToolCallById}
                 toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
@@ -311,13 +303,6 @@ const MessageListComponent: React.FC<MessageListProps> = ({
         )}
       </div>
 
-      {taskMessage && (
-        <MessageTaskDrawer
-          open
-          message={taskMessage}
-          onClose={handleCloseMessageTasks}
-        />
-      )}
     </div>
   );
 };

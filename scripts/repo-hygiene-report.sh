@@ -28,7 +28,6 @@ done < <(
   du -sh \
     "$ROOT_DIR/chat_app" \
     "$ROOT_DIR/chat_app_server_rs" \
-    "$ROOT_DIR/openai-codex-gateway" \
     "$ROOT_DIR/target-shared" \
     "$ROOT_DIR/docs" 2>/dev/null | sort -hr
 )

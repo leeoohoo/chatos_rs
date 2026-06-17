@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
-import { isSessionMatchedContactAndProject } from '../../../features/contactSession/sessionResolver';
+import {
+  hasSessionMessages,
+  isSessionMatchedContactAndProject,
+} from '../../../features/contactSession/sessionResolver';
 import type { Session } from '../../../types';
 import type { SendMessageRuntimeOptions, SessionSelectOptions } from '../../../lib/store/types';
-import type { ContactItem, ProjectContactRow } from './types';
+import type {
+  ContactItem,
+  EnsureProjectContactSessionOptions,
+  ProjectContactRow,
+} from './types';
 
 interface UseTeamMemberConversationParams {
   projectId: string;
@@ -23,7 +30,10 @@ interface UseTeamMemberConversationParams {
     options: { confirmMessage?: string },
   ) => Promise<void>;
   cancelPendingSessionSummariesLoad: () => void;
-  ensureContactSession: (contact: ContactItem) => Promise<string | null>;
+  ensureContactSession: (
+    contact: ContactItem,
+    options?: EnsureProjectContactSessionOptions,
+  ) => Promise<string | null>;
   selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<void>;
   sendMessage: (
     content: string,
@@ -59,14 +69,29 @@ export const useTeamMemberConversation = ({
   const [openingSummaryContactId, setOpeningSummaryContactId] = useState<string | null>(null);
   const latestContactSwitchSeqRef = useRef(0);
   const latestSummaryOpenSeqRef = useRef(0);
+  const autoSelectingSessionIdRef = useRef<string | null>(null);
 
   const currentSessionMatchedContactRow = useMemo(() => {
     if (!currentSession) {
       return null;
     }
-    return projectContacts.find((item) => (
-      isSessionMatchedContactAndProject(currentSession, item.contact, projectId)
-    )) || null;
+    return projectContacts.find((item) => {
+      if (!isSessionMatchedContactAndProject(currentSession, item.contact, projectId)) {
+        return false;
+      }
+      if (
+        item.latestSessionId
+        && item.lastMessageAt
+        && item.latestSessionId !== currentSession.id
+        && !hasSessionMessages(currentSession)
+      ) {
+        return false;
+      }
+      if (!item.session || item.session.id === currentSession.id) {
+        return true;
+      }
+      return !(hasSessionMessages(item.session) && !hasSessionMessages(currentSession));
+    }) || null;
   }, [currentSession, projectContacts, projectId]);
 
   const selectedContactRow = useMemo(() => {
@@ -90,14 +115,49 @@ export const useTeamMemberConversation = ({
     const normalizedSelectedSessionId = typeof selectedSessionId === 'string'
       ? selectedSessionId.trim()
       : '';
+    const switchingSelectedContact = Boolean(
+      selectedContactId
+      && switchingContactId
+      && selectedContactId === switchingContactId,
+    );
+    const sessionMatchesSelectedContact = (session: Session): boolean => (
+      !selectedContact
+      || isSessionMatchedContactAndProject(session, selectedContact, projectId)
+    );
+    const selectedRowSession = selectedContactRow?.session || null;
+    const selectedRowHasBetterMessageSession = Boolean(
+      selectedRowSession
+      && currentSession
+      && selectedRowSession.id !== currentSession.id
+      && hasSessionMessages(selectedRowSession)
+      && !hasSessionMessages(currentSession)
+    );
+    const selectedRowHasPreferredMessageSession = Boolean(
+      selectedContactRow?.latestSessionId
+      && selectedContactRow?.lastMessageAt
+      && currentSession
+      && selectedContactRow.latestSessionId !== currentSession.id
+      && !hasSessionMessages(currentSession)
+    );
     if (normalizedSelectedSessionId) {
-      if (currentSession?.id === normalizedSelectedSessionId) {
+      if (
+        currentSession?.id === normalizedSelectedSessionId
+        && sessionMatchesSelectedContact(currentSession)
+        && !selectedRowHasBetterMessageSession
+        && !selectedRowHasPreferredMessageSession
+      ) {
         return currentSession;
       }
-      const bySessionId = projectContacts.find((item) => item.session?.id === normalizedSelectedSessionId);
+      const bySessionId = projectContacts.find((item) => (
+        item.session?.id === normalizedSelectedSessionId
+        && (!selectedContact || item.contact.id === selectedContact.id)
+      ));
       if (bySessionId?.session) {
         return bySessionId.session;
       }
+    }
+    if (switchingSelectedContact) {
+      return null;
     }
     if (selectedContactRow?.session) {
       return selectedContactRow.session;
@@ -106,11 +166,24 @@ export const useTeamMemberConversation = ({
       currentSession
       && selectedContact
       && isSessionMatchedContactAndProject(currentSession, selectedContact, projectId)
+      && !selectedRowHasBetterMessageSession
+      && !selectedRowHasPreferredMessageSession
     ) {
       return currentSession;
     }
     return null;
-  }, [currentSession, projectContacts, projectId, selectedContact, selectedContactRow?.session, selectedSessionId]);
+  }, [
+    currentSession,
+    projectContacts,
+    projectId,
+    selectedContact,
+    selectedContactId,
+    selectedContactRow?.lastMessageAt,
+    selectedContactRow?.latestSessionId,
+    selectedContactRow?.session,
+    selectedSessionId,
+    switchingContactId,
+  ]);
 
   const isSelectedSessionActive = Boolean(
     selectedProjectSession?.id
@@ -136,7 +209,7 @@ export const useTeamMemberConversation = ({
     setSelectedContactId(contactId);
     setSwitchingContactId(contactId);
     try {
-      const sessionId = await ensureContactSession(contact);
+      const sessionId = await ensureContactSession(contact, { createIfMissing: false });
       if (latestContactSwitchSeqRef.current !== requestSeq) {
         return;
       }
@@ -176,6 +249,9 @@ export const useTeamMemberConversation = ({
       setSelectedSessionId(null);
       return;
     }
+    if (switchingContactId) {
+      return;
+    }
     if (currentSessionMatchedContactRow && currentSession?.id) {
       setSelectedContactId(currentSessionMatchedContactRow.contact.id);
       setSelectedSessionId(currentSession.id);
@@ -186,11 +262,36 @@ export const useTeamMemberConversation = ({
     }
     const firstContact = projectContacts[0];
     setSelectedContactId(firstContact.contact.id);
-    setSelectedSessionId(firstContact.session?.id || null);
-  }, [currentSession?.id, currentSessionMatchedContactRow, projectContacts, selectedContactId]);
+    setSelectedSessionId(firstContact.session?.id || firstContact.latestSessionId || null);
+  }, [
+    currentSession?.id,
+    currentSessionMatchedContactRow,
+    projectContacts,
+    selectedContactId,
+    switchingContactId,
+  ]);
 
   useEffect(() => {
     if (!selectedContactId || switchingContactId) {
+      return;
+    }
+    if (selectedSessionId && currentSession?.id !== selectedSessionId) {
+      if (autoSelectingSessionIdRef.current === selectedSessionId) {
+        return;
+      }
+      autoSelectingSessionIdRef.current = selectedSessionId;
+      void selectSession(selectedSessionId, {
+        keepActivePanel: true,
+        skipBackgroundSync: true,
+      }).finally(() => {
+        if (autoSelectingSessionIdRef.current === selectedSessionId) {
+          autoSelectingSessionIdRef.current = null;
+        }
+      });
+      return;
+    }
+    autoSelectingSessionIdRef.current = null;
+    if (selectedContactRow && !selectedContactRow.session) {
       return;
     }
     if (selectedProjectSession && isSelectedSessionActive) {
@@ -199,9 +300,13 @@ export const useTeamMemberConversation = ({
     void handleSelectContact(selectedContactId);
   }, [
     handleSelectContact,
+    currentSession?.id,
     isSelectedSessionActive,
+    selectSession,
     selectedContactId,
+    selectedContactRow,
     selectedProjectSession,
+    selectedSessionId,
     switchingContactId,
   ]);
 
@@ -215,6 +320,30 @@ export const useTeamMemberConversation = ({
       && selectedContact
       && isSessionMatchedContactAndProject(currentSession, selectedContact, projectId)
     ) {
+      const selectedRowSession = selectedContactRow?.session || null;
+      const selectedRowPreferredSessionId = selectedContactRow?.latestSessionId || null;
+      if (
+        selectedRowPreferredSessionId
+        && selectedContactRow?.lastMessageAt
+        && selectedRowPreferredSessionId !== currentSession.id
+        && !hasSessionMessages(currentSession)
+      ) {
+        if (selectedSessionId !== selectedRowPreferredSessionId) {
+          setSelectedSessionId(selectedRowPreferredSessionId);
+        }
+        return;
+      }
+      if (
+        selectedRowSession
+        && selectedRowSession.id !== currentSession.id
+        && hasSessionMessages(selectedRowSession)
+        && !hasSessionMessages(currentSession)
+      ) {
+        if (selectedSessionId !== selectedRowSession.id) {
+          setSelectedSessionId(selectedRowSession.id);
+        }
+        return;
+      }
       if (selectedSessionId !== currentSession.id) {
         setSelectedSessionId(currentSession.id);
       }
@@ -223,7 +352,9 @@ export const useTeamMemberConversation = ({
     if (switchingContactId === selectedContactId) {
       return;
     }
-    const latestRowSessionId = selectedContactRow?.session?.id || null;
+    const latestRowSessionId = selectedContactRow?.session?.id
+      || selectedContactRow?.latestSessionId
+      || null;
     if (selectedSessionId !== latestRowSessionId) {
       setSelectedSessionId(latestRowSessionId);
     }
@@ -232,7 +363,9 @@ export const useTeamMemberConversation = ({
     projectId,
     selectedContact,
     selectedContactId,
-    selectedContactRow?.session?.id,
+    selectedContactRow?.lastMessageAt,
+    selectedContactRow?.latestSessionId,
+    selectedContactRow?.session,
     selectedSessionId,
     switchingContactId,
   ]);
@@ -252,7 +385,7 @@ export const useTeamMemberConversation = ({
       return;
     }
     try {
-      const sessionId = await ensureContactSession(selectedContact);
+      const sessionId = await ensureContactSession(selectedContact, { createIfMissing: true });
       if (!sessionId) {
         return;
       }
@@ -295,7 +428,7 @@ export const useTeamMemberConversation = ({
     setSwitchingContactId(contact.id);
     setSummaryError(null);
     try {
-      const sessionId = await ensureContactSession(contact);
+      const sessionId = await ensureContactSession(contact, { createIfMissing: false });
       if (latestSummaryOpenSeqRef.current !== requestSeq) {
         return;
       }

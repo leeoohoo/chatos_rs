@@ -26,13 +26,46 @@ impl TaskService {
             return Err("取消原因不能为空".to_string());
         }
         if task.status == TaskStatus::Cancelled {
+            let reason = task.task_tool_state.cancel_reason.clone().unwrap_or(reason);
+            let cascade = self
+                .cascade_cancel_dependent_tasks(task.id.as_str(), &reason, current_user)
+                .await?;
+            for cancelled in &cascade {
+                self.try_send_task_callback("task.cancelled", cancelled.task.id.as_str(), None)
+                    .await;
+            }
             return Ok(Some(CancelTaskResponse {
                 cancelled: true,
                 task_id: task.id.clone(),
                 status: task.status,
-                reason: task.task_tool_state.cancel_reason.clone().unwrap_or(reason),
+                reason,
                 active_run_ids: Vec::new(),
-                cascade_cancelled_task_ids: Vec::new(),
+                cascade_cancelled_task_ids: cascade
+                    .iter()
+                    .map(|item| item.task.id.clone())
+                    .collect::<Vec<_>>(),
+                callback_event: "task.cancelled".to_string(),
+                task,
+            }));
+        }
+        if task.status == TaskStatus::Succeeded {
+            let cascade = self
+                .cascade_cancel_dependent_tasks(task.id.as_str(), &reason, current_user)
+                .await?;
+            for cancelled in &cascade {
+                self.try_send_task_callback("task.cancelled", cancelled.task.id.as_str(), None)
+                    .await;
+            }
+            return Ok(Some(CancelTaskResponse {
+                cancelled: !cascade.is_empty(),
+                task_id: task.id.clone(),
+                status: task.status,
+                reason,
+                active_run_ids: Vec::new(),
+                cascade_cancelled_task_ids: cascade
+                    .iter()
+                    .map(|item| item.task.id.clone())
+                    .collect::<Vec<_>>(),
                 callback_event: "task.cancelled".to_string(),
                 task,
             }));
@@ -300,15 +333,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_task_rejects_succeeded_tasks() {
+    async fn cancel_task_keeps_succeeded_root_but_cascades_pending_dependents() {
         let service = test_service().await;
-        let task =
+        let root =
             create_task_with_status(&service, "already done", TaskStatus::Succeeded, Vec::new())
                 .await;
+        let pending_child = create_task_with_status(
+            &service,
+            "pending child",
+            TaskStatus::Ready,
+            vec![root.id.clone()],
+        )
+        .await;
 
-        let err = service
+        let response = service
             .cancel_task(
-                task.id.as_str(),
+                root.id.as_str(),
                 CancelTaskRequest {
                     reason: "user changed their mind".to_string(),
                     replacement_task_ids: Vec::new(),
@@ -316,9 +356,37 @@ mod tests {
                 None,
             )
             .await
-            .expect_err("succeeded task cancellation should fail");
+            .expect("cancel succeeded root dependents")
+            .expect("task exists");
 
-        assert!(err.contains("已成功的任务不允许作废或取消"));
+        assert_eq!(response.task_id, root.id);
+        assert_eq!(response.status, TaskStatus::Succeeded);
+        assert_eq!(
+            response.cascade_cancelled_task_ids,
+            vec![pending_child.id.clone()]
+        );
+
+        let root_after = service
+            .get_task(root.id.as_str())
+            .await
+            .expect("get root")
+            .expect("root");
+        assert_eq!(root_after.status, TaskStatus::Succeeded);
+
+        let pending_after = service
+            .get_task(pending_child.id.as_str())
+            .await
+            .expect("get pending child")
+            .expect("pending child");
+        assert_eq!(pending_after.status, TaskStatus::Cancelled);
+        assert_eq!(
+            pending_after.task_tool_state.cancelled_because_task_id,
+            Some(root.id.clone())
+        );
+        assert_eq!(
+            pending_after.task_tool_state.cascade_root_task_id,
+            Some(root.id.clone())
+        );
     }
 
     #[tokio::test]

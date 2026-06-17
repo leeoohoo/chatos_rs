@@ -149,10 +149,14 @@ pub(super) async fn start_mock_provider(
         .route("/responses", post(mock_provider_handler))
         .route("/chat/completions", post(mock_provider_handler))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind mock provider");
-    let addr = listener.local_addr().expect("read mock provider addr");
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(err) => panic!("bind mock provider: {err}"),
+    };
+    let addr = match listener.local_addr() {
+        Ok(addr) => addr,
+        Err(err) => panic!("read mock provider addr: {err}"),
+    };
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });

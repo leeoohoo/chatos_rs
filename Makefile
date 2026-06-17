@@ -1,9 +1,9 @@
 SHELL := /bin/bash
 
 .PHONY: help dev restart status stop build test smoke
-.PHONY: build-chat-app-server build-chat-app build-gateway build-db-hub
-.PHONY: test-chat-app-server test-chat-app test-gateway test-db-hub
-.PHONY: smoke-repo smoke-chat-app-server smoke-chat-app smoke-gateway smoke-db-hub
+.PHONY: build-chat-app-server build-chat-app build-db-hub
+.PHONY: test-chat-app-server test-chat-app test-db-hub
+.PHONY: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub
 .PHONY: type-check-db-hub-frontend lint-db-hub-frontend
 
 help:
@@ -27,7 +27,7 @@ status:
 stop:
 	@./restart_services.sh stop
 
-build: build-chat-app-server build-chat-app build-gateway build-db-hub
+build: build-chat-app-server build-chat-app build-db-hub
 
 build-chat-app-server:
 	@cd chat_app_server_rs && cargo build
@@ -35,16 +35,13 @@ build-chat-app-server:
 build-chat-app:
 	@cd chat_app && npm run build
 
-build-gateway:
-	@cd openai-codex-gateway && python -m py_compile server.py gateway_base/*.py gateway_core/*.py gateway_http/*.py gateway_request/*.py gateway_response/*.py gateway_runtime/*.py gateway_stream/*.py create_response/*.py
-
 build-db-hub:
 	@cd db_connection_hub/backend && cargo build
 	@cd db_connection_hub/frontend && npm run build
 
-test: smoke test-chat-app-server test-chat-app test-gateway test-db-hub
+test: smoke test-chat-app-server test-chat-app test-db-hub
 
-smoke: smoke-repo smoke-chat-app-server smoke-chat-app smoke-gateway smoke-db-hub
+smoke: smoke-repo smoke-chat-app-server smoke-chat-app smoke-db-hub
 
 smoke-repo:
 	@bash scripts/check_api_surface.sh
@@ -60,9 +57,6 @@ smoke-chat-app-server:
 smoke-chat-app:
 	@cd chat_app && npm run type-check
 
-smoke-gateway:
-	@cd openai-codex-gateway && python server.py --help >/dev/null
-
 smoke-db-hub:
 	@cd db_connection_hub/backend && cargo check
 	@cd db_connection_hub/frontend && npm run type-check
@@ -74,10 +68,6 @@ test-chat-app:
 	@cd chat_app && npm run test -- --run
 	@cd chat_app && npm run lint
 	@cd chat_app && npm run type-check
-
-test-gateway:
-	@cd openai-codex-gateway && make test
-	@cd openai-codex-gateway && python server.py --help >/dev/null
 
 test-db-hub:
 	@cd db_connection_hub/backend && cargo test -q

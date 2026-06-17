@@ -2,17 +2,17 @@
 
 ## Positioning
 `Chatos RS` is an AI platform for engineering and collaborative workflows.  
-It combines conversational interaction, tool execution, long-term memory, and OpenAI-compatible access in one system so AI can run as a reliable ongoing worker, not only a one-shot chatbot.
+It combines conversational interaction, tool execution, and long-term memory in one system so AI can run as a reliable ongoing worker, not only a one-shot chatbot.
 
 ## What Problems It Solves
 Typical issues in engineering-grade chat AI systems:
 - Context is trapped in a single session and is hard to carry forward.
 - Token cost keeps increasing as history grows.
 - Tool integration is fragmented and expensive to maintain.
-- External integrations are difficult when protocol expectations differ.
+- Engineering workflows are hard to operate when tool execution is not observable.
 
 `Chatos RS` addresses these with a layered architecture:
-main chat service + external memory platform integration + compatibility gateway.
+main chat service + external memory platform integration + MCP-style tool orchestration.
 
 ## Core Advantages
 1. Long-term memory by design
@@ -25,15 +25,14 @@ main chat service + external memory platform integration + compatibility gateway
 - Built for tool calls and MCP-like workflows, making it practical for real engineering pipelines.
 
 4. Scalable architecture
-- Frontend, backend, external memory platform, and gateway are decoupled and can scale independently.
+- Frontend, backend, and external memory platform are decoupled and can scale independently.
 
-5. Strong ecosystem compatibility
-- Exposes OpenAI-compatible APIs so existing clients and SDKs can integrate with low migration effort.
+5. Operable engineering workflows
+- Keeps tool calls, task execution, and memory-backed context visible and maintainable.
 
 ## Architecture Layers
 - `chat_app/`: frontend interaction layer
 - `chat_app_server_rs/`: main orchestration backend (sessions, messages, tools, streaming)
-- `openai-codex-gateway/`: OpenAI-compatible gateway layer
 
 ## Quick Start
 Run from repository root:
@@ -54,10 +53,6 @@ make smoke
 `make smoke` runs repo governance checks plus lightweight cross-subproject probes.
 It also validates root startup script syntax and the Git-relevant large-file policy.
 
-System build matrix:
-
-- [SYSTEM_BUILD_MATRIX.md](./SYSTEM_BUILD_MATRIX.md)
-
 Shared local configuration entrypoint:
 
 - repository root [`.env.example`](./.env.example)
@@ -76,16 +71,13 @@ Default runtime logs:
 - `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
 
 ## Development Plans Archive
-Historical plans/assessments/contracts are centralized at:
-- local `docs/plans/` directory (intentionally excluded from git)
+Historical plans/assessments/contracts may live in root-level historical files or local `docs/plans/` archives.
 
 ## Per-Project READMEs
 - [chat_app English](./chat_app/README.en.md)
 - [chat_app 中文](./chat_app/README.zh-CN.md)
 - [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
-- [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
 - [db_connection_hub backend](./db_connection_hub/backend/README.md)
 - [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
 

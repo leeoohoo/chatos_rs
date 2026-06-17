@@ -3,6 +3,9 @@ mod context;
 mod registration_basic;
 mod registration_observe;
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
