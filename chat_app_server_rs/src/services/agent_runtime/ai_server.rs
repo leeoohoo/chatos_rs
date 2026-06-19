@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::agent_runtime::ai_client::{AiClient, AiClientCallbacks, ProcessOptions};
@@ -7,21 +7,17 @@ use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
 use crate::services::ai_common::{normalize_turn_id, persist_user_message_and_build_content_parts};
-use crate::services::shared_ai_runtime::{
-    build_shared_ai_runtime_with_chatos_records, build_shared_contextual_turn_runner,
-};
+use crate::services::shared_ai_runtime::build_shared_ai_runtime_with_chatos_records;
 use crate::utils::attachments;
 use tracing::warn;
 
 pub struct AiServer {
     pub message_manager: MessageManager,
-    pub ai_request_handler: AiRequestHandler,
     pub mcp_tool_execute: McpToolExecute,
     pub ai_client: AiClient,
     pub shared_ai_runtime: chatos_ai_runtime::AiRuntime,
     pub default_model: String,
     pub default_temperature: f64,
-    pub base_url: String,
 }
 
 impl AiServer {
@@ -49,13 +45,11 @@ impl AiServer {
         );
         Self {
             message_manager,
-            ai_request_handler,
             mcp_tool_execute,
             ai_client,
             shared_ai_runtime,
             default_model,
             default_temperature,
-            base_url,
         }
     }
 
@@ -71,15 +65,6 @@ impl AiServer {
             Some(mcp_tool_execute),
             self.message_manager.clone(),
         );
-    }
-
-    pub fn build_shared_contextual_turn_runner(
-        &self,
-    ) -> Result<chatos_ai_runtime::ContextualTurnRunner, String> {
-        build_shared_contextual_turn_runner(
-            Some(self.mcp_tool_execute.clone()),
-            self.message_manager.clone(),
-        )
     }
 
     pub async fn chat(

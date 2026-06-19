@@ -1,11 +1,13 @@
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto;
 
+use super::types::ContactSkillPromptMode;
 #[cfg(test)]
 use super::types::ParsedContactCommandInvocation;
+#[cfg(test)]
 use super::types::{
     CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
-    CONTACT_SKILL_READER_TOOL_NAME, ContactSkillPromptMode, contact_plugin_ref, contact_skill_ref,
+    CONTACT_SKILL_READER_TOOL_NAME, contact_plugin_ref, contact_skill_ref,
 };
 
 #[cfg(test)]
@@ -78,6 +80,7 @@ pub fn compose_contact_system_prompt(
     skill_mode: &ContactSkillPromptMode,
     locale: InternalContextLocale,
 ) -> Option<String> {
+    #[cfg(test)]
     #[derive(Clone)]
     struct SkillPromptEntry {
         skill_ref: String,
@@ -86,6 +89,7 @@ pub fn compose_contact_system_prompt(
         description: Option<String>,
         source_type: String,
     }
+    #[cfg(test)]
     #[derive(Clone)]
     struct PluginPromptEntry {
         plugin_ref: String,
@@ -134,13 +138,13 @@ pub fn compose_contact_system_prompt(
     lines.push(text(locale, "角色定义：", "Role definition:"));
     lines.push(agent.role_definition.trim().to_string());
 
+    #[cfg(test)]
     let mut skill_entries: Vec<SkillPromptEntry>;
+    #[cfg(test)]
     let mut plugin_entries: Vec<PluginPromptEntry>;
 
     match skill_mode {
         ContactSkillPromptMode::Disabled => {
-            skill_entries = Vec::new();
-            plugin_entries = Vec::new();
             lines.push(String::new());
             lines.push(text(
                 locale,
@@ -148,6 +152,7 @@ pub fn compose_contact_system_prompt(
                 "Skill context: this turn only uses Task Runner capabilities; contact skills and plugin content are not loaded.",
             ));
         }
+        #[cfg(test)]
         ContactSkillPromptMode::Summary { force_skill_first } => {
             skill_entries = Vec::new();
             plugin_entries = Vec::new();
@@ -361,6 +366,7 @@ pub fn compose_contact_system_prompt(
                 lines.push(text(locale, "无", "None"));
             }
         }
+        #[cfg(test)]
         ContactSkillPromptMode::SelectedFull { skills, plugins } => {
             skill_entries = Vec::with_capacity(skills.len());
             plugin_entries = Vec::with_capacity(plugins.len());
@@ -532,6 +538,7 @@ pub fn compose_contact_system_prompt(
         }
     }
 
+    #[cfg(test)]
     if matches!(skill_mode, ContactSkillPromptMode::Summary { .. }) {
         lines.push(String::new());
         lines.push(text(
@@ -592,6 +599,7 @@ pub fn compose_contact_system_prompt(
         }
     }
 
+    #[cfg(test)]
     if matches!(skill_mode, ContactSkillPromptMode::Summary { .. }) && !plugin_entries.is_empty() {
         lines.push(String::new());
         let plugin_examples = plugin_entries
@@ -631,6 +639,7 @@ pub fn compose_contact_system_prompt(
         }
     }
 
+    #[cfg(test)]
     if matches!(skill_mode, ContactSkillPromptMode::Summary { .. }) && !skill_entries.is_empty() {
         lines.push(String::new());
         lines.push(if locale.is_english() {
@@ -649,6 +658,7 @@ pub fn compose_contact_system_prompt(
     Some(lines.join("\n").trim().to_string())
 }
 
+#[cfg(test)]
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|raw| raw.trim().to_string())
@@ -663,10 +673,12 @@ fn text(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> St
     }
 }
 
+#[cfg(test)]
 fn text_ref(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> &'static str {
     if locale.is_english() { en } else { zh }
 }
 
+#[cfg(test)]
 fn field(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> &'static str {
     if locale.is_english() { en } else { zh }
 }

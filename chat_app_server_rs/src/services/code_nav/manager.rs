@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::CodeNavProvider;
 use super::fallback::{fallback_definition, fallback_document_symbols, fallback_references};
 use super::registry::default_providers;
 use super::types::{
@@ -7,7 +8,6 @@ use super::types::{
     NavPositionRequest, ProjectContext,
 };
 use super::workspace::build_project_context;
-use super::CodeNavProvider;
 
 #[derive(Clone)]
 pub struct CodeNavManager {

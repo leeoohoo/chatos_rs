@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use tokio::signal;

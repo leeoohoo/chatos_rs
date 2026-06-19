@@ -153,9 +153,13 @@ If the work will modify code, docs, config, scripts, prompts, pages, or other fi
 - an implementation task focused on making the change
 - a review task focused on independently checking whether the change is actually correct
 
+Hard constraint:
+
+- Whenever a task enables `CodeMaintainerWrite`, it must also enable `CodeMaintainerRead`. Do not create code tasks that have write tools but no read tools.
+
 Usually:
 
-- implementation leans toward `CodeMaintainerWrite`, and often also `TerminalController` or `BrowserTools`
+- implementation leans toward `CodeMaintainerRead` + `CodeMaintainerWrite`, and often also `TerminalController` or `BrowserTools`
 - review leans toward `CodeMaintainerRead`, and often also `TerminalController` or `BrowserTools`
 
 The review task should not merely repeat the implementation task. It should explicitly own validation, audit, regression checking, and omission detection.
@@ -187,8 +191,8 @@ Common capability guide:
 Recommended combinations:
 
 - code investigation: `CodeMaintainerRead`
-- code fix: `CodeMaintainerWrite` + `TerminalController`
-- frontend change: `CodeMaintainerWrite` + `TerminalController` + `BrowserTools`
+- code fix: `CodeMaintainerRead` + `CodeMaintainerWrite` + `TerminalController`
+- frontend change: `CodeMaintainerRead` + `CodeMaintainerWrite` + `TerminalController` + `BrowserTools`
 - frontend review: `CodeMaintainerRead` + `TerminalController` + `BrowserTools`
 - remote troubleshooting: `RemoteConnectionController` + `TerminalController`
 

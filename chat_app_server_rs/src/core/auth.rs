@@ -1,8 +1,8 @@
-use axum::extract::FromRequestParts;
-use axum::http::{header::AUTHORIZATION, request::Parts, HeaderMap, StatusCode};
 use axum::Json;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use axum::extract::FromRequestParts;
+use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION, request::Parts};
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -175,12 +175,12 @@ fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_token_secrets, parse_compat_auth_token, sign_compat_auth_payload,
-        DEFAULT_LEGACY_COMPAT_AUTH_SECRET,
+        DEFAULT_LEGACY_COMPAT_AUTH_SECRET, auth_token_secrets, parse_compat_auth_token,
+        sign_compat_auth_payload,
     };
     use crate::config::Config;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     fn build_compat_auth_token(user_id: &str, role: &str, secret: &str, exp: i64) -> String {
         let payload = format!("{}|{}|{}", user_id, role, exp);

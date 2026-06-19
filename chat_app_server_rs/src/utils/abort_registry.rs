@@ -36,11 +36,7 @@ pub fn set_controller(session_id: &str, turn_id: Option<&str>, token: Cancellati
     }
 }
 
-pub fn get_controller(session_id: &str) -> Option<CancellationToken> {
-    let map = ABORT_REGISTRY.lock();
-    map.get(session_id).map(|e| e.token.clone())
-}
-
+#[cfg(test)]
 pub fn abort(session_id: &str) -> bool {
     abort_turn(session_id, None)
 }
@@ -87,6 +83,7 @@ pub fn is_aborted(session_id: &str) -> bool {
     map.get(session_id).map(|e| e.aborted).unwrap_or(false)
 }
 
+#[cfg(test)]
 pub fn reset(session_id: &str) {
     reset_turn(session_id, None);
 }
@@ -109,6 +106,7 @@ pub fn reset_turn(session_id: &str, turn_id: Option<&str>) {
     entry.turn_id = normalized_turn_id;
 }
 
+#[cfg(test)]
 pub fn clear(session_id: &str) {
     if session_id.is_empty() {
         return;

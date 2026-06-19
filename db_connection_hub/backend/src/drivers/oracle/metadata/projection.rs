@@ -88,11 +88,19 @@ pub fn table_projection_children(database: &str, schema: &str, table: &str) -> V
 
     vec![
         MetadataNode {
-            id: metadata_common::make_node_id("index", &[database, schema, &normalized, &index_name]),
+            id: metadata_common::make_node_id(
+                "index",
+                &[database, schema, &normalized, &index_name],
+            ),
             parent_id: metadata_common::make_node_id("table", &[database, schema, &normalized]),
             node_type: MetadataNodeType::Index,
             display_name: index_name.clone(),
-            path: metadata_common::make_qualified_path(&[database, schema, &normalized, &index_name]),
+            path: metadata_common::make_qualified_path(&[
+                database,
+                schema,
+                &normalized,
+                &index_name,
+            ]),
             has_children: false,
         },
         MetadataNode {
@@ -103,9 +111,12 @@ pub fn table_projection_children(database: &str, schema: &str, table: &str) -> V
             parent_id: metadata_common::make_node_id("table", &[database, schema, &normalized]),
             node_type: MetadataNodeType::Trigger,
             display_name: trigger_name.clone(),
-            path: metadata_common::make_qualified_path(
-                &[database, schema, &normalized, &trigger_name],
-            ),
+            path: metadata_common::make_qualified_path(&[
+                database,
+                schema,
+                &normalized,
+                &trigger_name,
+            ]),
             has_children: false,
         },
     ]
@@ -143,7 +154,8 @@ pub fn parse_detail_node(node_id: &str) -> Option<ParsedDetailNode> {
         "synonym",
         "package",
     ] {
-        if let Some([_, schema, object_name]) = metadata_common::parse_prefixed_parts(node_id, prefix)
+        if let Some([_, schema, object_name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
         {
             return Some(ParsedDetailNode {
                 node_type: map_node_type(prefix)?,

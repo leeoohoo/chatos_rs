@@ -113,8 +113,8 @@ mod tests {
     use parking_lot::Mutex;
 
     use super::{
-        mark_runtime_check_ok, mark_runtime_check_warn, reset_runtime_health_for_tests,
-        snapshot_runtime_health, RuntimeHealthStatus,
+        RuntimeHealthStatus, mark_runtime_check_ok, mark_runtime_check_warn,
+        reset_runtime_health_for_tests, snapshot_runtime_health,
     };
 
     static TEST_GUARD: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));

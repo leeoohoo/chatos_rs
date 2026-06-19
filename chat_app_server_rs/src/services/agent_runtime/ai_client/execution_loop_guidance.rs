@@ -2,8 +2,9 @@ use chatos_ai_runtime::response_content_has_image_part;
 use serde_json::Value;
 
 use crate::modules::conversation_runtime::guidance::{
-    build_runtime_guidance_applied_event, build_runtime_guidance_message_content,
-    drain_runtime_guidance_items, resolve_runtime_guidance_locale, RuntimeGuidanceItem,
+    RuntimeGuidanceItem, build_runtime_guidance_applied_event,
+    build_runtime_guidance_message_content, drain_runtime_guidance_items,
+    resolve_runtime_guidance_locale,
 };
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::ai_common::is_non_terminal_response_status;
@@ -82,7 +83,7 @@ pub(super) fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::{append_input_items, build_runtime_guidance_input_item};
     use crate::core::internal_context_locale::InternalContextLocale;
@@ -131,9 +132,11 @@ mod tests {
             .get("content")
             .and_then(|value| value.as_array())
             .expect("guidance content should be response content parts");
-        assert!(content
-            .iter()
-            .any(|part| part.get("type").and_then(|value| value.as_str()) == Some("input_image")));
+        assert!(
+            content.iter().any(
+                |part| part.get("type").and_then(|value| value.as_str()) == Some("input_image")
+            )
+        );
     }
 
     #[tokio::test]

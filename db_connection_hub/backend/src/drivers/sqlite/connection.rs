@@ -5,6 +5,10 @@ use crate::{
         datasource::{ConnectionTestResult, ConnectionTestStageResult, DataSource},
         meta::AuthMode,
     },
+    drivers::connection_common::{
+        connect_timeout_ms, pool_limits, require_sqlite_file_path, validate_supported_auth_mode,
+        DEFAULT_SQLITE_POOL_MAX,
+    },
     error::{AppError, AppResult},
 };
 use sqlx::{
@@ -55,13 +59,10 @@ pub async fn test_connection(datasource: &DataSource) -> AppResult<ConnectionTes
 pub async fn connect_pool(datasource: &DataSource) -> AppResult<sqlx::SqlitePool> {
     validate_connection_payload(datasource)?;
 
-    let path = datasource.network.file_path.clone().ok_or_else(|| {
-        AppError::BadRequest("network.file_path is required for sqlite".to_string())
-    })?;
+    let path = require_sqlite_file_path(datasource)?;
 
-    let timeout_ms = datasource.options.connect_timeout_ms.unwrap_or(5_000);
-    let pool_min = datasource.options.pool_min.unwrap_or(1);
-    let pool_max = datasource.options.pool_max.unwrap_or(5);
+    let timeout_ms = connect_timeout_ms(datasource);
+    let (pool_min, pool_max) = pool_limits(datasource, DEFAULT_SQLITE_POOL_MAX);
 
     let options = SqliteConnectOptions::new()
         .filename(PathBuf::from(path))
@@ -79,28 +80,12 @@ pub async fn connect_pool(datasource: &DataSource) -> AppResult<sqlx::SqlitePool
 }
 
 fn validate_connection_payload(datasource: &DataSource) -> AppResult<()> {
-    match datasource.auth.mode {
-        AuthMode::NoAuth | AuthMode::FileKey => {}
-        _ => {
-            return Err(AppError::BadRequest(
-                "sqlite only supports no_auth/file_key in this stage".to_string(),
-            ))
-        }
-    }
-
-    if datasource
-        .network
-        .file_path
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::BadRequest(
-            "network.file_path is required for sqlite".to_string(),
-        ));
-    }
-
+    validate_supported_auth_mode(
+        datasource,
+        &[AuthMode::NoAuth, AuthMode::FileKey],
+        "sqlite only supports no_auth/file_key in this stage",
+    )?;
+    require_sqlite_file_path(datasource)?;
     Ok(())
 }
 

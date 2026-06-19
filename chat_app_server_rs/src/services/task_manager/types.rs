@@ -4,6 +4,7 @@ use super::normalizer::{normalize_priority, normalize_status, normalize_tags, tr
 
 pub const REVIEW_TIMEOUT_MS_DEFAULT: u64 = 86_400_000;
 pub const REVIEW_TIMEOUT_ERR: &str = "review_timeout";
+#[cfg(test)]
 pub const REVIEW_NOT_FOUND_ERR: &str = "review_not_found";
 pub const TASK_NOT_FOUND_ERR: &str = "task_not_found";
 
@@ -117,15 +118,6 @@ pub struct TaskCreateReviewPayload {
 pub enum TaskReviewAction {
     Confirm,
     Cancel,
-}
-
-impl TaskReviewAction {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Confirm => "confirm",
-            Self::Cancel => "cancel",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

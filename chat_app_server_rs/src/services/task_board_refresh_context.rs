@@ -1,7 +1,9 @@
 use serde_json::Value;
 
+#[cfg(test)]
+use crate::modules::conversation_runtime::task_board::build_runtime_context;
 use crate::modules::conversation_runtime::task_board::{
-    build_runtime_context, load_prefixed_input_items, TaskBoardRuntimeContext,
+    TaskBoardRuntimeContext, load_prefixed_input_items,
 };
 
 use std::sync::{Arc, Mutex};
@@ -16,6 +18,7 @@ impl TaskBoardRefreshContextStore {
         Self::default()
     }
 
+    #[cfg(test)]
     pub(crate) fn set(
         &self,
         session_id: Option<String>,

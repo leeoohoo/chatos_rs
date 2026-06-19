@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::models::{mcp_builtin_kind_guide, mcp_builtin_kind_values};
-use chatos_mcp_runtime::builtin_kind_by_any;
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies};
 
 use super::generic_task_model_config_description;
 
@@ -159,6 +159,8 @@ pub(crate) fn builtin_mcp_kind_schema_description() -> String {
     let mut lines = vec![
         "可选的 builtin MCP 多选列表。只在任务执行确实需要对应能力时选择；不确定时可先调用 list_mcp_builtin_catalog 查看当前目录。可选值："
             .to_string(),
+        "约束：如果选择 CodeMaintainerWrite，必须同时选择 CodeMaintainerRead；后端也会自动补齐这个依赖。"
+            .to_string(),
     ];
     for value in mcp_builtin_kind_values() {
         if let Some(kind) = builtin_kind_by_any(value.as_str()) {
@@ -189,12 +191,14 @@ pub(crate) fn normalize_mcp_builtin_kind_names(values: Vec<String>) -> Result<Ve
                 allowed.join(", ")
             )
         })?;
-        let normalized = kind.kind_name().to_string();
-        if !out.iter().any(|item| item == &normalized) {
-            out.push(normalized);
+        if !out.contains(&kind) {
+            out.push(kind);
         }
     }
-    Ok(out)
+    Ok(complete_builtin_kind_dependencies(out)
+        .into_iter()
+        .map(|kind| kind.kind_name().to_string())
+        .collect())
 }
 
 pub(crate) fn task_status_values() -> Vec<&'static str> {

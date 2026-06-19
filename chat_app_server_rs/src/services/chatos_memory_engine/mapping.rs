@@ -21,11 +21,9 @@ pub struct ChatosThreadMapping {
 
 #[derive(Debug, Clone)]
 pub struct ChatosReviewRepairScope {
-    pub tenant_id: String,
     pub project_id: String,
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
-    pub thread_label: Option<String>,
 }
 
 pub(crate) fn normalize_optional_text(value: Option<&str>) -> Option<String> {
@@ -118,27 +116,17 @@ fn extract_source_metadata_for_engine(metadata: Option<&Value>) -> Value {
 pub(crate) fn build_review_repair_scope(
     session: &Session,
 ) -> Result<ChatosReviewRepairScope, String> {
-    let mapping = build_thread_mapping(session)?;
+    build_thread_mapping(session)?;
     let metadata = session.metadata.as_ref();
     let project_id = resolve_session_project_scope(session.project_id.as_deref(), metadata);
     let contact_id = contact_id_from_metadata(metadata);
     let agent_id = contact_agent_id_from_metadata(metadata)
         .or_else(|| normalize_optional_text(session.selected_agent_id.as_deref()));
 
-    let thread_label = if let Some(contact_id) = contact_id.as_deref() {
-        Some(format!("contact_project:{contact_id}:{project_id}"))
-    } else {
-        agent_id
-            .as_deref()
-            .map(|agent_id| format!("agent_project:{agent_id}:{project_id}"))
-    };
-
     Ok(ChatosReviewRepairScope {
-        tenant_id: mapping.tenant_id,
         project_id,
         contact_id,
         agent_id,
-        thread_label,
     })
 }
 

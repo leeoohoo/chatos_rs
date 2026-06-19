@@ -1,10 +1,10 @@
 use axum::http::{HeaderMap, StatusCode};
-use axum::{routing::post, Json, Router};
+use axum::{Json, Router, routing::post};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::config::Config;
-use crate::core::auth::{access_token_from_headers, build_auth_token, AuthUser};
+use crate::core::auth::{AuthUser, access_token_from_headers, build_auth_token};
 use crate::core::time::now_rfc3339;
 use crate::core::websocket_ticket::issue_websocket_ticket;
 use crate::repositories::auth_users;

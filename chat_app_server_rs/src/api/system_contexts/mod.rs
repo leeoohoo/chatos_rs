@@ -4,8 +4,8 @@ mod contracts;
 mod support;
 
 use axum::{
-    routing::{get, post, put},
     Router,
+    routing::{get, post, put},
 };
 
 use self::ai_handlers::{

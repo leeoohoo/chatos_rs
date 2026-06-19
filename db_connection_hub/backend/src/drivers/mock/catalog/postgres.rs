@@ -16,7 +16,8 @@ pub fn build() -> MockCatalog {
     let public_schema_id = metadata_common::make_node_id("schema", &["orders", "public"]);
     let reporting_schema_id = metadata_common::make_node_id("schema", &["orders", "reporting"]);
     let orders_table_id = metadata_common::make_node_id("table", &["orders", "public", "orders"]);
-    let daily_kpi_view_id = metadata_common::make_node_id("view", &["orders", "public", "daily_kpi"]);
+    let daily_kpi_view_id =
+        metadata_common::make_node_id("view", &["orders", "public", "daily_kpi"]);
     let created_at_index_id = metadata_common::make_node_id(
         "index",
         &["orders", "public", "orders", "idx_orders_created_at"],

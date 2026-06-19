@@ -39,7 +39,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        internal_context_locale_from_settings, parse_internal_context_locale, InternalContextLocale,
+        InternalContextLocale, internal_context_locale_from_settings, parse_internal_context_locale,
     };
 
     #[test]

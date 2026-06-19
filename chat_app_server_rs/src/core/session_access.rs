@@ -1,9 +1,9 @@
 use crate::core::auth::AuthUser;
 use crate::models::session::Session;
 use crate::services::chatos_sessions;
-use axum::http::StatusCode;
 use axum::Json;
-use serde_json::{json, Value};
+use axum::http::StatusCode;
+use serde_json::{Value, json};
 
 #[derive(Debug)]
 pub enum SessionAccessError {

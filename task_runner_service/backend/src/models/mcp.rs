@@ -40,9 +40,9 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             capabilities: &["读取文件", "搜索代码", "查看目录结构", "汇总代码片段"],
         },
         BuiltinMcpKind::CodeMaintainerWrite => McpBuiltinKindGuide {
-            description: "代码维护写入工具，适合需要修改仓库文件、生成补丁或完成工程变更的任务。",
+            description: "代码维护写入工具，适合需要修改仓库文件、生成补丁或完成工程变更的任务；选择它时必须同时选择 CodeMaintainerRead。",
             use_cases: &["修改代码", "修复缺陷", "更新配置或文档", "生成可落地补丁"],
-            capabilities: &["读取文件", "搜索代码", "编辑文件", "应用补丁"],
+            capabilities: &["编辑文件", "应用补丁"],
         },
         BuiltinMcpKind::TerminalController => McpBuiltinKindGuide {
             description: "本地终端工具，适合需要运行命令、编译检查、执行脚本或查看环境状态的任务。",

@@ -1,11 +1,11 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 use sqlx::Row;
 
 use crate::core::values::optional_string_bson;
 use crate::models::project_run_environment::{
     ProjectRunCustomToolchain, ProjectRunEnvironmentSelection,
 };
-use crate::repositories::db::{to_doc, with_db};
+use crate::repositories::db::{mongo_find_one_doc, mongo_upsert_set_doc, with_db};
 
 fn normalize_doc(doc: &Document) -> Option<ProjectRunEnvironmentSelection> {
     Some(ProjectRunEnvironmentSelection {
@@ -38,11 +38,12 @@ pub async fn get_by_project_id(
         |db| {
             let project_id = project_id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("project_run_environment_settings")
-                    .find_one(doc! { "project_id": &project_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(
+                    db,
+                    "project_run_environment_settings",
+                    doc! { "project_id": &project_id },
+                )
+                .await?;
                 Ok(doc.as_ref().and_then(normalize_doc))
             })
         },
@@ -126,16 +127,13 @@ pub async fn upsert(
                 set_doc.insert("terminal_ui_enabled", selection.terminal_ui_enabled);
                 set_doc.insert("updated_at", selection.updated_at.clone());
 
-                db.collection::<Document>("project_run_environment_settings")
-                    .update_one(
-                        doc! { "project_id": &selection.project_id },
-                        doc! { "$set": to_doc(set_doc) },
-                        mongodb::options::UpdateOptions::builder()
-                            .upsert(true)
-                            .build(),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_upsert_set_doc(
+                    db,
+                    "project_run_environment_settings",
+                    doc! { "project_id": &selection.project_id },
+                    set_doc,
+                )
+                .await?;
                 Ok(selection)
             })
         },

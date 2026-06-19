@@ -14,7 +14,7 @@ pub use hub::{
     publish_ui_prompt_updated, subscribe_user_events,
 };
 pub use session_scope::{
-    resolve_conversation_scope, RealtimeAckMessage, RealtimeClientControlMessage,
-    RealtimeErrorMessage, RealtimeSubscriptionSet,
+    RealtimeAckMessage, RealtimeClientControlMessage, RealtimeErrorMessage,
+    RealtimeSubscriptionSet, resolve_conversation_scope,
 };
 pub(crate) use types::RemoteSftpTransferRealtimePayload;

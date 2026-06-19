@@ -14,6 +14,16 @@ import type {
   TaskStatus,
   UiPromptStatus,
 } from '../../types';
+import {
+  isRemoteToolName,
+  payloadAsOptionalNumber,
+  payloadAsOptionalString,
+  payloadAsRecord,
+  summarizeRemoteOperationStats,
+  type RemoteOperationStats,
+} from '../shared/remoteOperationUtils';
+
+export { formatRemoteEndpoint as formatTaskRemoteEndpoint } from '../shared/remoteOperationUtils';
 
 export type TaskFormValues = {
   title: string;
@@ -41,6 +51,29 @@ export type RunTaskFormValues = {
   model_config_id?: string;
   prompt_override?: string;
 };
+
+export const CODE_MAINTAINER_READ_KIND = 'CodeMaintainerRead';
+export const CODE_MAINTAINER_WRITE_KIND = 'CodeMaintainerWrite';
+
+export function completeEnabledBuiltinKindDependencies(values?: string[]): string[] {
+  const out: string[] = [];
+  (values || []).forEach((value) => {
+    const trimmed = value.trim();
+    if (trimmed && !out.includes(trimmed)) {
+      out.push(trimmed);
+    }
+  });
+
+  if (
+    out.includes(CODE_MAINTAINER_WRITE_KIND) &&
+    !out.includes(CODE_MAINTAINER_READ_KIND)
+  ) {
+    const writeIndex = out.indexOf(CODE_MAINTAINER_WRITE_KIND);
+    out.splice(writeIndex >= 0 ? writeIndex : out.length, 0, CODE_MAINTAINER_READ_KIND);
+  }
+
+  return out;
+}
 
 export const statusColorMap: Record<TaskStatus, string> = {
   draft: 'default',
@@ -188,12 +221,7 @@ export type TaskRemoteOperationView = {
   summary?: string;
 };
 
-export type TaskRemoteOperationStats = {
-  total: number;
-  serverCount: number;
-  successCount: number;
-  failedCount: number;
-};
+export type TaskRemoteOperationStats = RemoteOperationStats;
 
 export function collectTaskRemoteOperations(
   events: TaskRunEventRecord[],
@@ -201,33 +229,31 @@ export function collectTaskRemoteOperations(
 ): TaskRemoteOperationView[] {
   return events
     .filter((event) => event.event_type === 'tool_stream')
-    .map((event) => taskPayloadAsRecord(event.payload))
+    .map((event) => payloadAsRecord(event.payload))
     .filter((payload): payload is Record<string, unknown> => Boolean(payload))
-    .filter((payload) => isTaskRemoteToolName(taskPayloadAsOptionalString(payload.name) || ''))
+    .filter((payload) => isRemoteToolName(payloadAsOptionalString(payload.name) || ''))
     .map((payload) => {
-      const result = taskPayloadAsRecord(payload.result);
-      const nestedResult = taskPayloadAsRecord(result?.result);
-      const connectionId = taskPayloadAsOptionalString(result?.connection_id);
+      const result = payloadAsRecord(payload.result);
+      const nestedResult = payloadAsRecord(result?.result);
+      const connectionId = payloadAsOptionalString(result?.connection_id);
       const remoteServer = connectionId ? remoteServerMap.get(connectionId) : undefined;
-      const command = taskPayloadAsOptionalString(result?.command);
-      const path = taskPayloadAsOptionalString(result?.path);
-      const connectionName =
-        taskPayloadAsOptionalString(result?.name) || remoteServer?.name;
+      const command = payloadAsOptionalString(result?.command);
+      const path = payloadAsOptionalString(result?.path);
+      const connectionName = payloadAsOptionalString(result?.name) || remoteServer?.name;
 
       return {
-        name: taskPayloadAsOptionalString(payload.name) || 'unknown_tool',
+        name: payloadAsOptionalString(payload.name) || 'unknown_tool',
         success: Boolean(payload.success) && !Boolean(payload.is_error),
         connectionId,
         connectionName,
-        username:
-          taskPayloadAsOptionalString(result?.username) || remoteServer?.username,
-        host: taskPayloadAsOptionalString(result?.host) || remoteServer?.host,
-        port: taskPayloadAsOptionalNumber(result?.port) || remoteServer?.port,
+        username: payloadAsOptionalString(result?.username) || remoteServer?.username,
+        host: payloadAsOptionalString(result?.host) || remoteServer?.host,
+        port: payloadAsOptionalNumber(result?.port) || remoteServer?.port,
         command,
         path,
-        remoteHost: taskPayloadAsOptionalString(nestedResult?.remote_host),
-        content: taskPayloadAsOptionalString(payload.content),
-        summary: command || path || taskPayloadAsOptionalString(payload.content),
+        remoteHost: payloadAsOptionalString(nestedResult?.remote_host),
+        content: payloadAsOptionalString(payload.content),
+        summary: command || path || payloadAsOptionalString(payload.content),
       };
     });
 }
@@ -235,59 +261,7 @@ export function collectTaskRemoteOperations(
 export function summarizeTaskRemoteOperations(
   items: TaskRemoteOperationView[],
 ): TaskRemoteOperationStats {
-  const serverIds = new Set(items.map((item) => item.connectionId).filter(Boolean));
-  const successCount = items.filter((item) => item.success).length;
-  return {
-    total: items.length,
-    serverCount: serverIds.size,
-    successCount,
-    failedCount: items.length - successCount,
-  };
-}
-
-function isTaskRemoteToolName(name: string): boolean {
-  return (
-    name === 'list_connections' ||
-    name === 'test_connection' ||
-    name === 'run_command' ||
-    name === 'list_directory' ||
-    name === 'read_file'
-  );
-}
-
-function taskPayloadAsRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function taskPayloadAsOptionalString(value: unknown): string | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-  const text = value.trim();
-  return text ? text : undefined;
-}
-
-function taskPayloadAsOptionalNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  return undefined;
-}
-
-export function formatTaskRemoteEndpoint(
-  username?: string,
-  host?: string,
-  port?: number,
-): string | undefined {
-  if (!host) {
-    return undefined;
-  }
-  const userPrefix = username ? `${username}@` : '';
-  const portSuffix = port ? `:${port}` : '';
-  return `${userPrefix}${host}${portSuffix}`;
+  return summarizeRemoteOperationStats(items);
 }
 
 export function buildSchedulePayload(values: TaskFormValues): TaskScheduleConfig | null {

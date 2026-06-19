@@ -1,5 +1,4 @@
 mod codec;
-mod read_ops;
 mod row;
 mod write_ops;
 

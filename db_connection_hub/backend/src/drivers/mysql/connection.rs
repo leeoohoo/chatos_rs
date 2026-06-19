@@ -5,6 +5,10 @@ use crate::{
         datasource::{ConnectionTestResult, ConnectionTestStageResult, DataSource},
         meta::{AuthMode, SslMode},
     },
+    drivers::connection_common::{
+        connect_timeout_ms, pool_limits, require_network_host, require_network_port,
+        validate_network_host_port, validate_password_auth, validate_token_auth, DEFAULT_POOL_MAX,
+    },
     error::{AppError, AppResult},
 };
 use sqlx::{
@@ -61,9 +65,8 @@ pub async fn connect_pool(
     validate_connection_payload(datasource)?;
 
     let connect_options = build_connect_options(datasource, database)?;
-    let timeout_ms = datasource.options.connect_timeout_ms.unwrap_or(5_000);
-    let pool_min = datasource.options.pool_min.unwrap_or(1);
-    let pool_max = datasource.options.pool_max.unwrap_or(20);
+    let timeout_ms = connect_timeout_ms(datasource);
+    let (pool_min, pool_max) = pool_limits(datasource, DEFAULT_POOL_MAX);
 
     MySqlPoolOptions::new()
         .min_connections(pool_min)
@@ -78,15 +81,8 @@ fn build_connect_options(
     datasource: &DataSource,
     database: Option<&str>,
 ) -> AppResult<MySqlConnectOptions> {
-    let host = datasource
-        .network
-        .host
-        .clone()
-        .ok_or_else(|| AppError::BadRequest("network.host is required".to_string()))?;
-    let port = datasource
-        .network
-        .port
-        .ok_or_else(|| AppError::BadRequest("network.port is required".to_string()))?;
+    let host = require_network_host(datasource)?;
+    let port = require_network_port(datasource)?;
 
     let selected_db = database
         .map(|value| value.to_string())
@@ -148,57 +144,15 @@ fn map_ssl_mode(mode: Option<SslMode>) -> MySqlSslMode {
 fn validate_connection_payload(datasource: &DataSource) -> AppResult<()> {
     match datasource.auth.mode {
         AuthMode::Password => {
-            if datasource
-                .auth
-                .username
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("username is required".to_string()));
-            }
-            if datasource
-                .auth
-                .password
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("password is required".to_string()));
-            }
+            validate_password_auth(datasource)?;
         }
         AuthMode::Token => {
-            if datasource
-                .auth
-                .access_token
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("access_token is required".to_string()));
-            }
+            validate_token_auth(datasource)?;
         }
         AuthMode::TlsClientCert | AuthMode::Integrated | AuthMode::FileKey | AuthMode::NoAuth => {}
     }
 
-    if datasource
-        .network
-        .host
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::BadRequest("network.host is required".to_string()));
-    }
-    if datasource.network.port.is_none() {
-        return Err(AppError::BadRequest("network.port is required".to_string()));
-    }
-
-    Ok(())
+    validate_network_host_port(datasource)
 }
 
 pub fn map_db_error(stage: &str, err: sqlx::Error) -> AppError {

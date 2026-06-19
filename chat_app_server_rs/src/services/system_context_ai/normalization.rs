@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(super) fn normalize_optional_text(value: Option<String>, max_len: usize) -> Option<String> {
     value

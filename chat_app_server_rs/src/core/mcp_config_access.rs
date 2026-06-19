@@ -1,9 +1,9 @@
 use crate::core::auth::AuthUser;
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs;
-use axum::http::StatusCode;
 use axum::Json;
-use serde_json::{json, Value};
+use axum::http::StatusCode;
+use serde_json::{Value, json};
 
 #[derive(Debug)]
 pub enum McpConfigAccessError {

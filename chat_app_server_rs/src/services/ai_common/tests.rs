@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::request_support::{format_error_response, truncate_log};
@@ -412,12 +412,16 @@ fn build_aborted_tool_results_only_adds_missing_calls() {
     let merged = build_aborted_tool_results(&tool_calls, Some(existing.as_slice()));
 
     assert_eq!(merged.len(), 2);
-    assert!(merged
-        .iter()
-        .any(|item| item.tool_call_id == "call_existing" && item.success));
-    assert!(merged
-        .iter()
-        .any(|item| item.tool_call_id == "call_missing" && !item.success && item.is_error));
+    assert!(
+        merged
+            .iter()
+            .any(|item| item.tool_call_id == "call_existing" && item.success)
+    );
+    assert!(
+        merged
+            .iter()
+            .any(|item| item.tool_call_id == "call_missing" && !item.success && item.is_error)
+    );
 }
 
 #[test]
@@ -782,9 +786,41 @@ async fn consume_sse_stream_parses_trailing_plain_json_response() {
 }
 
 #[tokio::test]
+async fn consume_sse_stream_preserves_utf8_split_across_chunks() {
+    use bytes::Bytes;
+    use futures::stream;
+
+    let packet = "data: {\"type\":\"delta\",\"text\":\"我是\"}\n\n";
+    let bytes = packet.as_bytes();
+    let split_char = "是".as_bytes();
+    let split_at = bytes
+        .windows(split_char.len())
+        .position(|window| window == split_char)
+        .expect("test packet should contain split character");
+    let chunks = vec![
+        Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[..split_at + 1])),
+        Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[split_at + 1..split_at + 2])),
+        Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[split_at + 2..])),
+    ];
+
+    let mut events = Vec::new();
+    consume_sse_stream(stream::iter(chunks), None, |event| {
+        events.push(event);
+    })
+    .await
+    .expect("stream parsing should succeed");
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].get("text").and_then(|value| value.as_str()),
+        Some("我是")
+    );
+}
+
+#[tokio::test]
 async fn consume_sse_stream_returns_aborted_immediately_when_token_cancelled() {
     use futures::stream;
-    use tokio::time::{sleep, timeout, Duration};
+    use tokio::time::{Duration, sleep, timeout};
 
     let token = CancellationToken::new();
     let cancel_token = token.clone();

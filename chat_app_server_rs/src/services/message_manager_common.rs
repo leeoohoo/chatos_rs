@@ -6,8 +6,8 @@ use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::ai_common::{
-    build_assistant_message_metadata, build_tool_result_metadata,
-    TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE,
+    TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE, build_assistant_message_metadata,
+    build_tool_result_metadata,
 };
 use crate::services::{chatos_memory_engine, chatos_sessions};
 

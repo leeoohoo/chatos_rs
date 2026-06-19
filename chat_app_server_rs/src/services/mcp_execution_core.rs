@@ -16,6 +16,7 @@ pub(crate) use self::execution::{
 };
 pub(crate) use self::executor::McpExecutorCore;
 pub(crate) use self::lifecycle::{build_builtin_tool_state, build_tool_state};
+#[cfg(test)]
 pub(crate) use self::parallelism::should_parallelize_tool_batch;
 pub(crate) use self::registration::{
     codex_gateway_request_tools, register_tools_from_builtin, register_tools_from_http,
@@ -27,21 +28,21 @@ pub(crate) use self::state::McpToolState;
 use self::execution::execute_tools_stream_parallel;
 #[cfg(test)]
 use self::parallelism::{
-    has_conflicting_tool_profiles, paths_overlap, ToolAccessKind, ToolAccessProfile, ToolScope,
+    ToolAccessKind, ToolAccessProfile, ToolScope, has_conflicting_tool_profiles, paths_overlap,
 };
 
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     };
 
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::{
-        execute_tools_stream_parallel, has_conflicting_tool_profiles, paths_overlap,
-        ToolAccessKind, ToolAccessProfile, ToolScope,
+        ToolAccessKind, ToolAccessProfile, ToolScope, execute_tools_stream_parallel,
+        has_conflicting_tool_profiles, paths_overlap,
     };
 
     #[test]

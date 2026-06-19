@@ -6,10 +6,10 @@ use serde_json::Value;
 use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
-use super::{
-    codex_gateway_request_tools, execute_tools_stream_with_registry, should_parallelize_tool_batch,
-    McpToolState,
-};
+use super::{McpToolState, codex_gateway_request_tools, execute_tools_stream_with_registry};
+
+#[cfg(test)]
+use super::should_parallelize_tool_batch;
 
 #[derive(Clone)]
 pub(crate) struct McpExecutorCore {
@@ -96,6 +96,7 @@ impl McpExecutorCore {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) fn should_parallelize_tool_batch(&self, tool_calls: &[Value]) -> bool {
         should_parallelize_tool_batch(tool_calls, self.state.tool_metadata())
     }

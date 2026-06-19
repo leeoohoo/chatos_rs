@@ -9,7 +9,20 @@ pub fn log_chat_begin(
     stdio_count: usize,
     has_api_key: bool,
 ) {
-    info!("[CHAT] begin: session={}, model={}, baseUrl={}, useTools={}, httpMCP={}, stdioMCP={}, hasApiKey={}", session_id, model, if base_url.is_empty() { "(default)" } else { base_url }, use_tools, http_count, stdio_count, has_api_key);
+    info!(
+        "[CHAT] begin: session={}, model={}, baseUrl={}, useTools={}, httpMCP={}, stdioMCP={}, hasApiKey={}",
+        session_id,
+        model,
+        if base_url.is_empty() {
+            "(default)"
+        } else {
+            base_url
+        },
+        use_tools,
+        http_count,
+        stdio_count,
+        has_api_key
+    );
 }
 
 pub fn log_chat_cancelled(session_id: &str) {

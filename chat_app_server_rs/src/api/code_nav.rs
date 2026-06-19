@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use once_cell::sync::Lazy;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::services::code_nav::manager::CodeNavManager;
 use crate::services::code_nav::types::{DocumentSymbolsRequest, NavPositionRequest};

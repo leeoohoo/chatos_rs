@@ -25,7 +25,8 @@ pub fn parse_table_node(node_id: &str) -> Option<(String, String)> {
 
 pub fn parse_detail_node(node_id: &str) -> Option<(MetadataNodeType, String, String)> {
     for prefix in ["table", "view", "procedure", "function"] {
-        if let Some([database, object_name]) = metadata_common::parse_prefixed_parts(node_id, prefix)
+        if let Some([database, object_name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
         {
             let node_type = metadata_common::node_type_from_prefix(prefix)?;
             return Some((node_type, database, object_name));
@@ -76,7 +77,10 @@ mod tests {
     #[test]
     fn parse_detail_node_supports_routine_prefixes() {
         let procedure = parse_detail_node("procedure:crm:sync_customer_tags");
-        assert!(matches!(procedure, Some((MetadataNodeType::Procedure, _, _))));
+        assert!(matches!(
+            procedure,
+            Some((MetadataNodeType::Procedure, _, _))
+        ));
 
         let function = parse_detail_node("function:crm:compute_customer_score");
         assert!(matches!(function, Some((MetadataNodeType::Function, _, _))));

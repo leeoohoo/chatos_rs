@@ -1,8 +1,8 @@
-use crate::drivers::metadata_common;
 use crate::domain::{
     datasource::DatabaseInfo,
     metadata::{MetadataNode, MetadataNodeType},
 };
+use crate::drivers::metadata_common;
 
 pub fn database_nodes(databases: &[DatabaseInfo]) -> Vec<MetadataNode> {
     databases

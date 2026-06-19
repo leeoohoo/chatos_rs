@@ -1,15 +1,15 @@
 use axum::http::StatusCode;
 use axum::{
+    Json, Router,
     extract::{Path, Query},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::core::auth::AuthUser;
 use crate::core::messages::{
-    build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
+    MessageOut, NewMessageFields, build_message, create_message_and_maybe_rename,
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};

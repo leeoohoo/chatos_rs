@@ -93,38 +93,6 @@ pub struct ChatosMemoryProject {
     pub archived_at: Option<String>,
 }
 
-impl ChatosMemoryProject {
-    pub fn new(
-        user_id: String,
-        project_id: String,
-        name: String,
-        root_path: Option<String>,
-        description: Option<String>,
-        status: String,
-        is_virtual: i64,
-    ) -> Self {
-        let now = crate::core::time::now_rfc3339();
-        let archived_at = if status == "archived" || status == "deleted" {
-            Some(now.clone())
-        } else {
-            None
-        };
-        Self {
-            id: Uuid::new_v4().to_string(),
-            user_id,
-            project_id,
-            name,
-            root_path,
-            description,
-            status,
-            is_virtual: is_virtual.max(0),
-            created_at: now.clone(),
-            updated_at: now,
-            archived_at,
-        }
-    }
-}
-
 #[derive(Debug, FromRow)]
 pub struct ChatosMemoryProjectRow {
     pub id: String,
@@ -172,34 +140,6 @@ pub struct ChatosProjectAgentLink {
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
-}
-
-impl ChatosProjectAgentLink {
-    pub fn new(
-        user_id: String,
-        project_id: String,
-        agent_id: String,
-        contact_id: Option<String>,
-        latest_session_id: Option<String>,
-        last_message_at: Option<String>,
-        status: String,
-    ) -> Self {
-        let now = crate::core::time::now_rfc3339();
-        Self {
-            id: Uuid::new_v4().to_string(),
-            user_id,
-            project_id,
-            agent_id,
-            contact_id,
-            latest_session_id,
-            first_bound_at: now.clone(),
-            last_bound_at: now.clone(),
-            last_message_at,
-            status,
-            created_at: now.clone(),
-            updated_at: now,
-        }
-    }
 }
 
 #[derive(Debug, FromRow)]

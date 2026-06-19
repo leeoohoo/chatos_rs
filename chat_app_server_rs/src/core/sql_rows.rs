@@ -1,5 +1,5 @@
-use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
+use sqlx::sqlite::SqliteRow;
 
 pub fn collect_string_column(rows: Vec<SqliteRow>, column: &str) -> Vec<String> {
     rows.into_iter()

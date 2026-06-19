@@ -7,7 +7,7 @@ mod policy_paths;
 mod policy_roots;
 
 use axum::http::StatusCode;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 
@@ -308,8 +308,8 @@ impl FsPathPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::policy_paths::normalize_path_for_compare;
     use super::FsPathPolicy;
+    use super::policy_paths::normalize_path_for_compare;
     use crate::core::auth::AuthUser;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -488,12 +488,16 @@ mod tests {
         let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
         let canonical_child = fs::canonicalize(&child).expect("canonicalize child");
 
-        assert!(policy
-            .forbid_root_mutation(canonical_root.as_path())
-            .is_err());
-        assert!(policy
-            .forbid_root_mutation(canonical_child.as_path())
-            .is_ok());
+        assert!(
+            policy
+                .forbid_root_mutation(canonical_root.as_path())
+                .is_err()
+        );
+        assert!(
+            policy
+                .forbid_root_mutation(canonical_child.as_path())
+                .is_ok()
+        );
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }

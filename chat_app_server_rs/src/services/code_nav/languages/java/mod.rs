@@ -7,126 +7,65 @@ use crate::services::code_nav::fallback::extract_token_at_position;
 use crate::services::code_nav::languages::java::analysis::{
     analyze_java_file, is_java_declaration_location, nav_location_from_symbol,
     resolve_imported_type_paths, resolve_java_declaration_kind, score_java_definition_candidate,
-    search_java_occurrences, JAVA_EXTENSIONS, JAVA_IGNORED_DIRS,
+    search_java_occurrences, JavaSearchMatch, JavaSymbol, JAVA_EXTENSIONS, JAVA_IGNORED_DIRS,
 };
-use crate::services::code_nav::languages::shared_nav::{is_type_like, push_unique_location};
-use crate::services::code_nav::symbol_index::{
-    nav_location_from_indexed_symbol, project_symbol_index, score_indexed_definition_candidate,
-    IndexedSymbol,
+use crate::services::code_nav::languages::shared_nav::{
+    impl_nav_search_match_like_for_field_struct, impl_nav_symbol_like_for_field_struct,
+    indexed_symbols_from, is_type_like, push_current_file_symbol_definitions,
+    push_definition_search_matches, push_indexed_definition_candidates, push_unique_location,
+    search_occurrences_with_fallback, select_reference_locations, sort_and_truncate_nav_locations,
+    HeuristicNavLanguage,
 };
-use crate::services::code_nav::types::{
-    DocumentSymbolItem, DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities,
-    NavLocation, NavPositionRequest, ProjectContext,
-};
-use crate::services::code_nav::CodeNavProvider;
+use crate::services::code_nav::symbol_index::project_symbol_index;
+use crate::services::code_nav::types::{NavLocation, NavPositionRequest, ProjectContext};
 
 const MAX_DEFINITION_RESULTS: usize = 20;
 const MAX_REFERENCE_RESULTS: usize = 100;
 const MAX_SYMBOL_RESULTS: usize = 200;
 
-fn indexed_java_symbols(path: &Path) -> Result<Vec<IndexedSymbol>, String> {
+impl_nav_symbol_like_for_field_struct!(JavaSymbol);
+impl_nav_search_match_like_for_field_struct!(JavaSearchMatch);
+
+fn indexed_java_symbols(
+    path: &Path,
+) -> Result<Vec<crate::services::code_nav::symbol_index::IndexedSymbol>, String> {
     let analysis = analyze_java_file(path)?;
-    Ok(analysis
-        .symbols
-        .into_iter()
-        .map(|symbol| IndexedSymbol {
-            name: symbol.name,
-            kind: symbol.kind,
-            line: symbol.line,
-            column: symbol.column,
-            end_line: symbol.end_line,
-            end_column: symbol.end_column,
-        })
-        .collect())
+    Ok(indexed_symbols_from(&analysis.symbols))
 }
 
 #[derive(Default)]
 pub struct JavaCodeNavProvider;
 
-#[axum::async_trait]
-impl CodeNavProvider for JavaCodeNavProvider {
-    fn provider_id(&self) -> &'static str {
-        "java"
-    }
+impl HeuristicNavLanguage for JavaCodeNavProvider {
+    type Symbol = JavaSymbol;
 
-    fn language_id(&self) -> &'static str {
-        "java"
-    }
+    const PROVIDER_ID: &'static str = "java";
+    const LANGUAGE_ID: &'static str = "java";
+    const FILE_EXTENSION: &'static str = "java";
+    const MAX_SYMBOL_RESULTS: usize = self::MAX_SYMBOL_RESULTS;
 
-    fn definition_mode(&self) -> &'static str {
-        "provider-heuristic"
-    }
-
-    fn references_mode(&self) -> &'static str {
-        "provider-heuristic"
-    }
-
-    fn document_symbols_mode(&self) -> &'static str {
-        "provider-heuristic"
-    }
-
-    fn supports_file(&self, file_path: &Path) -> bool {
-        file_path.extension().and_then(|value| value.to_str()) == Some("java")
-    }
-
-    fn detect_project(&self, ctx: &ProjectContext) -> bool {
+    fn detect_project(ctx: &ProjectContext) -> bool {
         ctx.root.join("pom.xml").exists()
             || ctx.root.join("build.gradle").exists()
             || ctx.root.join("settings.gradle").exists()
     }
 
-    fn capabilities(&self, _ctx: &ProjectContext) -> NavCapabilities {
-        NavCapabilities {
-            supports_definition: true,
-            supports_references: true,
-            supports_document_symbols: true,
-        }
-    }
-
-    async fn definition(
-        &self,
+    fn definition(
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
         java_definition(ctx, req)
     }
 
-    async fn references(
-        &self,
+    fn references(
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
         java_references(ctx, req)
     }
 
-    async fn document_symbols(
-        &self,
-        ctx: &ProjectContext,
-        _req: &DocumentSymbolsRequest,
-    ) -> Result<DocumentSymbolsResponse, String> {
-        let analysis = analyze_java_file(&ctx.file_path)?;
-        let mut symbols: Vec<DocumentSymbolItem> = analysis
-            .symbols
-            .into_iter()
-            .map(|item| DocumentSymbolItem {
-                name: item.name,
-                kind: item.kind,
-                line: item.line,
-                column: item.column,
-                end_line: item.end_line,
-                end_column: item.end_column,
-            })
-            .collect();
-        if symbols.len() > MAX_SYMBOL_RESULTS {
-            symbols.truncate(MAX_SYMBOL_RESULTS);
-        }
-
-        Ok(DocumentSymbolsResponse {
-            provider: self.provider_id().to_string(),
-            language: self.language_id().to_string(),
-            mode: self.document_symbols_mode().to_string(),
-            symbols,
-        })
+    fn analyze_document_symbols(file_path: &Path) -> Result<Vec<Self::Symbol>, String> {
+        Ok(analyze_java_file(file_path)?.symbols)
     }
 }
 
@@ -149,15 +88,17 @@ fn java_definition(
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
 
-    for symbol in current
-        .symbols
-        .iter()
-        .filter(|item| item.name == token && item.line != req.line)
-    {
-        if let Some(location) = nav_location_from_symbol(&ctx.root, &ctx.file_path, symbol, 9.0)? {
-            push_unique_location(&mut candidates, &mut seen, location);
-        }
-    }
+    push_current_file_symbol_definitions(
+        &ctx.root,
+        &ctx.file_path,
+        &current.symbols,
+        &token,
+        req.line,
+        9.0,
+        nav_location_from_symbol,
+        &mut candidates,
+        &mut seen,
+    )?;
 
     for path in resolved_type_paths {
         let analysis = analyze_java_file(&path)?;
@@ -185,75 +126,64 @@ fn java_definition(
         indexed_java_symbols,
     ) {
         if let Some(symbols) = index.symbols_by_name.get(&token) {
-            for indexed in symbols {
-                if indexed.relative_path == ctx.relative_path && indexed.symbol.line == req.line {
-                    continue;
-                }
-                let mut score = score_indexed_definition_candidate(ctx, req, indexed);
-                if resolved_path_set.contains(&indexed.path) {
-                    score += 10.0;
-                }
-                let location = match nav_location_from_indexed_symbol(&ctx.root, indexed, score) {
-                    Ok(location) => location,
-                    Err(_) => continue,
-                };
-                push_unique_location(&mut candidates, &mut seen, location);
-            }
+            push_indexed_definition_candidates(
+                ctx,
+                req,
+                symbols,
+                |indexed| {
+                    if resolved_path_set.contains(&indexed.path) {
+                        10.0
+                    } else {
+                        0.0
+                    }
+                },
+                &mut candidates,
+                &mut seen,
+            );
         }
     }
 
     if candidates.is_empty() {
         let mut analysis_cache = HashMap::new();
-        let mut search_matches =
-            search_java_occurrences(&ctx.root, &token, true, true, MAX_REFERENCE_RESULTS)?;
-        if search_matches.is_empty() {
-            search_matches =
-                search_java_occurrences(&ctx.root, &token, false, true, MAX_REFERENCE_RESULTS)?;
-        }
+        let search_matches = search_occurrences_with_fallback(|case_sensitive, whole_word| {
+            search_java_occurrences(
+                &ctx.root,
+                &token,
+                case_sensitive,
+                whole_word,
+                MAX_REFERENCE_RESULTS,
+            )
+        })?;
 
-        for entry in search_matches {
-            let Some(declaration_kind) = resolve_java_declaration_kind(
-                &mut analysis_cache,
-                &entry,
-                &token,
-                current.primary_type.as_deref(),
-            ) else {
-                continue;
-            };
-            let score = score_java_definition_candidate(
-                ctx,
-                req,
-                &token,
-                declaration_kind,
-                &entry,
-                &resolved_path_set,
-            );
-            let location = NavLocation {
-                path: entry.path,
-                relative_path: entry.relative_path,
-                line: entry.line,
-                column: entry.column,
-                end_line: entry.line,
-                end_column: entry.column + token.chars().count().saturating_sub(1),
-                preview: entry.text,
-                score,
-            };
-            push_unique_location(&mut candidates, &mut seen, location);
-        }
+        push_definition_search_matches(
+            ctx,
+            req,
+            &token,
+            search_matches,
+            |entry, token| {
+                resolve_java_declaration_kind(
+                    &mut analysis_cache,
+                    entry,
+                    token,
+                    current.primary_type.as_deref(),
+                )
+            },
+            |entry, token, declaration_kind| {
+                score_java_definition_candidate(
+                    ctx,
+                    req,
+                    token,
+                    declaration_kind,
+                    entry,
+                    &resolved_path_set,
+                )
+            },
+            &mut candidates,
+            &mut seen,
+        );
     }
 
-    candidates.sort_by(|left, right| {
-        right
-            .score
-            .partial_cmp(&left.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(left.relative_path.cmp(&right.relative_path))
-            .then(left.line.cmp(&right.line))
-            .then(left.column.cmp(&right.column))
-    });
-    if candidates.len() > MAX_DEFINITION_RESULTS {
-        candidates.truncate(MAX_DEFINITION_RESULTS);
-    }
+    sort_and_truncate_nav_locations(&mut candidates, MAX_DEFINITION_RESULTS);
 
     Ok(candidates)
 }
@@ -268,66 +198,31 @@ fn java_references(
     };
 
     let current = analyze_java_file(&ctx.file_path)?;
-    let mut matches =
-        search_java_occurrences(&ctx.root, &token, true, true, MAX_REFERENCE_RESULTS)?;
-    if matches.is_empty() {
-        matches = search_java_occurrences(&ctx.root, &token, false, true, MAX_REFERENCE_RESULTS)?;
-    }
-
-    let mut locations = Vec::new();
-    let mut seen = HashSet::new();
-
-    for entry in matches {
-        let location = NavLocation {
-            score: if entry.relative_path == ctx.relative_path {
-                1.5
-            } else {
-                1.0
-            },
-            path: entry.path,
-            relative_path: entry.relative_path,
-            line: entry.line,
-            column: entry.column,
-            end_line: entry.line,
-            end_column: entry.column + token.chars().count().saturating_sub(1),
-            preview: entry.text,
-        };
-        push_unique_location(&mut locations, &mut seen, location);
-    }
-
-    let mut declarations = Vec::new();
-    let mut references = Vec::new();
-    let mut classification_cache = HashMap::new();
-    for location in locations {
-        if is_java_declaration_location(
-            &mut classification_cache,
-            &location,
+    let matches = search_occurrences_with_fallback(|case_sensitive, whole_word| {
+        search_java_occurrences(
+            &ctx.root,
             &token,
-            current.primary_type.as_deref(),
-        ) {
-            declarations.push(location);
-        } else {
-            references.push(location);
-        }
-    }
-
-    let mut out = if references.is_empty() {
-        declarations
-    } else {
-        references
-    };
-    out.sort_by(|left, right| {
-        (left.relative_path != ctx.relative_path)
-            .cmp(&(right.relative_path != ctx.relative_path))
-            .then(left.relative_path.cmp(&right.relative_path))
-            .then(left.line.cmp(&right.line))
-            .then(left.column.cmp(&right.column))
-    });
-    if out.len() > MAX_REFERENCE_RESULTS {
-        out.truncate(MAX_REFERENCE_RESULTS);
-    }
-
-    Ok(out)
+            case_sensitive,
+            whole_word,
+            MAX_REFERENCE_RESULTS,
+        )
+    })?;
+    let mut classification_cache = HashMap::new();
+    Ok(select_reference_locations(
+        ctx,
+        req,
+        &token,
+        matches,
+        MAX_REFERENCE_RESULTS,
+        |location, token| {
+            is_java_declaration_location(
+                &mut classification_cache,
+                location,
+                token,
+                current.primary_type.as_deref(),
+            )
+        },
+    ))
 }
 
 #[cfg(test)]

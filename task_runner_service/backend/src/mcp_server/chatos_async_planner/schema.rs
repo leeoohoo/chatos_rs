@@ -114,6 +114,8 @@ fn planner_builtin_mcp_kind_schema_description() -> String {
     let mut lines = vec![
         "联系人异步任务必须选择至少一个 builtin MCP 能力。只勾选本次执行真正需要的能力；不确定时可先调用 list_mcp_builtin_catalog 查看说明。"
             .to_string(),
+        "硬性约束：如果选择 CodeMaintainerWrite，必须同时选择 CodeMaintainerRead；不要创建只有写入工具、没有读取工具的代码任务。"
+            .to_string(),
     ];
     for value in mcp_builtin_kind_values() {
         if let Some(kind) = builtin_kind_by_any(value.as_str()) {

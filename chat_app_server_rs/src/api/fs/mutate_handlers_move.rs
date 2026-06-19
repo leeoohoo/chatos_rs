@@ -1,8 +1,8 @@
 use std::fs;
 
-use axum::http::StatusCode;
 use axum::Json;
-use serde_json::{json, Value};
+use axum::http::StatusCode;
+use serde_json::{Value, json};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;

@@ -1,12 +1,11 @@
 pub use chatos_ai_runtime::model_config::{
     default_base_url_for_provider, normalize_provider, normalize_thinking_level,
-    reasoning_effort_for_provider,
 };
 
-pub fn is_gpt_provider(provider: &str) -> bool {
-    chatos_ai_runtime::model_config::is_gpt_provider(provider)
-}
+#[cfg(test)]
+pub use chatos_ai_runtime::model_config::reasoning_effort_for_provider;
 
+#[cfg(test)]
 pub fn thinking_mode_for_provider(
     provider: Option<&str>,
     level: Option<&str>,

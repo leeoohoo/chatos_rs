@@ -15,7 +15,8 @@ pub fn parse_table_node(node_id: &str) -> Option<(String, String, String)> {
 
 pub fn parse_relation_node(node_id: &str) -> Option<(MetadataNodeType, String, String, String)> {
     for prefix in ["table", "view", "materialized_view", "sequence"] {
-        if let Some([database, schema, name]) = metadata_common::parse_prefixed_parts(node_id, prefix)
+        if let Some([database, schema, name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
         {
             let node_type = metadata_common::node_type_from_prefix(prefix)?;
             return Some((node_type, database, schema, name));
@@ -91,7 +92,10 @@ mod tests {
 
     #[test]
     fn function_display_name_handles_empty_signature() {
-        assert_eq!(function_display_name("refresh_cache", ""), "refresh_cache()");
+        assert_eq!(
+            function_display_name("refresh_cache", ""),
+            "refresh_cache()"
+        );
         assert_eq!(
             function_display_name("refresh_cache", "customer_id bigint"),
             "refresh_cache(customer_id bigint)"

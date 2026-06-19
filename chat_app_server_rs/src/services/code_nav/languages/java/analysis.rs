@@ -543,6 +543,9 @@ pub(crate) fn extract_method_signature(
         "constructor"
     } else {
         let declaration_prefix = before_params.strip_suffix(name.as_str())?.trim_end();
+        if declaration_prefix.ends_with('.') {
+            return None;
+        }
         if !has_java_method_return_type(declaration_prefix) {
             return None;
         }

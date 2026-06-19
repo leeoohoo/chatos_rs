@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::{bson::Document, Cursor};
+use mongodb::{Cursor, bson::Document};
 
 pub async fn collect_and_map<T, F>(
     mut cursor: Cursor<Document>,
@@ -15,10 +15,6 @@ where
         }
     }
     Ok(out)
-}
-
-pub async fn collect_documents(cursor: Cursor<Document>) -> Result<Vec<Document>, String> {
-    collect_and_map(cursor, |doc| Some(doc.clone())).await
 }
 
 pub async fn collect_string_field(

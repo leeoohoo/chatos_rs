@@ -1,4 +1,4 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 
 use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
@@ -6,9 +6,12 @@ use crate::core::update_fields::{
     mongo_set_doc_from_optional_strings, sqlite_update_parts_from_optional_strings,
 };
 use crate::models::terminal::{
-    normalize_terminal_kind, Terminal, TerminalRow, TERMINAL_KIND_PROJECT_RUN,
+    TERMINAL_KIND_PROJECT_RUN, Terminal, TerminalRow, normalize_terminal_kind,
 };
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_one_doc, mongo_find_one_doc, mongo_insert_doc,
+    mongo_update_set_doc, to_doc, with_db,
+};
 
 fn normalize_doc(doc: &Document) -> Option<Terminal> {
     Some(Terminal {
@@ -75,11 +78,7 @@ pub async fn get_terminal_by_id(id: &str) -> Result<Option<Terminal>, String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("terminals")
-                    .find_one(doc! { "id": id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(db, "terminals", doc! { "id": id }).await?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
@@ -118,11 +117,7 @@ pub async fn get_project_run_terminal_by_project_id(
                 if let Some(uid) = user_id {
                     filter.insert("user_id", uid);
                 }
-                let doc = db
-                    .collection::<Document>("terminals")
-                    .find_one(filter, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(db, "terminals", filter).await?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
@@ -229,7 +224,7 @@ pub async fn create_terminal(terminal: &Terminal) -> Result<String, String> {
                 ("last_active_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("terminals").insert_one(doc, None).await.map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "terminals", doc).await?;
                 Ok(term_mongo.id.clone())
             })
         },
@@ -281,10 +276,7 @@ pub async fn update_terminal_status(
                 }
                 set_doc.insert("updated_at", now_mongo.clone());
                 set_doc.insert("last_active_at", last_mongo.clone());
-                db.collection::<Document>("terminals")
-                    .update_one(doc! { "id": id }, doc! { "$set": set_doc }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_set_doc(db, "terminals", doc! { "id": id }, set_doc).await?;
                 Ok(())
             })
         },
@@ -324,10 +316,7 @@ pub async fn delete_terminal(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("terminals")
-                    .delete_one(doc! { "id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_one_doc(db, "terminals", doc! { "id": &id }).await?;
                 Ok(())
             })
         },

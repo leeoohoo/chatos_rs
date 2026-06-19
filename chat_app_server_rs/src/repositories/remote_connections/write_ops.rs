@@ -1,7 +1,9 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, doc};
 
 use crate::models::remote_connection::RemoteConnection;
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_one_doc, mongo_insert_doc, mongo_update_set_doc, to_doc, with_db,
+};
 
 use super::encrypt_connection_for_storage;
 
@@ -90,10 +92,7 @@ pub async fn create_remote_connection(connection: &RemoteConnection) -> Result<S
                 ("last_active_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("remote_connections")
-                    .insert_one(doc, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "remote_connections", doc).await?;
                 Ok(conn_mongo.id.clone())
             })
         },
@@ -145,36 +144,33 @@ pub async fn update_remote_connection(id: &str, data: &RemoteConnection) -> Resu
     with_db(
         |db| {
             Box::pin(async move {
-                db.collection::<Document>("remote_connections")
-                    .update_one(
-                        doc! { "id": id_mongo },
-                        doc! {
-                            "$set": {
-                                "name": data_mongo.name,
-                                "host": data_mongo.host,
-                                "port": data_mongo.port,
-                                "username": data_mongo.username,
-                                "auth_type": data_mongo.auth_type,
-                                "password": data_mongo.password,
-                                "private_key_path": data_mongo.private_key_path,
-                                "certificate_path": data_mongo.certificate_path,
-                                "default_remote_path": data_mongo.default_remote_path,
-                                "host_key_policy": data_mongo.host_key_policy,
-                                "jump_enabled": data_mongo.jump_enabled,
-                                "jump_connection_id": data_mongo.jump_connection_id,
-                                "jump_host": data_mongo.jump_host,
-                                "jump_port": data_mongo.jump_port,
-                                "jump_username": data_mongo.jump_username,
-                                "jump_private_key_path": data_mongo.jump_private_key_path,
-                                "jump_certificate_path": data_mongo.jump_certificate_path,
-                                "jump_password": data_mongo.jump_password,
-                                "updated_at": now_mongo,
-                            }
-                        },
-                        None,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_set_doc(
+                    db,
+                    "remote_connections",
+                    doc! { "id": id_mongo },
+                    doc! {
+                        "name": data_mongo.name,
+                        "host": data_mongo.host,
+                        "port": data_mongo.port,
+                        "username": data_mongo.username,
+                        "auth_type": data_mongo.auth_type,
+                        "password": data_mongo.password,
+                        "private_key_path": data_mongo.private_key_path,
+                        "certificate_path": data_mongo.certificate_path,
+                        "default_remote_path": data_mongo.default_remote_path,
+                        "host_key_policy": data_mongo.host_key_policy,
+                        "jump_enabled": data_mongo.jump_enabled,
+                        "jump_connection_id": data_mongo.jump_connection_id,
+                        "jump_host": data_mongo.jump_host,
+                        "jump_port": data_mongo.jump_port,
+                        "jump_username": data_mongo.jump_username,
+                        "jump_private_key_path": data_mongo.jump_private_key_path,
+                        "jump_certificate_path": data_mongo.jump_certificate_path,
+                        "jump_password": data_mongo.jump_password,
+                        "updated_at": now_mongo,
+                    },
+                )
+                .await?;
                 Ok(())
             })
         },
@@ -220,27 +216,28 @@ pub async fn touch_remote_connection(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("remote_connections")
-                    .update_one(
-                        doc! { "id": id },
-                        doc! { "$set": { "updated_at": now_mongo.clone(), "last_active_at": now_mongo } },
-                        None,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_set_doc(
+                    db,
+                    "remote_connections",
+                    doc! { "id": id },
+                    doc! { "updated_at": now_mongo.clone(), "last_active_at": now_mongo },
+                )
+                .await?;
                 Ok(())
             })
         },
         |pool| {
             let id = id.to_string();
             Box::pin(async move {
-                sqlx::query("UPDATE remote_connections SET updated_at = ?, last_active_at = ? WHERE id = ?")
-                    .bind(&now_sqlite)
-                    .bind(&now_sqlite)
-                    .bind(&id)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                sqlx::query(
+                    "UPDATE remote_connections SET updated_at = ?, last_active_at = ? WHERE id = ?",
+                )
+                .bind(&now_sqlite)
+                .bind(&now_sqlite)
+                .bind(&id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
@@ -253,10 +250,7 @@ pub async fn delete_remote_connection(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("remote_connections")
-                    .delete_one(doc! { "id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_one_doc(db, "remote_connections", doc! { "id": &id }).await?;
                 Ok(())
             })
         },

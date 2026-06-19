@@ -1,10 +1,10 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 use serde_json::Value;
 use sqlx::Row;
 
 use crate::core::values::bool_to_sqlite_int;
 use crate::models::session_runtime_settings::SessionRuntimeSettings;
-use crate::repositories::db::with_db;
+use crate::repositories::db::{mongo_find_one_doc, mongo_update_one_doc, with_db};
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value
@@ -100,14 +100,12 @@ pub async fn get_session_runtime_settings(
             let session_id = session_id.to_string();
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("session_runtime_settings")
-                    .find_one(
-                        doc! { "session_id": &session_id, "user_id": &user_id },
-                        None,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(
+                    db,
+                    "session_runtime_settings",
+                    doc! { "session_id": &session_id, "user_id": &user_id },
+                )
+                .await?;
                 Ok(doc.and_then(|document| doc_to_settings(&document)))
             })
         },
@@ -192,19 +190,17 @@ pub async fn upsert_session_runtime_settings(
                 if !unset_doc.is_empty() {
                     update_doc.insert("$unset", Bson::Document(unset_doc));
                 }
-                db.collection::<Document>("session_runtime_settings")
-                    .update_one(
-                        doc! {
-                            "session_id": &mongo_settings.session_id,
-                            "user_id": &mongo_settings.user_id,
-                        },
-                        update_doc,
-                        mongodb::options::UpdateOptions::builder()
-                            .upsert(true)
-                            .build(),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_one_doc(
+                    db,
+                    "session_runtime_settings",
+                    doc! {
+                        "session_id": &mongo_settings.session_id,
+                        "user_id": &mongo_settings.user_id,
+                    },
+                    update_doc,
+                    Some(mongodb::options::UpdateOptions::builder().upsert(true).build()),
+                )
+                .await?;
                 Ok(())
             })
         },

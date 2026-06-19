@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::FromRow;
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpConfig {
@@ -16,25 +15,6 @@ pub struct McpConfig {
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
-}
-
-impl McpConfig {
-    pub fn new(name: String, command: String) -> Self {
-        let now = crate::core::time::now_rfc3339();
-        Self {
-            id: Uuid::new_v4().to_string(),
-            name,
-            command,
-            r#type: "stdio".to_string(),
-            args: None,
-            env: None,
-            cwd: None,
-            user_id: None,
-            enabled: true,
-            created_at: now.clone(),
-            updated_at: now,
-        }
-    }
 }
 
 #[derive(Debug, FromRow)]

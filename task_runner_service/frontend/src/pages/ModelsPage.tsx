@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Button,
@@ -12,16 +12,12 @@ import {
   List,
   Modal,
   Select,
-  Segmented,
   Space,
-  Statistic,
   Switch,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
 import { api } from '../api/client';
@@ -31,87 +27,24 @@ import type {
   ModelCatalogResponse,
   ModelConfigRecord,
   ModelConfigTestResponse,
-  ProviderModelRecord,
 } from '../types';
-
-type ModelFormValues = {
-  name: string;
-  provider: string;
-  base_url: string;
-  api_key: string;
-  model: string;
-  usage_scenario?: string;
-  temperature?: number;
-  max_output_tokens?: number;
-  thinking_level?: string;
-  supports_responses: boolean;
-  instructions?: string;
-  request_cwd?: string;
-  include_prompt_cache_retention: boolean;
-  request_body_limit_bytes?: number;
-  enabled: boolean;
-};
-
-type SupportedProvider = 'openai' | 'deepseek' | 'kimik2';
-
-const SUPPORTED_PROVIDER_OPTIONS: Array<{ label: SupportedProvider; value: SupportedProvider }> = [
-  { label: 'openai', value: 'openai' },
-  { label: 'deepseek', value: 'deepseek' },
-  { label: 'kimik2', value: 'kimik2' },
-];
-
-const THINKING_LEVEL_OPTIONS: Record<SupportedProvider, Array<{ label: string; value: string }>> = {
-  openai: [
-    { label: 'none', value: 'none' },
-    { label: 'minimal', value: 'minimal' },
-    { label: 'low', value: 'low' },
-    { label: 'medium', value: 'medium' },
-    { label: 'high', value: 'high' },
-    { label: 'xhigh', value: 'xhigh' },
-  ],
-  deepseek: [
-    { label: 'none', value: 'none' },
-    { label: 'low', value: 'low' },
-    { label: 'medium', value: 'medium' },
-    { label: 'high', value: 'high' },
-    { label: 'max', value: 'max' },
-  ],
-  kimik2: [
-    { label: 'none', value: 'none' },
-    { label: 'auto', value: 'auto' },
-    { label: 'low', value: 'low' },
-    { label: 'medium', value: 'medium' },
-    { label: 'high', value: 'high' },
-    { label: 'xhigh', value: 'xhigh' },
-  ],
-};
-
-function defaultBaseUrlForProvider(provider?: string): string {
-  switch (provider) {
-    case 'deepseek':
-      return 'https://api.deepseek.com';
-    case 'kimik2':
-      return 'https://api.moonshot.ai/v1';
-    case 'openai':
-    default:
-      return 'https://api.openai.com/v1';
-  }
-}
-
-function normalizeSupportedProvider(provider?: string): SupportedProvider {
-  const value = (provider || '').trim().toLowerCase();
-  if (value === 'deepseek') {
-    return 'deepseek';
-  }
-  if (value === 'kimi' || value === 'kimik2' || value === 'kiminik2' || value === 'moonshot') {
-    return 'kimik2';
-  }
-  return 'openai';
-}
+import {
+  defaultBaseUrlForProvider,
+  type ModelEnabledFilter,
+  type ModelFormValues,
+  normalizeSupportedProvider,
+  SUPPORTED_PROVIDER_OPTIONS,
+  type SupportedProvider,
+  THINKING_LEVEL_OPTIONS,
+} from './models/modelPageUtils';
+import { ModelListTable } from './models/ModelListTable';
+import { ModelListToolbar } from './models/ModelListToolbar';
+import { ModelStatsBar } from './models/ModelStatsBar';
+import { useModelMutations } from './models/useModelMutations';
+import { useModelsPageData } from './models/useModelsPageData';
 
 export function ModelsPage() {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [messageApi, contextHolder] = message.useMessage();
@@ -120,102 +53,57 @@ export function ModelsPage() {
   const [testResult, setTestResult] = useState<ModelConfigTestResponse | null>(null);
   const [keywordFilter, setKeywordFilter] = useState('');
   const [providerFilter, setProviderFilter] = useState<'all' | string>('all');
-  const [enabledFilter, setEnabledFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  const [enabledFilter, setEnabledFilter] = useState<ModelEnabledFilter>('all');
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogResponse | null>(null);
   const [baseUrlDirty, setBaseUrlDirty] = useState(false);
   const [form] = Form.useForm<ModelFormValues>();
   const watchedProvider = Form.useWatch('provider', form);
   const watchedModel = Form.useWatch('model', form);
   const watchedApiKey = Form.useWatch('api_key', form);
+  const watchedSupportsResponses = Form.useWatch('supports_responses', form);
   const providerRef = useRef<SupportedProvider>('openai');
   const autoUpdatingBaseUrlRef = useRef(false);
   const routeModelId = searchParams.get('model_id') || undefined;
   const normalizedProvider = normalizeSupportedProvider(watchedProvider);
-  const enabledFilterOptions = useMemo(
-    () => [
-      { label: t('models.filter.all'), value: 'all' },
-      { label: t('models.filter.enabled'), value: 'enabled' },
-      { label: t('models.filter.disabled'), value: 'disabled' },
-    ],
-    [t],
-  );
-
-  const modelsQuery = useQuery({
-    queryKey: ['model-configs'],
-    queryFn: api.listModelConfigs,
+  const {
+    enabledFilterOptions,
+    modelsQuery,
+    usageQuery,
+    selectedModelQuery,
+    modelTasksQuery,
+    modelRunsQuery,
+    taskCountByModelId,
+    runCountByModelId,
+    selectedModel,
+    modelOptions,
+    thinkingLevelOptions,
+    providerOptions,
+    filteredModels,
+    filteredEnabledCount,
+    filteredTaskCount,
+    filteredRunCount,
+  } = useModelsPageData({
+    t,
+    routeModelId,
+    keywordFilter,
+    providerFilter,
+    enabledFilter,
+    normalizedProvider,
+    modelCatalog,
+    watchedModel,
+    editingProvider: editingModel?.provider,
+    watchedSupportsResponses,
   });
-  const usageQuery = useQuery({
-    queryKey: ['model-config-usage'],
-    queryFn: api.listModelConfigUsage,
-  });
-  const selectedModelQuery = useQuery({
-    queryKey: ['model-config', routeModelId],
-    queryFn: () => api.getModelConfig(routeModelId!),
-    enabled: Boolean(routeModelId),
-  });
-  const modelTasksQuery = useQuery({
-    queryKey: ['model-tasks', routeModelId],
-    queryFn: () => api.listTasks({ model_config_id: routeModelId!, limit: 20 }),
-    enabled: Boolean(routeModelId),
-  });
-  const modelRunsQuery = useQuery({
-    queryKey: ['model-runs', routeModelId],
-    queryFn: () => api.listRuns({ model_config_id: routeModelId!, limit: 10 }),
-    enabled: Boolean(routeModelId),
-  });
-
-  const createModelMutation = useMutation({
-    mutationFn: api.createModelConfig,
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['model-configs'] }),
-        queryClient.invalidateQueries({ queryKey: ['model-config-usage'] }),
-      ]);
-      messageApi.success(t('models.created'));
-      resetModelDrawerState();
-    },
-    onError: (error: Error) => messageApi.error(error.message),
-  });
-
-  const updateModelMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: Partial<CreateModelConfigPayload> }) =>
-      api.updateModelConfig(id, payload),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['model-configs'] }),
-        queryClient.invalidateQueries({ queryKey: ['model-config-usage'] }),
-      ]);
-      messageApi.success(t('models.updated'));
-      resetModelDrawerState();
-    },
-    onError: (error: Error) => messageApi.error(error.message),
-  });
-
-  const deleteModelMutation = useMutation({
-    mutationFn: api.deleteModelConfig,
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['model-configs'] }),
-        queryClient.invalidateQueries({ queryKey: ['model-config-usage'] }),
-        queryClient.invalidateQueries({ queryKey: ['tasks'] }),
-        queryClient.invalidateQueries({ queryKey: ['task-index'] }),
-      ]);
-      messageApi.success(t('models.deleted'));
-    },
-    onError: (error: Error) => messageApi.error(error.message),
-  });
-
-  const testModelMutation = useMutation({
-    mutationFn: (id: string) => api.testModelConfig(id, {}),
-    onSuccess: (result) => {
-      setTestResult(result);
-      if (result.ok) {
-        messageApi.success(t('models.testSuccess'));
-      } else {
-        messageApi.warning(t('models.testFailed'));
-      }
-    },
-    onError: (error: Error) => messageApi.error(error.message),
+  const {
+    createModelMutation,
+    updateModelMutation,
+    deleteModelMutation,
+    testModelMutation,
+  } = useModelMutations({
+    t,
+    messageApi,
+    onModelSaved: resetModelDrawerState,
+    onTestResult: setTestResult,
   });
   const previewModelCatalogMutation = useMutation({
     mutationFn: api.previewModelCatalog,
@@ -279,202 +167,6 @@ export function ModelsPage() {
       supports_responses: values.supports_responses,
     });
   }
-
-  const taskCountByModelId = useMemo(() => {
-    const map = new Map<string, number>();
-    (usageQuery.data || []).forEach((usage) => {
-      map.set(usage.model_config_id, usage.task_count);
-    });
-    return map;
-  }, [usageQuery.data]);
-  const runCountByModelId = useMemo(() => {
-    const map = new Map<string, number>();
-    (usageQuery.data || []).forEach((usage) => {
-      map.set(usage.model_config_id, usage.run_count);
-    });
-    return map;
-  }, [usageQuery.data]);
-  const selectedModel = useMemo(() => {
-    if (!routeModelId) {
-      return null;
-    }
-    return (
-      selectedModelQuery.data ||
-      (modelsQuery.data || []).find((model) => model.id === routeModelId) ||
-      null
-    );
-  }, [modelsQuery.data, routeModelId, selectedModelQuery.data]);
-  const modelOptions = useMemo(() => {
-    const options = new Map<string, ProviderModelRecord>();
-    (modelCatalog?.models || []).forEach((item) => {
-      options.set(item.id, item);
-    });
-    const currentModel = watchedModel;
-    if (currentModel && !options.has(currentModel)) {
-      options.set(currentModel, {
-        id: currentModel,
-        owned_by: editingModel?.provider || null,
-        context_length: null,
-        supports_images: false,
-        supports_video: false,
-        supports_reasoning: false,
-        supports_responses: form.getFieldValue('supports_responses') ?? false,
-        raw: undefined,
-      });
-    }
-    return Array.from(options.values()).map((item) => ({
-      label: item.context_length
-        ? `${item.id} (${item.context_length.toLocaleString()})`
-        : item.id,
-      value: item.id,
-    }));
-  }, [editingModel?.provider, form, modelCatalog?.models, watchedModel]);
-  const thinkingLevelOptions = useMemo(
-    () => THINKING_LEVEL_OPTIONS[normalizedProvider],
-    [normalizedProvider],
-  );
-  const providerOptions = useMemo(
-    () =>
-      ['all', ...Array.from(new Set((modelsQuery.data || []).map((model) => model.provider))).sort()]
-        .map((provider) => ({
-          label: provider === 'all' ? t('models.providerAll') : provider,
-          value: provider,
-        })),
-    [modelsQuery.data, t],
-  );
-  const filteredModels = useMemo(() => {
-    const keyword = keywordFilter.trim().toLowerCase();
-    return (modelsQuery.data || []).filter((model) => {
-      if (providerFilter !== 'all' && model.provider !== providerFilter) {
-        return false;
-      }
-      if (enabledFilter === 'enabled' && !model.enabled) {
-        return false;
-      }
-      if (enabledFilter === 'disabled' && model.enabled) {
-        return false;
-      }
-      if (!keyword) {
-        return true;
-      }
-      return [model.name, model.model, model.provider, model.base_url, model.usage_scenario]
-        .some((value) => value?.toLowerCase().includes(keyword));
-    });
-  }, [enabledFilter, keywordFilter, modelsQuery.data, providerFilter]);
-  const filteredTaskCount = useMemo(
-    () =>
-      filteredModels.reduce((total, model) => total + (taskCountByModelId.get(model.id) || 0), 0),
-    [filteredModels, taskCountByModelId],
-  );
-  const filteredRunCount = useMemo(
-    () =>
-      filteredModels.reduce((total, model) => total + (runCountByModelId.get(model.id) || 0), 0),
-    [filteredModels, runCountByModelId],
-  );
-
-  const columns: ColumnsType<ModelConfigRecord> = [
-    {
-      title: t('models.column.name'),
-      dataIndex: 'name',
-      render: (_, record) => (
-        <Space direction="vertical" size={0}>
-          <Button type="link" style={{ padding: 0 }} onClick={() => openDetailDrawer(record.id)}>
-            <Typography.Text strong>{record.name}</Typography.Text>
-          </Button>
-          <Typography.Text type="secondary">{record.model}</Typography.Text>
-        </Space>
-      ),
-    },
-    {
-      title: 'Provider',
-      dataIndex: 'provider',
-      width: 140,
-    },
-    {
-      title: t('models.column.usageScenario'),
-      dataIndex: 'usage_scenario',
-      width: 240,
-      ellipsis: true,
-      render: (value?: string | null) => value || '-',
-    },
-    {
-      title: 'Base URL',
-      dataIndex: 'base_url',
-      width: 280,
-      ellipsis: true,
-    },
-    {
-      title: 'Responses',
-      dataIndex: 'supports_responses',
-      width: 120,
-      render: (value: boolean) => (value ? t('common.yes') : t('common.no')),
-    },
-    {
-      title: t('models.column.boundTasks'),
-      key: 'task_count',
-      width: 120,
-      render: (_, record) => taskCountByModelId.get(record.id) || 0,
-    },
-    {
-      title: t('models.column.runCount'),
-      key: 'run_count',
-      width: 120,
-      render: (_, record) => runCountByModelId.get(record.id) || 0,
-    },
-    {
-      title: t('common.status'),
-      dataIndex: 'enabled',
-      width: 120,
-      render: (value: boolean) => (
-        <Tag color={value ? 'success' : 'default'}>
-          {value ? t('common.enabled') : t('common.disabled')}
-        </Tag>
-      ),
-    },
-    {
-      title: t('common.updatedAt'),
-      dataIndex: 'updated_at',
-      width: 180,
-      render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
-    },
-    {
-      title: t('common.actions'),
-      key: 'actions',
-      width: 420,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" onClick={() => openDetailDrawer(record.id)}>
-            {t('common.detail')}
-          </Button>
-          <Button
-            size="small"
-            onClick={() => navigate(`/tasks?model_config_id=${encodeURIComponent(record.id)}`)}
-          >
-            {t('tasks.title')}
-          </Button>
-          <Button
-            size="small"
-            onClick={() => navigate(`/runs?model_config_id=${encodeURIComponent(record.id)}`)}
-          >
-            {t('prompts.column.run')}
-          </Button>
-          <Button size="small" onClick={() => openEditDrawer(record)}>
-            {t('common.edit')}
-          </Button>
-          <Button
-            size="small"
-            onClick={() => testModelMutation.mutate(record.id)}
-            loading={testModelMutation.isPending}
-          >
-            {t('common.test')}
-          </Button>
-          <Button size="small" danger onClick={() => confirmDelete(record)}>
-            {t('common.delete')}
-          </Button>
-        </Space>
-      ),
-    },
-  ];
 
   function openCreateDrawer() {
     const provider: SupportedProvider = 'openai';
@@ -594,76 +286,50 @@ export function ModelsPage() {
     <>
       {contextHolder}
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        <Space style={{ justifyContent: 'space-between', width: '100%' }}>
-          <Space direction="vertical" size={0}>
-            <Typography.Title level={3} style={{ margin: 0 }}>
-              {t('models.title')}
-            </Typography.Title>
-            <Typography.Text type="secondary">
-              {t('models.subtitle')}
-            </Typography.Text>
-          </Space>
-          <Space>
-            <Input
-              allowClear
-              placeholder={t('models.searchPlaceholder')}
-              style={{ width: 240 }}
-              value={keywordFilter}
-              onChange={(event) => setKeywordFilter(event.target.value)}
-            />
-            <Select
-              style={{ width: 220 }}
-              value={providerFilter}
-              options={providerOptions}
-              onChange={(value) => setProviderFilter(value)}
-            />
-            <Segmented
-              value={enabledFilter}
-              onChange={(value) =>
-                setEnabledFilter(value as 'all' | 'enabled' | 'disabled')
-              }
-              options={enabledFilterOptions}
-            />
-            <Button
-              onClick={() => {
-                setKeywordFilter('');
-                setProviderFilter('all');
-                setEnabledFilter('all');
-              }}
-            >
-              {t('common.clearFilters')}
-            </Button>
-            <Button onClick={() => modelsQuery.refetch()}>{t('common.refresh')}</Button>
-            <Button type="primary" onClick={openCreateDrawer}>
-              {t('models.new')}
-            </Button>
-          </Space>
-        </Space>
-
-        <Space size="large" wrap>
-          <Statistic title={t('models.visible')} value={filteredModels.length} />
-          <Statistic
-            title={t('models.enabledCount')}
-            value={filteredModels.filter((model) => model.enabled).length}
-          />
-          <Statistic title={t('models.column.boundTasks')} value={filteredTaskCount} />
-          <Statistic title={t('models.runRecords')} value={filteredRunCount} />
-        </Space>
-
-        <Table<ModelConfigRecord>
-          rowKey="id"
-          columns={columns}
-          dataSource={filteredModels}
-          loading={modelsQuery.isLoading || usageQuery.isLoading}
-          pagination={{ pageSize: 8 }}
-          locale={{
-            emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={t('models.empty')}
-              />
-            ),
+        <ModelListToolbar
+          t={t}
+          keywordFilter={keywordFilter}
+          providerFilter={providerFilter}
+          enabledFilter={enabledFilter}
+          providerOptions={providerOptions}
+          enabledFilterOptions={enabledFilterOptions}
+          onKeywordFilterChange={setKeywordFilter}
+          onProviderFilterChange={setProviderFilter}
+          onEnabledFilterChange={setEnabledFilter}
+          onClearFilters={() => {
+            setKeywordFilter('');
+            setProviderFilter('all');
+            setEnabledFilter('all');
           }}
+          onRefresh={() => modelsQuery.refetch()}
+          onCreate={openCreateDrawer}
+        />
+
+        <ModelStatsBar
+          t={t}
+          visibleCount={filteredModels.length}
+          enabledCount={filteredEnabledCount}
+          taskCount={filteredTaskCount}
+          runCount={filteredRunCount}
+        />
+
+        <ModelListTable
+          t={t}
+          models={filteredModels}
+          loading={modelsQuery.isLoading || usageQuery.isLoading}
+          taskCountByModelId={taskCountByModelId}
+          runCountByModelId={runCountByModelId}
+          testing={testModelMutation.isPending}
+          onOpenDetail={openDetailDrawer}
+          onOpenEdit={openEditDrawer}
+          onDelete={confirmDelete}
+          onTest={(modelId) => testModelMutation.mutate(modelId)}
+          onViewTasks={(modelId) =>
+            navigate(`/tasks?model_config_id=${encodeURIComponent(modelId)}`)
+          }
+          onViewRuns={(modelId) =>
+            navigate(`/runs?model_config_id=${encodeURIComponent(modelId)}`)
+          }
         />
       </Space>
 

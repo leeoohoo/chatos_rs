@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{doc, Regex};
+use mongodb::bson::{Regex, doc};
 use mongodb::options::FindOptions;
 
 use crate::models::memory_skill::{
@@ -173,59 +173,6 @@ pub async fn get_skill_by_id(
                     .await
                     .map_err(|e| e.to_string())?;
                 Ok(row.map(MemorySkillRow::to_model))
-            })
-        },
-    )
-    .await
-}
-
-pub async fn list_skills_by_ids(
-    user_ids: &[String],
-    skill_ids: &[String],
-) -> Result<Vec<MemorySkill>, String> {
-    if user_ids.is_empty() || skill_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    with_db(
-        |db| {
-            let user_ids = user_ids.to_vec();
-            let skill_ids = skill_ids.to_vec();
-            Box::pin(async move {
-                let filter = if user_ids.len() == 1 {
-                    doc! { "user_id": user_ids[0].clone(), "id": { "$in": skill_ids } }
-                } else {
-                    doc! { "user_id": { "$in": user_ids }, "id": { "$in": skill_ids } }
-                };
-                let cursor = db
-                    .collection::<MemorySkill>("memory_skills")
-                    .find(filter, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                cursor
-                    .try_collect::<Vec<MemorySkill>>()
-                    .await
-                    .map_err(|e| e.to_string())
-            })
-        },
-        |pool| {
-            let user_ids = user_ids.to_vec();
-            let skill_ids = skill_ids.to_vec();
-            Box::pin(async move {
-                let mut sql = "SELECT * FROM memory_skills WHERE user_id IN (".to_string();
-                sql.push_str(&vec!["?"; user_ids.len()].join(","));
-                sql.push_str(") AND id IN (");
-                sql.push_str(&vec!["?"; skill_ids.len()].join(","));
-                sql.push(')');
-                let mut query = sqlx::query_as::<_, MemorySkillRow>(&sql);
-                for user_id in &user_ids {
-                    query = query.bind(user_id);
-                }
-                for skill_id in &skill_ids {
-                    query = query.bind(skill_id);
-                }
-                let rows = query.fetch_all(pool).await.map_err(|e| e.to_string())?;
-                Ok(rows.into_iter().map(MemorySkillRow::to_model).collect())
             })
         },
     )

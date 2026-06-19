@@ -11,8 +11,8 @@ use crate::services::agent_runtime::ai_client::AiClientCallbacks as AgentAiClien
 
 pub use self::callbacks::build_chat_stream_callbacks;
 pub use self::events::{
-    enrich_chat_result_with_persisted_messages, handle_chat_result, send_error_event,
-    send_start_event, send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
+    ChatEventSink, ChatRealtimeStreamContext, enrich_chat_result_with_persisted_messages,
+    handle_chat_result, send_error_event, send_start_event, send_tools_unavailable_event,
 };
 
 pub struct ChatStreamCallbacks {

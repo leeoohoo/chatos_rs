@@ -2,10 +2,10 @@ mod completion_error;
 mod request_error;
 mod support;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::warn;
 
-use super::{build_current_input_items, AiClient};
+use super::{AiClient, build_current_input_items};
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::chatos_memory_engine;
 use crate::services::chatos_sessions;
@@ -90,10 +90,7 @@ impl AiClient {
         if status.failed || (!status.generated && !status.compacted) {
             warn!(
                 "[Agent Runtime] remote active summary did not compact context: session_id={}, failed={}, generated={}, compacted={}",
-                session_id,
-                status.failed,
-                status.generated,
-                status.compacted
+                session_id, status.failed, status.generated, status.compacted
             );
             return false;
         }

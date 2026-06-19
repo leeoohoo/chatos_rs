@@ -128,10 +128,9 @@ async fn list_schema_children(
                 MetadataNodeType::View => {
                     metadata_common::make_node_id("view", &[database, schema, &name])
                 }
-                MetadataNodeType::MaterializedView => metadata_common::make_node_id(
-                    "materialized_view",
-                    &[database, schema, &name],
-                ),
+                MetadataNodeType::MaterializedView => {
+                    metadata_common::make_node_id("materialized_view", &[database, schema, &name])
+                }
                 MetadataNodeType::Sequence => {
                     metadata_common::make_node_id("sequence", &[database, schema, &name])
                 }
@@ -156,7 +155,10 @@ async fn list_schema_children(
             .unwrap_or_default();
         let display_name = function_display_name(&name, &identity_args);
         MetadataNode {
-            id: metadata_common::make_node_id("function", &[database, schema, &name, &identity_args]),
+            id: metadata_common::make_node_id(
+                "function",
+                &[database, schema, &name, &identity_args],
+            ),
             parent_id: metadata_common::make_node_id("schema", &[database, schema]),
             node_type: MetadataNodeType::Function,
             display_name: display_name.clone(),

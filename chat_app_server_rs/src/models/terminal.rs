@@ -94,10 +94,6 @@ pub fn normalize_terminal_kind(value: Option<String>) -> String {
 pub struct TerminalService;
 
 impl TerminalService {
-    pub async fn create(data: Terminal) -> Result<String, String> {
-        repo::create_terminal(&data).await
-    }
-
     pub async fn get_by_id(id: &str) -> Result<Option<Terminal>, String> {
         repo::get_terminal_by_id(id).await
     }
@@ -125,15 +121,6 @@ impl TerminalService {
         project_id: &str,
     ) -> Result<Vec<Terminal>, String> {
         repo::list_project_run_terminals_by_project_id(user_id, project_id).await
-    }
-
-    pub async fn update_status(
-        id: &str,
-        status: Option<String>,
-        last_active_at: Option<String>,
-        process_id: Option<i64>,
-    ) -> Result<(), String> {
-        repo::update_terminal_status(id, status, last_active_at, process_id).await
     }
 
     pub async fn touch(id: &str) -> Result<(), String> {

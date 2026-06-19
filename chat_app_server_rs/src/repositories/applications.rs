@@ -2,8 +2,11 @@ use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::models::application::{Application, ApplicationRow};
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
-use mongodb::bson::{doc, Bson, Document};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_one_doc, mongo_find_one_doc, mongo_insert_doc,
+    mongo_update_set_doc, to_doc, with_db,
+};
+use mongodb::bson::{Bson, Document, doc};
 
 fn normalize_doc(doc: &Document) -> Option<Application> {
     Some(Application {
@@ -57,11 +60,7 @@ pub async fn get_application_by_id(id: &str) -> Result<Option<Application>, Stri
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("applications")
-                    .find_one(doc! { "id": id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(db, "applications", doc! { "id": id }).await?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
@@ -100,7 +99,7 @@ pub async fn create_application(app: &Application) -> Result<Application, String
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("applications").insert_one(doc, None).await.map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "applications", doc).await?;
                 Ok(app_mongo.clone())
             })
         },
@@ -140,7 +139,7 @@ pub async fn update_application(id: &str, updates: &Application) -> Result<(), S
                 set_doc.insert("description", crate::core::values::optional_string_bson(updates_mongo.description.clone()));
                 set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
                 set_doc.insert("updated_at", now_mongo.clone());
-                db.collection::<Document>("applications").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
+                mongo_update_set_doc(db, "applications", doc! { "id": id }, set_doc).await?;
                 Ok(())
             })
         },
@@ -168,10 +167,7 @@ pub async fn delete_application(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("applications")
-                    .delete_one(doc! { "id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_one_doc(db, "applications", doc! { "id": &id }).await?;
                 db.collection::<Document>("mcp_config_applications")
                     .delete_many(doc! { "application_id": &id }, None)
                     .await

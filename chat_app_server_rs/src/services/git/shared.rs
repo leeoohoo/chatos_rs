@@ -3,7 +3,7 @@ use std::path::Path;
 use super::contracts::{GitActionResult, GitSummary};
 use super::inspection::is_tracked_path;
 use super::parsing::{compact_output, summary_from_status};
-use super::process::{git_output, GitCommandOutput, GitCommandStatusOutput, DEFAULT_GIT_TIMEOUT};
+use super::process::{DEFAULT_GIT_TIMEOUT, GitCommandOutput, GitCommandStatusOutput, git_output};
 use super::validation::ensure_safe_ref;
 
 pub(super) async fn read_repo_summary(repo_root: &Path) -> Result<GitSummary, String> {

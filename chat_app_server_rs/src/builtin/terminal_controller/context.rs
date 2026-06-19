@@ -112,11 +112,7 @@ fn cd_command_for_path(path: &Path) -> String {
 }
 
 fn shell_input_newline() -> &'static str {
-    if cfg!(windows) {
-        "\r"
-    } else {
-        "\n"
-    }
+    if cfg!(windows) { "\r" } else { "\n" }
 }
 
 pub(super) fn normalize_shell_input(input: &str) -> String {

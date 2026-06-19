@@ -214,7 +214,7 @@ impl TsServiceMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_semantic_locations, semantic_capabilities, TsServiceMode};
+    use super::{TsServiceMode, get_semantic_locations, semantic_capabilities};
     use crate::services::code_nav::types::{NavPositionRequest, ProjectContext};
     use std::fs;
     use std::path::PathBuf;

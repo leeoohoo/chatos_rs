@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use chatos_mcp_runtime::builtin_kind_by_any;
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies};
 
 use crate::config::AppConfig;
 use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord};
@@ -19,13 +19,16 @@ pub(super) fn selected_builtin_kinds(
     if kinds.is_empty() && mcp_config.enabled {
         kinds = chatos_mcp_runtime::configurable_builtin_kinds();
     }
-    kinds
+    complete_builtin_kind_dependencies(kinds)
 }
 
 pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {
-    values
+    let kinds = values
         .into_iter()
         .filter_map(|value| builtin_kind_by_any(&value))
+        .collect::<Vec<_>>();
+    complete_builtin_kind_dependencies(kinds)
+        .into_iter()
         .map(|kind| kind.kind_name().to_string())
         .collect()
 }

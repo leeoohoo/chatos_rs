@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::services::ai_prompt_tool::parse_json_loose;
 

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use chatos_ai_runtime as shared_ai_runtime;
 
@@ -37,16 +37,8 @@ impl PromptRunnerRuntime {
         self.config.provider.as_str()
     }
 
-    pub fn thinking_level(&self) -> Option<String> {
-        self.config.thinking_level.clone()
-    }
-
     pub fn temperature(&self) -> f64 {
         self.config.temperature.unwrap_or(0.7)
-    }
-
-    pub fn supports_responses(&self) -> bool {
-        self.config.supports_responses
     }
 
     pub fn api_key(&self) -> &str {

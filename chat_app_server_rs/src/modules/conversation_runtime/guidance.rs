@@ -1,8 +1,8 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::services::ai_common::build_user_content_parts;
-use crate::services::runtime_guidance_manager::{runtime_guidance_manager, DEFAULT_DRAIN_LIMIT};
+use crate::services::runtime_guidance_manager::{DEFAULT_DRAIN_LIMIT, runtime_guidance_manager};
 use crate::utils::attachments::Attachment;
 
 use super::user_context::load_runtime_user_context;

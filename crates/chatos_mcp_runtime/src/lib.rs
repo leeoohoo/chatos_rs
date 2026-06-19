@@ -14,8 +14,8 @@ pub use builder::McpExecutorBuilder;
 pub use builtin_catalog::{
     builtin_kind_by_any, builtin_kind_by_command, builtin_kind_by_config_id,
     builtin_kind_by_kind_name, builtin_kind_by_server_name, builtin_servers_from_kinds,
-    configurable_builtin_kinds, default_runtime_builtin_kinds, BuiltinMcpKind,
-    BuiltinMcpServerOptions, AGENT_BUILDER_COMMAND, AGENT_BUILDER_MCP_ID,
+    complete_builtin_kind_dependencies, configurable_builtin_kinds, default_runtime_builtin_kinds,
+    BuiltinMcpKind, BuiltinMcpServerOptions, AGENT_BUILDER_COMMAND, AGENT_BUILDER_MCP_ID,
     AGENT_BUILDER_SERVER_NAME, BROWSER_TOOLS_COMMAND, BROWSER_TOOLS_MCP_ID,
     BROWSER_TOOLS_SERVER_NAME, CODE_MAINTAINER_READ_COMMAND, CODE_MAINTAINER_READ_MCP_ID,
     CODE_MAINTAINER_READ_SERVER_NAME, CODE_MAINTAINER_WRITE_COMMAND, CODE_MAINTAINER_WRITE_MCP_ID,

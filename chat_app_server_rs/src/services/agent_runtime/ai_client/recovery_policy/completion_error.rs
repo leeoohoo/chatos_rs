@@ -1,8 +1,8 @@
 use serde_json::Value;
 use tracing::warn;
 
-use super::super::prev_context::{is_context_length_exceeded_error, is_missing_tool_call_error};
 use super::super::AiClient;
+use super::super::prev_context::{is_context_length_exceeded_error, is_missing_tool_call_error};
 use super::support::merge_pending_tool_items_into_stateless;
 use crate::services::ai_client_common::AiClientCallbacks;
 

@@ -581,5 +581,8 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
 
-    Ok(Database::Mongo { client, db })
+    Ok(Database::Mongo {
+        _client: client,
+        db,
+    })
 }

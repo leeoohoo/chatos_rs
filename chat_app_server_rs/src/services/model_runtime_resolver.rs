@@ -1,7 +1,7 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::config::Config;
-use crate::core::ai_model_config::{resolve_chat_model_config, ResolvedChatModelConfig};
+use crate::core::ai_model_config::{ResolvedChatModelConfig, resolve_chat_model_config};
 use crate::models::session::Session;
 use crate::repositories::ai_model_configs;
 

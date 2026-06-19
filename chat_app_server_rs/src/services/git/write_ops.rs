@@ -1,5 +1,5 @@
 use super::contracts::*;
-use super::process::{git_output, git_output_with_status, DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT};
+use super::process::{DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT, git_output, git_output_with_status};
 use super::shared::{
     action_result, action_result_with_status, discard_paths, read_repo_summary,
     require_current_branch, stage_paths, unstage_paths,

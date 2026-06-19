@@ -1,7 +1,9 @@
 use crate::core::mongo_cursor::collect_and_map;
 use crate::models::session_mcp_server::SessionMcpServer;
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
-use mongodb::bson::{doc, Bson, Document};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_many_doc, mongo_insert_doc, to_doc, with_db,
+};
+use mongodb::bson::{Bson, Document, doc};
 use sqlx::Row;
 
 fn normalize_doc(doc: &Document) -> Option<SessionMcpServer> {
@@ -77,7 +79,7 @@ pub async fn add_session_mcp_server(item: &SessionMcpServer) -> Result<(), Strin
                 ("created_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("session_mcp_servers").insert_one(doc, None).await.map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "session_mcp_servers", doc).await?;
                 Ok(())
             })
         },
@@ -107,7 +109,12 @@ pub async fn delete_session_mcp_server(
             let session_id = session_id.to_string();
             let mcp_id = mcp_config_id_or_id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("session_mcp_servers").delete_many(doc! { "session_id": session_id, "$or": [ { "id": &mcp_id }, { "mcp_config_id": &mcp_id } ] }, None).await.map_err(|e| e.to_string())?;
+                mongo_delete_many_doc(
+                    db,
+                    "session_mcp_servers",
+                    doc! { "session_id": session_id, "$or": [ { "id": &mcp_id }, { "mcp_config_id": &mcp_id } ] },
+                )
+                .await?;
                 Ok(())
             })
         },

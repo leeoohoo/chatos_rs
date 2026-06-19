@@ -1,13 +1,13 @@
 use chatos_mcp_runtime::ToolCallerModelRuntime;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::info;
 
 use crate::core::tool_call::tool_calls_value_has_items;
 use crate::modules::conversation_runtime::task_board::{
-    build_hidden_task_turn_review_metadata, build_task_turn_follow_up_directive,
-    build_task_turn_follow_up_message, build_task_turn_review_retry_guidance,
-    parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
-    TaskTurnReviewOutcome,
+    TaskTurnFollowUpMode, TaskTurnReviewOutcome, build_hidden_task_turn_review_metadata,
+    build_task_turn_follow_up_directive, build_task_turn_follow_up_message,
+    build_task_turn_review_retry_guidance, parse_task_turn_review_outcome,
+    strip_task_turn_review_marker,
 };
 use crate::services::agent_runtime::ai_request_handler::StreamCallbacks;
 use crate::services::ai_common::{
@@ -16,7 +16,7 @@ use crate::services::ai_common::{
     is_task_runner_async_plan_message_mode, terminal_empty_response_error,
 };
 use crate::utils::abort_registry;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::warn;
 
 use super::compat::{log_usage_snapshot, rewrite_system_messages_to_user};
@@ -26,7 +26,7 @@ use super::prev_context::base_url_disallows_system_messages;
 use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
 };
-use super::{build_current_input_items, AiClient, AiClientCallbacks};
+use super::{AiClient, AiClientCallbacks, build_current_input_items};
 
 const TASK_RUNNER_ASYNC_PLANNER_FINAL_SUMMARY_PROMPT: &str = "Task planning is complete. Do not call any more tools. Reply to the user now with a concise final summary that confirms the tasks were created or adjusted, summarizes the execution plan and prerequisite relationships, and states that the tasks will run automatically in the background and results will be sent later when completed.\n任务安排已经完成。不要再调用任何工具。现在直接给用户简要总结：确认任务已创建或调整，概括执行计划和前置关系，并说明任务会在后台自动执行，完成后会再把结果发送给用户。";
 

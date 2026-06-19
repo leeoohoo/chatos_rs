@@ -1,13 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::test_support::{
-    before_request_set_task_done_on_nth_request, build_test_client,
-    build_test_client_with_max_iterations, chunk_callbacks, demo_echo_tool, empty_callbacks,
-    ensure_memory_session, run_process_with_tools, setup_sqlite_task_board, start_mock_provider,
-    unique_session_id, MockProviderStep, RunProcessWithToolsArgs,
+    MockProviderStep, RunProcessWithToolsArgs, before_request_set_task_done_on_nth_request,
+    build_test_client, build_test_client_with_max_iterations, chunk_callbacks, demo_echo_tool,
+    empty_callbacks, ensure_memory_session, run_process_with_tools, setup_sqlite_task_board,
+    start_mock_provider, unique_session_id,
 };
 use crate::services::agent_runtime::ai_client::AiClientCallbacks;
 use crate::services::task_manager::TaskDraft;
@@ -220,9 +220,11 @@ async fn task_follow_up_continues_same_turn_until_unfinished_tasks_finish() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 3);
-    assert!(requests
-        .iter()
-        .all(|request| request.get("prev_id").is_none()));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.get("prev_id").is_none())
+    );
 }
 
 #[tokio::test]
@@ -312,9 +314,11 @@ async fn task_follow_up_reviews_same_turn_when_work_is_done() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert!(requests
-        .iter()
-        .all(|request| request.get("prev_id").is_none()));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.get("prev_id").is_none())
+    );
     let phases = phase_events.lock().expect("lock poisoned").clone();
     assert_eq!(phases.len(), 1);
     assert_eq!(
@@ -586,14 +590,18 @@ async fn recovers_input_must_be_list_and_retries_with_list_payload() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert!(requests[0]
-        .get("input")
-        .map(|value| value.is_string())
-        .unwrap_or(false));
-    assert!(requests[1]
-        .get("input")
-        .map(|value| value.is_array())
-        .unwrap_or(false));
+    assert!(
+        requests[0]
+            .get("input")
+            .map(|value| value.is_string())
+            .unwrap_or(false)
+    );
+    assert!(
+        requests[1]
+            .get("input")
+            .map(|value| value.is_array())
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -779,20 +787,26 @@ async fn tool_follow_up_uses_stateless_tool_context_outputs() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert!(requests
-        .iter()
-        .all(|request| request.get("prev_id").is_none()));
-    assert!(requests[1]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str()) == Some("call_tool_1")
-            });
-            has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.get("prev_id").is_none())
+    );
+    assert!(
+        requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_1")
+                });
+                has_output
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -843,26 +857,29 @@ async fn falls_back_to_stateless_when_tool_call_response_has_no_response_id() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].get("prev_id").is_none());
     assert!(requests[1].get("prev_id").is_none());
-    assert!(requests[1]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_missing_resp_id")
-            });
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_missing_resp_id")
-            });
-            has_user && has_call && has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_user = items
+                    .iter()
+                    .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_missing_resp_id")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_missing_resp_id")
+                });
+                has_user && has_call && has_output
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -918,26 +935,29 @@ async fn falls_back_to_stateless_when_incremental_tool_outputs_are_rejected() {
     assert_eq!(requests.len(), 3);
     assert!(requests[1].get("prev_id").is_none());
     assert!(requests[2].get("prev_id").is_none());
-    assert!(requests[2]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_prev_id_seed")
-            });
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_prev_id_seed")
-            });
-            has_user && has_call && has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_user = items
+                    .iter()
+                    .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_prev_id_seed")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_prev_id_seed")
+                });
+                has_user && has_call && has_output
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -1012,44 +1032,50 @@ async fn keeps_stateless_mode_after_missing_tool_call_fallback() {
     assert_eq!(requests.len(), 4);
     assert!(requests[1].get("prev_id").is_none());
     assert!(requests[2].get("prev_id").is_none());
-    assert!(requests[2]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_prev_id_seed")
-            });
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_prev_id_seed")
-            });
-            has_call && has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_prev_id_seed")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_prev_id_seed")
+                });
+                has_call && has_output
+            })
+            .unwrap_or(false)
+    );
     assert!(requests[3].get("prev_id").is_none());
-    assert!(requests[3]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_prev_id_recovered")
-            });
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_tool_prev_id_recovered")
-            });
-            has_user && has_call && has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[3]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_user = items
+                    .iter()
+                    .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_prev_id_recovered")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_prev_id_recovered")
+                });
+                has_user && has_call && has_output
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -1109,35 +1135,42 @@ async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_mer
     assert_eq!(requests.len(), 2);
 
     assert!(requests[0].get("prev_id").is_none());
-    assert!(requests[0]
-        .get("stream")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false));
-    assert!(requests[1]
-        .get("stream")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false));
+    assert!(
+        requests[0]
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    );
+    assert!(
+        requests[1]
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    );
     assert!(requests[1].get("prev_id").is_none());
-    assert!(requests[1]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_tool_1")
-            });
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_tool_1")
-            });
-            has_user && has_call && has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_user = items
+                    .iter()
+                    .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_tool_1")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_tool_1")
+                });
+                has_user && has_call && has_output
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -1194,26 +1227,29 @@ async fn recovers_stream_response_failed_missing_tool_call_without_completed_eve
 
     assert!(requests[0].get("prev_id").is_none());
     assert!(requests[1].get("prev_id").is_none());
-    assert!(requests[1]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_failed_1")
-            });
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_failed_1")
-            });
-            has_user && has_call && has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_user = items
+                    .iter()
+                    .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_failed_1")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_failed_1")
+                });
+                has_user && has_call && has_output
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -1270,26 +1306,29 @@ async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
 
     assert!(requests[0].get("prev_id").is_none());
     assert!(requests[1].get("prev_id").is_none());
-    assert!(requests[1]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_user = items
-                .iter()
-                .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
-            let has_call = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_mix_1")
-            });
-            let has_output = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_mix_1")
-            });
-            has_user && has_call && has_output
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_user = items
+                    .iter()
+                    .any(|item| item.get("role").and_then(|value| value.as_str()) == Some("user"));
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_mix_1")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_mix_1")
+                });
+                has_user && has_call && has_output
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -1363,35 +1402,43 @@ async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 3);
-    assert!(requests
-        .iter()
-        .all(|request| request.get("prev_id").is_none()));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.get("prev_id").is_none())
+    );
 
-    assert!(requests[1]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_output_1 = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_round_1")
-            });
-            has_output_1
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_output_1 = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_round_1")
+                });
+                has_output_1
+            })
+            .unwrap_or(false)
+    );
 
-    assert!(requests[2]
-        .get("input")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            let has_output_2 = items.iter().any(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-                    && item.get("call_id").and_then(|value| value.as_str())
-                        == Some("call_stream_round_2")
-            });
-            has_output_2
-        })
-        .unwrap_or(false));
+    assert!(
+        requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_output_2 = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_round_2")
+                });
+                has_output_2
+            })
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -1557,10 +1604,12 @@ async fn retries_non_terminal_empty_stream_response_and_recovers_statelessly() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].get("prev_id").is_none());
     assert!(requests[1].get("prev_id").is_none());
-    assert!(requests[1]
-        .get("input")
-        .map(|value| value.is_array())
-        .unwrap_or(false));
+    assert!(
+        requests[1]
+            .get("input")
+            .map(|value| value.is_array())
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]
@@ -1609,10 +1658,12 @@ async fn retries_terminal_empty_stream_response_and_recovers_with_stateless_retr
     assert_eq!(requests.len(), 2);
     assert!(requests[0].get("prev_id").is_none());
     assert!(requests[1].get("prev_id").is_none());
-    assert!(requests[1]
-        .get("input")
-        .map(|value| value.is_array())
-        .unwrap_or(false));
+    assert!(
+        requests[1]
+            .get("input")
+            .map(|value| value.is_array())
+            .unwrap_or(false)
+    );
 }
 
 #[tokio::test]

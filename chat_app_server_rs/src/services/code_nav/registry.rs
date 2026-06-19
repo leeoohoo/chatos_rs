@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::CodeNavProvider;
 use super::languages::c::CCodeNavProvider;
 use super::languages::cpp::CppCodeNavProvider;
 use super::languages::csharp::CSharpCodeNavProvider;
@@ -10,7 +11,6 @@ use super::languages::kotlin::KotlinCodeNavProvider;
 use super::languages::python::PythonCodeNavProvider;
 use super::languages::rust::RustCodeNavProvider;
 use super::languages::typescript::TypeScriptCodeNavProvider;
-use super::CodeNavProvider;
 
 pub fn default_providers() -> Vec<Arc<dyn CodeNavProvider>> {
     vec![

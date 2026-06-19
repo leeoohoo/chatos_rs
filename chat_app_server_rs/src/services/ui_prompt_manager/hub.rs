@@ -2,18 +2,19 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 use super::normalizer::trimmed_non_empty;
+#[cfg(test)]
+use super::types::{UI_PROMPT_NOT_FOUND_ERR, UiPromptResponseSubmission, UiPromptStatus};
 use super::types::{
-    UiPromptDecision, UiPromptPayload, UiPromptResponseSubmission, UiPromptStatus,
-    UI_PROMPT_NOT_FOUND_ERR, UI_PROMPT_TIMEOUT_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    UI_PROMPT_TIMEOUT_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT, UiPromptDecision, UiPromptPayload,
 };
 
 #[derive(Debug)]
 struct PendingUiPromptEntry {
-    payload: UiPromptPayload,
-    sender: oneshot::Sender<UiPromptDecision>,
+    _payload: UiPromptPayload,
+    _sender: oneshot::Sender<UiPromptDecision>,
 }
 
 #[derive(Debug, Default)]
@@ -26,10 +27,17 @@ impl UiPromptHub {
         let prompt_id = payload.prompt_id.clone();
         let (sender, receiver) = oneshot::channel();
         let mut pending = self.pending.lock().await;
-        pending.insert(prompt_id, PendingUiPromptEntry { payload, sender });
+        pending.insert(
+            prompt_id,
+            PendingUiPromptEntry {
+                _payload: payload,
+                _sender: sender,
+            },
+        );
         receiver
     }
 
+    #[cfg(test)]
     async fn resolve(
         &self,
         prompt_id: &str,
@@ -48,16 +56,11 @@ impl UiPromptHub {
         }
 
         entry
-            .sender
+            ._sender
             .send(UiPromptDecision { status, response })
             .map_err(|_| "ui_prompt_listener_closed".to_string())?;
 
-        Ok(entry.payload)
-    }
-
-    async fn payload(&self, prompt_id: &str) -> Option<UiPromptPayload> {
-        let pending = self.pending.lock().await;
-        pending.get(prompt_id).map(|entry| entry.payload.clone())
+        Ok(entry._payload)
     }
 
     async fn remove(&self, prompt_id: &str) {
@@ -111,6 +114,7 @@ pub async fn wait_for_ui_prompt_decision(
     }
 }
 
+#[cfg(test)]
 pub async fn submit_ui_prompt_response(
     prompt_id: &str,
     response: UiPromptResponseSubmission,
@@ -118,9 +122,4 @@ pub async fn submit_ui_prompt_response(
     let prompt_id =
         trimmed_non_empty(prompt_id).ok_or_else(|| "prompt_id is required".to_string())?;
     UI_PROMPT_HUB.resolve(prompt_id, response).await
-}
-
-pub async fn get_ui_prompt_payload(prompt_id: &str) -> Option<UiPromptPayload> {
-    let prompt_id = trimmed_non_empty(prompt_id)?;
-    UI_PROMPT_HUB.payload(prompt_id).await
 }

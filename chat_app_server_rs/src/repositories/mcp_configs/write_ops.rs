@@ -1,7 +1,10 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 
 use crate::models::mcp_config::McpConfig;
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_many_doc, mongo_delete_one_doc, mongo_insert_doc,
+    mongo_update_set_doc, to_doc, with_db,
+};
 
 pub async fn create_mcp_config(cfg: &McpConfig) -> Result<(), String> {
     let now = crate::core::time::now_rfc3339();
@@ -44,10 +47,7 @@ pub async fn create_mcp_config(cfg: &McpConfig) -> Result<(), String> {
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("mcp_configs")
-                    .insert_one(doc, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "mcp_configs", doc).await?;
                 Ok(())
             })
         },
@@ -110,10 +110,7 @@ pub async fn update_mcp_config(id: &str, updates: &McpConfig) -> Result<(), Stri
                 );
                 set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
                 set_doc.insert("updated_at", now_mongo.clone());
-                db.collection::<Document>("mcp_configs")
-                    .update_one(doc! { "id": id }, doc! { "$set": set_doc }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_set_doc(db, "mcp_configs", doc! { "id": id }, set_doc).await?;
                 Ok(())
             })
         },
@@ -145,18 +142,11 @@ pub async fn delete_mcp_config(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("mcp_configs")
-                    .delete_one(doc! { "id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                db.collection::<Document>("mcp_config_applications")
-                    .delete_many(doc! { "mcp_config_id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                db.collection::<Document>("mcp_config_profiles")
-                    .delete_many(doc! { "mcp_config_id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_one_doc(db, "mcp_configs", doc! { "id": &id }).await?;
+                mongo_delete_many_doc(db, "mcp_config_applications", doc! { "mcp_config_id": &id })
+                    .await?;
+                mongo_delete_many_doc(db, "mcp_config_profiles", doc! { "mcp_config_id": &id })
+                    .await?;
                 Ok(())
             })
         },

@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 use sqlx::Row;
 
 use crate::core::mongo_cursor::collect_map_sorted_desc;
@@ -7,7 +7,10 @@ use crate::core::secrets::{decrypt_optional_secret, encrypt_optional_secret, is_
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::db::{self, Database};
 use crate::models::ai_model_config::{AiModelConfig, AiModelConfigRow};
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_one_doc, mongo_find_one_doc, mongo_insert_doc,
+    mongo_update_set_doc, to_doc, with_db,
+};
 use crate::utils::model_config::normalize_provider;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -148,11 +151,7 @@ pub async fn get_ai_model_config_by_id(id: &str) -> Result<Option<AiModelConfig>
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("ai_model_configs")
-                    .find_one(doc! { "id": id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(db, "ai_model_configs", doc! { "id": id }).await?;
                 Ok(doc
                     .and_then(|document| normalize_doc(&document))
                     .map(decrypt_model_for_read))
@@ -219,10 +218,7 @@ pub async fn create_ai_model_config(config: &AiModelConfig) -> Result<AiModelCon
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("ai_model_configs")
-                    .insert_one(doc, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "ai_model_configs", doc).await?;
                 Ok(())
             })
         },
@@ -310,10 +306,7 @@ pub async fn update_ai_model_config(id: &str, config: &AiModelConfig) -> Result<
                     Bson::Boolean(config_mongo.supports_responses),
                 );
                 set_doc.insert("updated_at", now_mongo.clone());
-                db.collection::<Document>("ai_model_configs")
-                    .update_one(doc! { "id": id }, doc! { "$set": set_doc }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_set_doc(db, "ai_model_configs", doc! { "id": id }, set_doc).await?;
                 Ok(())
             })
         },
@@ -351,10 +344,7 @@ pub async fn delete_ai_model_config(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("ai_model_configs")
-                    .delete_one(doc! { "id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_one_doc(db, "ai_model_configs", doc! { "id": &id }).await?;
                 Ok(())
             })
         },
@@ -373,8 +363,8 @@ pub async fn delete_ai_model_config(id: &str) -> Result<(), String> {
     .await
 }
 
-pub async fn backfill_ai_model_config_secret_storage(
-) -> Result<AiModelConfigSecretBackfillReport, String> {
+pub async fn backfill_ai_model_config_secret_storage()
+-> Result<AiModelConfigSecretBackfillReport, String> {
     if !has_legacy_ai_model_configs_storage().await? {
         return Ok(AiModelConfigSecretBackfillReport::default());
     }
@@ -411,14 +401,13 @@ pub async fn backfill_ai_model_config_secret_storage(
                     }
 
                     let encrypted = encrypt_optional_secret(Some(api_key))?.unwrap_or_default();
-                    collection
-                        .update_one(
-                            doc! { "id": id },
-                            doc! { "$set": { "api_key": encrypted } },
-                            None,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    mongo_update_set_doc(
+                        db,
+                        "ai_model_configs",
+                        doc! { "id": id },
+                        doc! { "api_key": encrypted },
+                    )
+                    .await?;
                     report.migrated_count += 1;
                 }
 

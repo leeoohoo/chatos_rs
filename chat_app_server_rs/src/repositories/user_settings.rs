@@ -1,20 +1,17 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 use serde_json::Value;
 use sqlx::Row;
 
 use crate::models::user_settings::UserSettings;
-use crate::repositories::db::with_db;
+use crate::repositories::db::{mongo_find_one_doc, mongo_update_one_doc, with_db};
 
 pub async fn get_user_settings(user_id: &str) -> Result<Option<UserSettings>, String> {
     with_db(
         |db| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("user_settings")
-                    .find_one(doc! { "user_id": &user_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc =
+                    mongo_find_one_doc(db, "user_settings", doc! { "user_id": &user_id }).await?;
                 if let Some(doc) = doc {
                     let settings = doc
                         .get("settings")
@@ -63,10 +60,14 @@ pub async fn set_user_settings(user_id: &str, settings: &Value) -> Result<(), St
             let settings = settings.clone();
             Box::pin(async move {
                 let now = crate::core::time::now_rfc3339();
-                db.collection::<Document>("user_settings")
-                    .update_one(doc! { "user_id": &user_id }, doc! { "$set": { "user_id": &user_id, "settings": json_to_bson(settings), "updated_at": &now } }, mongodb::options::UpdateOptions::builder().upsert(true).build())
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_one_doc(
+                    db,
+                    "user_settings",
+                    doc! { "user_id": &user_id },
+                    doc! { "$set": { "user_id": &user_id, "settings": json_to_bson(settings), "updated_at": &now } },
+                    Some(mongodb::options::UpdateOptions::builder().upsert(true).build()),
+                )
+                .await?;
                 Ok(())
             })
         },

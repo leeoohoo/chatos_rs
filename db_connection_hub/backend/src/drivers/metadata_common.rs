@@ -76,10 +76,7 @@ pub fn parse_prefixed_3(node_id: &str, prefix: &str) -> Option<(String, String, 
     parse_prefixed_parts::<3>(node_id, prefix).map(|[first, second, third]| (first, second, third))
 }
 
-pub fn parse_prefixed_4(
-    node_id: &str,
-    prefix: &str,
-) -> Option<(String, String, String, String)> {
+pub fn parse_prefixed_4(node_id: &str, prefix: &str) -> Option<(String, String, String, String)> {
     parse_prefixed_parts::<4>(node_id, prefix)
         .map(|[first, second, third, fourth]| (first, second, third, fourth))
 }
@@ -132,7 +129,10 @@ mod tests {
 
     #[test]
     fn make_node_id_joins_prefix_and_parts() {
-        let id = make_node_id("index", &["orders", "public", "orders", "idx_orders_created_at"]);
+        let id = make_node_id(
+            "index",
+            &["orders", "public", "orders", "idx_orders_created_at"],
+        );
         assert_eq!(id, "index:orders:public:orders:idx_orders_created_at");
     }
 

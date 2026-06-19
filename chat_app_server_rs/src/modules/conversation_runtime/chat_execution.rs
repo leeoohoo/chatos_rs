@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;

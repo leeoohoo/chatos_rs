@@ -1,10 +1,10 @@
-use axum::http::StatusCode;
 use axum::Json;
+use axum::http::StatusCode;
 use serde_json::Value;
 
 use crate::core::remote_connection_error_codes::remote_connection_codes;
 
-use super::{extract_second_factor_required_prompt, WsOutput};
+use super::{WsOutput, extract_second_factor_required_prompt};
 
 pub(super) fn error_payload(error: impl Into<String>, code: &'static str) -> Json<Value> {
     Json(serde_json::json!({ "error": error.into(), "code": code }))

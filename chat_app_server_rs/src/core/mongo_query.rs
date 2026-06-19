@@ -1,4 +1,4 @@
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{Document, doc};
 
 pub fn filter_optional_user_id(user_id: Option<String>) -> Document {
     if let Some(uid) = user_id {

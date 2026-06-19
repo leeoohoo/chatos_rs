@@ -2,6 +2,55 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Default)]
+struct Utf8ChunkDecoder {
+    pending: Vec<u8>,
+}
+
+impl Utf8ChunkDecoder {
+    fn push(&mut self, bytes: &[u8]) -> String {
+        self.pending.extend_from_slice(bytes);
+        let mut out = String::new();
+
+        loop {
+            match std::str::from_utf8(self.pending.as_slice()) {
+                Ok(text) => {
+                    out.push_str(text);
+                    self.pending.clear();
+                    break;
+                }
+                Err(err) => {
+                    let valid_up_to = err.valid_up_to();
+                    if valid_up_to > 0 {
+                        let valid =
+                            std::str::from_utf8(&self.pending[..valid_up_to]).unwrap_or_default();
+                        out.push_str(valid);
+                        self.pending.drain(..valid_up_to);
+                        continue;
+                    }
+
+                    if let Some(error_len) = err.error_len() {
+                        out.push('\u{FFFD}');
+                        self.pending.drain(..error_len);
+                        continue;
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        out
+    }
+
+    fn finish(&mut self) -> String {
+        if self.pending.is_empty() {
+            return String::new();
+        }
+        String::from_utf8_lossy(&std::mem::take(&mut self.pending)).to_string()
+    }
+}
+
 pub fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
     let mut events = Vec::new();
     while let Some(idx) = buffer.find("\n\n") {
@@ -38,9 +87,10 @@ where
     F: FnMut(Value),
 {
     let mut buffer = String::new();
+    let mut decoder = Utf8ChunkDecoder::default();
     let mut process_chunk = |chunk: Result<bytes::Bytes, E>| -> Result<(), String> {
         let bytes = chunk.map_err(|err| err.to_string())?;
-        let text = String::from_utf8_lossy(&bytes).to_string();
+        let text = decoder.push(bytes.as_ref());
         buffer.push_str(&text);
         for event in drain_sse_json_events(&mut buffer) {
             on_event(event);
@@ -66,6 +116,10 @@ where
         }
     }
 
+    let tail_text = decoder.finish();
+    if !tail_text.is_empty() {
+        buffer.push_str(&tail_text);
+    }
     flush_stream_tail_events(&mut buffer, &mut on_event);
     Ok(())
 }
@@ -164,5 +218,31 @@ mod tests {
                 "status": "completed"
             })
         );
+    }
+
+    #[tokio::test]
+    async fn consume_sse_stream_preserves_utf8_split_across_chunks() {
+        let packet = "data: {\"type\":\"delta\",\"text\":\"我是\"}\n\n";
+        let bytes = packet.as_bytes();
+        let split_char = "是".as_bytes();
+        let split_at = bytes
+            .windows(split_char.len())
+            .position(|window| window == split_char)
+            .expect("test packet should contain split character");
+        let chunks = vec![
+            Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[..split_at + 1])),
+            Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[split_at + 1..split_at + 2])),
+            Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[split_at + 2..])),
+        ];
+
+        let mut events = Vec::new();
+        consume_sse_stream(stream::iter(chunks), None, |event| {
+            events.push(event);
+        })
+        .await
+        .expect("stream parsing should succeed");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], json!({"type":"delta","text":"我是"}));
     }
 }

@@ -1,10 +1,10 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use once_cell::sync::OnceCell;
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
 const SECRET_PREFIX: &str = "enc:v1:";

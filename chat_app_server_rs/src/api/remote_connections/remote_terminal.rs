@@ -1,14 +1,14 @@
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
-use portable_pty::{native_pty_system, MasterPty, PtySize};
+use portable_pty::{MasterPty, PtySize, native_pty_system};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant};
-use tokio::sync::broadcast;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::broadcast;
 use tokio::time::Duration;
 
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};

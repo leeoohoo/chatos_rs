@@ -1,16 +1,10 @@
+#[cfg(test)]
 use std::future::Future;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::utils::abort_registry;
-
-pub(crate) fn normalize_reasoning_effort(
-    provider: Option<&str>,
-    level: Option<&str>,
-) -> Option<String> {
-    crate::utils::model_config::reasoning_effort_for_provider(provider, level)
-}
 
 pub(crate) fn truncate_log(value: &str, max_len: usize) -> String {
     if value.len() <= max_len {
@@ -34,6 +28,7 @@ pub(crate) fn build_abort_token(
     Some(token)
 }
 
+#[cfg(test)]
 pub(crate) fn format_error_response(status: reqwest::StatusCode, raw: &str) -> String {
     format!("status {}: {}", status, truncate_log(raw, 2000))
 }
@@ -59,6 +54,7 @@ fn request_payload_max_bytes(env_key: &str) -> usize {
         .unwrap_or(1_500_000)
 }
 
+#[cfg(test)]
 pub(crate) async fn await_with_optional_abort<F, T, E>(
     future: F,
     token: Option<CancellationToken>,

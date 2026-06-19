@@ -278,7 +278,7 @@ fn is_text_searchable(path: &Path, bytes: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{search_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_VISITS};
+    use super::{DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_VISITS, TextSearchRequest, search_text};
     use std::fs;
     use std::path::PathBuf;
 

@@ -355,6 +355,30 @@ pub fn default_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
         .collect()
 }
 
+pub fn complete_builtin_kind_dependencies<I>(kinds: I) -> Vec<BuiltinMcpKind>
+where
+    I: IntoIterator<Item = BuiltinMcpKind>,
+{
+    let mut out = Vec::new();
+    for kind in kinds {
+        if !out.contains(&kind) {
+            out.push(kind);
+        }
+    }
+
+    if out.contains(&BuiltinMcpKind::CodeMaintainerWrite)
+        && !out.contains(&BuiltinMcpKind::CodeMaintainerRead)
+    {
+        let insert_at = out
+            .iter()
+            .position(|kind| *kind == BuiltinMcpKind::CodeMaintainerWrite)
+            .unwrap_or(out.len());
+        out.insert(insert_at, BuiltinMcpKind::CodeMaintainerRead);
+    }
+
+    out
+}
+
 pub fn builtin_servers_from_kinds<I>(
     kinds: I,
     options: &BuiltinMcpServerOptions,
@@ -371,10 +395,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        builtin_kind_by_any, builtin_servers_from_kinds, configurable_builtin_kinds,
-        default_runtime_builtin_kinds, BuiltinMcpKind, BuiltinMcpServerOptions,
-        DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_WRITE_BYTES, DEFAULT_SEARCH_LIMIT,
-        LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID,
+        builtin_kind_by_any, builtin_servers_from_kinds, complete_builtin_kind_dependencies,
+        configurable_builtin_kinds, default_runtime_builtin_kinds, BuiltinMcpKind,
+        BuiltinMcpServerOptions, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_WRITE_BYTES,
+        DEFAULT_SEARCH_LIMIT, LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID,
         MEMORY_SKILL_READER_SERVER_NAME, TASK_MANAGER_COMMAND, TASK_MANAGER_MCP_ID,
     };
 
@@ -452,5 +476,35 @@ mod tests {
         assert!(runtime.contains(&BuiltinMcpKind::BrowserTools));
         assert!(!runtime.contains(&BuiltinMcpKind::AgentBuilder));
         assert!(!runtime.contains(&BuiltinMcpKind::MemorySkillReader));
+    }
+
+    #[test]
+    fn completes_code_maintainer_write_dependencies() {
+        assert_eq!(
+            complete_builtin_kind_dependencies([
+                BuiltinMcpKind::TerminalController,
+                BuiltinMcpKind::CodeMaintainerWrite,
+            ]),
+            vec![
+                BuiltinMcpKind::TerminalController,
+                BuiltinMcpKind::CodeMaintainerRead,
+                BuiltinMcpKind::CodeMaintainerWrite,
+            ]
+        );
+    }
+
+    #[test]
+    fn completing_builtin_dependencies_keeps_existing_read_and_dedupes() {
+        assert_eq!(
+            complete_builtin_kind_dependencies([
+                BuiltinMcpKind::CodeMaintainerRead,
+                BuiltinMcpKind::CodeMaintainerWrite,
+                BuiltinMcpKind::CodeMaintainerRead,
+            ]),
+            vec![
+                BuiltinMcpKind::CodeMaintainerRead,
+                BuiltinMcpKind::CodeMaintainerWrite,
+            ]
+        );
     }
 }

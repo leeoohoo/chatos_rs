@@ -1,18 +1,9 @@
 use futures::TryStreamExt;
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{Document, doc};
 use mongodb::options::FindOptions;
 
 use crate::models::agent::{Agent, AgentRow};
 use crate::repositories::db::with_db;
-
-pub async fn list_agents(
-    user_id: &str,
-    enabled: Option<bool>,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Agent>, String> {
-    list_agents_by_user_ids(&[user_id.to_string()], enabled, limit, offset).await
-}
 
 pub async fn list_agents_by_user_ids(
     user_ids: &[String],

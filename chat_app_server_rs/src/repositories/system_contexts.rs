@@ -1,9 +1,12 @@
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{Bson, Document, doc};
 
 use crate::core::mongo_cursor::{collect_map_sorted_desc, collect_string_field};
 use crate::core::sql_rows::collect_string_column;
 use crate::models::system_context::{SystemContext, SystemContextRow};
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_many_doc, mongo_delete_one_doc, mongo_find_one_doc,
+    mongo_insert_doc, mongo_update_many_set_doc, mongo_update_set_doc, to_doc, with_db,
+};
 
 fn normalize_doc(doc: &Document) -> Option<SystemContext> {
     Some(SystemContext {
@@ -55,11 +58,12 @@ pub async fn get_active_system_context(user_id: &str) -> Result<Option<SystemCon
         |db| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("system_contexts")
-                    .find_one(doc! { "user_id": user_id, "is_active": true }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(
+                    db,
+                    "system_contexts",
+                    doc! { "user_id": user_id, "is_active": true },
+                )
+                .await?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
@@ -85,11 +89,7 @@ pub async fn get_system_context_by_id(id: &str) -> Result<Option<SystemContext>,
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("system_contexts")
-                    .find_one(doc! { "id": id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(db, "system_contexts", doc! { "id": id }).await?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
@@ -128,7 +128,7 @@ pub async fn create_system_context(ctx: &SystemContext) -> Result<(), String> {
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("system_contexts").insert_one(doc, None).await.map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "system_contexts", doc).await?;
                 Ok(())
             })
         },
@@ -166,7 +166,7 @@ pub async fn update_system_context(id: &str, updates: &SystemContext) -> Result<
                 set_doc.insert("content", crate::core::values::optional_string_bson(updates_mongo.content.clone()));
                 set_doc.insert("is_active", Bson::Boolean(updates_mongo.is_active));
                 set_doc.insert("updated_at", now_mongo.clone());
-                db.collection::<Document>("system_contexts").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
+                mongo_update_set_doc(db, "system_contexts", doc! { "id": id }, set_doc).await?;
                 Ok(())
             })
         },
@@ -193,14 +193,13 @@ pub async fn delete_system_context(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("system_contexts")
-                    .delete_one(doc! { "id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                db.collection::<Document>("system_context_applications")
-                    .delete_many(doc! { "system_context_id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_one_doc(db, "system_contexts", doc! { "id": &id }).await?;
+                mongo_delete_many_doc(
+                    db,
+                    "system_context_applications",
+                    doc! { "system_context_id": &id },
+                )
+                .await?;
                 Ok(())
             })
         },
@@ -228,22 +227,20 @@ pub async fn activate_system_context(context_id: &str, user_id: &str) -> Result<
             let context_id = context_id.to_string();
             let user_id = user_id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("system_contexts")
-                    .update_many(
-                        doc! { "user_id": &user_id },
-                        doc! { "$set": { "is_active": false } },
-                        None,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-                db.collection::<Document>("system_contexts")
-                    .update_one(
-                        doc! { "id": &context_id },
-                        doc! { "$set": { "is_active": true, "updated_at": &now_mongo } },
-                        None,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_many_set_doc(
+                    db,
+                    "system_contexts",
+                    doc! { "user_id": &user_id },
+                    doc! { "is_active": false },
+                )
+                .await?;
+                mongo_update_set_doc(
+                    db,
+                    "system_contexts",
+                    doc! { "id": &context_id },
+                    doc! { "is_active": true, "updated_at": &now_mongo },
+                )
+                .await?;
                 Ok(())
             })
         },
@@ -307,7 +304,12 @@ pub async fn set_app_ids_for_system_context(
             let context_id = context_id.to_string();
             let app_ids = app_ids.to_vec();
             Box::pin(async move {
-                db.collection::<Document>("system_context_applications").delete_many(doc! { "system_context_id": &context_id }, None).await.map_err(|e| e.to_string())?;
+                mongo_delete_many_doc(
+                    db,
+                    "system_context_applications",
+                    doc! { "system_context_id": &context_id },
+                )
+                .await?;
                 if !app_ids.is_empty() {
                     let now = crate::core::time::now_rfc3339();
                     let docs: Vec<Document> = app_ids.iter().map(|aid| doc! { "id": format!("{}_{}", context_id, aid), "system_context_id": &context_id, "application_id": aid, "created_at": &now }).collect();

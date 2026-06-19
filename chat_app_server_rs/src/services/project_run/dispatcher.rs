@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::project_run::ProjectRunCatalog;
-use crate::models::terminal::{TerminalService, TERMINAL_KIND_PROJECT_RUN};
+use crate::models::terminal::{TERMINAL_KIND_PROJECT_RUN, TerminalService};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::terminal_manager::get_terminal_manager;
 

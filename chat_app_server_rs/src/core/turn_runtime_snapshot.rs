@@ -307,7 +307,7 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
 
-    use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
+    use super::{BuildTurnRuntimeSnapshotInput, build_turn_runtime_snapshot_payload};
     use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
     use crate::core::internal_context_locale::InternalContextLocale;
 

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use super::process::{git_output, DEFAULT_GIT_TIMEOUT};
+use super::process::{DEFAULT_GIT_TIMEOUT, git_output};
 
 pub(super) async fn require_repo_root(root: &str) -> Result<PathBuf, String> {
     let root = parse_root(root)?;

@@ -150,6 +150,7 @@ impl SharedMcpToolExecute {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) fn should_parallelize_tool_batch(&self, tool_calls: &[Value]) -> bool {
         if let Some(shared) = &self.shared_core {
             return shared.should_parallelize_tool_batch(tool_calls);

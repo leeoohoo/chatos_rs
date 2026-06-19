@@ -81,6 +81,7 @@ impl McpToolExecute {
             .await
     }
 
+    #[cfg(test)]
     fn should_parallelize_tool_batch(&self, tool_calls: &[Value]) -> bool {
         self.shared.should_parallelize_tool_batch(tool_calls)
     }

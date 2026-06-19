@@ -1,18 +1,18 @@
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::time::Duration;
 
-use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
+use crate::models::terminal::{TERMINAL_KIND_SHARED, Terminal, TerminalService};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::terminal_manager::get_terminal_manager;
 
+use super::super::BoundContext;
 use super::super::capture::capture_command_output;
 use super::super::context::{
     build_input_payload, derive_terminal_name, resolve_project_root, resolve_target_path,
     terminal_cwd_in_root,
 };
-use super::super::BoundContext;
 
 pub(in crate::builtin::terminal_controller) async fn execute_command_with_context(
     ctx: BoundContext,

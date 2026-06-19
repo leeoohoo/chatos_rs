@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
 use async_trait::async_trait;
-use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use chatos_ai_runtime as shared_ai_runtime;
 use chatos_mcp_runtime::ToolCallerModelRuntime;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use chatos_builtin_tools::{
     BrowserVisionAdapter, BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
@@ -14,7 +14,7 @@ use chatos_builtin_tools::{
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::chat_runtime::{
-    compose_contact_system_prompt, ChatRuntimeMetadata, ContactSkillPromptMode,
+    ChatRuntimeMetadata, ContactSkillPromptMode, compose_contact_system_prompt,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::models::{ai_model_config::AiModelConfig, session::Session};
@@ -797,13 +797,10 @@ mod tests {
         )
         .with_responses_support(false)
         .with_images_support(Some(true));
-        assert!(browser_vision_candidate_from_caller_runtime(
-            &non_responses,
-            "generic",
-            None,
-            None,
-        )
-        .is_none());
+        assert!(
+            browser_vision_candidate_from_caller_runtime(&non_responses, "generic", None, None,)
+                .is_none()
+        );
 
         let non_vision = ToolCallerModelRuntime::openai_compatible(
             "https://models.example/v1",

@@ -83,24 +83,19 @@ impl Default for DatabaseConfig {
 
 pub enum Database {
     Sqlite(SqlitePool),
-    Mongo { client: Client, db: MongoDatabase },
+    Mongo { _client: Client, db: MongoDatabase },
 }
 
 impl Database {
+    #[cfg(test)]
     pub fn is_mongo(&self) -> bool {
         matches!(self, Database::Mongo { .. })
     }
 
+    #[cfg(test)]
     pub fn sqlite_pool(&self) -> Option<&SqlitePool> {
         match self {
             Database::Sqlite(pool) => Some(pool),
-            _ => None,
-        }
-    }
-
-    pub fn mongo_db(&self) -> Option<&MongoDatabase> {
-        match self {
-            Database::Mongo { db, .. } => Some(db),
             _ => None,
         }
     }

@@ -1,7 +1,7 @@
-use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::Read;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -35,71 +35,6 @@ pub fn parse_attachments(list: &[Value]) -> Vec<Attachment> {
             r#type: get_str(v, "type"),
         })
         .collect()
-}
-
-pub fn build_content_parts(user_text: &str, attachments: &[Attachment]) -> Value {
-    let mut parts: Vec<Value> = Vec::new();
-    let text = user_text.to_string();
-    if !text.trim().is_empty() {
-        parts.push(json!({"type": "text", "text": text}));
-    }
-
-    for att in attachments {
-        let name = att.name.clone().unwrap_or_else(|| "attachment".to_string());
-        let mime = att
-            .mime_type
-            .clone()
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-        let size = att.size.unwrap_or(0);
-        let meta_line = format!("Attachment: {} ({}, {} bytes)", name, mime, size);
-
-        if mime.starts_with("image/") && att.data_url.is_some() {
-            parts.push(json!({"type": "image_url", "image_url": {"url": att.data_url.clone().unwrap_or_default()}}));
-            parts.push(json!({"type": "text", "text": meta_line}));
-            continue;
-        }
-
-        if let Some(text) = &att.text {
-            if !text.is_empty() {
-                let max = 8000usize;
-                let body = if text.len() > max {
-                    format!("{}\n...[truncated]", &text[..max])
-                } else {
-                    text.clone()
-                };
-                let fenced = format!("{}\n\n【File Content】\n\n{}", meta_line, body);
-                parts.push(json!({"type": "text", "text": fenced}));
-                continue;
-            }
-        }
-
-        if let Some(data_url) = &att.data_url {
-            if mime == "text/plain" {
-                if let Some(decoded) = decode_data_url(data_url) {
-                    let body = String::from_utf8_lossy(&decoded).to_string();
-                    let max = 8000usize;
-                    let body = if body.len() > max {
-                        format!("{}\n...[truncated]", &body[..max])
-                    } else {
-                        body
-                    };
-                    parts.push(
-                        json!({"type": "text", "text": format!("{}\n\n{}", meta_line, body)}),
-                    );
-                    continue;
-                }
-            }
-        }
-
-        parts
-            .push(json!({"type": "text", "text": format!("{} [content not included]", meta_line)}));
-    }
-
-    if parts.is_empty() {
-        Value::String(text)
-    } else {
-        Value::Array(parts)
-    }
 }
 
 pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachment]) -> Value {

@@ -11,8 +11,7 @@ use super::{common::*, MockCatalog};
 pub fn build() -> MockCatalog {
     let billing_db_id = metadata_common::make_node_id("db", &["billing"]);
     let dbo_schema_id = metadata_common::make_node_id("schema", &["billing", "dbo"]);
-    let invoices_table_id =
-        metadata_common::make_node_id("table", &["billing", "dbo", "invoices"]);
+    let invoices_table_id = metadata_common::make_node_id("table", &["billing", "dbo", "invoices"]);
 
     let databases = vec![DatabaseInfo {
         name: "billing".to_string(),

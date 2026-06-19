@@ -1,5 +1,8 @@
 use super::chatos_async_planner;
-use super::support::{agent_tool_allowed, create_task_schema, task_mcp_config_schema};
+use super::support::{
+    agent_tool_allowed, create_task_schema, normalize_mcp_builtin_kind_names,
+    task_mcp_config_schema,
+};
 use super::{McpRequestContext, McpToolProfile};
 use crate::models::{
     CreateTaskRequest, TaskMcpConfig, TaskScheduleMode, TaskStatus, UpdateTaskRequest,
@@ -44,6 +47,19 @@ fn task_mcp_config_schema_hides_host_passthrough_fields() {
     assert!(!properties.contains_key("workspace_dir"));
     assert!(!properties.contains_key("default_remote_server_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
+}
+
+#[test]
+fn normalizes_code_maintainer_write_with_required_read_kind() {
+    let normalized = normalize_mcp_builtin_kind_names(vec!["CodeMaintainerWrite".to_string()])
+        .expect("normalized kinds");
+    assert_eq!(
+        normalized,
+        vec![
+            "CodeMaintainerRead".to_string(),
+            "CodeMaintainerWrite".to_string(),
+        ]
+    );
 }
 
 #[test]

@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use portable_pty::{native_pty_system, ChildKiller, MasterPty, PtySize};
+use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
 use tokio::sync::broadcast;
 
-use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
+use crate::models::terminal::{TERMINAL_KIND_PROJECT_RUN, Terminal};
 use crate::services::realtime::{
     publish_project_run_instance_changed, publish_project_run_state_changed,
     publish_terminal_list_invalidated, publish_terminal_state_changed,
@@ -22,7 +22,7 @@ use super::path_utils::{canonicalize_path, path_is_within_root};
 use super::prompt_parser::{
     extract_prompt_cwd, infer_prompt_cwd_from_context, is_prompt_line, strip_ansi,
 };
-use super::{input_triggers_busy, now_millis, TerminalEvent};
+use super::{TerminalEvent, input_triggers_busy, now_millis};
 
 pub struct TerminalSession {
     terminal: Terminal,

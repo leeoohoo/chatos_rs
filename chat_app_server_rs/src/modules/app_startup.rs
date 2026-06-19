@@ -61,10 +61,7 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         Ok(report) => {
             info!(
                 "Chatos memory_engine source ensured: source_id={} source_type={} status={} sdk_enabled={}",
-                report.source_id,
-                report.source_type,
-                report.status,
-                report.sdk_enabled
+                report.source_id, report.source_type, report.status, report.sdk_enabled
             );
             core::runtime_health::mark_runtime_check_ok(
                 "memory_engine_source_bootstrap",

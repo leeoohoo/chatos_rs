@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tracing_appender::rolling;
 use tracing_subscriber::fmt::time::UtcTime;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 struct LoggerGuards {
     _file: tracing_appender::non_blocking::WorkerGuard,

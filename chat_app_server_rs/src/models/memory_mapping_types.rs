@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryContactDto {
@@ -135,26 +134,4 @@ pub struct UpdateContactTaskRunnerConfigRequestDto {
     pub password: Option<String>,
     #[serde(default)]
     pub clear_password: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ComposeContextResponse {
-    pub merged_summary: Option<String>,
-    pub summary_count: usize,
-    pub messages: Vec<crate::models::message::Message>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct CreateSessionRequest {
-    pub user_id: String,
-    pub project_id: Option<String>,
-    pub title: Option<String>,
-    pub metadata: Option<Value>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct PatchSessionRequest {
-    pub title: Option<String>,
-    pub status: Option<String>,
-    pub metadata: Option<Value>,
 }

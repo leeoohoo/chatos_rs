@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
-use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
+use crate::models::terminal::{TERMINAL_KIND_PROJECT_RUN, Terminal};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
 use crate::services::realtime::{

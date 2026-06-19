@@ -1,15 +1,10 @@
-#[path = "normalizer/choice.rs"]
-mod choice;
+#[cfg(test)]
 #[path = "normalizer/fields.rs"]
 mod fields;
 #[path = "normalizer/redaction.rs"]
 mod redaction;
-#[path = "normalizer/submission.rs"]
-mod submission;
 #[path = "normalizer/support.rs"]
 mod support;
-#[path = "normalizer/values.rs"]
-mod values;
 
 use super::types::{UiPromptPayload, UiPromptResponseSubmission};
 

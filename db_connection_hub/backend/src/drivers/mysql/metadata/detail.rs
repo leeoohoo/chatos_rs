@@ -159,9 +159,7 @@ async fn load_routine_detail(
     .map_err(|err| AppError::BadRequest(format!("failed to query routine detail: {err}")))?;
 
     let row = row.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "mysql routine not found: {database}.{object_name}"
-        ))
+        AppError::NotFound(format!("mysql routine not found: {database}.{object_name}"))
     })?;
 
     let body = row
@@ -179,7 +177,10 @@ async fn load_routine_detail(
 
     let ddl = body.map(|body| match node_type {
         MetadataNodeType::Procedure => {
-            format!("CREATE PROCEDURE `{}`.`{}`\n{}", database, object_name, body)
+            format!(
+                "CREATE PROCEDURE `{}`.`{}`\n{}",
+                database, object_name, body
+            )
         }
         MetadataNodeType::Function => format!(
             "CREATE FUNCTION `{}`.`{}` RETURNS {}\n{}",

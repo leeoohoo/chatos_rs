@@ -4,24 +4,24 @@ mod review_hub;
 mod store;
 mod types;
 
-pub use review_hub::{create_task_review, wait_for_task_review_decision};
 #[cfg(test)]
 pub use review_hub::submit_task_review_decision;
+pub use review_hub::{create_task_review, wait_for_task_review_decision};
 pub use store::{
     complete_task_by_id, create_tasks_for_turn, delete_task_by_id, list_tasks_for_context,
     update_task_by_id,
 };
 pub use types::{
-    TaskCreateReviewPayload, TaskDraft, TaskOutcomeItem, TaskRecord, TaskReviewAction,
-    TaskUpdatePatch, REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
+    REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR, TaskCreateReviewPayload,
+    TaskDraft, TaskOutcomeItem, TaskRecord, TaskReviewAction, TaskUpdatePatch,
 };
 
 #[cfg(test)]
 mod tests {
     use super::normalizer::normalize_task_draft;
     use super::{
-        create_task_review, submit_task_review_decision, wait_for_task_review_decision, TaskDraft,
-        TaskReviewAction, TaskUpdatePatch,
+        TaskDraft, TaskReviewAction, TaskUpdatePatch, create_task_review,
+        submit_task_review_decision, wait_for_task_review_decision,
     };
 
     #[test]

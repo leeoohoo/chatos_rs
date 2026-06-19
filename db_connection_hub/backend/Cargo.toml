@@ -20,3 +20,5 @@ tokio-util = { version = "0.7", features = ["compat"] }
 futures-util = "0.3"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 tower-http = { version = "0.5", features = ["cors"] }
+
+[workspace]

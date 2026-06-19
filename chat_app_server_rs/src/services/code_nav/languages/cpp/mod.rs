@@ -4,16 +4,16 @@ use std::path::Path;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::services::code_nav::CodeNavProvider;
 use crate::services::code_nav::languages::basic::{
-    count_char, find_balanced_end, find_column, last_identifier, make_symbol,
-    strip_c_style_comments, BasicFileAnalysis, BasicLanguageSpec, BasicSymbol,
+    BasicFileAnalysis, BasicLanguageSpec, BasicSymbol, count_char, find_balanced_end, find_column,
+    last_identifier, make_symbol, strip_c_style_comments,
 };
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities, NavLocation,
     NavPositionRequest, ProjectContext,
 };
-use crate::services::code_nav::CodeNavProvider;
 
 const CPP_IGNORED_DIRS: &[&str] = &[
     ".git",
@@ -424,7 +424,7 @@ fn push_symbol(
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze_cpp_file, classify_cpp_declaration, CppCodeNavProvider};
+    use super::{CppCodeNavProvider, analyze_cpp_file, classify_cpp_declaration};
     use crate::services::code_nav::CodeNavProvider;
     use std::fs;
     use std::path::PathBuf;
