@@ -1,7 +1,7 @@
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::io::Read;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

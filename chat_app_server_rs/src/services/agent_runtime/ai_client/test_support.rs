@@ -1,17 +1,17 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
-    Json, Router,
     extract::State,
-    http::{HeaderValue, StatusCode, header},
+    http::{header, HeaderValue, StatusCode},
     routing::post,
+    Json, Router,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::{Mutex, OnceCell};
 
 use super::{AiClient, AiClientCallbacks};
@@ -22,7 +22,7 @@ use crate::services::agent_runtime::ai_request_handler::AiRequestHandler;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::chatos_memory_engine::sync_chatos_session;
-use crate::services::task_manager::{TaskDraft, TaskRecord, create_tasks_for_turn};
+use crate::services::task_manager::{create_tasks_for_turn, TaskDraft, TaskRecord};
 use crate::services::user_settings::AiClientSettings;
 
 static TEST_CONFIG_INIT: Once = Once::new();

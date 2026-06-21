@@ -2,10 +2,10 @@ mod completion_error;
 mod request_error;
 mod support;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::warn;
 
-use super::{AiClient, build_current_input_items};
+use super::{build_current_input_items, AiClient};
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::chatos_memory_engine;
 use crate::services::chatos_sessions;

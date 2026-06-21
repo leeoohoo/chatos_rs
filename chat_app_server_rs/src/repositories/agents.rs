@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
 
 use crate::models::agent::{Agent, AgentRow};
@@ -126,8 +126,8 @@ pub async fn create_agent(agent: &Agent) -> Result<(), String> {
 
                 sqlx::query(
                     "INSERT INTO agents \
-                    (id, user_id, name, description, category, role_definition, plugin_sources, skills, skill_ids, default_skill_ids, mcp_policy, project_policy, enabled, created_at, updated_at) \
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (id, user_id, name, description, category, role_definition, task_runner_agent_account_id, plugin_sources, skills, skill_ids, default_skill_ids, mcp_policy, project_policy, enabled, created_at, updated_at) \
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&agent.id)
                 .bind(&agent.user_id)
@@ -135,6 +135,7 @@ pub async fn create_agent(agent: &Agent) -> Result<(), String> {
                 .bind(&agent.description)
                 .bind(&agent.category)
                 .bind(&agent.role_definition)
+                .bind(&agent.task_runner_agent_account_id)
                 .bind(&plugin_sources)
                 .bind(&skills)
                 .bind(&skill_ids)
@@ -192,6 +193,7 @@ pub async fn update_agent(agent: &Agent) -> Result<(), String> {
                     description = ?, \
                     category = ?, \
                     role_definition = ?, \
+                    task_runner_agent_account_id = ?, \
                     plugin_sources = ?, \
                     skills = ?, \
                     skill_ids = ?, \
@@ -207,6 +209,7 @@ pub async fn update_agent(agent: &Agent) -> Result<(), String> {
                 .bind(&agent.description)
                 .bind(&agent.category)
                 .bind(&agent.role_definition)
+                .bind(&agent.task_runner_agent_account_id)
                 .bind(&plugin_sources)
                 .bind(&skills)
                 .bind(&skill_ids)

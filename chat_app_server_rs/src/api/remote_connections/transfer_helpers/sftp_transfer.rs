@@ -7,8 +7,8 @@ use walkdir::WalkDir;
 use crate::models::remote_connection::RemoteConnection;
 
 use super::super::{
-    SftpTransferManager, connect_ssh2_session_with_verification, join_remote_path,
-    normalize_remote_path, remote_parent_path,
+    connect_ssh2_session_with_verification, join_remote_path, normalize_remote_path,
+    remote_parent_path, SftpTransferManager,
 };
 use super::errors::TransferJobError;
 

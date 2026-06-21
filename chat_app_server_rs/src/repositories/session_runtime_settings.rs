@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value;
 use sqlx::Row;
 

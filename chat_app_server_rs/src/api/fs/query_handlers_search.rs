@@ -2,8 +2,8 @@ use std::fs;
 
 use crate::core::auth::AuthUser;
 use axum::http::StatusCode;
-use axum::{Json, extract::Query};
-use serde_json::{Value, json};
+use axum::{extract::Query, Json};
+use serde_json::{json, Value};
 
 use super::super::contracts::{FsContentSearchQuery, FsSearchQuery};
 use super::super::helpers::format_system_time;
@@ -11,8 +11,8 @@ use super::super::policy::FsPathPolicy;
 use super::super::search::{is_search_match, normalize_search_keyword};
 use super::policy_error_tuple;
 use crate::services::workspace_search::{
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_VISITS, TextSearchRequest,
-    search_text as search_workspace_text,
+    search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_MAX_VISITS,
 };
 
 const DEFAULT_SEARCH_LIMIT: usize = 200;

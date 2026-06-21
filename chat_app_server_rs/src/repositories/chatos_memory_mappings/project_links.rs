@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 use mongodb::options::{FindOneOptions, FindOptions, UpdateOptions};
 
 use crate::core::values::optional_string_bson;

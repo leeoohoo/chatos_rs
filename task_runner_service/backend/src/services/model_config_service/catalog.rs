@@ -29,6 +29,7 @@ impl ModelConfigService {
         let model = normalized_optional(input.model);
         let record = ModelConfigRecord {
             id: "preview".to_string(),
+            owner_user_id: None,
             name: "preview".to_string(),
             provider: provider.clone(),
             base_url: normalize_model_base_url_input(provider.as_str(), input.base_url),

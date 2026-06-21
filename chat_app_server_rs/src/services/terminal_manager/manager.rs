@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 
-use crate::models::terminal::{TERMINAL_KIND_PROJECT_RUN, Terminal};
+use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
 use crate::services::realtime::{
@@ -364,11 +364,11 @@ impl TerminalsManager {
                 .await?;
         let mut cleaned = 0usize;
         for terminal in terminals {
-            let pid = terminal.process_id.unwrap_or(0);
+            let _pid = terminal.process_id.unwrap_or(0);
             #[cfg(unix)]
-            if pid > 0 {
+            if _pid > 0 {
                 unsafe {
-                    let _ = libc::kill(pid as i32, libc::SIGTERM);
+                    let _ = libc::kill(_pid as i32, libc::SIGTERM);
                 }
             }
             let _ = TerminalLogService::delete_by_terminal(terminal.id.as_str()).await;

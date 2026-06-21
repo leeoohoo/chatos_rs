@@ -1,4 +1,4 @@
-use serde_json::{Number, Value, json};
+use serde_json::{json, Number, Value};
 
 use crate::core::messages::{
     ensure_message_metadata_object, extract_message_tool_calls_for_display,

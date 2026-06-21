@@ -7,7 +7,7 @@ use super::parsing::{
     non_empty, non_repo_summary, parse_compare_commits, parse_name_status_z, parse_status_files,
     split_remote_branch,
 };
-use super::process::{DEFAULT_GIT_TIMEOUT, git_output, git_version, resolve_git_binary};
+use super::process::{git_output, git_version, resolve_git_binary, DEFAULT_GIT_TIMEOUT};
 use super::shared::{comparison_range, read_repo_summary};
 use super::validation::{
     discover_child_repo_roots, discover_repo_root, parse_optional_root, parse_root,

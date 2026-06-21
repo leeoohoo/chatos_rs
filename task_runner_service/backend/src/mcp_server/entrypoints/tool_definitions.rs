@@ -60,9 +60,10 @@ impl TaskRunnerMcpService {
     ) -> Vec<Value> {
         let mut tools = self.list_tools();
         if let Ok(model_configs) = self.model_config_service.list_model_configs().await {
-            enrich_tool_schemas_with_model_configs(&mut tools, &model_configs);
+            let visible_model_configs = filter_model_configs_for_user(model_configs, current_user);
+            enrich_tool_schemas_with_model_configs(&mut tools, &visible_model_configs);
             if tool_profile == McpToolProfile::ChatosAsyncPlanner {
-                enrich_tool_schemas_for_async_planner(&mut tools, &model_configs);
+                enrich_tool_schemas_for_async_planner(&mut tools, &visible_model_configs);
             }
         } else if tool_profile == McpToolProfile::ChatosAsyncPlanner {
             enrich_tool_schemas_for_async_planner(&mut tools, &[]);

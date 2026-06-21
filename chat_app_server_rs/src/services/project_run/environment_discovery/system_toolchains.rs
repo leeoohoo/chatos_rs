@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use super::super::environment_support::{home_dir, normalize_path, option_id, resolve_user_path};
 use super::support::{
-    ToolchainOptions, ToolchainSeen, discover_direct_file_option, java_home_candidate,
-    list_child_dirs, push_if_exists, push_option, push_option_with_label,
+    discover_direct_file_option, java_home_candidate, list_child_dirs, push_if_exists, push_option,
+    push_option_with_label, ToolchainOptions, ToolchainSeen,
 };
 
 fn command_exists(name: &str) -> Option<PathBuf> {

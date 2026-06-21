@@ -15,8 +15,8 @@ pub struct EnsureChatosMemoryEngineSourceReport {
     pub status: String,
 }
 
-pub async fn ensure_chatos_memory_engine_source()
--> Result<EnsureChatosMemoryEngineSourceReport, String> {
+pub async fn ensure_chatos_memory_engine_source(
+) -> Result<EnsureChatosMemoryEngineSourceReport, String> {
     let _cfg = Config::try_get()?;
 
     let source = memory_engine_client::upsert_source(

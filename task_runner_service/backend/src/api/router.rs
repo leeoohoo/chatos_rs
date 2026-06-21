@@ -1,5 +1,6 @@
 use axum::middleware;
-use axum::routing::{get, patch, post};
+use axum::http::HeaderMap;
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -45,6 +46,7 @@ use super::tooling::{
     list_notepad_tags, list_terminal_processes, read_notepad_note, write_terminal_process,
 };
 use super::*;
+use crate::models::{ChatosSyncedModelConfigRequest, ModelConfigRecord};
 
 pub fn build_router(state: AppState) -> Router {
     let protected_api = Router::new()
@@ -189,6 +191,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/skills/task-runner", get(task_runner_skill_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/agent-token", post(agent_token_handler))
+        .route(
+            "/api/chatos-sync/model-configs",
+            post(chatos_sync_upsert_model_config),
+        )
+        .route(
+            "/api/chatos-sync/model-configs/:id",
+            delete(chatos_sync_delete_model_config),
+        )
         .merge(chatos_internal::router())
         .merge(protected_api)
         .route("/mcp", post(mcp_entrypoint))
@@ -205,4 +215,60 @@ pub fn build_router(state: AppState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+}
+
+fn require_chatos_sync_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+    let Some(expected) = state
+        .config
+        .chatos_callback_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(ApiError::forbidden(
+            "chatos callback secret is not configured",
+        ));
+    };
+    let provided = headers
+        .get("x-chatos-callback-secret")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::unauthorized("missing chatos callback secret"))?;
+    if provided != expected {
+        return Err(ApiError::unauthorized("invalid chatos callback secret"));
+    }
+    Ok(())
+}
+
+async fn chatos_sync_upsert_model_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ChatosSyncedModelConfigRequest>,
+) -> Result<Json<ModelConfigRecord>, ApiError> {
+    require_chatos_sync_secret(&state, &headers)?;
+    let record = state
+        .model_config_service
+        .upsert_chatos_model_config(request)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(record))
+}
+
+async fn chatos_sync_delete_model_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    require_chatos_sync_secret(&state, &headers)?;
+    let deleted = state
+        .model_config_service
+        .delete_model_config(id.trim())
+        .await
+        .map_err(ApiError::internal)?;
+    if deleted {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found("model config not found"))
+    }
 }

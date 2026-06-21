@@ -7,12 +7,13 @@ impl SqliteStore {
     ) -> Result<ModelConfigRecord, String> {
         sqlx::query(
             "INSERT INTO model_configs (
-                id, name, provider, base_url, api_key, model, usage_scenario, temperature, max_output_tokens,
+                id, owner_user_id, name, provider, base_url, api_key, model, usage_scenario, temperature, max_output_tokens,
                 thinking_level, supports_responses, instructions, request_cwd,
                 include_prompt_cache_retention, request_body_limit_bytes, enabled,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+                owner_user_id = excluded.owner_user_id,
                 name = excluded.name,
                 provider = excluded.provider,
                 base_url = excluded.base_url,
@@ -32,6 +33,7 @@ impl SqliteStore {
                 updated_at = excluded.updated_at",
         )
         .bind(&model.id)
+        .bind(model.owner_user_id.clone())
         .bind(&model.name)
         .bind(&model.provider)
         .bind(&model.base_url)

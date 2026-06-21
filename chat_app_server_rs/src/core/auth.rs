@@ -1,8 +1,9 @@
-use axum::Json;
 use axum::extract::FromRequestParts;
-use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION, request::Parts};
-use base64::Engine;
+use axum::http::{header::AUTHORIZATION, request::Parts, HeaderMap, StatusCode};
+use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -15,6 +16,16 @@ const DEFAULT_LEGACY_COMPAT_AUTH_SECRET: &str = "legacy_compat_dev_change_me";
 pub struct AuthUser {
     pub user_id: String,
     pub role: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct UserServiceAuthClaims {
+    iss: String,
+    aud: String,
+    exp: usize,
+    principal_type: String,
+    user_id: Option<String>,
+    role: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +110,9 @@ pub fn access_token_from_raw(token: &str) -> Result<String, AuthHeaderError> {
 
 pub fn resolve_auth_user_from_token(access_token: &str) -> Result<AuthUser, AuthResolveError> {
     let cfg = Config::try_get().map_err(AuthResolveError::ConfigUnavailable)?;
+    if let Some(user) = parse_user_service_auth_token(access_token, cfg) {
+        return Ok(user);
+    }
     let parsed = auth_token_secrets(cfg)
         .into_iter()
         .find_map(|secret| parse_compat_auth_token(access_token, secret));
@@ -138,6 +152,33 @@ fn parse_compat_auth_token(token: &str, secret: &str) -> Option<(String, String,
     Some((user_id, role, exp))
 }
 
+fn parse_user_service_auth_token(token: &str, cfg: &Config) -> Option<AuthUser> {
+    let secret = cfg.user_service_jwt_secret.as_deref()?;
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.set_issuer(&[cfg.user_service_jwt_issuer.as_str()]);
+    validation.set_audience(&[cfg.user_service_user_audience.as_str()]);
+    let claims = decode::<UserServiceAuthClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .ok()?
+    .claims;
+    if claims.iss.trim().is_empty()
+        || claims.aud.trim().is_empty()
+        || claims.exp == 0
+        || claims.principal_type != "human_user"
+    {
+        return None;
+    }
+    let user_id = claims.user_id?.trim().to_string();
+    let role = claims.role?.trim().to_string();
+    if user_id.is_empty() || role.is_empty() {
+        return None;
+    }
+    Some(AuthUser { user_id, role })
+}
+
 fn sign_compat_auth_payload(payload: &str, secret: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(payload.as_bytes());
@@ -175,12 +216,13 @@ fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_LEGACY_COMPAT_AUTH_SECRET, auth_token_secrets, parse_compat_auth_token,
-        sign_compat_auth_payload,
+        auth_token_secrets, parse_compat_auth_token, parse_user_service_auth_token,
+        sign_compat_auth_payload, UserServiceAuthClaims, DEFAULT_LEGACY_COMPAT_AUTH_SECRET,
     };
     use crate::config::Config;
-    use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    use jsonwebtoken::{encode, EncodingKey, Header};
 
     fn build_compat_auth_token(user_id: &str, role: &str, secret: &str, exp: i64) -> String {
         let payload = format!("{}|{}|{}", user_id, role, exp);
@@ -188,26 +230,8 @@ mod tests {
         URL_SAFE_NO_PAD.encode(format!("{}|{}", payload, sig))
     }
 
-    #[test]
-    fn parses_valid_compat_token() {
-        let exp = chrono::Utc::now().timestamp() + 3600;
-        let token = build_compat_auth_token("alice", "admin", "secret-1", exp);
-        let parsed = parse_compat_auth_token(token.as_str(), "secret-1").expect("parse token");
-        assert_eq!(parsed.0, "alice");
-        assert_eq!(parsed.1, "admin");
-        assert_eq!(parsed.2, exp);
-    }
-
-    #[test]
-    fn rejects_token_signed_with_other_secret() {
-        let exp = chrono::Utc::now().timestamp() + 3600;
-        let token = build_compat_auth_token("alice", "admin", "secret-1", exp);
-        assert!(parse_compat_auth_token(token.as_str(), "secret-2").is_none());
-    }
-
-    #[test]
-    fn auth_token_secrets_include_explicit_compat_secret() {
-        let cfg = Config {
+    fn build_test_config() -> Config {
+        Config {
             openai_api_key: String::new(),
             openai_base_url: "https://api.openai.com/v1".to_string(),
             port: 3997,
@@ -232,13 +256,92 @@ mod tests {
             auth_jwt_secret: "primary-secret".to_string(),
             auth_compat_secret: Some("compat-secret".to_string()),
             auth_access_token_ttl_seconds: 3600,
+            user_service_base_url: Some("http://127.0.0.1:39190".to_string()),
+            user_service_request_timeout_ms: 5000,
+            user_service_jwt_secret: Some("user-service-secret".to_string()),
+            user_service_jwt_issuer: "user_service".to_string(),
+            user_service_user_audience: "user_service".to_string(),
+            task_runner_base_url: "http://127.0.0.1:39090".to_string(),
             memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
             memory_engine_request_timeout_ms: 5000,
             memory_engine_active_summary_trigger_timeout_ms: 5000,
             memory_engine_active_summary_poll_interval_ms: 10_000,
             memory_engine_active_summary_poll_timeout_ms: 120_000,
             task_runner_callback_secret: None,
-        };
+        }
+    }
+
+    fn build_user_service_auth_token(claims: &UserServiceAuthClaims, secret: &str) -> String {
+        encode(
+            &Header::default(),
+            claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode user_service auth token")
+    }
+
+    #[test]
+    fn parses_valid_compat_token() {
+        let exp = chrono::Utc::now().timestamp() + 3600;
+        let token = build_compat_auth_token("alice", "admin", "secret-1", exp);
+        let parsed = parse_compat_auth_token(token.as_str(), "secret-1").expect("parse token");
+        assert_eq!(parsed.0, "alice");
+        assert_eq!(parsed.1, "admin");
+        assert_eq!(parsed.2, exp);
+    }
+
+    #[test]
+    fn rejects_token_signed_with_other_secret() {
+        let exp = chrono::Utc::now().timestamp() + 3600;
+        let token = build_compat_auth_token("alice", "admin", "secret-1", exp);
+        assert!(parse_compat_auth_token(token.as_str(), "secret-2").is_none());
+    }
+
+    #[test]
+    fn parses_valid_user_service_human_user_token() {
+        let cfg = build_test_config();
+        let token = build_user_service_auth_token(
+            &UserServiceAuthClaims {
+                iss: "user_service".to_string(),
+                aud: "user_service".to_string(),
+                exp: (chrono::Utc::now().timestamp() + 3600) as usize,
+                principal_type: "human_user".to_string(),
+                user_id: Some("user-123".to_string()),
+                role: Some("user".to_string()),
+            },
+            cfg.user_service_jwt_secret
+                .as_deref()
+                .expect("missing secret"),
+        );
+
+        let user = parse_user_service_auth_token(token.as_str(), &cfg).expect("parse token");
+        assert_eq!(user.user_id, "user-123");
+        assert_eq!(user.role, "user");
+    }
+
+    #[test]
+    fn rejects_user_service_agent_account_token_for_human_auth() {
+        let cfg = build_test_config();
+        let token = build_user_service_auth_token(
+            &UserServiceAuthClaims {
+                iss: "user_service".to_string(),
+                aud: "user_service".to_string(),
+                exp: (chrono::Utc::now().timestamp() + 3600) as usize,
+                principal_type: "agent_account".to_string(),
+                user_id: Some("user-123".to_string()),
+                role: Some("user".to_string()),
+            },
+            cfg.user_service_jwt_secret
+                .as_deref()
+                .expect("missing secret"),
+        );
+
+        assert!(parse_user_service_auth_token(token.as_str(), &cfg).is_none());
+    }
+
+    #[test]
+    fn auth_token_secrets_include_explicit_compat_secret() {
+        let cfg = build_test_config();
 
         let secrets = auth_token_secrets(&cfg);
         assert_eq!(secrets[0], "primary-secret");

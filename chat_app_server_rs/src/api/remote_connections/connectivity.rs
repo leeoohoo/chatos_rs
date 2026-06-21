@@ -5,7 +5,7 @@ use std::io::Read;
 use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::Duration as StdDuration;
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
 
 use crate::models::remote_connection::RemoteConnection;
 

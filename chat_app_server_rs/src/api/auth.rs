@@ -1,13 +1,14 @@
 use axum::http::{HeaderMap, StatusCode};
-use axum::{Json, Router, routing::post};
+use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::config::Config;
-use crate::core::auth::{AuthUser, access_token_from_headers, build_auth_token};
+use crate::core::auth::{access_token_from_headers, build_auth_token, AuthUser};
 use crate::core::time::now_rfc3339;
 use crate::core::websocket_ticket::issue_websocket_ticket;
 use crate::repositories::auth_users;
+use crate::services::user_service_api_client;
 
 #[derive(Debug, Deserialize)]
 struct LoginRequest {
@@ -33,10 +34,16 @@ pub fn router() -> Router {
 }
 
 pub fn protected_router() -> Router {
-    Router::new().route("/api/auth/ws-ticket", post(issue_ws_ticket))
+    Router::new()
+        .route("/api/auth/ws-ticket", post(issue_ws_ticket))
+        .route("/api/auth/agent-accounts", get(list_agent_accounts))
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {
+    if let Some(base_url) = configured_user_service_base_url() {
+        return register_via_user_service(base_url.as_str(), req).await;
+    }
+
     let username = req
         .username
         .or(req.email)
@@ -99,6 +106,9 @@ async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>)
 }
 
 async fn login(Json(req): Json<LoginRequest>) -> (StatusCode, Json<Value>) {
+    if let Some(base_url) = configured_user_service_base_url() {
+        return login_via_user_service(base_url.as_str(), req).await;
+    }
     login_inner(req.username, req.email, req.password).await
 }
 
@@ -144,7 +154,37 @@ async fn login_inner(
     }
 }
 
-async fn me(auth: AuthUser) -> (StatusCode, Json<Value>) {
+async fn me(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    if let Some(base_url) = configured_user_service_base_url() {
+        if let Ok(access_token) = access_token_from_headers(&headers) {
+            match user_service_api_client::get_me(
+                base_url.as_str(),
+                access_token.as_str(),
+                Config::get().user_service_request_timeout_ms,
+            )
+            .await
+            {
+                Ok(payload) => {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({
+                            "user": user_public_value_from_user_service(payload.user)
+                        })),
+                    );
+                }
+                Err(err) => {
+                    return (
+                        StatusCode::BAD_GATEWAY,
+                        Json(json!({
+                            "error": "fetch user profile via user_service failed",
+                            "detail": err,
+                        })),
+                    );
+                }
+            }
+        }
+    }
+
     (
         StatusCode::OK,
         Json(json!({
@@ -171,12 +211,71 @@ async fn issue_ws_ticket(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Jso
     }
 }
 
+async fn list_agent_accounts(_auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match access_token_from_headers(&headers) {
+        Ok(token) => token,
+        Err(err) => return err.into_response(),
+    };
+    match user_service_api_client::list_agent_accounts(
+        base_url.as_str(),
+        access_token.as_str(),
+        Config::get().user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!(items))),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "load agent accounts via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
 fn user_public_value(user_id: &str, role: &str) -> Value {
     json!({
         "id": user_id,
         "username": user_id,
         "email": user_id,
         "display_name": Value::Null,
+        "role": role,
+        "status": "active",
+        "last_login_at": Value::Null,
+        "created_at": Value::Null,
+        "updated_at": Value::Null,
+    })
+}
+
+fn user_public_value_from_user_service(
+    user: user_service_api_client::UserServiceAuthUser,
+) -> Value {
+    let username = user
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(user.id.as_str())
+        .to_string();
+    let role = user
+        .role
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("user")
+        .to_string();
+    json!({
+        "id": user.id,
+        "username": username.clone(),
+        "email": username,
+        "display_name": user.display_name,
         "role": role,
         "status": "active",
         "last_login_at": Value::Null,
@@ -212,5 +311,127 @@ fn build_login_success_response(user: &auth_users::AuthUserRecord) -> (StatusCod
                 "detail": err
             })),
         ),
+    }
+}
+
+fn configured_user_service_base_url() -> Option<String> {
+    Config::try_get()
+        .ok()
+        .and_then(|cfg| cfg.user_service_base_url.clone())
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+}
+
+async fn register_via_user_service(
+    base_url: &str,
+    req: RegisterRequest,
+) -> (StatusCode, Json<Value>) {
+    let username = req
+        .username
+        .or(req.email)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let password = req
+        .password
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(username) = username else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "username is required"})),
+        );
+    };
+    let Some(password) = password else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "password is required"})),
+        );
+    };
+    match user_service_api_client::register(
+        base_url,
+        username.as_str(),
+        password.as_str(),
+        Config::get().user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(payload) => proxy_login_success_response(payload),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "register via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+async fn login_via_user_service(base_url: &str, req: LoginRequest) -> (StatusCode, Json<Value>) {
+    let username = req
+        .username
+        .or(req.email)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let password = req
+        .password
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(username) = username else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "username is required"})),
+        );
+    };
+    let Some(password) = password else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "password is required"})),
+        );
+    };
+    match user_service_api_client::login(
+        base_url,
+        username.as_str(),
+        password.as_str(),
+        Config::get().user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(payload) => proxy_login_success_response(payload),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "login via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+fn proxy_login_success_response(
+    payload: user_service_api_client::UserServiceLoginResponse,
+) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "access_token": payload.token,
+            "token_type": "Bearer",
+            "user": user_public_value_from_user_service(payload.user),
+        })),
+    )
+}
+
+fn proxy_status_from_user_service_error(err: &str) -> StatusCode {
+    if err.contains(" 400 ") || err.contains(": 400 ") {
+        StatusCode::BAD_REQUEST
+    } else if err.contains(" 401 ") || err.contains(": 401 ") {
+        StatusCode::UNAUTHORIZED
+    } else if err.contains(" 403 ") || err.contains(": 403 ") {
+        StatusCode::FORBIDDEN
+    } else if err.contains(" 404 ") || err.contains(": 404 ") {
+        StatusCode::NOT_FOUND
+    } else if err.contains(" 409 ") || err.contains(": 409 ") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::BAD_GATEWAY
     }
 }

@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use uuid::Uuid;
+
+use crate::config::Config;
 use crate::models::agent::{Agent, AgentSkill};
 use crate::models::chatos_agent_types::{
     ChatosAgentDto, ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,
@@ -12,7 +15,9 @@ use crate::services::text_normalization::{
     normalize_optional_text_ref, normalize_required_text_owned, normalize_string_vec,
     resolve_visible_user_ids,
 };
-use crate::services::{chatos_memory_engine, chatos_skills};
+use crate::services::{
+    access_token_scope, chatos_memory_engine, chatos_skills, user_service_api_client,
+};
 
 pub async fn list_agents(
     user_id: &str,
@@ -51,7 +56,7 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
     )
     .await?;
 
-    let agent = Agent::new(
+    let mut agent = Agent::new(
         user_id,
         name,
         normalize_optional_text(payload.description.as_deref()),
@@ -65,6 +70,10 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
         payload.project_policy.clone(),
         payload.enabled.unwrap_or(true),
     );
+    if payload.auto_provision_task_runner_account.unwrap_or(false) {
+        agent.task_runner_agent_account_id =
+            Some(provision_task_runner_agent_account(&agent).await?);
+    }
     agents_repo::create_agent(&agent).await?;
     Ok(agent_to_dto(agent))
 }
@@ -107,6 +116,7 @@ pub async fn update_agent(
         category: payload.category.clone().or(existing.category),
         role_definition: normalize_optional_text(payload.role_definition.as_deref())
             .unwrap_or(existing.role_definition),
+        task_runner_agent_account_id: existing.task_runner_agent_account_id,
         plugin_sources: normalized.plugin_sources,
         skills: normalized.skills,
         skill_ids: normalized.skill_ids,
@@ -210,6 +220,7 @@ fn agent_to_dto(agent: Agent) -> ChatosAgentDto {
         description: agent.description,
         category: agent.category,
         role_definition: agent.role_definition,
+        task_runner_agent_account_id: agent.task_runner_agent_account_id,
         plugin_sources: agent.plugin_sources,
         skills: dto_skills_from_agent(agent.skills.as_slice()),
         skill_ids: agent.skill_ids,
@@ -497,4 +508,41 @@ fn first_non_empty_line(value: &str) -> Option<String> {
         .map(str::trim)
         .find(|item| !item.is_empty())
         .map(ToOwned::to_owned)
+}
+
+async fn provision_task_runner_agent_account(agent: &Agent) -> Result<String, String> {
+    let config = Config::get();
+    let user_service_base_url = config
+        .user_service_base_url
+        .as_deref()
+        .ok_or_else(|| "CHATOS_USER_SERVICE_BASE_URL is not configured".to_string())?;
+    let access_token = access_token_scope::get_current_access_token()
+        .ok_or_else(|| "current user access token is missing".to_string())?;
+    let created = user_service_api_client::create_agent_account(
+        user_service_base_url,
+        access_token.as_str(),
+        &user_service_api_client::CreateUserServiceAgentAccountRequest {
+            username: build_task_runner_agent_username(agent.id.as_str()),
+            display_name: Some(agent.name.clone()),
+            password: build_task_runner_agent_password(),
+            owner_user_id: Some(agent.user_id.clone()),
+            enabled: Some(agent.enabled),
+        },
+        config.user_service_request_timeout_ms,
+    )
+    .await?;
+    Ok(created.id)
+}
+
+fn build_task_runner_agent_username(agent_id: &str) -> String {
+    let normalized = agent_id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    format!("chatos-agent-{normalized}")
+}
+
+fn build_task_runner_agent_password() -> String {
+    format!("tr-{}", Uuid::new_v4().simple())
 }

@@ -1,4 +1,41 @@
 services:
+  user-service-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.user_service_backend
+    image: chatos/user-service-backend:latest
+    container_name: chatos-user-service-backend
+    restart: unless-stopped
+    environment:
+      USER_SERVICE_HOST: 0.0.0.0
+      USER_SERVICE_PORT: 39190
+      USER_SERVICE_DATABASE_URL: ${USER_SERVICE_DATABASE_URL:-sqlite:///app/data/user_service.db}
+      USER_SERVICE_JWT_SECRET: ${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
+      USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
+      USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
+      USER_SERVICE_TASK_RUNNER_AUDIENCE: ${USER_SERVICE_TASK_RUNNER_AUDIENCE:-task_runner}
+      USER_SERVICE_USER_ACCESS_TTL_SECONDS: ${USER_SERVICE_USER_ACCESS_TTL_SECONDS:-43200}
+      USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS: ${USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS:-3600}
+      USER_SERVICE_SUPER_ADMIN_USERNAME: ${USER_SERVICE_SUPER_ADMIN_USERNAME:-admin}
+      USER_SERVICE_SUPER_ADMIN_PASSWORD: ${USER_SERVICE_SUPER_ADMIN_PASSWORD:-admin123456}
+      USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME: ${USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME:-System Admin}
+    volumes:
+      - user_service_data:/app/data
+    ports:
+      - "${USER_SERVICE_PORT:-39190}:39190"
+
+  user-service-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.user_service_frontend
+    image: chatos/user-service-frontend:latest
+    container_name: chatos-user-service-frontend
+    restart: unless-stopped
+    depends_on:
+      - user-service-backend
+    ports:
+      - "${USER_SERVICE_FRONTEND_PORT:-39191}:80"
+
   backend:
     build:
       context: .
@@ -9,6 +46,8 @@ services:
     image: chatos/backend:latest
     container_name: chatos-backend
     restart: unless-stopped
+    depends_on:
+      - user-service-backend
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       HOST: ${HOST:-0.0.0.0}
@@ -19,6 +58,11 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      CHATOS_USER_SERVICE_BASE_URL: ${CHATOS_DOCKER_USER_SERVICE_BASE_URL:-http://user-service-backend:39190}
+      CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS: ${CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS:-5000}
+      CHATOS_USER_SERVICE_JWT_SECRET: ${CHATOS_USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
+      CHATOS_USER_SERVICE_JWT_ISSUER: ${CHATOS_USER_SERVICE_JWT_ISSUER:-user_service}
+      CHATOS_USER_SERVICE_USER_AUDIENCE: ${CHATOS_USER_SERVICE_USER_AUDIENCE:-user_service}
       NOTEPAD_DATA_DIR: ${NOTEPAD_DATA_DIR:-/app/data/notepad}
     volumes:
       - ./chat_app_server_rs/config:/app/config:ro
@@ -46,3 +90,4 @@ services:
 volumes:
   chatos_backend_data:
   chatos_backend_logs:
+  user_service_data:

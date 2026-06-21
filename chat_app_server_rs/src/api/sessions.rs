@@ -1,6 +1,6 @@
 use axum::{
-    Router,
     routing::{delete, get},
+    Router,
 };
 
 mod contracts;

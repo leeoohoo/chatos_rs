@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::SftpTransferStatus;
 use crate::services::realtime::{
-    RemoteSftpTransferRealtimePayload, publish_remote_sftp_transfer_updated,
+    publish_remote_sftp_transfer_updated, RemoteSftpTransferRealtimePayload,
 };
 
 pub(super) struct SftpTransferManager {

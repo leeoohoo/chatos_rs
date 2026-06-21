@@ -30,6 +30,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             description TEXT,
             category TEXT,
             role_definition TEXT NOT NULL,
+            task_runner_agent_account_id TEXT,
             plugin_sources TEXT NOT NULL DEFAULT '[]',
             skills TEXT NOT NULL DEFAULT '[]',
             skill_ids TEXT NOT NULL DEFAULT '[]',
@@ -79,6 +80,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             agent_name_snapshot TEXT,
             task_runner_enabled INTEGER NOT NULL DEFAULT 0,
             task_runner_base_url TEXT,
+            task_runner_agent_account_id TEXT,
             task_runner_username TEXT,
             task_runner_password TEXT,
             status TEXT NOT NULL DEFAULT 'active',
@@ -365,6 +367,9 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     ensure_column(pool, "sessions", "archived_at", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "agents", "task_runner_agent_account_id", "TEXT")
+        .await
+        .ok();
     ensure_column(
         pool,
         "chatos_contacts",
@@ -376,6 +381,14 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     ensure_column(pool, "chatos_contacts", "task_runner_base_url", "TEXT")
         .await
         .ok();
+    ensure_column(
+        pool,
+        "chatos_contacts",
+        "task_runner_agent_account_id",
+        "TEXT",
+    )
+    .await
+    .ok();
     ensure_column(pool, "chatos_contacts", "task_runner_username", "TEXT")
         .await
         .ok();

@@ -100,7 +100,6 @@ export const canSubmitAiModelFormWithOptions = (
   return Boolean(
     formData.name.trim()
       && formData.base_url.trim()
-      && formData.model_name.trim()
       && (!requireApiKey || formData.api_key.trim()),
   );
 };

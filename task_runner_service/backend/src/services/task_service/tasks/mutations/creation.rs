@@ -10,7 +10,7 @@ impl TaskService {
         validate_required("title", &input.title)?;
         validate_required("objective", &input.objective)?;
         if let Some(model_config_id) = input.default_model_config_id.as_deref() {
-            self.ensure_model_config_exists(model_config_id).await?;
+            self.ensure_model_config_access(model_config_id, creator).await?;
         }
         if matches!(input.status, Some(TaskStatus::Queued | TaskStatus::Running)) {
             return Err(

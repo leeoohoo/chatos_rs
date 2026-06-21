@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::{Cursor, bson::Document};
+use mongodb::{bson::Document, Cursor};
 
 pub async fn collect_and_map<T, F>(
     mut cursor: Cursor<Document>,

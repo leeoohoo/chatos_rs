@@ -1,4 +1,4 @@
-use crate::db::{Database, get_db_sync};
+use crate::db::{get_db_sync, Database};
 use crate::models::project::ProjectService;
 use crate::repositories::change_logs::{
     ProjectChangeCounts, ProjectChangeMark, ProjectChangeSummarySnapshot,
@@ -8,8 +8,8 @@ use crate::services::project_run::classify_project_run_path_change;
 use crate::services::realtime::{
     publish_project_change_summary_updated, publish_project_run_catalog_updated,
 };
-use mongodb::Database as MongoDatabase;
 use mongodb::bson::doc;
+use mongodb::Database as MongoDatabase;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use std::fs;

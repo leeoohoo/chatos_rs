@@ -313,10 +313,10 @@ function useAuthStoreWithFallback<T>(
 ) {
   const contextStore = React.useContext(AuthStoreContext);
   const store = contextStore ?? globalAuthStore;
-  if (selector) {
-    return useStoreWithEqualityFn(store, selector, equalityFn);
-  }
-  return useStoreWithEqualityFn(store);
+  const effectiveSelector = (selector ?? ((state: AuthState) => state)) as (
+    state: AuthState,
+  ) => T;
+  return useStoreWithEqualityFn(store, effectiveSelector, equalityFn);
 }
 
 export const useAuthStore = Object.assign(

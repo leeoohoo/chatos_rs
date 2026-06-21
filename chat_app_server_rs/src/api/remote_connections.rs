@@ -1,4 +1,4 @@
-use axum::{Router, routing::get};
+use axum::{routing::get, Router};
 
 mod connectivity;
 mod contracts;
@@ -51,7 +51,7 @@ use self::remote_sftp::{
     get_sftp_transfer_status, list_remote_sftp_entries, rename_remote_entry, start_sftp_transfer,
     upload_file_to_remote,
 };
-use self::remote_terminal::{DisconnectReason, RemoteTerminalEvent, get_remote_terminal_manager};
+use self::remote_terminal::{get_remote_terminal_manager, DisconnectReason, RemoteTerminalEvent};
 use self::request_normalize::{normalize_create_request, normalize_update_request};
 pub(crate) use self::resolved_connection::resolve_jump_connection_snapshot;
 use self::ssh_auth::{

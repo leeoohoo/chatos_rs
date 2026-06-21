@@ -65,6 +65,14 @@ impl MongoStore {
 
         self.ensure_index(&self.model_configs, doc! { "id": 1 }, true)
             .await?;
+        self.ensure_index(&self.model_configs, doc! { "owner_user_id": 1 }, false)
+            .await?;
+        self.ensure_index(
+            &self.model_configs,
+            doc! { "owner_user_id": 1, "updated_at": -1 },
+            false,
+        )
+        .await?;
         self.ensure_index(&self.model_configs, doc! { "updated_at": -1 }, false)
             .await?;
         self.ensure_index(&self.runtime_settings, doc! { "id": 1 }, true)

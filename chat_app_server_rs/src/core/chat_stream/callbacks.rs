@@ -1,15 +1,15 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::core::chat_stream::ChatEventSink;
 use crate::services::agent_runtime::ai_client::AiClientCallbacks as AgentAiClientCallbacks;
 use crate::utils::abort_registry;
 use crate::utils::events::Events;
 
-use super::ChatStreamCallbacks;
 use super::text::join_stream_text;
+use super::ChatStreamCallbacks;
 
 pub fn build_chat_stream_callbacks(
     sink: &ChatEventSink,

@@ -54,6 +54,7 @@ pub(in crate::services) fn normalize_model_config_record(
     let provider = normalize_model_provider_input(&record.provider)?;
     record.thinking_level =
         normalize_model_thinking_level_input(provider.as_str(), record.thinking_level.clone())?;
+    record.owner_user_id = normalized_optional(record.owner_user_id);
     record.base_url = normalize_model_base_url_input(provider.as_str(), Some(record.base_url));
     record.provider = provider;
     record.usage_scenario = normalized_optional(record.usage_scenario);

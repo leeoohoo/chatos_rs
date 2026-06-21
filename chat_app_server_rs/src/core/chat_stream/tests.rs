@@ -28,13 +28,11 @@ fn build_error_event_payload_marks_rate_limited_errors() {
         payload.get("code").and_then(|value| value.as_str()),
         Some("RATE_LIMITED")
     );
-    assert!(
-        payload
-            .get("message")
-            .and_then(|value| value.as_str())
-            .map(|value| value.contains("上游模型接口限流"))
-            .unwrap_or(false)
-    );
+    assert!(payload
+        .get("message")
+        .and_then(|value| value.as_str())
+        .map(|value| value.contains("上游模型接口限流"))
+        .unwrap_or(false));
     assert_eq!(
         payload
             .get("data")

@@ -259,5 +259,9 @@ fn resolve_cd_target(root_cwd: &Path, current_cwd: &Path, target: Option<&str>) 
 }
 
 fn shell_input_newline() -> &'static str {
-    if cfg!(windows) { "\r" } else { "\n" }
+    if cfg!(windows) {
+        "\r"
+    } else {
+        "\n"
+    }
 }

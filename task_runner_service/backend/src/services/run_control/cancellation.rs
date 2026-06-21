@@ -1,4 +1,5 @@
 use super::*;
+use crate::auth::CurrentUser;
 
 impl RunService {
     pub async fn cancel_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
@@ -8,16 +9,16 @@ impl RunService {
         match current_run.status {
             TaskRunStatus::Queued | TaskRunStatus::Running => {}
             TaskRunStatus::Succeeded => {
-                return Err("当前运行状态不允许取消: succeeded".to_string());
+                return Err("cannot cancel a succeeded run".to_string());
             }
             TaskRunStatus::Failed => {
-                return Err("当前运行状态不允许取消: failed".to_string());
+                return Err("cannot cancel a failed run".to_string());
             }
             TaskRunStatus::Cancelled => {
-                return Err("当前运行状态不允许取消: cancelled".to_string());
+                return Err("cannot cancel an already cancelled run".to_string());
             }
             TaskRunStatus::Blocked => {
-                return Err("当前运行状态不允许取消: blocked".to_string());
+                return Err("cannot cancel a blocked run".to_string());
             }
         }
         if current_run.cancel_requested {
@@ -31,7 +32,7 @@ impl RunService {
             .append_run_event(TaskRunEventRecord::new(
                 run_id.to_string(),
                 "cancel_requested",
-                Some("已请求取消任务运行".to_string()),
+                Some("run cancellation requested".to_string()),
                 None,
             ))
             .await?;
@@ -45,7 +46,7 @@ impl RunService {
                 .append_run_event(TaskRunEventRecord::new(
                     run_id.to_string(),
                     "cancelled",
-                    Some("任务在启动前已取消".to_string()),
+                    Some("run cancelled before execution started".to_string()),
                     None,
                 ))
                 .await?;
@@ -62,11 +63,27 @@ impl RunService {
     }
 
     pub async fn retry_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
+        self.retry_run_with_user(run_id, None).await
+    }
+
+    pub async fn retry_run_for_user(
+        &self,
+        run_id: &str,
+        current_user: &CurrentUser,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.retry_run_with_user(run_id, Some(current_user)).await
+    }
+
+    async fn retry_run_with_user(
+        &self,
+        run_id: &str,
+        current_user: Option<&CurrentUser>,
+    ) -> Result<Option<TaskRunRecord>, String> {
         let Some(run) = self.store.get_run(run_id).await? else {
             return Ok(None);
         };
         if matches!(run.status, TaskRunStatus::Queued | TaskRunStatus::Running) {
-            return Err("运行仍在进行中，暂时不能重试".to_string());
+            return Err("run is still active and cannot be retried yet".to_string());
         }
 
         let prompt_override = run
@@ -78,6 +95,12 @@ impl RunService {
             model_config_id: Some(run.model_config_id.clone()),
             prompt_override,
         };
-        self.start_run(&run.task_id, request).await.map(Some)
+        let restarted = if let Some(current_user) = current_user {
+            self.start_run_for_user(&run.task_id, request, current_user)
+                .await?
+        } else {
+            self.start_run(&run.task_id, request).await?
+        };
+        Ok(Some(restarted))
     }
 }

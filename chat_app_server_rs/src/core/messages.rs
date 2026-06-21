@@ -223,7 +223,11 @@ pub fn flatten_text_value(value: &Value, object_keys: &[&str]) -> String {
 
 pub fn extract_non_empty_text_value(value: &Value, object_keys: &[&str]) -> Option<String> {
     let text = flatten_text_value(value, object_keys);
-    if text.is_empty() { None } else { Some(text) }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 pub fn text_value_or_json(value: &Value, object_keys: &[&str]) -> String {
@@ -275,7 +279,7 @@ pub fn message_turn_id(message: &Message) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use super::{
         ensure_message_metadata_object, extract_message_tool_calls_for_display,

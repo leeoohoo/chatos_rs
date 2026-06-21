@@ -181,7 +181,7 @@ pub async fn get_turn_runtime_snapshot_by_turn(
 mod tests {
     use serde_json::json;
 
-    use super::{FULL_SESSION_MESSAGES_PAGE_SIZE, append_visible_message_page};
+    use super::{append_visible_message_page, FULL_SESSION_MESSAGES_PAGE_SIZE};
     use crate::models::message::Message;
 
     fn build_message(id: &str, hidden: bool) -> Message {

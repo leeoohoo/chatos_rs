@@ -1,4 +1,5 @@
 use super::*;
+use crate::auth::CurrentUser;
 
 impl RunService {
     pub async fn start_run(
@@ -6,7 +7,26 @@ impl RunService {
         task_id: &str,
         input: StartTaskRunRequest,
     ) -> Result<TaskRunRecord, String> {
-        self.start_run_with_trigger(task_id, input, RunTriggerSource::Manual)
+        self.start_run_with_user(task_id, input, None).await
+    }
+
+    pub async fn start_run_for_user(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+        current_user: &CurrentUser,
+    ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_user(task_id, input, Some(current_user))
+            .await
+    }
+
+    async fn start_run_with_user(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+        current_user: Option<&CurrentUser>,
+    ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Manual, current_user)
             .await
     }
 
@@ -15,7 +35,7 @@ impl RunService {
         task_id: &str,
         input: StartTaskRunRequest,
     ) -> Result<TaskRunRecord, String> {
-        self.start_run_with_trigger(task_id, input, RunTriggerSource::Scheduler)
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Scheduler, None)
             .await
     }
 
@@ -32,6 +52,7 @@ impl RunService {
         task_id: &str,
         input: StartTaskRunRequest,
         trigger: RunTriggerSource,
+        current_user: Option<&CurrentUser>,
     ) -> Result<TaskRunRecord, String> {
         let start_lock = self.start_lock_for_task(task_id);
         let _guard = start_lock.lock().await;
@@ -39,7 +60,7 @@ impl RunService {
             .store
             .get_task(task_id)
             .await?
-            .ok_or_else(|| format!("任务不存在: {task_id}"))?;
+            .ok_or_else(|| format!("task not found: {task_id}"))?;
         info!(
             task_id = task.id.as_str(),
             task_title = task.title.as_str(),
@@ -57,10 +78,10 @@ impl RunService {
         if matches!(task.schedule.mode, TaskScheduleMode::ContactAsync)
             && !matches!(trigger, RunTriggerSource::Scheduler)
         {
-            return Err("联系人异步任务只能由后台调度器触发执行".to_string());
+            return Err("contact_async tasks can only be started by the scheduler".to_string());
         }
         if task.status == TaskStatus::Cancelled {
-            return Err(format!("任务已取消，不能再次启动: {task_id}"));
+            return Err(format!("task has been cancelled: {task_id}"));
         }
         if self.store.has_active_run_for_task(task_id).await? {
             info!(
@@ -68,20 +89,28 @@ impl RunService {
                 task_title = task.title.as_str(),
                 "task runner rejected start_run because an active run already exists"
             );
-            return Err("当前任务已有正在执行的运行".to_string());
+            return Err("an active run already exists for this task".to_string());
         }
         self.ensure_task_thread(&task).await?;
 
         let model_config_id = normalized_optional(input.model_config_id.clone())
             .or(task.default_model_config_id.clone())
-            .ok_or_else(|| "任务未绑定模型配置，且本次执行也没有指定模型配置".to_string())?;
+            .ok_or_else(|| {
+                "task has no bound model config and this run request did not provide one"
+                    .to_string()
+            })?;
         let model_config = self
             .store
             .get_model_config(&model_config_id)
             .await?
-            .ok_or_else(|| format!("模型配置不存在: {model_config_id}"))?;
+            .ok_or_else(|| format!("model config not found: {model_config_id}"))?;
         if !model_config.enabled {
-            return Err(format!("模型配置已禁用: {model_config_id}"));
+            return Err(format!("model config is disabled: {model_config_id}"));
+        }
+        if let Some(current_user) = current_user {
+            if !current_user.can_access_owned_resource(model_config.owner_user_id.as_deref()) {
+                return Err(format!("model config not found: {model_config_id}"));
+            }
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &task, &model_config)?;
@@ -146,7 +175,7 @@ impl RunService {
             .append_run_event(TaskRunEventRecord::new(
                 run.id.clone(),
                 "queued",
-                Some("任务已进入队列".to_string()),
+                Some("task run queued".to_string()),
                 None,
             ))
             .await?;

@@ -2,8 +2,8 @@ use std::path::Path;
 
 use super::super::environment_support::normalize_path;
 use super::support::{
-    ToolchainOptions, ToolchainSeen, discover_direct_file_option, java_home_candidate,
-    list_child_dirs, push_option_with_label, push_relative_option,
+    discover_direct_file_option, java_home_candidate, list_child_dirs, push_option_with_label,
+    push_relative_option, ToolchainOptions, ToolchainSeen,
 };
 
 fn discover_project_local_java_homes(

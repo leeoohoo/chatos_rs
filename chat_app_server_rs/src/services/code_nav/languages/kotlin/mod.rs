@@ -4,16 +4,16 @@ use std::path::Path;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::services::code_nav::CodeNavProvider;
 use crate::services::code_nav::languages::basic::{
-    BasicFileAnalysis, BasicLanguageSpec, BasicSymbol, count_char, find_balanced_end, find_column,
-    make_symbol, strip_c_style_comments,
+    count_char, find_balanced_end, find_column, make_symbol, strip_c_style_comments,
+    BasicFileAnalysis, BasicLanguageSpec, BasicSymbol,
 };
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities, NavLocation,
     NavPositionRequest, ProjectContext,
 };
+use crate::services::code_nav::CodeNavProvider;
 
 const KOTLIN_IGNORED_DIRS: &[&str] = &[
     ".git",
@@ -266,9 +266,9 @@ fn consume_kotlin_annotation(line: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{KotlinCodeNavProvider, SPEC, analyze_kotlin_file, classify_kotlin_declaration};
-    use crate::services::code_nav::CodeNavProvider;
+    use super::{analyze_kotlin_file, classify_kotlin_declaration, KotlinCodeNavProvider, SPEC};
     use crate::services::code_nav::types::{NavPositionRequest, ProjectContext};
+    use crate::services::code_nav::CodeNavProvider;
     use std::fs;
     use std::path::PathBuf;
 

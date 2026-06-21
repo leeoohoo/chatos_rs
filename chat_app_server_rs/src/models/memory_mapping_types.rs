@@ -9,6 +9,7 @@ pub struct MemoryContactDto {
     #[serde(default)]
     pub task_runner_enabled: bool,
     pub task_runner_base_url: Option<String>,
+    pub task_runner_agent_account_id: Option<String>,
     pub task_runner_username: Option<String>,
     #[serde(default)]
     pub task_runner_has_password: bool,
@@ -129,6 +130,7 @@ pub struct CreateMemoryContactResponseDto {
 pub struct UpdateContactTaskRunnerConfigRequestDto {
     pub enabled: bool,
     pub base_url: Option<String>,
+    pub task_runner_agent_account_id: Option<String>,
     pub username: Option<String>,
     #[serde(default)]
     pub password: Option<String>,

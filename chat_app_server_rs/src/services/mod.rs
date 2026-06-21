@@ -52,6 +52,7 @@ pub(crate) mod task_runner_api_client;
 pub mod terminal_manager;
 pub(crate) mod text_normalization;
 pub mod ui_prompt_manager;
+pub mod user_service_api_client;
 pub mod user_settings;
 pub mod workspace_realtime_watcher;
 pub mod workspace_search;

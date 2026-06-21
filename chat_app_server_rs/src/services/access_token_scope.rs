@@ -30,6 +30,10 @@ fn current_access_token() -> Option<String> {
         .and_then(|token| normalize_optional_token(Some(token)))
 }
 
+pub fn get_current_access_token() -> Option<String> {
+    current_access_token()
+}
+
 fn normalize_optional_token(token: Option<String>) -> Option<String> {
     token.and_then(|value| {
         let trimmed = value.trim().to_string();

@@ -6,7 +6,7 @@ use crate::repositories::db::{
     doc_from_pairs, mongo_delete_one_doc, mongo_find_one_doc, mongo_insert_doc,
     mongo_update_set_doc, to_doc, with_db,
 };
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 
 fn normalize_doc(doc: &Document) -> Option<Application> {
     Some(Application {

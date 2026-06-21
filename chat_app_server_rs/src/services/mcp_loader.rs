@@ -2,8 +2,8 @@ use crate::core::mcp_args::{parse_args_json_array_or_whitespace, parse_env};
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs;
 use crate::services::builtin_mcp::{
-    BuiltinMcpKind, builtin_kind_by_command, builtin_kind_by_id, get_builtin_mcp_config,
-    is_builtin_mcp_id, list_builtin_mcp_configs,
+    builtin_kind_by_command, builtin_kind_by_id, get_builtin_mcp_config, is_builtin_mcp_id,
+    list_builtin_mcp_configs, BuiltinMcpKind,
 };
 use crate::utils::workspace::resolve_workspace_dir;
 

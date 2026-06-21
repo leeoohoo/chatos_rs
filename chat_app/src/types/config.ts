@@ -60,6 +60,7 @@ export interface AgentConfig {
   category?: string;
   ai_model_config_id: string;
   enabled: boolean;
+  task_runner_agent_account_id?: string | null;
   project_id?: string | null;
   workspace_dir?: string | null;
   role_definition?: string;

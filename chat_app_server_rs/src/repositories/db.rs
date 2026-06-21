@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::UpdateOptions;
 use std::sync::Arc;
 

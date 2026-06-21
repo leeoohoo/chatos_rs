@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::fs;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -11,7 +11,7 @@ use super::store_normalize::{
     extract_title_from_markdown, normalize_folder_path, normalize_string, normalize_title, now_iso,
     split_folder, ts_to_rfc3339, unique_tags,
 };
-use super::types::{INDEX_VERSION, NoteIndexEntry, NoteOutput, NotesIndex};
+use super::types::{NoteIndexEntry, NoteOutput, NotesIndex, INDEX_VERSION};
 
 mod folder_ops;
 mod note_ops;
@@ -41,7 +41,11 @@ fn normalize_index(mut index: NotesIndex) -> NotesIndex {
         let tags = unique_tags(&item.tags);
         let created_at = {
             let value = normalize_string(item.created_at.as_str());
-            if value.is_empty() { now_iso() } else { value }
+            if value.is_empty() {
+                now_iso()
+            } else {
+                value
+            }
         };
         let updated_at = {
             let value = normalize_string(item.updated_at.as_str());

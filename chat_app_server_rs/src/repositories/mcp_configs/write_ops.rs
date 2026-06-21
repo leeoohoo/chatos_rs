@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::db::{

@@ -3,7 +3,7 @@ use crate::models::session_mcp_server::SessionMcpServer;
 use crate::repositories::db::{
     doc_from_pairs, mongo_delete_many_doc, mongo_insert_doc, to_doc, with_db,
 };
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use sqlx::Row;
 
 fn normalize_doc(doc: &Document) -> Option<SessionMcpServer> {

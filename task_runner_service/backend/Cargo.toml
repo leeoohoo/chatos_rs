@@ -14,14 +14,15 @@ chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 dotenvy = "0.15"
 futures-util = "0.3"
-memory_engine_sdk = { path = "../../../memory_engine/sdk" }
+jsonwebtoken = "9"
+memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 parking_lot = "0.12"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+ssh2 = "0.9"
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

@@ -6,6 +6,7 @@ export interface ContactItem {
   taskRunner?: {
     enabled: boolean;
     baseUrl: string;
+    agentAccountId?: string | null;
     username: string;
     hasPassword: boolean;
   };

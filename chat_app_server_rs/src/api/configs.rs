@@ -1,11 +1,11 @@
 use axum::http::StatusCode;
 use axum::{
-    Json, Router,
     extract::{Path, Query},
     routing::{get, post, put},
+    Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::core::auth::AuthUser;

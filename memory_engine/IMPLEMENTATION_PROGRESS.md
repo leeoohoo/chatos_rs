@@ -1,0 +1,255 @@
+# Memory Engine 整改进度
+
+## 目标
+
+按照根目录的《项目评估与实施方案》逐项修复，并在修复过程中持续记录：
+
+- 当前阶段
+- 已完成事项
+- 进行中事项
+- 待处理事项
+- 验证结果
+- 已知风险或遗留问题
+
+## 当前阶段
+
+阶段 3 基本完成，阶段 4 持续推进中，阶段 5 持续补齐 SDK 与后端契约
+
+## 已完成
+
+- 建立整改进度文档
+- 增加 `rust-toolchain.toml`，固定 Rust 工具链为 `1.93.0`
+- 为 `admin` / `core` 路由增加 operator 级认证能力
+- 新增 `MEMORY_ENGINE_OPERATOR_TOKEN` 配置项
+- 管理台支持通过 `VITE_MEMORY_ENGINE_OPERATOR_TOKEN` 透传 operator token
+- SDK 认证上下文新增租户一致性校验
+- SDK 的 `threads` / `records` / `context` / `subject_memories` / `jobs` / `snapshots` / `summaries` 入口已接入租户校验
+- 管理台 source 表单改为显式维护 `tenant_id`
+- `summaries` 仓储新增按 `tenant_id` / `source_id` 的过滤能力，优先用于 SDK 摘要读取与删除路径
+- 补充了 SDK 租户校验和 operator token 比对的最小测试
+- `records` 仓储的 pending / mark / reset / upsert / delete 路径已统一收口到 `tenant_id + source_id + thread_id`
+- `thread summary` / `repair summary` / `compose context` / `subject memory` / `rollup` 已接入新的 records / summaries 完整作用域
+- `summaries` 的内部读取与状态回写已收口到 `tenant_id + source_id + thread_id`
+- `thread_snapshots` 的 upsert / latest / by-turn 查询已统一纳入 `tenant_id + source_id + thread_id + snapshot_type + turn_id`
+- `engine_records` / `engine_summaries` / `engine_thread_snapshots` 的索引定义已升级到完整作用域，并开始移除旧的 thread-only 索引
+- 管理台线程详情读取 summaries 时已补充 `tenant_id` / `source_id` 查询参数
+- SDK 与 direct API 的 `record_id` 直查 / 直删入口已改为要求 `tenant_id + source_id`，并支持附带 `thread_id` 做更强约束
+- `batch_sync_records` 已改为按单条 upsert 的旧值 / 新值增量维护线程 `pending_record_count` 与 `pending_summary_tokens`
+- 线程 pending 队列状态新增原子增量更新 helper，避免 batch sync 后总是全量 count + 拉取 pending records
+- summary worker 的线程筛选已将 `pending_summary_tokens` 阈值过滤下推到 Mongo 查询层，避免“先 limit 再内存过滤”漏选线程
+- worker 的 summary / rollup / subject_memory / reconcile 已在单个 tick 内并发执行，减少串行等待
+- 已补一个轻量 pending queue reconcile pass，作为增量维护的异步校正
+- summary / rollup / subject_memory scopes / reconcile 的候选项执行已改为受限并发，减少单类任务在一个 tick 内完全串行扫线程或 scope
+- 数据页详情区改为按 tab 懒加载 summaries / subject memories，避免线程详情首屏直接扇出全部请求
+- 管理台主入口已对 `dashboard / data / sources / models / policies / runs` 页面区块和高成本 modal 做 `React.lazy` 拆分
+- 控制台初始化已改为“先加载目录与概览统计，进入 `runs` 页再按需加载任务运行列表”，减少首屏无效请求
+- `runs` 页已去掉前端逐条 `getThread` 的线程名补查 N+1，改为直接消费 job run 列表中的展示信息
+- `job runs` 后端列表已补线程展示名富化，前端无需再为线程名称单独扇出查询
+- `runs` 页元数据列改为可展开折叠，降低超长 JSON 对表格布局的压迫
+- 数据页线程记录分页已从 `count + list` 双请求收敛为单次分页请求，后端统一返回 `items + total`
+- `runs` 页加载已从 `thread runs + scheduler runs + stats` 三次请求收敛为单个 bundle 接口
+- 数据页在“总结 / 记忆”标签下切换线程时已去掉重复详情请求，避免一次切换触发两次同类加载
+- 控制台首页已改为消费 dashboard 聚合统计接口，`sources / models / policies` 目录数据改为按 tab 水合，不再在初始化时全量拉取
+- `data / runs` 页筛选已改为直接输入 `source_id`，不再为了下拉选项额外加载 `sources` 目录数据
+- 数据页状态 Hook 已下沉到懒加载页容器，`useThreadExplorer` 不再在控制台根组件首屏参与加载
+- 已建立前端最小测试基线（`vitest + jsdom + testing-library`），并补上 `useRunManagement` / `useConsoleResources` / `useThreadExplorer` 的首批请求收敛回归测试
+- `runs` 页状态 Hook 已下沉到懒加载页容器，控制台顶部“刷新”已改为按当前页签执行真实刷新，不再只刷新概览
+- `sources / models / policies` 的目录数据、表单状态和 modal 状态已进一步从 `App` 根层下沉到各自懒加载页容器，控制台根组件只保留概览统计与页签级刷新分发
+- `useConsoleResources` 已收敛为 dashboard overview 专用 Hook，不再混管目录资源加载
+- `sources / models` 页在发生创建、编辑、删除等目录变更后会主动回刷 dashboard overview，避免首页统计明显滞后
+- `model` 保存 / 删除与 `policy` 保存路径已补错误提示兜底，减少未处理失败导致的静默问题
+- `models` 页在模型创建 / 编辑 / 删除后已去掉对 `policies` 目录的冗余联动刷新，进一步减少下沉后的跨页无效请求
+- 控制台根层已去掉“等待 dashboard overview 才渲染整个页面”的阻塞逻辑，改为应用壳先渲染、概览卡片局部 skeleton 加载
+- worker 的 `summary / rollup / subject memory / reconcile` 受限并发上限已从代码常量收口为显式配置项，后续可按环境调优而不必改代码
+- 已补一批后端仓储级回归测试，覆盖 `job run` 线程展示名选择、records 分页聚合解析、统计数值解析等关键请求收敛依赖点
+- 已清理一批 backend 历史 dead code 与未使用导出，`cargo check` 当前无新增 warning 噪音，更便于后续继续治理
+- `runs` 页 bundle 接口已去掉前端未使用的 `stats` 负载，减少一次无效统计聚合和对应的前端状态更新
+- SDK 已补齐 `thread records` 分页契约，新增 `list_thread_records_page` 返回 `items + total`，原 `list_thread_records` 保持兼容并继续只返回 `items`
+- 已建立 SDK 最小测试基线，补上 `transport` 查询参数拼装 / base URL 规范化，以及 `thread records` 分页响应反序列化测试
+- 数据页线程详情已补异步竞态保护，快速切换线程或详情标签时，旧请求结果不再覆盖当前线程的记录 / 总结 / 记忆状态
+- 数据页刷新语义已补齐：当停留在“总结结果 / 主题记忆”标签时，刷新会同步回刷当前详情标签，不再只刷新线程列表和记录分页
+- dashboard 与 runs 页的刷新入口已补异步竞态保护，连续刷新或并发刷新时，旧响应不再回写覆盖较新的页面状态
+- 数据页线程列表的行 key 与选中态判断已改为完整作用域键（`tenant_id + source_id + thread_id`），界面层不再继续隐含依赖“裸 thread_id 全局唯一”
+- `sources / models / policies` 目录页底层 loaders 已补异步竞态保护，连续刷新或保存后回刷时，旧目录请求结果不再覆盖新状态
+- `data / runs` 页面已补统一错误提示回调，接口失败时会稳定提示并正确结束 loading，不再更容易出现静默失败或未处理 Promise 拒绝
+- 管理台轮换 source secret 时已补传 `tenant_id`，避免在 `source_id` 非全局唯一场景下对错误租户的 source 产生歧义
+- `sources / models / policies` 的关键 catalog actions 已拆分“主操作失败”和“刷新列表失败”两类错误语义，避免保存 / 删除 / 轮换成功后却被误报成主操作失败
+- `sources / models` 的 dashboard 概览回刷回调已从主操作错误中拆分，保存 / 删除 / 轮换成功后若仅概览刷新失败，会给出准确的后续提示，不再误报成主操作失败
+- 前端 `adminApi` 中已清理未再使用的 `listJobRuns / getJobRunStats` 旧入口，减少 runs 数据流重构后的死代码与维护噪音
+- `PolicyEditorCard` 已修复“普通重渲染覆盖未保存草稿”的问题，仅在真正收到新的 policy 载荷时才重置表单，避免策略编辑过程中输入被悄悄清空
+- 前端测试环境已补 `window.matchMedia` shim，后续组件级 antd 响应式测试更稳定，可继续扩展组件测试基线
+- `PolicyEditorCard` 保存按钮已改为显式 async 提交流程，避免直接链式 `validateFields().then(...)` 带来的未处理 Promise 噪音，交互语义更清晰
+- 已补齐线程删除后端链路，`core` / `sdk` 路由现在都支持按完整作用域删除线程，并同步清理该线程下的 `records / summaries / snapshots`，修复了 SDK 已暴露 `delete_thread` 但服务端未接线的契约缺口
+- SDK 已继续扩充 client 层请求构造测试，新增 `job runs` 与 `sources` 查询/路径拼装回归测试，覆盖 `since_hours` 最小值收口与 `tenant_id` 查询编码等边界
+- SDK `new_platform()` 模式已补一轮契约收口：允许省略 `source_id` 的 direct 读接口不再注入空 `source_id` 查询，必须依赖 source 作用域的写/调度接口则会尽早返回清晰错误，避免“静默带空过滤”与“平台模式误用直连写接口”混在一起
+- `model profile` 管理链路已补齐单项按 id 读取接口，SDK 不再通过“先拉全量列表再本地筛选”的方式模拟单项查询，补上了一处 admin 客户端/服务端能力不对称和一个低收益的额外列表请求
+- SDK 使用文档已补充 `new_platform / new_direct / new_system` 的适用边界，明确了平台模式下哪些 direct 接口可以安全使用、哪些必须改走显式 `source_id` 模式，降低错误接入的概率
+- SDK 已补可选 `operator token` 透传能力，`new_direct / new_platform / new_system` 现在都可以链式调用 `.with_operator_token(...)` 与后端 `MEMORY_ENGINE_OPERATOR_TOKEN` 鉴权对齐，避免启用 operator 认证后 direct/platform 调用天然 401
+- 后端 `records / summaries / threads` 的删除入口已统一补上 `source_guard::ensure_write_source_allowed(...)` 校验，避免部分破坏性写操作仍绕过 source 写权限收口
+- SDK `admin` 契约已继续补齐：`EngineModelProfile` / `UpsertEngineModelProfileRequest` 现已对齐后端 `is_default` 字段，同时新增 `list_job_policies`、`get_job_runs_bundle`、`get_dashboard_overview` 客户端入口，减少“后端已有能力但 SDK 无法直连”的封装缺口
+- `job runs` 管理查询的 `trigger_type` 过滤已从后端能力面继续向 SDK 与前端请求层透传，修复了 bundle / 列表查询对该过滤条件的参数丢失问题
+- `runs` 页筛选表单与状态 Hook 已正式接入 `trigger_type`，现在前端界面可以真实使用该过滤能力，不再停留在类型定义和请求层“已支持但 UI 失联”的状态
+- `job-runs/bundle` 后端已修复对 `trigger_type` 过滤条件的“假支持”问题：此前前端与 SDK 会透传该参数，但 bundle 接口内部固定拆成 `thread_direct / scheduler` 两路，导致部分筛选条件被服务端忽略；现在已按请求语义正确收口，并补上最小后端回归测试
+- `runs` 页触发方式筛选已补充 `subject_direct` 选项，列表展示文案也同步识别主题记忆直触发任务，避免前端能查到但界面文案仍显得缺口明显
+- SDK `get_job_run_stats()` 已收口为直接返回统计值本身，不再把后端 `{ stats: ... }` 包装原样暴露给调用方；客户端接口语义与命名现在更加一致，并补上最小反序列化测试
+- `runs` 查询链路已补齐 `thread_id` 过滤：后端与 SDK 原本已经支持，但前端类型、请求层、状态 Hook 与筛选表单之前仍未贯通；现在已完整接出，避免一项真实存在的过滤能力长期停留在“只能后端/SDK 用，UI 失联”的状态
+- 数据页线程筛选已继续补齐 `subject_id / external_thread_id / thread_label` 三组高价值条件；这些字段原本后端查询与前端请求层均已支持，但 UI 与状态映射未贯通，现在已可以在控制台中直接使用
+- `useThreadExplorer` 已抽出线程筛选值到查询参数的纯映射 helper，并补上对应测试，减少仅依赖未渲染 Form 实例的脆弱测试方式
+- 数据页线程筛选已进一步补齐 `contact_id / project_id / agent_id / mapping_source / mapping_version`，线程检索链路里高频使用的结构化映射字段现在已基本都能从控制台直接输入筛选
+- 前端与 SDK 的 `EngineThread` 类型已补齐后端真实返回的总结状态字段，包括 `summary_status / summary_job_run_id / pending_record_count / pending_summary_tokens` 等，修复了线程模型契约长期落后于服务端的问题
+- 数据页线程列表已补一个轻量的“总结状态 / 待总结记录”展示，至少把新增线程状态字段落到界面上，降低这批字段继续只存在于返回载荷却不被消费的情况
+- 线程删除响应已补齐 `deleted_snapshots` 计数，后端真实会同步清理 `records / summaries / snapshots` 的行为现在能被返回模型完整表达，避免 SDK 调用方只能看到部分删除结果
+- `EngineSummary` / `EngineSource` 契约已继续收口：SDK 已删除后端并未实际返回的 `subject_memory_lane_keys` 幽灵字段，后端 `EngineSource.secret_key_hash` 也已改为仅内部存储可读、对外 API 不再序列化暴露，前端与 SDK 类型同步去掉该字段，避免把内部密钥哈希误承诺给外部调用方
+- SDK 响应模型的默认值语义已继续向后端对齐：`EngineSource.status`、`EngineThread.status / summary_status`、`EngineRecord.summary_status`、`EngineSubjectMemory.status / rollup_status`、`EngineSubjectMemoryScope.status` 现在都具备与后端一致的反序列化默认值兜底，降低旧数据或缺字段响应导致 SDK 解析失败的兼容性风险
+- backend / SDK 已补一轮更聚焦的模型契约测试，覆盖 `secret_key_hash` 非暴露序列化、`summary` 无幽灵字段、以及多类响应模型默认值回退语义，阶段 5 的 contract/model consistency 已进一步从“人工约定”收口为可回归校验
+- SDK `EngineModelProfile.enabled` 与 `EngineJobPolicy.enabled` 的默认值语义已继续向后端对齐，旧文档缺失 `enabled` 字段时现在会像服务端一样回落为 `true`，避免 SDK 把历史数据误解析成禁用态
+- 前端 `adminApi` 的动态管理路径已补齐统一 URL 编码，`modelId` / `jobType` 等包含特殊字符时不再更容易命中错误路径或与后端路由语义不一致
+- 前端 `adminApi` 已补一层模型归一化收口：`model profiles / sources / job policies / rotate source secret` 的返回载荷现在会在请求层统一回填后端默认值语义，旧数据缺字段时界面不再更容易把 `enabled/status/capabilities` 等状态误渲染为空值或错误值
+- 前端 `adminApi` 已补独立回归测试，覆盖动态管理路径编码、管理模型默认值归一化以及 `sources / policies` 缺字段载荷的稳定回填，减少这批 API 收口逻辑后续被重构回退的风险
+- 数据页筛选区已改成“常用条件直出 + 高级条件折叠”，避免顶部筛选表单在字段较多时长期占满首屏高度；消息记录区默认分页已从 `6` 提升到 `20`，并补上长内容预览 + 弹窗查看完整内容，减少右侧明细区过于拥挤、每页信息量过低的问题
+- 数据页消息记录行已进一步收紧为“单行预览 + 独立详情入口”，行内不再展开工具片段；右侧详情区已改成可拖拽分栏布局，消息记录 / 总结 / 记忆卡片也已切到满高伸缩容器，避免列表继续悬空在页面中部
+- 数据页筛选区已进一步改成稳定网格布局，工作区也改回可控的双栏 grid；线程行标题改成单行紧凑展示，避免当前视图在窄内容下仍呈现“整页竖堆”的错觉
+- 数据页“总结结果 / 主题记忆”也已统一成“预览 + 详情”模式，不再直接把长正文铺在表格里；三张明细表现在都共享同一套详情抽屉与紧凑预览逻辑
+
+## 进行中
+
+- 继续观察 worker 并发后的实际运行表现
+- 继续推进阶段 4，收敛管理台剩余首屏包体与请求扇出问题
+- 继续推进阶段 5，补齐 SDK 平台模式与客户端/服务端剩余契约缺口
+
+## 待处理
+
+- 为 `job runs` / dashboard 设计更直接的聚合接口，进一步压缩前端请求与字段拼装
+- 继续评估前端主包拆分策略，必要时再引入更稳的 vendor chunk 方案
+- 继续扩充 SDK client 层请求构造、错误分支与更多契约测试
+- 评估并补充 records / summaries / snapshots 的更细粒度回归测试
+- 评估是否需要把当前受限并发上限做成显式配置或指标化输出
+- 继续盘点 SDK “平台模式” 下对空 `source_id` 的隐式依赖，区分可安全省略过滤的读接口与必须显式绑定 source 的写/调度接口
+
+## 验证记录
+
+- `cargo check`（backend）通过
+- `cargo test`（backend）通过，当前 `39/39`
+- `npm run type-check`（frontend）通过
+- `npm run test`（frontend）通过，`5/5`
+- `npm run build`（frontend）通过
+- 前端页面拆分后，主共享包已从约 `1,143 kB` 降到 `700.00 kB`，gzip 后 `227.37 kB`
+- 继续下沉目录页状态后，主共享包进一步降到 `655.64 kB`，gzip 后 `213.39 kB`
+- 去掉控制台根层 overview 阻塞后，前端构建仍通过，主共享包微降到 `655.60 kB`，gzip 后 `213.38 kB`
+- 去掉 `runs` 页 bundle 未使用的 `stats` 负载后，前端构建仍通过，主共享包微降到 `655.58 kB`，gzip 后 `213.38 kB`
+- 当前仍有 Vite 默认大包告警：`dist/assets/index-ClMcK5kh.js` 为 `655.58 kB`，说明 Ant Design 与表格相关共享依赖仍偏重
+- backend 新增 `AppConfig` 解析测试，覆盖 worker 并发相关配置的默认值与最小值收口逻辑
+- backend 新增仓储级解析与展示名回归测试，减少聚合接口和分页接口后续回退风险
+- `cargo check`（sdk）通过
+- `cargo test`（sdk）通过，当前 `5/5`
+- `cargo check`（backend）在线程删除链路补丁后再次通过
+- `cargo test`（backend）在线程删除链路补丁后再次通过，当前 `39/39`
+- `cargo check`（sdk）在线程删除链路与新增 client 测试后再次通过
+- `cargo test`（sdk）在线程删除链路与新增 client 测试后再次通过，当前 `9/9`
+- `cargo check`（sdk）在平台模式 `source_id` 收口补丁后再次通过
+- `cargo test`（sdk）在平台模式 `source_id` 收口补丁后再次通过，当前 `11/11`
+- `cargo check`（backend）在 `model profile` 单项读取链路补丁后再次通过
+- `cargo test`（backend）在 `model profile` 单项读取链路补丁后再次通过，当前 `39/39`
+- `cargo check`（sdk）在 `model profile` 单项读取链路补丁后再次通过
+- `cargo test`（sdk）在 `model profile` 单项读取链路补丁后再次通过，当前 `11/11`
+- `cargo check`（sdk）在 `operator token` 透传补丁后再次通过
+- `cargo test`（sdk）在 `operator token` 透传补丁后再次通过，当前 `13/13`
+- `cargo check`（backend）在删除路径 `source_guard` 收口补丁后再次通过
+- `cargo test`（backend）在删除路径 `source_guard` 收口补丁后再次通过，当前 `39/39`
+- `cargo check`（sdk）在 admin 契约补齐补丁后再次通过
+- `cargo test`（sdk）在 admin 契约补齐补丁后再次通过，当前 `18/18`
+- `cargo test`（sdk）在 `job runs trigger_type` 过滤补丁后再次通过，当前 `18/18`
+- `npm run test`（frontend）在 `job runs trigger_type` 过滤补丁后再次通过，当前 `20/20`
+- `npm run type-check`（frontend）在 `job runs trigger_type` 过滤补丁后再次通过
+- `npm run test`（frontend）在 `runs trigger_type` 筛选 UI 补丁后再次通过，当前 `20/20`
+- `npm run type-check`（frontend）在 `runs trigger_type` 筛选 UI 补丁后再次通过
+- `cargo test`（backend）在 `job-runs/bundle trigger_type` 语义收口补丁后再次通过，当前 `42/42`
+- `npm run test`（frontend）在 `subject_direct` runs UI 补丁后再次通过，当前 `20/20`
+- `npm run type-check`（frontend）在 `subject_direct` runs UI 补丁后再次通过
+- `cargo check`（sdk）在 `job_run_stats` 返回语义收口补丁后再次通过
+- `cargo test`（sdk）在 `job_run_stats` 返回语义收口补丁后再次通过，当前 `19/19`
+- `npm run test`（frontend）在 `runs thread_id` 过滤补丁后再次通过，当前 `20/20`
+- `npm run type-check`（frontend）在 `runs thread_id` 过滤补丁后再次通过
+- `npm run test`（frontend）在数据页线程扩展筛选补丁后再次通过，当前 `21/21`
+- `npm run type-check`（frontend）在数据页线程扩展筛选补丁后再次通过
+- `npm run test`（frontend）在数据页线程结构化映射筛选补丁后再次通过，当前 `21/21`
+- `npm run type-check`（frontend）在数据页线程结构化映射筛选补丁后再次通过
+- `cargo test`（sdk）在线程模型总结状态字段对齐补丁后再次通过，当前 `20/20`
+- `npm run test`（frontend）在线程模型总结状态字段对齐补丁后再次通过，当前 `21/21`
+- `npm run type-check`（frontend）在线程模型总结状态字段对齐补丁后再次通过
+- `cargo test`（backend）在线程删除响应 `deleted_snapshots` 对齐补丁后再次通过，当前 `42/42`
+- `cargo test`（sdk）在线程删除响应 `deleted_snapshots` 对齐补丁后再次通过，当前 `21/21`
+- `cargo test`（backend）在 `EngineSource.secret_key_hash` 非暴露序列化补丁后再次通过，当前 `43/43`
+- `cargo test`（sdk）在 `summary/source` 契约收口补丁后再次通过，当前 `23/23`
+- `cargo test`（sdk）在响应模型默认值对齐补丁后再次通过，当前 `28/28`
+- `npm run test`（frontend）在 `EngineSource` 契约收口补丁后再次通过，当前 `21/21`
+- `npm run type-check`（frontend）在 `EngineSource` 契约收口补丁后再次通过
+- `cargo test`（sdk）在 `enabled=true` 默认值语义补丁后再次通过，当前 `30/30`
+- `npm run test`（frontend）在 admin 动态路径统一编码补丁后再次通过，当前 `21/21`
+- `npm run type-check`（frontend）在 admin 动态路径统一编码补丁后再次通过
+- `npm run test`（frontend）在 admin 返回载荷归一化补丁后再次通过，当前 `21/21`
+- `npm run type-check`（frontend）在 admin 返回载荷归一化补丁后再次通过
+- `npm run test`（frontend）在 `adminApi` API 收口测试补齐后再次通过，当前 `24/24`
+- `npm run type-check`（frontend）在 `adminApi` API 收口测试补齐后再次通过
+- `npm run test`（frontend）在数据页筛选折叠与消息记录阅读性补丁后再次通过，当前 `24/24`
+- `npm run type-check`（frontend）在数据页筛选折叠与消息记录阅读性补丁后再次通过
+- `npm run test`（frontend）再次通过，当前 `8/8`
+- `npm run type-check`（frontend）再次通过
+- `npm run test`（frontend）在竞态保护补丁后再次通过，当前 `10/10`
+- `npm run type-check`（frontend）在竞态保护补丁后再次通过
+- `npm run build`（frontend）在竞态保护补丁后再次通过
+- 当前前端构建主共享包为 `dist/assets/index-BTSQ1EOv.js`，`655.68 kB`，gzip 后 `213.41 kB`
+- `npm run test`（frontend）在 catalog loaders 竞态保护补丁后再次通过，当前 `11/11`
+- `npm run type-check`（frontend）在 catalog loaders 竞态保护补丁后再次通过
+- `npm run test`（frontend）在错误处理补丁后再次通过，当前 `13/13`
+- `npm run type-check`（frontend）在错误处理补丁后再次通过
+- `npm run build`（frontend）在错误处理补丁后再次通过
+- 当前前端构建主共享包为 `dist/assets/index-Dnv66nxk.js`，`655.68 kB`，gzip 后 `213.41 kB`
+- `npm run test`（frontend）在 source secret 作用域补丁后再次通过，当前 `14/14`
+- `npm run type-check`（frontend）在 source secret 作用域补丁后再次通过
+- `npm run build`（frontend）在 source secret 作用域补丁后再次通过
+- 当前前端构建主共享包为 `dist/assets/index-CBcL6cIY.js`，`655.68 kB`，gzip 后 `213.42 kB`
+- `npm run test`（frontend）在 catalog actions 错误语义补丁后再次通过，当前 `16/16`
+- `npm run type-check`（frontend）在 catalog actions 错误语义补丁后再次通过
+- `npm run test`（frontend）在 catalog callback 错误语义补丁后再次通过，当前 `18/18`
+- `npm run type-check`（frontend）在 catalog callback 错误语义补丁后再次通过
+- `npm run build`（frontend）在 catalog callback 错误语义补丁后再次通过
+- 当前前端构建主共享包为 `dist/assets/index-D6ROl-Ia.js`，`655.68 kB`，gzip 后 `213.42 kB`
+- `npm run test`（frontend）在 adminApi 死代码清理后再次通过，当前 `18/18`
+- `npm run type-check`（frontend）在 adminApi 死代码清理后再次通过
+- `npm run build`（frontend）在 adminApi 死代码清理后再次通过
+- 当前前端构建主共享包为 `dist/assets/index-BSFq40J-.js`，`655.27 kB`，gzip 后 `213.39 kB`
+- `npm run test`（frontend）在 PolicyEditorCard 草稿保护补丁后再次通过，当前 `20/20`
+- `npm run type-check`（frontend）在 PolicyEditorCard 草稿保护补丁后再次通过
+- `npm run build`（frontend）在 PolicyEditorCard 草稿保护补丁后再次通过
+- 当前前端构建主共享包为 `dist/assets/index-DqH1fCN4.js`，`655.27 kB`，gzip 后 `213.38 kB`
+- `npm run test`（frontend）在 PolicyEditorCard 提交流程收口后再次通过，当前 `20/20`
+- `npm run type-check`（frontend）在 PolicyEditorCard 提交流程收口后再次通过
+- `npm run build`（frontend）在 PolicyEditorCard 提交流程收口后再次通过
+- 当前前端构建主共享包为 `dist/assets/index-D1tS7cPo.js`，`655.27 kB`，gzip 后 `213.39 kB`
+- `npm run type-check`（frontend）在数据页消息记录单行化与分栏布局补丁后通过
+- `npm run test`（frontend）在数据页消息记录单行化与分栏布局补丁后通过，当前 `24/24`
+- `npm run build`（frontend）在数据页消息记录单行化与分栏布局补丁后通过
+- 当前前端构建主共享包为 `dist/assets/index-CA68jY1J.js`，`656.88 kB`，gzip 后 `213.86 kB`
+- `npm run type-check`（frontend）在数据页筛选网格与双栏布局补丁后通过
+- `npm run test`（frontend）在数据页筛选网格与双栏布局补丁后通过，当前 `24/24`
+- `npm run build`（frontend）在数据页筛选网格与双栏布局补丁后通过
+- 当前前端构建主共享包为 `dist/assets/index-RSLKJOu2.js`，`656.88 kB`，gzip 后 `213.86 kB`
+- `npm run type-check`（frontend）在总结/记忆统一预览补丁后通过
+- `npm run test`（frontend）在总结/记忆统一预览补丁后通过，当前 `24/24`
+- `npm run build`（frontend）在总结/记忆统一预览补丁后通过
+- 当前前端构建主共享包为 `dist/assets/index-CRoJkkR_.js`，`656.88 kB`，gzip 后 `213.86 kB`
+
+## 已知风险与遗留
+
+- 目前已完成 records / summaries / snapshots 关键读写路径的作用域收口，但仓库内仍有一部分历史辅助接口沿用“id 全局唯一”的假设，后续需要继续盘点
+- `source_id` 是否允许跨租户重名，虽然 SDK 和核心仓储已经显著收紧，但底层业务约束仍建议在后续阶段明确成文
+- 本轮索引迁移依赖服务启动时自动创建/删除索引；如果线上已有异常历史数据，仍建议在正式环境补一次索引与重复数据巡检
+- 当前 pending queue 已改为以增量统计为主、全量刷新为兜底，并增加了轻量 reconcile pass；如果线上存在历史脏数据，仍建议继续观察采样覆盖是否足够
+- worker 侧已经从“按任务类型串行 + 候选项串行”推进到“按任务类型并行 + 候选项受限并发”，并发上限也已配置化；后续仍需要结合真实负载继续调优默认值
+- 前端代码分割已经显著降低首屏下载量，但由于 Ant Design 与表格依赖较重，仍存在一个较大的共享 chunk；后续若继续深拆，需要避免引入循环 chunk 警告或维护成本过高的手工 vendor 切分
+- 当前 `policies` 页仍需要在进入页面时同时加载 `models + policies` 两类目录数据；虽然已经不再阻塞其他页签首屏，但后续仍可继续评估更细粒度的编辑器按需加载
+- SDK 测试基线刚建立，当前仍主要覆盖契约和工具函数；后续还需要继续补上更多 client 层请求构造与错误分支测试
+- 前端线程详情的主要竞态与刷新语义问题已修复，但更大范围的列表页请求取消 / 去抖 / 缓存策略仍未系统化，后续仍可继续演进
+- 当前前端竞态保护主要依赖请求序号屏蔽旧响应，尚未统一接入真正的请求取消能力；如果后续请求量继续增大，仍可评估 `AbortController` 级别的收口
+- 当前前端错误提示主要补到了 `dashboard / data / runs / catalog loaders` 关键路径，后续仍可继续盘点更深层 action 或 modal 提交链路的一致错误收口

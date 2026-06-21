@@ -71,6 +71,15 @@ impl AppConfig {
             normalized_env("TASK_RUNNER_ADMIN_USERNAME").unwrap_or_else(|| "admin".to_string());
         let admin_password = normalized_env("TASK_RUNNER_ADMIN_PASSWORD")
             .unwrap_or_else(|| "admin123456".to_string());
+        let user_service_jwt_secret = normalized_env("TASK_RUNNER_USER_SERVICE_JWT_SECRET")
+            .or_else(|| normalized_env("USER_SERVICE_JWT_SECRET"));
+        let user_service_jwt_issuer = normalized_env("TASK_RUNNER_USER_SERVICE_JWT_ISSUER")
+            .or_else(|| normalized_env("USER_SERVICE_JWT_ISSUER"))
+            .unwrap_or_else(|| "user_service".to_string());
+        let user_service_task_runner_audience =
+            normalized_env("TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE")
+                .or_else(|| normalized_env("USER_SERVICE_TASK_RUNNER_AUDIENCE"))
+                .unwrap_or_else(|| "task_runner".to_string());
         let admin_display_name = normalized_env("TASK_RUNNER_ADMIN_DISPLAY_NAME")
             .unwrap_or_else(|| "管理员".to_string());
 
@@ -85,7 +94,8 @@ impl AppConfig {
                 &mongodb_database,
             ),
             memory_engine_base_url: normalized_env("MEMORY_ENGINE_BASE_URL")
-                .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_BASE_URL")),
+                .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_BASE_URL"))
+                .or_else(default_memory_engine_base_url),
             memory_engine_source_id: normalized_env("MEMORY_ENGINE_SOURCE_ID")
                 .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_SOURCE_ID"))
                 .unwrap_or_else(|| "task".to_string()),
@@ -109,6 +119,9 @@ impl AppConfig {
             admin_username,
             admin_password,
             admin_display_name,
+            user_service_jwt_secret,
+            user_service_jwt_issuer,
+            user_service_task_runner_audience,
         })
     }
 }
@@ -126,6 +139,25 @@ pub(super) fn env_usize(key: &str, default_value: usize) -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default_value)
+}
+
+fn default_memory_engine_base_url() -> Option<String> {
+    let host = client_accessible_host(
+        normalized_env("MEMORY_ENGINE_HOST").or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_HOST")),
+    )?;
+    let port = normalized_env("MEMORY_ENGINE_PORT")
+        .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_PORT"))
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(7081);
+    Some(format!("http://{host}:{port}/api/memory-engine/v1"))
+}
+
+fn client_accessible_host(host: Option<String>) -> Option<String> {
+    match host.as_deref().map(str::trim) {
+        Some("") | None => None,
+        Some("0.0.0.0") | Some("::") | Some("[::]") => Some("127.0.0.1".to_string()),
+        Some(value) => Some(value.to_string()),
+    }
 }
 
 pub(super) fn default_workspace_dir() -> String {

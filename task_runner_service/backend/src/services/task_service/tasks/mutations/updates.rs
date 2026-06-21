@@ -5,6 +5,7 @@ impl TaskService {
         &self,
         id: &str,
         patch: UpdateTaskRequest,
+        current_user: Option<&CurrentUser>,
     ) -> Result<Option<TaskRecord>, String> {
         let Some(mut task) = self.store.get_task(id).await? else {
             return Ok(None);
@@ -47,7 +48,8 @@ impl TaskService {
         if let Some(model_config_id) = patch.default_model_config_id {
             let model_config_id = model_config_id.trim().to_string();
             if !model_config_id.is_empty() {
-                self.ensure_model_config_exists(&model_config_id).await?;
+                self.ensure_model_config_access(&model_config_id, current_user)
+                    .await?;
                 task.default_model_config_id = Some(model_config_id);
             } else {
                 task.default_model_config_id = None;

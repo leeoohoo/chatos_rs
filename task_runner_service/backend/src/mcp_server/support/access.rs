@@ -96,6 +96,7 @@ pub(crate) fn model_configs_for_user(
 ) -> Vec<Value> {
     models
         .into_iter()
+        .filter(|model| model_visible_to_user(model, current_user))
         .map(|model| model_config_for_user(model, current_user))
         .collect()
 }
@@ -109,4 +110,21 @@ pub(crate) fn model_config_for_user(model: ModelConfigRecord, current_user: &Cur
         object.insert("api_key".to_string(), Value::String(String::new()));
     }
     value
+}
+
+pub(crate) fn filter_model_configs_for_user(
+    models: Vec<ModelConfigRecord>,
+    current_user: &CurrentUser,
+) -> Vec<ModelConfigRecord> {
+    models
+        .into_iter()
+        .filter(|model| model_visible_to_user(model, current_user))
+        .collect()
+}
+
+pub(crate) fn model_visible_to_user(
+    model: &ModelConfigRecord,
+    current_user: &CurrentUser,
+) -> bool {
+    current_user.can_access_owned_resource(model.owner_user_id.as_deref())
 }

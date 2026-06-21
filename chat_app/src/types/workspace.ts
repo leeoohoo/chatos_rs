@@ -169,6 +169,7 @@ export interface ContactRecord {
   taskRunner?: {
     enabled: boolean;
     baseUrl: string;
+    agentAccountId?: string | null;
     username: string;
     hasPassword: boolean;
   };

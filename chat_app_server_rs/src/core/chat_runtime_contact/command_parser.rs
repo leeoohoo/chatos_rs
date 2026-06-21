@@ -5,8 +5,8 @@ use crate::models::chatos_agent_types::{
 };
 
 use super::types::{
-    CONTACT_COMMAND_READER_TOOL_NAME, ParsedContactCommandInvocation,
-    ParsedImplicitCommandSelection,
+    ParsedContactCommandInvocation, ParsedImplicitCommandSelection,
+    CONTACT_COMMAND_READER_TOOL_NAME,
 };
 
 pub fn parse_contact_command_invocation(

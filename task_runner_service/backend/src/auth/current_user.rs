@@ -6,6 +6,7 @@ pub struct CurrentUser {
     pub username: String,
     pub display_name: String,
     pub role: UserRole,
+    pub owner_user_id: Option<String>,
 }
 
 impl CurrentUser {
@@ -25,6 +26,26 @@ impl CurrentUser {
     pub fn is_agent(&self) -> bool {
         self.role == UserRole::Agent
     }
+
+    pub fn effective_owner_user_id(&self) -> Option<&str> {
+        self.owner_user_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn can_access_owned_resource(&self, owner_user_id: Option<&str>) -> bool {
+        if self.is_admin() {
+            return true;
+        }
+        let owner_user_id = owner_user_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        match owner_user_id {
+            Some(owner_user_id) => self.effective_owner_user_id() == Some(owner_user_id),
+            None => true,
+        }
+    }
 }
 
 impl From<&UserRecord> for CurrentUser {
@@ -34,6 +55,7 @@ impl From<&UserRecord> for CurrentUser {
             username: value.username.clone(),
             display_name: value.display_name.clone(),
             role: value.role,
+            owner_user_id: None,
         }
     }
 }

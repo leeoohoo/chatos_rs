@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -13,6 +13,7 @@ use super::support::normalize_optional_text;
 pub struct UpdateContactTaskRunnerConfigInput {
     pub enabled: bool,
     pub base_url: Option<String>,
+    pub agent_account_id: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
     pub clear_password: bool,
@@ -303,18 +304,22 @@ pub async fn update_contact_task_runner_config(
     };
     let updated_at = crate::core::time::now_rfc3339();
     let base_url = normalize_optional_text(input.base_url.as_deref());
+    let agent_account_id = normalize_optional_text(input.agent_account_id.as_deref());
     let username = normalize_optional_text(input.username.as_deref());
     let password = match normalize_optional_text(input.password.as_deref()) {
         Some(value) => Some(value),
         None if input.clear_password => None,
         None => existing.task_runner_password.clone(),
     };
-    let enabled = input.enabled && base_url.is_some() && username.is_some() && password.is_some();
+    let enabled = input.enabled
+        && base_url.is_some()
+        && (agent_account_id.is_some() || (username.is_some() && password.is_some()));
 
     with_db(
         |db| {
             let contact_id = contact_id.to_string();
             let base_url = base_url.clone();
+            let agent_account_id = agent_account_id.clone();
             let username = username.clone();
             let password = password.clone();
             let updated_at = updated_at.clone();
@@ -324,6 +329,10 @@ pub async fn update_contact_task_runner_config(
                     "updated_at": &updated_at,
                 };
                 set_doc.insert("task_runner_base_url", optional_string_bson(base_url.clone()));
+                set_doc.insert(
+                    "task_runner_agent_account_id",
+                    optional_string_bson(agent_account_id.clone()),
+                );
                 set_doc.insert("task_runner_username", optional_string_bson(username.clone()));
                 set_doc.insert("task_runner_password", optional_string_bson(password.clone()));
                 let result = db
@@ -343,17 +352,19 @@ pub async fn update_contact_task_runner_config(
         |pool| {
             let contact_id = contact_id.to_string();
             let base_url = base_url.clone();
+            let agent_account_id = agent_account_id.clone();
             let username = username.clone();
             let password = password.clone();
             let updated_at = updated_at.clone();
             Box::pin(async move {
                 let result = sqlx::query(
                     "UPDATE chatos_contacts SET \
-                    task_runner_enabled = ?, task_runner_base_url = ?, task_runner_username = ?, task_runner_password = ?, updated_at = ? \
+                    task_runner_enabled = ?, task_runner_base_url = ?, task_runner_agent_account_id = ?, task_runner_username = ?, task_runner_password = ?, updated_at = ? \
                     WHERE id = ?",
                 )
                 .bind(if enabled { 1_i64 } else { 0_i64 })
                 .bind(&base_url)
+                .bind(&agent_account_id)
                 .bind(&username)
                 .bind(&password)
                 .bind(&updated_at)

@@ -7,7 +7,7 @@ pub(super) use chatos_ai_runtime::response_parse::{
     extract_output_text, extract_reasoning_from_response,
 };
 pub(super) use chatos_ai_runtime::stream_parse::{
-    StreamState, apply_responses_stream_event as apply_stream_event,
+    apply_responses_stream_event as apply_stream_event, StreamState,
 };
 #[cfg(test)]
 pub(super) use chatos_ai_runtime::stream_parse::{

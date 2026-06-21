@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::core::mcp_tools::{
-    BuiltinToolService, ToolInfo as ChatosToolInfo, ToolResult as ChatosToolResult,
-    build_builtin_tool_service,
+    build_builtin_tool_service, BuiltinToolService, ToolInfo as ChatosToolInfo,
+    ToolResult as ChatosToolResult,
 };
 use crate::services::builtin_mcp::BuiltinMcpKind as ChatosBuiltinMcpKind;
 use crate::services::mcp_loader::{

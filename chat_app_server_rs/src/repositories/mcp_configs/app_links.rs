@@ -1,4 +1,4 @@
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 
 use crate::core::mongo_cursor::collect_string_field;
 use crate::core::sql_rows::collect_string_column;

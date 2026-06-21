@@ -1,3 +1,5 @@
+use memory_engine_sdk::UpsertSourceRequest;
+use serde_json::json;
 use crate::auth::AuthService;
 use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
@@ -26,8 +28,9 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
+        ensure_task_runner_memory_engine_source(&config).await?;
         let store = AppStore::new(&config).await?;
-        let auth_service = AuthService::new(store.clone());
+        let auth_service = AuthService::new(config.clone(), store.clone());
         auth_service.ensure_default_admin(&config).await?;
         let task_service = TaskService::new(config.clone(), store.clone());
         let model_config_service = ModelConfigService::new(store.clone());
@@ -71,4 +74,42 @@ impl AppState {
             auth_service,
         })
     }
+}
+
+async fn ensure_task_runner_memory_engine_source(config: &AppConfig) -> Result<(), String> {
+    let Some(client) = config.memory_client()? else {
+        return Ok(());
+    };
+    let source_id = config.memory_engine_source_id.trim();
+    if source_id.is_empty() {
+        return Ok(());
+    }
+    client
+        .upsert_source(
+            source_id,
+            &UpsertSourceRequest {
+                tenant_id: None,
+                source_type: "task_runner".to_string(),
+                name: "Task Runner".to_string(),
+                description: Some(
+                    "Task Runner managed source for task threads, run records, summaries, and subject memories."
+                        .to_string(),
+                ),
+                config: Some(json!({
+                    "platform_managed": true,
+                    "owner_service": "task_runner_service_backend",
+                    "mapping_version": "task_runner.v1",
+                    "capabilities": [
+                        "threads",
+                        "records",
+                        "summaries",
+                        "subject_memories"
+                    ],
+                })),
+                sdk_enabled: Some(true),
+                status: Some("active".to_string()),
+            },
+        )
+        .await?;
+    Ok(())
 }

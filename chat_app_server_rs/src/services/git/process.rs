@@ -243,7 +243,11 @@ fn bundled_git_candidates() -> Vec<PathBuf> {
 }
 
 fn git_executable_name() -> &'static str {
-    if cfg!(windows) { "git.exe" } else { "git" }
+    if cfg!(windows) {
+        "git.exe"
+    } else {
+        "git"
+    }
 }
 
 fn git_launch_error(git_bin: &Path, err: std::io::Error) -> String {

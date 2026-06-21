@@ -1,5 +1,5 @@
 use crate::services::mcp_loader::{
-    McpBuiltinServer, McpHttpServer, McpStdioServer, load_mcp_configs_for_user,
+    load_mcp_configs_for_user, McpBuiltinServer, McpHttpServer, McpStdioServer,
 };
 
 pub type McpServerBundle = (

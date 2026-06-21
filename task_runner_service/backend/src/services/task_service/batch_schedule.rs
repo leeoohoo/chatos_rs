@@ -19,6 +19,7 @@ impl TaskService {
                         status: Some(request.status),
                         ..UpdateTaskRequest::default()
                     },
+                    None,
                 )
                 .await
             {

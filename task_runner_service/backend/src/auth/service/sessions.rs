@@ -6,16 +6,17 @@ impl AuthService {
         let now = Utc::now().timestamp();
         {
             let sessions = self.sessions.read();
-            let record = sessions.get(token)?;
-            if record
-                .expires_at_unix
-                .is_none_or(|expires_at| expires_at > now)
-            {
-                return Some(record.user.clone());
+            if let Some(record) = sessions.get(token) {
+                if record
+                    .expires_at_unix
+                    .is_none_or(|expires_at| expires_at > now)
+                {
+                    return Some(record.user.clone());
+                }
             }
         }
         self.sessions.write().remove(token);
-        None
+        self.current_user_from_user_service_token(token)
     }
 
     pub fn logout(&self, token: &str) {

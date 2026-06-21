@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use sqlx::Row;
 
 use crate::core::values::optional_string_bson;

@@ -2,6 +2,7 @@ import type {
   AuthResponse,
   MeResponse,
   RegisterPayload,
+  TaskRunnerAgentAccountResponse,
   UserSettingsResponse,
   UserSettingsUpdatePayload,
 } from './types';
@@ -29,6 +30,12 @@ export const login = (
 
 export const getMe = (request: ApiRequestFn): Promise<MeResponse> => {
   return request<MeResponse>('/auth/me');
+};
+
+export const listTaskRunnerAgentAccounts = (
+  request: ApiRequestFn,
+): Promise<TaskRunnerAgentAccountResponse[]> => {
+  return request<TaskRunnerAgentAccountResponse[]>('/auth/agent-accounts');
 };
 
 export const getUserSettings = (request: ApiRequestFn, userId?: string): Promise<UserSettingsResponse> => {

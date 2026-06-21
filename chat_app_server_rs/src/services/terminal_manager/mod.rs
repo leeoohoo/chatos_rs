@@ -10,7 +10,7 @@ mod shell_path;
 #[cfg(test)]
 mod tests;
 
-pub use self::manager::{TerminalsManager, get_terminal_manager};
+pub use self::manager::{get_terminal_manager, TerminalsManager};
 pub use self::session::TerminalSession;
 
 #[derive(Debug, Clone)]

@@ -6,8 +6,8 @@ use super::types::ContactSkillPromptMode;
 use super::types::ParsedContactCommandInvocation;
 #[cfg(test)]
 use super::types::{
-    CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
-    CONTACT_SKILL_READER_TOOL_NAME, contact_plugin_ref, contact_skill_ref,
+    contact_plugin_ref, contact_skill_ref, CONTACT_COMMAND_READER_TOOL_NAME,
+    CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
 };
 
 #[cfg(test)]
@@ -139,9 +139,9 @@ pub fn compose_contact_system_prompt(
     lines.push(agent.role_definition.trim().to_string());
 
     #[cfg(test)]
-    let mut skill_entries: Vec<SkillPromptEntry>;
+    let mut skill_entries: Vec<SkillPromptEntry> = Vec::new();
     #[cfg(test)]
-    let mut plugin_entries: Vec<PluginPromptEntry>;
+    let mut plugin_entries: Vec<PluginPromptEntry> = Vec::new();
 
     match skill_mode {
         ContactSkillPromptMode::Disabled => {
@@ -675,10 +675,18 @@ fn text(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> St
 
 #[cfg(test)]
 fn text_ref(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> &'static str {
-    if locale.is_english() { en } else { zh }
+    if locale.is_english() {
+        en
+    } else {
+        zh
+    }
 }
 
 #[cfg(test)]
 fn field(locale: InternalContextLocale, zh: &'static str, en: &'static str) -> &'static str {
-    if locale.is_english() { en } else { zh }
+    if locale.is_english() {
+        en
+    } else {
+        zh
+    }
 }

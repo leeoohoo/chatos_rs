@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tokio::fs;
 
-use super::process::{DEFAULT_GIT_TIMEOUT, git_output};
+use super::process::{git_output, DEFAULT_GIT_TIMEOUT};
 
 const MAX_UNTRACKED_DIFF_BYTES: u64 = 256 * 1024;
 

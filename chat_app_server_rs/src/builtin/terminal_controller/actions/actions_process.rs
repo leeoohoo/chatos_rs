@@ -1,11 +1,11 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::time::{Duration, Instant};
 
 use chatos_builtin_tools::PROCESS_WAIT_MAX_TIMEOUT_MS;
 
 use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
-use crate::services::terminal_manager::{TerminalEvent, get_terminal_manager};
+use crate::services::terminal_manager::{get_terminal_manager, TerminalEvent};
 
 use super::super::capture::compact_recent_logs;
 use super::super::{

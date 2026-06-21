@@ -124,6 +124,9 @@ export function createSendMessageHandler({
       model_name: effectiveModelName || selectedModel.model_name,
       thinking_level: effectiveThinkingLevel || selectedModel.thinking_level,
     };
+    if (!selectedModelForRequest.model_name?.trim()) {
+      throw new Error('Please select a concrete runtime model before sending the message.');
+    }
 
     const runtimeMetadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
       selectedModelId: selectedModel?.id || null,

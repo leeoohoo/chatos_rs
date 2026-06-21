@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 
 use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
@@ -6,7 +6,7 @@ use crate::core::update_fields::{
     mongo_set_doc_from_optional_strings, sqlite_update_parts_from_optional_strings,
 };
 use crate::models::terminal::{
-    TERMINAL_KIND_PROJECT_RUN, Terminal, TerminalRow, normalize_terminal_kind,
+    normalize_terminal_kind, Terminal, TerminalRow, TERMINAL_KIND_PROJECT_RUN,
 };
 use crate::repositories::db::{
     doc_from_pairs, mongo_delete_one_doc, mongo_find_one_doc, mongo_insert_doc,

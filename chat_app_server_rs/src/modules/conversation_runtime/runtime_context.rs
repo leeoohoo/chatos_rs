@@ -1,26 +1,27 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use serde::Serialize;
 use tracing::warn;
 
+use crate::config::Config;
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
-    ChatRuntimeMetadata, ContactSkillPromptMode, compose_contact_system_prompt, normalize_id,
-    resolve_project_runtime,
+    compose_contact_system_prompt, normalize_id, resolve_project_runtime, ChatRuntimeMetadata,
+    ContactSkillPromptMode,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::core::mcp_runtime::{McpServerBundle, empty_mcp_server_bundle};
+use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
-    chatos_agents, chatos_memory_engine, chatos_memory_mappings, chatos_sessions,
-    task_runner_api_client,
+    access_token_scope, chatos_agents, chatos_memory_engine, chatos_memory_mappings,
+    chatos_sessions, task_runner_api_client,
 };
 
 const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
@@ -257,23 +258,62 @@ async fn build_contact_task_runner_runtime(
         }
     };
 
-    let token = match task_runner_api_client::exchange_agent_token(
-        &task_runner_api_client::TaskRunnerAgentCredentials {
-            base_url: config.base_url.clone(),
-            username: config.username.clone(),
-            password: config.password.clone(),
-            contact_id: Some(config.contact_id.clone()),
-        },
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => {
+    let token = if let Some(agent_account_id) = config.agent_account_id.as_deref() {
+        let Some(user_service_base_url) = Config::try_get()
+            .ok()
+            .and_then(|cfg| cfg.user_service_base_url.clone())
+        else {
             warn!(
-                "exchange task runner agent token failed: contact_id={} detail={}",
-                config.contact_id, err
+                "exchange task runner token via user_service skipped: user_service_base_url missing: contact_id={}",
+                config.contact_id
             );
             return None;
+        };
+        let Some(access_token) = access_token_scope::get_current_access_token() else {
+            warn!(
+                "exchange task runner token via user_service skipped: current user access token missing: contact_id={}",
+                config.contact_id
+            );
+            return None;
+        };
+        match task_runner_api_client::exchange_task_runner_token_via_user_service(
+            &task_runner_api_client::UserServiceTaskRunnerExchange {
+                base_url: user_service_base_url,
+                access_token,
+                task_runner_agent_account_id: agent_account_id.to_string(),
+                contact_id: Some(config.contact_id.clone()),
+            },
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    "exchange task runner agent token via user_service failed: contact_id={} agent_account_id={} detail={}",
+                    config.contact_id, agent_account_id, err
+                );
+                return None;
+            }
+        }
+    } else {
+        match task_runner_api_client::exchange_agent_token(
+            &task_runner_api_client::TaskRunnerAgentCredentials {
+                base_url: config.base_url.clone(),
+                username: config.username.clone(),
+                password: config.password.clone(),
+                contact_id: Some(config.contact_id.clone()),
+            },
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    "exchange task runner agent token failed: contact_id={} detail={}",
+                    config.contact_id, err
+                );
+                return None;
+            }
         }
     };
 

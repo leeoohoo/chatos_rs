@@ -82,7 +82,7 @@ struct ChatosSessionActiveMessageTasksResponse {
 }
 
 #[derive(Debug)]
-struct InternalApiError {
+pub(super) struct InternalApiError {
     status: StatusCode,
     message: String,
 }

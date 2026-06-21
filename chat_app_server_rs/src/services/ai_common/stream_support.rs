@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use futures::{Stream, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
 

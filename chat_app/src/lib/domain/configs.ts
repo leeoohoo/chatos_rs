@@ -97,6 +97,7 @@ export const normalizeAgent = (agent: MemoryAgentResponse): AgentConfig => ({
   category: agent.category || '',
   ai_model_config_id: '',
   enabled: agent.enabled !== false,
+  task_runner_agent_account_id: agent.task_runner_agent_account_id || null,
   project_id: typeof agent.project_policy?.project_id === 'string' ? agent.project_policy.project_id : null,
   workspace_dir: typeof agent.project_policy?.project_root === 'string' ? agent.project_policy.project_root : null,
   app_ids: [],

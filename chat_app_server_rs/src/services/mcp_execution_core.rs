@@ -28,21 +28,21 @@ pub(crate) use self::state::McpToolState;
 use self::execution::execute_tools_stream_parallel;
 #[cfg(test)]
 use self::parallelism::{
-    ToolAccessKind, ToolAccessProfile, ToolScope, has_conflicting_tool_profiles, paths_overlap,
+    has_conflicting_tool_profiles, paths_overlap, ToolAccessKind, ToolAccessProfile, ToolScope,
 };
 
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Arc,
         atomic::{AtomicUsize, Ordering},
+        Arc,
     };
 
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use super::{
-        ToolAccessKind, ToolAccessProfile, ToolScope, execute_tools_stream_parallel,
-        has_conflicting_tool_profiles, paths_overlap,
+        execute_tools_stream_parallel, has_conflicting_tool_profiles, paths_overlap,
+        ToolAccessKind, ToolAccessProfile, ToolScope,
     };
 
     #[test]

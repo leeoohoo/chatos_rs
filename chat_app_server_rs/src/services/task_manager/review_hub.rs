@@ -2,18 +2,18 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 use crate::services::realtime::{publish_task_board_updated, resolve_conversation_scope};
 
 use super::normalizer::{normalize_task_drafts, trimmed_non_empty};
-#[cfg(test)]
-use super::types::{REVIEW_NOT_FOUND_ERR, TaskReviewAction};
 use super::types::{
-    REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT, TaskCreateReviewPayload, TaskDraft,
-    TaskReviewDecision,
+    TaskCreateReviewPayload, TaskDraft, TaskReviewDecision, REVIEW_TIMEOUT_ERR,
+    REVIEW_TIMEOUT_MS_DEFAULT,
 };
+#[cfg(test)]
+use super::types::{TaskReviewAction, REVIEW_NOT_FOUND_ERR};
 
 #[derive(Debug)]
 struct PendingReviewEntry {

@@ -70,6 +70,7 @@ export interface ContactResponse {
   agent_name_snapshot?: string | null;
   task_runner_enabled?: boolean | null;
   task_runner_base_url?: string | null;
+  task_runner_agent_account_id?: string | null;
   task_runner_username?: string | null;
   task_runner_has_password?: boolean | null;
   status?: string | null;
@@ -82,6 +83,7 @@ export type ContactCreateResponse = ContactResponse | { contact: ContactResponse
 export interface ContactTaskRunnerUpdatePayload {
   enabled: boolean;
   base_url?: string | null;
+  task_runner_agent_account_id?: string | null;
   username?: string | null;
   password?: string | null;
   clear_password?: boolean;

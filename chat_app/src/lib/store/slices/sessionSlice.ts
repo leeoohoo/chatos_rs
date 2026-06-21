@@ -48,7 +48,8 @@ export interface SessionSliceActions {
     contactId: string,
     config: {
       enabled: boolean;
-      baseUrl: string;
+      baseUrl?: string;
+      agentAccountId?: string;
       username: string;
       password?: string;
       clearPassword?: boolean;

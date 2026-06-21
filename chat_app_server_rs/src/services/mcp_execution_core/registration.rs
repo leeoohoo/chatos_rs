@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::core::mcp_tools::{
-    BuiltinToolService, ToolInfo, build_builtin_tool_service, build_function_tool_schema,
-    parse_tool_definition,
+    build_builtin_tool_service, build_function_tool_schema, parse_tool_definition,
+    BuiltinToolService, ToolInfo,
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 

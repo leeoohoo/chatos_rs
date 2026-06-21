@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::services::ai_prompt_tool::run_text_prompt;
 

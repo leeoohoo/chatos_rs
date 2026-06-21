@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const CHATOS_DIR_NAME: &str = ".chatos";

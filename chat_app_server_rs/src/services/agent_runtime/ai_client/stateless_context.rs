@@ -1,9 +1,9 @@
-use chatos_ai_runtime::{StatelessHistoryMessage, build_stateless_history_items_with_output_cap};
+use chatos_ai_runtime::{build_stateless_history_items_with_output_cap, StatelessHistoryMessage};
 use serde_json::Value;
 use tracing::info;
 
 use super::compat::cap_tool_output_for_input;
-use super::{AiClient, build_current_input_items};
+use super::{build_current_input_items, AiClient};
 use crate::core::messages::is_session_summary_message;
 
 #[cfg(test)]

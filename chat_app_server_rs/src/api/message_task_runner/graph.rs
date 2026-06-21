@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 use super::normalize_text;
@@ -316,7 +316,7 @@ pub(super) fn normalize_message_task_graph_payload_edges_with_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn normalized_edges(payload: &Value) -> Vec<Value> {
         payload

@@ -90,6 +90,7 @@ export interface MemoryAgentResponse {
   description?: string | null;
   category?: string | null;
   role_definition: string;
+  task_runner_agent_account_id?: string | null;
   plugin_sources?: string[];
   skills?: MemoryAgentSkillResponse[];
   skill_ids?: string[];

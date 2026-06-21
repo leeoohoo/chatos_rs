@@ -1,9 +1,9 @@
 use crate::core::auth::AuthUser;
 use crate::models::application::Application;
 use crate::repositories::applications;
-use axum::Json;
 use axum::http::StatusCode;
-use serde_json::{Value, json};
+use axum::Json;
+use serde_json::{json, Value};
 
 #[derive(Debug)]
 pub enum ApplicationAccessError {

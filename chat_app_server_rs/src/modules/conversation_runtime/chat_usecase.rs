@@ -7,9 +7,9 @@ use crate::services::ai_common::normalize_turn_id;
 use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
 
-use super::bootstrap::{CommonChatBootstrapInput, load_common_chat_bootstrap};
+use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_execution::init_agent_ai_server;
-use super::chat_runner::{BootstrappedChatInput, build_chat_event_sink, run_bootstrapped_chat};
+use super::chat_runner::{build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput};
 use super::guidance;
 
 pub struct RunChatUsecaseInput {

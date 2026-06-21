@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use sqlx::Row;
 
 use crate::core::mongo_cursor::collect_map_sorted_desc;
@@ -363,8 +363,8 @@ pub async fn delete_ai_model_config(id: &str) -> Result<(), String> {
     .await
 }
 
-pub async fn backfill_ai_model_config_secret_storage()
--> Result<AiModelConfigSecretBackfillReport, String> {
+pub async fn backfill_ai_model_config_secret_storage(
+) -> Result<AiModelConfigSecretBackfillReport, String> {
     if !has_legacy_ai_model_configs_storage().await? {
         return Ok(AiModelConfigSecretBackfillReport::default());
     }

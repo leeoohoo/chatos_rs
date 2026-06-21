@@ -26,7 +26,7 @@ pub(super) use config_files::collect_project_config_files;
 
 use hints::collect_project_toolchain_hints;
 use project_toolchains::discover_project_local_toolchains;
-use support::{ToolchainOptions, ToolchainSeen, push_option_with_label};
+use support::{push_option_with_label, ToolchainOptions, ToolchainSeen};
 use system_toolchains::{
     discover_gradle_user_homes, discover_homebrew_bins, discover_java_homes,
     discover_known_commands, discover_maven_settings, discover_user_versioned_bins,

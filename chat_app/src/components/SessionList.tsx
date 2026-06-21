@@ -181,6 +181,8 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setContactError={controller.contactSessionCreator.setContactError}
         handleCreateContactSession={controller.contactSessionCreator.handleCreateContactSession}
         taskRunnerContact={controller.taskRunnerContact}
+        taskRunnerAgentAccounts={controller.taskRunnerAgentAccounts}
+        taskRunnerAgentAccountsLoading={controller.taskRunnerAgentAccountsLoading}
         taskRunnerError={controller.taskRunnerError}
         taskRunnerSaving={controller.taskRunnerSaving}
         closeTaskRunnerConfig={controller.closeTaskRunnerConfig}

@@ -26,6 +26,12 @@ pub struct Config {
     pub auth_jwt_secret: String,
     pub auth_compat_secret: Option<String>,
     pub auth_access_token_ttl_seconds: i64,
+    pub user_service_base_url: Option<String>,
+    pub user_service_request_timeout_ms: i64,
+    pub user_service_jwt_secret: Option<String>,
+    pub user_service_jwt_issuer: String,
+    pub user_service_user_audience: String,
+    pub task_runner_base_url: String,
     pub memory_engine_base_url: String,
     pub memory_engine_request_timeout_ms: i64,
     pub memory_engine_active_summary_trigger_timeout_ms: i64,
@@ -130,8 +136,25 @@ impl Config {
         let auth_compat_secret = read_optional_env("AUTH_COMPAT_SECRET");
         let auth_access_token_ttl_seconds =
             read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
+        let user_service_base_url = read_optional_env("CHATOS_USER_SERVICE_BASE_URL")
+            .or_else(|| read_optional_env("USER_SERVICE_BASE_URL"))
+            .or_else(|| Some(default_user_service_base_url()));
+        let user_service_request_timeout_ms =
+            read_int("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let user_service_jwt_secret = read_optional_env("CHATOS_USER_SERVICE_JWT_SECRET")
+            .or_else(|| read_optional_env("USER_SERVICE_JWT_SECRET"))
+            .or_else(|| Some("change_me_user_service_secret".to_string()));
+        let user_service_jwt_issuer = read_optional_env("CHATOS_USER_SERVICE_JWT_ISSUER")
+            .or_else(|| read_optional_env("USER_SERVICE_JWT_ISSUER"))
+            .unwrap_or_else(|| "user_service".to_string());
+        let user_service_user_audience = read_optional_env("CHATOS_USER_SERVICE_USER_AUDIENCE")
+            .or_else(|| read_optional_env("USER_SERVICE_USER_AUDIENCE"))
+            .unwrap_or_else(|| "user_service".to_string());
+        let task_runner_base_url = read_optional_env("CHATOS_TASK_RUNNER_BASE_URL")
+            .or_else(|| read_optional_env("TASK_RUNNER_BASE_URL"))
+            .unwrap_or_else(default_task_runner_base_url);
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:7081/api/memory-engine/v1".to_string());
+            .unwrap_or_else(|_| default_memory_engine_base_url());
         let memory_engine_request_timeout_ms =
             read_int("MEMORY_ENGINE_REQUEST_TIMEOUT_MS", 5000).max(300);
         let memory_engine_active_summary_trigger_timeout_ms =
@@ -146,6 +169,7 @@ impl Config {
             normalized_env,
             port,
             host.as_str(),
+            task_runner_base_url.as_str(),
             memory_engine_base_url.as_str(),
         )?;
         Ok(Config {
@@ -173,6 +197,12 @@ impl Config {
             auth_jwt_secret,
             auth_compat_secret,
             auth_access_token_ttl_seconds,
+            user_service_base_url,
+            user_service_request_timeout_ms,
+            user_service_jwt_secret,
+            user_service_jwt_issuer,
+            user_service_user_audience,
+            task_runner_base_url,
             memory_engine_base_url,
             memory_engine_request_timeout_ms,
             memory_engine_active_summary_trigger_timeout_ms,
@@ -263,6 +293,7 @@ impl Config {
             }
         );
         println!("  - Memory Engine 配置:");
+        println!("    • TASK_RUNNER_BASE_URL: {}", self.task_runner_base_url);
         println!(
             "    • MEMORY_ENGINE_BASE_URL: {}",
             self.memory_engine_base_url
@@ -291,6 +322,49 @@ fn read_optional_env(key: &str) -> Option<String> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+fn read_optional_u16_env(key: &str) -> Option<u16> {
+    read_optional_env(key).and_then(|value| value.parse::<u16>().ok())
+}
+
+fn client_accessible_host(host: Option<String>) -> String {
+    match host.as_deref().map(str::trim) {
+        Some("") | Some("0.0.0.0") | Some("::") | Some("[::]") | None => "127.0.0.1".to_string(),
+        Some(value) => value.to_string(),
+    }
+}
+
+fn default_memory_engine_base_url() -> String {
+    let host = client_accessible_host(read_optional_env("MEMORY_ENGINE_HOST"));
+    let port = read_optional_u16_env("MEMORY_ENGINE_PORT").unwrap_or(7081);
+    build_memory_engine_base_url(host.as_str(), port)
+}
+
+fn default_user_service_base_url() -> String {
+    let host = client_accessible_host(read_optional_env("USER_SERVICE_HOST"));
+    let port = read_optional_u16_env("USER_SERVICE_PORT").unwrap_or(39190);
+    build_user_service_base_url(host.as_str(), port)
+}
+
+fn default_task_runner_base_url() -> String {
+    let host = client_accessible_host(read_optional_env("TASK_RUNNER_HOST"));
+    let port = read_optional_u16_env("TASK_RUNNER_BACKEND_PORT")
+        .or_else(|| read_optional_u16_env("TASK_RUNNER_PORT"))
+        .unwrap_or(39090);
+    build_task_runner_base_url(host.as_str(), port)
+}
+
+fn build_memory_engine_base_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}/api/memory-engine/v1")
+}
+
+fn build_user_service_base_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}")
+}
+
+fn build_task_runner_base_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}")
 }
 
 fn normalize_env(value: &str) -> &str {
@@ -322,6 +396,7 @@ fn validate_config(
     normalized_env: &str,
     port: u16,
     host: &str,
+    task_runner_base_url: &str,
     memory_engine_base_url: &str,
 ) -> Result<(), String> {
     if port == 0 {
@@ -329,6 +404,9 @@ fn validate_config(
     }
     if host.trim().is_empty() {
         return Err("HOST must not be empty".to_string());
+    }
+    if task_runner_base_url.trim().is_empty() {
+        return Err("TASK_RUNNER_BASE_URL must not be empty".to_string());
     }
     if memory_engine_base_url.trim().is_empty() {
         return Err("MEMORY_ENGINE_BASE_URL must not be empty".to_string());
@@ -346,7 +424,10 @@ fn validate_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_env, require_secret_for_env, validate_config};
+    use super::{
+        build_memory_engine_base_url, build_task_runner_base_url, build_user_service_base_url,
+        client_accessible_host, normalize_env, require_secret_for_env, validate_config,
+    };
 
     #[test]
     fn normalize_env_maps_prod_alias() {
@@ -376,6 +457,7 @@ mod tests {
             "development",
             0,
             "0.0.0.0",
+            "http://127.0.0.1:39090",
             "http://127.0.0.1:7081/api/memory-engine/v1",
         )
         .expect_err("zero port must fail");
@@ -384,8 +466,14 @@ mod tests {
 
     #[test]
     fn validate_config_rejects_invalid_prod_memory_engine_url() {
-        let err = validate_config("production", 3997, "0.0.0.0", "memory-engine.internal")
-            .expect_err("invalid production url must fail");
+        let err = validate_config(
+            "production",
+            3997,
+            "0.0.0.0",
+            "http://127.0.0.1:39090",
+            "memory-engine.internal",
+        )
+        .expect_err("invalid production url must fail");
         assert!(err.contains("MEMORY_ENGINE_BASE_URL"));
     }
 
@@ -395,8 +483,41 @@ mod tests {
             "production",
             3997,
             "0.0.0.0",
+            "https://task-runner.example.com",
             "https://memory.example.com/api/memory-engine/v1",
         )
         .expect("valid production config");
+    }
+
+    #[test]
+    fn build_memory_engine_base_url_uses_loopback_host() {
+        assert_eq!(
+            build_memory_engine_base_url("127.0.0.1", 7199),
+            "http://127.0.0.1:7199/api/memory-engine/v1"
+        );
+    }
+
+    #[test]
+    fn build_task_runner_base_url_uses_loopback_host() {
+        assert_eq!(
+            build_task_runner_base_url("127.0.0.1", 39090),
+            "http://127.0.0.1:39090"
+        );
+    }
+
+    #[test]
+    fn build_user_service_base_url_uses_loopback_host() {
+        assert_eq!(
+            build_user_service_base_url("127.0.0.1", 39190),
+            "http://127.0.0.1:39190"
+        );
+    }
+
+    #[test]
+    fn client_accessible_host_preserves_explicit_host() {
+        assert_eq!(
+            client_accessible_host(Some("memory-engine.internal".to_string())),
+            "memory-engine.internal"
+        );
     }
 }

@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::services::llm_prompt_runner::run_text_prompt_with_model_config;
 

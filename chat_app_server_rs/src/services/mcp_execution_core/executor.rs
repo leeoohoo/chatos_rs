@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
-use super::{McpToolState, codex_gateway_request_tools, execute_tools_stream_with_registry};
+use super::{codex_gateway_request_tools, execute_tools_stream_with_registry, McpToolState};
 
 #[cfg(test)]
 use super::should_parallelize_tool_batch;

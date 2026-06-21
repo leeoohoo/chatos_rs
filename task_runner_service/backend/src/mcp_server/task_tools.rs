@@ -96,7 +96,7 @@ impl TaskRunnerMcpService {
                     .await?;
                 let task = self
                     .task_service
-                    .update_task(args.task_id.as_str(), args.patch)
+                    .update_task(args.task_id.as_str(), args.patch, Some(current_user))
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
                 Ok(text_result(task_for_external_mcp(task)))

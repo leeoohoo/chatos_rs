@@ -106,12 +106,39 @@ impl RunService {
         &self,
         request: BatchTaskRunRequest,
     ) -> Result<BatchTaskOperationResponse, String> {
+        self.batch_start_runs_with_user(request, None).await
+    }
+
+    pub async fn batch_start_runs_for_user(
+        &self,
+        request: BatchTaskRunRequest,
+        current_user: &CurrentUser,
+    ) -> Result<BatchTaskOperationResponse, String> {
+        self.batch_start_runs_with_user(request, Some(current_user))
+            .await
+    }
+
+    async fn batch_start_runs_with_user(
+        &self,
+        request: BatchTaskRunRequest,
+        current_user: Option<&CurrentUser>,
+    ) -> Result<BatchTaskOperationResponse, String> {
         let task_ids = normalize_batch_task_ids(request.task_ids)?;
         let mut results = Vec::with_capacity(task_ids.len());
 
         for task_id in task_ids {
-            match self
-                .start_run(
+            let run_result = if let Some(current_user) = current_user {
+                self.start_run_for_user(
+                    &task_id,
+                    StartTaskRunRequest {
+                        model_config_id: request.model_config_id.clone(),
+                        prompt_override: request.prompt_override.clone(),
+                    },
+                    current_user,
+                )
+                .await
+            } else {
+                self.start_run(
                     &task_id,
                     StartTaskRunRequest {
                         model_config_id: request.model_config_id.clone(),
@@ -119,7 +146,8 @@ impl RunService {
                     },
                 )
                 .await
-            {
+            };
+            match run_result {
                 Ok(run) => results.push(BatchTaskOperationItem {
                     task_id,
                     ok: true,

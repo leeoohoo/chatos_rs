@@ -110,6 +110,8 @@ pub struct ChatosAgentDto {
     pub category: Option<String>,
     pub role_definition: String,
     #[serde(default)]
+    pub task_runner_agent_account_id: Option<String>,
+    #[serde(default)]
     pub plugin_sources: Vec<String>,
     #[serde(default)]
     pub skills: Vec<ChatosAgentSkillDto>,
@@ -156,6 +158,8 @@ pub struct CreateChatosAgentRequest {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: String,
+    #[serde(default)]
+    pub auto_provision_task_runner_account: Option<bool>,
     pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<ChatosAgentSkillDto>>,
     pub skill_ids: Option<Vec<String>>,

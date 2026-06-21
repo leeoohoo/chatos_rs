@@ -5,7 +5,7 @@ use regex::RegexBuilder;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::services::code_nav::languages::shared_nav::{
-    NavSearchMatchLike, indexed_symbols_from, nav_location_from_coordinates,
+    indexed_symbols_from, nav_location_from_coordinates, NavSearchMatchLike,
 };
 use crate::services::code_nav::symbol_index::IndexedSymbol;
 use crate::services::code_nav::types::NavLocation;

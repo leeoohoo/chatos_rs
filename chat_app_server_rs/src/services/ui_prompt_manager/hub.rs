@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 
 use super::normalizer::trimmed_non_empty;
-#[cfg(test)]
-use super::types::{UI_PROMPT_NOT_FOUND_ERR, UiPromptResponseSubmission, UiPromptStatus};
 use super::types::{
-    UI_PROMPT_TIMEOUT_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT, UiPromptDecision, UiPromptPayload,
+    UiPromptDecision, UiPromptPayload, UI_PROMPT_TIMEOUT_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT,
 };
+#[cfg(test)]
+use super::types::{UiPromptResponseSubmission, UiPromptStatus, UI_PROMPT_NOT_FOUND_ERR};
 
 #[derive(Debug)]
 struct PendingUiPromptEntry {

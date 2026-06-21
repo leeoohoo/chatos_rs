@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
+import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
 import {
   useOptionalChatStoreContext,
 } from '../../lib/store/ChatStoreContext';
@@ -135,6 +136,8 @@ export const useSessionListController = ({
   const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [taskRunnerContactId, setTaskRunnerContactId] = useState<string | null>(null);
+  const [taskRunnerAgentAccounts, setTaskRunnerAgentAccounts] = useState<TaskRunnerAgentAccountResponse[]>([]);
+  const [taskRunnerAgentAccountsLoading, setTaskRunnerAgentAccountsLoading] = useState(false);
   const [taskRunnerError, setTaskRunnerError] = useState<string | null>(null);
   const [taskRunnerSaving, setTaskRunnerSaving] = useState(false);
 
@@ -200,7 +203,7 @@ export const useSessionListController = ({
 
   const inlineActionMenus = useInlineActionMenus();
 
-  const openTaskRunnerConfig = (displaySessionId: string) => {
+  const openTaskRunnerConfig = async (displaySessionId: string) => {
     const contactId = displaySessionId.startsWith('contact-placeholder:')
       ? displaySessionId.replace('contact-placeholder:', '').trim()
       : '';
@@ -211,36 +214,35 @@ export const useSessionListController = ({
     }
     setTaskRunnerContactId(contact.id);
     setTaskRunnerError(null);
+    setTaskRunnerAgentAccountsLoading(true);
+    try {
+      const items = await apiClient.listTaskRunnerAgentAccounts();
+      setTaskRunnerAgentAccounts(Array.isArray(items) ? items : []);
+    } catch (error) {
+      setTaskRunnerAgentAccounts([]);
+      setTaskRunnerError(error instanceof Error ? error.message : t('taskRunnerConfig.loadAgentAccountsFailed'));
+    } finally {
+      setTaskRunnerAgentAccountsLoading(false);
+    }
   };
 
   const closeTaskRunnerConfig = () => {
     setTaskRunnerContactId(null);
+    setTaskRunnerAgentAccounts([]);
+    setTaskRunnerAgentAccountsLoading(false);
     setTaskRunnerError(null);
   };
 
   const saveTaskRunnerConfig = async (values: {
     enabled: boolean;
-    baseUrl: string;
-    username: string;
-    password?: string;
-    clearPassword?: boolean;
+    agentAccountId: string;
   }) => {
     if (!taskRunnerContact) {
       return;
     }
-    const baseUrl = values.baseUrl.trim();
-    const username = values.username.trim();
-    if (values.enabled && (!baseUrl || !username)) {
-      setTaskRunnerError(t('taskRunnerConfig.missingEndpoint'));
-      return;
-    }
-    if (
-      values.enabled
-      && !values.password?.trim()
-      && !taskRunnerContact.taskRunner?.hasPassword
-      && !values.clearPassword
-    ) {
-      setTaskRunnerError(t('taskRunnerConfig.missingPassword'));
+    const agentAccountId = values.agentAccountId.trim();
+    if (values.enabled && !agentAccountId) {
+      setTaskRunnerError(t('taskRunnerConfig.agentAccountMissing'));
       return;
     }
     setTaskRunnerSaving(true);
@@ -248,8 +250,9 @@ export const useSessionListController = ({
     try {
       await updateContactTaskRunnerConfig(taskRunnerContact.id, {
         ...values,
-        baseUrl,
-        username,
+        agentAccountId,
+        username: '',
+        clearPassword: true,
       });
       closeTaskRunnerConfig();
     } catch (error) {
@@ -564,6 +567,8 @@ export const useSessionListController = ({
     setTerminalModalOpen,
     setTerminalRoot,
     taskRunnerContact,
+    taskRunnerAgentAccounts,
+    taskRunnerAgentAccountsLoading,
     taskRunnerError,
     taskRunnerSaving,
     closeTaskRunnerConfig,

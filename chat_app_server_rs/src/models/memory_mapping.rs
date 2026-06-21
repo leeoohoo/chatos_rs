@@ -13,6 +13,8 @@ pub struct ChatosContact {
     #[serde(default)]
     pub task_runner_base_url: Option<String>,
     #[serde(default)]
+    pub task_runner_agent_account_id: Option<String>,
+    #[serde(default)]
     pub task_runner_username: Option<String>,
     #[serde(default, skip_serializing)]
     pub task_runner_password: Option<String>,
@@ -36,6 +38,7 @@ impl ChatosContact {
             agent_name_snapshot,
             task_runner_enabled: false,
             task_runner_base_url: None,
+            task_runner_agent_account_id: None,
             task_runner_username: None,
             task_runner_password: None,
             status,
@@ -53,6 +56,7 @@ pub struct ChatosContactRow {
     pub agent_name_snapshot: Option<String>,
     pub task_runner_enabled: i64,
     pub task_runner_base_url: Option<String>,
+    pub task_runner_agent_account_id: Option<String>,
     pub task_runner_username: Option<String>,
     pub task_runner_password: Option<String>,
     pub status: String,
@@ -69,6 +73,7 @@ impl ChatosContactRow {
             agent_name_snapshot: self.agent_name_snapshot,
             task_runner_enabled: self.task_runner_enabled != 0,
             task_runner_base_url: self.task_runner_base_url,
+            task_runner_agent_account_id: self.task_runner_agent_account_id,
             task_runner_username: self.task_runner_username,
             task_runner_password: self.task_runner_password,
             status: self.status,

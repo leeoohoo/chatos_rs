@@ -18,6 +18,7 @@ pub(super) fn contact_to_dto(contact: ChatosContact) -> MemoryContactDto {
         agent_name_snapshot: contact.agent_name_snapshot,
         task_runner_enabled: contact.task_runner_enabled,
         task_runner_base_url: contact.task_runner_base_url,
+        task_runner_agent_account_id: contact.task_runner_agent_account_id,
         task_runner_username: contact.task_runner_username,
         task_runner_has_password: contact
             .task_runner_password

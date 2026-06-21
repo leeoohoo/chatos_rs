@@ -14,7 +14,7 @@ mod schema;
 mod tests;
 mod text;
 
-pub use self::builtin::{BuiltinToolService, build_builtin_tool_service};
+pub use self::builtin::{build_builtin_tool_service, BuiltinToolService};
 pub use self::execution::execute_tools_stream;
 pub use self::rpc::{jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio};
 #[cfg(test)]

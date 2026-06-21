@@ -1,29 +1,29 @@
 import React, { useEffect, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
+import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
 import type { ContactItem } from './types';
-
-const DEFAULT_TASK_RUNNER_BASE_URL = 'http://127.0.0.1:39090';
 
 interface TaskRunnerConfigModalProps {
   isOpen: boolean;
   contact: ContactItem | null;
+  agentAccounts: TaskRunnerAgentAccountResponse[];
+  loadingAgentAccounts: boolean;
   saving: boolean;
   error: string | null;
   onClose: () => void;
   onSave: (values: {
     enabled: boolean;
-    baseUrl: string;
-    username: string;
-    password?: string;
-    clearPassword?: boolean;
+    agentAccountId: string;
   }) => Promise<void> | void;
 }
 
 export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
   isOpen,
   contact,
+  agentAccounts,
+  loadingAgentAccounts,
   saving,
   error,
   onClose,
@@ -31,20 +31,14 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
 }) => {
   const { t } = useI18n();
   const [enabled, setEnabled] = useState(false);
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_TASK_RUNNER_BASE_URL);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [clearPassword, setClearPassword] = useState(false);
+  const [agentAccountId, setAgentAccountId] = useState('');
 
   useEffect(() => {
     if (!isOpen || !contact) {
       return;
     }
     setEnabled(Boolean(contact.taskRunner?.enabled));
-    setBaseUrl(contact.taskRunner?.baseUrl || DEFAULT_TASK_RUNNER_BASE_URL);
-    setUsername(contact.taskRunner?.username || '');
-    setPassword('');
-    setClearPassword(false);
+    setAgentAccountId(contact.taskRunner?.agentAccountId || '');
   }, [contact, isOpen]);
 
   if (!contact) {
@@ -52,7 +46,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
   }
   const taskRunner = contact.taskRunner || {
     enabled: false,
-    baseUrl: '',
+    agentAccountId: '',
     username: '',
     hasPassword: false,
   };
@@ -70,10 +64,7 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
           event.preventDefault();
           void onSave({
             enabled,
-            baseUrl,
-            username,
-            password: password.trim() || undefined,
-            clearPassword,
+            agentAccountId,
           });
         }}
       >
@@ -82,9 +73,9 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
             <div>
               <div className="text-sm font-medium text-foreground">{contact.name}</div>
               <div className="text-xs text-muted-foreground">
-                {taskRunner.hasPassword
-                  ? t('taskRunnerConfig.passwordSaved')
-                  : t('taskRunnerConfig.passwordMissing')}
+                {taskRunner.agentAccountId
+                  ? t('taskRunnerConfig.agentAccountSelected')
+                  : t('taskRunnerConfig.noAgentAccountSelected')}
               </div>
             </div>
             <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -97,54 +88,34 @@ export const TaskRunnerConfigModal: React.FC<TaskRunnerConfigModalProps> = ({
             </label>
           </div>
 
-          <div>
-            <label className="text-sm text-muted-foreground">{t('taskRunnerConfig.baseUrl')}</label>
-            <input
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={DEFAULT_TASK_RUNNER_BASE_URL}
-            />
+          <div className="text-xs text-muted-foreground">
+            {t('taskRunnerConfig.endpointManaged')}
           </div>
 
           <div>
-            <label className="text-sm text-muted-foreground">{t('taskRunnerConfig.username')}</label>
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
+            <label className="text-sm text-muted-foreground">{t('taskRunnerConfig.agentAccount')}</label>
+            <select
+              value={agentAccountId}
+              onChange={(event) => setAgentAccountId(event.target.value)}
               className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              autoComplete="off"
-            />
+              disabled={loadingAgentAccounts}
+            >
+              <option value="">{t('taskRunnerConfig.agentAccountPlaceholder')}</option>
+              {agentAccounts
+                .filter((item) => item.enabled !== false)
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.display_name?.trim() || item.username} ({item.username})
+                  </option>
+                ))}
+            </select>
+            {loadingAgentAccounts ? (
+              <div className="mt-1 text-xs text-muted-foreground">{t('common.loading')}</div>
+            ) : null}
+            {!loadingAgentAccounts && agentAccounts.length === 0 ? (
+              <div className="mt-1 text-xs text-muted-foreground">{t('taskRunnerConfig.noAgentAccounts')}</div>
+            ) : null}
           </div>
-
-          <div>
-            <label className="text-sm text-muted-foreground">{t('taskRunnerConfig.password')}</label>
-            <input
-              value={password}
-              onChange={(event) => {
-                setPassword(event.target.value);
-                if (event.target.value.trim()) {
-                  setClearPassword(false);
-                }
-              }}
-              type="password"
-              className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={taskRunner.hasPassword ? t('taskRunnerConfig.passwordKeepPlaceholder') : ''}
-              autoComplete="new-password"
-            />
-          </div>
-
-          {taskRunner.hasPassword ? (
-            <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={clearPassword}
-                disabled={Boolean(password.trim())}
-                onChange={(event) => setClearPassword(event.target.checked)}
-              />
-              {t('taskRunnerConfig.clearPassword')}
-            </label>
-          ) : null}
 
           {error ? <div className="text-xs text-destructive">{error}</div> : null}
         </div>

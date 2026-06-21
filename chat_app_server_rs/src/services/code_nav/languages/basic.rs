@@ -9,7 +9,7 @@ use self::helpers::extension_matches;
 use self::resolution::{find_definitions, find_references};
 
 use crate::services::code_nav::languages::shared_nav::{
-    NavSymbolLike, document_symbols_response, heuristic_nav_capabilities,
+    document_symbols_response, heuristic_nav_capabilities, NavSymbolLike,
 };
 use crate::services::code_nav::types::{
     DocumentSymbolsResponse, NavCapabilities, NavLocation, NavPositionRequest, ProjectContext,

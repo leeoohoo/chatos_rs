@@ -44,6 +44,9 @@ pub struct AppConfig {
     pub admin_username: String,
     pub admin_password: String,
     pub admin_display_name: String,
+    pub user_service_jwt_secret: Option<String>,
+    pub user_service_jwt_issuer: String,
+    pub user_service_task_runner_audience: String,
 }
 
 impl AppConfig {

@@ -35,6 +35,7 @@ export const normalizeContact = (raw: ContactResponse | unknown): ContactRecord 
     taskRunner: {
       enabled: readBooleanFirst(record, ['task_runner_enabled'], false),
       baseUrl: readTrimmedString(record, 'task_runner_base_url'),
+      agentAccountId: readTrimmedString(record, 'task_runner_agent_account_id'),
       username: readTrimmedString(record, 'task_runner_username'),
       hasPassword: readBooleanFirst(record, ['task_runner_has_password'], false),
     },

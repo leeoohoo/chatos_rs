@@ -77,6 +77,7 @@ pub(super) fn user_from_row(row: &SqliteRow) -> Result<UserRecord, String> {
 pub(super) fn model_config_from_row(row: &SqliteRow) -> Result<ModelConfigRecord, String> {
     Ok(ModelConfigRecord {
         id: row.get("id"),
+        owner_user_id: row.get("owner_user_id"),
         name: row.get("name"),
         provider: row.get("provider"),
         base_url: row.get("base_url"),

@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::models::terminal::{Terminal, TerminalService};
 use crate::models::terminal_log::TerminalLogService;

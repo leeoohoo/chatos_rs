@@ -214,7 +214,8 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
       contactId: string,
       config: {
         enabled: boolean;
-        baseUrl: string;
+        baseUrl?: string;
+        agentAccountId?: string;
         username: string;
         password?: string;
         clearPassword?: boolean;
@@ -227,7 +228,8 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
       const password = config.password?.trim();
       const updated = await client.updateContactTaskRunnerConfig(trimmed, {
         enabled: config.enabled,
-        base_url: config.baseUrl.trim() || null,
+        base_url: config.baseUrl?.trim() || null,
+        task_runner_agent_account_id: config.agentAccountId?.trim() || null,
         username: config.username.trim() || null,
         password: password || undefined,
         clear_password: config.clearPassword,

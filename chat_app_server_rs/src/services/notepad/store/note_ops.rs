@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -9,7 +9,7 @@ use super::super::store_normalize::{
     unique_tags,
 };
 use super::super::types::{CreateNoteParams, ListNotesParams, SearchNotesParams, UpdateNoteParams};
-use super::{NotepadStore, entry_to_output};
+use super::{entry_to_output, NotepadStore};
 
 impl NotepadStore {
     pub async fn list_notes(&self, params: ListNotesParams) -> Result<Value, String> {

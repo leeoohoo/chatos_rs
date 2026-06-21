@@ -1,11 +1,12 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::config::Config;
-use crate::core::ai_model_config::{ResolvedChatModelConfig, resolve_chat_model_config};
+use crate::core::ai_model_config::{resolve_chat_model_config, ResolvedChatModelConfig};
+use crate::models::ai_model_config::AiModelConfig;
 use crate::models::session::Session;
 use crate::repositories::ai_model_configs;
 
-use super::chatos_sessions;
+use super::{chatos_sessions, user_service_api_client};
 
 fn normalize_optional_id(value: Option<&str>) -> Option<String> {
     value
@@ -18,27 +19,100 @@ fn session_selected_model_id(session: &Session) -> Option<String> {
     normalize_optional_id(session.selected_model_id.as_deref())
 }
 
+fn configured_user_service_base_url(cfg: &Config) -> Option<String> {
+    cfg.user_service_base_url
+        .clone()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn from_user_service_model_config(
+    record: user_service_api_client::UserServiceModelConfigRecord,
+) -> AiModelConfig {
+    let model = if !record.model_name.trim().is_empty() {
+        record.model_name
+    } else {
+        record.model
+    };
+    AiModelConfig {
+        id: record.id,
+        user_id: Some(record.owner_user_id),
+        name: record.name,
+        provider: record.provider,
+        model,
+        thinking_level: record.thinking_level,
+        api_key: record.api_key,
+        has_api_key: record.has_api_key,
+        base_url: record.base_url,
+        enabled: record.enabled,
+        supports_images: record.supports_images,
+        supports_reasoning: record.supports_reasoning,
+        supports_responses: record.supports_responses,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+async fn get_user_service_model_config_by_id(
+    cfg: &Config,
+    model_id: &str,
+    user_id: &str,
+) -> Result<AiModelConfig, String> {
+    let base_url = configured_user_service_base_url(cfg)
+        .ok_or_else(|| "user_service is not configured".to_string())?;
+    let access_token = user_service_api_client::build_user_access_token(user_id, Some("user"))?;
+    let profile = user_service_api_client::get_model_config(
+        base_url.as_str(),
+        access_token.as_str(),
+        model_id,
+        true,
+        cfg.user_service_request_timeout_ms,
+    )
+    .await?;
+    if profile.owner_user_id != user_id {
+        return Err(format!("forbidden model config access: {model_id}"));
+    }
+    Ok(from_user_service_model_config(profile))
+}
+
+async fn list_user_service_model_configs(
+    cfg: &Config,
+    user_id: &str,
+) -> Result<Vec<AiModelConfig>, String> {
+    let base_url = configured_user_service_base_url(cfg)
+        .ok_or_else(|| "user_service is not configured".to_string())?;
+    let access_token = user_service_api_client::build_user_access_token(user_id, Some("user"))?;
+    let items = user_service_api_client::list_model_configs(
+        base_url.as_str(),
+        access_token.as_str(),
+        Some(user_id),
+        cfg.user_service_request_timeout_ms,
+    )
+    .await?;
+    Ok(items
+        .into_iter()
+        .map(from_user_service_model_config)
+        .collect())
+}
+
 fn pick_default_engine_profile(
-    profiles: Vec<crate::models::ai_model_config::AiModelConfig>,
-) -> Result<crate::models::ai_model_config::AiModelConfig, String> {
+    profiles: Vec<AiModelConfig>,
+) -> Result<AiModelConfig, String> {
     let enabled = profiles
         .into_iter()
         .filter(|item| item.enabled)
         .collect::<Vec<_>>();
 
     match enabled.len() {
-        0 => Err("未找到启用的模型，请先在 chatos 中启用至少一个模型".to_string()),
+        0 => Err("no enabled model config found".to_string()),
         1 => Ok(enabled[0].clone()),
         _ => Err(
-            "检测到多个启用的模型，请显式传入 model_config_id，或先为当前会话绑定 selected_model_id"
-                .to_string(),
+            "multiple enabled model configs found; please provide model_config_id or bind a selected_model_id".to_string(),
         ),
     }
 }
 
-pub fn runtime_value_from_engine_profile(
-    profile: &crate::models::ai_model_config::AiModelConfig,
-) -> Value {
+pub fn runtime_value_from_engine_profile(profile: &AiModelConfig) -> Value {
     json!({
         "provider": profile.provider,
         "model_name": profile.model,
@@ -73,6 +147,43 @@ fn merge_safe_request_overrides(base: &mut Value, request_model_cfg: &Value) {
     }
 }
 
+async fn load_profile_by_id(
+    cfg: &Config,
+    model_id: &str,
+    user_id: Option<&str>,
+) -> Result<AiModelConfig, String> {
+    if configured_user_service_base_url(cfg).is_some() {
+        if let Some(user_id) = user_id {
+            return get_user_service_model_config_by_id(cfg, model_id, user_id).await;
+        }
+    }
+
+    let profile = ai_model_configs::get_ai_model_config_by_id(model_id)
+        .await
+        .map_err(|err| format!("load model config failed: {err}"))?
+        .ok_or_else(|| format!("model config not found: {model_id}"))?;
+    if let Some(user_id) = user_id {
+        if profile.user_id.as_deref() != Some(user_id) {
+            return Err(format!("forbidden model config access: {model_id}"));
+        }
+    }
+    Ok(profile)
+}
+
+async fn load_default_profile(cfg: &Config, user_id: Option<&str>) -> Result<AiModelConfig, String> {
+    if configured_user_service_base_url(cfg).is_some() {
+        if let Some(user_id) = user_id {
+            let profiles = list_user_service_model_configs(cfg, user_id).await?;
+            return pick_default_engine_profile(profiles);
+        }
+    }
+
+    let profiles = ai_model_configs::list_ai_model_configs(user_id)
+        .await
+        .map_err(|err| format!("load model configs failed: {err}"))?;
+    pick_default_engine_profile(profiles)
+}
+
 pub async fn resolve_model_runtime_for_request(
     requested_model_config_id: Option<&str>,
     request_model_cfg: Option<&Value>,
@@ -91,7 +202,7 @@ pub async fn resolve_model_runtime_for_request(
         {
             Some(valid_session_id) => chatos_sessions::get_session_by_id(valid_session_id.as_str())
                 .await
-                .map_err(|err| format!("读取会话失败: {err}"))?,
+                .map_err(|err| format!("load session failed: {err}"))?,
             None => None,
         }
     } else {
@@ -101,21 +212,9 @@ pub async fn resolve_model_runtime_for_request(
         explicit_model_id.or_else(|| session.as_ref().and_then(session_selected_model_id));
 
     let profile = if let Some(model_id) = resolved_model_id {
-        let profile = ai_model_configs::get_ai_model_config_by_id(model_id.as_str())
-            .await
-            .map_err(|err| format!("读取模型配置失败: {err}"))?
-            .ok_or_else(|| format!("模型配置不存在: {}", model_id))?;
-        if let Some(user_id) = user_id {
-            if profile.user_id.as_deref() != Some(user_id) {
-                return Err(format!("无权访问模型配置: {}", model_id));
-            }
-        }
-        profile
+        load_profile_by_id(cfg, model_id.as_str(), user_id).await?
     } else {
-        let profiles = ai_model_configs::list_ai_model_configs(user_id)
-            .await
-            .map_err(|err| format!("读取模型配置失败: {err}"))?;
-        pick_default_engine_profile(profiles)?
+        load_default_profile(cfg, user_id).await?
     };
 
     let mut model_cfg = runtime_value_from_engine_profile(&profile);

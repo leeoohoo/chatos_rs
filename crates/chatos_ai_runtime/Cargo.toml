@@ -16,4 +16,4 @@ tokio-util = "0.7"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chatos_mcp_runtime = { path = "../chatos_mcp_runtime" }
-memory_engine_sdk = { path = "../../../memory_engine/sdk" }
+memory_engine_sdk = { path = "../memory_engine_sdk" }

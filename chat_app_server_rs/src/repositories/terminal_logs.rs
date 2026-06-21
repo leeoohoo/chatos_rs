@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 
 use crate::core::mongo_cursor::collect_and_map;
 use crate::core::sql_query::append_limit_offset_clause;

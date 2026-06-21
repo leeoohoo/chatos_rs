@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::time::Duration;
 
 use crate::api::remote_connections::{
@@ -9,11 +9,11 @@ use crate::api::remote_connections::{
 };
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
-use super::BoundContext;
 use super::context::{
     command_danger_reason, join_remote_path, normalize_remote_path, required_user_id,
     resolve_connection_id, shell_quote, truncate_text,
 };
+use super::BoundContext;
 
 #[derive(Debug, Serialize)]
 struct ConnectionSummary {

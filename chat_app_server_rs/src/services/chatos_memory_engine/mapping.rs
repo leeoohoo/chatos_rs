@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::core::chat_runtime::{
     contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,

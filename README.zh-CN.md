@@ -1,5 +1,7 @@
 # Chatos RS
 
+跨系统安装教程见 [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
+
 ## 项目定位
 `Chatos RS` 是一个面向开发与工程协作场景的 AI 平台。  
 它把对话交互、工具调用和长期记忆统一到一套系统中，目标是让 AI 能稳定地“持续工作”，而不是只做一次性聊天。
@@ -66,12 +68,49 @@ make smoke
 ./restart_services.sh stop
 ```
 
+## WSL Rust 开发流
+如果 Windows 上的 Smart App Control / Code Integrity 会拦截 `cargo run` 或 `cargo test`，
+优先改走 WSL 内运行 Rust，而不是直接在 Windows 上执行 Rust 产物。
+
+一次性初始化：
+
+```powershell
+wsl.exe --install -d Ubuntu
+make bootstrap-wsl
+```
+
+从 Windows 侧启动 ChatOS（实际运行在 WSL 内）：
+
+```powershell
+make restart-wsl
+make status-wsl
+make stop-wsl
+```
+
+只启动 `user_service`：
+
+```powershell
+make restart-user-service-wsl
+make status-user-service-wsl
+make stop-user-service-wsl
+```
+
+根目录 `.env` 可选配置：
+
+- `WSL_DEV_DISTRO`
+- `WSL_CARGO_TARGET_DIR`
+- `WSL_RUNTIME_DIR`
+- `WSL_USER_SERVICE_RUNTIME_DIR`
+
 默认日志路径：
 - `/tmp/chatos_rs_dev_<repo-hash>/backend.log`
 - `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
 
 ## 开发方案归档
 方案/评估/契约文档可能位于根目录历史文档，或本地 `docs/plans/` 归档目录。
+
+## WSL 文档
+- [WSL Rust 开发流](./WSL_RUST_DEV_FLOW_20260619.md)
 
 ## 子项目文档
 - [chat_app English](./chat_app/README.en.md)

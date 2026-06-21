@@ -1,6 +1,7 @@
 import React from 'react';
 
 import type { AgentConfig, FsEntry } from '../../types';
+import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
 import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
@@ -27,15 +28,14 @@ interface SessionListDialogsProps {
   setContactError: (value: string | null) => void;
   handleCreateContactSession: () => Promise<void> | void;
   taskRunnerContact: ContactItem | null;
+  taskRunnerAgentAccounts: TaskRunnerAgentAccountResponse[];
+  taskRunnerAgentAccountsLoading: boolean;
   taskRunnerError: string | null;
   taskRunnerSaving: boolean;
   closeTaskRunnerConfig: () => void;
   saveTaskRunnerConfig: (values: {
     enabled: boolean;
-    baseUrl: string;
-    username: string;
-    password?: string;
-    clearPassword?: boolean;
+    agentAccountId: string;
   }) => Promise<void> | void;
 
   projectModalOpen: boolean;
@@ -155,6 +155,8 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setContactError,
   handleCreateContactSession,
   taskRunnerContact,
+  taskRunnerAgentAccounts,
+  taskRunnerAgentAccountsLoading,
   taskRunnerError,
   taskRunnerSaving,
   closeTaskRunnerConfig,
@@ -280,6 +282,8 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
     <TaskRunnerConfigModal
       isOpen={Boolean(taskRunnerContact)}
       contact={taskRunnerContact}
+      agentAccounts={taskRunnerAgentAccounts}
+      loadingAgentAccounts={taskRunnerAgentAccountsLoading}
       saving={taskRunnerSaving}
       error={taskRunnerError}
       onClose={closeTaskRunnerConfig}

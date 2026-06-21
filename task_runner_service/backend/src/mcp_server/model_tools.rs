@@ -3,7 +3,9 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::models::{CreateModelConfigRequest, TestModelConfigRequest};
 
-use super::support::{model_config_for_user, model_configs_for_user, require_admin_tool};
+use super::support::{
+    model_config_for_user, model_configs_for_user, model_visible_to_user, require_admin_tool,
+};
 use super::{
     decode_args, text_result, ModelConfigIdArgs, TaskRunnerMcpService, TestModelConfigArgs,
     UpdateModelConfigArgs,
@@ -32,6 +34,9 @@ impl TaskRunnerMcpService {
                     .get_model_config(args.model_config_id.as_str())
                     .await?
                     .ok_or_else(|| format!("模型配置不存在: {}", args.model_config_id))?;
+                if !model_visible_to_user(&model, current_user) {
+                    return Err(format!("模型配置不存在: {}", args.model_config_id));
+                }
                 Ok(text_result(model_config_for_user(model, current_user)))
             }
             "create_model_config" => {

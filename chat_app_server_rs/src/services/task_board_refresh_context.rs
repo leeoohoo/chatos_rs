@@ -3,7 +3,7 @@ use serde_json::Value;
 #[cfg(test)]
 use crate::modules::conversation_runtime::task_board::build_runtime_context;
 use crate::modules::conversation_runtime::task_board::{
-    TaskBoardRuntimeContext, load_prefixed_input_items,
+    load_prefixed_input_items, TaskBoardRuntimeContext,
 };
 
 use std::sync::{Arc, Mutex};

@@ -59,20 +59,21 @@ pub(in crate::api) async fn get_task(
         .await
         .map_err(ApiError::bad_request)?
         .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))
+        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))
 }
 
 pub(in crate::api) async fn update_task(
     Path(id): Path<String>,
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Json(input): Json<UpdateTaskRequest>,
 ) -> Result<Json<TaskRecord>, ApiError> {
     let task = state
         .task_service
-        .update_task(&id, input)
+        .update_task(&id, input, Some(&current_user))
         .await
         .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
     Ok(Json(task))
 }
 
@@ -88,7 +89,7 @@ pub(in crate::api) async fn delete_task(
     {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::not_found(format!("任务不存在: {id}")))
+        Err(ApiError::not_found(format!("task not found: {id}")))
     }
 }
 
@@ -103,7 +104,7 @@ pub(in crate::api) async fn cancel_task(
         .cancel_task(&id, input, Some(&current_user))
         .await
         .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
     Ok(Json(result))
 }
 
@@ -117,7 +118,7 @@ pub(in crate::api) async fn update_task_mcp(
         .update_task_mcp(&id, input)
         .await
         .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
     Ok(Json(task))
 }
 
@@ -131,7 +132,7 @@ pub(in crate::api) async fn record_task_process(
         .record_task_process(&id, input)
         .await
         .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
     Ok(Json(task))
 }
 
@@ -144,6 +145,6 @@ pub(in crate::api) async fn preview_task_mcp_prompt(
         .preview_task_prompt(&id)
         .await
         .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {id}")))?;
+        .ok_or_else(|| ApiError::not_found(format!("task not found: {id}")))?;
     Ok(Json(preview))
 }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::fs;
 use walkdir::WalkDir;
 

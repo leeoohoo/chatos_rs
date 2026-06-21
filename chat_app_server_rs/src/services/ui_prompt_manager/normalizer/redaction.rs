@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::support::SECRET_MASK;
 use super::{UiPromptPayload, UiPromptResponseSubmission};
@@ -78,5 +78,9 @@ fn secret_field_keys(payload: &UiPromptPayload) -> Option<Vec<String>> {
         })
         .collect();
 
-    if keys.is_empty() { None } else { Some(keys) }
+    if keys.is_empty() {
+        None
+    } else {
+        Some(keys)
+    }
 }

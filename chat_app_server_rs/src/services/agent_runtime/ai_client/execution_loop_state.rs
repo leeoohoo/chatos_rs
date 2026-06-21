@@ -4,15 +4,15 @@ use chatos_ai_runtime::{
     merge_pending_tool_turn_items as merge_shared_pending_tool_turn_items,
 };
 use serde_json::Value;
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 use tracing::warn;
 
 use crate::core::messages::{optional_text_has_content, text_has_content};
 use crate::services::agent_runtime::ai_request_handler::AiResponse;
 
-use super::AiClient;
 use super::execution_loop_guidance::is_non_terminal_finish_reason;
 use super::input_transform::{build_current_input_items, to_message_item};
+use super::AiClient;
 
 impl AiClient {
     pub(in crate::services::agent_runtime::ai_client) async fn try_recover_from_terminal_empty_response(

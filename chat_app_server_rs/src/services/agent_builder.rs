@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use crate::models::chatos_agent_types::{
     ChatosAgentDto, ChatosAgentSkillDto, ChatosSkillDto, ChatosSkillPluginDto,
     CreateChatosAgentRequest,
 };
-use crate::services::llm_prompt_runner::{PromptRunnerRuntime, run_text_prompt_with_runtime};
+use crate::services::llm_prompt_runner::{run_text_prompt_with_runtime, PromptRunnerRuntime};
 use crate::services::text_normalization::{
     normalize_optional_text_owned, normalize_required_text_owned, normalize_string_vec,
 };
@@ -94,7 +94,9 @@ pub async fn ai_create_agent(
     )
     .await?;
 
-    let create_req = build_create_agent_request(&request, raw.as_str(), visible_skills.as_slice())?;
+    let mut create_req =
+        build_create_agent_request(&request, raw.as_str(), visible_skills.as_slice())?;
+    create_req.auto_provision_task_runner_account = Some(true);
     let created = chatos_agents::create_agent(&create_req).await?;
 
     Ok(AiCreateAgentResult {
@@ -271,6 +273,7 @@ fn build_create_agent_request(
         description,
         category,
         role_definition,
+        auto_provision_task_runner_account: None,
         plugin_sources: if plugin_sources.is_empty() {
             None
         } else {
@@ -474,7 +477,11 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 
 fn normalize_optional_string_array(value: Option<Vec<String>>) -> Option<Vec<String>> {
     let items = normalize_string_vec(value.unwrap_or_default());
-    if items.is_empty() { None } else { Some(items) }
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
 }
 
 fn payload_optional_string(payload: &Map<String, Value>, field: &str) -> Option<String> {
@@ -496,7 +503,11 @@ fn parse_string_array_from_value(value: &Value) -> Option<Vec<String>> {
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     dedupe_strings(&mut out);
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn parse_skill_objects_from_value(value: &Value) -> Option<Vec<ChatosAgentSkillDto>> {
@@ -524,7 +535,11 @@ fn parse_skill_objects_from_value(value: &Value) -> Option<Vec<ChatosAgentSkillD
             .map(ToOwned::to_owned)?;
         out.push(ChatosAgentSkillDto { id, name, content });
     }
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn build_inline_skills_from_prompts(
@@ -543,7 +558,11 @@ fn build_inline_skills_from_prompts(
             content: trimmed.to_string(),
         });
     }
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn dedupe_strings(items: &mut Vec<String>) {

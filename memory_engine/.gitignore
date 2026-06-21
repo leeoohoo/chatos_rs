@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs / runtime files
+*.log
+*.pid
+
+# Environment files
+.env
+.env.*
+!backend/.env.example
+backend/.env
+backend/.env.*
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/
+dist/
+
+# Rust build output
+target/
+backend/target/
+sdk/target/
+
+.codex_write_test
+/.chatos

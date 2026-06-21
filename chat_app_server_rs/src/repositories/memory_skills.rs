@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{Regex, doc};
+use mongodb::bson::{doc, Regex};
 use mongodb::options::FindOptions;
 
 use crate::models::memory_skill::{

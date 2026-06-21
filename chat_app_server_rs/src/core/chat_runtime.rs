@@ -5,21 +5,21 @@ mod chat_runtime_metadata;
 #[path = "chat_runtime_project.rs"]
 mod chat_runtime_project;
 
-pub use self::chat_runtime_contact::{ContactSkillPromptMode, compose_contact_system_prompt};
+pub use self::chat_runtime_contact::{compose_contact_system_prompt, ContactSkillPromptMode};
 pub use self::chat_runtime_metadata::{
-    ChatRuntimeMetadata, contact_agent_id_from_metadata, contact_id_from_metadata, metadata_string,
-    normalize_id, project_id_from_metadata,
+    contact_agent_id_from_metadata, contact_id_from_metadata, metadata_string, normalize_id,
+    project_id_from_metadata, ChatRuntimeMetadata,
 };
 pub use self::chat_runtime_project::resolve_project_runtime;
 
 #[cfg(test)]
 mod tests {
     use super::chat_runtime_contact::{
-        CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
-        CONTACT_SKILL_READER_TOOL_NAME, compose_contact_command_system_prompt,
-        parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
+        compose_contact_command_system_prompt, parse_contact_command_invocation,
+        parse_implicit_command_selections_from_tools_end, CONTACT_COMMAND_READER_TOOL_NAME,
+        CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
     };
-    use super::{ChatRuntimeMetadata, ContactSkillPromptMode, compose_contact_system_prompt};
+    use super::{compose_contact_system_prompt, ChatRuntimeMetadata, ContactSkillPromptMode};
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::models::chatos_agent_types::{
         ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,

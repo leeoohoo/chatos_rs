@@ -38,8 +38,8 @@ pub struct RunExecutionInput {
 }
 
 pub(crate) use self::analyzer::{
-    ProjectRunPathChangeKind, analyze_project, apply_default_target,
-    classify_project_run_path_change,
+    analyze_project, apply_default_target, classify_project_run_path_change,
+    ProjectRunPathChangeKind,
 };
 pub(crate) use self::cache::{
     clear_cached_environment_snapshot, read_cached_catalog, write_cached_catalog,

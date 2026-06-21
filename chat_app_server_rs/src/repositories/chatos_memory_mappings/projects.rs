@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{FindOptions, UpdateOptions};
 use sqlx::{QueryBuilder, Sqlite};
 

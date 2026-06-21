@@ -202,7 +202,11 @@ pub fn merge_extracted_plugin_content(
         changed = true;
     }
 
-    if changed { Some(refreshed) } else { None }
+    if changed {
+        Some(refreshed)
+    } else {
+        None
+    }
 }
 
 fn discover_cached_plugins_for_user(user_id: &str) -> Result<Vec<MemorySkillPlugin>, String> {

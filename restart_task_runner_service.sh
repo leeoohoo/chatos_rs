@@ -2,9 +2,14 @@
 if [[ -z "${CHATOS_RS_SHELL_SANITIZED-}" ]]; then export CHATOS_RS_SHELL_SANITIZED=1; export CHATOS_RS_SCRIPT_PATH="$0"; exec bash <(tr -d '\r' < "$0") "$@"; fi
 
 set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
 
 SCRIPT_PATH="${CHATOS_RS_SCRIPT_PATH:-${BASH_SOURCE[0]}}"
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+DEV_MONGO_HELPER="$ROOT_DIR/scripts/dev-mongo-common.sh"
+
+# shellcheck disable=SC1090
+source "$DEV_MONGO_HELPER"
 
 load_optional_env() {
   local env_file="$1"
@@ -24,17 +29,36 @@ load_optional_env "$ROOT_DIR/.env"
 load_optional_env "$TASK_RUNNER_ROOT_DIR/.env"
 load_optional_env "$TASK_RUNNER_BACKEND_DIR/.env"
 
+DEV_MONGO_HOST="${DEV_MONGO_HOST:-127.0.0.1}"
+DEV_MONGO_PORT="${DEV_MONGO_PORT:-27018}"
+DEV_MONGO_CONTAINER_NAME="${DEV_MONGO_CONTAINER_NAME:-chatos-dev-mongo}"
 TASK_RUNNER_BACKEND_PORT="${TASK_RUNNER_BACKEND_PORT:-${TASK_RUNNER_PORT:-39090}}"
 TASK_RUNNER_FRONTEND_PORT="${TASK_RUNNER_FRONTEND_PORT:-39091}"
 TASK_RUNNER_HEALTHCHECK_HOST="${TASK_RUNNER_HEALTHCHECK_HOST:-127.0.0.1}"
 TASK_RUNNER_VITE_API_BASE_URL="${TASK_RUNNER_VITE_API_BASE_URL:-http://127.0.0.1:${TASK_RUNNER_BACKEND_PORT}}"
 TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-mongo}"
-TASK_RUNNER_DATABASE_URL="${TASK_RUNNER_DATABASE_URL:-mongodb://admin:admin@127.0.0.1:27018/task_runner_service?authSource=admin}"
+TASK_RUNNER_START_DEV_MONGO="${TASK_RUNNER_START_DEV_MONGO:-${START_DEV_MONGO:-auto}}"
+TASK_RUNNER_DEV_MONGO_HOST="${TASK_RUNNER_DEV_MONGO_HOST:-$DEV_MONGO_HOST}"
+TASK_RUNNER_DEV_MONGO_PORT="${TASK_RUNNER_DEV_MONGO_PORT:-$DEV_MONGO_PORT}"
+TASK_RUNNER_DEV_MONGO_CONTAINER_NAME="${TASK_RUNNER_DEV_MONGO_CONTAINER_NAME:-$DEV_MONGO_CONTAINER_NAME}"
+TASK_RUNNER_DEV_MONGO_CLIENT_HOST="$(dev_mongo_client_host "$TASK_RUNNER_DEV_MONGO_HOST")"
+TASK_RUNNER_MONGODB_DATABASE="${TASK_RUNNER_MONGODB_DATABASE:-task_runner_service}"
+TASK_RUNNER_DATABASE_URL="${TASK_RUNNER_DATABASE_URL:-mongodb://admin:admin@${TASK_RUNNER_DEV_MONGO_CLIENT_HOST}:${TASK_RUNNER_DEV_MONGO_PORT}/${TASK_RUNNER_MONGODB_DATABASE}?authSource=admin}"
 TASK_RUNNER_STOP_BY_PORT="${TASK_RUNNER_STOP_BY_PORT:-1}"
 TASK_RUNNER_CHATOS_BACKEND_PORT="${TASK_RUNNER_CHATOS_BACKEND_PORT:-${MAIN_BACKEND_PORT:-${BACKEND_PORT:-3997}}}"
 TASK_RUNNER_CALLBACK_SECRET_DEFAULT="${TASK_RUNNER_CALLBACK_SECRET_DEFAULT:-chatos-task-runner-dev-secret}"
 TASK_RUNNER_CHATOS_CALLBACK_SECRET="${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-$TASK_RUNNER_CALLBACK_SECRET_DEFAULT}}"
 TASK_RUNNER_CHATOS_CALLBACK_URL="${TASK_RUNNER_CHATOS_CALLBACK_URL:-http://127.0.0.1:${TASK_RUNNER_CHATOS_BACKEND_PORT}/api/agent/chat/task-runner/callback}"
+TASK_RUNNER_USER_SERVICE_JWT_SECRET_EFFECTIVE="${TASK_RUNNER_USER_SERVICE_JWT_SECRET:-${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}}"
+TASK_RUNNER_USER_SERVICE_JWT_ISSUER_EFFECTIVE="${TASK_RUNNER_USER_SERVICE_JWT_ISSUER:-${USER_SERVICE_JWT_ISSUER:-user_service}}"
+TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE_EFFECTIVE="${TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE:-${USER_SERVICE_TASK_RUNNER_AUDIENCE:-task_runner}}"
+TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN_EFFECTIVE="${TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN:-${MEMORY_ENGINE_OPERATOR_TOKEN:-chatos-memory-engine-dev-operator-token}}"
+TASK_RUNNER_MEMORY_ENGINE_HOST_EFFECTIVE="${TASK_RUNNER_MEMORY_ENGINE_HOST:-${MEMORY_ENGINE_HOST:-127.0.0.1}}"
+if [[ "$TASK_RUNNER_MEMORY_ENGINE_HOST_EFFECTIVE" == "0.0.0.0" || "$TASK_RUNNER_MEMORY_ENGINE_HOST_EFFECTIVE" == "::" || "$TASK_RUNNER_MEMORY_ENGINE_HOST_EFFECTIVE" == "[::]" ]]; then
+  TASK_RUNNER_MEMORY_ENGINE_HOST_EFFECTIVE="127.0.0.1"
+fi
+TASK_RUNNER_MEMORY_ENGINE_PORT_EFFECTIVE="${TASK_RUNNER_MEMORY_ENGINE_PORT:-${MEMORY_ENGINE_PORT:-7081}}"
+TASK_RUNNER_MEMORY_ENGINE_BASE_URL_EFFECTIVE="${TASK_RUNNER_MEMORY_ENGINE_BASE_URL:-${MEMORY_ENGINE_BASE_URL:-http://${TASK_RUNNER_MEMORY_ENGINE_HOST_EFFECTIVE}:${TASK_RUNNER_MEMORY_ENGINE_PORT_EFFECTIVE}/api/memory-engine/v1}}"
 
 if command -v shasum >/dev/null 2>&1; then
   ROOT_HASH="$(printf '%s' "$ROOT_DIR:task-runner" | shasum | awk '{print substr($1,1,8)}')"
@@ -60,6 +84,30 @@ need_cmd() {
   fi
 }
 
+kill_pid_or_group() {
+  local pid="$1"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+  if kill -0 -- "-$pid" >/dev/null 2>&1; then
+    kill -- "-$pid" >/dev/null 2>&1 || true
+  else
+    kill "$pid" >/dev/null 2>&1 || true
+  fi
+}
+
+force_kill_pid_or_group() {
+  local pid="$1"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+  if kill -0 -- "-$pid" >/dev/null 2>&1; then
+    kill -9 -- "-$pid" >/dev/null 2>&1 || true
+  else
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  fi
+}
+
 stop_from_pid_file() {
   local name="$1"
   local pid_file="$2"
@@ -70,10 +118,10 @@ stop_from_pid_file() {
   pid="$(cat "$pid_file" 2>/dev/null || true)"
   if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
     echo "[INFO] 停止 $name (pid=$pid)"
-    kill "$pid" >/dev/null 2>&1 || true
+    kill_pid_or_group "$pid"
     sleep 1
     if kill -0 "$pid" >/dev/null 2>&1; then
-      kill -9 "$pid" >/dev/null 2>&1 || true
+      force_kill_pid_or_group "$pid"
     fi
   fi
   rm -f "$pid_file"
@@ -174,7 +222,11 @@ launch_service() {
   ensure_port_available "$name" "$port" || return 1
   echo "[INFO] 启动 $name..."
   : >"$log_file"
-  nohup bash -lc "$command" >"$log_file" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+  else
+    nohup bash -lc "$command" >"$log_file" 2>&1 < /dev/null &
+  fi
   echo $! >"$pid_file"
 }
 
@@ -281,10 +333,24 @@ ensure_sqlite_parent_dir() {
   fi
 }
 
+ensure_task_runner_dev_mongo() {
+  local store_mode
+  store_mode="$(printf '%s' "$TASK_RUNNER_STORE_MODE" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$store_mode" != "mongo" && "$store_mode" != "mongodb" ]]; then
+    return 0
+  fi
+
+  ensure_dev_mongo_service \
+    "$TASK_RUNNER_START_DEV_MONGO" \
+    "$TASK_RUNNER_DEV_MONGO_HOST" \
+    "$TASK_RUNNER_DEV_MONGO_PORT" \
+    "$TASK_RUNNER_DEV_MONGO_CONTAINER_NAME"
+}
+
 prepare() {
+  local cmd="${1:-restart}"
+
   need_cmd bash
-  need_cmd npm
-  need_cmd cargo
 
   if [[ ! -d "$TASK_RUNNER_BACKEND_DIR" || ! -d "$TASK_RUNNER_FRONTEND_DIR" ]]; then
     echo "[ERROR] 项目目录不完整: $TASK_RUNNER_BACKEND_DIR / $TASK_RUNNER_FRONTEND_DIR"
@@ -292,7 +358,14 @@ prepare() {
   fi
 
   mkdir -p "$TASK_RUNNER_RUNTIME_DIR"
-  ensure_sqlite_parent_dir "$TASK_RUNNER_DATABASE_URL"
+
+  case "$cmd" in
+    restart|start)
+      need_cmd npm
+      need_cmd cargo
+      ensure_sqlite_parent_dir "$TASK_RUNNER_DATABASE_URL"
+      ;;
+  esac
 }
 
 start_task_runner_backend() {
@@ -301,7 +374,7 @@ start_task_runner_backend() {
     "$TASK_RUNNER_BACKEND_PORT" \
     "$TASK_RUNNER_BACKEND_PID_FILE" \
     "$TASK_RUNNER_BACKEND_LOG_FILE" \
-    "cd \"$ROOT_DIR\" && cargo build -p task_runner_service_backend --bin task_runner_service_backend && TASK_RUNNER_STORE_MODE=\"\${TASK_RUNNER_STORE_MODE:-$TASK_RUNNER_STORE_MODE}\" TASK_RUNNER_HOST=\"\${TASK_RUNNER_HOST:-127.0.0.1}\" TASK_RUNNER_PORT=\"$TASK_RUNNER_BACKEND_PORT\" TASK_RUNNER_WORKSPACE_DIR=\"\${TASK_RUNNER_WORKSPACE_DIR:-$ROOT_DIR}\" TASK_RUNNER_DATABASE_URL=\"\${TASK_RUNNER_DATABASE_URL:-$TASK_RUNNER_DATABASE_URL}\" TASK_RUNNER_CHATOS_CALLBACK_URL=\"\${TASK_RUNNER_CHATOS_CALLBACK_URL:-$TASK_RUNNER_CHATOS_CALLBACK_URL}\" TASK_RUNNER_CHATOS_CALLBACK_SECRET=\"\${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-$TASK_RUNNER_CHATOS_CALLBACK_SECRET}\" CHATOS_TASK_RUNNER_CALLBACK_SECRET=\"\${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-$TASK_RUNNER_CHATOS_CALLBACK_SECRET}\" exec \"$TASK_RUNNER_BACKEND_BINARY\""
+    "cd \"$ROOT_DIR\" && cargo build -p task_runner_service_backend --bin task_runner_service_backend && TASK_RUNNER_STORE_MODE=\"\${TASK_RUNNER_STORE_MODE:-$TASK_RUNNER_STORE_MODE}\" TASK_RUNNER_HOST=\"\${TASK_RUNNER_HOST:-127.0.0.1}\" TASK_RUNNER_PORT=\"$TASK_RUNNER_BACKEND_PORT\" TASK_RUNNER_WORKSPACE_DIR=\"\${TASK_RUNNER_WORKSPACE_DIR:-$ROOT_DIR}\" TASK_RUNNER_DATABASE_URL=\"\${TASK_RUNNER_DATABASE_URL:-$TASK_RUNNER_DATABASE_URL}\" TASK_RUNNER_MEMORY_ENGINE_BASE_URL=\"\${TASK_RUNNER_MEMORY_ENGINE_BASE_URL:-$TASK_RUNNER_MEMORY_ENGINE_BASE_URL_EFFECTIVE}\" MEMORY_ENGINE_BASE_URL=\"\${MEMORY_ENGINE_BASE_URL:-$TASK_RUNNER_MEMORY_ENGINE_BASE_URL_EFFECTIVE}\" MEMORY_ENGINE_HOST=\"\${MEMORY_ENGINE_HOST:-$TASK_RUNNER_MEMORY_ENGINE_HOST_EFFECTIVE}\" MEMORY_ENGINE_PORT=\"\${MEMORY_ENGINE_PORT:-$TASK_RUNNER_MEMORY_ENGINE_PORT_EFFECTIVE}\" TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN=\"\${TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN:-$TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN_EFFECTIVE}\" MEMORY_ENGINE_OPERATOR_TOKEN=\"\${MEMORY_ENGINE_OPERATOR_TOKEN:-$TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN_EFFECTIVE}\" TASK_RUNNER_CHATOS_CALLBACK_URL=\"\${TASK_RUNNER_CHATOS_CALLBACK_URL:-$TASK_RUNNER_CHATOS_CALLBACK_URL}\" TASK_RUNNER_CHATOS_CALLBACK_SECRET=\"\${TASK_RUNNER_CHATOS_CALLBACK_SECRET:-$TASK_RUNNER_CHATOS_CALLBACK_SECRET}\" CHATOS_TASK_RUNNER_CALLBACK_SECRET=\"\${CHATOS_TASK_RUNNER_CALLBACK_SECRET:-$TASK_RUNNER_CHATOS_CALLBACK_SECRET}\" TASK_RUNNER_USER_SERVICE_JWT_SECRET=\"\${TASK_RUNNER_USER_SERVICE_JWT_SECRET:-$TASK_RUNNER_USER_SERVICE_JWT_SECRET_EFFECTIVE}\" USER_SERVICE_JWT_SECRET=\"\${USER_SERVICE_JWT_SECRET:-$TASK_RUNNER_USER_SERVICE_JWT_SECRET_EFFECTIVE}\" TASK_RUNNER_USER_SERVICE_JWT_ISSUER=\"\${TASK_RUNNER_USER_SERVICE_JWT_ISSUER:-$TASK_RUNNER_USER_SERVICE_JWT_ISSUER_EFFECTIVE}\" USER_SERVICE_JWT_ISSUER=\"\${USER_SERVICE_JWT_ISSUER:-$TASK_RUNNER_USER_SERVICE_JWT_ISSUER_EFFECTIVE}\" TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE=\"\${TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE:-$TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE_EFFECTIVE}\" USER_SERVICE_TASK_RUNNER_AUDIENCE=\"\${USER_SERVICE_TASK_RUNNER_AUDIENCE:-$TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE_EFFECTIVE}\" exec \"$TASK_RUNNER_BACKEND_BINARY\""
 }
 
 start_task_runner_frontend() {
@@ -334,7 +407,8 @@ run_start_sequence() {
   local backend_timeout="${TASK_RUNNER_BACKEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-120}}"
   local frontend_timeout="${TASK_RUNNER_FRONTEND_HEALTHCHECK_TIMEOUT_SEC:-${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}}"
 
-  start_task_runner_backend &&
+  ensure_task_runner_dev_mongo &&
+    start_task_runner_backend &&
     start_task_runner_frontend
 
   sleep 2 &&
@@ -357,6 +431,9 @@ print_runtime_info() {
   echo "  Task Runner backend url: http://localhost:$TASK_RUNNER_BACKEND_PORT"
   echo "  Task Runner health url: http://${TASK_RUNNER_HEALTHCHECK_HOST}:$TASK_RUNNER_BACKEND_PORT/api/health"
   echo "  Task Runner callback url: $TASK_RUNNER_CHATOS_CALLBACK_URL"
+  echo "  Task Runner store mode: $TASK_RUNNER_STORE_MODE"
+  echo "  Task Runner database url: $TASK_RUNNER_DATABASE_URL"
+  echo "  Memory Engine base url: $TASK_RUNNER_MEMORY_ENGINE_BASE_URL_EFFECTIVE"
 }
 
 status() {
@@ -374,10 +451,13 @@ status() {
   echo "  Task Runner frontend url: http://localhost:$TASK_RUNNER_FRONTEND_PORT"
   echo "  Task Runner backend url: http://localhost:$TASK_RUNNER_BACKEND_PORT"
   echo "  Task Runner callback url: $TASK_RUNNER_CHATOS_CALLBACK_URL"
+  echo "  Task Runner store mode: $TASK_RUNNER_STORE_MODE"
+  echo "  Task Runner database url: $TASK_RUNNER_DATABASE_URL"
+  echo "  Memory Engine base url: $TASK_RUNNER_MEMORY_ENGINE_BASE_URL_EFFECTIVE"
 }
 
 CMD="${1:-restart}"
-prepare
+prepare "$CMD"
 
 case "$CMD" in
   restart|start)

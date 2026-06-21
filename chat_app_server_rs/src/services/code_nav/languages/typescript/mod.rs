@@ -1,12 +1,12 @@
-use crate::services::code_nav::CodeNavProvider;
 use crate::services::code_nav::languages::ts_service::{
-    TsServiceMode, get_semantic_document_symbols, get_semantic_locations, semantic_capabilities,
-    supports_typescript_file,
+    get_semantic_document_symbols, get_semantic_locations, semantic_capabilities,
+    supports_typescript_file, TsServiceMode,
 };
 use crate::services::code_nav::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities, NavLocation,
     NavPositionRequest, ProjectContext,
 };
+use crate::services::code_nav::CodeNavProvider;
 use std::path::Path;
 
 #[derive(Default)]

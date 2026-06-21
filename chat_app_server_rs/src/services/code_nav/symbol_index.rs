@@ -551,14 +551,14 @@ fn is_type_like(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexedSymbol, invalidate_project_symbol_indexes_for_path,
-        nav_location_from_indexed_symbol, project_symbol_index,
+        invalidate_project_symbol_indexes_for_path, nav_location_from_indexed_symbol,
+        project_symbol_index, IndexedSymbol,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{
-        Arc,
         atomic::{AtomicUsize, Ordering},
+        Arc,
     };
 
     fn make_temp_symbol_index_project() -> PathBuf {

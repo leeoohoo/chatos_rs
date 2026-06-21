@@ -51,12 +51,13 @@ impl TaskRunnerMcpService {
                     .await?;
                 let run = self
                     .run_service
-                    .start_run(
+                    .start_run_for_user(
                         args.task_id.as_str(),
                         StartTaskRunRequest {
                             model_config_id: args.model_config_id,
                             prompt_override: args.prompt_override,
                         },
+                        current_user,
                     )
                     .await?;
                 Ok(text_result(json!(run)))
@@ -67,11 +68,14 @@ impl TaskRunnerMcpService {
                     .await?;
                 let result = self
                     .run_service
-                    .batch_start_runs(BatchTaskRunRequest {
-                        task_ids: args.task_ids,
-                        model_config_id: args.model_config_id,
-                        prompt_override: args.prompt_override,
-                    })
+                    .batch_start_runs_for_user(
+                        BatchTaskRunRequest {
+                            task_ids: args.task_ids,
+                            model_config_id: args.model_config_id,
+                            prompt_override: args.prompt_override,
+                        },
+                        current_user,
+                    )
                     .await?;
                 Ok(text_result(json!(result)))
             }
@@ -92,7 +96,7 @@ impl TaskRunnerMcpService {
                         },
                     )
                     .await?
-                    .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
+                    .ok_or_else(|| format!("task not found: {}", args.task_id))?;
                 Ok(text_result(json!(response)))
             }
             "list_task_memory_records" => {
@@ -113,7 +117,7 @@ impl TaskRunnerMcpService {
                         },
                     )
                     .await?
-                    .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
+                    .ok_or_else(|| format!("task not found: {}", args.task_id))?;
                 Ok(text_result(json!(response)))
             }
             "summarize_task_memory" => {
@@ -124,7 +128,7 @@ impl TaskRunnerMcpService {
                     .task_service
                     .summarize_task_memory(args.task_id.as_str())
                     .await?
-                    .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
+                    .ok_or_else(|| format!("task not found: {}", args.task_id))?;
                 Ok(text_result(json!(response)))
             }
             "cancel_run" => {
@@ -135,7 +139,7 @@ impl TaskRunnerMcpService {
                     .run_service
                     .cancel_run(args.run_id.as_str())
                     .await?
-                    .ok_or_else(|| format!("运行记录不存在: {}", args.run_id))?;
+                    .ok_or_else(|| format!("run not found: {}", args.run_id))?;
                 Ok(text_result(json!(run)))
             }
             "retry_run" => {
@@ -144,9 +148,9 @@ impl TaskRunnerMcpService {
                     .await?;
                 let run = self
                     .run_service
-                    .retry_run(args.run_id.as_str())
+                    .retry_run_for_user(args.run_id.as_str(), current_user)
                     .await?
-                    .ok_or_else(|| format!("运行记录不存在: {}", args.run_id))?;
+                    .ok_or_else(|| format!("run not found: {}", args.run_id))?;
                 Ok(text_result(json!(run)))
             }
             "list_run_events" => {

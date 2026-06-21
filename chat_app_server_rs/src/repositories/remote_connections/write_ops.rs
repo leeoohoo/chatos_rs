@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, doc};
+use mongodb::bson::{doc, Bson};
 
 use crate::models::remote_connection::RemoteConnection;
 use crate::repositories::db::{

@@ -112,8 +112,10 @@ const AiModelManagerForm = ({
             onChange={(event) => onFormDataChange({ model_name: event.target.value })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
             placeholder={t('aiModelManager.form.modelNamePlaceholder')}
-            required
           />
+          <p className="mt-2 text-xs text-muted-foreground">
+            Optional. Leave blank to pick the concrete runtime model later in the chat composer.
+          </p>
         </div>
 
         <div>

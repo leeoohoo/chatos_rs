@@ -7,6 +7,8 @@ use super::{default_tool_result_model_max_chars, default_tool_results_model_tota
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfigRecord {
     pub id: String,
+    #[serde(default)]
+    pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: String,
     pub base_url: String,
@@ -62,6 +64,20 @@ pub struct CreateModelConfigRequest {
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: Option<bool>,
     pub request_body_limit_bytes: Option<usize>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatosSyncedModelConfigRequest {
+    pub id: String,
+    pub owner_user_id: Option<String>,
+    pub name: String,
+    pub provider: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub thinking_level: Option<String>,
+    pub supports_responses: Option<bool>,
     pub enabled: Option<bool>,
 }
 

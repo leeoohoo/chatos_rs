@@ -1,5 +1,7 @@
 # Chatos RS
 
+Cross-platform installation guide: [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
+
 ## Positioning
 `Chatos RS` is an AI platform for engineering and collaborative workflows.  
 It combines conversational interaction, tool execution, and long-term memory in one system so AI can run as a reliable ongoing worker, not only a one-shot chatbot.
@@ -33,12 +35,21 @@ main chat service + external memory platform integration + MCP-style tool orches
 ## Architecture Layers
 - `chat_app/`: frontend interaction layer
 - `chat_app_server_rs/`: main orchestration backend (sessions, messages, tools, streaming)
+- `user_service/`: unified identity service for real users, agent accounts, and Task Runner delegation tokens
+- `task_runner_service/`: task execution and agent runtime service
+- `memory_engine/`: independent long-term memory microservice
 
 ## Quick Start
 Run from repository root:
 
 ```bash
 ./restart_services.sh restart
+```
+
+Run the full local stack:
+
+```bash
+./restart_all_services.sh restart
 ```
 
 Unified root tasks:
@@ -64,11 +75,87 @@ Useful commands:
 ```bash
 ./restart_services.sh status
 ./restart_services.sh stop
+./restart_all_services.sh status
+./restart_all_services.sh stop
 ```
+
+## WSL Rust Dev Flow
+If Windows Smart App Control / Code Integrity blocks `cargo run` or `cargo test`,
+use the WSL-based Rust dev flow instead of executing Rust artifacts directly on Windows.
+
+Bootstrap WSL once:
+
+```powershell
+wsl.exe --install -d Ubuntu
+make bootstrap-wsl
+```
+
+Run ChatOS inside WSL from Windows:
+
+```powershell
+make restart-wsl
+make status-wsl
+make stop-wsl
+```
+
+Run the full stack inside WSL from Windows:
+
+```powershell
+make restart-all-wsl
+make status-all-wsl
+make stop-all-wsl
+```
+
+Run only `user_service` inside WSL from Windows:
+
+```powershell
+make restart-user-service-wsl
+make status-user-service-wsl
+make stop-user-service-wsl
+```
+
+Optional root `.env` keys for the WSL helper:
+
+- `WSL_DEV_DISTRO`
+- `WSL_CARGO_TARGET_DIR`
+- `WSL_RUNTIME_DIR`
+- `WSL_USER_SERVICE_RUNTIME_DIR`
+- `WSL_TASK_RUNNER_RUNTIME_DIR`
+- `WSL_MEMORY_ENGINE_RUNTIME_DIR`
+
+Unified user-service local run:
+
+```bash
+bash user_service/restart_services.sh restart
+make status-user-service
+make stop-user-service
+```
+
+If root `.env` keeps `START_USER_SERVICE=1` and
+`CHATOS_USER_SERVICE_BASE_URL=http://127.0.0.1:39190`, then
+`./restart_services.sh restart` will also start the local `user_service`.
+
+Containerized local run:
+
+```bash
+docker compose up -d user-service-backend user-service-frontend backend frontend
+```
+
+Current limitation:
+- `docker compose config` has been validated for this repository.
+- On the current Windows machine, Smart App Control / Code Integrity can block Rust-generated EXE/DLL artifacts during `cargo run` or `cargo test`; use the WSL flow above to avoid that execution-policy issue.
+
+Default container URLs:
+- ChatOS frontend: `http://127.0.0.1:8080`
+- ChatOS backend: `http://127.0.0.1:3997`
+- user_service frontend: `http://127.0.0.1:39191`
+- user_service backend: `http://127.0.0.1:39190`
 
 Default runtime logs:
 - `/tmp/chatos_rs_dev_<repo-hash>/backend.log`
 - `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
+- `/tmp/chatos_rs_user_service_<repo-hash>/backend.log`
+- `/tmp/chatos_rs_user_service_<repo-hash>/frontend.log`
 
 ## Development Plans Archive
 Historical plans/assessments/contracts may live in root-level historical files or local `docs/plans/` archives.
@@ -80,6 +167,12 @@ Historical plans/assessments/contracts may live in root-level historical files o
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
 - [db_connection_hub backend](./db_connection_hub/backend/README.md)
 - [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
+
+## Unified User Service Docs
+- [user_service](./user_service/README.md)
+- [unified user-service status](./CHATOS_UNIFIED_USER_SERVICE_STATUS_20260619.md)
+- [user_service local runbook](./USER_SERVICE_LOCAL_RUNBOOK_20260619.md)
+- [WSL Rust dev flow](./WSL_RUST_DEV_FLOW_20260619.md)
 
 ## License
 This project is licensed under the [MIT License](./LICENSE).

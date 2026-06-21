@@ -1,6 +1,6 @@
-use axum::Json;
 use axum::http::StatusCode;
-use serde_json::{Value, json};
+use axum::Json;
+use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::core::remote_connection_error_codes::remote_connection_codes;
@@ -65,7 +65,7 @@ mod tests {
             ensure_user_id_matches(Some("user-2"), &auth).expect_err("should reject mismatch");
         assert_eq!(err.0, StatusCode::FORBIDDEN);
         assert_eq!(
-            err.1.0,
+            err.1 .0,
             json!({
                 "error": "user_id 与登录用户不一致",
                 "code": remote_connection_codes::USER_SCOPE_FORBIDDEN

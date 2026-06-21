@@ -81,6 +81,9 @@ mod tests {
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
             admin_display_name: "Admin".to_string(),
+            user_service_jwt_secret: None,
+            user_service_jwt_issuer: "user_service".to_string(),
+            user_service_task_runner_audience: "task_runner".to_string(),
         }
     }
 

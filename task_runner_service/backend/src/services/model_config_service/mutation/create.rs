@@ -13,6 +13,7 @@ impl ModelConfigService {
         let now = now_rfc3339();
         let record = ModelConfigRecord {
             id: Uuid::new_v4().to_string(),
+            owner_user_id: None,
             name: input.name.trim().to_string(),
             provider: provider.clone(),
             base_url: normalize_model_base_url_input(provider.as_str(), Some(input.base_url)),

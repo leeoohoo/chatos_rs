@@ -10,8 +10,18 @@ data/
 logs/
 *.log
 .env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 .local/
 .cache/
+.vite/
 
 .DS_Store
 *.pyc

@@ -10,7 +10,7 @@ use super::{
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
 use crate::services::builtin_mcp::{
-    BROWSER_TOOLS_SERVER_NAME, BuiltinMcpKind, WEB_TOOLS_SERVER_NAME,
+    BuiltinMcpKind, BROWSER_TOOLS_SERVER_NAME, WEB_TOOLS_SERVER_NAME,
 };
 use crate::services::mcp_loader::McpBuiltinServer;
 
@@ -188,11 +188,8 @@ fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
     .expect("prompt");
 
     assert!(prompt.contains("`memory_skill_reader_get_skill_detail`"));
-    assert!(
-        prompt.contains(
-            "这一 section 由系统根据当前实际成功注册与失败不可用的内置 MCP 工具动态补全。"
-        )
-    );
+    assert!(prompt
+        .contains("这一 section 由系统根据当前实际成功注册与失败不可用的内置 MCP 工具动态补全。"));
     assert!(prompt.contains("`memory_plugin_reader_get_plugin_detail`"));
     assert!(prompt.contains("plugin source unavailable"));
 }
