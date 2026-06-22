@@ -33,6 +33,7 @@ pub struct Config {
     pub user_service_user_audience: String,
     pub task_runner_base_url: String,
     pub memory_engine_base_url: String,
+    pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout_ms: i64,
     pub memory_engine_active_summary_trigger_timeout_ms: i64,
     pub memory_engine_active_summary_poll_interval_ms: i64,
@@ -155,6 +156,7 @@ impl Config {
             .unwrap_or_else(default_task_runner_base_url);
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
             .unwrap_or_else(|_| default_memory_engine_base_url());
+        let memory_engine_operator_token = read_optional_env("MEMORY_ENGINE_OPERATOR_TOKEN");
         let memory_engine_request_timeout_ms =
             read_int("MEMORY_ENGINE_REQUEST_TIMEOUT_MS", 5000).max(300);
         let memory_engine_active_summary_trigger_timeout_ms =
@@ -204,6 +206,7 @@ impl Config {
             user_service_user_audience,
             task_runner_base_url,
             memory_engine_base_url,
+            memory_engine_operator_token,
             memory_engine_request_timeout_ms,
             memory_engine_active_summary_trigger_timeout_ms,
             memory_engine_active_summary_poll_interval_ms,
@@ -297,6 +300,14 @@ impl Config {
         println!(
             "    • MEMORY_ENGINE_BASE_URL: {}",
             self.memory_engine_base_url
+        );
+        println!(
+            "    • MEMORY_ENGINE_OPERATOR_TOKEN: {}",
+            if self.memory_engine_operator_token.is_some() {
+                "已设置"
+            } else {
+                "未设置"
+            }
         );
         println!(
             "    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}",

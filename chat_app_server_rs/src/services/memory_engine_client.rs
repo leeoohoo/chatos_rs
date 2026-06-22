@@ -5,10 +5,14 @@ pub type UpsertEngineSourceRequestDto = memory_engine_sdk::UpsertSourceRequest;
 
 fn build_client() -> Result<memory_engine_sdk::MemoryEngineClient, String> {
     let cfg = Config::try_get()?;
-    memory_engine_sdk::MemoryEngineClient::new_platform(
+    let mut client = memory_engine_sdk::MemoryEngineClient::new_platform(
         cfg.memory_engine_base_url.clone(),
         std::time::Duration::from_millis(cfg.memory_engine_request_timeout_ms.max(300) as u64),
-    )
+    )?;
+    if let Some(operator_token) = cfg.memory_engine_operator_token.as_deref() {
+        client = client.with_operator_token(operator_token);
+    }
+    Ok(client)
 }
 
 pub async fn upsert_source(

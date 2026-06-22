@@ -263,6 +263,7 @@ mod tests {
             user_service_user_audience: "user_service".to_string(),
             task_runner_base_url: "http://127.0.0.1:39090".to_string(),
             memory_engine_base_url: "http://127.0.0.1:7081/api/memory-engine/v1".to_string(),
+            memory_engine_operator_token: Some("test-memory-token".to_string()),
             memory_engine_request_timeout_ms: 5000,
             memory_engine_active_summary_trigger_timeout_ms: 5000,
             memory_engine_active_summary_poll_interval_ms: 10_000,
