@@ -15,6 +15,10 @@ load_optional_env() {
 }
 
 load_optional_env "$ROOT_DIR/.env"
+# The full-stack launcher starts memory_engine before task_runner, so shared
+# credentials from service-local env files must be reconciled here.
+load_optional_env "$ROOT_DIR/memory_engine/.env"
+load_optional_env "$ROOT_DIR/task_runner_service/.env"
 
 MEMORY_ENGINE_SCRIPT="$ROOT_DIR/memory_engine/restart_services.sh"
 USER_SERVICE_SCRIPT="$ROOT_DIR/user_service/restart_services.sh"
@@ -27,6 +31,16 @@ START_USER_SERVICE="${START_USER_SERVICE:-1}"
 START_CHATOS="${START_CHATOS:-1}"
 START_TASK_RUNNER="${START_TASK_RUNNER:-1}"
 START_DB_CONNECTION_HUB="${START_DB_CONNECTION_HUB:-1}"
+
+sync_memory_engine_operator_token() {
+  if [[ -n "${MEMORY_ENGINE_OPERATOR_TOKEN:-}" ]]; then
+    export TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN="$MEMORY_ENGINE_OPERATOR_TOKEN"
+  elif [[ -n "${TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN:-}" ]]; then
+    export MEMORY_ENGINE_OPERATOR_TOKEN="$TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN"
+  fi
+}
+
+sync_memory_engine_operator_token
 
 run_enabled() {
   local flag="$1"
