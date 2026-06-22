@@ -342,8 +342,8 @@ prepare() {
     echo "[ERROR] project directories are incomplete: $MAIN_BACKEND_DIR / $MAIN_FRONTEND_DIR"
     exit 1
   fi
-  if [[ "$START_USER_SERVICE" == "1" && ! -x "$USER_SERVICE_SCRIPT" ]]; then
-    echo "[ERROR] user_service startup script is missing or not executable: $USER_SERVICE_SCRIPT"
+  if [[ "$START_USER_SERVICE" == "1" && ! -f "$USER_SERVICE_SCRIPT" ]]; then
+    echo "[ERROR] user_service startup script is missing: $USER_SERVICE_SCRIPT"
     exit 1
   fi
 
@@ -361,7 +361,7 @@ start_user_service() {
   if [[ "$START_USER_SERVICE" != "1" ]]; then
     return 0
   fi
-  "$USER_SERVICE_SCRIPT" restart
+  bash "$USER_SERVICE_SCRIPT" restart
 }
 
 start_main_backend() {
@@ -413,7 +413,7 @@ do_stop() {
   wait_port_released "main frontend" "$MAIN_FRONTEND_PORT" || return 1
 
   if [[ "$START_USER_SERVICE" == "1" ]]; then
-    "$USER_SERVICE_SCRIPT" stop || return 1
+    bash "$USER_SERVICE_SCRIPT" stop || return 1
   fi
 }
 
@@ -475,7 +475,7 @@ status() {
   echo "  memory_engine base_url: $MEMORY_ENGINE_BASE_URL_EFFECTIVE"
   if [[ "$START_USER_SERVICE" == "1" ]]; then
     echo
-    "$USER_SERVICE_SCRIPT" status || true
+    bash "$USER_SERVICE_SCRIPT" status || true
   fi
 }
 

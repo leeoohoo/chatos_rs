@@ -1,5 +1,9 @@
 use chrono::Utc;
-use sqlx::{Row, SqlitePool};
+use futures_util::TryStreamExt;
+use mongodb::bson::{doc, to_document, Bson};
+use mongodb::options::{FindOptions, IndexOptions, UpdateOptions};
+use mongodb::{Collection, Database, IndexModel};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::{hash_password, normalize_display_name, normalize_username};
@@ -12,12 +16,77 @@ use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
 
 #[derive(Clone)]
 pub struct AppStore {
-    pool: SqlitePool,
+    users: Collection<UserRecord>,
+    agent_accounts: Collection<AgentAccountRecord>,
+    revoked_tokens: Collection<RevokedTokenRecord>,
+    user_model_configs: Collection<UserModelConfigRecord>,
+    user_model_settings: Collection<UserModelSettingsRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RevokedTokenRecord {
+    jti: String,
+    subject_id: String,
+    revoked_at: String,
+    expires_at_unix: i64,
 }
 
 impl AppStore {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self {
+            users: db.collection("users"),
+            agent_accounts: db.collection("agent_accounts"),
+            revoked_tokens: db.collection("revoked_tokens"),
+            user_model_configs: db.collection("user_model_configs"),
+            user_model_settings: db.collection("user_model_settings"),
+        }
+    }
+
+    pub async fn initialize(&self) -> Result<(), String> {
+        self.create_unique_index(&self.users, "username").await?;
+        self.create_unique_index(&self.agent_accounts, "username")
+            .await?;
+        self.create_unique_index(&self.revoked_tokens, "jti")
+            .await?;
+        self.create_index(&self.agent_accounts, "owner_user_id")
+            .await?;
+        self.create_index(&self.user_model_configs, "owner_user_id")
+            .await?;
+        self.create_unique_index(&self.user_model_settings, "user_id")
+            .await?;
+        Ok(())
+    }
+
+    async fn create_index<T>(&self, collection: &Collection<T>, field: &str) -> Result<(), String>
+    where
+        T: Send + Sync,
+    {
+        let model = IndexModel::builder().keys(doc! { field: 1 }).build();
+        collection
+            .create_index(model, None)
+            .await
+            .map_err(|err| format!("create mongodb index {field} failed: {err}"))?;
+        Ok(())
+    }
+
+    async fn create_unique_index<T>(
+        &self,
+        collection: &Collection<T>,
+        field: &str,
+    ) -> Result<(), String>
+    where
+        T: Send + Sync,
+    {
+        let options = IndexOptions::builder().unique(true).build();
+        let model = IndexModel::builder()
+            .keys(doc! { field: 1 })
+            .options(options)
+            .build();
+        collection
+            .create_index(model, None)
+            .await
+            .map_err(|err| format!("create mongodb unique index {field} failed: {err}"))?;
+        Ok(())
     }
 
     fn decrypt_optional_secret_lossy(value: Option<String>) -> Option<String> {
@@ -48,8 +117,9 @@ impl AppStore {
     }
 
     pub async fn ensure_default_super_admin(&self, config: &AppConfig) -> Result<(), String> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(&self.pool)
+        let count = self
+            .users
+            .count_documents(None, None)
             .await
             .map_err(|err| err.to_string())?;
         if count > 0 {
@@ -85,131 +155,107 @@ impl AppStore {
     }
 
     pub async fn find_user_by_id(&self, id: &str) -> Result<Option<UserRecord>, String> {
-        sqlx::query_as::<_, UserRecord>(
-            "SELECT id, username, display_name, password_hash, role, enabled, created_at, updated_at, last_login_at FROM users WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())
+        self.users
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn find_user_by_username(
         &self,
         username: &str,
     ) -> Result<Option<UserRecord>, String> {
-        sqlx::query_as::<_, UserRecord>(
-            "SELECT id, username, display_name, password_hash, role, enabled, created_at, updated_at, last_login_at FROM users WHERE username = ?",
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())
+        self.users
+            .find_one(doc! { "username": username }, None)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn list_users_summary(&self) -> Result<Vec<UserSummaryRecord>, String> {
-        sqlx::query_as::<_, UserSummaryRecord>(
-            r#"
-            SELECT
-                u.id,
-                u.username,
-                u.display_name,
-                u.role,
-                u.enabled,
-                u.created_at,
-                u.updated_at,
-                u.last_login_at,
-                COALESCE(COUNT(a.id), 0) AS agent_count
-            FROM users u
-            LEFT JOIN agent_accounts a ON a.owner_user_id = u.id
-            GROUP BY u.id, u.username, u.display_name, u.role, u.enabled, u.created_at, u.updated_at, u.last_login_at
-            ORDER BY u.updated_at DESC, u.created_at DESC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|err| err.to_string())
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1, "created_at": -1 })
+            .build();
+        let users: Vec<UserRecord> = self
+            .users
+            .find(None, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut summaries = Vec::with_capacity(users.len());
+        for user in users {
+            summaries.push(self.user_summary_from_record(user).await?);
+        }
+        Ok(summaries)
     }
 
     pub async fn get_user_summary(&self, id: &str) -> Result<Option<UserSummaryRecord>, String> {
-        sqlx::query_as::<_, UserSummaryRecord>(
-            r#"
-            SELECT
-                u.id,
-                u.username,
-                u.display_name,
-                u.role,
-                u.enabled,
-                u.created_at,
-                u.updated_at,
-                u.last_login_at,
-                COALESCE(COUNT(a.id), 0) AS agent_count
-            FROM users u
-            LEFT JOIN agent_accounts a ON a.owner_user_id = u.id
-            WHERE u.id = ?
-            GROUP BY u.id, u.username, u.display_name, u.role, u.enabled, u.created_at, u.updated_at, u.last_login_at
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())
+        let Some(user) = self.find_user_by_id(id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(self.user_summary_from_record(user).await?))
+    }
+
+    async fn user_summary_from_record(
+        &self,
+        user: UserRecord,
+    ) -> Result<UserSummaryRecord, String> {
+        let agent_count = self.count_agents_by_owner(user.id.as_str()).await?;
+        Ok(UserSummaryRecord {
+            id: user.id,
+            username: user.username,
+            display_name: user.display_name,
+            role: user.role,
+            enabled: user.enabled,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
+            last_login_at: user.last_login_at,
+            agent_count,
+        })
     }
 
     pub async fn insert_user_record(&self, user: &UserRecord) -> Result<(), String> {
-        sqlx::query(
-            "INSERT INTO users (id, username, display_name, password_hash, role, enabled, created_at, updated_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&user.id)
-        .bind(&user.username)
-        .bind(&user.display_name)
-        .bind(&user.password_hash)
-        .bind(&user.role)
-        .bind(user.enabled)
-        .bind(&user.created_at)
-        .bind(&user.updated_at)
-        .bind(&user.last_login_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        self.users
+            .insert_one(user, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn update_user_record(&self, user: &UserRecord) -> Result<(), String> {
-        sqlx::query(
-            "UPDATE users SET display_name = ?, password_hash = ?, role = ?, enabled = ?, updated_at = ?, last_login_at = ? WHERE id = ?",
-        )
-        .bind(&user.display_name)
-        .bind(&user.password_hash)
-        .bind(&user.role)
-        .bind(user.enabled)
-        .bind(&user.updated_at)
-        .bind(&user.last_login_at)
-        .bind(&user.id)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        let update = to_set_document(user)?;
+        self.users
+            .update_one(doc! { "id": &user.id }, update, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn touch_user_last_login(&self, id: &str) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?")
-            .bind(&now)
-            .bind(&now)
-            .bind(id)
-            .execute(&self.pool)
+        self.users
+            .update_one(
+                doc! { "id": id },
+                doc! { "$set": { "last_login_at": &now, "updated_at": &now } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn count_enabled_super_admins(&self) -> Result<i64, String> {
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE enabled = 1 AND role = ?")
-            .bind(USER_ROLE_SUPER_ADMIN)
-            .fetch_one(&self.pool)
+        let count = self
+            .users
+            .count_documents(
+                doc! { "enabled": true, "role": USER_ROLE_SUPER_ADMIN },
+                None,
+            )
             .await
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        i64::try_from(count).map_err(|err| err.to_string())
     }
 
     pub async fn list_agent_accounts(&self) -> Result<Vec<AgentAccountListItem>, String> {
@@ -227,104 +273,82 @@ impl AppStore {
         &self,
         owner_user_id: Option<&str>,
     ) -> Result<Vec<AgentAccountListItem>, String> {
-        let base = r#"
-            SELECT
-                a.id,
-                a.username,
-                a.display_name,
-                a.owner_user_id,
-                u.username AS owner_username,
-                u.display_name AS owner_display_name,
-                a.enabled,
-                a.created_at,
-                a.updated_at,
-                a.last_login_at
-            FROM agent_accounts a
-            INNER JOIN users u ON u.id = a.owner_user_id
-        "#;
-        let sql = if owner_user_id.is_some() {
-            format!(
-                "{base} WHERE a.owner_user_id = ? ORDER BY a.updated_at DESC, a.created_at DESC"
-            )
-        } else {
-            format!("{base} ORDER BY a.updated_at DESC, a.created_at DESC")
-        };
-        let mut query = sqlx::query_as::<_, AgentAccountListItem>(&sql);
-        if let Some(owner_user_id) = owner_user_id {
-            query = query.bind(owner_user_id);
-        }
-        query
-            .fetch_all(&self.pool)
+        let filter = owner_user_id.map(|owner| doc! { "owner_user_id": owner });
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1, "created_at": -1 })
+            .build();
+        let agents: Vec<AgentAccountRecord> = self
+            .agent_accounts
+            .find(filter, options)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut items = Vec::with_capacity(agents.len());
+        for agent in agents {
+            let Some(owner) = self.find_user_by_id(agent.owner_user_id.as_str()).await? else {
+                continue;
+            };
+            items.push(AgentAccountListItem {
+                id: agent.id,
+                username: agent.username,
+                display_name: agent.display_name,
+                owner_user_id: agent.owner_user_id,
+                owner_username: owner.username,
+                owner_display_name: owner.display_name,
+                enabled: agent.enabled,
+                created_at: agent.created_at,
+                updated_at: agent.updated_at,
+                last_login_at: agent.last_login_at,
+            });
+        }
+        Ok(items)
     }
 
     pub async fn find_agent_by_id(&self, id: &str) -> Result<Option<AgentAccountRecord>, String> {
-        sqlx::query_as::<_, AgentAccountRecord>(
-            "SELECT id, username, display_name, password_hash, owner_user_id, enabled, created_at, updated_at, last_login_at FROM agent_accounts WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())
+        self.agent_accounts
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn find_agent_by_username(
         &self,
         username: &str,
     ) -> Result<Option<AgentAccountRecord>, String> {
-        sqlx::query_as::<_, AgentAccountRecord>(
-            "SELECT id, username, display_name, password_hash, owner_user_id, enabled, created_at, updated_at, last_login_at FROM agent_accounts WHERE username = ?",
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())
+        self.agent_accounts
+            .find_one(doc! { "username": username }, None)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn insert_agent_record(&self, agent: &AgentAccountRecord) -> Result<(), String> {
-        sqlx::query(
-            "INSERT INTO agent_accounts (id, username, display_name, password_hash, owner_user_id, enabled, created_at, updated_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&agent.id)
-        .bind(&agent.username)
-        .bind(&agent.display_name)
-        .bind(&agent.password_hash)
-        .bind(&agent.owner_user_id)
-        .bind(agent.enabled)
-        .bind(&agent.created_at)
-        .bind(&agent.updated_at)
-        .bind(&agent.last_login_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        self.agent_accounts
+            .insert_one(agent, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn update_agent_record(&self, agent: &AgentAccountRecord) -> Result<(), String> {
-        sqlx::query(
-            "UPDATE agent_accounts SET display_name = ?, password_hash = ?, owner_user_id = ?, enabled = ?, updated_at = ?, last_login_at = ? WHERE id = ?",
-        )
-        .bind(&agent.display_name)
-        .bind(&agent.password_hash)
-        .bind(&agent.owner_user_id)
-        .bind(agent.enabled)
-        .bind(&agent.updated_at)
-        .bind(&agent.last_login_at)
-        .bind(&agent.id)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        let update = to_set_document(agent)?;
+        self.agent_accounts
+            .update_one(doc! { "id": &agent.id }, update, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn touch_agent_last_login(&self, id: &str) -> Result<(), String> {
         let now = now_rfc3339();
-        sqlx::query("UPDATE agent_accounts SET last_login_at = ?, updated_at = ? WHERE id = ?")
-            .bind(&now)
-            .bind(&now)
-            .bind(id)
-            .execute(&self.pool)
+        self.agent_accounts
+            .update_one(
+                doc! { "id": id },
+                doc! { "$set": { "last_login_at": &now, "updated_at": &now } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
@@ -336,45 +360,51 @@ impl AppStore {
         subject_id: &str,
         expires_at_unix: i64,
     ) -> Result<(), String> {
-        let now = now_rfc3339();
-        sqlx::query(
-            "INSERT INTO revoked_tokens (jti, subject_id, revoked_at, expires_at_unix) VALUES (?, ?, ?, ?) ON CONFLICT(jti) DO NOTHING",
-        )
-        .bind(jti)
-        .bind(subject_id)
-        .bind(&now)
-        .bind(expires_at_unix)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        let record = RevokedTokenRecord {
+            jti: jti.to_string(),
+            subject_id: subject_id.to_string(),
+            revoked_at: now_rfc3339(),
+            expires_at_unix,
+        };
+        self.revoked_tokens
+            .update_one(
+                doc! { "jti": jti },
+                to_set_document(&record)?,
+                UpdateOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn is_token_revoked(&self, jti: &str) -> Result<bool, String> {
         self.cleanup_expired_revocations().await?;
-        let value = sqlx::query("SELECT 1 FROM revoked_tokens WHERE jti = ? LIMIT 1")
-            .bind(jti)
-            .fetch_optional(&self.pool)
+        let value = self
+            .revoked_tokens
+            .find_one(doc! { "jti": jti }, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(value.is_some())
     }
 
     async fn cleanup_expired_revocations(&self) -> Result<(), String> {
-        sqlx::query("DELETE FROM revoked_tokens WHERE expires_at_unix < ?")
-            .bind(Utc::now().timestamp())
-            .execute(&self.pool)
+        self.revoked_tokens
+            .delete_many(
+                doc! { "expires_at_unix": { "$lt": Utc::now().timestamp() } },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
     }
 
     pub async fn count_agents_by_owner(&self, owner_user_id: &str) -> Result<i64, String> {
-        sqlx::query_scalar("SELECT COUNT(*) FROM agent_accounts WHERE owner_user_id = ?")
-            .bind(owner_user_id)
-            .fetch_one(&self.pool)
+        let count = self
+            .agent_accounts
+            .count_documents(doc! { "owner_user_id": owner_user_id }, None)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        i64::try_from(count).map_err(|err| err.to_string())
     }
 
     pub async fn username_exists_elsewhere(
@@ -382,35 +412,30 @@ impl AppStore {
         username: &str,
         current_user_id: Option<&str>,
     ) -> Result<bool, String> {
-        let row = sqlx::query("SELECT id FROM users WHERE username = ? LIMIT 1")
-            .bind(username)
-            .fetch_optional(&self.pool)
+        let found = self
+            .users
+            .find_one(doc! { "username": username }, None)
             .await
             .map_err(|err| err.to_string())?;
-        if let Some(row) = row {
-            let found_id: String = row.try_get("id").map_err(|err| err.to_string())?;
-            if current_user_id != Some(found_id.as_str()) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(found.is_some_and(|user| current_user_id != Some(user.id.as_str())))
     }
 
     pub async fn list_user_model_configs(
         &self,
         owner_user_id: Option<&str>,
     ) -> Result<Vec<UserModelConfigRecord>, String> {
-        let base = "SELECT id, owner_user_id, name, provider, model, thinking_level, api_key, base_url, enabled, supports_images, supports_reasoning, supports_responses, created_at, updated_at FROM user_model_configs";
-        let sql = if owner_user_id.is_some() {
-            format!("{base} WHERE owner_user_id = ? ORDER BY updated_at DESC, created_at DESC")
-        } else {
-            format!("{base} ORDER BY updated_at DESC, created_at DESC")
-        };
-        let mut query = sqlx::query_as::<_, UserModelConfigRecord>(&sql);
-        if let Some(owner_user_id) = owner_user_id {
-            query = query.bind(owner_user_id);
-        }
-        let rows = query.fetch_all(&self.pool).await.map_err(|err| err.to_string())?;
+        let filter = owner_user_id.map(|owner| doc! { "owner_user_id": owner });
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1, "created_at": -1 })
+            .build();
+        let rows: Vec<UserModelConfigRecord> = self
+            .user_model_configs
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(rows
             .into_iter()
             .map(Self::decrypt_user_model_config)
@@ -421,13 +446,11 @@ impl AppStore {
         &self,
         id: &str,
     ) -> Result<Option<UserModelConfigRecord>, String> {
-        let row = sqlx::query_as::<_, UserModelConfigRecord>(
-            "SELECT id, owner_user_id, name, provider, model, thinking_level, api_key, base_url, enabled, supports_images, supports_reasoning, supports_responses, created_at, updated_at FROM user_model_configs WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        let row = self
+            .user_model_configs
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(row.map(Self::decrypt_user_model_config))
     }
 
@@ -436,100 +459,67 @@ impl AppStore {
         config: &UserModelConfigRecord,
     ) -> Result<UserModelConfigRecord, String> {
         let stored = Self::encrypt_user_model_config(config.clone())?;
-        sqlx::query(
-            r#"
-            INSERT INTO user_model_configs (
-                id, owner_user_id, name, provider, model, thinking_level, api_key, base_url,
-                enabled, supports_images, supports_reasoning, supports_responses, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                owner_user_id = excluded.owner_user_id,
-                name = excluded.name,
-                provider = excluded.provider,
-                model = excluded.model,
-                thinking_level = excluded.thinking_level,
-                api_key = excluded.api_key,
-                base_url = excluded.base_url,
-                enabled = excluded.enabled,
-                supports_images = excluded.supports_images,
-                supports_reasoning = excluded.supports_reasoning,
-                supports_responses = excluded.supports_responses,
-                created_at = excluded.created_at,
-                updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(&stored.id)
-        .bind(&stored.owner_user_id)
-        .bind(&stored.name)
-        .bind(&stored.provider)
-        .bind(&stored.model)
-        .bind(&stored.thinking_level)
-        .bind(&stored.api_key)
-        .bind(&stored.base_url)
-        .bind(stored.enabled)
-        .bind(stored.supports_images)
-        .bind(stored.supports_reasoning)
-        .bind(stored.supports_responses)
-        .bind(&stored.created_at)
-        .bind(&stored.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        self.user_model_configs
+            .update_one(
+                doc! { "id": &stored.id },
+                to_set_document(&stored)?,
+                UpdateOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(Self::decrypt_user_model_config(stored))
     }
 
     pub async fn delete_user_model_config(&self, id: &str) -> Result<bool, String> {
-        let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
-        let result = sqlx::query("DELETE FROM user_model_configs WHERE id = ?")
-            .bind(id)
-            .execute(&mut *tx)
+        let result = self
+            .user_model_configs
+            .delete_one(doc! { "id": id }, None)
             .await
             .map_err(|err| err.to_string())?;
-        sqlx::query(
-            "UPDATE user_model_settings SET memory_summary_model_config_id = NULL WHERE memory_summary_model_config_id = ?",
-        )
-        .bind(id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| err.to_string())?;
-        tx.commit().await.map_err(|err| err.to_string())?;
-        Ok(result.rows_affected() > 0)
+        self.user_model_settings
+            .update_many(
+                doc! { "memory_summary_model_config_id": id },
+                doc! { "$set": { "memory_summary_model_config_id": Bson::Null } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.deleted_count > 0)
     }
 
     pub async fn get_user_model_settings(
         &self,
         user_id: &str,
     ) -> Result<Option<UserModelSettingsRecord>, String> {
-        sqlx::query_as::<_, UserModelSettingsRecord>(
-            "SELECT user_id, memory_summary_model_config_id, updated_at FROM user_model_settings WHERE user_id = ?",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|err| err.to_string())
+        self.user_model_settings
+            .find_one(doc! { "user_id": user_id }, None)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn save_user_model_settings(
         &self,
         settings: &UserModelSettingsRecord,
     ) -> Result<UserModelSettingsRecord, String> {
-        sqlx::query(
-            r#"
-            INSERT INTO user_model_settings (user_id, memory_summary_model_config_id, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                memory_summary_model_config_id = excluded.memory_summary_model_config_id,
-                updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(&settings.user_id)
-        .bind(&settings.memory_summary_model_config_id)
-        .bind(&settings.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|err| err.to_string())?;
+        self.user_model_settings
+            .update_one(
+                doc! { "user_id": &settings.user_id },
+                to_set_document(settings)?,
+                UpdateOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(settings.clone())
     }
+}
+
+fn to_set_document<T>(value: &T) -> Result<mongodb::bson::Document, String>
+where
+    T: Serialize,
+{
+    let mut document = to_document(value).map_err(|err| err.to_string())?;
+    document.remove("_id");
+    Ok(doc! { "$set": document })
 }
 
 pub fn now_rfc3339() -> String {

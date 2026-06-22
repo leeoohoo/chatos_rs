@@ -95,6 +95,7 @@ cargo fetch
 - `CHATOS_TASK_RUNNER_BASE_URL=http://127.0.0.1:39090`
 - `TASK_RUNNER_CHATOS_CALLBACK_SECRET=change_me_chatos_task_runner_secret`
 - `TASK_RUNNER_DATABASE_URL=mongodb://admin:admin@127.0.0.1:27018/task_runner_service?authSource=admin`
+- `USER_SERVICE_DATABASE_URL=mongodb://admin:admin@127.0.0.1:27018/user_service?authSource=admin`
 - `MEMORY_ENGINE_MONGODB_URI=mongodb://admin:admin@127.0.0.1:27018/admin`
 - `MEMORY_ENGINE_OPERATOR_TOKEN=chatos-memory-engine-dev-operator-token`
 
@@ -103,7 +104,7 @@ cargo fetch
 - ChatOS 主后端默认走 MongoDB
 - `task_runner_service` 默认走 MongoDB
 - `memory_engine` 默认走 MongoDB
-- `user_service` 根级默认仍是本地 SQLite：`USER_SERVICE_DATABASE_URL=sqlite://user_service/backend/data/user_service.db`
+- `user_service` 默认走 MongoDB：`USER_SERVICE_DATABASE_URL=mongodb://admin:admin@127.0.0.1:27018/user_service?authSource=admin`
 
 ### 4.4 统一模型配置说明
 
