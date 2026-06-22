@@ -286,6 +286,22 @@ ensure_user_service_mongo() {
   esac
 }
 
+ensure_frontend_deps() {
+  if [[ -x "$FRONTEND_DIR/node_modules/.bin/vite" ]]; then
+    return
+  fi
+
+  echo "[INFO] installing user_service frontend dependencies..."
+  (
+    cd "$FRONTEND_DIR"
+    if [[ -f package-lock.json ]]; then
+      npm ci
+    else
+      npm install
+    fi
+  )
+}
+
 start_backend() {
   ensure_user_service_mongo
 
@@ -298,6 +314,8 @@ start_backend() {
 }
 
 start_frontend() {
+  ensure_frontend_deps
+
   launch_service \
     "user_service frontend" \
     "$USER_SERVICE_FRONTEND_PORT" \
