@@ -12,7 +12,7 @@ mod repositories;
 use std::collections::HashSet;
 
 use futures_util::TryStreamExt;
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 use repositories::records::compact_turns;
 
 use crate::models::EngineRecord;

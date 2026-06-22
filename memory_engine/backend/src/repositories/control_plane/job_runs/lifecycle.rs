@@ -1,10 +1,10 @@
-use mongodb::bson::{Bson, doc};
+use mongodb::bson::{doc, Bson};
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::db::Db;
 use crate::models::{
-    CreateEngineJobRunRequest, EngineJobRun, FinishEngineJobRunRequest, now_rfc3339,
+    now_rfc3339, CreateEngineJobRunRequest, EngineJobRun, FinishEngineJobRunRequest,
 };
 
 use super::super::common::job_run_collection;

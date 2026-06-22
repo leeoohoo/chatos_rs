@@ -48,8 +48,25 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     if let Some(model_config_id) = filters.model_config_id.as_deref() {
         filter.insert("default_model_config_id", model_config_id);
     }
-    if let Some(creator_user_id) = filters.creator_user_id.as_deref() {
-        filter.insert("creator_user_id", creator_user_id);
+    if let Some(owner_user_id) = filters.creator_user_id.as_deref() {
+        filter.insert(
+            "$or",
+            vec![
+                doc! { "owner_user_id": owner_user_id },
+                doc! {
+                    "$and": [
+                        {
+                            "$or": [
+                                { "owner_user_id": { "$exists": false } },
+                                { "owner_user_id": null },
+                                { "owner_user_id": "" }
+                            ]
+                        },
+                        { "creator_user_id": owner_user_id }
+                    ]
+                },
+            ],
+        );
     }
     if filters.scheduled_only.unwrap_or(false) {
         filter.insert("schedule.mode", doc! { "$ne": "manual" });

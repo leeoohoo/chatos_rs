@@ -180,6 +180,8 @@ async fn build_runtime_config(
                 service.config.memory_engine_source_id.clone(),
             )
             .with_timeout_ms(service.config.memory_timeout.as_millis() as u64)
+            .with_access_token(crate::auth::get_current_access_token())
+            .with_operator_token(service.config.memory_engine_operator_token.clone())
             .with_record_scope(Some(MemoryRecordScope::message_thread(
                 task.tenant_id.clone(),
                 task.memory_thread_id.clone(),

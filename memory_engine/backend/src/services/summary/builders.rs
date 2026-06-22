@@ -18,9 +18,8 @@ pub(crate) async fn build_summary_text(
     records: &[EngineRecord],
     settings: &SummaryJobSettings,
 ) -> Result<SummaryBuildResult, String> {
-    let ai =
-        control_plane_service::build_ai_client_for_job(config, db, "summary", owner_user_id)
-            .await?;
+    let ai = control_plane_service::build_ai_client_for_job(config, db, "summary", owner_user_id)
+        .await?;
     if !ai.is_enabled() {
         return Err("summary model is not configured or enabled".to_string());
     }
@@ -57,13 +56,9 @@ pub(crate) async fn build_repair_summary_text(
     settings: &SummaryJobSettings,
     job_run_id: Option<&str>,
 ) -> Result<SummaryBuildResult, String> {
-    let ai = control_plane_service::build_ai_client_for_job(
-        config,
-        db,
-        "thread_repair",
-        owner_user_id,
-    )
-    .await?;
+    let ai =
+        control_plane_service::build_ai_client_for_job(config, db, "thread_repair", owner_user_id)
+            .await?;
     if !ai.is_enabled() {
         return Err("thread repair model is not configured or enabled".to_string());
     }
@@ -135,8 +130,7 @@ pub(crate) async fn build_rollup_summary_text(
     target_level: i64,
 ) -> Result<SummaryBuildResult, String> {
     let ai =
-        control_plane_service::build_ai_client_for_job(config, db, "rollup", owner_user_id)
-            .await?;
+        control_plane_service::build_ai_client_for_job(config, db, "rollup", owner_user_id).await?;
     if !ai.is_enabled() {
         return Err("rollup model is not configured or enabled".to_string());
     }

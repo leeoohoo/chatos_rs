@@ -67,21 +67,30 @@ impl AppConfig {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(10_000);
-        let admin_username =
-            normalized_env("TASK_RUNNER_ADMIN_USERNAME").unwrap_or_else(|| "admin".to_string());
+        let admin_username = normalized_env("TASK_RUNNER_ADMIN_USERNAME")
+            .or_else(|| normalized_env("USER_SERVICE_SUPER_ADMIN_USERNAME"))
+            .or_else(|| normalized_env("CHATOS_ADMIN_USERNAME"))
+            .unwrap_or_else(|| "admin".to_string());
         let admin_password = normalized_env("TASK_RUNNER_ADMIN_PASSWORD")
+            .or_else(|| normalized_env("USER_SERVICE_SUPER_ADMIN_PASSWORD"))
+            .or_else(|| normalized_env("CHATOS_ADMIN_PASSWORD"))
             .unwrap_or_else(|| "admin123456".to_string());
-        let user_service_jwt_secret = normalized_env("TASK_RUNNER_USER_SERVICE_JWT_SECRET")
-            .or_else(|| normalized_env("USER_SERVICE_JWT_SECRET"));
-        let user_service_jwt_issuer = normalized_env("TASK_RUNNER_USER_SERVICE_JWT_ISSUER")
-            .or_else(|| normalized_env("USER_SERVICE_JWT_ISSUER"))
-            .unwrap_or_else(|| "user_service".to_string());
-        let user_service_task_runner_audience =
-            normalized_env("TASK_RUNNER_USER_SERVICE_TASK_RUNNER_AUDIENCE")
-                .or_else(|| normalized_env("USER_SERVICE_TASK_RUNNER_AUDIENCE"))
-                .unwrap_or_else(|| "task_runner".to_string());
+        let user_service_base_url = normalized_env("TASK_RUNNER_USER_SERVICE_BASE_URL")
+            .or_else(|| normalized_env("CHATOS_USER_SERVICE_BASE_URL"))
+            .or_else(|| normalized_env("USER_SERVICE_BASE_URL"))
+            .unwrap_or_else(default_user_service_base_url);
+        let user_service_request_timeout_ms =
+            std::env::var("TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS")
+                .ok()
+                .or_else(|| std::env::var("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS").ok())
+                .or_else(|| std::env::var("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS").ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(5000)
+                .max(300);
         let admin_display_name = normalized_env("TASK_RUNNER_ADMIN_DISPLAY_NAME")
-            .unwrap_or_else(|| "管理员".to_string());
+            .or_else(|| normalized_env("USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME"))
+            .or_else(|| normalized_env("CHATOS_ADMIN_DISPLAY_NAME"))
+            .unwrap_or_else(|| "System Admin".to_string());
 
         Ok(Self {
             host,
@@ -119,9 +128,8 @@ impl AppConfig {
             admin_username,
             admin_password,
             admin_display_name,
-            user_service_jwt_secret,
-            user_service_jwt_issuer,
-            user_service_task_runner_audience,
+            user_service_base_url,
+            user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
         })
     }
 }
@@ -143,13 +151,23 @@ pub(super) fn env_usize(key: &str, default_value: usize) -> usize {
 
 fn default_memory_engine_base_url() -> Option<String> {
     let host = client_accessible_host(
-        normalized_env("MEMORY_ENGINE_HOST").or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_HOST")),
+        normalized_env("MEMORY_ENGINE_HOST")
+            .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_HOST")),
     )?;
     let port = normalized_env("MEMORY_ENGINE_PORT")
         .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_PORT"))
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(7081);
     Some(format!("http://{host}:{port}/api/memory-engine/v1"))
+}
+
+fn default_user_service_base_url() -> String {
+    let host = client_accessible_host(normalized_env("USER_SERVICE_HOST"))
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = normalized_env("USER_SERVICE_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(39190);
+    format!("http://{host}:{port}")
 }
 
 fn client_accessible_host(host: Option<String>) -> Option<String> {

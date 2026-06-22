@@ -16,7 +16,7 @@ impl AuthService {
             }
         }
         self.sessions.write().remove(token);
-        self.current_user_from_user_service_token(token)
+        None
     }
 
     pub fn logout(&self, token: &str) {

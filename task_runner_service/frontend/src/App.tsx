@@ -170,6 +170,9 @@ function AuthGate() {
     return <LoginPage loading={loginLoading} onLogin={handleLogin} />;
   }
 
+  const requireAdmin = (element: React.ReactElement) =>
+    currentUser.role === 'admin' ? element : <Navigate to="/tasks" replace />;
+
   return (
     <Suspense
       fallback={
@@ -196,8 +199,8 @@ function AuthGate() {
           <Route path="/prompts" element={<PromptsPage />} />
           <Route path="/mcp" element={<McpCatalogPage />} />
           <Route path="/tooling" element={<ToolingPage />} />
-          <Route path="/users" element={<UsersPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/users" element={requireAdmin(<UsersPage />)} />
+          <Route path="/settings" element={requireAdmin(<SettingsPage />)} />
         </Route>
       </Routes>
     </Suspense>

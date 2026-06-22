@@ -14,8 +14,7 @@ pub(crate) async fn build_subject_memory_from_summaries(
     target_summary_tokens: i64,
 ) -> Result<SummaryBuildResult, String> {
     let ai =
-        control_plane::build_ai_client_for_job(config, db, "subject_memory", owner_user_id)
-            .await?;
+        control_plane::build_ai_client_for_job(config, db, "subject_memory", owner_user_id).await?;
     if !ai.is_enabled() {
         return Err("subject memory model is not configured or enabled".to_string());
     }
@@ -52,8 +51,7 @@ pub(crate) async fn build_subject_memory_rollup(
     target_level: i64,
 ) -> Result<SummaryBuildResult, String> {
     let ai =
-        control_plane::build_ai_client_for_job(config, db, "subject_memory", owner_user_id)
-            .await?;
+        control_plane::build_ai_client_for_job(config, db, "subject_memory", owner_user_id).await?;
     if !ai.is_enabled() {
         return Err("subject memory model is not configured or enabled".to_string());
     }

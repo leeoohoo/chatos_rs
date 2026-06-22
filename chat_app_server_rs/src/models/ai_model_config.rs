@@ -9,6 +9,8 @@ pub struct AiModelConfig {
     pub provider: String,
     pub model: String,
     pub thinking_level: Option<String>,
+    pub task_usage_scenario: Option<String>,
+    pub task_thinking_level: Option<String>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,
@@ -17,6 +19,8 @@ pub struct AiModelConfig {
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
+    #[serde(default)]
+    pub sync_warnings: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -53,6 +57,8 @@ impl AiModelConfigRow {
             provider,
             model: self.model,
             thinking_level: self.thinking_level,
+            task_usage_scenario: None,
+            task_thinking_level: None,
             api_key: self.api_key,
             has_api_key: false,
             base_url: self.base_url,
@@ -60,6 +66,7 @@ impl AiModelConfigRow {
             supports_images: self.supports_images == 1,
             supports_reasoning: self.supports_reasoning == 1,
             supports_responses: self.supports_responses == 1,
+            sync_warnings: Vec::new(),
             created_at: self.created_at,
             updated_at: self.updated_at,
         }

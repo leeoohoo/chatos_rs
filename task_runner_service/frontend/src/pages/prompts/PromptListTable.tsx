@@ -45,6 +45,14 @@ export function PromptListTable({
   onOpenPrompt,
   onPageChange,
 }: PromptListTableProps) {
+  function promptOwnerLabel(taskId?: string | null): string {
+    if (!taskId) {
+      return '-';
+    }
+    const task = taskMap.get(taskId);
+    return task?.creator_display_name || task?.creator_username || task?.creator_user_id || '-';
+  }
+
   const columns: ColumnsType<UiPromptRecord> = [
     {
       title: t('prompts.column.promptId'),
@@ -72,6 +80,12 @@ export function PromptListTable({
         ) : (
           '-'
         ),
+    },
+    {
+      title: t('runs.column.owner'),
+      dataIndex: 'task_id',
+      width: 160,
+      render: (value?: string | null) => promptOwnerLabel(value),
     },
     {
       title: t('prompts.column.run'),

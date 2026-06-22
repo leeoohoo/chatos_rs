@@ -3,6 +3,12 @@ import { debugLog } from '@/lib/utils';
 import { buildQuery } from './shared';
 import type {
   ActiveSystemContextResponse,
+  AiModelConfigCreatePayload,
+  AiModelProviderCreatePayload,
+  AiModelProviderResponse,
+  AiModelProviderUpdatePayload,
+  AiModelSettingsResponse,
+  AiModelSettingsUpdatePayload,
   AiProviderModelsResponse,
   AiModelConfigResponse,
   AiModelConfigUpdatePayload,
@@ -131,21 +137,69 @@ export const getAiModelConfigs = (request: ApiRequestFn): Promise<AiModelConfigR
   return request<AiModelConfigResponse[]>('/ai-model-configs');
 };
 
+export const getAiModelConfig = (
+  request: ApiRequestFn,
+  id: string,
+  options?: { includeSecret?: boolean },
+): Promise<AiModelConfigResponse> => {
+  const query = buildQuery({ include_secret: options?.includeSecret ? 'true' : undefined });
+  return request<AiModelConfigResponse>(`/ai-model-configs/${id}${query}`);
+};
+
+export const getAiModelProviders = (request: ApiRequestFn): Promise<AiModelProviderResponse[]> => {
+  return request<AiModelProviderResponse[]>('/ai-model-providers');
+};
+
+export const getAiModelProvider = (
+  request: ApiRequestFn,
+  id: string,
+  options?: { includeSecret?: boolean },
+): Promise<AiModelProviderResponse> => {
+  const query = buildQuery({ include_secret: options?.includeSecret ? 'true' : undefined });
+  return request<AiModelProviderResponse>(`/ai-model-providers/${id}${query}`);
+};
+
+export const createAiModelProvider = (
+  request: ApiRequestFn,
+  data: AiModelProviderCreatePayload,
+): Promise<AiModelProviderResponse> => {
+  return request<AiModelProviderResponse>('/ai-model-providers', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateAiModelProvider = (
+  request: ApiRequestFn,
+  id: string,
+  data: AiModelProviderUpdatePayload,
+): Promise<AiModelProviderResponse> => {
+  return request<AiModelProviderResponse>(`/ai-model-providers/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+};
+
+export const refreshAiModelProvider = (
+  request: ApiRequestFn,
+  id: string,
+  data: AiModelProviderUpdatePayload,
+): Promise<AiModelProviderResponse> => {
+  return request<AiModelProviderResponse>(`/ai-model-providers/${id}/refresh`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteAiModelProvider = (request: ApiRequestFn, id: string): Promise<{ success?: boolean }> => {
+  return request<{ success?: boolean }>(`/ai-model-providers/${id}`, {
+    method: 'DELETE',
+  });
+};
+
 export const createAiModelConfig = (
   request: ApiRequestFn,
-  data: {
-    id: string;
-    name: string;
-    provider: string;
-    model: string;
-    thinking_level?: string;
-    api_key: string;
-    base_url: string;
-    enabled: boolean;
-    supports_images?: boolean;
-    supports_reasoning?: boolean;
-    supports_responses?: boolean;
-  }
+  data: AiModelConfigCreatePayload,
 ): Promise<AiModelConfigResponse> => {
   return request<AiModelConfigResponse>('/ai-model-configs', {
     method: 'POST',
@@ -164,6 +218,17 @@ export const updateAiModelConfig = (
   });
 };
 
+export const refreshAiModelConfig = (
+  request: ApiRequestFn,
+  id: string,
+  data: AiModelConfigUpdatePayload,
+): Promise<AiModelConfigResponse> => {
+  return request<AiModelConfigResponse>(`/ai-model-configs/${id}/refresh`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
 export const deleteAiModelConfig = (request: ApiRequestFn, id: string): Promise<{ success?: boolean }> => {
   return request<{ success?: boolean }>(`/ai-model-configs/${id}`, {
     method: 'DELETE',
@@ -177,6 +242,22 @@ export const getAiProviderModels = (
 ): Promise<AiProviderModelsResponse> => {
   const query = buildQuery({ refresh: options?.refresh ? 'true' : undefined });
   return request<AiProviderModelsResponse>(`/ai-model-configs/${id}/models${query}`);
+};
+
+export const getAiModelSettings = (
+  request: ApiRequestFn,
+): Promise<AiModelSettingsResponse> => {
+  return request<AiModelSettingsResponse>('/ai-model-settings');
+};
+
+export const updateAiModelSettings = (
+  request: ApiRequestFn,
+  data: AiModelSettingsUpdatePayload,
+): Promise<AiModelSettingsResponse> => {
+  return request<AiModelSettingsResponse>('/ai-model-settings', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
 };
 
 export const getSystemContexts = (request: ApiRequestFn, userId: string): Promise<SystemContextResponse[]> => {

@@ -15,7 +15,8 @@ impl TaskService {
             return Ok(Vec::new());
         };
         let filters = sanitize_task_list_filters(TaskListFilters {
-            creator_user_id: creator.map(|user| user.id.clone()),
+            creator_user_id: creator
+                .and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned)),
             ..TaskListFilters::default()
         });
         let tasks = self.store.list_tasks_filtered(&filters).await?;

@@ -11,7 +11,7 @@ use super::memory_options::{
     sanitize_task_memory_context_policy, sanitize_task_memory_records_options,
 };
 use super::task_threads::ensure_task_thread_for_config;
-use super::TaskService;
+use super::{save_task_if_tenant_aligned, TaskService};
 
 impl TaskService {
     pub async fn get_task_memory_context(
@@ -19,7 +19,7 @@ impl TaskService {
         id: &str,
         options: TaskMemoryContextOptions,
     ) -> Result<Option<TaskMemoryContextResponse>, String> {
-        let Some(task) = self.store.get_task(id).await? else {
+        let Some(task) = self.get_task_with_aligned_memory_tenant(id).await? else {
             return Ok(None);
         };
         let client = self.require_memory_client()?;
@@ -75,7 +75,7 @@ impl TaskService {
         id: &str,
         options: TaskMemoryRecordsOptions,
     ) -> Result<Option<TaskMemoryRecordsResponse>, String> {
-        let Some(task) = self.store.get_task(id).await? else {
+        let Some(task) = self.get_task_with_aligned_memory_tenant(id).await? else {
             return Ok(None);
         };
         let client = self.require_memory_client()?;
@@ -143,7 +143,7 @@ impl TaskService {
         &self,
         id: &str,
     ) -> Result<Option<TaskMemorySummaryResponse>, String> {
-        let Some(task) = self.store.get_task(id).await? else {
+        let Some(task) = self.get_task_with_aligned_memory_tenant(id).await? else {
             return Ok(None);
         };
         let client = self.require_memory_client()?;
@@ -169,5 +169,17 @@ impl TaskService {
 
     pub(super) async fn ensure_task_thread(&self, task: &TaskRecord) -> Result<(), String> {
         ensure_task_thread_for_config(&self.config, task).await
+    }
+
+    async fn get_task_with_aligned_memory_tenant(
+        &self,
+        id: &str,
+    ) -> Result<Option<TaskRecord>, String> {
+        let Some(task) = self.store.get_task(id).await? else {
+            return Ok(None);
+        };
+        save_task_if_tenant_aligned(&self.store, task)
+            .await
+            .map(Some)
     }
 }

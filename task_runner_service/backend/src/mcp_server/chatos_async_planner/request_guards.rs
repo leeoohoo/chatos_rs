@@ -56,14 +56,6 @@ pub(in crate::mcp_server) fn planner_prerequisite_create_request(
 pub(in crate::mcp_server) fn ensure_planner_required_fields(
     input: &CreateTaskRequest,
 ) -> Result<(), String> {
-    if input
-        .default_model_config_id
-        .as_deref()
-        .map(str::trim)
-        .is_none_or(|value| value.is_empty())
-    {
-        return Err("联系人异步任务必须指定 default_model_config_id".to_string());
-    }
     let has_enabled_builtin_kinds = input.mcp_config.as_ref().is_some_and(|config| {
         config
             .enabled_builtin_kinds

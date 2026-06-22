@@ -41,10 +41,11 @@ Backward compatibility is still kept for the old contact-level Task Runner usern
 
 - `user_service` is now the source of truth for user-owned model configs.
 - A real user can keep provider credentials here and create that user's own agent accounts here.
-- ChatOS may save a provider-only config with `provider + base_url + api_key` and leave `model` blank.
-- When ChatOS actually sends a request, the concrete runtime model is still selected later from the fetched provider model list.
-- `task_runner_service` and `memory_engine` only receive synced runnable configs when `model` is concrete and non-empty.
+- Creating a model config may omit `model`; `user_service` will call the provider-compatible `/models` endpoint and create one concrete config per returned model id.
+- ChatOS, `task_runner_service`, and `memory_engine` use those concrete model names from the shared configs.
+- `task_runner_service` and `memory_engine` receive synced runnable configs when downstream sync is configured.
 - `memory_summary_model_config_id` must point to a config with a concrete `model`.
+- Memory summary thinking level is stored in model settings; Task Runner usage and thinking level are stored per model config.
 
 ## Downstream Sync Environment
 
@@ -58,9 +59,9 @@ If you want model config changes in `user_service` to sync into the other servic
 
 Important behavior:
 
-- If `model` is blank, ChatOS can still use the config as a provider credential entry.
-- The downstream sync will skip runnable-model creation for `task_runner_service` and `memory_engine`.
-- That skip is returned as `sync_warnings` instead of failing the save request.
+- `model` is optional on create. If omitted, `user_service` imports provider models from `/models`.
+- `model` is required on each concrete stored config and cannot be cleared on update.
+- Downstream sync problems are returned as `sync_warnings` on the save response.
 - The repository startup scripts now default `MEMORY_ENGINE_OPERATOR_TOKEN` to `chatos-memory-engine-dev-operator-token` for local development.
 
 ## Run Backend

@@ -20,6 +20,12 @@ pub struct TaskRecord {
     pub creator_username: Option<String>,
     #[serde(default)]
     pub creator_display_name: Option<String>,
+    #[serde(default)]
+    pub owner_user_id: Option<String>,
+    #[serde(default)]
+    pub owner_username: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
     pub result_summary: Option<String>,
     #[serde(default)]
     pub process_log: Option<String>,
@@ -71,6 +77,9 @@ pub struct TaskSummaryRecord {
     pub creator_user_id: Option<String>,
     pub creator_username: Option<String>,
     pub creator_display_name: Option<String>,
+    pub owner_user_id: Option<String>,
+    pub owner_username: Option<String>,
+    pub owner_display_name: Option<String>,
     pub last_run_id: Option<String>,
     pub updated_at: String,
 }
@@ -85,6 +94,9 @@ impl From<&TaskRecord> for TaskSummaryRecord {
             creator_user_id: value.creator_user_id.clone(),
             creator_username: value.creator_username.clone(),
             creator_display_name: value.creator_display_name.clone(),
+            owner_user_id: value.owner_user_id.clone(),
+            owner_username: value.owner_username.clone(),
+            owner_display_name: value.owner_display_name.clone(),
             last_run_id: value.last_run_id.clone(),
             updated_at: value.updated_at.clone(),
         }

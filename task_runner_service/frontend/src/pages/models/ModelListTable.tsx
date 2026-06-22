@@ -60,6 +60,27 @@ export function ModelListTable({
       width: 140,
     },
     {
+      title: t('models.column.owner'),
+      dataIndex: 'owner_user_id',
+      width: 180,
+      render: (_, record) => {
+        const displayName = record.owner_display_name?.trim();
+        const username = record.owner_username?.trim();
+        const ownerId = record.owner_user_id?.trim();
+        if (!displayName && !username && !ownerId) {
+          return '-';
+        }
+        return (
+          <Space direction="vertical" size={0}>
+            <Typography.Text>{displayName || username || ownerId}</Typography.Text>
+            {username && username !== displayName ? (
+              <Typography.Text type="secondary">{username}</Typography.Text>
+            ) : null}
+          </Space>
+        );
+      },
+    },
+    {
       title: t('models.column.usageScenario'),
       dataIndex: 'usage_scenario',
       width: 240,

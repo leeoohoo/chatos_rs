@@ -31,6 +31,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setShowSystemContextEditor,
     showAiModelManager,
     setShowAiModelManager,
+    showMemoryModelSettings,
+    setShowMemoryModelSettings,
+    showTaskModelSettings,
+    setShowTaskModelSettings,
+    memoryModelAttention,
+    taskModelAttention,
     showAgentManager,
     setShowAgentManager,
     showNotepadPanel,
@@ -77,6 +83,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onOpenNotepad={() => setShowNotepadPanel(true)}
         onOpenApplications={() => setShowApplicationsPanel(true)}
         onOpenAiModelManager={() => setShowAiModelManager(true)}
+        onOpenMemoryModelSettings={() => setShowMemoryModelSettings(true)}
+        onOpenTaskModelSettings={() => setShowTaskModelSettings(true)}
+        memoryModelAttention={memoryModelAttention}
+        taskModelAttention={taskModelAttention}
         onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
         onOpenUserSettings={() => setShowUserSettings(true)}
@@ -107,6 +117,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setShowNotepadPanel={setShowNotepadPanel}
         showAiModelManager={showAiModelManager}
         setShowAiModelManager={setShowAiModelManager}
+        showMemoryModelSettings={showMemoryModelSettings}
+        setShowMemoryModelSettings={setShowMemoryModelSettings}
+        showTaskModelSettings={showTaskModelSettings}
+        setShowTaskModelSettings={setShowTaskModelSettings}
         showAgentManager={showAgentManager}
         setShowAgentManager={setShowAgentManager}
         showUserSettings={showUserSettings}

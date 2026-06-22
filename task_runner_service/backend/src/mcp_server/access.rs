@@ -1,11 +1,14 @@
 use crate::auth::CurrentUser;
 use crate::models::{
-    TaskListFilters, TaskRecord, TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus,
-    UiPromptRecord,
+    CreateTaskRequest, TaskListFilters, TaskRecord, TaskRunRecord, TaskScheduleMode,
+    TaskStatsResponse, TaskStatus, UiPromptRecord,
 };
 
 use super::chatos_async_planner::require_chatos_async_source_context;
-use super::support::ensure_task_owner;
+use super::support::{
+    effective_owner_user_id, enabled_model_configs_for_user, ensure_task_owner,
+    model_visible_to_user, select_model_config_id_for_task,
+};
 use super::{McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 
 impl TaskRunnerMcpService {
@@ -19,7 +22,7 @@ impl TaskRunnerMcpService {
         let tasks = self
             .task_service
             .list_tasks_filtered(TaskListFilters {
-                creator_user_id: Some(current_user.id.clone()),
+                creator_user_id: Some(effective_owner_user_id(current_user)?.to_string()),
                 ..TaskListFilters::default()
             })
             .await?;
@@ -94,6 +97,7 @@ impl TaskRunnerMcpService {
         }
         let (source_session_id, source_user_message_id) =
             require_chatos_async_source_context(request_context)?;
+        let owner_user_id = effective_owner_user_id(current_user)?;
         self.task_service
             .list_tasks_for_chatos_message(source_session_id, source_user_message_id)
             .await
@@ -101,7 +105,12 @@ impl TaskRunnerMcpService {
                 tasks
                     .into_iter()
                     .filter(|task| {
-                        task.creator_user_id.as_deref() == Some(current_user.id.as_str())
+                        task.owner_user_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .or_else(|| task.creator_user_id.as_deref())
+                            == Some(owner_user_id)
                     })
                     .collect()
             })
@@ -153,6 +162,51 @@ impl TaskRunnerMcpService {
             return Ok(());
         }
         Err("当前 agent 无权访问该提示".to_string())
+    }
+
+    pub(in crate::mcp_server) async fn ensure_mcp_default_model_config(
+        &self,
+        input: &mut CreateTaskRequest,
+        current_user: &CurrentUser,
+    ) -> Result<(), String> {
+        if input
+            .default_model_config_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+        {
+            let model_config_id = input.default_model_config_id.as_deref().unwrap_or_default();
+            let model = self
+                .model_config_service
+                .get_model_config(model_config_id)
+                .await?
+                .ok_or_else(|| format!("model config not found: {model_config_id}"))?;
+            if !model.enabled {
+                return Err(format!("model config is disabled: {model_config_id}"));
+            }
+            if !model_visible_to_user(&model, current_user) {
+                return Err(format!("model config not found: {model_config_id}"));
+            }
+            return Ok(());
+        }
+
+        let models = self.model_config_service.list_model_configs().await?;
+        let models = enabled_model_configs_for_user(models, current_user);
+        let tags = input.tags.as_deref().unwrap_or(&[]);
+        let Some(model_config_id) = select_model_config_id_for_task(
+            models.as_slice(),
+            input.title.as_str(),
+            input.objective.as_str(),
+            input.description.as_deref(),
+            tags,
+        ) else {
+            return Err(
+                "当前用户没有启用中的 Task 模型配置，请先在 Chatos 的 Task 模型设置里启用至少一个模型"
+                    .to_string(),
+            );
+        };
+        input.default_model_config_id = Some(model_config_id);
+        Ok(())
     }
 
     pub(super) async fn filter_runs_for_user(

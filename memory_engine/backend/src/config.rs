@@ -19,9 +19,8 @@ pub struct AppConfig {
     pub worker_subject_memory_concurrency: usize,
     pub worker_reconcile_concurrency: usize,
     pub operator_token: Option<String>,
-    pub user_service_jwt_secret: Option<String>,
-    pub user_service_jwt_issuer: String,
-    pub user_service_user_audience: String,
+    pub user_service_base_url: String,
+    pub user_service_request_timeout_ms: u64,
 }
 
 impl AppConfig {
@@ -80,17 +79,20 @@ impl AppConfig {
             1,
         );
         let operator_token = env_text("MEMORY_ENGINE_OPERATOR_TOKEN");
-        let user_service_jwt_secret = env_text("MEMORY_ENGINE_USER_SERVICE_JWT_SECRET")
-            .or_else(|| env_text("CHATOS_USER_SERVICE_JWT_SECRET"))
-            .or_else(|| env_text("USER_SERVICE_JWT_SECRET"));
-        let user_service_jwt_issuer = env_text("MEMORY_ENGINE_USER_SERVICE_JWT_ISSUER")
-            .or_else(|| env_text("CHATOS_USER_SERVICE_JWT_ISSUER"))
-            .or_else(|| env_text("USER_SERVICE_JWT_ISSUER"))
-            .unwrap_or_else(|| "user_service".to_string());
-        let user_service_user_audience = env_text("MEMORY_ENGINE_USER_SERVICE_USER_AUDIENCE")
-            .or_else(|| env_text("CHATOS_USER_SERVICE_USER_AUDIENCE"))
-            .or_else(|| env_text("USER_SERVICE_USER_AUDIENCE"))
-            .unwrap_or_else(|| "user_service".to_string());
+        let user_service_base_url = env_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")
+            .or_else(|| env_text("MEMORY_ENGINE_USER_SERVICE_API_BASE"))
+            .or_else(|| env_text("VITE_USER_SERVICE_API_BASE"))
+            .or_else(|| env_text("CHATOS_USER_SERVICE_BASE_URL"))
+            .or_else(|| env_text("USER_SERVICE_BASE_URL"))
+            .unwrap_or_else(|| "http://127.0.0.1:39190".to_string());
+        let user_service_request_timeout_ms = parse_bounded_u64(
+            env::var("MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS")
+                .ok()
+                .or_else(|| env::var("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS").ok())
+                .or_else(|| env::var("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS").ok()),
+            5000,
+            300,
+        );
 
         Self {
             host,
@@ -110,9 +112,8 @@ impl AppConfig {
             worker_subject_memory_concurrency,
             worker_reconcile_concurrency,
             operator_token,
-            user_service_jwt_secret,
-            user_service_jwt_issuer,
-            user_service_user_audience,
+            user_service_base_url,
+            user_service_request_timeout_ms,
         }
     }
 }

@@ -32,7 +32,6 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   clearAuthToken,
   getAuthToken,
-  hasOperatorConsoleAccess,
   setAuthToken,
   userServiceApi,
 } from './api/userService';
@@ -72,7 +71,7 @@ const RunsSectionContainer = lazy(() =>
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 const ADMIN_TABS: TabKey[] = ['dashboard', 'data', 'sources', 'models', 'policies', 'runs'];
-const USER_TABS: TabKey[] = ['models'];
+const USER_TABS: TabKey[] = ['data', 'models', 'runs'];
 
 export default function MemoryEngineApp() {
   return (
@@ -205,10 +204,9 @@ type ConsoleShellProps = {
 };
 
 function ConsoleShell({ currentUser, logoutLoading, onLogout }: ConsoleShellProps) {
-  const canAccessAdminConsole =
-    currentUser.role === 'super_admin' && hasOperatorConsoleAccess();
+  const canAccessAdminConsole = currentUser.role === 'super_admin';
   const availableTabs = canAccessAdminConsole ? ADMIN_TABS : USER_TABS;
-  const defaultTab = canAccessAdminConsole ? 'dashboard' : 'models';
+  const defaultTab = canAccessAdminConsole ? 'dashboard' : 'data';
   const [tab, setTab] = useState<TabKey>(defaultTab);
   const [dataRefreshNonce, setDataRefreshNonce] = useState(0);
   const [sourcesRefreshNonce, setSourcesRefreshNonce] = useState(0);
@@ -285,7 +283,7 @@ function ConsoleShell({ currentUser, logoutLoading, onLogout }: ConsoleShellProp
             Memory Engine
           </Title>
           <Text type="secondary">
-            {canAccessAdminConsole ? 'Operator console' : 'User-scoped model console'}
+            {canAccessAdminConsole ? 'Admin console' : 'User-scoped console'}
           </Text>
         </div>
         <Menu
@@ -304,12 +302,12 @@ function ConsoleShell({ currentUser, logoutLoading, onLogout }: ConsoleShellProp
                 {currentUser.role}
               </Tag>
               <Tag color={canAccessAdminConsole ? 'processing' : 'default'}>
-                {canAccessAdminConsole ? 'admin-console' : 'user-model-scope'}
+                {canAccessAdminConsole ? 'admin-console' : 'user-scope'}
               </Tag>
               <Text type="secondary">
                 {canAccessAdminConsole
-                  ? 'Sources, global models, policies, and job execution are available.'
-                  : 'You are managing only your own model profiles.'}
+                  ? 'All tenants, sources, models, policies, and job runs are available.'
+                  : 'You are viewing only your own tenant data and model profiles.'}
               </Text>
             </Space>
             <Space wrap>
@@ -388,7 +386,7 @@ function LoginPage({ loading, onLogin }: LoginPageProps) {
             </Title>
             <Text type="secondary">
               Sign in with your ChatOS user account. Regular users manage only their own model
-              profiles. Full console access remains limited to operator-enabled super admins.
+              profiles and tenant data. Super admins can view all tenants.
             </Text>
           </Space>
           <Form<LoginPayload>

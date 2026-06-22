@@ -1,7 +1,8 @@
+import { Eye, EyeOff, Loader2, RefreshCw } from 'lucide-react';
+
 import { useI18n } from '../../i18n/I18nProvider';
 import {
   AI_MODEL_PROVIDERS,
-  AI_MODEL_THINKING_LEVELS,
   applyProviderChange,
 } from './helpers';
 import type { AiModelManagerFormProps } from './types';
@@ -13,8 +14,20 @@ const AiModelManagerForm = ({
   onSubmit,
   onCancel,
   onFormDataChange,
+  apiKeyVisible = false,
+  apiKeyLoading = false,
+  refreshingModels = false,
+  onToggleApiKeyVisible,
+  onRefreshModels,
 }: AiModelManagerFormProps) => {
   const { t } = useI18n();
+  const canRefreshModels = Boolean(
+    editingConfig
+      && formData.name.trim()
+      && formData.base_url.trim()
+      && !formData.clear_api_key
+      && (formData.has_stored_api_key || formData.api_key.trim()),
+  );
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
@@ -69,20 +82,38 @@ const AiModelManagerForm = ({
 
         <div>
           <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.apiKey')}</label>
-          <input
-            type="password"
-            value={formData.api_key}
-            onChange={(event) => onFormDataChange({
-              api_key: event.target.value,
-              clear_api_key: false,
-            })}
-            disabled={editingConfig !== null && formData.clear_api_key}
-            className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder={editingConfig
-              ? t('aiModelManager.form.apiKeyPlaceholderEdit')
-              : t('aiModelManager.form.apiKeyPlaceholder')}
-            required={editingConfig === null}
-          />
+          <div className="relative">
+            <input
+              type={apiKeyVisible ? 'text' : 'password'}
+              value={formData.api_key}
+              onChange={(event) => onFormDataChange({
+                api_key: event.target.value,
+                clear_api_key: false,
+              })}
+              disabled={editingConfig !== null && formData.clear_api_key}
+              className="w-full rounded-md border border-input bg-background py-2 pl-3 pr-11 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder={editingConfig
+                ? t('aiModelManager.form.apiKeyPlaceholderEdit')
+                : t('aiModelManager.form.apiKeyPlaceholder')}
+              required={editingConfig === null}
+            />
+            <button
+              type="button"
+              onClick={onToggleApiKeyVisible}
+              disabled={apiKeyLoading || (editingConfig !== null && formData.clear_api_key)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+              title={apiKeyVisible ? t('aiModelManager.form.hideApiKey') : t('aiModelManager.form.showApiKey')}
+              aria-label={apiKeyVisible ? t('aiModelManager.form.hideApiKey') : t('aiModelManager.form.showApiKey')}
+            >
+              {apiKeyLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : apiKeyVisible ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
           {editingConfig && formData.has_stored_api_key ? (
             <div className="mt-2 space-y-2">
               <p className="text-xs text-muted-foreground">
@@ -102,36 +133,6 @@ const AiModelManagerForm = ({
               </label>
             </div>
           ) : null}
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.modelName')}</label>
-          <input
-            type="text"
-            value={formData.model_name}
-            onChange={(event) => onFormDataChange({ model_name: event.target.value })}
-            className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder={t('aiModelManager.form.modelNamePlaceholder')}
-          />
-          <p className="mt-2 text-xs text-muted-foreground">
-            Optional. Leave blank to pick the concrete runtime model later in the chat composer.
-          </p>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.thinkingLevel')}</label>
-          <select
-            value={formData.thinking_level}
-            onChange={(event) => onFormDataChange({ thinking_level: event.target.value })}
-            disabled={formData.provider !== 'gpt'}
-            className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
-          >
-            {AI_MODEL_THINKING_LEVELS.map((level) => (
-              <option key={level || 'empty'} value={level}>
-                {level || t('aiModelManager.form.thinkingLevelAuto')}
-              </option>
-            ))}
-          </select>
         </div>
 
         <div className="flex items-center">
@@ -188,6 +189,21 @@ const AiModelManagerForm = ({
       </div>
 
       <div className="flex items-center justify-end gap-2">
+        {editingConfig ? (
+          <button
+            type="button"
+            onClick={onRefreshModels}
+            disabled={refreshingModels || !canRefreshModels}
+            className="mr-auto inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm transition-colors hover:bg-accent disabled:opacity-50"
+          >
+            {refreshingModels ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {refreshingModels ? t('aiModelManager.form.refreshingModels') : t('aiModelManager.form.refreshModels')}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onCancel}

@@ -1,5 +1,3 @@
-use memory_engine_sdk::UpsertSourceRequest;
-use serde_json::json;
 use crate::auth::AuthService;
 use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
@@ -9,6 +7,8 @@ use crate::services::{
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;
+use memory_engine_sdk::UpsertSourceRequest;
+use serde_json::json;
 use tracing::{info, warn};
 
 #[derive(Clone)]

@@ -4,7 +4,7 @@ use mongodb::options::FindOptions;
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::{EngineModelProfile, UpsertEngineModelProfileRequest, now_rfc3339};
+use crate::models::{now_rfc3339, EngineModelProfile, UpsertEngineModelProfileRequest};
 
 use super::common::model_profile_collection;
 

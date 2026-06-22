@@ -15,6 +15,7 @@ import {
   getAuthTypeLabel,
   renderTestStatus,
   serverCreatorLabel,
+  serverOwnerLabel,
 } from './serverPageUtils';
 
 type ServerListTableProps = {
@@ -72,7 +73,7 @@ export function ServerListTable({
     {
       title: t('servers.column.source'),
       key: 'source',
-      width: 190,
+      width: 170,
       render: (_, record) => (
         <Space direction="vertical" size={0}>
           <Typography.Text>{serverCreatorLabel(record)}</Typography.Text>
@@ -83,6 +84,12 @@ export function ServerListTable({
           ) : null}
         </Space>
       ),
+    },
+    {
+      title: t('servers.column.owner'),
+      key: 'owner',
+      width: 170,
+      render: (_, record) => serverOwnerLabel(record),
     },
     {
       title: t('servers.column.hostKeyPolicy'),

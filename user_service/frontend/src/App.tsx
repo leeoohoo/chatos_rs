@@ -20,7 +20,6 @@ import { AppShell } from './components/AppShell';
 import { AgentAccountsPage } from './pages/AgentAccountsPage';
 import { ModelsPage } from './pages/ModelsPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { TokenExchangePage } from './pages/TokenExchangePage';
 import { UsersPage } from './pages/UsersPage';
 import type { AuthUser, LoginPayload } from './types';
 
@@ -147,8 +146,8 @@ function AuthGate() {
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/agents" element={<AgentAccountsPage />} />
-        <Route path="/exchange" element={<TokenExchangePage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="*" element={<Navigate to="/models" replace />} />
       </Route>
     </Routes>
   );
@@ -187,7 +186,7 @@ function LoginPage({ loading, onLogin }: LoginPageProps) {
               User Service
             </Typography.Title>
             <Typography.Text type="secondary">
-              统一用户、Agent 与 Task Runner token exchange
+              统一用户、Agent 账号与模型配置
             </Typography.Text>
           </Space>
         </Space>

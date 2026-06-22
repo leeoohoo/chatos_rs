@@ -18,6 +18,7 @@ impl TaskService {
             .get_task(root_task_id)
             .await?
             .ok_or_else(|| TASK_NOT_FOUND_ERR.to_string())?;
+        let parent = save_task_if_tenant_aligned(&self.store, parent).await?;
         let id = Uuid::new_v4().to_string();
         let now = now_rfc3339();
         let title = draft.title.trim().to_string();
@@ -59,6 +60,9 @@ impl TaskService {
             creator_user_id: parent.creator_user_id.clone(),
             creator_username: parent.creator_username.clone(),
             creator_display_name: parent.creator_display_name.clone(),
+            owner_user_id: parent.owner_user_id.clone(),
+            owner_username: parent.owner_username.clone(),
+            owner_display_name: parent.owner_display_name.clone(),
             result_summary,
             process_log: None,
             last_run_id: None,
@@ -139,6 +143,7 @@ impl TaskService {
 
         let now = now_rfc3339();
         apply_manager_patch(&mut task, patch, false, now.as_str())?;
+        align_task_tenant_to_owner(&mut task);
         task.updated_at = now;
         self.ensure_task_thread(&task).await?;
         self.store.save_task(task).await
@@ -172,6 +177,7 @@ impl TaskService {
         if task.task_tool_state.last_outcome_at.is_none() {
             task.task_tool_state.last_outcome_at = Some(now.clone());
         }
+        align_task_tenant_to_owner(&mut task);
         task.updated_at = now;
         self.ensure_task_thread(&task).await?;
         self.store.save_task(task).await

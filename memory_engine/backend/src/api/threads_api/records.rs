@@ -11,7 +11,7 @@ use super::queries::{
     CompactTurnsQuery, CountThreadRecordsQuery, DeleteThreadRecordsQuery, ListThreadRecordsQuery,
     TurnProcessRecordsQuery,
 };
-use crate::api::source_guard;
+use crate::api::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{
     BatchSyncRecordsRequest, BatchSyncRecordsResponse, CompactTurnsResponse,
     ThreadRecordsPageResponse, TurnProcessRecordsResponse,
@@ -21,9 +21,11 @@ use crate::state::AppState;
 
 pub async fn batch_sync_records(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Json(req): Json<BatchSyncRecordsRequest>,
 ) -> Result<Json<BatchSyncRecordsResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     let upserted_count = records::batch_sync_records(&state.pool, thread_id.as_str(), &req)
         .await
@@ -37,14 +39,16 @@ pub async fn batch_sync_records(
 
 pub async fn list_records(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<ListThreadRecordsQuery>,
 ) -> Result<Json<ThreadRecordsPageResponse>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let asc = !matches!(query.order.as_deref(), Some("desc"));
     let page = records::list_records_page(
         &state.pool,
         thread_id.as_str(),
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_id.as_deref(),
         query.role.as_deref(),
         query.record_type.as_deref(),
@@ -60,6 +64,7 @@ pub async fn list_records(
 
 pub async fn delete_records(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<DeleteThreadRecordsQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
@@ -69,6 +74,7 @@ pub async fn delete_records(
             "tenant_id is required".to_string(),
         ));
     };
+    auth.ensure_tenant_scope(tenant_id)?;
     let Some(source_id) = query.source_id.as_deref() else {
         return Err((
             axum::http::StatusCode::BAD_REQUEST,
@@ -90,13 +96,15 @@ pub async fn delete_records(
 
 pub async fn count_records(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<CountThreadRecordsQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let count = records::count_records(
         &state.pool,
         thread_id.as_str(),
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_id.as_deref(),
         query.role.as_deref(),
         query.record_type.as_deref(),
@@ -109,13 +117,15 @@ pub async fn count_records(
 
 pub async fn list_compact_turns(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<CompactTurnsQuery>,
 ) -> Result<Json<CompactTurnsResponse>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let (items, has_more, next_before) = records::list_compact_turn_slices(
         &state.pool,
         thread_id.as_str(),
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_id.as_deref(),
         query.record_type.as_deref(),
         query.limit.unwrap_or(2),
@@ -133,13 +143,15 @@ pub async fn list_compact_turns(
 
 pub async fn get_turn_process_records(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path((thread_id, turn_id)): Path<(String, String)>,
     Query(query): Query<TurnProcessRecordsQuery>,
 ) -> Result<Json<TurnProcessRecordsResponse>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let items = records::list_turn_process_records(
         &state.pool,
         thread_id.as_str(),
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_id.as_deref(),
         query.record_type.as_deref(),
         turn_id.as_str(),

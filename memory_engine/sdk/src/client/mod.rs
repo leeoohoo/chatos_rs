@@ -14,8 +14,13 @@ use self::transport::normalize_base_url;
 
 #[derive(Debug, Clone)]
 enum AuthMode {
-    Direct { source_id: String },
-    SystemKey { system_id: String, secret_key: String },
+    Direct {
+        source_id: String,
+    },
+    SystemKey {
+        system_id: String,
+        secret_key: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -24,13 +29,11 @@ pub struct MemoryEngineClient {
     base_url: String,
     auth: AuthMode,
     operator_token: Option<String>,
+    access_token: Option<String>,
 }
 
 impl MemoryEngineClient {
-    pub fn new_platform(
-        base_url: impl Into<String>,
-        timeout: Duration,
-    ) -> Result<Self, String> {
+    pub fn new_platform(base_url: impl Into<String>, timeout: Duration) -> Result<Self, String> {
         Ok(Self {
             http: reqwest::Client::builder()
                 .timeout(timeout)
@@ -41,6 +44,7 @@ impl MemoryEngineClient {
                 source_id: String::new(),
             },
             operator_token: None,
+            access_token: None,
         })
     }
 
@@ -59,6 +63,7 @@ impl MemoryEngineClient {
                 source_id: source_id.into(),
             },
             operator_token: None,
+            access_token: None,
         })
     }
 
@@ -79,11 +84,17 @@ impl MemoryEngineClient {
                 secret_key: secret_key.into(),
             },
             operator_token: None,
+            access_token: None,
         })
     }
 
     pub fn with_operator_token(mut self, operator_token: impl Into<String>) -> Self {
-        self.operator_token = normalize_operator_token(operator_token.into());
+        self.operator_token = normalize_token(operator_token.into());
+        self
+    }
+
+    pub fn with_bearer_token(mut self, access_token: impl Into<String>) -> Self {
+        self.access_token = normalize_token(access_token.into());
         self
     }
 }
@@ -108,7 +119,7 @@ pub(super) fn require_direct_source_id<'a>(
     })
 }
 
-fn normalize_operator_token(token: String) -> Option<String> {
+fn normalize_token(token: String) -> Option<String> {
     let normalized = token.trim();
     if normalized.is_empty() {
         None
@@ -119,9 +130,7 @@ fn normalize_operator_token(token: String) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        normalize_operator_token, optional_direct_source_id, require_direct_source_id,
-    };
+    use super::{normalize_token, optional_direct_source_id, require_direct_source_id};
 
     #[test]
     fn optional_direct_source_id_ignores_empty_values() {
@@ -140,10 +149,10 @@ mod tests {
 
     #[test]
     fn normalize_operator_token_ignores_blank_values() {
-        assert_eq!(normalize_operator_token("".to_string()), None);
-        assert_eq!(normalize_operator_token("   ".to_string()), None);
+        assert_eq!(normalize_token("".to_string()), None);
+        assert_eq!(normalize_token("   ".to_string()), None);
         assert_eq!(
-            normalize_operator_token(" token-1 ".to_string()),
+            normalize_token(" token-1 ".to_string()),
             Some("token-1".to_string())
         );
     }

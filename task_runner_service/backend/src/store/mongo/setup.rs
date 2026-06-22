@@ -54,6 +54,8 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.tasks, doc! { "creator_user_id": 1 }, false)
             .await?;
+        self.ensure_index(&self.tasks, doc! { "owner_user_id": 1 }, false)
+            .await?;
         self.ensure_index(&self.tasks, doc! { "schedule.next_run_at": 1 }, false)
             .await?;
         self.ensure_index(
@@ -84,6 +86,8 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "creator_user_id": 1 }, false)
             .await?;
+        self.ensure_index(&self.remote_servers, doc! { "owner_user_id": 1 }, false)
+            .await?;
         self.ensure_index(&self.remote_servers, doc! { "task_id": 1 }, false)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "updated_at": -1 }, false)
@@ -96,6 +100,12 @@ impl MongoStore {
         self.ensure_index(
             &self.external_mcp_configs,
             doc! { "creator_user_id": 1 },
+            false,
+        )
+        .await?;
+        self.ensure_index(
+            &self.external_mcp_configs,
+            doc! { "owner_user_id": 1 },
             false,
         )
         .await?;

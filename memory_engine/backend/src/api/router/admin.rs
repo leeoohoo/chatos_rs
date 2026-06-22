@@ -40,15 +40,15 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/memory-engine/v1/admin/sources",
-            get(sources_api::list_sources),
+            get(sources_api::admin_list_sources),
         )
         .route(
             "/api/memory-engine/v1/admin/sources/:source_id",
-            put(sources_api::upsert_source),
+            put(sources_api::admin_upsert_source),
         )
         .route(
             "/api/memory-engine/v1/admin/sources/:source_id/rotate-key",
-            post(sources_api::rotate_source_secret),
+            post(sources_api::admin_rotate_source_secret),
         )
 }
 

@@ -10,7 +10,8 @@ impl TaskService {
         validate_required("title", &input.title)?;
         validate_required("objective", &input.objective)?;
         if let Some(model_config_id) = input.default_model_config_id.as_deref() {
-            self.ensure_model_config_access(model_config_id, creator).await?;
+            self.ensure_model_config_access(model_config_id, creator)
+                .await?;
         }
         if matches!(input.status, Some(TaskStatus::Queued | TaskStatus::Running)) {
             return Err(
@@ -52,8 +53,13 @@ impl TaskService {
             mcp_config.default_remote_server_id = Some(remote_server.id.clone());
         }
         if passthrough_remote_server.is_none() {
-            self.validate_task_mcp_config(&mcp_config).await?;
+            self.validate_task_mcp_config(&mcp_config, creator).await?;
         }
+        let tenant_id = resolve_task_tenant_id(
+            input.tenant_id,
+            creator,
+            self.config.default_tenant_id.as_str(),
+        )?;
         let task = TaskRecord {
             id: id.clone(),
             title: input.title.trim().to_string(),
@@ -65,10 +71,7 @@ impl TaskService {
             tags: normalize_tags(input.tags),
             default_model_config_id: normalized_optional(input.default_model_config_id),
             memory_thread_id: format!("task-{id}"),
-            tenant_id: input
-                .tenant_id
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| self.config.default_tenant_id.clone()),
+            tenant_id,
             subject_id: input
                 .subject_id
                 .filter(|value| !value.trim().is_empty())
@@ -76,6 +79,15 @@ impl TaskService {
             creator_user_id: creator.map(|user| user.id.clone()),
             creator_username: creator.map(|user| user.username.clone()),
             creator_display_name: creator.map(|user| user.display_name.clone()),
+            owner_user_id: creator
+                .and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned)),
+            owner_username: creator
+                .and_then(|user| user.effective_owner_username().map(ToOwned::to_owned)),
+            owner_display_name: creator.and_then(|user| {
+                user.effective_owner_display_name()
+                    .map(ToOwned::to_owned)
+                    .or_else(|| user.effective_owner_username().map(ToOwned::to_owned))
+            }),
             result_summary: None,
             process_log: None,
             last_run_id: None,

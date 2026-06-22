@@ -60,16 +60,18 @@ impl TaskService {
         }
         if let Some(mcp_config) = patch.mcp_config {
             task.mcp_config = sanitize_task_mcp_config(mcp_config);
-            self.validate_task_mcp_config(&task.mcp_config).await?;
+            self.validate_task_mcp_config(&task.mcp_config, current_user)
+                .await?;
         }
         let prerequisite_task_ids = patch
             .prerequisite_task_ids
             .map(normalize_prerequisite_task_ids);
         if let Some(prerequisite_task_ids) = prerequisite_task_ids.as_ref() {
-            self.validate_task_prerequisites(id, prerequisite_task_ids, None)
+            self.validate_task_prerequisites(id, prerequisite_task_ids, current_user)
                 .await?;
             task.prerequisite_task_ids = prerequisite_task_ids.clone();
         }
+        align_task_tenant_to_owner(&mut task);
         task.updated_at = now_rfc3339();
         self.ensure_task_thread(&task).await?;
         let saved = self.store.save_task(task).await?;
@@ -100,6 +102,7 @@ impl TaskService {
         &self,
         id: &str,
         patch: UpdateTaskMcpRequest,
+        current_user: Option<&CurrentUser>,
     ) -> Result<Option<TaskRecord>, String> {
         let Some(mut task) = self.store.get_task(id).await? else {
             return Ok(None);
@@ -133,7 +136,8 @@ impl TaskService {
             task.mcp_config.external_mcp_config_ids = external_mcp_config_ids;
         }
         task.mcp_config = sanitize_task_mcp_config(task.mcp_config);
-        self.validate_task_mcp_config(&task.mcp_config).await?;
+        self.validate_task_mcp_config(&task.mcp_config, current_user)
+            .await?;
         task.updated_at = now_rfc3339();
         Ok(Some(self.store.save_task(task).await?))
     }

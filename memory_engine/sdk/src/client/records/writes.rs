@@ -36,7 +36,8 @@ impl MemoryEngineClient {
                     return Err("tenant_id is required for system-key record deletion".to_string());
                 };
                 let mut query_pairs = vec![("tenant_id", tenant_id)];
-                if let Some(thread_id) = thread_id.map(str::trim).filter(|value| !value.is_empty()) {
+                if let Some(thread_id) = thread_id.map(str::trim).filter(|value| !value.is_empty())
+                {
                     query_pairs.push(("thread_id", thread_id));
                 }
                 self.delete_with_query(

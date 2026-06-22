@@ -1,7 +1,7 @@
 use futures_util::TryStreamExt;
 use mongodb::{
+    bson::{doc, Bson, Document},
     Cursor,
-    bson::{Bson, Document, doc},
 };
 use serde_json::Value;
 

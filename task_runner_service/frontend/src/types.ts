@@ -61,6 +61,11 @@ export interface UserSummaryRecord {
   created_at: string;
   updated_at: string;
   last_login_at?: string | null;
+  principal_type?: 'human_user' | 'agent_account' | string | null;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
+  agent_count?: number | null;
 }
 
 export interface CreateUserPayload {
@@ -131,6 +136,9 @@ export interface TaskRecord {
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
   result_summary?: string | null;
   process_log?: string | null;
   last_run_id?: string | null;
@@ -150,6 +158,9 @@ export interface TaskRecord {
 
 export interface ModelConfigRecord {
   id: string;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
   name: string;
   provider: string;
   base_url: string;
@@ -193,6 +204,9 @@ export interface RemoteServerRecord {
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
   task_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -268,6 +282,9 @@ export interface ExternalMcpConfigRecord {
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -434,6 +451,9 @@ export interface TaskSummaryRecord {
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
   last_run_id?: string | null;
   updated_at: string;
 }

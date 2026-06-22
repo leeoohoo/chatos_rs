@@ -60,6 +60,13 @@ export function ExternalMcpConfigListSection({
       ),
     },
     {
+      title: t('servers.detail.creator'),
+      key: 'creator',
+      width: 160,
+      render: (_, record) =>
+        record.creator_display_name || record.creator_username || record.creator_user_id || '-',
+    },
+    {
       title: t('common.status'),
       dataIndex: 'enabled',
       width: 120,

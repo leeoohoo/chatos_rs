@@ -31,6 +31,8 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
         provider,
         model: doc.get_str("model").ok()?.to_string(),
         thinking_level: doc.get_str("thinking_level").ok().map(|s| s.to_string()),
+        task_usage_scenario: None,
+        task_thinking_level: None,
         api_key: doc.get_str("api_key").ok().map(|s| s.to_string()),
         has_api_key: false,
         base_url: doc.get_str("base_url").ok().map(|s| s.to_string()),
@@ -38,6 +40,7 @@ fn normalize_doc(doc: &Document) -> Option<AiModelConfig> {
         supports_images: doc.get_bool("supports_images").unwrap_or(false),
         supports_reasoning: doc.get_bool("supports_reasoning").unwrap_or(false),
         supports_responses: doc.get_bool("supports_responses").unwrap_or(false),
+        sync_warnings: Vec::new(),
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
     })

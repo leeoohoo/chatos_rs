@@ -8,6 +8,7 @@ mod admin_api;
 mod context_api;
 mod health_api;
 mod jobs_api;
+mod memory_auth;
 mod model_profile_auth;
 mod operator_auth;
 #[cfg(test)]

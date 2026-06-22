@@ -17,9 +17,13 @@ use crate::store::AppStore;
 
 const AGENT_TOKEN_TTL_SECONDS: i64 = 3600;
 
+mod access_token_scope;
 mod current_user;
 mod service;
 mod support;
 
+pub use access_token_scope::{
+    get_current_access_token, spawn_with_current_access_token, with_access_token_scope,
+};
 pub use current_user::CurrentUser;
 pub use service::AuthService;

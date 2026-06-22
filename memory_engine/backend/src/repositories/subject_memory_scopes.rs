@@ -1,9 +1,9 @@
 use futures_util::TryStreamExt;
-use mongodb::bson::{Bson, doc};
+use mongodb::bson::{doc, Bson};
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::{EngineSubjectMemoryScope, UpsertSubjectMemoryScopeRequest, now_rfc3339};
+use crate::models::{now_rfc3339, EngineSubjectMemoryScope, UpsertSubjectMemoryScopeRequest};
 
 pub async fn upsert_subject_memory_scope(
     db: &Db,

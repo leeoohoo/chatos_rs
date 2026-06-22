@@ -73,4 +73,14 @@ describe('aiModelManager helpers', () => {
       api_key: 'new-secret',
     }, { requireApiKey: true })).toBe(true);
   });
+
+  it('lets creates omit concrete model because user_service imports provider models', () => {
+    const formData = {
+      ...toAiModelFormData(buildConfig()),
+      model_name: '  ',
+      api_key: 'new-secret',
+    };
+
+    expect(canSubmitAiModelFormWithOptions(formData, { requireApiKey: true })).toBe(true);
+  });
 });

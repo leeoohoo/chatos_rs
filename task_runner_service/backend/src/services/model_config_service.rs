@@ -6,9 +6,9 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::models::{
-    now_rfc3339, ChatosSyncedModelConfigRequest, CreateModelConfigRequest,
-    ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
-    PreviewModelCatalogRequest, TestModelConfigRequest, UpdateModelConfigRequest,
+    now_rfc3339, ChatosSyncedModelConfigRequest, CreateModelConfigRequest, ModelCatalogResponse,
+    ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PreviewModelCatalogRequest,
+    TestModelConfigRequest, UpdateModelConfigRequest,
 };
 use crate::store::AppStore;
 
@@ -83,14 +83,30 @@ impl ModelConfigService {
         let record = ModelConfigRecord {
             id: input.id.trim().to_string(),
             owner_user_id: normalized_optional(input.owner_user_id),
+            owner_username: existing.as_ref().and_then(|item| {
+                item.owner_username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            }),
+            owner_display_name: existing.as_ref().and_then(|item| {
+                item.owner_display_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            }),
             name: input.name.trim().to_string(),
             provider: provider.clone(),
             base_url: normalize_model_base_url_input(provider.as_str(), Some(input.base_url)),
             api_key: input.api_key.trim().to_string(),
             model: input.model.trim().to_string(),
-            usage_scenario: existing
-                .as_ref()
-                .and_then(|item| item.usage_scenario.clone()),
+            usage_scenario: normalized_optional(input.usage_scenario).or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|item| item.usage_scenario.clone())
+            }),
             temperature: existing.as_ref().and_then(|item| item.temperature),
             max_output_tokens: existing.as_ref().and_then(|item| item.max_output_tokens),
             thinking_level,

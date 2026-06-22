@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, doc};
+use mongodb::bson::{doc, Bson};
 
 use crate::db::Db;
 use crate::models::now_rfc3339;

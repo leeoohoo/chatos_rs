@@ -58,8 +58,12 @@ impl MemoryEngineClient {
                     limit: req.limit,
                     offset: req.offset,
                 };
-                self.send_json(Method::POST, "/summaries/query-by-thread-label", Some(&direct))
-                    .await?
+                self.send_json(
+                    Method::POST,
+                    "/summaries/query-by-thread-label",
+                    Some(&direct),
+                )
+                .await?
             }
             AuthMode::SystemKey { .. } => {
                 self.send_json(

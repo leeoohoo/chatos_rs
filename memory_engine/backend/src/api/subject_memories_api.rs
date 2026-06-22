@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::source_guard;
+use super::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{
     EngineSubjectMemory, MarkSubjectMemoriesRolledUpRequest, MarkSubjectMemoriesRolledUpResponse,
     QuerySubjectMemoriesRequest, UpsertSubjectMemoryRequest,
@@ -27,9 +27,11 @@ pub struct ListSubjectMemoriesQuery {
 
 pub async fn upsert_subject_memory(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path((subject_id, memory_key)): Path<(String, String)>,
     Json(req): Json<UpsertSubjectMemoryRequest>,
 ) -> Result<Json<EngineSubjectMemory>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     subject_memories::upsert_subject_memory(
         &state.pool,
@@ -44,9 +46,11 @@ pub async fn upsert_subject_memory(
 
 pub async fn list_subject_memories(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(subject_id): Path<String>,
     Query(query): Query<ListSubjectMemoriesQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     let items = subject_memories::list_subject_memories(
         &state.pool,
         query.tenant_id.as_str(),
@@ -64,9 +68,11 @@ pub async fn list_subject_memories(
 
 pub async fn mark_subject_memories_rolled_up(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(subject_id): Path<String>,
     Json(req): Json<MarkSubjectMemoriesRolledUpRequest>,
 ) -> Result<Json<MarkSubjectMemoriesRolledUpResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     let marked = subject_memories::mark_subject_memories_rolled_up(
         &state.pool,
@@ -83,8 +89,10 @@ pub async fn mark_subject_memories_rolled_up(
 
 pub async fn query_subject_memories(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Json(req): Json<QuerySubjectMemoriesRequest>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     let items = subject_memories::query_subject_memories(
         &state.pool,
         req.tenant_id.as_str(),

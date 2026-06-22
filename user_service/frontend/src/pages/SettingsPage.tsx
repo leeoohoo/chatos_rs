@@ -28,7 +28,7 @@ export function SettingsPage() {
         type="info"
         showIcon
         message="当前实现说明"
-        description="这版用户微服务已经实现统一用户、Agent 账号和 Task Runner token exchange 的主链路。JWKS 和下游 task_runner/chatos 的完全接入还需要下一步继续改造。"
+        description="这版用户微服务负责统一用户、Agent 账号和共享模型配置。Task Runner 的短期访问凭证由 chatos 后端按需自动换取，用户不需要手动生成。"
       />
 
       <Card title="当前登录用户" loading={currentUserQuery.isLoading}>

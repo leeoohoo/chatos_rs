@@ -34,8 +34,10 @@ pub(in crate::api) async fn system_config_handler(
 
 pub(in crate::api) async fn update_system_config_handler(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Json(input): Json<UpdateRuntimeSettingsRequest>,
 ) -> Result<Json<SystemConfigResponse>, ApiError> {
+    require_admin_user(&current_user)?;
     let settings = state
         .task_service
         .update_runtime_settings(input)

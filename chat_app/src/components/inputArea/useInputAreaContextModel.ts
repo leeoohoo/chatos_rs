@@ -101,7 +101,13 @@ export const useInputAreaContextModel = ({
         return t('inputArea.model.selectTitle');
       }
       const modelName = effectiveModelName || selectedModel.model_name;
-      return modelName ? `${selectedModel.name} / ${modelName}` : selectedModel.name;
+      if (!modelName) {
+        return selectedModel.name;
+      }
+      if (selectedModel.name.toLocaleLowerCase().includes(modelName.toLocaleLowerCase())) {
+        return selectedModel.name;
+      }
+      return `${selectedModel.name} / ${modelName}`;
     },
     [effectiveModelName, selectedModel, t],
   );

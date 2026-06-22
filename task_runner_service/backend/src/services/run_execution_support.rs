@@ -15,15 +15,10 @@ impl RunService {
         memory_scope: Option<&MemoryScope>,
     ) -> Option<Value> {
         let scope = memory_scope?;
-        let Some(base_url) = self.config.memory_engine_base_url.clone() else {
+        let Some(client) = self.config.memory_client().ok().flatten() else {
             return None;
         };
-        let composer = MemoryContextComposer::new_direct(
-            base_url,
-            self.config.memory_timeout,
-            self.config.memory_engine_source_id.clone(),
-        )
-        .ok()?;
+        let composer = MemoryContextComposer::from_client(client);
         match composer.compose(scope).await {
             Ok(response) => serde_json::to_value(response).ok(),
             Err(err) => {

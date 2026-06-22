@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::source_guard;
+use super::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{EngineSubjectMemoryScope, UpsertSubjectMemoryScopeRequest};
 use crate::repositories::subject_memory_scopes;
 use crate::state::AppState;
@@ -21,9 +21,11 @@ pub struct ListSubjectMemoryScopesQuery {
 
 pub async fn upsert_subject_memory_scope(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(scope_key): Path<String>,
     Json(req): Json<UpsertSubjectMemoryScopeRequest>,
 ) -> Result<Json<EngineSubjectMemoryScope>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     subject_memory_scopes::upsert_subject_memory_scope(&state.pool, scope_key.as_str(), req)
         .await
@@ -33,11 +35,13 @@ pub async fn upsert_subject_memory_scope(
 
 pub async fn list_subject_memory_scopes(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Query(query): Query<ListSubjectMemoryScopesQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let items = subject_memory_scopes::list_active_subject_memory_scopes(
         &state.pool,
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_id.as_deref(),
         query.limit.unwrap_or(200),
     )

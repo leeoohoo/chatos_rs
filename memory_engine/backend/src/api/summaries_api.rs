@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::source_guard;
+use super::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{
     EngineSummary, GetThreadActiveSummaryStatusRequest, ListSummariesByThreadLabelRequest,
     MarkSummariesSubjectMemoryRequest, MarkSummariesSubjectMemoryResponse,
@@ -38,9 +38,11 @@ pub struct ThreadScopeQuery {
 
 pub async fn run_thread_summary(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Json(req): Json<RunThreadSummaryRequest>,
 ) -> Result<Json<RunThreadSummaryResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     summary::run_thread_summary(
         &state.config,
@@ -56,9 +58,11 @@ pub async fn run_thread_summary(
 
 pub async fn run_thread_repair_summary(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Json(req): Json<RunThreadRepairSummaryRequest>,
 ) -> Result<Json<RunThreadRepairSummaryResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     summary::run_thread_repair_summary(
         &state.config,
@@ -74,13 +78,15 @@ pub async fn run_thread_repair_summary(
 
 pub async fn list_thread_summaries(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<ListSummariesQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let items: Vec<EngineSummary> = summaries::list_thread_summaries(
         &state.pool,
         thread_id.as_str(),
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_id.as_deref(),
         query.summary_type.as_deref(),
         query.status.as_deref(),
@@ -95,8 +101,10 @@ pub async fn list_thread_summaries(
 
 pub async fn list_summaries_by_thread_label(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Json(req): Json<ListSummariesByThreadLabelRequest>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     let items = summaries::list_summaries_by_thread_label(
         &state.pool,
         req.tenant_id.as_str(),
@@ -116,9 +124,11 @@ pub async fn list_summaries_by_thread_label(
 
 pub async fn upsert_thread_summary(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path((thread_id, summary_id)): Path<(String, String)>,
     Json(req): Json<UpsertThreadSummaryRequest>,
 ) -> Result<Json<EngineSummary>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     summaries::upsert_thread_summary(&state.pool, thread_id.as_str(), summary_id.as_str(), req)
         .await
@@ -128,9 +138,11 @@ pub async fn upsert_thread_summary(
 
 pub async fn run_thread_active_summary(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Json(req): Json<RunThreadActiveSummaryRequest>,
 ) -> Result<Json<RunThreadActiveSummaryResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     summary::run_thread_active_summary(
         &state.config,
@@ -147,9 +159,11 @@ pub async fn run_thread_active_summary(
 
 pub async fn get_thread_active_summary_status(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<GetThreadActiveSummaryStatusRequest>,
 ) -> Result<Json<RunThreadActiveSummaryResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, query.source_id.as_str()).await?;
     summary::get_thread_active_summary_status(&state.pool, thread_id.as_str(), query)
         .await
@@ -159,9 +173,11 @@ pub async fn get_thread_active_summary_status(
 
 pub async fn delete_thread_summary(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path((thread_id, summary_id)): Path<(String, String)>,
     Query(query): Query<ThreadScopeQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, query.source_id.as_str()).await?;
     let reset_records = summaries::delete_thread_summary(
         &state.pool,
@@ -177,9 +193,11 @@ pub async fn delete_thread_summary(
 
 pub async fn mark_subject_memory_summarized(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Json(req): Json<MarkSummariesSubjectMemoryRequest>,
 ) -> Result<Json<MarkSummariesSubjectMemoryResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     let marked = summaries::mark_summaries_subject_memory_summarized(
         &state.pool,
         req.tenant_id.as_str(),

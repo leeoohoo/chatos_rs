@@ -23,6 +23,18 @@ export interface CurrentUserResponse {
   user: AuthUser;
 }
 
+export interface UserSummaryRecord {
+  id: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string | null;
+  agent_count: number;
+}
+
 const AUTH_TOKEN_STORAGE_KEY = 'user_service_auth_token';
 const AUTH_CHANGED_EVENT = 'user-service-auth-changed';
 
@@ -120,6 +132,7 @@ export const userServiceApi = {
       body: JSON.stringify(payload),
     }),
   currentUser: () => request<CurrentUserResponse>('/api/auth/me'),
+  listUsers: () => request<UserSummaryRecord[]>('/api/users'),
   logout: () =>
     request<void>('/api/auth/logout', {
       method: 'POST',

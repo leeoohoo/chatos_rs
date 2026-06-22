@@ -84,7 +84,8 @@ pub async fn run_thread_active_summary(
         &ctx,
         THREAD_DIRECT_TRIGGER,
     )
-    .await {
+    .await
+    {
         Ok(job_run) => job_run,
         Err(err) if err.contains("slot already occupied") => {
             if let Some(existing_job) =

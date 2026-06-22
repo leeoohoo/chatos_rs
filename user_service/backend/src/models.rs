@@ -66,6 +66,8 @@ pub struct UserModelConfigRecord {
     pub provider: String,
     pub model: String,
     pub thinking_level: Option<String>,
+    pub task_usage_scenario: Option<String>,
+    pub task_thinking_level: Option<String>,
     pub api_key: Option<String>,
     #[serde(default)]
     pub has_api_key: bool,
@@ -79,9 +81,33 @@ pub struct UserModelConfigRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserModelProviderRecord {
+    pub id: String,
+    pub owner_user_id: String,
+    pub name: String,
+    pub provider: String,
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub has_api_key: bool,
+    pub base_url: Option<String>,
+    pub enabled: bool,
+    pub supports_images: bool,
+    pub supports_reasoning: bool,
+    pub supports_responses: bool,
+    pub last_sync_status: Option<String>,
+    pub last_sync_error: Option<String>,
+    pub last_synced_at: Option<String>,
+    #[serde(default)]
+    pub imported_model_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserModelSettingsRecord {
     pub user_id: String,
     pub memory_summary_model_config_id: Option<String>,
+    pub memory_summary_thinking_level: Option<String>,
     pub updated_at: String,
 }
 
@@ -116,6 +142,29 @@ pub struct LoginResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrentUserResponse {
     pub user: AuthUser,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifiedPrincipal {
+    pub sub: String,
+    pub jti: String,
+    pub exp: usize,
+    pub principal_type: String,
+    pub user_id: Option<String>,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub agent_account_id: Option<String>,
+    pub owner_user_id: Option<String>,
+    pub owner_username: Option<String>,
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenVerifyResponse {
+    pub principal: VerifiedPrincipal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +213,22 @@ pub struct CreateUserModelConfigRequest {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
+    pub task_usage_scenario: Option<String>,
+    pub task_thinking_level: Option<String>,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub enabled: Option<bool>,
+    pub supports_images: Option<bool>,
+    pub supports_reasoning: Option<bool>,
+    pub supports_responses: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateUserModelProviderRequest {
+    pub id: Option<String>,
+    pub owner_user_id: Option<String>,
+    pub name: String,
+    pub provider: Option<String>,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
@@ -178,6 +243,21 @@ pub struct UpdateUserModelConfigRequest {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
+    pub task_usage_scenario: Option<String>,
+    pub task_thinking_level: Option<String>,
+    pub api_key: Option<String>,
+    pub clear_api_key: Option<bool>,
+    pub base_url: Option<String>,
+    pub enabled: Option<bool>,
+    pub supports_images: Option<bool>,
+    pub supports_reasoning: Option<bool>,
+    pub supports_responses: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateUserModelProviderRequest {
+    pub name: Option<String>,
+    pub provider: Option<String>,
     pub api_key: Option<String>,
     pub clear_api_key: Option<bool>,
     pub base_url: Option<String>,
@@ -191,6 +271,7 @@ pub struct UpdateUserModelConfigRequest {
 pub struct UpdateUserModelSettingsRequest {
     pub user_id: Option<String>,
     pub memory_summary_model_config_id: Option<String>,
+    pub memory_summary_thinking_level: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

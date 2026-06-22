@@ -11,7 +11,6 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
                     "status": { "type": "string", "enum": task_status_values() },
                     "keyword": { "type": "string" },
                     "tag": { "type": "string" },
-                    "model_config_id": { "type": "string" },
                     "scheduled_only": { "type": "boolean" },
                     "parent_task_id": { "type": "string" },
                     "source_run_id": { "type": "string" },

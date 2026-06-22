@@ -2,7 +2,7 @@ use mongodb::bson::doc;
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::{EngineSubject, UpsertSubjectRequest, now_rfc3339};
+use crate::models::{now_rfc3339, EngineSubject, UpsertSubjectRequest};
 
 pub async fn upsert_subject(
     db: &Db,

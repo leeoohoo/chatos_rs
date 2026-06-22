@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
-    AgentAccountListItem, AgentAccountRecord, UserModelConfigRecord, UserModelSettingsRecord,
-    UserRecord, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    AgentAccountListItem, AgentAccountRecord, UserModelConfigRecord, UserModelProviderRecord,
+    UserModelSettingsRecord, UserRecord, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
 
@@ -20,6 +20,7 @@ pub struct AppStore {
     agent_accounts: Collection<AgentAccountRecord>,
     revoked_tokens: Collection<RevokedTokenRecord>,
     user_model_configs: Collection<UserModelConfigRecord>,
+    user_model_providers: Collection<UserModelProviderRecord>,
     user_model_settings: Collection<UserModelSettingsRecord>,
 }
 
@@ -38,6 +39,7 @@ impl AppStore {
             agent_accounts: db.collection("agent_accounts"),
             revoked_tokens: db.collection("revoked_tokens"),
             user_model_configs: db.collection("user_model_configs"),
+            user_model_providers: db.collection("user_model_providers"),
             user_model_settings: db.collection("user_model_settings"),
         }
     }
@@ -51,6 +53,8 @@ impl AppStore {
         self.create_index(&self.agent_accounts, "owner_user_id")
             .await?;
         self.create_index(&self.user_model_configs, "owner_user_id")
+            .await?;
+        self.create_index(&self.user_model_providers, "owner_user_id")
             .await?;
         self.create_unique_index(&self.user_model_settings, "user_id")
             .await?;
@@ -114,6 +118,30 @@ impl AppStore {
             .map(str::trim)
             .is_some_and(|value| !value.is_empty());
         Ok(config)
+    }
+
+    fn decrypt_user_model_provider(
+        mut provider: UserModelProviderRecord,
+    ) -> UserModelProviderRecord {
+        provider.has_api_key = provider
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        provider.api_key = Self::decrypt_optional_secret_lossy(provider.api_key);
+        provider
+    }
+
+    fn encrypt_user_model_provider(
+        mut provider: UserModelProviderRecord,
+    ) -> Result<UserModelProviderRecord, String> {
+        provider.api_key = encrypt_optional_secret(provider.api_key)?;
+        provider.has_api_key = provider
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        Ok(provider)
     }
 
     pub async fn ensure_default_super_admin(&self, config: &AppConfig) -> Result<(), String> {
@@ -479,9 +507,71 @@ impl AppStore {
         self.user_model_settings
             .update_many(
                 doc! { "memory_summary_model_config_id": id },
-                doc! { "$set": { "memory_summary_model_config_id": Bson::Null } },
+                doc! { "$set": {
+                    "memory_summary_model_config_id": Bson::Null,
+                    "memory_summary_thinking_level": Bson::Null,
+                } },
                 None,
             )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.deleted_count > 0)
+    }
+
+    pub async fn list_user_model_providers(
+        &self,
+        owner_user_id: Option<&str>,
+    ) -> Result<Vec<UserModelProviderRecord>, String> {
+        let filter = owner_user_id.map(|owner| doc! { "owner_user_id": owner });
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1, "created_at": -1 })
+            .build();
+        let rows: Vec<UserModelProviderRecord> = self
+            .user_model_providers
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(Self::decrypt_user_model_provider)
+            .collect())
+    }
+
+    pub async fn find_user_model_provider_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<UserModelProviderRecord>, String> {
+        let row = self
+            .user_model_providers
+            .find_one(doc! { "id": id }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(row.map(Self::decrypt_user_model_provider))
+    }
+
+    pub async fn save_user_model_provider(
+        &self,
+        provider: &UserModelProviderRecord,
+    ) -> Result<UserModelProviderRecord, String> {
+        let stored = Self::encrypt_user_model_provider(provider.clone())?;
+        self.user_model_providers
+            .update_one(
+                doc! { "id": &stored.id },
+                to_set_document(&stored)?,
+                UpdateOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(Self::decrypt_user_model_provider(stored))
+    }
+
+    pub async fn delete_user_model_provider(&self, id: &str) -> Result<bool, String> {
+        let result = self
+            .user_model_providers
+            .delete_one(doc! { "id": id }, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(result.deleted_count > 0)

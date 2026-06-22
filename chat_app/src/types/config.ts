@@ -45,12 +45,43 @@ export interface AiModelConfig {
   has_api_key: boolean;
   model_name: string;
   thinking_level?: string;
+  task_usage_scenario?: string | null;
+  task_thinking_level?: string | null;
   enabled: boolean;
   supports_images: boolean;
   supports_reasoning: boolean;
   supports_responses: boolean;
+  sync_warnings?: string[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AiModelProvider {
+  id: string;
+  name: string;
+  provider: string;
+  base_url: string;
+  api_key: string;
+  has_api_key: boolean;
+  enabled: boolean;
+  supports_images: boolean;
+  supports_reasoning: boolean;
+  supports_responses: boolean;
+  last_sync_status?: string | null;
+  last_sync_error?: string | null;
+  last_synced_at?: string | null;
+  imported_model_count: number;
+  sync_warnings?: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AiModelSettings {
+  user_id: string;
+  memory_summary_model_config_id?: string | null;
+  memory_summary_thinking_level?: string | null;
+  updated_at?: string;
+  sync_warnings?: string[];
 }
 
 export interface AgentConfig {

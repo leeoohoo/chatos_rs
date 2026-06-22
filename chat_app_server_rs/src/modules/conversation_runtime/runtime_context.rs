@@ -258,7 +258,9 @@ async fn build_contact_task_runner_runtime(
         }
     };
 
-    let token = if let Some(agent_account_id) = config.agent_account_id.as_deref() {
+    let (token, user_access_token) = if let Some(agent_account_id) =
+        config.agent_account_id.as_deref()
+    {
         let Some(user_service_base_url) = Config::try_get()
             .ok()
             .and_then(|cfg| cfg.user_service_base_url.clone())
@@ -276,10 +278,10 @@ async fn build_contact_task_runner_runtime(
             );
             return None;
         };
-        match task_runner_api_client::exchange_task_runner_token_via_user_service(
+        let agent_token = match task_runner_api_client::exchange_task_runner_token_via_user_service(
             &task_runner_api_client::UserServiceTaskRunnerExchange {
                 base_url: user_service_base_url,
-                access_token,
+                access_token: access_token.clone(),
                 task_runner_agent_account_id: agent_account_id.to_string(),
                 contact_id: Some(config.contact_id.clone()),
             },
@@ -294,31 +296,22 @@ async fn build_contact_task_runner_runtime(
                 );
                 return None;
             }
-        }
+        };
+        (agent_token, access_token)
     } else {
-        match task_runner_api_client::exchange_agent_token(
-            &task_runner_api_client::TaskRunnerAgentCredentials {
-                base_url: config.base_url.clone(),
-                username: config.username.clone(),
-                password: config.password.clone(),
-                contact_id: Some(config.contact_id.clone()),
-            },
-        )
-        .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    "exchange task runner agent token failed: contact_id={} detail={}",
-                    config.contact_id, err
-                );
-                return None;
-            }
-        }
+        warn!(
+            "task runner runtime skipped: contact_id={} missing user_service agent account mapping",
+            config.contact_id
+        );
+        return None;
     };
 
     let mut headers = HashMap::new();
     headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+    headers.insert(
+        "X-Chatos-User-Authorization".to_string(),
+        format!("Bearer {user_access_token}"),
+    );
     headers.insert(
         "X-Task-Runner-Tool-Profile".to_string(),
         "chatos_async_planner".to_string(),

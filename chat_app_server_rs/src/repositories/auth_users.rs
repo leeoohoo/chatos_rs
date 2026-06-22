@@ -1,6 +1,5 @@
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 
 use crate::repositories::db::with_db;
@@ -12,12 +11,6 @@ pub struct AuthUserRecord {
     pub role: String,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CreateUserResult {
-    Created,
-    AlreadyExists,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -39,12 +32,6 @@ impl AuthUserRow {
             updated_at: self.updated_at,
         }
     }
-}
-
-pub fn hash_password(password: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(password.as_bytes());
-    format!("{:x}", hasher.finalize())
 }
 
 pub async fn get_user_by_id(user_id: &str) -> Result<Option<AuthUserRecord>, String> {
@@ -78,21 +65,6 @@ pub async fn get_user_by_id(user_id: &str) -> Result<Option<AuthUserRecord>, Str
         },
     )
     .await
-}
-
-pub async fn verify_user_password(
-    user_id: &str,
-    password: &str,
-) -> Result<Option<AuthUserRecord>, String> {
-    let Some(user) = get_user_by_id(user_id).await? else {
-        return Ok(None);
-    };
-
-    if user.password_hash == hash_password(password) {
-        Ok(Some(user))
-    } else {
-        Ok(None)
-    }
 }
 
 pub async fn upsert_user(user: &AuthUserRecord) -> Result<(), String> {
@@ -141,53 +113,6 @@ pub async fn upsert_user(user: &AuthUserRecord) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
                 Ok(())
-            })
-        },
-    )
-    .await
-}
-
-pub async fn create_user(user: &AuthUserRecord) -> Result<CreateUserResult, String> {
-    let user = user.clone();
-
-    with_db(
-        |db| {
-            let user = user.clone();
-            Box::pin(async move {
-                match db.collection::<AuthUserRecord>("auth_users").insert_one(user, None).await {
-                    Ok(_) => Ok(CreateUserResult::Created),
-                    Err(err) => {
-                        if err.to_string().contains("E11000") {
-                            return Ok(CreateUserResult::AlreadyExists);
-                        }
-                        Err(err.to_string())
-                    }
-                }
-            })
-        },
-        |pool| {
-            let user = user.clone();
-            Box::pin(async move {
-                match sqlx::query(
-                    "INSERT INTO auth_users (user_id, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(&user.user_id)
-                .bind(&user.password_hash)
-                .bind(&user.role)
-                .bind(&user.created_at)
-                .bind(&user.updated_at)
-                .execute(pool)
-                .await
-                {
-                    Ok(_) => Ok(CreateUserResult::Created),
-                    Err(err) => {
-                        let message = err.to_string();
-                        if message.contains("UNIQUE constraint failed") {
-                            return Ok(CreateUserResult::AlreadyExists);
-                        }
-                        Err(message)
-                    }
-                }
             })
         },
     )

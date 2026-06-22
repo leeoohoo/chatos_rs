@@ -15,7 +15,10 @@ use super::prerequisite_context::{
 };
 use super::status_display::TaskStatusExt;
 use super::workspace_mcp::ensure_effective_task_workspace_dir;
-use super::{is_terminal_run_status, normalized_optional, RunService, TaskService};
+use super::{
+    is_terminal_run_status, normalized_optional, save_task_if_tenant_aligned, RunService,
+    TaskService,
+};
 
 mod completion;
 mod dependency_runs;

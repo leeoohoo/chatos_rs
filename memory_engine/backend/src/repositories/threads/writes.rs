@@ -1,8 +1,8 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 
 use crate::db::Db;
 use crate::models::{
-    DeleteThreadResponse, EngineThread, UpsertThreadRequest, now_plus_seconds_rfc3339, now_rfc3339,
+    now_plus_seconds_rfc3339, now_rfc3339, DeleteThreadResponse, EngineThread, UpsertThreadRequest,
 };
 use crate::repositories::records;
 

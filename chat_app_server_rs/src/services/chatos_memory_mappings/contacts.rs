@@ -14,8 +14,6 @@ pub struct ContactTaskRunnerRuntimeConfig {
     pub contact_id: String,
     pub base_url: String,
     pub agent_account_id: Option<String>,
-    pub username: String,
-    pub password: String,
 }
 
 pub async fn list_memory_contacts(
@@ -67,9 +65,7 @@ pub async fn get_contact_task_runner_runtime_config(
         return Ok(None);
     };
     let agent_account_id = normalize_non_empty(contact.task_runner_agent_account_id.as_deref());
-    let username = normalize_non_empty(contact.task_runner_username.as_deref()).unwrap_or_default();
-    let password = normalize_non_empty(contact.task_runner_password.as_deref()).unwrap_or_default();
-    if agent_account_id.is_none() && (username.is_empty() || password.is_empty()) {
+    if agent_account_id.is_none() {
         return Ok(None);
     }
 
@@ -77,8 +73,6 @@ pub async fn get_contact_task_runner_runtime_config(
         contact_id: contact.id,
         base_url,
         agent_account_id,
-        username,
-        password,
     }))
 }
 

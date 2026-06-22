@@ -65,8 +65,7 @@ impl MemoryEngineClient {
     ) -> Result<ThreadSnapshotLookupResponse, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id =
-                    require_direct_source_id(source_id, "get_latest_thread_snapshot")?;
+                let source_id = require_direct_source_id(source_id, "get_latest_thread_snapshot")?;
                 self.send_json::<ThreadSnapshotLookupResponse, _>(
                     Method::GET,
                     &format!(
@@ -106,8 +105,7 @@ impl MemoryEngineClient {
     ) -> Result<ThreadSnapshotLookupResponse, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id =
-                    require_direct_source_id(source_id, "get_thread_snapshot_by_turn")?;
+                let source_id = require_direct_source_id(source_id, "get_thread_snapshot_by_turn")?;
                 self.send_json::<ThreadSnapshotLookupResponse, _>(
                     Method::GET,
                     &format!(

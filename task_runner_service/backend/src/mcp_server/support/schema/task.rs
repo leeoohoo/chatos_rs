@@ -3,8 +3,6 @@ use serde_json::{json, Value};
 use crate::models::{mcp_builtin_kind_guide, mcp_builtin_kind_values};
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies};
 
-use super::generic_task_model_config_description;
-
 pub(crate) fn create_task_schema() -> Value {
     let enabled_builtin_kinds_description = builtin_mcp_kind_schema_description();
     json!({
@@ -16,10 +14,6 @@ pub(crate) fn create_task_schema() -> Value {
             "input_payload": { "description": "任务输入数据。可以放结构化 JSON、引用信息或执行所需材料。" },
             "priority": { "type": "integer", "description": "任务优先级，数字越大优先级越高。" },
             "tags": { "type": "array", "items": { "type": "string" }, "description": "任务标签。" },
-            "default_model_config_id": {
-                "type": "string",
-                "description": generic_task_model_config_description(false)
-            },
             "schedule": { "type": "object", "description": "任务调度配置；不需要定时或延迟执行时不要传。" },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "enabled_builtin_kinds": {
@@ -45,10 +39,6 @@ pub(crate) fn update_task_schema() -> Value {
             "status": { "type": "string", "enum": task_status_values() },
             "priority": { "type": "integer" },
             "tags": { "type": "array", "items": { "type": "string" } },
-            "default_model_config_id": {
-                "type": "string",
-                "description": generic_task_model_config_description(true)
-            },
             "schedule": { "type": "object" },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "mcp_config": task_mcp_config_schema()
@@ -88,10 +78,6 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
-                        "default_model_config_id": {
-                            "type": "string",
-                            "description": generic_task_model_config_description(false)
-                        },
                         "schedule": { "type": "object" },
                         "enabled_builtin_kinds": {
                             "type": "array",

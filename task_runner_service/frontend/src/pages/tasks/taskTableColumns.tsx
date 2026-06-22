@@ -14,6 +14,7 @@ import {
   isSchedulerOnlyTask,
   statusColorMap,
   taskCreatorLabel,
+  taskOwnerLabel,
   type TaskRemoteOperationStats,
   type TaskRemoteOperationView,
 } from './taskPageUtils';
@@ -131,6 +132,12 @@ export function buildTaskTableColumns({
       dataIndex: 'creator_display_name',
       width: 150,
       render: (_, record) => taskCreatorLabel(record),
+    },
+    {
+      title: t('tasks.column.owner'),
+      dataIndex: 'owner_display_name',
+      width: 170,
+      render: (_, record) => taskOwnerLabel(record),
     },
     {
       title: t('tasks.column.model'),

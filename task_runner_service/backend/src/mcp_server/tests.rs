@@ -1,12 +1,16 @@
 use super::chatos_async_planner;
 use super::support::{
-    agent_tool_allowed, create_task_schema, normalize_mcp_builtin_kind_names,
+    agent_tool_allowed, create_task_schema, enrich_tool_schemas_with_model_configs,
+    filter_model_configs_for_user, model_configs_for_user, normalize_mcp_builtin_kind_names,
     task_mcp_config_schema,
 };
 use super::{McpRequestContext, McpToolProfile};
+use crate::auth::CurrentUser;
 use crate::models::{
-    CreateTaskRequest, TaskMcpConfig, TaskScheduleMode, TaskStatus, UpdateTaskRequest,
+    CreateTaskRequest, ModelConfigRecord, TaskMcpConfig, TaskScheduleMode, TaskStatus,
+    UpdateTaskRequest, UserRole,
 };
+use serde_json::json;
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -20,6 +24,7 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(!properties.contains_key("subject_id"));
     assert!(!properties.contains_key("status"));
     assert!(!properties.contains_key("mcp_config"));
+    assert!(!properties.contains_key("default_model_config_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
 
     let kind_enum = properties
@@ -65,6 +70,53 @@ fn normalizes_code_maintainer_write_with_required_read_kind() {
 #[test]
 fn external_mcp_tools_hide_internal_process_recorder() {
     assert!(!agent_tool_allowed("record_task_process"));
+    assert!(!agent_tool_allowed("list_model_configs"));
+    assert!(!agent_tool_allowed("get_model_config"));
+}
+
+#[test]
+fn mcp_model_list_is_strictly_scoped_to_current_owner() {
+    let current_user = admin_user("user-1");
+    let models = vec![
+        model_config("own-enabled", "user-1", true),
+        model_config("other-enabled", "user-2", true),
+        model_config("own-disabled", "user-1", false),
+    ];
+
+    let visible = model_configs_for_user(models, &current_user);
+
+    assert_eq!(visible.len(), 1);
+    assert_eq!(
+        visible[0].get("id").and_then(|value| value.as_str()),
+        Some("own-enabled")
+    );
+    assert_eq!(
+        visible[0].get("api_key").and_then(|value| value.as_str()),
+        Some("")
+    );
+}
+
+#[test]
+fn mcp_tool_schema_does_not_expose_model_config_ids() {
+    let current_user = admin_user("user-1");
+    let models = vec![
+        model_config("own-enabled", "user-1", true),
+        model_config("other-enabled", "user-2", true),
+        model_config("own-disabled", "user-1", false),
+    ];
+    let visible_models = filter_model_configs_for_user(models, &current_user);
+    let mut tools = vec![json!({
+        "name": "create_task",
+        "inputSchema": create_task_schema(),
+    })];
+
+    enrich_tool_schemas_with_model_configs(&mut tools, &visible_models);
+    let properties = tools[0]
+        .pointer("/inputSchema/properties")
+        .and_then(|value| value.as_object())
+        .expect("properties");
+
+    assert!(!properties.contains_key("default_model_config_id"));
 }
 
 #[test]
@@ -134,8 +186,8 @@ fn async_planner_update_task_cannot_change_status() {
 }
 
 #[test]
-fn async_planner_tasks_require_model_and_builtin_kinds() {
-    let missing_model = CreateTaskRequest {
+fn async_planner_tasks_require_builtin_kinds_but_not_model_id() {
+    let missing_model_id = CreateTaskRequest {
         title: "task".to_string(),
         description: None,
         objective: "objective".to_string(),
@@ -153,7 +205,7 @@ fn async_planner_tasks_require_model_and_builtin_kinds() {
         }),
         prerequisite_task_ids: None,
     };
-    assert!(chatos_async_planner::ensure_planner_required_fields(&missing_model).is_err());
+    assert!(chatos_async_planner::ensure_planner_required_fields(&missing_model_id).is_ok());
 
     let missing_builtin_kinds = CreateTaskRequest {
         default_model_config_id: Some("model-1".to_string()),
@@ -161,7 +213,7 @@ fn async_planner_tasks_require_model_and_builtin_kinds() {
             enabled_builtin_kinds: Vec::new(),
             ..TaskMcpConfig::default()
         }),
-        ..missing_model.clone()
+        ..missing_model_id.clone()
     };
     assert!(chatos_async_planner::ensure_planner_required_fields(&missing_builtin_kinds).is_err());
 
@@ -171,7 +223,7 @@ fn async_planner_tasks_require_model_and_builtin_kinds() {
             enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
             ..TaskMcpConfig::default()
         }),
-        ..missing_model
+        ..missing_model_id
     };
     assert!(chatos_async_planner::ensure_planner_required_fields(&valid).is_ok());
 }
@@ -233,5 +285,43 @@ fn valid_planner_create_request() -> CreateTaskRequest {
             ..TaskMcpConfig::default()
         }),
         prerequisite_task_ids: None,
+    }
+}
+
+fn admin_user(owner_user_id: &str) -> CurrentUser {
+    CurrentUser {
+        id: owner_user_id.to_string(),
+        username: format!("{owner_user_id}-name"),
+        display_name: format!("{owner_user_id} name"),
+        role: UserRole::Admin,
+        owner_user_id: Some(owner_user_id.to_string()),
+        owner_username: Some(format!("{owner_user_id}-name")),
+        owner_display_name: Some(format!("{owner_user_id} name")),
+    }
+}
+
+fn model_config(id: &str, owner_user_id: &str, enabled: bool) -> ModelConfigRecord {
+    ModelConfigRecord {
+        id: id.to_string(),
+        owner_user_id: Some(owner_user_id.to_string()),
+        owner_username: Some(format!("{owner_user_id}-name")),
+        owner_display_name: Some(format!("{owner_user_id} name")),
+        name: id.to_string(),
+        provider: "openai".to_string(),
+        base_url: "https://api.example.test/v1".to_string(),
+        api_key: format!("{id}-key"),
+        model: format!("{id}-model"),
+        usage_scenario: Some(format!("{id} usage")),
+        temperature: None,
+        max_output_tokens: None,
+        thinking_level: None,
+        supports_responses: true,
+        instructions: None,
+        request_cwd: None,
+        include_prompt_cache_retention: false,
+        request_body_limit_bytes: None,
+        enabled,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
     }
 }

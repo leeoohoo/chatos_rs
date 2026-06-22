@@ -7,9 +7,7 @@ use crate::models::{
 };
 
 use super::transport::{append_optional_i64_query, append_optional_query};
-use super::{
-    optional_direct_source_id, require_direct_source_id, AuthMode, MemoryEngineClient,
-};
+use super::{optional_direct_source_id, require_direct_source_id, AuthMode, MemoryEngineClient};
 
 impl MemoryEngineClient {
     pub async fn upsert_thread(
@@ -112,7 +110,11 @@ impl MemoryEngineClient {
             AuthMode::Direct { source_id } => {
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", tenant_id);
-                append_optional_query(&mut query, "source_id", optional_direct_source_id(source_id));
+                append_optional_query(
+                    &mut query,
+                    "source_id",
+                    optional_direct_source_id(source_id),
+                );
                 let full_path = if query.is_empty() {
                     format!("/threads/{}", urlencoding::encode(thread_id))
                 } else {
@@ -146,7 +148,11 @@ impl MemoryEngineClient {
             AuthMode::Direct { source_id } => {
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", Some(req.tenant_id.as_str()));
-                append_optional_query(&mut query, "source_id", optional_direct_source_id(source_id));
+                append_optional_query(
+                    &mut query,
+                    "source_id",
+                    optional_direct_source_id(source_id),
+                );
                 append_optional_query(&mut query, "subject_id", req.subject_id.as_deref());
                 append_optional_query(
                     &mut query,
@@ -157,11 +163,7 @@ impl MemoryEngineClient {
                 append_optional_query(&mut query, "contact_id", req.contact_id.as_deref());
                 append_optional_query(&mut query, "project_id", req.project_id.as_deref());
                 append_optional_query(&mut query, "agent_id", req.agent_id.as_deref());
-                append_optional_query(
-                    &mut query,
-                    "mapping_source",
-                    req.mapping_source.as_deref(),
-                );
+                append_optional_query(&mut query, "mapping_source", req.mapping_source.as_deref());
                 append_optional_query(
                     &mut query,
                     "mapping_version",

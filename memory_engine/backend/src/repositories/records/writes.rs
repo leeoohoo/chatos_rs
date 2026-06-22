@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use mongodb::{
-    bson::{Bson, doc},
+    bson::{doc, Bson},
     options::ReturnDocument,
 };
 use tokio::task::JoinSet;
@@ -321,7 +321,7 @@ pub async fn delete_record_by_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{SummaryQueueDelta, calculate_summary_queue_delta};
+    use super::{calculate_summary_queue_delta, SummaryQueueDelta};
     use crate::models::{EngineRecord, UpsertRecordInput};
     use crate::repositories::records::common::estimate_record_summary_tokens;
 

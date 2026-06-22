@@ -98,20 +98,20 @@ export function createAiModelActions({ set, get, client }: Deps) {
         const existingConfig = get().aiModelConfigs.find((item) => item.id === config.id);
         const method = existingConfig ? 'update' : 'create';
         const provider = config.provider || 'gpt';
-        const thinking_level = provider === 'gpt' ? (config.thinking_level || undefined) : undefined;
         const trimmedApiKey = config.api_key.trim();
         const apiData: AiModelConfigCreatePayload = {
           id: config.id || generateId(),
           name: config.name,
           provider,
-          model: config.model_name,
-          thinking_level,
+          model: config.model_name.trim() || undefined,
           api_key: trimmedApiKey,
           base_url: config.base_url,
           enabled: config.enabled,
           supports_images: config.supports_images === true,
           supports_reasoning: config.supports_reasoning === true,
           supports_responses: config.supports_responses === true,
+          task_usage_scenario: config.task_usage_scenario?.trim() || undefined,
+          task_thinking_level: config.task_thinking_level?.trim() || undefined,
         };
         if (method === 'update') {
           const updateData: AiModelConfigUpdatePayload = {
@@ -119,12 +119,13 @@ export function createAiModelActions({ set, get, client }: Deps) {
             name: apiData.name,
             provider: apiData.provider,
             model: apiData.model,
-            thinking_level: apiData.thinking_level,
             base_url: apiData.base_url,
             enabled: apiData.enabled,
             supports_images: apiData.supports_images,
             supports_reasoning: apiData.supports_reasoning,
             supports_responses: apiData.supports_responses,
+            task_usage_scenario: apiData.task_usage_scenario,
+            task_thinking_level: apiData.task_thinking_level,
           };
           if (trimmedApiKey) {
             updateData.api_key = trimmedApiKey;
@@ -150,6 +151,7 @@ export function createAiModelActions({ set, get, client }: Deps) {
         set((state) => {
           state.error = error instanceof Error ? error.message : 'Failed to update AI model config';
         });
+        throw error;
       }
     },
     deleteAiModelConfig: async (id: string) => {

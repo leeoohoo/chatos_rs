@@ -7,6 +7,7 @@ use tokio::try_join;
 
 use super::error::internal_error;
 use super::queries::{JobRunStatsQuery, JobRunsQuery};
+use crate::api::memory_auth::MemoryAuthContext;
 use crate::models::{DashboardOverviewResponse, EngineJobRun, JobRunsBundleResponse};
 use crate::repositories::{control_plane, sources};
 use crate::state::AppState;
@@ -19,15 +20,17 @@ const JOB_TYPE_ROLLUP: &str = "rollup";
 
 pub async fn list_job_runs(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Query(q): Query<JobRunsQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(q.tenant_id.as_deref())?;
     control_plane::list_job_runs(
         &state.pool,
         q.job_type.as_deref(),
         q.trigger_type.as_deref(),
         q.thread_id.as_deref(),
         q.status.as_deref(),
-        q.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         q.source_id.as_deref(),
         q.limit.unwrap_or(100),
     )
@@ -38,12 +41,14 @@ pub async fn list_job_runs(
 
 pub async fn job_run_stats(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Query(q): Query<JobRunStatsQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(q.tenant_id.as_deref())?;
     control_plane::job_run_stats(
         &state.pool,
         q.job_type.as_deref(),
-        q.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         q.source_id.as_deref(),
         q.since_hours.unwrap_or(24),
     )
@@ -54,14 +59,28 @@ pub async fn job_run_stats(
 
 pub async fn job_runs_bundle(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Query(q): Query<JobRunsQuery>,
 ) -> Result<Json<JobRunsBundleResponse>, (axum::http::StatusCode, String)> {
     let limit = q.limit.unwrap_or(200);
+    let tenant_id = auth.resolve_tenant_scope(q.tenant_id.as_deref())?;
     let (thread_triggers, scheduler_triggers) =
         bundle_trigger_filters(q.job_type.as_deref(), q.trigger_type.as_deref());
     let (thread_runs, scheduler_runs) = try_join!(
-        list_job_run_bucket(&state.pool, &q, thread_triggers.as_slice(), limit),
-        list_job_run_bucket(&state.pool, &q, scheduler_triggers.as_slice(), limit),
+        list_job_run_bucket(
+            &state.pool,
+            &q,
+            tenant_id.as_deref(),
+            thread_triggers.as_slice(),
+            limit
+        ),
+        list_job_run_bucket(
+            &state.pool,
+            &q,
+            tenant_id.as_deref(),
+            scheduler_triggers.as_slice(),
+            limit
+        ),
     )
     .map_err(internal_error)?;
 
@@ -74,6 +93,7 @@ pub async fn job_runs_bundle(
 async fn list_job_run_bucket(
     db: &crate::db::Db,
     query: &JobRunsQuery,
+    tenant_id: Option<&str>,
     trigger_types: &[String],
     limit: i64,
 ) -> Result<Vec<EngineJobRun>, String> {
@@ -89,7 +109,7 @@ async fn list_job_run_bucket(
             Some(trigger_type.as_str()),
             query.thread_id.as_deref(),
             query.status.as_deref(),
-            query.tenant_id.as_deref(),
+            tenant_id,
             query.source_id.as_deref(),
             limit,
         )
@@ -109,14 +129,38 @@ async fn list_job_run_bucket(
 
 pub async fn dashboard_overview(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
 ) -> Result<Json<DashboardOverviewResponse>, (axum::http::StatusCode, String)> {
-    let (source_count, model_count, policy_count, job_stats) = try_join!(
-        sources::count_sources(&state.pool),
-        control_plane::count_model_profiles(&state.pool),
-        control_plane::count_job_policies(&state.pool),
-        control_plane::job_run_stats(&state.pool, None, None, None, 24),
-    )
+    let tenant_id = auth.resolve_tenant_scope(None)?;
+    let owner_user_id = auth.resolve_owner_scope(None)?;
+    let source_count = match tenant_id.as_deref() {
+        Some(tenant_id) => {
+            sources::list_sources(&state.pool, Some(tenant_id), None, None, None, 10_000, 0)
+                .await
+                .map(|items| items.len() as i64)
+        }
+        None => sources::count_sources(&state.pool).await,
+    }
     .map_err(internal_error)?;
+    let model_count = match owner_user_id.as_deref() {
+        Some(owner_user_id) => {
+            control_plane::list_model_profiles_by_owner(&state.pool, owner_user_id)
+                .await
+                .map(|items| items.len() as i64)
+        }
+        None => control_plane::count_model_profiles(&state.pool).await,
+    }
+    .map_err(internal_error)?;
+    let policy_count = if auth.is_super_admin_or_operator() {
+        control_plane::count_job_policies(&state.pool)
+            .await
+            .map_err(internal_error)?
+    } else {
+        0
+    };
+    let job_stats = control_plane::job_run_stats(&state.pool, None, tenant_id.as_deref(), None, 24)
+        .await
+        .map_err(internal_error)?;
 
     Ok(Json(DashboardOverviewResponse {
         source_count,
@@ -131,7 +175,10 @@ fn bundle_trigger_filters(
     requested: Option<&str>,
 ) -> (Vec<String>, Vec<String>) {
     let normalized_job_type = job_type.map(str::trim).filter(|value| !value.is_empty());
-    let scheduler_only_job = matches!(normalized_job_type, Some(JOB_TYPE_SUMMARY | JOB_TYPE_ROLLUP));
+    let scheduler_only_job = matches!(
+        normalized_job_type,
+        Some(JOB_TYPE_SUMMARY | JOB_TYPE_ROLLUP)
+    );
 
     match requested.map(str::trim).filter(|value| !value.is_empty()) {
         None if scheduler_only_job => (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()]),

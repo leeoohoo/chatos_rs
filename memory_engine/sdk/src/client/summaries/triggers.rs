@@ -42,7 +42,10 @@ impl MemoryEngineClient {
                 };
                 self.send_json(
                     Method::POST,
-                    &format!("/sdk/threads/{}/summaries/run", urlencoding::encode(thread_id)),
+                    &format!(
+                        "/sdk/threads/{}/summaries/run",
+                        urlencoding::encode(thread_id)
+                    ),
                     Some(&req),
                 )
                 .await
@@ -65,8 +68,7 @@ impl MemoryEngineClient {
 
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id =
-                    require_direct_source_id(source_id, "run_thread_active_summary")?;
+                let source_id = require_direct_source_id(source_id, "run_thread_active_summary")?;
                 let req = DirectRunThreadActiveSummaryRequest {
                     tenant_id,
                     source_id,
@@ -108,10 +110,8 @@ impl MemoryEngineClient {
     ) -> Result<RunThreadActiveSummaryResponse, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id = require_direct_source_id(
-                    source_id,
-                    "get_thread_active_summary_status",
-                )?;
+                let source_id =
+                    require_direct_source_id(source_id, "get_thread_active_summary_status")?;
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", Some(tenant_id));
                 append_optional_query(&mut query, "source_id", Some(source_id));
@@ -162,8 +162,7 @@ impl MemoryEngineClient {
 
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id =
-                    require_direct_source_id(source_id, "run_thread_repair_summary")?;
+                let source_id = require_direct_source_id(source_id, "run_thread_repair_summary")?;
                 let req = DirectRunThreadRepairSummaryRequest {
                     tenant_id,
                     source_id,

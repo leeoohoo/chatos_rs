@@ -1,4 +1,4 @@
-use mongodb::{Client, Database, options::ClientOptions};
+use mongodb::{options::ClientOptions, Client, Database};
 
 use crate::config::AppConfig;
 

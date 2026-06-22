@@ -57,6 +57,16 @@ pub struct UserSummaryRecord {
     pub created_at: String,
     pub updated_at: String,
     pub last_login_at: Option<String>,
+    #[serde(default)]
+    pub principal_type: Option<String>,
+    #[serde(default)]
+    pub owner_user_id: Option<String>,
+    #[serde(default)]
+    pub owner_username: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
+    pub agent_count: Option<i64>,
 }
 
 impl From<&UserRecord> for UserSummaryRecord {
@@ -70,6 +80,11 @@ impl From<&UserRecord> for UserSummaryRecord {
             created_at: value.created_at.clone(),
             updated_at: value.updated_at.clone(),
             last_login_at: value.last_login_at.clone(),
+            principal_type: Some("task_runner_local_user".to_string()),
+            owner_user_id: None,
+            owner_username: None,
+            owner_display_name: None,
+            agent_count: None,
         }
     }
 }

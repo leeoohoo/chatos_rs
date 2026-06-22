@@ -33,7 +33,7 @@ impl TaskRunnerMcpService {
                         keyword: args.keyword,
                         tag: args.tag,
                         model_config_id: args.model_config_id,
-                        creator_user_id: task_creator_filter(current_user),
+                        creator_user_id: task_creator_filter(current_user)?,
                         scheduled_only: args.scheduled_only,
                         parent_task_id: args.parent_task_id,
                         source_run_id: args.source_run_id,
@@ -68,7 +68,12 @@ impl TaskRunnerMcpService {
                     {
                         return Ok(text_result(task_for_external_mcp(existing)));
                     }
+                    self.ensure_mcp_default_model_config(&mut input, current_user)
+                        .await?;
                     input = planner_root_create_request(input)?;
+                } else {
+                    self.ensure_mcp_default_model_config(&mut input, current_user)
+                        .await?;
                 }
                 let task = self
                     .task_service

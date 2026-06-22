@@ -17,7 +17,9 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, info_span};
 
 use crate::config::Config;
-use crate::core::auth::{access_token_from_headers, resolve_auth_user_from_token, AuthHeaderError};
+use crate::core::auth::{
+    access_token_from_headers, resolve_auth_user_via_user_service, AuthHeaderError,
+};
 use crate::core::websocket_ticket::{consume_websocket_ticket, WebSocketTicketRecord};
 use crate::modules;
 use crate::services::access_token_scope;
@@ -249,8 +251,9 @@ async fn require_auth(
     // 在中间件只解析一次 token，并把登录用户注入 request extensions。
     let (access_token, auth_user) = match access_token_from_headers(req.headers()) {
         Ok(token) => {
-            let auth_user =
-                resolve_auth_user_from_token(token.as_str()).map_err(|err| err.into_response())?;
+            let auth_user = resolve_auth_user_via_user_service(token.as_str())
+                .await
+                .map_err(|err| err.into_response())?;
             (token, auth_user)
         }
         // Browser WebSocket cannot set Authorization headers directly.

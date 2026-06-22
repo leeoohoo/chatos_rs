@@ -3,8 +3,7 @@ use serde::Serialize;
 
 use crate::models::{
     RunPendingRollupsResponse, RunPendingSummariesResponse, RunSubjectMemoryScopesResponse,
-    SdkRunPendingRollupsRequest, SdkRunPendingSummariesRequest,
-    SdkRunSubjectMemoryScopesRequest,
+    SdkRunPendingRollupsRequest, SdkRunPendingSummariesRequest, SdkRunSubjectMemoryScopesRequest,
 };
 
 use super::{optional_direct_source_id, AuthMode, MemoryEngineClient};
@@ -119,8 +118,12 @@ impl MemoryEngineClient {
                     source_id: optional_direct_source_id(source_id),
                     limit,
                 };
-                self.send_json(Method::POST, "/jobs/subject-memory-scopes/run-once", Some(&req))
-                    .await
+                self.send_json(
+                    Method::POST,
+                    "/jobs/subject-memory-scopes/run-once",
+                    Some(&req),
+                )
+                .await
             }
             AuthMode::SystemKey { .. } => {
                 let req = SdkRunSubjectMemoryScopesRequest {

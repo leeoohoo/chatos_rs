@@ -128,11 +128,7 @@ pub fn join_stream_text(current: &str, chunk: &str) -> String {
     join_stream_text_with_min_overlap(current, chunk, 1)
 }
 
-pub fn join_stream_text_with_min_overlap(
-    current: &str,
-    chunk: &str,
-    min_overlap: usize,
-) -> String {
+pub fn join_stream_text_with_min_overlap(current: &str, chunk: &str, min_overlap: usize) -> String {
     if chunk.is_empty() {
         return current.to_string();
     }

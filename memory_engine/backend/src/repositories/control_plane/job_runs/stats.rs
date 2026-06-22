@@ -1,5 +1,5 @@
 use futures_util::TryStreamExt;
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 
 use crate::db::Db;
 
@@ -65,7 +65,7 @@ pub async fn job_run_stats(
 
 #[cfg(test)]
 mod tests {
-    use mongodb::bson::{Bson, Document, doc};
+    use mongodb::bson::{doc, Bson, Document};
 
     use crate::repositories::control_plane::common::doc_i64;
 

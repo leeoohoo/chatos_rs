@@ -1,5 +1,5 @@
 use futures_util::TryStreamExt;
-use mongodb::{Collection, IndexModel, bson::Document, options::IndexOptions};
+use mongodb::{bson::Document, options::IndexOptions, Collection, IndexModel};
 
 fn unique_flag(model: &IndexModel) -> bool {
     model
@@ -112,7 +112,7 @@ pub async fn drop_index_if_exists(
 mod tests {
     use mongodb::bson::doc;
 
-    use super::{IndexModel, IndexOptions, has_equivalent_index};
+    use super::{has_equivalent_index, IndexModel, IndexOptions};
 
     #[test]
     fn equivalent_index_check_ignores_name_when_keys_and_unique_match() {
@@ -135,12 +135,10 @@ mod tests {
 
     #[test]
     fn equivalent_index_check_rejects_unique_mismatch() {
-        let indexes = vec![
-            IndexModel::builder()
-                .keys(doc! {"tenant_id": 1, "source_id": 1})
-                .options(IndexOptions::builder().unique(false).build())
-                .build(),
-        ];
+        let indexes = vec![IndexModel::builder()
+            .keys(doc! {"tenant_id": 1, "source_id": 1})
+            .options(IndexOptions::builder().unique(false).build())
+            .build()];
 
         assert!(!has_equivalent_index(
             &indexes,

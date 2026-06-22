@@ -7,7 +7,9 @@ use crate::db::Db;
 use crate::models::{ComposeContextMeta, ComposeContextRequest, ComposeContextResponse};
 use crate::repositories::{records, threads};
 
-use self::blocks::{build_context_blocks, subject_ids_for_context, subject_memory_subject_ids_for_context};
+use self::blocks::{
+    build_context_blocks, subject_ids_for_context, subject_memory_subject_ids_for_context,
+};
 use self::policy::ResolvedComposeContextPolicy;
 
 pub async fn compose_context(

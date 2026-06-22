@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use chatos_mcp_runtime::{BuiltinMcpPromptLocale, McpExecutor};
 
 use crate::memory_context::MemoryScope;
 use crate::runtime::AiRuntimeOptions;
 use crate::traits::{ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput};
-use crate::turn::{ContextualTurnRequest, RuntimeTurnSpec, message_item, user_text_item};
+use crate::turn::{message_item, user_text_item, ContextualTurnRequest, RuntimeTurnSpec};
 
 use super::{TaskBuiltinMcpPromptMode, TaskBuiltinMcpPromptSnapshot};
 

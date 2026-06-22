@@ -7,7 +7,12 @@ import type {
   AiModelConfigCreatePayload,
   AiModelConfigResponse,
   AiModelConfigUpdatePayload,
+  AiModelProviderCreatePayload,
+  AiModelProviderResponse,
+  AiModelProviderUpdatePayload,
   AiProviderModelsResponse,
+  AiModelSettingsResponse,
+  AiModelSettingsUpdatePayload,
   ActiveSystemContextResponse,
   ApplicationCreatePayload,
   ApplicationResponse,
@@ -50,10 +55,20 @@ export interface ConfigFacade {
   updateMcpConfig(id: string, data: McpConfigUpdatePayload): Promise<McpConfigResponse>;
   deleteMcpConfig(id: string): Promise<{ success?: boolean }>;
   getAiModelConfigs(): Promise<AiModelConfigResponse[]>;
+  getAiModelConfig(id: string, options?: { includeSecret?: boolean }): Promise<AiModelConfigResponse>;
+  getAiModelProviders(): Promise<AiModelProviderResponse[]>;
+  getAiModelProvider(id: string, options?: { includeSecret?: boolean }): Promise<AiModelProviderResponse>;
+  createAiModelProvider(data: AiModelProviderCreatePayload): Promise<AiModelProviderResponse>;
+  updateAiModelProvider(id: string, data: AiModelProviderUpdatePayload): Promise<AiModelProviderResponse>;
+  refreshAiModelProvider(id: string, data: AiModelProviderUpdatePayload): Promise<AiModelProviderResponse>;
+  deleteAiModelProvider(id: string): Promise<{ success?: boolean }>;
   createAiModelConfig(data: AiModelConfigCreatePayload): Promise<AiModelConfigResponse>;
   updateAiModelConfig(id: string, data: AiModelConfigUpdatePayload): Promise<AiModelConfigResponse>;
+  refreshAiModelConfig(id: string, data: AiModelConfigUpdatePayload): Promise<AiModelConfigResponse>;
   deleteAiModelConfig(id: string): Promise<{ success?: boolean }>;
   getAiProviderModels(id: string, options?: { refresh?: boolean }): Promise<AiProviderModelsResponse>;
+  getAiModelSettings(): Promise<AiModelSettingsResponse>;
+  updateAiModelSettings(data: AiModelSettingsUpdatePayload): Promise<AiModelSettingsResponse>;
   getSystemContexts(userId: string): Promise<SystemContextResponse[]>;
   getActiveSystemContext(userId: string): Promise<ActiveSystemContextResponse>;
   createSystemContext(data: SystemContextCreatePayload): Promise<SystemContextResponse>;
@@ -121,17 +136,47 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
   async getAiModelConfigs() {
     return configsApi.getAiModelConfigs(this.getRequestFn());
   },
+  async getAiModelConfig(id, options) {
+    return configsApi.getAiModelConfig(this.getRequestFn(), id, options);
+  },
+  async getAiModelProviders() {
+    return configsApi.getAiModelProviders(this.getRequestFn());
+  },
+  async getAiModelProvider(id, options) {
+    return configsApi.getAiModelProvider(this.getRequestFn(), id, options);
+  },
+  async createAiModelProvider(data) {
+    return configsApi.createAiModelProvider(this.getRequestFn(), data);
+  },
+  async updateAiModelProvider(id, data) {
+    return configsApi.updateAiModelProvider(this.getRequestFn(), id, data);
+  },
+  async refreshAiModelProvider(id, data) {
+    return configsApi.refreshAiModelProvider(this.getRequestFn(), id, data);
+  },
+  async deleteAiModelProvider(id) {
+    return configsApi.deleteAiModelProvider(this.getRequestFn(), id);
+  },
   async createAiModelConfig(data) {
     return configsApi.createAiModelConfig(this.getRequestFn(), data);
   },
   async updateAiModelConfig(id, data) {
     return configsApi.updateAiModelConfig(this.getRequestFn(), id, data);
   },
+  async refreshAiModelConfig(id, data) {
+    return configsApi.refreshAiModelConfig(this.getRequestFn(), id, data);
+  },
   async deleteAiModelConfig(id) {
     return configsApi.deleteAiModelConfig(this.getRequestFn(), id);
   },
   async getAiProviderModels(id, options) {
     return configsApi.getAiProviderModels(this.getRequestFn(), id, options);
+  },
+  async getAiModelSettings() {
+    return configsApi.getAiModelSettings(this.getRequestFn());
+  },
+  async updateAiModelSettings(data) {
+    return configsApi.updateAiModelSettings(this.getRequestFn(), data);
   },
   async getSystemContexts(userId) {
     return configsApi.getSystemContexts(this.getRequestFn(), userId);

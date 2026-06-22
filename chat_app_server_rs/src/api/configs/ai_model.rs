@@ -11,12 +11,13 @@ use crate::core::ai_model_config_access::{
 use crate::core::auth::AuthUser;
 use crate::models::ai_model_config::AiModelConfig;
 use crate::repositories::ai_model_configs;
+use crate::services::access_token_scope;
 use crate::services::user_service_api_client;
 use crate::utils::model_config::{
     default_base_url_for_provider, normalize_provider, normalize_thinking_level,
 };
 
-use super::{AiModelConfigRequest, UserQuery};
+use super::{AiModelConfigRequest, AiModelSettingsRequest, UserQuery};
 
 fn normalize_provider_input(provider: Option<String>) -> Result<String, String> {
     let raw = provider.unwrap_or_else(|| "gpt".to_string());
@@ -89,11 +90,9 @@ fn user_service_timeout_ms() -> i64 {
         .unwrap_or(5000)
 }
 
-fn user_service_access_token_for_auth(auth: &AuthUser) -> Result<String, String> {
-    user_service_api_client::build_user_access_token(
-        auth.user_id.as_str(),
-        Some(auth.role.as_str()),
-    )
+fn user_service_access_token_for_auth(_auth: &AuthUser) -> Result<String, String> {
+    access_token_scope::get_current_access_token()
+        .ok_or_else(|| "current user access token is required".to_string())
 }
 
 fn proxy_status_from_user_service_error(err: &str) -> StatusCode {
@@ -127,6 +126,8 @@ fn from_user_service_model_config(
         provider: normalize_provider(record.provider.as_str()),
         model,
         thinking_level: record.thinking_level,
+        task_usage_scenario: record.task_usage_scenario,
+        task_thinking_level: record.task_thinking_level,
         api_key: record.api_key,
         has_api_key: record.has_api_key,
         base_url: record.base_url,
@@ -134,6 +135,7 @@ fn from_user_service_model_config(
         supports_images: record.supports_images,
         supports_reasoning: record.supports_reasoning,
         supports_responses: record.supports_responses,
+        sync_warnings: record.sync_warnings,
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
@@ -153,6 +155,8 @@ fn to_user_service_create_request(
         provider: req.provider,
         model: normalize_optional_input(req.model),
         thinking_level: normalize_optional_input(req.thinking_level),
+        task_usage_scenario: normalize_optional_input(req.task_usage_scenario),
+        task_thinking_level: normalize_optional_input(req.task_thinking_level),
         api_key: normalize_optional_input(req.api_key),
         base_url: normalize_optional_input(req.base_url),
         enabled: req.enabled,
@@ -170,6 +174,8 @@ fn to_user_service_update_request(
         provider: req.provider,
         model: req.model,
         thinking_level: req.thinking_level,
+        task_usage_scenario: req.task_usage_scenario,
+        task_thinking_level: req.task_thinking_level,
         api_key: normalize_optional_input(req.api_key),
         clear_api_key: req.clear_api_key,
         base_url: req.base_url,
@@ -181,13 +187,15 @@ fn to_user_service_update_request(
 }
 
 fn to_response_value(cfg: &AiModelConfig) -> Value {
-    json!({
+    let mut value = json!({
         "id": cfg.id,
         "name": cfg.name,
         "provider": cfg.provider,
         "model": cfg.model,
         "model_name": cfg.model,
         "thinking_level": cfg.thinking_level,
+        "task_usage_scenario": cfg.task_usage_scenario,
+        "task_thinking_level": cfg.task_thinking_level,
         "has_api_key": cfg.has_api_key
             || cfg.api_key
                 .as_deref()
@@ -200,7 +208,104 @@ fn to_response_value(cfg: &AiModelConfig) -> Value {
         "supports_responses": cfg.supports_responses,
         "created_at": cfg.created_at,
         "updated_at": cfg.updated_at
-    })
+    });
+    if !cfg.sync_warnings.is_empty() {
+        value["sync_warnings"] = json!(cfg.sync_warnings);
+    }
+    value
+}
+
+fn to_response_value_with_secret(cfg: &AiModelConfig, include_secret: bool) -> Value {
+    let mut value = to_response_value(cfg);
+    if include_secret {
+        value["api_key"] = Value::String(cfg.api_key.clone().unwrap_or_default());
+    }
+    value
+}
+
+fn model_settings_response_value(
+    settings: user_service_api_client::UserServiceModelSettingsRecord,
+) -> Value {
+    let mut value = json!({
+        "user_id": settings.user_id,
+        "memory_summary_model_config_id": settings.memory_summary_model_config_id,
+        "memory_summary_thinking_level": settings.memory_summary_thinking_level,
+        "updated_at": settings.updated_at,
+    });
+    if !settings.sync_warnings.is_empty() {
+        value["sync_warnings"] = json!(settings.sync_warnings);
+    }
+    value
+}
+
+fn to_user_service_create_provider_request(
+    auth: &AuthUser,
+    req: AiModelConfigRequest,
+) -> user_service_api_client::CreateUserServiceModelProviderRequest {
+    user_service_api_client::CreateUserServiceModelProviderRequest {
+        id: req
+            .id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        owner_user_id: Some(auth.user_id.clone()),
+        name: req.name.unwrap_or_default(),
+        provider: req.provider,
+        api_key: normalize_optional_input(req.api_key),
+        base_url: normalize_optional_input(req.base_url),
+        enabled: req.enabled,
+        supports_images: req.supports_images,
+        supports_reasoning: req.supports_reasoning,
+        supports_responses: req.supports_responses,
+    }
+}
+
+fn to_user_service_update_provider_request(
+    req: AiModelConfigRequest,
+) -> user_service_api_client::UpdateUserServiceModelProviderRequest {
+    user_service_api_client::UpdateUserServiceModelProviderRequest {
+        name: req.name,
+        provider: req.provider,
+        api_key: normalize_optional_input(req.api_key),
+        clear_api_key: req.clear_api_key,
+        base_url: req.base_url,
+        enabled: req.enabled,
+        supports_images: req.supports_images,
+        supports_reasoning: req.supports_reasoning,
+        supports_responses: req.supports_responses,
+    }
+}
+
+fn model_provider_response_value(
+    provider: user_service_api_client::UserServiceModelProviderRecord,
+    include_secret: bool,
+) -> Value {
+    let mut value = json!({
+        "id": provider.id,
+        "name": provider.name,
+        "provider": normalize_provider(provider.provider.as_str()),
+        "has_api_key": provider.has_api_key
+            || provider
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()),
+        "base_url": provider.base_url,
+        "enabled": provider.enabled,
+        "supports_images": provider.supports_images,
+        "supports_reasoning": provider.supports_reasoning,
+        "supports_responses": provider.supports_responses,
+        "last_sync_status": provider.last_sync_status,
+        "last_sync_error": provider.last_sync_error,
+        "last_synced_at": provider.last_synced_at,
+        "imported_model_count": provider.imported_model_count,
+        "sync_warnings": provider.sync_warnings,
+        "created_at": provider.created_at,
+        "updated_at": provider.updated_at,
+    });
+    if include_secret {
+        value["api_key"] = Value::String(provider.api_key.unwrap_or_default());
+    }
+    value
 }
 
 fn normalize_base_url_for_models(provider: &str, base_url: Option<&str>) -> String {
@@ -356,6 +461,8 @@ fn build_model_config(
         name,
         provider,
         model,
+        task_usage_scenario: None,
+        task_thinking_level: None,
         base_url: normalize_optional_input(req.base_url),
         api_key,
         has_api_key,
@@ -364,6 +471,7 @@ fn build_model_config(
         supports_images: req.supports_images.unwrap_or(false),
         supports_reasoning: req.supports_reasoning.unwrap_or(false),
         supports_responses: req.supports_responses.unwrap_or(false),
+        sync_warnings: Vec::new(),
         created_at: crate::core::time::now_rfc3339(),
         updated_at: crate::core::time::now_rfc3339(),
     })
@@ -433,6 +541,446 @@ pub(super) async fn list_ai_model_configs(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "获取 AI 模型配置失败", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn get_ai_model_config(
+    auth: AuthUser,
+    Path(config_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, Json<Value>) {
+    let include_secret = query
+        .get("include_secret")
+        .map(|value| value == "true" || value == "1")
+        .unwrap_or(false);
+
+    if let Some(base_url) = configured_user_service_base_url() {
+        let access_token = match user_service_access_token_for_auth(&auth) {
+            Ok(token) => token,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "build user_service access token failed", "detail": err})),
+                );
+            }
+        };
+        return match user_service_api_client::get_model_config(
+            base_url.as_str(),
+            access_token.as_str(),
+            config_id.as_str(),
+            include_secret,
+            user_service_timeout_ms(),
+        )
+        .await
+        {
+            Ok(item) => (
+                StatusCode::OK,
+                Json(to_response_value_with_secret(
+                    &from_user_service_model_config(item),
+                    include_secret,
+                )),
+            ),
+            Err(err) => (
+                proxy_status_from_user_service_error(err.as_str()),
+                Json(json!({
+                    "error": "load ai model config via user_service failed",
+                    "detail": err
+                })),
+            ),
+        };
+    }
+
+    let profile = match ensure_owned_ai_model_config(config_id.as_str(), &auth).await {
+        Ok(item) => item,
+        Err(err) => return map_ai_model_config_access_error(err),
+    };
+    (
+        StatusCode::OK,
+        Json(to_response_value_with_secret(&profile, include_secret)),
+    )
+}
+
+pub(super) async fn get_ai_model_settings(
+    auth: AuthUser,
+    Query(query): Query<UserQuery>,
+) -> (StatusCode, Json<Value>) {
+    if query
+        .user_id
+        .as_deref()
+        .is_some_and(|value| value != auth.user_id.as_str())
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "user_id 与登录用户不一致"})),
+        );
+    }
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::get_model_settings(
+        base_url.as_str(),
+        access_token.as_str(),
+        Some(auth.user_id.as_str()),
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(settings) => (
+            StatusCode::OK,
+            Json(model_settings_response_value(settings)),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "load ai model settings via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn put_ai_model_settings(
+    auth: AuthUser,
+    Json(req): Json<AiModelSettingsRequest>,
+) -> (StatusCode, Json<Value>) {
+    if req
+        .user_id
+        .as_deref()
+        .is_some_and(|value| value != auth.user_id.as_str())
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "user_id 与登录用户不一致"})),
+        );
+    }
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    let payload = user_service_api_client::UpdateUserServiceModelSettingsRequest {
+        user_id: Some(auth.user_id.clone()),
+        memory_summary_model_config_id: req
+            .memory_summary_model_config_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        memory_summary_thinking_level: req
+            .memory_summary_thinking_level
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    };
+    match user_service_api_client::update_model_settings(
+        base_url.as_str(),
+        access_token.as_str(),
+        &payload,
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(settings) => (
+            StatusCode::OK,
+            Json(model_settings_response_value(settings)),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "update ai model settings via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn list_ai_model_providers(
+    auth: AuthUser,
+    Query(query): Query<UserQuery>,
+) -> (StatusCode, Json<Value>) {
+    if query
+        .user_id
+        .as_deref()
+        .is_some_and(|value| value != auth.user_id.as_str())
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "user_id 与登录用户不一致"})),
+        );
+    }
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::list_model_providers(
+        base_url.as_str(),
+        access_token.as_str(),
+        Some(auth.user_id.as_str()),
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(items) => (
+            StatusCode::OK,
+            Json(Value::Array(
+                items
+                    .into_iter()
+                    .map(|item| model_provider_response_value(item, false))
+                    .collect(),
+            )),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "load ai model providers via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn get_ai_model_provider(
+    auth: AuthUser,
+    Path(provider_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> (StatusCode, Json<Value>) {
+    let include_secret = query
+        .get("include_secret")
+        .map(|value| value == "true" || value == "1")
+        .unwrap_or(false);
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::get_model_provider(
+        base_url.as_str(),
+        access_token.as_str(),
+        provider_id.as_str(),
+        include_secret,
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(item) => (
+            StatusCode::OK,
+            Json(model_provider_response_value(item, include_secret)),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "load ai model provider via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn create_ai_model_provider(
+    auth: AuthUser,
+    Json(req): Json<AiModelConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::create_model_provider(
+        base_url.as_str(),
+        access_token.as_str(),
+        &to_user_service_create_provider_request(&auth, req),
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(item) => (
+            StatusCode::CREATED,
+            Json(model_provider_response_value(item, false)),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "create ai model provider via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn update_ai_model_provider(
+    auth: AuthUser,
+    Path(provider_id): Path<String>,
+    Json(req): Json<AiModelConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::update_model_provider(
+        base_url.as_str(),
+        access_token.as_str(),
+        provider_id.as_str(),
+        &to_user_service_update_provider_request(req),
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(item) => (
+            StatusCode::OK,
+            Json(model_provider_response_value(item, false)),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "update ai model provider via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn refresh_ai_model_provider(
+    auth: AuthUser,
+    Path(provider_id): Path<String>,
+    Json(req): Json<AiModelConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::refresh_model_provider(
+        base_url.as_str(),
+        access_token.as_str(),
+        provider_id.as_str(),
+        &to_user_service_update_provider_request(req),
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(item) => (
+            StatusCode::OK,
+            Json(model_provider_response_value(item, false)),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "refresh ai model provider via user_service failed",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn delete_ai_model_provider(
+    auth: AuthUser,
+    Path(provider_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::delete_model_provider(
+        base_url.as_str(),
+        access_token.as_str(),
+        provider_id.as_str(),
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({"message": "AI provider deleted"})),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "delete ai model provider via user_service failed",
+                "detail": err
+            })),
         ),
     }
 }
@@ -555,6 +1103,49 @@ pub(super) async fn update_ai_model_config(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "更新 AI 模型配置失败", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn refresh_ai_model_config(
+    auth: AuthUser,
+    Path(config_id): Path<String>,
+    Json(req): Json<AiModelConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let Some(base_url) = configured_user_service_base_url() else {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "user_service is not configured"})),
+        );
+    };
+    let access_token = match user_service_access_token_for_auth(&auth) {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "build user_service access token failed", "detail": err})),
+            );
+        }
+    };
+    match user_service_api_client::refresh_model_config(
+        base_url.as_str(),
+        access_token.as_str(),
+        config_id.as_str(),
+        &to_user_service_update_request(req),
+        user_service_timeout_ms(),
+    )
+    .await
+    {
+        Ok(item) => (
+            StatusCode::OK,
+            Json(to_response_value(&from_user_service_model_config(item))),
+        ),
+        Err(err) => (
+            proxy_status_from_user_service_error(err.as_str()),
+            Json(json!({
+                "error": "refresh ai model config via user_service failed",
+                "detail": err
+            })),
         ),
     }
 }
@@ -742,6 +1333,8 @@ mod tests {
             provider: "gpt".to_string(),
             model: "gpt-4o".to_string(),
             thinking_level: Some("medium".to_string()),
+            task_usage_scenario: None,
+            task_thinking_level: None,
             api_key: Some("secret".to_string()),
             has_api_key: true,
             base_url: Some("https://api.openai.com/v1".to_string()),
@@ -749,6 +1342,7 @@ mod tests {
             supports_images: true,
             supports_reasoning: true,
             supports_responses: true,
+            sync_warnings: Vec::new(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         });

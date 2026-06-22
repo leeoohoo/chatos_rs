@@ -36,6 +36,15 @@ pub(super) fn build_remote_server_record(
         creator_user_id: creator.map(|user| user.id.clone()),
         creator_username: creator.map(|user| user.username.clone()),
         creator_display_name: creator.map(|user| user.display_name.clone()),
+        owner_user_id: creator
+            .and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned)),
+        owner_username: creator
+            .and_then(|user| user.effective_owner_username().map(ToOwned::to_owned)),
+        owner_display_name: creator.and_then(|user| {
+            user.effective_owner_display_name()
+                .map(ToOwned::to_owned)
+                .or_else(|| user.effective_owner_username().map(ToOwned::to_owned))
+        }),
         task_id,
         created_at: now.clone(),
         updated_at: now,

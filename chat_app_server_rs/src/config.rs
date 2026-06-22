@@ -28,9 +28,6 @@ pub struct Config {
     pub auth_access_token_ttl_seconds: i64,
     pub user_service_base_url: Option<String>,
     pub user_service_request_timeout_ms: i64,
-    pub user_service_jwt_secret: Option<String>,
-    pub user_service_jwt_issuer: String,
-    pub user_service_user_audience: String,
     pub task_runner_base_url: String,
     pub memory_engine_base_url: String,
     pub memory_engine_operator_token: Option<String>,
@@ -142,15 +139,6 @@ impl Config {
             .or_else(|| Some(default_user_service_base_url()));
         let user_service_request_timeout_ms =
             read_int("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
-        let user_service_jwt_secret = read_optional_env("CHATOS_USER_SERVICE_JWT_SECRET")
-            .or_else(|| read_optional_env("USER_SERVICE_JWT_SECRET"))
-            .or_else(|| Some("change_me_user_service_secret".to_string()));
-        let user_service_jwt_issuer = read_optional_env("CHATOS_USER_SERVICE_JWT_ISSUER")
-            .or_else(|| read_optional_env("USER_SERVICE_JWT_ISSUER"))
-            .unwrap_or_else(|| "user_service".to_string());
-        let user_service_user_audience = read_optional_env("CHATOS_USER_SERVICE_USER_AUDIENCE")
-            .or_else(|| read_optional_env("USER_SERVICE_USER_AUDIENCE"))
-            .unwrap_or_else(|| "user_service".to_string());
         let task_runner_base_url = read_optional_env("CHATOS_TASK_RUNNER_BASE_URL")
             .or_else(|| read_optional_env("TASK_RUNNER_BASE_URL"))
             .unwrap_or_else(default_task_runner_base_url);
@@ -201,9 +189,6 @@ impl Config {
             auth_access_token_ttl_seconds,
             user_service_base_url,
             user_service_request_timeout_ms,
-            user_service_jwt_secret,
-            user_service_jwt_issuer,
-            user_service_user_audience,
             task_runner_base_url,
             memory_engine_base_url,
             memory_engine_operator_token,

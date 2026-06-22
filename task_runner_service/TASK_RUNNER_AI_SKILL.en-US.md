@@ -39,7 +39,7 @@ Do not actively poll for progress.
 - Use the user's latest message plus the existing task details to decide which direct tasks should no longer continue; Task Runner automatically cascades cancellation to pending or running downstream tasks that depend on them.
 - If the work will land in code, docs, config, scripts, prompts, pages, or other files, default to including a review step. Do not treat "implementation finished" as a real closure condition.
 - Once task creation, updates, and dependency checks for the turn are complete, call `wait_for_task_completion`, then stop calling Task Runner tools.
-- Never invent `task_id`, `model_config_id`, or prerequisite IDs. Use only real values returned by tools.
+- Do not ask the user or tool calls to carry model-selection fields; Task Runner binds an available model for the current user automatically. Use only real returned values for `task_id` and prerequisite IDs.
 - Do not change task execution status. Task Runner maintains execution status.
 
 ## How To Write Better Tasks
@@ -78,7 +78,7 @@ If dependencies matter, use `get_task_dependency_graph` to inspect the chain.
 
 Then:
 
-- use `update_task` to change title, objective, input, model, tags, priority, or MCP capabilities
+- use `update_task` to change title, objective, input, tags, priority, or MCP capabilities
 - use `set_task_prerequisites` to change prerequisite relationships
 - use `cancel_task` when you judge that an already arranged pending or running item should no longer continue based on the user's latest message; the reason must explain why it no longer matches the user's current intent
 - when cancelling a task that other tasks depend on, do not manually cancel every downstream task; Task Runner cascades cancellation to dependent pending or running tasks

@@ -1,10 +1,10 @@
-use mongodb::bson::{Document, doc};
+use mongodb::bson::{doc, Document};
 
 use crate::db::Db;
 use crate::models::EngineThread;
 
-use super::ListThreadsQuery;
 use super::common::{collect_threads, normalize_optional_text, thread_collection};
+use super::ListThreadsQuery;
 
 fn push_alias_filter(filters: &mut Vec<Document>, paths: &[&str], value: &str) {
     let aliases = paths

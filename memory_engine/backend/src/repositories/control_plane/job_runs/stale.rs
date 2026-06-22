@@ -3,11 +3,11 @@ use mongodb::bson::doc;
 use tracing::warn;
 
 use crate::db::Db;
-use crate::models::{EngineJobRun, now_rfc3339};
+use crate::models::{now_rfc3339, EngineJobRun};
 use crate::repositories::threads;
 
 use super::super::common::{
-    JOB_TYPE_THREAD_REPAIR, STALE_THREAD_REPAIR_JOB_TIMEOUT_SECS, job_run_collection,
+    job_run_collection, JOB_TYPE_THREAD_REPAIR, STALE_THREAD_REPAIR_JOB_TIMEOUT_SECS,
 };
 
 fn stale_timeout_secs(job: &EngineJobRun, default_timeout_secs: i64) -> i64 {

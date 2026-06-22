@@ -1,11 +1,13 @@
 import type {
   AgentConfig,
   AiModelConfig,
+  AiModelProvider,
   McpConfig,
   SystemContext,
 } from '../../types';
 import type {
   AiModelConfigResponse,
+  AiModelProviderResponse,
   McpConfigResponse,
   MemoryAgentResponse,
   SessionSummaryResponse,
@@ -48,10 +50,38 @@ export const normalizeAiModelConfig = (config: AiModelConfigResponse): AiModelCo
     has_api_key: config.has_api_key === true || Boolean(config.api_key?.trim()),
     model_name: config.model_name || config.model || '',
     thinking_level: config.thinking_level || undefined,
+    task_usage_scenario: config.task_usage_scenario || null,
+    task_thinking_level: config.task_thinking_level || null,
     enabled: config.enabled === true,
     supports_images: config.supports_images === true,
     supports_reasoning: config.supports_reasoning === true,
     supports_responses: config.supports_responses === true,
+    sync_warnings: config.sync_warnings || [],
+    createdAt: toDate(createdAt),
+    updatedAt: toDate(updatedAt),
+  };
+};
+
+export const normalizeAiModelProvider = (provider: AiModelProviderResponse): AiModelProvider => {
+  const createdAt = provider.created_at || provider.createdAt;
+  const updatedAt = provider.updated_at || provider.updatedAt || createdAt;
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    provider: provider.provider || 'gpt',
+    base_url: provider.base_url || '',
+    api_key: '',
+    has_api_key: provider.has_api_key === true || Boolean(provider.api_key?.trim()),
+    enabled: provider.enabled === true,
+    supports_images: provider.supports_images === true,
+    supports_reasoning: provider.supports_reasoning === true,
+    supports_responses: provider.supports_responses === true,
+    last_sync_status: provider.last_sync_status || null,
+    last_sync_error: provider.last_sync_error || null,
+    last_synced_at: provider.last_synced_at || null,
+    imported_model_count: Number(provider.imported_model_count || 0),
+    sync_warnings: provider.sync_warnings || [],
     createdAt: toDate(createdAt),
     updatedAt: toDate(updatedAt),
   };

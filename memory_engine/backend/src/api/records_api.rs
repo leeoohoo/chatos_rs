@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::source_guard;
+use super::{memory_auth::MemoryAuthContext, source_guard};
 use crate::repositories::records;
 use crate::state::AppState;
 
@@ -20,6 +20,7 @@ pub struct RecordQuery {
 
 pub async fn get_record(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(record_id): Path<String>,
     Query(query): Query<RecordQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
@@ -29,6 +30,7 @@ pub async fn get_record(
             "tenant_id is required".to_string(),
         ));
     };
+    auth.ensure_tenant_scope(tenant_id)?;
     let Some(source_id) = query.source_id.as_deref() else {
         return Err((
             axum::http::StatusCode::BAD_REQUEST,
@@ -50,6 +52,7 @@ pub async fn get_record(
 
 pub async fn delete_record(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(record_id): Path<String>,
     Query(query): Query<RecordQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
@@ -59,6 +62,7 @@ pub async fn delete_record(
             "tenant_id is required".to_string(),
         ));
     };
+    auth.ensure_tenant_scope(tenant_id)?;
     let Some(source_id) = query.source_id.as_deref() else {
         return Err((
             axum::http::StatusCode::BAD_REQUEST,

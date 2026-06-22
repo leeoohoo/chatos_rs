@@ -43,7 +43,10 @@ impl SqliteStore {
             clauses.push("default_model_config_id = ?".to_string());
         }
         if filters.creator_user_id.is_some() {
-            clauses.push("creator_user_id = ?".to_string());
+            clauses.push(
+                "(owner_user_id = ? OR ((owner_user_id IS NULL OR owner_user_id = '') AND creator_user_id = ?))"
+                    .to_string(),
+            );
         }
         if filters.scheduled_only.unwrap_or(false) {
             clauses.push("json_extract(schedule_json, '$.mode') <> 'manual'".to_string());
@@ -117,7 +120,7 @@ impl SqliteStore {
             query = query.bind(model_config_id);
         }
         if let Some(creator_user_id) = filters.creator_user_id.as_deref() {
-            query = query.bind(creator_user_id);
+            query = query.bind(creator_user_id).bind(creator_user_id);
         }
         if let Some(parent_task_id) = filters.parent_task_id.as_deref() {
             query = query.bind(parent_task_id);

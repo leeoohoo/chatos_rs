@@ -1,12 +1,12 @@
 use futures_util::TryStreamExt;
 use mongodb::{
+    bson::{doc, Bson, Document},
     Cursor,
-    bson::{Bson, Document, doc},
 };
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::{EngineSubjectMemory, UpsertSubjectMemoryRequest, now_rfc3339};
+use crate::models::{now_rfc3339, EngineSubjectMemory, UpsertSubjectMemoryRequest};
 
 pub(crate) fn subject_memory_collection(db: &Db) -> mongodb::Collection<EngineSubjectMemory> {
     db.collection::<EngineSubjectMemory>("engine_subject_memories")

@@ -8,14 +8,15 @@ import type {
   LoginResponse,
   ResetAgentPasswordPayload,
   SystemConfigResponse,
-  TaskRunnerTokenExchangePayload,
-  TaskRunnerTokenExchangeResponse,
   CreateUserModelConfigPayload,
+  CreateUserModelProviderPayload,
   UpdateUserModelConfigPayload,
+  UpdateUserModelProviderPayload,
   UpdateUserModelSettingsPayload,
   UpdateAgentAccountPayload,
   UpdateUserPayload,
   UserModelConfigRecord,
+  UserModelProviderRecord,
   UserModelSettingsRecord,
   UserSummaryRecord,
 } from '../types';
@@ -77,9 +78,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let message = response.statusText;
     try {
-      const data = (await response.json()) as { error?: string };
-      if (data.error) {
-        message = data.error;
+      const data = (await response.json()) as { error?: string; detail?: string };
+      if (data.error || data.detail) {
+        message = [data.error, data.detail].filter(Boolean).join(': ');
       }
     } catch {
       // noop
@@ -136,6 +137,33 @@ export const api = {
     request<UserModelConfigRecord[]>(
       `/api/model-configs${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`,
     ),
+  listModelProviders: (userId?: string) =>
+    request<UserModelProviderRecord[]>(
+      `/api/model-providers${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`,
+    ),
+  getModelProvider: (id: string, includeSecret?: boolean) =>
+    request<UserModelProviderRecord>(
+      `/api/model-providers/${id}${includeSecret ? '?include_secret=true' : ''}`,
+    ),
+  createModelProvider: (payload: CreateUserModelProviderPayload) =>
+    request<UserModelProviderRecord>('/api/model-providers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateModelProvider: (id: string, payload: UpdateUserModelProviderPayload) =>
+    request<UserModelProviderRecord>(`/api/model-providers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  refreshModelProvider: (id: string, payload: UpdateUserModelProviderPayload) =>
+    request<UserModelProviderRecord>(`/api/model-providers/${id}/refresh`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteModelProvider: (id: string) =>
+    request<void>(`/api/model-providers/${id}`, {
+      method: 'DELETE',
+    }),
   createModelConfig: (payload: CreateUserModelConfigPayload) =>
     request<UserModelConfigRecord>('/api/model-configs', {
       method: 'POST',
@@ -159,11 +187,6 @@ export const api = {
     }),
   resetAgentPassword: (id: string, payload: ResetAgentPasswordPayload) =>
     request<void>(`/api/agent-accounts/${id}/reset-password`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  exchangeTaskRunnerToken: (payload: TaskRunnerTokenExchangePayload) =>
-    request<TaskRunnerTokenExchangeResponse>('/api/token/exchange/task-runner', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

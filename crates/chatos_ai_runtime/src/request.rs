@@ -6,7 +6,9 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::model_config::{reasoning_effort_for_provider, thinking_mode_for_provider};
+use crate::model_config::{
+    normalize_provider, reasoning_effort_for_provider, thinking_mode_for_provider,
+};
 #[cfg(test)]
 use crate::request_payload::response_items_to_chat_messages;
 use crate::request_payload::{
@@ -134,6 +136,7 @@ impl AiRequestHandler {
         on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
         options: AiRequestOptions,
     ) -> Result<AiResponse, String> {
+        let provider = effective_provider_for_request(base_url, provider);
         let transport = if supports_responses {
             AiTransport::Responses
         } else {
@@ -401,6 +404,20 @@ fn build_request_payload(
     }
 }
 
+fn effective_provider_for_request(base_url: &str, provider: Option<String>) -> Option<String> {
+    let provider = provider?;
+    let normalized = normalize_provider(provider.as_str());
+    if normalized == "gpt" && !is_openai_api_base_url(base_url) {
+        return Some("openai_compatible".to_string());
+    }
+    Some(provider)
+}
+
+fn is_openai_api_base_url(base_url: &str) -> bool {
+    let value = base_url.trim().to_ascii_lowercase();
+    value.is_empty() || value.contains("api.openai.com")
+}
+
 fn transport_label(transport: AiTransport) -> &'static str {
     match transport {
         AiTransport::Responses => "responses",
@@ -529,7 +546,7 @@ mod tests {
 
     use super::{
         build_chat_completions_request_payload, build_responses_request_payload,
-        response_items_to_chat_messages, AiRequestOptions,
+        effective_provider_for_request, response_items_to_chat_messages, AiRequestOptions,
     };
 
     #[test]
@@ -651,6 +668,26 @@ mod tests {
         assert_eq!(
             payload.get("cwd"),
             Some(&Value::String("/workspace".to_string()))
+        );
+    }
+
+    #[test]
+    fn custom_openai_base_url_uses_compatible_provider() {
+        assert_eq!(
+            effective_provider_for_request(
+                "https://gateway.example.test/v1",
+                Some("openai".to_string()),
+            )
+            .as_deref(),
+            Some("openai_compatible")
+        );
+        assert_eq!(
+            effective_provider_for_request(
+                "https://api.openai.com/v1",
+                Some("openai".to_string()),
+            )
+            .as_deref(),
+            Some("openai")
         );
     }
 }

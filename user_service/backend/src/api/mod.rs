@@ -10,8 +10,9 @@ use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, Tr
 use tracing::Level;
 
 use crate::auth::{
-    bearer_token_from_headers, decode_user_service_token, unauthorized, CurrentPrincipal,
+    bearer_token_from_headers, decode_any_user_service_token, unauthorized, CurrentPrincipal,
 };
+use crate::models::{PRINCIPAL_TYPE_AGENT_ACCOUNT, PRINCIPAL_TYPE_HUMAN_USER};
 use crate::state::AppState;
 
 mod agents;
@@ -24,6 +25,7 @@ mod users;
 pub fn build_router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/verify", get(auth::verify))
         .route("/api/auth/logout", post(auth::logout))
         .route(
             "/api/users",
@@ -47,6 +49,20 @@ pub fn build_router(state: AppState) -> Router {
             get(models::list_model_configs).post(models::create_model_config),
         )
         .route(
+            "/api/model-providers",
+            get(models::list_model_providers).post(models::create_model_provider),
+        )
+        .route(
+            "/api/model-providers/:id",
+            get(models::get_model_provider)
+                .patch(models::update_model_provider)
+                .delete(models::delete_model_provider),
+        )
+        .route(
+            "/api/model-providers/:id/refresh",
+            post(models::refresh_model_provider_models),
+        )
+        .route(
             "/api/model-configs/settings",
             get(models::get_model_settings).put(models::put_model_settings),
         )
@@ -55,6 +71,10 @@ pub fn build_router(state: AppState) -> Router {
             get(models::get_model_config)
                 .patch(models::update_model_config)
                 .delete(models::delete_model_config),
+        )
+        .route(
+            "/api/model-configs/:id/refresh",
+            post(models::refresh_model_config_provider_models),
         )
         .route(
             "/api/token/exchange/task-runner",
@@ -93,7 +113,7 @@ pub async fn require_auth(
     }
 
     let token = bearer_token_from_headers(request.headers()).map_err(|err| unauthorized(&err))?;
-    let claims = decode_user_service_token(token.as_str(), &state.config)
+    let claims = decode_any_user_service_token(token.as_str(), &state.config)
         .map_err(|_| unauthorized("invalid or expired token"))?;
     if state
         .store
@@ -105,25 +125,64 @@ pub async fn require_auth(
     }
 
     let principal = CurrentPrincipal::from(claims);
-    if principal.is_human_user() {
-        let Some(user_id) = principal.user_id.as_deref() else {
-            return Err(unauthorized("token missing user identity"));
-        };
-        let Some(user) = state
-            .store
-            .find_user_by_id(user_id)
-            .await
-            .map_err(internal_error)?
-        else {
-            return Err(unauthorized("user not found"));
-        };
-        if !user.enabled {
-            return Err(unauthorized("user has been disabled"));
-        }
-    }
+    ensure_principal_active(&state, &principal).await?;
 
     request.extensions_mut().insert(principal);
     Ok(next.run(request).await)
+}
+
+async fn ensure_principal_active(
+    state: &AppState,
+    principal: &CurrentPrincipal,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    match principal.principal_type.as_str() {
+        PRINCIPAL_TYPE_HUMAN_USER => {
+            let Some(user_id) = principal.user_id.as_deref() else {
+                return Err(unauthorized("token missing user identity"));
+            };
+            let Some(user) = state
+                .store
+                .find_user_by_id(user_id)
+                .await
+                .map_err(internal_error)?
+            else {
+                return Err(unauthorized("user not found"));
+            };
+            if !user.enabled {
+                return Err(unauthorized("user has been disabled"));
+            }
+            Ok(())
+        }
+        PRINCIPAL_TYPE_AGENT_ACCOUNT => {
+            let Some(agent_account_id) = principal.agent_account_id.as_deref() else {
+                return Err(unauthorized("token missing agent identity"));
+            };
+            let Some(agent) = state
+                .store
+                .find_agent_by_id(agent_account_id)
+                .await
+                .map_err(internal_error)?
+            else {
+                return Err(unauthorized("agent account not found"));
+            };
+            if !agent.enabled {
+                return Err(unauthorized("agent account has been disabled"));
+            }
+            let Some(owner) = state
+                .store
+                .find_user_by_id(agent.owner_user_id.as_str())
+                .await
+                .map_err(internal_error)?
+            else {
+                return Err(unauthorized("agent owner not found"));
+            };
+            if !owner.enabled {
+                return Err(unauthorized("agent owner has been disabled"));
+            }
+            Ok(())
+        }
+        _ => Err(unauthorized("unsupported principal type")),
+    }
 }
 
 pub type ApiResult<T> = Result<Json<T>, (StatusCode, Json<Value>)>;

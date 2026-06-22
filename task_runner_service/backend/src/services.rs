@@ -52,6 +52,7 @@ mod task_manager_bridge;
 mod task_memory;
 mod task_process_log;
 mod task_service;
+mod task_tenant_scope;
 mod task_threads;
 mod terminal_lifecycle;
 mod tooling_state;
@@ -74,6 +75,9 @@ use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::build_remote_server_record;
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
+use self::task_tenant_scope::{
+    align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
+};
 use self::workspace_mcp::{
     ensure_workspace_dir_available, normalize_builtin_kind_names, sanitize_task_mcp_config,
 };

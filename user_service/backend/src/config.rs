@@ -68,10 +68,13 @@ impl AppConfig {
                     format!("invalid USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS: {err}")
                 })?,
             super_admin_username: read_env("USER_SERVICE_SUPER_ADMIN_USERNAME")
+                .or_else(|| read_env("CHATOS_ADMIN_USERNAME"))
                 .unwrap_or_else(|| "admin".to_string()),
             super_admin_password: read_env("USER_SERVICE_SUPER_ADMIN_PASSWORD")
+                .or_else(|| read_env("CHATOS_ADMIN_PASSWORD"))
                 .unwrap_or_else(|| "admin123456".to_string()),
             super_admin_display_name: read_env("USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME")
+                .or_else(|| read_env("CHATOS_ADMIN_DISPLAY_NAME"))
                 .unwrap_or_else(|| "System Admin".to_string()),
             memory_engine_base_url: read_env("MEMORY_ENGINE_BASE_URL"),
             memory_engine_operator_token: read_env("MEMORY_ENGINE_OPERATOR_TOKEN"),

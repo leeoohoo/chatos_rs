@@ -36,10 +36,14 @@ impl InMemoryStore {
                     .is_none_or(|value| task.default_model_config_id.as_deref() == Some(value))
             })
             .filter(|task| {
-                filters
-                    .creator_user_id
-                    .as_deref()
-                    .is_none_or(|value| task.creator_user_id.as_deref() == Some(value))
+                filters.creator_user_id.as_deref().is_none_or(|value| {
+                    task.owner_user_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .or_else(|| task.creator_user_id.as_deref())
+                        == Some(value)
+                })
             })
             .filter(|task| {
                 !filters.scheduled_only.unwrap_or(false)

@@ -1,9 +1,9 @@
-use mongodb::bson::{Bson, doc};
+use mongodb::bson::{doc, Bson};
 use uuid::Uuid;
 
 use crate::db::Db;
 use crate::models::{
-    EngineThreadSnapshot, ThreadSnapshotLookupResponse, UpsertThreadSnapshotRequest, now_rfc3339,
+    now_rfc3339, EngineThreadSnapshot, ThreadSnapshotLookupResponse, UpsertThreadSnapshotRequest,
 };
 
 pub async fn upsert_thread_snapshot(

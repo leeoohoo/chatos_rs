@@ -4,13 +4,12 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
     vec![
         tool_definition(
             "list_runs",
-            "List Task Runner runs with optional task, status, or model config filters.",
+            "List Task Runner runs with optional task or status filters.",
             json!({
                 "type": "object",
                 "properties": {
                     "task_id": { "type": "string" },
                     "status": { "type": "string", "enum": run_status_values() },
-                    "model_config_id": { "type": "string" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
                 },
                 "additionalProperties": false
@@ -32,10 +31,6 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
             required_object_schema(
                 json!({
                     "task_id": { "type": "string", "minLength": 1 },
-                    "model_config_id": {
-                        "type": "string",
-                        "description": generic_run_model_config_description()
-                    },
                     "prompt_override": { "type": "string" }
                 }),
                 &["task_id"],
@@ -50,10 +45,6 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
                         "type": "array",
                         "items": { "type": "string", "minLength": 1 },
                         "minItems": 1
-                    },
-                    "model_config_id": {
-                        "type": "string",
-                        "description": generic_run_model_config_description()
                     },
                     "prompt_override": { "type": "string" }
                 }),

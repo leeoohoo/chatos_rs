@@ -148,6 +148,15 @@ export function taskCreatorLabel(task: TaskRecord): string {
   return displayName || username || '-';
 }
 
+export function taskOwnerLabel(task: TaskRecord): string {
+  const displayName = task.owner_display_name?.trim();
+  const username = task.owner_username?.trim();
+  if (displayName && username && displayName !== username) {
+    return `${displayName} (${username})`;
+  }
+  return displayName || username || task.owner_user_id || taskCreatorLabel(task);
+}
+
 export function taskRunReportContent(run?: TaskRunRecord | null): string | null {
   const report = run?.report;
   if (!report || typeof report !== 'object' || Array.isArray(report)) {

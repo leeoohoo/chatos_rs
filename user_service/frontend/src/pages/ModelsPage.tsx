@@ -23,18 +23,17 @@ import dayjs from 'dayjs';
 
 import { api } from '../api/client';
 import type {
-  CreateUserModelConfigPayload,
-  UpdateUserModelConfigPayload,
+  CreateUserModelProviderPayload,
+  UpdateUserModelProviderPayload,
   UserModelConfigRecord,
+  UserModelProviderRecord,
   UserSummaryRecord,
 } from '../types';
 
-type ModelFormValues = {
+type ProviderFormValues = {
   owner_user_id?: string;
   name: string;
   provider: string;
-  model?: string;
-  thinking_level?: string;
   api_key?: string;
   clear_api_key?: boolean;
   base_url?: string;
@@ -52,24 +51,28 @@ const PROVIDER_OPTIONS = [
   { label: 'OpenAI Compatible', value: 'openai_compatible' },
 ];
 
-const THINKING_OPTIONS = [
-  { label: 'Default', value: '' },
-  { label: 'none', value: 'none' },
-  { label: 'auto', value: 'auto' },
-  { label: 'minimal', value: 'minimal' },
-  { label: 'low', value: 'low' },
-  { label: 'medium', value: 'medium' },
-  { label: 'high', value: 'high' },
-  { label: 'xhigh', value: 'xhigh' },
-];
+const ALL_USERS_SCOPE = '__all_users__';
+
+function providerCatalogStatusLabel(status?: string | null) {
+  switch (status) {
+    case 'ok':
+      return 'loaded';
+    case 'error':
+      return 'failed';
+    case 'empty':
+      return 'empty';
+    default:
+      return 'not fetched';
+  }
+}
 
 export function ModelsPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingConfig, setEditingConfig] = useState<UserModelConfigRecord | null>(null);
+  const [editingProvider, setEditingProvider] = useState<UserModelProviderRecord | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string>();
-  const [form] = Form.useForm<ModelFormValues>();
+  const [form] = Form.useForm<ProviderFormValues>();
 
   const currentUserQuery = useQuery({
     queryKey: ['current-user'],
@@ -84,15 +87,25 @@ export function ModelsPage() {
   const isSuperAdmin = currentUser?.role === 'super_admin';
 
   useEffect(() => {
-    if (!selectedUserId && currentUser?.id) {
+    if (!isSuperAdmin && !selectedUserId && currentUser?.id) {
       setSelectedUserId(currentUser.id);
     }
-  }, [currentUser?.id, selectedUserId]);
+  }, [currentUser?.id, isSuperAdmin, selectedUserId]);
+
+  const scopedUserId = selectedUserId;
+  const scopedQueryKey = scopedUserId || ALL_USERS_SCOPE;
+  const canLoadModelData = Boolean(currentUser) && (isSuperAdmin || Boolean(scopedUserId));
+
+  const providersQuery = useQuery({
+    queryKey: ['model-providers', scopedQueryKey],
+    queryFn: () => api.listModelProviders(scopedUserId),
+    enabled: canLoadModelData,
+  });
 
   const modelConfigsQuery = useQuery({
-    queryKey: ['model-configs', selectedUserId],
-    queryFn: () => api.listModelConfigs(selectedUserId),
-    enabled: Boolean(selectedUserId),
+    queryKey: ['model-configs', scopedQueryKey],
+    queryFn: () => api.listModelConfigs(scopedUserId),
+    enabled: canLoadModelData,
   });
 
   const modelSettingsQuery = useQuery({
@@ -101,33 +114,43 @@ export function ModelsPage() {
     enabled: Boolean(selectedUserId),
   });
 
-  const createMutation = useMutation({
-    mutationFn: (payload: CreateUserModelConfigPayload) => api.createModelConfig(payload),
+  const createProviderMutation = useMutation({
+    mutationFn: (payload: CreateUserModelProviderPayload) => api.createModelProvider(payload),
     onSuccess: async (result) => {
       showWarnings(result.sync_warnings);
-      message.success('Model config created');
+      message.success('Provider saved');
       closeDrawer();
       await invalidateCurrentUserModelQueries();
     },
     onError: showError,
   });
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: UpdateUserModelConfigPayload }) =>
-      api.updateModelConfig(id, payload),
+  const updateProviderMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: UpdateUserModelProviderPayload }) =>
+      api.updateModelProvider(id, payload),
     onSuccess: async (result) => {
       showWarnings(result.sync_warnings);
-      message.success('Model config updated');
+      message.success('Provider updated');
       closeDrawer();
       await invalidateCurrentUserModelQueries();
     },
     onError: showError,
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.deleteModelConfig(id),
+  const refreshProviderMutation = useMutation({
+    mutationFn: (provider: UserModelProviderRecord) => api.refreshModelProvider(provider.id, {}),
+    onSuccess: async (result) => {
+      showWarnings(result.sync_warnings);
+      message.success('Provider models refreshed');
+      await invalidateCurrentUserModelQueries();
+    },
+    onError: showError,
+  });
+
+  const deleteProviderMutation = useMutation({
+    mutationFn: (id: string) => api.deleteModelProvider(id),
     onSuccess: async () => {
-      message.success('Model config deleted');
+      message.success('Provider deleted');
       await invalidateCurrentUserModelQueries();
     },
     onError: showError,
@@ -156,12 +179,15 @@ export function ModelsPage() {
     [usersQuery.data],
   );
 
+  const currentProviders = providersQuery.data || [];
   const currentConfigs = modelConfigsQuery.data || [];
-  const memoryEligibleConfigs = currentConfigs.filter((item) => item.model_name.trim());
+  const memoryEligibleConfigs = selectedUserId
+    ? currentConfigs.filter((item) => item.owner_user_id === selectedUserId && item.model_name.trim())
+    : [];
 
-  const columns: ColumnsType<UserModelConfigRecord> = [
+  const providerColumns: ColumnsType<UserModelProviderRecord> = [
     {
-      title: 'Config',
+      title: 'Provider',
       dataIndex: 'name',
       render: (_, record) => (
         <Space direction="vertical" size={0}>
@@ -177,19 +203,6 @@ export function ModelsPage() {
       ),
     },
     {
-      title: 'Model',
-      dataIndex: 'model_name',
-      width: 220,
-      render: (value: string, record) => (
-        <Space direction="vertical" size={0}>
-          <Typography.Text>{value || '-'}</Typography.Text>
-          {record.thinking_level ? (
-            <Typography.Text type="secondary">{record.thinking_level}</Typography.Text>
-          ) : null}
-        </Space>
-      ),
-    },
-    {
       title: 'Owner',
       dataIndex: 'owner_user_id',
       width: 220,
@@ -197,6 +210,30 @@ export function ModelsPage() {
         const owner = (usersQuery.data || []).find((item) => item.id === ownerUserId);
         return owner ? `${owner.display_name || owner.username} (${owner.username})` : ownerUserId;
       },
+    },
+    {
+      title: 'Catalog',
+      key: 'catalog',
+      width: 260,
+      render: (_, record) => (
+        <Space direction="vertical" size={0}>
+          <Space size={8} wrap>
+            <Tag color={record.last_sync_status === 'ok' ? 'success' : 'default'}>
+              {providerCatalogStatusLabel(record.last_sync_status)}
+            </Tag>
+            <Tag>{record.imported_model_count || 0} models</Tag>
+          </Space>
+          {record.last_sync_error ? (
+            <Typography.Text type="danger" ellipsis={{ tooltip: record.last_sync_error }}>
+              {record.last_sync_error}
+            </Typography.Text>
+          ) : record.last_synced_at ? (
+            <Typography.Text type="secondary">
+              {dayjs(record.last_synced_at).format('YYYY-MM-DD HH:mm:ss')}
+            </Typography.Text>
+          ) : null}
+        </Space>
+      ),
     },
     {
       title: 'Flags',
@@ -222,16 +259,19 @@ export function ModelsPage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 160,
+      width: 240,
       render: (_, record) => (
         <Space>
+          <Button size="small" icon={<ReloadOutlined />} onClick={() => refreshProviderMutation.mutate(record)}>
+            Refresh
+          </Button>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(record)}>
             Edit
           </Button>
           <Popconfirm
-            title="Delete this model config?"
-            onConfirm={() => deleteMutation.mutate(record.id)}
-            okButtonProps={{ loading: deleteMutation.isPending }}
+            title="Delete this provider and its imported models?"
+            onConfirm={() => deleteProviderMutation.mutate(record.id)}
+            okButtonProps={{ loading: deleteProviderMutation.isPending }}
           >
             <Button size="small" danger icon={<DeleteOutlined />}>
               Delete
@@ -239,6 +279,63 @@ export function ModelsPage() {
           </Popconfirm>
         </Space>
       ),
+    },
+  ];
+
+  const modelColumns: ColumnsType<UserModelConfigRecord> = [
+    {
+      title: 'Concrete Model',
+      dataIndex: 'name',
+      render: (_, record) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text strong>{record.name}</Typography.Text>
+          <Typography.Text type="secondary">
+            {record.provider} | {record.model_name}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: 'Owner',
+      dataIndex: 'owner_user_id',
+      width: 220,
+      render: (ownerUserId: string) => {
+        const owner = (usersQuery.data || []).find((item) => item.id === ownerUserId);
+        return owner ? `${owner.display_name || owner.username} (${owner.username})` : ownerUserId;
+      },
+    },
+    {
+      title: 'Task Usage',
+      dataIndex: 'task_usage_scenario',
+      width: 220,
+      render: (value?: string | null) => value || '-',
+    },
+    {
+      title: 'Task Thinking',
+      dataIndex: 'task_thinking_level',
+      width: 160,
+      render: (value?: string | null) => value || '-',
+    },
+    {
+      title: 'Flags',
+      key: 'flags',
+      width: 220,
+      render: (_, record) => (
+        <Space wrap>
+          <Tag color={record.enabled ? 'success' : 'default'}>
+            {record.enabled ? 'Enabled' : 'Disabled'}
+          </Tag>
+          {record.supports_images ? <Tag>Image</Tag> : null}
+          {record.supports_reasoning ? <Tag>Reasoning</Tag> : null}
+          {record.supports_responses ? <Tag>Responses</Tag> : null}
+        </Space>
+      ),
+    },
+    {
+      title: 'Updated',
+      dataIndex: 'updated_at',
+      width: 180,
+      render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
     },
   ];
 
@@ -255,13 +352,14 @@ export function ModelsPage() {
 
   async function invalidateCurrentUserModelQueries() {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['model-configs', selectedUserId] }),
-      queryClient.invalidateQueries({ queryKey: ['model-settings', selectedUserId] }),
+      queryClient.invalidateQueries({ queryKey: ['model-providers'] }),
+      queryClient.invalidateQueries({ queryKey: ['model-configs'] }),
+      queryClient.invalidateQueries({ queryKey: ['model-settings'] }),
     ]);
   }
 
   function openCreateDrawer() {
-    setEditingConfig(null);
+    setEditingProvider(null);
     form.resetFields();
     form.setFieldsValue({
       owner_user_id: selectedUserId,
@@ -275,14 +373,12 @@ export function ModelsPage() {
     setDrawerOpen(true);
   }
 
-  function openEditDrawer(record: UserModelConfigRecord) {
-    setEditingConfig(record);
+  function openEditDrawer(record: UserModelProviderRecord) {
+    setEditingProvider(record);
     form.setFieldsValue({
       owner_user_id: record.owner_user_id,
       name: record.name,
       provider: record.provider,
-      model: record.model_name,
-      thinking_level: record.thinking_level || '',
       api_key: '',
       clear_api_key: false,
       base_url: record.base_url || '',
@@ -296,28 +392,24 @@ export function ModelsPage() {
 
   function closeDrawer() {
     setDrawerOpen(false);
-    setEditingConfig(null);
+    setEditingProvider(null);
     form.resetFields();
   }
 
-  function submit(values: ModelFormValues) {
+  function submit(values: ProviderFormValues) {
     if (!selectedUserId && !values.owner_user_id) {
       message.error('Owner user is required');
       return;
     }
-    const normalizedModel = values.model?.trim() || undefined;
-    const normalizedThinkingLevel = values.thinking_level?.trim() || undefined;
     const normalizedBaseUrl = values.base_url?.trim() || undefined;
     const normalizedApiKey = values.api_key?.trim() || undefined;
 
-    if (editingConfig) {
-      updateMutation.mutate({
-        id: editingConfig.id,
+    if (editingProvider) {
+      updateProviderMutation.mutate({
+        id: editingProvider.id,
         payload: {
           name: values.name.trim(),
           provider: values.provider,
-          model: normalizedModel,
-          thinking_level: normalizedThinkingLevel,
           api_key: normalizedApiKey,
           clear_api_key: values.clear_api_key === true,
           base_url: normalizedBaseUrl ?? '',
@@ -330,12 +422,10 @@ export function ModelsPage() {
       return;
     }
 
-    createMutation.mutate({
+    createProviderMutation.mutate({
       owner_user_id: isSuperAdmin ? values.owner_user_id : selectedUserId,
       name: values.name.trim(),
       provider: values.provider,
-      model: normalizedModel,
-      thinking_level: normalizedThinkingLevel,
       api_key: normalizedApiKey,
       base_url: normalizedBaseUrl,
       enabled: values.enabled,
@@ -358,19 +448,22 @@ export function ModelsPage() {
       >
         <Space direction="vertical" size={0}>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            Model Configs
+            AI Providers & Models
           </Typography.Title>
           <Typography.Text type="secondary">
-            User-scoped provider credentials live here. ChatOS can keep model blank, while
-            task and memory use configs with a concrete model name.
+            Save provider credentials here. User service fetches concrete models from the provider
+            catalog for ChatOS, Task Runner, and Memory Engine.
           </Typography.Text>
         </Space>
         <Space wrap>
           {isSuperAdmin ? (
             <Select
-              value={selectedUserId}
-              options={userOptions}
-              onChange={setSelectedUserId}
+              value={selectedUserId || ALL_USERS_SCOPE}
+              options={[
+                { label: 'All users', value: ALL_USERS_SCOPE },
+                ...userOptions,
+              ]}
+              onChange={(value) => setSelectedUserId(value === ALL_USERS_SCOPE ? undefined : value)}
               style={{ width: 280 }}
               placeholder="Select owner user"
             />
@@ -378,74 +471,103 @@ export function ModelsPage() {
           <Button
             icon={<ReloadOutlined />}
             onClick={() => {
+              void providersQuery.refetch();
               void modelConfigsQuery.refetch();
-              void modelSettingsQuery.refetch();
+              if (selectedUserId) {
+                void modelSettingsQuery.refetch();
+              }
             }}
-            loading={modelConfigsQuery.isFetching || modelSettingsQuery.isFetching}
+            loading={providersQuery.isFetching || modelConfigsQuery.isFetching || modelSettingsQuery.isFetching}
           >
             Refresh
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateDrawer}>
-            New Config
+            New Provider
           </Button>
         </Space>
       </div>
 
+      <Card title="Providers">
+        <Table<UserModelProviderRecord>
+          rowKey="id"
+          columns={providerColumns}
+          dataSource={currentProviders}
+          loading={providersQuery.isLoading}
+          pagination={{ pageSize: 10, showSizeChanger: true }}
+          expandable={{
+            expandedRowRender: (record) =>
+              record.sync_warnings && record.sync_warnings.length > 0 ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Refresh warnings"
+                  description={record.sync_warnings.join(' | ')}
+                />
+              ) : null,
+            rowExpandable: (record) => Boolean(record.sync_warnings?.length),
+          }}
+          locale={{
+            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No provider" />,
+          }}
+        />
+      </Card>
+
       <Card title="Memory Engine Summary Model">
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Typography.Text type="secondary">
-            Choose the default concrete model for this user's memory summary jobs.
-          </Typography.Text>
-          <Space wrap style={{ width: '100%' }}>
-            <Select
-              value={modelSettingsQuery.data?.memory_summary_model_config_id ?? undefined}
-              allowClear
-              style={{ minWidth: 320 }}
-              placeholder="Select summary model"
-              options={memoryEligibleConfigs.map((item) => ({
-                label: `${item.name} | ${item.model_name}`,
-                value: item.id,
-              }))}
-              onChange={(value) => saveSettingsMutation.mutate(value ?? null)}
-              loading={modelSettingsQuery.isLoading}
-            />
-          </Space>
-          {memoryEligibleConfigs.length === 0 ? (
+          {!selectedUserId ? (
             <Alert
               type="info"
               showIcon
-              message="No concrete model available"
-              description="Configs without a model name still work for ChatOS provider setup, but they cannot be used as the memory summary model."
+              message="Select one user to edit memory settings"
+              description="Super admin can view all providers and imported models at once, but memory summary defaults are saved per user."
             />
-          ) : null}
+          ) : (
+            <>
+              <Typography.Text type="secondary">
+                Choose the default concrete model for this user's memory summary jobs.
+              </Typography.Text>
+              <Space wrap style={{ width: '100%' }}>
+                <Select
+                  value={modelSettingsQuery.data?.memory_summary_model_config_id ?? undefined}
+                  allowClear
+                  style={{ minWidth: 320 }}
+                  placeholder="Select summary model"
+                  options={memoryEligibleConfigs.map((item) => ({
+                    label: `${item.name} | ${item.model_name}`,
+                    value: item.id,
+                  }))}
+                  onChange={(value) => saveSettingsMutation.mutate(value ?? null)}
+                  loading={modelSettingsQuery.isLoading}
+                />
+              </Space>
+              {memoryEligibleConfigs.length === 0 ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="No concrete model available"
+                  description="Create a provider and refresh its model catalog before choosing a memory summary model."
+                />
+              ) : null}
+            </>
+          )}
         </Space>
       </Card>
 
-      <Table<UserModelConfigRecord>
-        rowKey="id"
-        columns={columns}
-        dataSource={currentConfigs}
-        loading={modelConfigsQuery.isLoading}
-        pagination={{ pageSize: 10, showSizeChanger: true }}
-        expandable={{
-          expandedRowRender: (record) =>
-            record.sync_warnings && record.sync_warnings.length > 0 ? (
-              <Alert
-                type="warning"
-                showIcon
-                message="Sync warnings"
-                description={record.sync_warnings.join(' | ')}
-              />
-            ) : null,
-          rowExpandable: (record) => Boolean(record.sync_warnings?.length),
-        }}
-        locale={{
-          emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No model config" />,
-        }}
-      />
+      <Card title="Imported Concrete Models">
+        <Table<UserModelConfigRecord>
+          rowKey="id"
+          columns={modelColumns}
+          dataSource={currentConfigs}
+          loading={modelConfigsQuery.isLoading}
+          pagination={{ pageSize: 10, showSizeChanger: true }}
+          locale={{
+            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No imported model" />,
+          }}
+        />
+      </Card>
 
       <Drawer
-        title={editingConfig ? `Edit ${editingConfig.name}` : 'New Model Config'}
+        title={editingProvider ? `Edit ${editingProvider.name}` : 'New Provider'}
         open={drawerOpen}
         width={520}
         onClose={closeDrawer}
@@ -455,7 +577,7 @@ export function ModelsPage() {
             <Button onClick={closeDrawer}>Cancel</Button>
             <Button
               type="primary"
-              loading={createMutation.isPending || updateMutation.isPending}
+              loading={createProviderMutation.isPending || updateProviderMutation.isPending}
               onClick={() => form.submit()}
             >
               Save
@@ -463,7 +585,7 @@ export function ModelsPage() {
           </Space>
         }
       >
-        <Form<ModelFormValues>
+        <Form<ProviderFormValues>
           form={form}
           layout="vertical"
           requiredMark={false}
@@ -501,26 +623,16 @@ export function ModelsPage() {
           </Form.Item>
           <Form.Item
             name="api_key"
-            label={editingConfig ? 'New API Key' : 'API Key'}
-            rules={editingConfig ? undefined : [{ required: true, message: 'Please enter an API key' }]}
+            label={editingProvider ? 'New API Key' : 'API Key'}
+            rules={editingProvider ? undefined : [{ required: true, message: 'Please enter an API key' }]}
           >
-            <Input.Password placeholder={editingConfig ? 'Leave empty to keep existing key' : ''} />
+            <Input.Password placeholder={editingProvider ? 'Leave empty to keep existing key' : ''} />
           </Form.Item>
-          {editingConfig?.has_api_key ? (
+          {editingProvider?.has_api_key ? (
             <Form.Item name="clear_api_key" valuePropName="checked">
               <Switch checkedChildren="Clear Saved Key" unCheckedChildren="Keep Saved Key" />
             </Form.Item>
           ) : null}
-          <Form.Item
-            name="model"
-            label="Concrete Model"
-            extra="Optional for ChatOS provider setup. Required if this config should sync into task or memory as a runnable model."
-          >
-            <Input placeholder="gpt-4.1 / deepseek-chat / kimi-k2..." />
-          </Form.Item>
-          <Form.Item name="thinking_level" label="Thinking Level">
-            <Select options={THINKING_OPTIONS} />
-          </Form.Item>
           <Form.Item name="enabled" label="Enabled" valuePropName="checked">
             <Switch />
           </Form.Item>

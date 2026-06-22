@@ -13,8 +13,8 @@ use crate::models::{
 };
 
 use super::{
-    normalize_strings, normalized_optional, normalized_optional_nested, validate_required,
-    TaskService, TaskStatusExt,
+    align_task_tenant_to_owner, normalize_strings, normalized_optional, normalized_optional_nested,
+    save_task_if_tenant_aligned, validate_required, TaskService, TaskStatusExt,
 };
 
 mod store_adapter;

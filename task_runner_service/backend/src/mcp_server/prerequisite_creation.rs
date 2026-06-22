@@ -116,6 +116,8 @@ impl TaskRunnerMcpService {
                 mcp_config,
                 prerequisite_task_ids: Some(item.prerequisite_task_ids.clone()),
             };
+            self.ensure_mcp_default_model_config(&mut request, current_user)
+                .await?;
             if tool_profile == McpToolProfile::ChatosAsyncPlanner {
                 request = if is_prerequisite_node {
                     planner_prerequisite_create_request(request)?
