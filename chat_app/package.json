@@ -75,7 +75,7 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.0",
     "jsdom": "^23.0.0",
-    "postcss": "^8.4.0",
+    "postcss": "^8.5.15",
     "rollup": "^4.0.0",
     "rollup-plugin-dts": "^6.0.0",
     "storybook": "^8.6.14",
