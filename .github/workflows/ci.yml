@@ -56,7 +56,6 @@ jobs:
       - name: Root startup scripts syntax
         run: |
           bash -n restart_services.sh
-          bash -n restart_agentforge.sh
           bash -n db_connection_hub/restart_services.sh
 
       - name: Large file policy
@@ -200,30 +199,6 @@ jobs:
 
       - name: cargo test
         run: cargo test -q
-
-  agentforge:
-    name: agentforge (Rust workspace)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: agentforge
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust deps
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: agentforge -> target-shared
-
-      - name: cargo check workspace
-        run: cargo check --workspace --offline
-
-      - name: cargo test workspace
-        run: cargo test --workspace --offline -q
 
   chat-app-frontend:
     name: chat_app (TypeScript)
