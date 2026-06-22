@@ -78,6 +78,23 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
     Ok(agent_to_dto(agent))
 }
 
+pub async fn ensure_task_runner_agent_account(
+    agent_id: &str,
+) -> Result<Option<ChatosAgentDto>, String> {
+    let Some(mut agent) = agents_repo::get_agent_by_id(agent_id).await? else {
+        return Ok(None);
+    };
+    if normalize_optional_text(agent.task_runner_agent_account_id.as_deref()).is_some() {
+        return Ok(Some(agent_to_dto(agent)));
+    }
+
+    let account_id = provision_task_runner_agent_account(&agent).await?;
+    agent.task_runner_agent_account_id = Some(account_id);
+    agent.updated_at = crate::core::time::now_rfc3339();
+    agents_repo::update_agent(&agent).await?;
+    Ok(Some(agent_to_dto(agent)))
+}
+
 pub async fn update_agent(
     agent_id: &str,
     payload: &UpdateChatosAgentRequest,
@@ -518,11 +535,23 @@ async fn provision_task_runner_agent_account(agent: &Agent) -> Result<String, St
         .ok_or_else(|| "CHATOS_USER_SERVICE_BASE_URL is not configured".to_string())?;
     let access_token = access_token_scope::get_current_access_token()
         .ok_or_else(|| "current user access token is missing".to_string())?;
+    let username = build_task_runner_agent_username(agent.id.as_str());
+    if let Some(existing_id) = find_existing_task_runner_agent_account_id(
+        user_service_base_url,
+        access_token.as_str(),
+        username.as_str(),
+        config.user_service_request_timeout_ms,
+    )
+    .await?
+    {
+        return Ok(existing_id);
+    }
+
     let created = user_service_api_client::create_agent_account(
         user_service_base_url,
         access_token.as_str(),
         &user_service_api_client::CreateUserServiceAgentAccountRequest {
-            username: build_task_runner_agent_username(agent.id.as_str()),
+            username: username.clone(),
             display_name: Some(agent.name.clone()),
             password: build_task_runner_agent_password(),
             owner_user_id: Some(agent.user_id.clone()),
@@ -530,8 +559,22 @@ async fn provision_task_runner_agent_account(agent: &Agent) -> Result<String, St
         },
         config.user_service_request_timeout_ms,
     )
-    .await?;
-    Ok(created.id)
+    .await;
+
+    match created {
+        Ok(created) => Ok(created.id),
+        Err(err) if is_existing_agent_account_error(err.as_str()) => {
+            find_existing_task_runner_agent_account_id(
+                user_service_base_url,
+                access_token.as_str(),
+                username.as_str(),
+                config.user_service_request_timeout_ms,
+            )
+            .await?
+            .ok_or(err)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn build_task_runner_agent_username(agent_id: &str) -> String {
@@ -545,4 +588,33 @@ fn build_task_runner_agent_username(agent_id: &str) -> String {
 
 fn build_task_runner_agent_password() -> String {
     format!("tr-{}", Uuid::new_v4().simple())
+}
+
+async fn find_existing_task_runner_agent_account_id(
+    user_service_base_url: &str,
+    access_token: &str,
+    username: &str,
+    timeout_ms: i64,
+) -> Result<Option<String>, String> {
+    let items = user_service_api_client::list_agent_accounts(
+        user_service_base_url,
+        access_token,
+        timeout_ms,
+    )
+    .await?;
+    Ok(items
+        .into_iter()
+        .find(|item| usernames_match(item.username.as_str(), username))
+        .map(|item| item.id))
+}
+
+fn usernames_match(left: &str, right: &str) -> bool {
+    left.trim().eq_ignore_ascii_case(right.trim())
+}
+
+fn is_existing_agent_account_error(err: &str) -> bool {
+    let normalized = err.trim().to_ascii_lowercase();
+    normalized.contains("agent username already exists")
+        || (normalized.contains("already exists") && normalized.contains(" 400 "))
+        || (normalized.contains("already exists") && normalized.contains(": 400 "))
 }

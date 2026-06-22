@@ -27,6 +27,7 @@ pub mod memory_engine_client;
 pub mod memory_engine_source_bootstrap;
 pub(crate) mod message_manager_common;
 pub mod model_runtime_resolver;
+pub mod new_user_bootstrap;
 pub mod notepad;
 pub mod project_fs_cache;
 pub mod project_local_cache;

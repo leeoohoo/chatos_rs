@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::config::Config;
 use crate::core::auth::{access_token_from_headers, AuthUser};
 use crate::core::websocket_ticket::issue_websocket_ticket;
-use crate::services::user_service_api_client;
+use crate::services::{new_user_bootstrap, user_service_api_client};
 
 #[derive(Debug, Deserialize)]
 struct LoginRequest {
@@ -34,6 +34,7 @@ pub fn router() -> Router {
 pub fn protected_router() -> Router {
     Router::new()
         .route("/api/auth/ws-ticket", post(issue_ws_ticket))
+        .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
         .route("/api/auth/agent-accounts", get(list_agent_accounts))
 }
 
@@ -128,6 +129,38 @@ async fn list_agent_accounts(_auth: AuthUser, headers: HeaderMap) -> (StatusCode
     }
 }
 
+async fn bootstrap_defaults(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    let access_token = match access_token_from_headers(&headers) {
+        Ok(token) => token,
+        Err(err) => return err.into_response(),
+    };
+    match new_user_bootstrap::bootstrap_new_user_defaults(
+        new_user_bootstrap::NewUserBootstrapInput {
+            access_token,
+            user_id: auth.user_id,
+            username: None,
+            display_name: None,
+        },
+    )
+    .await
+    {
+        Ok(report) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "report": report,
+            })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "bootstrap default workspace failed",
+                "detail": err,
+            })),
+        ),
+    }
+}
+
 fn user_public_value_from_user_service(
     user: user_service_api_client::UserServiceAuthUser,
 ) -> Value {
@@ -208,7 +241,26 @@ async fn register_via_user_service(
     )
     .await
     {
-        Ok(payload) => proxy_login_success_response(payload),
+        Ok(payload) => {
+            if let Err(err) = new_user_bootstrap::bootstrap_new_user_defaults(
+                new_user_bootstrap::NewUserBootstrapInput {
+                    access_token: payload.token.clone(),
+                    user_id: payload.user.id.clone(),
+                    username: payload.user.username.clone(),
+                    display_name: payload.user.display_name.clone(),
+                },
+            )
+            .await
+            {
+                eprintln!(
+                    "[AUTH] bootstrap new user defaults failed: user_id={} username={} detail={}",
+                    payload.user.id,
+                    payload.user.username.as_deref().unwrap_or_default(),
+                    err
+                );
+            }
+            proxy_login_success_response(payload)
+        }
         Err(err) => (
             proxy_status_from_user_service_error(err.as_str()),
             Json(json!({
