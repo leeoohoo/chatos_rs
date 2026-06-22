@@ -1,9 +1,12 @@
 import React from 'react';
 
-import { RowsCard, renderCardHeader } from '../shared/primitives';
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
+import { RowsCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, items }) => {
+  const { t } = useI18n();
   const tasks = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -12,7 +15,7 @@ const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${tasks.length} 项`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'tasks', tasks.length))}
       <div className="tool-detail-list">
         {tasks.map((task, index) => {
           const titleText = asString(task.title).trim() || `task ${index + 1}`;
@@ -38,10 +41,10 @@ const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
                 <div className="tool-detail-item-body">
                   {[
                     details,
-                    outcomeSummary ? `成果: ${outcomeSummary}` : '',
-                    blockerReason ? `阻塞: ${blockerReason}` : '',
-                    blockerNeeds.length > 0 ? `需满足: ${blockerNeeds.join('；')}` : '',
-                    resumeHint ? `提示: ${resumeHint}` : '',
+                    outcomeSummary ? t('toolCard.task.outcome', { value: outcomeSummary }) : '',
+                    blockerReason ? t('toolCard.task.blocker', { value: blockerReason }) : '',
+                    blockerNeeds.length > 0 ? t('toolCard.task.needs', { value: blockerNeeds.join('; ') }) : '',
+                    resumeHint ? t('toolCard.task.hint', { value: resumeHint }) : '',
                     tags.length > 0 ? `#${tags.join(' #')}` : '',
                   ].filter(Boolean).join(' · ')}
                 </div>
@@ -63,6 +66,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -70,7 +74,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Review result"
+          title={translateToolTitle('Review result', locale)}
           rows={[
             { key: 'confirmed', value: asBoolean(record.confirmed) },
             { key: 'cancelled', value: asBoolean(record.cancelled) },
@@ -78,7 +82,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
             { key: 'reason', value: asString(record.reason).trim() },
           ]}
         />
-        <TaskListCard title="Tasks" items={asArray(record.tasks)} />
+        <TaskListCard title={translateToolTitle('Tasks', locale)} items={asArray(record.tasks)} />
       </div>
     );
   }
@@ -87,13 +91,13 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Task scope"
+          title={translateToolTitle('Task scope', locale)}
           rows={[
             { key: 'count', value: asNumber(record.count) },
             { key: 'current turn only', value: asString(record.conversation_turn_id ?? record.conversationTurnId).trim() ? 'yes' : 'no' },
           ]}
         />
-        <TaskListCard title="Tasks" items={asArray(record.tasks)} />
+        <TaskListCard title={translateToolTitle('Tasks', locale)} items={asArray(record.tasks)} />
       </div>
     );
   }
@@ -102,13 +106,13 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title={displayName === 'complete_task' ? 'Completion result' : 'Update result'}
+          title={translateToolTitle(displayName === 'complete_task' ? 'Completion result' : 'Update result', locale)}
           rows={[
             { key: 'updated', value: asBoolean(record.updated) },
             { key: 'completed', value: asBoolean(record.completed) },
           ]}
         />
-        <TaskListCard title="Task" items={[record.task]} />
+        <TaskListCard title={translateToolTitle('Task', locale)} items={[record.task]} />
       </div>
     );
   }
@@ -117,7 +121,7 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Delete result"
+          title={translateToolTitle('Delete result', locale)}
           rows={[
             { key: 'deleted', value: asBoolean(record.deleted) },
             { key: 'task id', value: asString(record.task_id ?? record.taskId).trim() },

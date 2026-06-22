@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type {
   CodeNavDocumentSymbolsResult,
@@ -24,6 +25,7 @@ interface ProjectPreviewNavigationProps {
   navCapabilitiesError: string | null;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbolsExpanded: boolean;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
@@ -35,6 +37,7 @@ interface ProjectPreviewNavigationProps {
   onOpenNextSearchHit: () => void;
   onRequestDefinition: () => void;
   onRequestReferences: () => void;
+  onGoBackFromNav: () => void;
   onSearchInProject: (query: string) => void;
   onClearTokenSelection: () => void;
   onOpenNavLocation: (location: CodeNavLocation) => void;
@@ -58,6 +61,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
   navCapabilitiesError,
   navError,
   activeNavLocationId,
+  canGoBackFromNav,
   documentSymbolsExpanded,
   documentSymbolsLoading,
   documentSymbolsError,
@@ -69,11 +73,13 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
   onOpenNextSearchHit,
   onRequestDefinition,
   onRequestReferences,
+  onGoBackFromNav,
   onSearchInProject,
   onClearTokenSelection,
   onOpenNavLocation,
   onOpenDocumentSymbol,
 }) => {
+  const { t } = useI18n();
   const canSearchInProject = Boolean(displayedToken?.trim());
   const canClearNavigation = Boolean(selectedToken || navResult || navError);
 
@@ -91,7 +97,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
         {activeSearchQuery && totalSearchHits > 0 && (
           <>
             <span className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground">
-              搜索命中 {activeSearchPositionLabel}
+              {t('projectExplorer.preview.nav.searchHits', { label: activeSearchPositionLabel || '' })}
             </span>
             <button
               type="button"
@@ -99,7 +105,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
               disabled={!canOpenPreviousSearchHit}
               className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              上一处
+              {t('projectExplorer.preview.nav.previous')}
             </button>
             <button
               type="button"
@@ -107,7 +113,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
               disabled={!canOpenNextSearchHit}
               className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              下一处
+              {t('projectExplorer.preview.nav.next')}
             </button>
           </>
         )}
@@ -116,21 +122,29 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
             type="button"
             onClick={onRequestDefinition}
             disabled={!selectedToken || navLoading}
-            className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {navLoading && navRequestKind === 'definition' ? '查询中...' : '跳到定义'}
-          </button>
-        )}
+          className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {navLoading && navRequestKind === 'definition' ? t('projectExplorer.preview.nav.loading') : t('projectExplorer.preview.nav.goToDefinition')}
+        </button>
+      )}
         {canNavigateToReferences && (
           <button
             type="button"
             onClick={onRequestReferences}
             disabled={!selectedToken || navLoading}
-            className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {navLoading && navRequestKind === 'references' ? '查询中...' : '查找引用'}
-          </button>
-        )}
+          className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {navLoading && navRequestKind === 'references' ? t('projectExplorer.preview.nav.loading') : t('projectExplorer.preview.nav.findReferences')}
+        </button>
+      )}
+        <button
+          type="button"
+          onClick={onGoBackFromNav}
+          disabled={!canGoBackFromNav || navLoading}
+          className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {t('projectExplorer.preview.nav.goBack')}
+        </button>
         <button
           type="button"
           onClick={() => {
@@ -141,7 +155,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
           disabled={!canSearchInProject}
           className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
-          项目内搜索
+          {t('projectExplorer.preview.nav.searchInProject')}
         </button>
         <button
           type="button"
@@ -149,11 +163,15 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
           disabled={!canClearNavigation}
           className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
-          清空导航
+          {t('projectExplorer.preview.nav.clear')}
         </button>
         {navResultLabel && navResult && (
           <span className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground">
-            {navResultLabel} {navResult.locations.length} 条 · {navResult.mode}
+            {t('projectExplorer.preview.nav.summary', {
+              label: navResultLabel,
+              count: navResult.locations.length,
+              mode: navResult.mode,
+            })}
           </span>
         )}
         <button
@@ -162,12 +180,12 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
           onClick={onToggleDocumentSymbols}
           className="ml-auto inline-flex h-8 items-center gap-2 rounded border border-border px-3 text-xs hover:bg-accent"
         >
-          <span>{documentSymbolsExpanded ? 'v' : '>'} 文件符号</span>
+          <span>{documentSymbolsExpanded ? 'v' : '>'} {t('projectExplorer.preview.nav.fileSymbols')}</span>
           <span className="text-[11px] text-muted-foreground">
             {documentSymbolsLoading
-              ? '加载中'
+              ? t('common.loading')
               : documentSymbolsError
-                ? '加载失败'
+                ? t('projectExplorer.preview.nav.loadFailed')
                 : documentSymbolCount}
           </span>
         </button>
@@ -199,7 +217,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
                   {location.relativePath} · L{location.line}
                 </span>
                 <span className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">
-                  {location.preview || '(无预览)'}
+                  {location.preview || t('projectExplorer.preview.nav.noPreview')}
                 </span>
               </button>
             );
@@ -209,7 +227,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
       {documentSymbolsExpanded && (
         <div className="mt-1.5 rounded border border-border bg-background">
           {documentSymbolsLoading ? (
-            <div className="px-3 py-2 text-[11px] text-muted-foreground">正在加载文件符号...</div>
+            <div className="px-3 py-2 text-[11px] text-muted-foreground">{t('projectExplorer.preview.nav.loadingSymbols')}</div>
           ) : documentSymbolsError ? (
             <div className="px-3 py-2 text-[11px] text-destructive">{documentSymbolsError}</div>
           ) : documentSymbols?.symbols && documentSymbols.symbols.length > 0 ? (
@@ -242,7 +260,7 @@ export const ProjectPreviewNavigation: React.FC<ProjectPreviewNavigationProps> =
             </div>
           ) : (
             <div className="px-3 py-2 text-[11px] text-muted-foreground">
-              当前文件没有提取到可导航符号
+              {t('projectExplorer.preview.nav.noSymbols')}
             </div>
           )}
         </div>

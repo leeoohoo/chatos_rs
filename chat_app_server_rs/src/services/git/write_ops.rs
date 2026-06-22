@@ -1,14 +1,11 @@
 use super::contracts::*;
-use super::process::{
-    git_output, git_output_with_status, DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT,
-};
+use super::process::{git_output, git_output_with_status, DEFAULT_GIT_TIMEOUT, REMOTE_GIT_TIMEOUT};
 use super::shared::{
-    action_result, action_result_with_status, read_repo_summary, require_current_branch,
-    stage_paths, unstage_paths,
+    action_result, action_result_with_status, discard_paths, read_repo_summary,
+    require_current_branch, stage_paths, unstage_paths,
 };
 use super::validation::{
-    ensure_safe_ref, merge_args, require_repo_root, validate_branch_name,
-    validate_relative_paths,
+    ensure_safe_ref, merge_args, require_repo_root, validate_branch_name, validate_relative_paths,
 };
 
 pub async fn fetch(request: GitFetchRequest) -> Result<GitActionResult, String> {
@@ -200,5 +197,12 @@ pub async fn commit(request: GitCommitRequest) -> Result<GitActionResult, String
         DEFAULT_GIT_TIMEOUT,
     )
     .await?;
+    action_result(repo_root.as_path(), output).await
+}
+
+pub async fn discard(request: GitPathRequest) -> Result<GitActionResult, String> {
+    let repo_root = require_repo_root(&request.root).await?;
+    let paths = validate_relative_paths(&request.paths)?;
+    let output = discard_paths(repo_root.as_path(), &paths).await?;
     action_result(repo_root.as_path(), output).await
 }

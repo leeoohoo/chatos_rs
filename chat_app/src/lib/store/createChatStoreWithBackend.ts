@@ -1,7 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import {immer} from 'zustand/middleware/immer';
 import {persist} from 'zustand/middleware';
-import {apiClient} from '../api/client';
 import type ApiClient from '../api/client';
 import {createSendMessageHandler} from './actions/sendMessage';
 import { createApplicationActions } from './actions/applications';
@@ -14,35 +13,42 @@ import { createProjectActions } from './actions/projects';
 import { createTerminalActions } from './actions/terminals';
 import { createRemoteConnectionActions } from './actions/remoteConnections';
 import { createMessageActions } from './actions/messages';
-import { createRuntimeGuidanceActions } from './actions/runtimeGuidance';
-import { createStreamingActions } from './actions/streaming';
 import { createAgentActions } from './actions/agents';
 import { createSystemContextActions } from './actions/systemContexts';
 import { createUiActions } from './actions/ui';
+import { configurationInitialState } from './slices/configurationSlice';
+import { conversationRuntimeInitialState } from './slices/conversationRuntimeSlice';
+import { remoteExecutionInitialState } from './slices/remoteExecutionSlice';
+import { sessionInitialState } from './slices/sessionSlice';
+import { uiInitialState } from './slices/uiSlice';
+import { workspaceInitialState } from './slices/workspaceSlice';
+import {
+  primeScopedChatStoreStateFromLegacy,
+  resolveChatStorePersistKey,
+} from './persistence';
 import type {
   ChatActions,
   ChatState,
-  ChatStoreDraft,
   ChatStoreConfig,
-  TaskReviewPanelState,
-  UiPromptPanelState,
 } from './types';
 
 export type { ChatActions, ChatState, ChatStoreConfig } from './types';
 
 /**
  * 创建聊天store的工厂函数（使用后端API版本）
- * @param customApiClient 自定义的API客户端实例，如果不提供则使用默认的apiClient
+ * @param customApiClient 自定义的API客户端实例
  * @param config 自定义配置，包含userId和projectId
  * @returns 聊天store hook
  */
-export function createChatStoreWithBackend(customApiClient?: ApiClient, config?: ChatStoreConfig) {
-    const client = customApiClient || apiClient;
+export function createChatStoreWithBackend(customApiClient: ApiClient, config?: ChatStoreConfig) {
+    const client = customApiClient;
     const customUserId = config?.userId;
     const customProjectId = config?.projectId;
     
     // 用户 ID 由登录态注入；缺失时不再回退到硬编码默认值
     const userId = customUserId || '';
+    const persistKey = resolveChatStorePersistKey(userId);
+    primeScopedChatStoreStateFromLegacy(userId);
     
     // 获取userId的统一函数
     const getUserIdParam = () => userId;
@@ -57,55 +63,12 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     });
 
                     return {
-                    // 初始状态
-                    sessions: [],
-                    currentSessionId: null,
-                    currentSession: null,
-                    contacts: [],
-                    projects: [],
-                    currentProjectId: null,
-                    currentProject: null,
-                    activePanel: 'chat',
-                    terminals: [],
-                    currentTerminalId: null,
-                    currentTerminal: null,
-                    remoteConnections: [],
-                    currentRemoteConnectionId: null,
-                    currentRemoteConnection: null,
-                    messages: [],
-                    isLoading: false,
-                    isStreaming: false,
-                    streamingMessageId: null,
-                    hasMoreMessages: true,
-                    sessionChatState: {},
-                    sessionRuntimeGuidanceState: {},
-                    sessionStreamingMessageDrafts: {},
-                    sessionTurnProcessState: {},
-                    sessionTurnProcessCache: {},
-                    taskReviewPanel: null,
-                    taskReviewPanelsBySession: {},
-                    uiPromptPanel: null,
-                    uiPromptPanelsBySession: {},
-                    sidebarOpen: true,
-                    theme: 'light',
-                    chatConfig: {
-                        model: 'gpt-4',
-                        temperature: 0.7,
-                        systemPrompt: '',
-                        enableMcp: true,
-                        reasoningEnabled: false,
-                    },
-                    mcpConfigs: [],
-                    aiModelConfigs: [],
-                    selectedModelId: null,
-                    agents: [],
-                    selectedAgentId: null,
-                    sessionAiSelectionBySession: {},
-                    systemContexts: [],
-                    activeSystemContext: null,
-                    applications: [],
-                    selectedApplicationId: null,
-                    error: null,
+                    ...sessionInitialState,
+                    ...workspaceInitialState,
+                    ...remoteExecutionInitialState,
+                    ...conversationRuntimeInitialState,
+                    ...uiInitialState,
+                    ...configurationInitialState,
 
                     // 会话/项目/消息/流式/UI 操作（拆分到独立模块）
                     ...createContactActions({ set, get, client, getUserIdParam }),
@@ -114,113 +77,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createTerminalActions({ set, get, client, getUserIdParam }),
                     ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
-                    ...createRuntimeGuidanceActions({ set, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
-                    ...createStreamingActions({ set, get, client }),
-                    setTaskReviewPanel: (panel: ChatState['taskReviewPanel']) => {
-                        set((state: ChatStoreDraft) => {
-                            state.taskReviewPanel = panel;
-                        });
-                    },
-                    upsertTaskReviewPanel: (panel: TaskReviewPanelState) => {
-                        if (!panel || !panel.reviewId || !panel.sessionId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const sessionId = panel.sessionId;
-                            const panels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
-                                ? state.taskReviewPanelsBySession[sessionId]
-                                : [];
-                            const index = panels.findIndex((item) => item.reviewId === panel.reviewId);
-                            if (index >= 0) {
-                                panels[index] = panel;
-                            } else {
-                                panels.push(panel);
-                            }
-                            state.taskReviewPanelsBySession[sessionId] = panels;
-                            if (state.currentSessionId === sessionId) {
-                                state.taskReviewPanel = panels[0] || panel;
-                            }
-                        });
-                    },
-                    removeTaskReviewPanel: (reviewId: string, sessionId?: string) => {
-                        if (!reviewId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const candidates = sessionId
-                                ? [sessionId]
-                                : Object.keys(state.taskReviewPanelsBySession || {});
-                            for (const sid of candidates) {
-                                const panels = state.taskReviewPanelsBySession?.[sid];
-                                if (!Array.isArray(panels) || panels.length === 0) {
-                                    continue;
-                                }
-                                const nextPanels = panels.filter((item) => item.reviewId !== reviewId);
-                                if (nextPanels.length > 0) {
-                                    state.taskReviewPanelsBySession[sid] = nextPanels;
-                                } else {
-                                    delete state.taskReviewPanelsBySession[sid];
-                                }
-                                if (state.currentSessionId === sid) {
-                                    state.taskReviewPanel = nextPanels[0] || null;
-                                }
-                                break;
-                            }
-                        });
-                    },
-                    setUiPromptPanel: (panel: ChatState['uiPromptPanel']) => {
-                        set((state: ChatStoreDraft) => {
-                            state.uiPromptPanel = panel;
-                        });
-                    },
-                    upsertUiPromptPanel: (panel: UiPromptPanelState) => {
-                        if (!panel || !panel.promptId || !panel.sessionId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const sessionId = panel.sessionId;
-                            const panels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
-                                ? state.uiPromptPanelsBySession[sessionId]
-                                : [];
-                            const index = panels.findIndex((item) => item.promptId === panel.promptId);
-                            if (index >= 0) {
-                                panels[index] = panel;
-                            } else {
-                                panels.push(panel);
-                            }
-                            state.uiPromptPanelsBySession[sessionId] = panels;
-                            if (state.currentSessionId === sessionId) {
-                                state.uiPromptPanel = panels[0] || panel;
-                            }
-                        });
-                    },
-                    removeUiPromptPanel: (promptId: string, sessionId?: string) => {
-                        if (!promptId) {
-                            return;
-                        }
-                        set((state: ChatStoreDraft) => {
-                            const candidates = sessionId
-                                ? [sessionId]
-                                : Object.keys(state.uiPromptPanelsBySession || {});
-                            for (const sid of candidates) {
-                                const panels = state.uiPromptPanelsBySession?.[sid];
-                                if (!Array.isArray(panels) || panels.length === 0) {
-                                    continue;
-                                }
-                                const nextPanels = panels.filter((item) => item.promptId !== promptId);
-                                if (nextPanels.length > 0) {
-                                    state.uiPromptPanelsBySession[sid] = nextPanels;
-                                } else {
-                                    delete state.uiPromptPanelsBySession[sid];
-                                }
-                                if (state.currentSessionId === sid) {
-                                    state.uiPromptPanel = nextPanels[0] || null;
-                                }
-                                break;
-                            }
-                        });
-                    },
                     ...createUiActions({ set }),
 
                     // 配置操作（拆分到独立模块）
@@ -233,7 +90,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createApplicationActions({ set, get, client, getUserIdParam }),
 
                     // AI模型管理（拆分到独立模块）
-                    ...createAiModelActions({ set, get, client, getUserIdParam }),
+                    ...createAiModelActions({ set, get, client }),
 
                     // 智能体/系统上下文（拆分到独立模块）
                     ...createAgentActions({ set, get, client, getUserIdParam }),
@@ -254,7 +111,20 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                 };
                 },
                 {
-                    name: 'chat-store-with-backend',
+                    name: persistKey,
+                    version: 2,
+                    migrate: (persistedState: unknown, version: number) => {
+                        if (!persistedState || typeof persistedState !== 'object') {
+                            return persistedState;
+                        }
+                        const nextState = {...(persistedState as Record<string, unknown>)};
+                        if (version < 2) {
+                            delete nextState.sessionChatState;
+                        }
+                        delete nextState.sessionStreamingMessageDrafts;
+                        delete nextState.sessionTurnProcessCache;
+                        return nextState;
+                    },
                     partialize: (state) => ({
                         theme: state.theme,
                         sidebarOpen: state.sidebarOpen,

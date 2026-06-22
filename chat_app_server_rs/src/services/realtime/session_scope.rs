@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::validation::normalize_non_empty_str;
 use crate::repositories::db::with_db;
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 
 use super::types::RealtimeEventEnvelope;
 
@@ -95,11 +95,11 @@ pub async fn resolve_conversation_scope(
         return Ok(scope);
     }
 
-    let session = memory_server_client::get_session_by_id(conversation_id.as_str())
+    let session = chatos_sessions::get_session_by_id(conversation_id.as_str())
         .await
         .map_err(|err| {
             format!(
-                "load conversation {} from memory server failed: {}",
+                "load conversation {} from chatos session store failed: {}",
                 conversation_id, err
             )
         })?;
@@ -122,7 +122,10 @@ impl RealtimeSubscriptionSet {
         Ok(normalized)
     }
 
-    pub fn unsubscribe(&mut self, topics: Vec<RealtimeTopic>) -> Result<Vec<RealtimeTopic>, String> {
+    pub fn unsubscribe(
+        &mut self,
+        topics: Vec<RealtimeTopic>,
+    ) -> Result<Vec<RealtimeTopic>, String> {
         let normalized = normalize_topics(topics)?;
         for topic in &normalized {
             self.topics.remove(topic);
@@ -136,7 +139,9 @@ impl RealtimeSubscriptionSet {
         }
 
         let envelope_topics = topics_for_envelope(envelope);
-        envelope_topics.into_iter().any(|topic| self.topics.contains(&topic))
+        envelope_topics
+            .into_iter()
+            .any(|topic| self.topics.contains(&topic))
     }
 }
 
@@ -220,7 +225,11 @@ fn topics_for_envelope(envelope: &RealtimeEventEnvelope) -> Vec<RealtimeTopic> {
         });
     }
 
-    if let Some(project_id) = envelope.project_id.as_deref().and_then(normalize_non_empty_str) {
+    if let Some(project_id) = envelope
+        .project_id
+        .as_deref()
+        .and_then(normalize_non_empty_str)
+    {
         topics.push(RealtimeTopic {
             scope: RealtimeTopicScope::Project,
             id: Some(project_id.to_string()),

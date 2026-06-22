@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
 import type { useDialogService } from '../ui/DialogProvider';
 import { normalizeNoteMeta } from './controllerHelpers';
@@ -14,6 +15,7 @@ interface UseNotepadCrudActionsOptions {
   apiClient: ApiClient;
   confirm: ReturnType<typeof useDialogService>['confirm'];
   content: string;
+  t: TranslateFn;
   ensureFolderExpanded: (folderPath: string) => void;
   loadNotes: (options?: { force?: boolean }) => Promise<void>;
   markNotesStale: () => void;
@@ -40,6 +42,7 @@ export const useNotepadCrudActions = ({
   apiClient,
   confirm,
   content,
+  t,
   ensureFolderExpanded,
   loadNotes,
   markNotesStale,
@@ -64,16 +67,16 @@ export const useNotepadCrudActions = ({
   const createFolder = useCallback(async (parentFolder?: string) => {
     const baseFolder = normalizeFolderPath(parentFolder ?? selectedFolder);
     const promptTitle = baseFolder
-      ? `在目录 "${baseFolder}" 下新建子目录（支持输入相对路径）`
-      : '请输入新文件夹路径（例如 work/ideas）';
+      ? t('notepad.prompt.createFolder.messageChild', { folder: baseFolder })
+      : t('notepad.prompt.createFolder.messageRoot');
     const raw = await prompt({
-      title: '新建目录',
+      title: t('notepad.prompt.createFolder.title'),
       message: promptTitle,
-      inputLabel: '目录路径',
-      placeholder: baseFolder ? '例如 ideas/today' : '例如 work/ideas',
+      inputLabel: t('notepad.prompt.createFolder.inputLabel'),
+      placeholder: baseFolder ? t('notepad.prompt.createFolder.placeholderChild') : t('notepad.prompt.createFolder.placeholderRoot'),
       defaultValue: '',
-      confirmText: '创建',
-      cancelText: '取消',
+      confirmText: t('applications.form.submitCreate'),
+      cancelText: t('common.cancel'),
       type: 'info',
     });
     if (raw === null) {
@@ -95,24 +98,24 @@ export const useNotepadCrudActions = ({
       ensureFolderExpanded(folder);
       applyFolderToCache(folder);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建文件夹失败');
+      setError(err instanceof Error ? err.message : t('notepad.error.createFolder'));
     } finally {
       setLoading(false);
     }
-  }, [apiClient, applyFolderToCache, ensureFolderExpanded, prompt, selectedFolder, setError, setLoading, setSelectedFolder]);
+  }, [apiClient, applyFolderToCache, ensureFolderExpanded, prompt, selectedFolder, setError, setLoading, setSelectedFolder, t]);
 
   const createNote = useCallback(async (folderOverride?: string) => {
     const targetFolder = normalizeFolderPath(folderOverride ?? selectedFolder);
     const noteTitle = await prompt({
-      title: '新建笔记',
+      title: t('notepad.prompt.createNote.title'),
       message: targetFolder
-        ? `将在目录 "${targetFolder}" 下创建笔记`
-        : '将在根目录下创建笔记',
-      inputLabel: '笔记标题',
-      placeholder: '请输入笔记标题',
+        ? t('notepad.prompt.createNote.messageFolder', { folder: targetFolder })
+        : t('notepad.prompt.createNote.messageRoot'),
+      inputLabel: t('notepad.prompt.createNote.inputLabel'),
+      placeholder: t('notepad.prompt.createNote.placeholder'),
       defaultValue: '',
-      confirmText: '创建',
-      cancelText: '取消',
+      confirmText: t('applications.form.submitCreate'),
+      cancelText: t('common.cancel'),
       type: 'info',
     });
     if (noteTitle === null) {
@@ -146,11 +149,11 @@ export const useNotepadCrudActions = ({
         resetEditor();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建笔记失败');
+      setError(err instanceof Error ? err.message : t('notepad.error.createNote'));
     } finally {
       setLoading(false);
     }
-  }, [apiClient, ensureFolderExpanded, openNote, prompt, resetEditor, selectedFolder, setError, setLoading, setSelectedFolder, upsertCachedNote]);
+  }, [apiClient, ensureFolderExpanded, openNote, prompt, resetEditor, selectedFolder, setError, setLoading, setSelectedFolder, t, upsertCachedNote]);
 
   const saveNote = useCallback(async () => {
     if (!selectedNoteId) {
@@ -176,11 +179,11 @@ export const useNotepadCrudActions = ({
         await loadNotes({ force: true });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存笔记失败');
+      setError(err instanceof Error ? err.message : t('notepad.error.save'));
     } finally {
       setLoading(false);
     }
-  }, [apiClient, content, loadNotes, markNotesStale, selectedNoteId, setDirty, setError, setLoading, tagsText, title, upsertCachedNote, upsertCachedNoteDetail]);
+  }, [apiClient, content, loadNotes, markNotesStale, selectedNoteId, setDirty, setError, setLoading, t, tagsText, title, upsertCachedNote, upsertCachedNoteDetail]);
 
   const deleteNoteById = useCallback(async (noteId: string, titleHint?: string) => {
     const normalizedId = String(noteId || '').trim();
@@ -188,10 +191,12 @@ export const useNotepadCrudActions = ({
       return;
     }
     const confirmed = await confirm({
-      title: '删除笔记',
-      message: `确认删除笔记“${titleHint || '当前笔记'}”？此操作不可恢复。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: t('notepad.confirm.deleteNote.title'),
+      message: t('notepad.confirm.deleteNote.message', {
+        name: titleHint || t('notepad.editor.titleEditing'),
+      }),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -207,11 +212,11 @@ export const useNotepadCrudActions = ({
       }
       removeCachedNote(normalizedId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除笔记失败');
+      setError(err instanceof Error ? err.message : t('notepad.error.deleteNote'));
     } finally {
       setLoading(false);
     }
-  }, [apiClient, confirm, removeCachedNote, resetEditor, selectedNoteId, setError, setLoading]);
+  }, [apiClient, confirm, removeCachedNote, resetEditor, selectedNoteId, setError, setLoading, t]);
 
   const deleteNote = useCallback(async () => {
     if (!selectedNoteId) {
@@ -228,10 +233,10 @@ export const useNotepadCrudActions = ({
     }
 
     const confirmed = await confirm({
-      title: '删除目录',
-      message: `确认删除目录“${folder}”吗？会同时删除该目录下所有笔记。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: t('notepad.confirm.deleteFolder.title'),
+      message: t('notepad.confirm.deleteFolder.message', { name: folder }),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -258,11 +263,11 @@ export const useNotepadCrudActions = ({
 
       removeFolderFromCache(folder);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除目录失败');
+      setError(err instanceof Error ? err.message : t('notepad.error.deleteFolder'));
     } finally {
       setLoading(false);
     }
-  }, [apiClient, confirm, notes, removeFolderFromCache, resetEditor, selectedFolder, selectedNoteId, setError, setLoading, setSelectedFolder]);
+  }, [apiClient, confirm, notes, removeFolderFromCache, resetEditor, selectedFolder, selectedNoteId, setError, setLoading, setSelectedFolder, t]);
 
   return {
     createFolder,

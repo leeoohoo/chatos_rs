@@ -1,11 +1,14 @@
 import React from 'react';
 
 import type { AgentConfig, FsEntry } from '../../types';
+import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
 import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
+import { TaskRunnerConfigModal } from './TaskRunnerConfigModal';
 import type { RemoteConnection } from '../../types';
+import type { ContactItem } from './types';
 import type {
   DirPickerTarget,
   HostKeyPolicy,
@@ -24,6 +27,16 @@ interface SessionListDialogsProps {
   setSelectedContactAgentId: (value: string) => void;
   setContactError: (value: string | null) => void;
   handleCreateContactSession: () => Promise<void> | void;
+  taskRunnerContact: ContactItem | null;
+  taskRunnerAgentAccounts: TaskRunnerAgentAccountResponse[];
+  taskRunnerAgentAccountsLoading: boolean;
+  taskRunnerError: string | null;
+  taskRunnerSaving: boolean;
+  closeTaskRunnerConfig: () => void;
+  saveTaskRunnerConfig: (values: {
+    enabled: boolean;
+    agentAccountId: string;
+  }) => Promise<void> | void;
 
   projectModalOpen: boolean;
   projectRoot: string;
@@ -113,6 +126,7 @@ interface SessionListDialogsProps {
   dirPickerTarget: DirPickerTarget;
   dirPickerPath: string | null;
   dirPickerParent: string | null;
+  dirPickerWritable: boolean;
   dirPickerLoading: boolean;
   dirPickerItems: FsEntry[];
   dirPickerError: string | null;
@@ -140,6 +154,13 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setSelectedContactAgentId,
   setContactError,
   handleCreateContactSession,
+  taskRunnerContact,
+  taskRunnerAgentAccounts,
+  taskRunnerAgentAccountsLoading,
+  taskRunnerError,
+  taskRunnerSaving,
+  closeTaskRunnerConfig,
+  saveTaskRunnerConfig,
   projectModalOpen,
   projectRoot,
   projectError,
@@ -224,6 +245,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   dirPickerTarget,
   dirPickerPath,
   dirPickerParent,
+  dirPickerWritable,
   dirPickerLoading,
   dirPickerItems,
   dirPickerError,
@@ -255,6 +277,17 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onCreate={() => {
         void handleCreateContactSession();
       }}
+    />
+
+    <TaskRunnerConfigModal
+      isOpen={Boolean(taskRunnerContact)}
+      contact={taskRunnerContact}
+      agentAccounts={taskRunnerAgentAccounts}
+      loadingAgentAccounts={taskRunnerAgentAccountsLoading}
+      saving={taskRunnerSaving}
+      error={taskRunnerError}
+      onClose={closeTaskRunnerConfig}
+      onSave={saveTaskRunnerConfig}
     />
 
     <CreateProjectModal
@@ -367,6 +400,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       target={dirPickerTarget}
       currentPath={dirPickerPath || ''}
       parentPath={dirPickerParent}
+      writable={dirPickerWritable}
       loading={dirPickerLoading}
       items={dirPickerItems}
       error={dirPickerError}

@@ -3,6 +3,7 @@ use crate::{
         datasource::DataSource,
         metadata::{MetadataNode, MetadataNodeType, MetadataNodesResponse},
     },
+    drivers::metadata_common,
     error::{AppError, AppResult},
 };
 
@@ -11,99 +12,40 @@ pub fn paginate_nodes(
     page: u32,
     page_size: u32,
 ) -> MetadataNodesResponse {
-    let safe_page = page.max(1);
-    let safe_size = page_size.clamp(1, 500);
-    let total = items.len() as u64;
-    let start = ((safe_page - 1) * safe_size) as usize;
-
-    let paged = if start >= items.len() {
-        Vec::new()
-    } else {
-        let end = (start + safe_size as usize).min(items.len());
-        items[start..end].to_vec()
-    };
-
-    MetadataNodesResponse {
-        items: paged,
-        page: safe_page,
-        page_size: safe_size,
-        total,
-    }
+    metadata_common::paginate_nodes(items, page, page_size)
 }
 
 pub fn parse_database_node(parent_id: &str) -> Option<String> {
-    parent_id
-        .strip_prefix("db:")
-        .map(std::string::ToString::to_string)
+    metadata_common::parse_database_node(parent_id)
 }
 
 pub fn parse_table_node(node_id: &str) -> Option<(String, String)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?;
-    let table = parts.next()?;
-    if prefix != "table" {
-        return None;
-    }
-    Some((database.to_string(), table.to_string()))
+    metadata_common::parse_prefixed_2(node_id, "table")
 }
 
 pub fn parse_detail_node(node_id: &str) -> Option<(MetadataNodeType, String, String)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?;
-    let object_name = parts.next()?;
+    for prefix in ["table", "view", "procedure", "function"] {
+        if let Some([database, object_name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
+        {
+            let node_type = metadata_common::node_type_from_prefix(prefix)?;
+            return Some((node_type, database, object_name));
+        }
+    }
 
-    let node_type = match prefix {
-        "table" => MetadataNodeType::Table,
-        "view" => MetadataNodeType::View,
-        _ => return None,
-    };
-
-    Some((node_type, database.to_string(), object_name.to_string()))
+    None
 }
 
 pub fn parse_index_node(node_id: &str) -> Option<(String, String, String)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?;
-    let table = parts.next()?;
-    let index_name = parts.next()?;
-    if prefix != "index" {
-        return None;
-    }
-    Some((
-        database.to_string(),
-        table.to_string(),
-        index_name.to_string(),
-    ))
+    metadata_common::parse_prefixed_3(node_id, "index")
 }
 
 pub fn parse_trigger_node(node_id: &str) -> Option<(String, String, String)> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let database = parts.next()?;
-    let table = parts.next()?;
-    let trigger_name = parts.next()?;
-    if prefix != "trigger" {
-        return None;
-    }
-    Some((
-        database.to_string(),
-        table.to_string(),
-        trigger_name.to_string(),
-    ))
+    metadata_common::parse_prefixed_3(node_id, "trigger")
 }
 
 pub fn make_db_node(database: &str) -> MetadataNode {
-    MetadataNode {
-        id: format!("db:{database}"),
-        parent_id: "root".to_string(),
-        node_type: MetadataNodeType::Database,
-        display_name: database.to_string(),
-        path: database.to_string(),
-        has_children: true,
-    }
+    metadata_common::make_db_node(database)
 }
 
 pub fn scoped_database(datasource: &DataSource) -> Option<&str> {
@@ -124,4 +66,29 @@ pub fn ensure_database_in_scope(datasource: &DataSource, database: &str) -> AppR
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::metadata::MetadataNodeType;
+
+    use super::parse_detail_node;
+
+    #[test]
+    fn parse_detail_node_supports_routine_prefixes() {
+        let procedure = parse_detail_node("procedure:crm:sync_customer_tags");
+        assert!(matches!(
+            procedure,
+            Some((MetadataNodeType::Procedure, _, _))
+        ));
+
+        let function = parse_detail_node("function:crm:compute_customer_score");
+        assert!(matches!(function, Some((MetadataNodeType::Function, _, _))));
+    }
+
+    #[test]
+    fn parse_detail_node_rejects_legacy_routine_prefix() {
+        let routine = parse_detail_node("routine:crm:sync_customer_tags");
+        assert!(routine.is_none());
+    }
 }

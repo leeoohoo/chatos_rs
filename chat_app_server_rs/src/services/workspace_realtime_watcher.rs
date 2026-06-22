@@ -1,26 +1,59 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 use tracing::{debug, warn};
-use walkdir::{DirEntry, WalkDir};
 
 use crate::builtin::code_maintainer::ChangeLogStore;
 use crate::models::project::{Project, ProjectService};
+use crate::services::project_fs_cache::invalidate_directory_listing_cache_for_path;
+use crate::services::project_run::{classify_project_run_path_change, ProjectRunPathChangeKind};
 use crate::services::realtime::publish_project_run_catalog_updated;
 
+mod dirty_scope;
+mod path_utils;
+mod snapshot;
+
+use dirty_scope::{
+    apply_dirty_scope_snapshots, classify_dirty_path_scope, collect_project_dirty_paths,
+    diff_workspace_files, DirtyPathScopeKind,
+};
+use path_utils::normalize_path_string;
+use snapshot::{
+    collect_dirty_scope_snapshots, collect_workspace_snapshot, current_file_fingerprint,
+    DirtyScopeCollectResult, SnapshotCollectResult,
+};
+
 const WORKSPACE_WATCHER_SERVER_NAME: &str = "workspace_watcher";
-const WORKSPACE_WATCHER_FULL_SCAN_INTERVAL: Duration = Duration::from_secs(4);
+const DEFAULT_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS: u64 = 60;
+const MIN_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS: u64 = 5;
+const WORKSPACE_WATCHER_MAX_INCREMENTAL_DIRTY_PATHS: usize = 64;
 const WORKSPACE_WATCHER_IDLE_WAIT: Duration = Duration::from_secs(1);
 const WORKSPACE_WATCHER_SUPPRESSION_TTL: Duration = Duration::from_secs(30);
-const WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH: &str = ".chatos/project_runner.sh";
 
 static WATCHER_STATE: Lazy<Arc<WorkspaceRealtimeWatcherState>> =
     Lazy::new(|| Arc::new(WorkspaceRealtimeWatcherState::default()));
+static WORKSPACE_WATCHER_FULL_SCAN_INTERVAL: Lazy<Option<Duration>> = Lazy::new(|| {
+    let parsed = std::env::var("WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECONDS")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok());
+
+    match parsed {
+        Some(0) => None,
+        Some(seconds) => Some(Duration::from_secs(
+            seconds.max(MIN_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS),
+        )),
+        None => Some(Duration::from_secs(
+            DEFAULT_WORKSPACE_WATCHER_FULL_SCAN_INTERVAL_SECS,
+        )),
+    }
+});
 
 #[derive(Default)]
 struct WorkspaceRealtimeWatcherState {
@@ -63,11 +96,12 @@ struct WorkspacePathChange {
     kind: &'static str,
     bytes: i64,
     signature: String,
+    fingerprint: Option<FileFingerprint>,
 }
 
-enum SnapshotCollectResult {
-    Ready(HashMap<String, FileFingerprint>),
-    RootMissing,
+enum IncrementalScanOutcome {
+    Handled(Vec<WorkspacePathChange>),
+    FallbackToFullScan,
 }
 
 pub fn start_workspace_realtime_watcher() {
@@ -113,16 +147,22 @@ pub fn suppress_logged_path(path: &str) {
 }
 
 async fn run_workspace_realtime_watcher() {
-    let mut last_full_scan = Instant::now()
-        .checked_sub(WORKSPACE_WATCHER_FULL_SCAN_INTERVAL)
+    let full_scan_interval = *WORKSPACE_WATCHER_FULL_SCAN_INTERVAL;
+    let mut pending_initial_scan = true;
+    let mut last_full_scan = full_scan_interval
+        .and_then(|interval| Instant::now().checked_sub(interval))
         .unwrap_or_else(Instant::now);
 
     loop {
-        let should_run_full_scan = last_full_scan.elapsed() >= WORKSPACE_WATCHER_FULL_SCAN_INTERVAL;
+        let should_run_full_scan = pending_initial_scan
+            || full_scan_interval
+                .map(|interval| last_full_scan.elapsed() >= interval)
+                .unwrap_or(false);
         let dirty_paths = take_dirty_paths();
 
         if should_run_full_scan || !dirty_paths.is_empty() {
             if should_run_full_scan {
+                pending_initial_scan = false;
                 last_full_scan = Instant::now();
             }
             if let Err(err) = scan_projects(should_run_full_scan, dirty_paths).await {
@@ -154,15 +194,18 @@ async fn scan_projects(full_scan: bool, dirty_paths: Vec<String>) -> Result<(), 
         .retain(|project_id, _| project_id_set.contains(project_id));
 
     for project in projects {
-        if !should_scan_project(full_scan, &dirty_paths, &project) {
+        let project_dirty_paths = if full_scan {
+            Vec::new()
+        } else {
+            collect_project_dirty_paths(dirty_paths.as_slice(), project.root_path.as_str())
+        };
+        if !full_scan && project_dirty_paths.is_empty() {
             continue;
         }
-        if let Err(err) = scan_project(&project).await {
+        if let Err(err) = scan_project(&project, full_scan, project_dirty_paths).await {
             warn!(
                 "workspace realtime watcher project scan failed: project_id={} root={} err={}",
-                project.id,
-                project.root_path,
-                err,
+                project.id, project.root_path, err,
             );
         }
     }
@@ -170,25 +213,44 @@ async fn scan_projects(full_scan: bool, dirty_paths: Vec<String>) -> Result<(), 
     Ok(())
 }
 
-fn should_scan_project(full_scan: bool, dirty_paths: &[String], project: &Project) -> bool {
-    if full_scan {
-        return true;
-    }
-    let root = normalize_path_string(project.root_path.as_str());
-    if root.is_empty() {
-        return false;
-    }
-    dirty_paths
-        .iter()
-        .any(|path| path_matches_root(path.as_str(), root.as_str()))
-}
-
-async fn scan_project(project: &Project) -> Result<(), String> {
+async fn scan_project(
+    project: &Project,
+    full_scan: bool,
+    dirty_paths: Vec<String>,
+) -> Result<(), String> {
     let normalized_root = normalize_path_string(project.root_path.as_str());
     if normalized_root.is_empty() {
         return Ok(());
     }
 
+    let dirty_scope_kind = classify_dirty_path_scope(&normalized_root, dirty_paths.as_slice());
+    let should_run_full_scan = {
+        let mut state_guard = WATCHER_STATE.project_states.lock();
+        let state = state_guard
+            .entry(project.id.clone())
+            .or_insert_with(ProjectSnapshotState::default);
+        if state.root_path != normalized_root {
+            *state = ProjectSnapshotState {
+                root_path: normalized_root.clone(),
+                files: HashMap::new(),
+                initialized: false,
+                root_available: false,
+            };
+        }
+        full_scan
+            || !state.initialized
+            || dirty_paths.len() > WORKSPACE_WATCHER_MAX_INCREMENTAL_DIRTY_PATHS
+            || dirty_scope_kind == DirtyPathScopeKind::Root
+    };
+
+    if should_run_full_scan {
+        return scan_project_full(project, normalized_root).await;
+    }
+
+    scan_project_incremental(project, normalized_root, dirty_paths).await
+}
+
+async fn scan_project_full(project: &Project, normalized_root: String) -> Result<(), String> {
     let snapshot = collect_workspace_snapshot(normalized_root.clone()).await?;
 
     let mut state_guard = WATCHER_STATE.project_states.lock();
@@ -197,7 +259,7 @@ async fn scan_project(project: &Project) -> Result<(), String> {
         .or_insert_with(ProjectSnapshotState::default);
     if state.root_path != normalized_root {
         *state = ProjectSnapshotState {
-            root_path: normalized_root.clone(),
+            root_path: normalized_root,
             files: HashMap::new(),
             initialized: false,
             root_available: false,
@@ -206,37 +268,11 @@ async fn scan_project(project: &Project) -> Result<(), String> {
 
     match snapshot {
         SnapshotCollectResult::RootMissing => {
-            if state.root_available {
-                state.root_available = false;
-                state.initialized = false;
-                state.files.clear();
-                if let Some(user_id) = project.user_id.as_deref() {
-                    publish_project_run_catalog_updated(
-                        user_id,
-                        project.id.as_str(),
-                        "project_root_missing",
-                        Some(project.root_path.as_str()),
-                        Some(false),
-                        Some(true),
-                    );
-                }
-            }
+            mark_project_root_missing(project, state);
             return Ok(());
         }
         SnapshotCollectResult::Ready(current_files) => {
-            if !state.root_available {
-                state.root_available = true;
-                if let Some(user_id) = project.user_id.as_deref() {
-                    publish_project_run_catalog_updated(
-                        user_id,
-                        project.id.as_str(),
-                        "project_root_available",
-                        Some(project.root_path.as_str()),
-                        Some(snapshot_has_runner_script(project.root_path.as_str(), &current_files)),
-                        Some(false),
-                    );
-                }
-            }
+            mark_project_root_available(project, state);
 
             if !state.initialized {
                 state.files = current_files;
@@ -244,114 +280,186 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                 return Ok(());
             }
 
-            let previous_files = state.files.clone();
+            let previous_files = std::mem::take(&mut state.files);
             let changes = diff_workspace_files(&previous_files, &current_files);
             state.files = current_files;
             state.initialized = true;
-            let runner_script_exists = snapshot_has_runner_script(
-                project.root_path.as_str(),
-                &state.files,
-            );
             drop(state_guard);
 
             if changes.is_empty() {
                 return Ok(());
             }
 
-            let store = ChangeLogStore::new(
-                WORKSPACE_WATCHER_SERVER_NAME,
-                Some(project.id.clone()),
-                None,
-            )?;
-            let mut runner_script_changed = false;
-
-            for change in changes {
-                runner_script_changed = runner_script_changed
-                    || is_runner_script_path(project.root_path.as_str(), change.path.as_str());
-                let current_fingerprint = match change.kind {
-                    "delete" => None,
-                    _ => current_file_fingerprint(Path::new(change.path.as_str())),
-                };
-                if is_suppressed_path(change.path.as_str(), current_fingerprint.as_ref()) {
-                    continue;
-                }
-                store.log_change(
-                    change.path.as_str(),
-                    "workspace_scan",
-                    change.kind,
-                    change.bytes,
-                    change.signature.as_str(),
-                    "",
-                    "",
-                    None,
-                )?;
-            }
-
-            if runner_script_changed {
-                if let Some(user_id) = project.user_id.as_deref() {
-                    let runner_script_path = Path::new(project.root_path.as_str())
-                        .join(WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH)
-                        .to_string_lossy()
-                        .to_string();
-                    publish_project_run_catalog_updated(
-                        user_id,
-                        project.id.as_str(),
-                        "workspace_runner_script_changed",
-                        Some(runner_script_path.as_str()),
-                        Some(runner_script_exists),
-                        Some(false),
-                    );
-                }
-            }
+            process_workspace_changes(project, changes)?;
         }
     }
 
     Ok(())
 }
 
-fn diff_workspace_files(
-    previous: &HashMap<String, FileFingerprint>,
-    current: &HashMap<String, FileFingerprint>,
-) -> Vec<WorkspacePathChange> {
-    let mut changes = Vec::new();
+async fn scan_project_incremental(
+    project: &Project,
+    normalized_root: String,
+    dirty_paths: Vec<String>,
+) -> Result<(), String> {
+    let snapshots = collect_dirty_scope_snapshots(normalized_root.clone(), dirty_paths).await?;
+    let outcome = {
+        let mut state_guard = WATCHER_STATE.project_states.lock();
+        let state = state_guard
+            .entry(project.id.clone())
+            .or_insert_with(ProjectSnapshotState::default);
+        if state.root_path != normalized_root {
+            *state = ProjectSnapshotState {
+                root_path: normalized_root.clone(),
+                files: HashMap::new(),
+                initialized: false,
+                root_available: false,
+            };
+        }
 
-    for (path, current_fp) in current {
-        match previous.get(path) {
-            Some(previous_fp) if previous_fp == current_fp => {}
-            Some(_) => changes.push(WorkspacePathChange {
-                path: path.clone(),
-                kind: "edit",
-                bytes: current_fp.size_bytes.min(i64::MAX as u64) as i64,
-                signature: current_fp.signature(),
-            }),
-            None => changes.push(WorkspacePathChange {
-                path: path.clone(),
-                kind: "create",
-                bytes: current_fp.size_bytes.min(i64::MAX as u64) as i64,
-                signature: current_fp.signature(),
-            }),
+        match snapshots {
+            DirtyScopeCollectResult::RootMissing => {
+                mark_project_root_missing(project, state);
+                IncrementalScanOutcome::Handled(Vec::new())
+            }
+            DirtyScopeCollectResult::Ready(snapshots) => {
+                mark_project_root_available(project, state);
+                if !state.initialized {
+                    IncrementalScanOutcome::FallbackToFullScan
+                } else {
+                    let changes = apply_dirty_scope_snapshots(&mut state.files, snapshots);
+                    state.initialized = true;
+                    IncrementalScanOutcome::Handled(changes)
+                }
+            }
+        }
+    };
+
+    match outcome {
+        IncrementalScanOutcome::Handled(changes) => process_workspace_changes(project, changes),
+        IncrementalScanOutcome::FallbackToFullScan => {
+            scan_project_full(project, normalized_root).await
         }
     }
+}
 
-    for (path, previous_fp) in previous {
-        if current.contains_key(path) {
+fn mark_project_root_missing(project: &Project, state: &mut ProjectSnapshotState) {
+    if !state.root_available {
+        return;
+    }
+
+    state.root_available = false;
+    state.initialized = false;
+    state.files.clear();
+    publish_project_root_status(project, "project_root_missing");
+}
+
+fn mark_project_root_available(project: &Project, state: &mut ProjectSnapshotState) {
+    if state.root_available {
+        return;
+    }
+
+    state.root_available = true;
+    publish_project_root_status(project, "project_root_available");
+}
+
+fn publish_project_root_status(project: &Project, reason: &'static str) {
+    let Some(user_id) = project.user_id.as_deref() else {
+        return;
+    };
+
+    publish_project_run_catalog_updated(
+        user_id,
+        project.id.as_str(),
+        reason,
+        Some(project.root_path.as_str()),
+    );
+}
+
+fn process_workspace_changes(
+    project: &Project,
+    changes: Vec<WorkspacePathChange>,
+) -> Result<(), String> {
+    if changes.is_empty() {
+        return Ok(());
+    }
+
+    let mut store: Option<ChangeLogStore> = None;
+    let mut logged_change_count = 0usize;
+    let mut project_run_change: Option<(ProjectRunPathChangeKind, String)> = None;
+
+    for change in changes {
+        if is_suppressed_path(change.path.as_str(), change.fingerprint.as_ref()) {
             continue;
         }
-        changes.push(WorkspacePathChange {
-            path: path.clone(),
-            kind: "delete",
-            bytes: previous_fp.size_bytes.min(i64::MAX as u64) as i64,
-            signature: previous_fp.signature(),
-        });
+        let store = match store.as_ref() {
+            Some(existing) => existing,
+            None => {
+                store = Some(ChangeLogStore::new(
+                    WORKSPACE_WATCHER_SERVER_NAME,
+                    Some(project.id.clone()),
+                    None,
+                )?);
+                match store.as_ref() {
+                    Some(existing) => existing,
+                    None => return Err("workspace watcher store initialization failed".to_string()),
+                }
+            }
+        };
+        store.log_change(
+            change.path.as_str(),
+            "workspace_scan",
+            change.kind,
+            change.bytes,
+            change.signature.as_str(),
+            "",
+            "",
+            None,
+        )?;
+        logged_change_count += 1;
+        let _ = invalidate_directory_listing_cache_for_path(
+            project.root_path.as_str(),
+            Path::new(change.path.as_str()),
+        );
+
+        if let Some(kind) =
+            classify_project_run_path_change(change.path.as_str(), Some(change.kind))
+        {
+            match &project_run_change {
+                Some((ProjectRunPathChangeKind::Catalog, _)) => {}
+                Some((ProjectRunPathChangeKind::Environment, _))
+                    if kind == ProjectRunPathChangeKind::Environment => {}
+                _ => {
+                    project_run_change = Some((kind, change.path.clone()));
+                }
+            }
+        }
     }
 
-    changes
+    if logged_change_count == 0 {
+        return Ok(());
+    }
+
+    if let Some((kind, path)) = project_run_change {
+        let Some(user_id) = project.user_id.as_deref() else {
+            return Ok(());
+        };
+        publish_project_run_catalog_updated(
+            user_id,
+            project.id.as_str(),
+            kind.realtime_reason(),
+            Some(path.as_str()),
+        );
+    }
+
+    Ok(())
 }
 
 fn prune_expired_suppressions() {
-    WATCHER_STATE.suppressed_paths.lock().retain(|_, entry| {
-        entry.added_at.elapsed() < WORKSPACE_WATCHER_SUPPRESSION_TTL
-    });
+    WATCHER_STATE
+        .suppressed_paths
+        .lock()
+        .retain(|_, entry| entry.added_at.elapsed() < WORKSPACE_WATCHER_SUPPRESSION_TTL);
 }
 
 fn is_suppressed_path(path: &str, current: Option<&FileFingerprint>) -> bool {
@@ -371,208 +479,32 @@ fn is_suppressed_path(path: &str, current: Option<&FileFingerprint>) -> bool {
     };
 
     if matches {
-        debug!("workspace watcher suppressed duplicate path change: {}", path);
+        debug!(
+            "workspace watcher suppressed duplicate path change: {}",
+            path
+        );
         guard.remove(path);
         return true;
     }
     false
 }
 
-async fn collect_workspace_snapshot(root: String) -> Result<SnapshotCollectResult, String> {
-    tokio::task::spawn_blocking(move || collect_workspace_snapshot_blocking(root.as_str()))
-        .await
-        .map_err(|err| err.to_string())?
-}
-
-fn collect_workspace_snapshot_blocking(root: &str) -> Result<SnapshotCollectResult, String> {
-    let root_path = PathBuf::from(root);
-    if !root_path.exists() || !root_path.is_dir() {
-        return Ok(SnapshotCollectResult::RootMissing);
-    }
-
-    let mut files = HashMap::new();
-    for entry in WalkDir::new(&root_path)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| should_descend_into(entry, &root_path))
-    {
-        let entry = match entry {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if entry.depth() == 0 || !entry.file_type().is_file() {
-            continue;
-        }
-
-        let absolute_path = entry.path().to_path_buf();
-        if should_ignore_file(absolute_path.as_path(), &root_path) {
-            continue;
-        }
-        let Some(fingerprint) = current_file_fingerprint(absolute_path.as_path()) else {
-            continue;
-        };
-        files.insert(
-            normalize_path_string(absolute_path.to_string_lossy().as_ref()),
-            fingerprint,
-        );
-    }
-
-    Ok(SnapshotCollectResult::Ready(files))
-}
-
-fn should_descend_into(entry: &DirEntry, root: &Path) -> bool {
-    if entry.depth() == 0 {
-        return true;
-    }
-    if !entry.file_type().is_dir() {
-        return true;
-    }
-
-    let Some(relative) = entry.path().strip_prefix(root).ok() else {
-        return true;
-    };
-    let normalized = normalize_relative_string(relative);
-    if normalized.is_empty() {
-        return true;
-    }
-
-    !matches!(
-        normalized.as_str(),
-        ".git"
-            | "node_modules"
-            | "target"
-            | "dist"
-            | "build"
-            | ".next"
-            | ".turbo"
-            | ".idea"
-            | ".vscode"
-            | "coverage"
-            | "project_runner"
-    )
-}
-
-fn should_ignore_file(path: &Path, root: &Path) -> bool {
-    let Some(relative) = path.strip_prefix(root).ok() else {
-        return false;
-    };
-    let normalized = normalize_relative_string(relative);
-    if normalized.is_empty() {
-        return false;
-    }
-    if normalized.starts_with("project_runner/") {
-        return true;
-    }
-    false
-}
-
-fn current_file_fingerprint(path: &Path) -> Option<FileFingerprint> {
-    let metadata = std::fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let modified_millis = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-        .map(|value| value.as_millis())
-        .unwrap_or(0);
-    Some(FileFingerprint {
-        modified_millis,
-        size_bytes: metadata.len(),
-    })
-}
-
-fn is_runner_script_path(project_root: &str, path: &str) -> bool {
-    let project_root = normalize_path_string(project_root);
-    if project_root.is_empty() {
-        return false;
-    }
-    let runner_path = normalize_path_string(
-        Path::new(project_root.as_str())
-            .join(WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH)
-            .to_string_lossy()
-            .as_ref(),
-    );
-    runner_path == normalize_path_string(path)
-}
-
-fn snapshot_has_runner_script(
-    project_root: &str,
-    files: &HashMap<String, FileFingerprint>,
-) -> bool {
-    let project_root = normalize_path_string(project_root);
-    if project_root.is_empty() {
-        return false;
-    }
-    let runner_path = normalize_path_string(
-        Path::new(project_root.as_str())
-            .join(WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH)
-            .to_string_lossy()
-            .as_ref(),
-    );
-    files.contains_key(runner_path.as_str())
-}
-
-fn path_matches_root(path: &str, root: &str) -> bool {
-    if path == root {
-        return true;
-    }
-    let prefix = if root.ends_with(std::path::MAIN_SEPARATOR) {
-        root.to_string()
-    } else {
-        format!("{root}{}", std::path::MAIN_SEPARATOR)
-    };
-    path.starts_with(prefix.as_str())
-}
-
-fn normalize_relative_string(path: &Path) -> String {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(value) => normalized.push(value),
-            _ => {}
-        }
-    }
-    normalized.to_string_lossy().replace('\\', "/")
-}
-
-fn normalize_path_string(path: &str) -> String {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    let mut normalized = PathBuf::new();
-    for component in Path::new(trimmed).components() {
-        match component {
-            Component::Prefix(value) => normalized.push(value.as_os_str()),
-            Component::RootDir => {
-                let separator = std::path::MAIN_SEPARATOR.to_string();
-                normalized.push(separator);
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(value) => normalized.push(value),
-        }
-    }
-    normalized.to_string_lossy().to_string()
-}
-
 impl FileFingerprint {
     fn signature(&self) -> String {
-        format!("workspace-scan:{}:{}", self.modified_millis, self.size_bytes)
+        format!(
+            "workspace-scan:{}:{}",
+            self.modified_millis, self.size_bytes
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_runner_script_path, normalize_path_string, path_matches_root};
+    use std::collections::HashMap;
+
+    use super::dirty_scope::{collapse_dirty_paths, take_scoped_previous_files};
+    use super::path_utils::{is_path_within_scope, normalize_path_string, path_matches_root};
+    use super::FileFingerprint;
 
     #[test]
     fn normalize_path_string_keeps_absolute_paths_stable() {
@@ -587,14 +519,71 @@ mod tests {
     }
 
     #[test]
-    fn runner_script_detection_matches_expected_relative_path() {
-        assert!(is_runner_script_path(
-            "/tmp/project",
-            "/tmp/project/.chatos/project_runner.sh"
+    fn collapse_dirty_paths_prefers_ancestor_scope() {
+        let collapsed = collapse_dirty_paths(vec![
+            "/tmp/demo/src/main.rs".to_string(),
+            "/tmp/demo/src".to_string(),
+            "/tmp/demo/src/lib.rs".to_string(),
+            "/tmp/demo/README.md".to_string(),
+        ]);
+        assert_eq!(
+            collapsed,
+            vec![
+                "/tmp/demo/src".to_string(),
+                "/tmp/demo/README.md".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn take_scoped_previous_files_removes_exact_and_nested_matches() {
+        let mut files = HashMap::from([
+            (
+                "/tmp/demo/src/main.rs".to_string(),
+                FileFingerprint {
+                    modified_millis: 1,
+                    size_bytes: 10,
+                },
+            ),
+            (
+                "/tmp/demo/src/lib.rs".to_string(),
+                FileFingerprint {
+                    modified_millis: 2,
+                    size_bytes: 20,
+                },
+            ),
+            (
+                "/tmp/demo/README.md".to_string(),
+                FileFingerprint {
+                    modified_millis: 3,
+                    size_bytes: 30,
+                },
+            ),
+        ]);
+
+        let scoped = take_scoped_previous_files(
+            &mut files,
+            &[
+                "/tmp/demo/src".to_string(),
+                "/tmp/demo/README.md".to_string(),
+            ],
+        );
+
+        assert!(files.is_empty());
+        assert_eq!(scoped["/tmp/demo/src"].len(), 2);
+        assert_eq!(scoped["/tmp/demo/README.md"].len(), 1);
+    }
+
+    #[test]
+    fn is_path_within_scope_respects_path_boundaries() {
+        assert!(is_path_within_scope(
+            "/tmp/demo/src/main.rs",
+            "/tmp/demo/src"
         ));
-        assert!(!is_runner_script_path(
-            "/tmp/project",
-            "/tmp/project/project_runner/index.ts"
+        assert!(is_path_within_scope("/tmp/demo/src", "/tmp/demo/src"));
+        assert!(!is_path_within_scope(
+            "/tmp/demo/src-two/file.rs",
+            "/tmp/demo/src"
         ));
     }
 }

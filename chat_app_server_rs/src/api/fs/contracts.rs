@@ -3,6 +3,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub(super) struct FsQuery {
     pub(super) path: Option<String>,
+    pub(super) force_refresh: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +41,12 @@ pub(super) struct FsCreateFileRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct FsWriteFileRequest {
+    pub(super) path: Option<String>,
+    pub(super) content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct FsDeleteRequest {
     pub(super) path: Option<String>,
     pub(super) recursive: Option<bool>,
@@ -55,5 +62,22 @@ pub(super) struct FsMoveRequest {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct FsDownloadQuery {
+    pub(super) path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct FsAppendGitignoreRequest {
+    pub(super) path: Option<String>,
+    pub(super) mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct FsOpenPathRequest {
+    pub(super) path: Option<String>,
+    pub(super) mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct FsDiscardGitChangesRequest {
     pub(super) path: Option<String>,
 }

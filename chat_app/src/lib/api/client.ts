@@ -11,6 +11,7 @@ import {
 import * as streamApi from './client/stream';
 import type {
   ConversationMessagePayload,
+  WebSocketTicketResponse,
 } from './client/types';
 import * as workspaceApi from './client/workspace';
 
@@ -45,6 +46,17 @@ class ApiClient {
 
   getAccessToken(): string | null {
     return this.accessToken;
+  }
+
+  async issueWebSocketTicket(): Promise<string> {
+    const response = await this.request<WebSocketTicketResponse>('/auth/ws-ticket', {
+      method: 'POST',
+    });
+    const ticket = String(response?.ticket || '').trim();
+    if (!ticket) {
+      throw new Error('签发 WebSocket 连接票据失败');
+    }
+    return ticket;
   }
 
   onAccessTokenRefresh(listener: (token: string) => void): () => void {

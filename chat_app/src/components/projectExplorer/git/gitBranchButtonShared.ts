@@ -1,25 +1,41 @@
+import type { TranslateFn } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 
-export const statusLabel: Record<string, string> = {
-  added: '新增',
-  modified: '修改',
-  deleted: '删除',
-  renamed: '重命名',
-  copied: '复制',
-  untracked: '未跟踪',
-  conflicted: '冲突',
+const statusLabelKey: Record<string, string> = {
+  added: 'git.status.added',
+  modified: 'git.status.modified',
+  deleted: 'git.status.deleted',
+  renamed: 'git.status.renamed',
+  copied: 'git.status.copied',
+  untracked: 'git.status.untracked',
+  conflicted: 'git.status.conflicted',
 };
 
-export const statusTitle: Record<string, string> = {
-  untracked: 'Git 还没有纳入版本管理的新文件，Stage 后才会进入本次提交。',
-  conflicted: '文件存在合并冲突，需要解决后再提交。',
+const statusTitleKey: Record<string, string> = {
+  untracked: 'git.statusTitle.untracked',
+  conflicted: 'git.statusTitle.conflicted',
 };
 
-export const gitClientSourceLabel: Record<string, string> = {
-  env: '环境变量 Git',
-  bundled: '内置 Git',
-  system: '系统 Git',
-  unknown: '未知 Git',
+const gitClientSourceLabelKey: Record<string, string> = {
+  env: 'git.client.env',
+  bundled: 'git.client.bundled',
+  system: 'git.client.system',
+  unknown: 'git.client.unknown',
+};
+
+export const getGitStatusLabel = (status: string, t: TranslateFn): string => {
+  const key = statusLabelKey[status];
+  return key ? t(key) : status;
+};
+
+export const getGitStatusTitle = (status: string, t: TranslateFn): string | undefined => {
+  const key = statusTitleKey[status];
+  return key ? t(key) : undefined;
+};
+
+export const getGitClientSourceLabel = (source: string, t: TranslateFn): string => {
+  const key = gitClientSourceLabelKey[source];
+  return key ? t(key) : source;
 };
 
 interface DiffLineView {
@@ -39,16 +55,16 @@ const formatDiffHeader = (line: string): string => {
   return oldPath === newPath ? oldPath : `${oldPath} -> ${newPath}`;
 };
 
-const formatDiffHunk = (line: string): string => {
+const formatDiffHunk = (line: string, t: TranslateFn): string => {
   const match = line.match(/^@@\s+-(\S+)\s+\+(\S+)\s+@@\s*(.*)$/);
   if (!match) return line;
   const oldRange = match[1].replace(/^\+|-/, '');
   const newRange = match[2].replace(/^\+|-/, '');
   const suffix = match[3] ? ` · ${match[3]}` : '';
-  return `旧 ${oldRange} / 新 ${newRange}${suffix}`;
+  return t('git.diff.oldNew', { oldRange, newRange, suffix });
 };
 
-export const diffLineView = (line: string): DiffLineView => {
+export const diffLineView = (line: string, t: TranslateFn): DiffLineView => {
   if (line.startsWith('diff --git')) {
     return {
       content: formatDiffHeader(line),
@@ -57,7 +73,7 @@ export const diffLineView = (line: string): DiffLineView => {
   }
   if (line.startsWith('@@')) {
     return {
-      content: formatDiffHunk(line),
+      content: formatDiffHunk(line, t),
       className: 'border-l-amber-500 bg-amber-50 text-amber-950 dark:bg-amber-950/35 dark:text-amber-100',
     };
   }

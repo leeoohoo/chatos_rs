@@ -6,7 +6,6 @@ import type { UseTeamMembersPaneViewPropsOptions } from './teamMembersPaneViewPr
 
 export const useTeamMembersSidebarProps = ({
   project,
-  store,
   resources,
 }: UseTeamMembersPaneViewPropsOptions): ComponentProps<typeof TeamMembersSidebar> => useMemo(() => ({
   projectName: project.name,
@@ -23,9 +22,6 @@ export const useTeamMembersSidebarProps = ({
     : null,
   openingRuntimeContextContactId: resources.runtimeContext.openingRuntimeContextContactId,
   removingContactId: resources.members.removingContactId,
-  sessionChatState: store.sessionChatState,
-  taskReviewPanelsBySession: store.taskReviewPanelsBySession,
-  uiPromptPanelsBySession: store.uiPromptPanelsBySession,
   onOpenAddMember: () => {
     void resources.members.handleOpenAddMember();
   },
@@ -60,7 +56,4 @@ export const useTeamMembersSidebarProps = ({
   resources.runtimeContext.runtimeContextOpen,
   resources.runtimeContext.runtimeContextSessionId,
   resources.summary.summaryPaneSessionId,
-  store.sessionChatState,
-  store.taskReviewPanelsBySession,
-  store.uiPromptPanelsBySession,
 ]);

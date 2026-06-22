@@ -93,6 +93,7 @@ export const REMOTE_SFTP_ERROR_CODE_ACTIONS: Record<string, string> = {
 };
 
 const DETAIL_REQUIRED_CODES = new Set<string>([
+  'auth_failed',
   'remote_connection_access_internal',
   'remote_connection_create_failed',
   'remote_connection_update_failed',

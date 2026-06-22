@@ -1,11 +1,20 @@
 import React from 'react';
 
-import { RowsCard, StringListCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
+import {
+  RowsCard,
+  StringListCard,
+  TextBlockCard,
+  formatToolCardCount,
+  renderCardHeader,
+} from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const normalizeFolder = (folder: string): string => folder.trim() || 'root';
 
 const NoteListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, items }) => {
+  const { t } = useI18n();
   const notes = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -14,7 +23,7 @@ const NoteListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${notes.length} 条`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'notes', notes.length))}
       <div className="tool-detail-list">
         {notes.map((note, index) => {
           const titleText = asString(note.title).trim() || `note ${index + 1}`;
@@ -41,6 +50,7 @@ const NoteListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
 };
 
 const TagListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { locale, t } = useI18n();
   const tags = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -49,7 +59,7 @@ const TagListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Tags', `${tags.length} 个`)}
+      {renderCardHeader(translateToolTitle('Tags', locale), formatToolCardCount(t, 'tags', tags.length))}
       <div className="tool-detail-list">
         {tags.map((tag, index) => (
           <div key={`notepad-tag-${index}`} className="tool-detail-item">
@@ -71,6 +81,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -78,7 +89,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Notepad ready"
+          title={translateToolTitle('Notepad ready', locale)}
           rows={[
             { key: 'initialized', value: asBoolean(record.ok) },
             { key: 'notes', value: asNumber(record.notes) },
@@ -93,13 +104,13 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Folder summary"
+          title={translateToolTitle('Folder summary', locale)}
           rows={[
             { key: 'count', value: asArray(record.folders).length },
           ]}
         />
         <StringListCard
-          title="Folders"
+          title={translateToolTitle('Folders', locale)}
           values={asArray(record.folders).map((item) => normalizeFolder(asString(item)))}
           fullWidth
         />
@@ -111,12 +122,12 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title={displayName === 'search_notes' ? 'Search result' : 'Note summary'}
+          title={translateToolTitle(displayName === 'search_notes' ? 'Search result' : 'Note summary', locale)}
           rows={[
             { key: 'count', value: asArray(record.notes).length },
           ]}
         />
-        <NoteListCard title="Notes" items={asArray(record.notes)} />
+        <NoteListCard title={translateToolTitle('Notes', locale)} items={asArray(record.notes)} />
       </div>
     );
   }
@@ -125,7 +136,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Tag summary"
+          title={translateToolTitle('Tag summary', locale)}
           rows={[
             { key: 'count', value: asArray(record.tags).length },
           ]}
@@ -142,7 +153,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Note"
+          title={translateToolTitle('Note', locale)}
           rows={[
             { key: 'title', value: asString(note?.title).trim() },
             { key: 'folder', value: normalizeFolder(asString(note?.folder).trim()) },
@@ -152,7 +163,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
           ]}
           fullWidth
         />
-        <TextBlockCard title="Note content" content={asString(record.content)} />
+        <TextBlockCard title={translateToolTitle('Note content', locale)} content={asString(record.content)} />
       </div>
     );
   }
@@ -164,7 +175,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Saved note"
+          title={translateToolTitle('Saved note', locale)}
           rows={[
             { key: 'title', value: asString(note?.title).trim() },
             { key: 'folder', value: normalizeFolder(asString(note?.folder).trim()) },
@@ -182,7 +193,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Folder result"
+          title={translateToolTitle('Folder result', locale)}
           rows={[
             { key: 'success', value: asBoolean(record.ok) },
             { key: 'folder', value: normalizeFolder(asString(record.folder).trim()) },
@@ -197,7 +208,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Folder moved"
+          title={translateToolTitle('Folder moved', locale)}
           rows={[
             { key: 'success', value: asBoolean(record.ok) },
             { key: 'from', value: normalizeFolder(asString(record.from).trim()) },
@@ -213,7 +224,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Delete result"
+          title={translateToolTitle('Delete result', locale)}
           rows={[
             { key: 'deleted', value: asBoolean(record.ok) },
             { key: 'note id', value: asString(record.id).trim() },
@@ -226,7 +237,7 @@ export const NotepadToolDetails: React.FC<NotepadToolDetailsProps> = ({
   return (
     <div className="tool-detail-stack">
       <RowsCard
-        title="Notepad result"
+        title={translateToolTitle('Notepad result', locale)}
         rows={[
           { key: 'success', value: asBoolean(record.ok) },
           { key: 'folder', value: normalizeFolder(asString(record.folder).trim()) },

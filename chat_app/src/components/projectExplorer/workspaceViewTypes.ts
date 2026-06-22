@@ -1,7 +1,6 @@
 import type React from 'react';
 
 import type {
-  ChangeLogItem,
   CodeNavCapabilities,
   CodeNavDocumentSymbolsResult,
   CodeNavLocation,
@@ -9,16 +8,18 @@ import type {
   FsEntry,
   FsReadResult,
   Project,
-  ProjectChangeSummary,
+  ProjectRunEnvironment,
+  ProjectRunInstance,
+  ProjectRunResolutionSuggestion,
+  ProjectRunState,
+  ProjectRunTarget,
+  ProjectRunToolchainOption,
   ProjectSearchHit,
+  Terminal,
 } from '../../types';
 import type { MoveConflictState } from './Overlays';
-import type {
-  ProjectRunnerActiveTerminal,
-  ProjectRunnerMember,
-} from './useProjectExplorerRunState';
+import type { ProjectRunnerActiveTerminal } from './useProjectExplorerRunState';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
-import type { ChangeKind } from './utils';
 
 export interface ProjectExplorerWorkspaceTreeState {
   treeWidth: number;
@@ -33,14 +34,8 @@ export interface ProjectExplorerWorkspaceTreeState {
   actionLoading: boolean;
   actionReloadPath: string | null;
   contextMenu: ExplorerContextMenuState | null;
-  canConfirmCurrent: boolean;
-  showOnlyChanged: boolean;
-  changeSummary: ProjectChangeSummary;
-  loadingSummary: boolean;
-  summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
-  aggregatedChangeKindByPath: Map<string, ChangeKind>;
 }
 
 export interface ProjectExplorerWorkspaceSearchState {
@@ -64,7 +59,8 @@ export interface ProjectExplorerWorkspacePreviewState {
   loadingFile: boolean;
   error: string | null;
   selectedFile: FsReadResult | null;
-  selectedLog: ChangeLogItem | null;
+  savingFile: boolean;
+  saveError: string | null;
 }
 
 export interface ProjectExplorerWorkspaceCodeNavState {
@@ -79,38 +75,60 @@ export interface ProjectExplorerWorkspaceCodeNavState {
   navLoading: boolean;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
+  requestDocumentSymbols: () => Promise<void>;
 }
 
 export interface ProjectExplorerWorkspaceRunState {
-  canRunFile: (entry: FsEntry) => boolean;
-  handleRunFile: (entry: FsEntry) => Promise<void>;
   runStatus: string;
   runCatalogLoading: boolean;
   runCatalogError: string | null;
-  projectMembers: ProjectRunnerMember[];
-  projectMembersLoading: boolean;
-  projectMembersError: string | null;
-  runnerScriptExists: boolean;
-  runnerScriptChecking: boolean;
-  runnerScriptPath: string;
-  runnerStartCommand: string;
-  runnerStopCommand: string;
-  runnerRestartCommand: string;
+  runEnvironment: ProjectRunEnvironment | null;
+  runEnvironmentLoading: boolean;
+  runEnvironmentError: string | null;
+  runTargets: ProjectRunTarget[];
+  availableToolchainKinds: string[];
+  selectedToolchainOptions: Record<string, ProjectRunToolchainOption | null>;
+  missingToolchainKinds: string[];
+  customToolchainDrafts: Record<string, string>;
+  envVarsDraft: string;
+  commandPreview: string;
+  envPreview: string;
+  environmentHints: string[];
+  envVarsPlaceholder: string;
+  terminalUiEnabled: boolean;
+  selectedRunTargetId: string | null;
+  setSelectedRunTargetId: (targetId: string) => Promise<void> | void;
+  updateSelectedToolchain: (kind: string, optionId: string) => Promise<void> | void;
+  updateCustomToolchainDraft: (kind: string, value: string) => void;
+  saveCustomToolchain: (kind: string) => Promise<void> | void;
+  setEnvVarsDraft: (value: string) => void;
+  saveEnvVarsDraft: () => Promise<void> | void;
+  setTerminalUiEnabled: (enabled: boolean) => Promise<void> | void;
   starting: boolean;
   stopping: boolean;
   restarting: boolean;
+  deleting: boolean;
   runnerMessage: string | null;
   runnerError: string | null;
+  runnerDiagnosis: string | null;
+  runnerSuggestions: ProjectRunResolutionSuggestion[];
+  projectRunState: ProjectRunState | null;
+  projectRunInstances: ProjectRunInstance[];
+  selectedRunInstanceId: string | null;
+  projectRunTerminal: Terminal | null;
   activeRun: ProjectRunnerActiveTerminal | null;
+  lastExitedRun: ProjectRunnerActiveTerminal | null;
   activeTerminalBusy: boolean;
+  selectRunInstance: (terminalId: string | null) => void;
   handleRunnerStart: () => Promise<void>;
   handleRunnerStop: () => Promise<void>;
   handleRunnerRestart: () => Promise<void>;
+  handleRunnerDelete: () => Promise<void>;
   refreshRunnerState: () => Promise<void>;
-  handleGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
 }
 
 export interface ProjectExplorerWorkspaceInteractions {
@@ -119,7 +137,6 @@ export interface ProjectExplorerWorkspaceInteractions {
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
   setSelectedPath: React.Dispatch<React.SetStateAction<string | null>>;
   setSelectedFile: React.Dispatch<React.SetStateAction<FsReadResult | null>>;
-  setShowOnlyChanged: React.Dispatch<React.SetStateAction<boolean>>;
   setDraggingEntryPath: React.Dispatch<React.SetStateAction<string | null>>;
   setDropTargetDirPath: React.Dispatch<React.SetStateAction<string | null>>;
   setMoveConflict: React.Dispatch<React.SetStateAction<MoveConflictState | null>>;
@@ -135,8 +152,6 @@ export interface ProjectExplorerWorkspaceInteractions {
   handleCreateDirectory: (path: string) => Promise<void>;
   handleCreateFile: (path: string) => Promise<void>;
   handleRefresh: () => Promise<void>;
-  handleConfirmCurrentChanges: () => Promise<void>;
-  handleConfirmAllChanges: () => Promise<void>;
   handleSearchQueryChange: (value: string) => void;
   handleSearchCaseSensitiveChange: React.Dispatch<React.SetStateAction<boolean>>;
   handleSearchWholeWordChange: React.Dispatch<React.SetStateAction<boolean>>;
@@ -151,10 +166,20 @@ export interface ProjectExplorerWorkspaceInteractions {
   requestDefinition: () => Promise<void>;
   requestReferences: () => Promise<void>;
   handleOpenNavLocation: (location: CodeNavLocation) => Promise<void>;
+  goBackFromNav: () => Promise<void>;
   handleOpenDocumentSymbol: (line: number) => void;
   handleMoveEntryByDrop: (sourcePath: string, targetDirPath: string) => Promise<void>;
   handleDownloadSelected: (entry: FsEntry) => Promise<void>;
   handleDeleteSelected: (entry: FsEntry) => Promise<void>;
+  handleCopyFilePath: (entry: FsEntry) => Promise<boolean>;
+  handleCopyRelativeFilePath: (entry: FsEntry) => Promise<boolean>;
+  handleIgnoreFile: (entry: FsEntry) => Promise<boolean>;
+  handleIgnoreFolder: (entry: FsEntry) => Promise<boolean>;
+  handleIgnoreByExtension: (entry: FsEntry) => Promise<boolean>;
+  handleOpenPathInDefaultProgram: (entry: FsEntry) => Promise<boolean>;
+  handleRevealInFinder: (entry: FsEntry) => Promise<boolean>;
+  handleOpenInCode: (entry: FsEntry) => Promise<boolean>;
+  handleSaveFile: (path: string, content: string) => Promise<boolean>;
 }
 
 export interface ProjectExplorerWorkspaceViewParams {

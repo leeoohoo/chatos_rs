@@ -1,18 +1,17 @@
 import type { Message } from '../../../types';
 import type { SendMessageRuntimeOptions } from '../../../types';
 import type ApiClient from '../../api/client';
-import { ApiRequestError } from '../../api/client/shared';
 import {
   getRealtimeConnectionStateSnapshot,
   waitForRealtimeConnectedSnapshot,
 } from '../../realtime/state';
 import { debugLog } from '@/lib/utils';
-import { prepareAttachmentsForStreaming } from './sendMessage/attachments';
-import { createInternalId } from './sendMessage/internalId';
 import {
-  createDraftAssistantMessage,
-  createDraftUserMessage,
-} from './sendMessage/messageFactory';
+  assertPayloadWithinTransportBudget,
+  prepareAttachmentsForStreaming,
+} from './sendMessage/attachments';
+import { createInternalId } from './sendMessage/internalId';
+import { createDraftUserMessage } from './sendMessage/messageFactory';
 import {
   buildChatRequestLogPayload,
   buildStreamChatRuntimeOptions,
@@ -24,9 +23,10 @@ import {
 } from './sendMessage/runtime';
 import {
   applySessionRuntimeMetadata,
-  beginAssistantDraftInState,
   beginUserTurnInState,
   createDefaultSessionChatState,
+  replaceOptimisticUserMessageId,
+  setTaskRunnerAsyncUserMessageStatus,
 } from './sendMessage/sessionState';
 import {
   mergeSessionRuntimeIntoMetadata,
@@ -37,18 +37,9 @@ import type {
   ChatStoreSet,
 } from '../types';
 import { type StreamingMessage } from './sendMessage/types';
+import { rollbackFailedSendMessage } from './sendMessage/streamExecution';
 
 const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
-
-const shouldFallbackToSseForRealtimeCommandError = (error: unknown): boolean => {
-  if (error instanceof ApiRequestError) {
-    if (error.status >= 400 && error.status < 500) {
-      return false;
-    }
-    return true;
-  }
-  return true;
-};
 
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
@@ -67,11 +58,7 @@ export function createSendMessageHandler({
     attachments: File[] = [],
     runtimeOptions: SendMessageRuntimeOptions = {},
   ) {
-    let tempUserId: string | null = null;
     let tempAssistantId: string | null = null;
-    let streamExecutionModulePromise:
-      | Promise<typeof import('./sendMessage/streamExecution')>
-      | null = null;
     const {
       currentSessionId,
       currentSession,
@@ -96,7 +83,10 @@ export function createSendMessageHandler({
     }
 
     const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
-    const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
+    const requestedModelConfigId = typeof runtimeOptions?.modelConfigId === 'string'
+      ? runtimeOptions.modelConfigId.trim()
+      : '';
+    const effectiveSelectedModelId = requestedModelConfigId || sessionAiSelection?.selectedModelId || selectedModelId;
     const sessionRuntime = readSessionRuntimeFromMetadata(currentSession?.metadata);
     const fallbackContactAgentId = (
       typeof runtimeOptions?.contactAgentId === 'string'
@@ -118,33 +108,35 @@ export function createSendMessageHandler({
     const {
       effectiveContactAgentId,
       effectiveRemoteConnectionId,
+      effectiveModelName,
+      effectiveThinkingLevel,
       effectiveProjectId,
       effectiveProjectRoot,
       effectiveWorkspaceRoot,
       effectiveExecutionRoot,
-      effectiveMcpEnabled,
-      effectiveEnabledMcpIds,
     } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsWithContactFallback);
-    const effectiveSkillsEnabled = runtimeOptionsWithContactFallback.skillsEnabled === true;
-    const effectiveSelectedSkillIds = Array.isArray(runtimeOptionsWithContactFallback.selectedSkillIds)
-      ? runtimeOptionsWithContactFallback.selectedSkillIds
-        .map((item: string) => (typeof item === 'string' ? item.trim() : ''))
-        .filter((item: string, index: number, arr: string[]) => item.length > 0 && arr.indexOf(item) === index)
-      : [];
     const selectedModel = resolveSelectedModelOrThrow(
       effectiveSelectedModelId,
       aiModelConfigs,
     );
+    const selectedModelForRequest = {
+      ...selectedModel,
+      model_name: effectiveModelName || selectedModel.model_name,
+      thinking_level: effectiveThinkingLevel || selectedModel.thinking_level,
+    };
+    if (!selectedModelForRequest.model_name?.trim()) {
+      throw new Error('Please select a concrete runtime model before sending the message.');
+    }
 
     const runtimeMetadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
       selectedModelId: selectedModel?.id || null,
+      selectedModelName: selectedModelForRequest.model_name || null,
+      selectedThinkingLevel: selectedModelForRequest.thinking_level || null,
       contactAgentId: effectiveContactAgentId,
       remoteConnectionId: effectiveRemoteConnectionId,
       projectId: effectiveProjectId,
       projectRoot: effectiveProjectRoot,
       workspaceRoot: effectiveWorkspaceRoot,
-      mcpEnabled: effectiveMcpEnabled,
-      enabledMcpIds: effectiveEnabledMcpIds,
     });
     set((state) => {
       applySessionRuntimeMetadata(state, currentSessionId, runtimeMetadata);
@@ -166,7 +158,7 @@ export function createSendMessageHandler({
       const {
         supportsImages,
         reasoningEnabled,
-      } = resolveModelCapabilities(selectedModel, chatConfig);
+      } = resolveModelCapabilities(selectedModelForRequest, chatConfig);
       const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
         attachments,
         supportsImages,
@@ -178,41 +170,20 @@ export function createSendMessageHandler({
         sessionId: currentSessionId,
         content,
         conversationTurnId,
-        selectedModel,
+        selectedModel: selectedModelForRequest,
         previewAttachments,
         createdAt: userMessageTime,
       });
-      tempUserId = userMessage.id;
       const turnProcessKey = conversationTurnId || userMessage.id;
-      if (userMessage.metadata?.historyProcess) {
-        userMessage.metadata.historyProcess.userMessageId = userMessage.id;
-        userMessage.metadata.historyProcess.turnId = turnProcessKey;
+      if (userMessage.metadata?.task_runner_async) {
+        userMessage.metadata.task_runner_async.source_user_message_id = userMessage.id;
+        userMessage.metadata.task_runner_async.source_turn_id = turnProcessKey;
       }
 
       set((state) => {
         beginUserTurnInState(state, {
           sessionId: currentSessionId,
           userMessage,
-          turnProcessKey,
-          conversationTurnId,
-        });
-      });
-
-      // 创建临时的助手消息用于UI显示，但不保存到数据库
-      tempAssistantMessage = createDraftAssistantMessage({
-        sessionId: currentSessionId,
-        conversationTurnId,
-        selectedModel,
-        userMessage,
-        userMessageTime,
-      });
-      tempAssistantId = tempAssistantMessage.id;
-
-      set((state) => {
-        beginAssistantDraftInState(state, {
-          sessionId: currentSessionId,
-          userMessageId: userMessage.id,
-          assistantMessage: tempAssistantMessage,
           conversationTurnId,
         });
       });
@@ -221,7 +192,7 @@ export function createSendMessageHandler({
         sessionId: currentSessionId,
         turnId: conversationTurnId,
         content,
-        selectedModel,
+        selectedModel: selectedModelForRequest,
         chatConfig,
         systemContext: activeSystemContext?.content || chatConfig.systemPrompt || '',
         attachments: apiAttachments || [],
@@ -230,10 +201,7 @@ export function createSendMessageHandler({
         remoteConnectionId: effectiveRemoteConnectionId,
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
-        mcpEnabled: effectiveMcpEnabled,
-        enabledMcpIds: effectiveEnabledMcpIds,
-        skillsEnabled: effectiveSkillsEnabled,
-        selectedSkillIds: effectiveSelectedSkillIds,
+        workspaceRoot: effectiveWorkspaceRoot,
       });
 
       debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
@@ -244,117 +212,82 @@ export function createSendMessageHandler({
         remoteConnectionId: effectiveRemoteConnectionId,
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
-        mcpEnabled: effectiveMcpEnabled,
-        enabledMcpIds: effectiveEnabledMcpIds,
-        skillsEnabled: effectiveSkillsEnabled,
-        selectedSkillIds: effectiveSelectedSkillIds,
+        workspaceRoot: effectiveWorkspaceRoot,
+      });
+      const userId = getUserIdParam();
+      assertPayloadWithinTransportBudget({
+        conversation_id: currentSessionId,
+        content,
+        user_id: userId,
+        attachments: apiAttachments || [],
+        reasoning_enabled: reasoningEnabled,
+        turn_id: streamRuntimeOptions.turnId,
+        contact_agent_id: streamRuntimeOptions.contactAgentId || undefined,
+        remote_connection_id: Object.prototype.hasOwnProperty.call(
+          streamRuntimeOptions,
+          'remoteConnectionId',
+        )
+          ? (streamRuntimeOptions.remoteConnectionId ?? null)
+          : undefined,
+        project_id: streamRuntimeOptions.projectId || undefined,
+        project_root: streamRuntimeOptions.projectRoot || undefined,
+        workspace_root: streamRuntimeOptions.workspaceRoot || undefined,
+        model_config_id: selectedModelForRequest.id,
+        ai_model_config: {
+          temperature: 0.7,
+          model_name: selectedModelForRequest.model_name,
+          thinking_level: selectedModelForRequest.thinking_level || null,
+        },
       });
       let preferRealtimeStream = getRealtimeConnectionStateSnapshot() === 'connected';
       if (!preferRealtimeStream) {
         preferRealtimeStream = await waitForRealtimeConnectedSnapshot(REALTIME_STREAM_CONNECT_GRACE_MS);
       }
+      if (!preferRealtimeStream) {
+        throw new Error('Realtime connection unavailable');
+      }
 
-      let shouldFallbackToSse = false;
-      let realtimeCommandError: unknown = null;
-      if (preferRealtimeStream) {
+      set((state) => {
+        const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
+        state.sessionChatState[currentSessionId] = {
+          ...prev,
+          streamingTransport: 'realtime',
+        };
+      });
+
+      const commandResponse = await client.sendChatCommand(
+        currentSessionId,
+        content,
+        selectedModelForRequest,
+        userId,
+        apiAttachments,
+        reasoningEnabled,
+        streamRuntimeOptions,
+      );
+      if (commandResponse?.accepted === false) {
+        throw new Error('聊天命令未被接受');
+      }
+      const persistedUserMessageId = (
+        commandResponse?.source_user_message_id
+        || commandResponse?.user_message_id
+        || null
+      );
+      let activeUserMessageId = userMessage.id;
+      if (persistedUserMessageId) {
         set((state) => {
-          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
-          state.sessionChatState[currentSessionId] = {
-            ...prev,
-            streamingTransport: 'realtime',
-          };
-        });
-        try {
-          const commandResponse = await client.sendChatCommand(
-            currentSessionId,
-            content,
-            selectedModel,
-            getUserIdParam(),
-            apiAttachments,
-            reasoningEnabled,
-            streamRuntimeOptions,
+          activeUserMessageId = replaceOptimisticUserMessageId(
+            state,
+            userMessage.id,
+            persistedUserMessageId,
           );
-          if (commandResponse?.accepted === false) {
-            throw new Error('聊天命令未被接受');
-          }
-        } catch (error) {
-          realtimeCommandError = error;
-          shouldFallbackToSse = shouldFallbackToSseForRealtimeCommandError(error);
-          if (shouldFallbackToSse) {
-            debugLog('⚠️ realtime send command failed, fallback to SSE', {
-              error: error instanceof Error ? error.message : String(error),
-              conversationTurnId,
-              currentSessionId,
-            });
-          } else {
-            debugLog('⛔ realtime send command rejected, skip SSE fallback', {
-              error: error instanceof Error ? error.message : String(error),
-              errorStatus: error instanceof ApiRequestError ? error.status : null,
-              conversationTurnId,
-              currentSessionId,
-            });
-            throw error;
-          }
-        }
-      } else {
-        shouldFallbackToSse = true;
-      }
-
-      if (shouldFallbackToSse) {
-        set((state) => {
-          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
-          state.sessionChatState[currentSessionId] = {
-            ...prev,
-            streamingTransport: 'sse',
-          };
-        });
-        const response = await client.streamChat(
-          currentSessionId,
-          content,
-          selectedModel,
-          getUserIdParam(),
-          apiAttachments,
-          reasoningEnabled,
-          streamRuntimeOptions,
-        );
-
-        if (!response) {
-          throw new Error('No response received');
-        }
-
-        streamExecutionModulePromise ??= import('./sendMessage/streamExecution');
-        const { runStreamingAssistantTurn } = await streamExecutionModulePromise;
-        await runStreamingAssistantTurn({
-          apiClient: client,
-          set,
-          getCurrentState: () => {
-            const state = get();
-            return {
-              currentSessionId: state.currentSessionId,
-              messages: state.messages,
-              loadMessages: state.loadMessages,
-            };
-          },
-          currentSessionId,
-          tempAssistantMessage,
-          tempUserId,
-          conversationTurnId,
-          streamedTextRef,
-          response,
         });
       }
-
-      if (realtimeCommandError) {
-        debugLog('ℹ️ SSE fallback completed after realtime command failure', {
-          conversationTurnId,
-          currentSessionId,
-        });
-      }
+      set((state) => {
+        setTaskRunnerAsyncUserMessageStatus(state, activeUserMessageId, 'processing');
+      });
 
       debugLog('✅ 消息发送完成');
     } catch (error) {
-      streamExecutionModulePromise ??= import('./sendMessage/streamExecution');
-      const { rollbackFailedSendMessage } = await streamExecutionModulePromise;
       const readableError = rollbackFailedSendMessage({
         set,
         currentSessionId,

@@ -1,4 +1,12 @@
 use serde::Deserialize;
+use std::collections::HashMap;
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProjectRunCustomToolchainRequest {
+    pub(super) kind: Option<String>,
+    pub(super) label: Option<String>,
+    pub(super) path: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ProjectQuery {
@@ -32,28 +40,23 @@ pub(super) struct AddProjectContactRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ProjectChangeQuery {
-    pub(super) path: Option<String>,
-    pub(super) limit: Option<i64>,
-    pub(super) offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ConfirmProjectChangesRequest {
-    pub(super) mode: Option<String>,
-    pub(super) paths: Option<Vec<String>>,
-    pub(super) change_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct ProjectRunExecuteRequest {
     pub(super) target_id: Option<String>,
     pub(super) cwd: Option<String>,
     pub(super) command: Option<String>,
     pub(super) create_if_missing: Option<bool>,
+    pub(super) terminal_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ProjectRunDefaultRequest {
     pub(super) target_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProjectRunEnvironmentUpdateRequest {
+    pub(super) selected_toolchains: Option<HashMap<String, String>>,
+    pub(super) custom_toolchains: Option<HashMap<String, ProjectRunCustomToolchainRequest>>,
+    pub(super) env_vars: Option<HashMap<String, String>>,
+    pub(super) terminal_ui_enabled: Option<bool>,
 }

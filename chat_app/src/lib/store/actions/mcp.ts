@@ -15,10 +15,12 @@ interface Deps {
 
 export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
   return {
-    loadMcpConfigs: async () => {
+    loadMcpConfigs: async (options?: { forceRefresh?: boolean }) => {
       try {
         const userId = getUserIdParam();
-        const configs = await client.getMcpConfigs(userId);
+        const configs = await client.getMcpConfigs(userId, {
+          forceRefresh: options?.forceRefresh === true,
+        });
 
         debugLog('🔍 [后端返回] loadMcpConfigs 返回的数据:', configs);
 
@@ -72,7 +74,7 @@ export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
           saved = await client.createMcpConfig(createData);
         }
 
-        await get().loadMcpConfigs();
+        await get().loadMcpConfigs({ forceRefresh: true });
 
         return saved ? normalizeMcpConfig(saved) : null;
       } catch (error) {

@@ -12,18 +12,22 @@ mod history_process_support;
 mod mcp_server_handlers;
 mod message_handlers;
 mod review_handlers;
+mod runtime_settings_handlers;
 mod session_handlers;
 mod summary_handlers;
 mod support;
 
 use self::mcp_server_handlers::{add_mcp_server, delete_mcp_server, list_mcp_servers};
 use self::message_handlers::{
-    create_session_message, get_session_messages, get_session_turn_display_messages,
-    get_session_turn_display_messages_by_turn, get_session_turn_process_messages,
-    get_session_turn_process_messages_by_turn, get_session_turn_runtime_context_by_turn,
-    get_session_turn_runtime_context_latest,
+    create_session_message, get_session_compact_history, get_session_messages,
+    get_session_turn_display_messages, get_session_turn_display_messages_by_turn,
+    get_session_turn_runtime_context_by_turn, get_session_turn_runtime_context_latest,
+    get_session_user_message_turns,
 };
 use self::review_handlers::{get_session_review_repair_status, run_session_review_repair};
+use self::runtime_settings_handlers::{
+    get_session_runtime_settings, update_session_runtime_settings,
+};
 use self::session_handlers::{
     create_session, delete_session, get_session, list_sessions, update_session,
 };
@@ -42,6 +46,10 @@ pub fn router() -> Router {
             get(get_session).put(update_session).delete(delete_session),
         )
         .route(
+            "/api/conversations/:conversation_id/runtime-settings",
+            get(get_session_runtime_settings).put(update_session_runtime_settings),
+        )
+        .route(
             "/api/conversations/:conversation_id/mcp-servers",
             get(list_mcp_servers).post(add_mcp_server),
         )
@@ -54,16 +62,16 @@ pub fn router() -> Router {
             get(get_session_messages).post(create_session_message),
         )
         .route(
-            "/api/conversations/:conversation_id/turns/:user_message_id/process",
-            get(get_session_turn_process_messages),
+            "/api/conversations/:conversation_id/compact-history",
+            get(get_session_compact_history),
+        )
+        .route(
+            "/api/conversations/:conversation_id/user-message-turns",
+            get(get_session_user_message_turns),
         )
         .route(
             "/api/conversations/:conversation_id/turns/:user_message_id/messages",
             get(get_session_turn_display_messages),
-        )
-        .route(
-            "/api/conversations/:conversation_id/turns/by-turn/:turn_id/process",
-            get(get_session_turn_process_messages_by_turn),
         )
         .route(
             "/api/conversations/:conversation_id/turns/by-turn/:turn_id/messages",

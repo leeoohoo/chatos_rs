@@ -1,11 +1,44 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
-import { DiffPanel } from './ChangeLogPanels';
+import { useI18n } from '../../i18n/I18nProvider';
+import { isMarkdownFile } from './utils';
 import { ProjectPreviewFileContent } from './previewPane/ProjectPreviewFileContent';
 import { ProjectPreviewHeader } from './previewPane/ProjectPreviewHeader';
 import { ProjectPreviewNavigation } from './previewPane/ProjectPreviewNavigation';
-import { ProjectRunnerMemberPickerDialog } from './previewPane/ProjectRunnerMemberPickerDialog';
 import type { ProjectPreviewPaneProps } from './previewPane/previewPaneTypes';
+
+const fallbackCopyText = (value: string): boolean => {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand('copy');
+  } finally {
+    document.body.removeChild(textarea);
+  }
+};
+
+const copyTextToClipboard = async (value: string): Promise<void> => {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  if (!fallbackCopyText(value)) {
+    throw new Error('Clipboard API is unavailable');
+  }
+};
 
 export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   selectedFile,
@@ -13,6 +46,8 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   selectedEntry,
   loadingFile,
   error,
+  saveError,
+  savingFile,
   searchQuery,
   searchCaseSensitive,
   searchWholeWord,
@@ -32,56 +67,57 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   navLoading,
   navError,
   activeNavLocationId,
+  canGoBackFromNav,
   documentSymbols,
   documentSymbolsLoading,
   documentSymbolsError,
-  selectedLog,
-  runStatus,
-  runCatalogLoading,
-  projectMembers,
-  projectMembersLoading,
-  runnerScriptExists,
-  runnerScriptChecking,
-  runnerScriptPath,
-  runnerStartCommand,
-  runnerStopCommand,
-  runnerRestartCommand,
-  starting,
-  stopping,
-  restarting,
-  runnerMessage,
-  runnerError,
+  onRequestDocumentSymbols,
   onTokenSelection,
   onClearTokenSelection,
   onRequestDefinition,
   onRequestReferences,
+  onGoBackFromNav,
   onSearchInProject,
   onOpenPreviousSearchHit,
   onOpenNextSearchHit,
   onActivateSearchHit,
   onOpenNavLocation,
   onOpenDocumentSymbol,
-  onRunnerStart,
-  onRunnerStop,
-  onRunnerRestart,
-  onRefreshRunnerState,
-  onGenerateRunnerScriptForContact,
+  onSaveFile,
 }) => {
-  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
-  const [memberPickerSelectedId, setMemberPickerSelectedId] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [generationError, setGenerationError] = useState<string | null>(null);
-  const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+  const { t } = useI18n();
   const [documentSymbolsExpanded, setDocumentSymbolsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState('');
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   useEffect(() => {
     setDocumentSymbolsExpanded(false);
   }, [selectedFile?.path]);
 
-  const selectedMember = useMemo(
-    () => projectMembers.find((member) => member.contactId === memberPickerSelectedId) || null,
-    [memberPickerSelectedId, projectMembers],
-  );
+  useEffect(() => {
+    setIsEditing(false);
+    setDraftContent(selectedFile?.isBinary ? '' : (selectedFile?.content || ''));
+    setCopyStatus('idle');
+  }, [selectedFile?.content, selectedFile?.isBinary, selectedFile?.path]);
+
+  useEffect(() => {
+    setCopyStatus('idle');
+  }, [isEditing]);
+
+  useEffect(() => {
+    if (copyStatus === 'idle') {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCopyStatus('idle');
+    }, 1600);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [copyStatus]);
 
   const displayedToken = selectedToken || navResult?.token || null;
   const activeSearchQuery = searchQuery.trim();
@@ -96,85 +132,75 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   );
   const navResultLabel = useMemo(() => {
     if (!navResult || !navRequestKind) return null;
-    if (navRequestKind === 'definition') return '定义结果';
-    if (navRequestKind === 'references') return '引用结果';
-    return '导航结果';
-  }, [navRequestKind, navResult]);
+    if (navRequestKind === 'definition') return t('projectExplorer.preview.nav.definition');
+    if (navRequestKind === 'references') return t('projectExplorer.preview.nav.references');
+    return t('projectExplorer.preview.nav.default');
+  }, [navRequestKind, navResult, t]);
   const documentSymbolCount = documentSymbols?.symbols?.length || 0;
-  const mergedError = runnerError || generationError;
-  const mergedMessage = !mergedError ? (generationMessage || runnerMessage) : null;
-
-  const handleGenerateForMember = async (
-    member: typeof projectMembers[number],
-  ): Promise<boolean> => {
-    setGenerating(true);
-    setGenerationError(null);
-    setGenerationMessage(null);
-    try {
-      await onGenerateRunnerScriptForContact(member);
-      setGenerationMessage(`已向 ${member.name || member.contactId} 发送脚本生成任务`);
-      onRefreshRunnerState();
-      return true;
-    } catch (generation) {
-      setGenerationError(generation instanceof Error ? generation.message : '发送脚本生成任务失败');
-      return false;
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const handleGenerateClick = () => {
-    setGenerationError(null);
-    setGenerationMessage(null);
-    if (projectMembersLoading) {
-      return;
-    }
-    if (projectMembers.length === 0) {
-      setGenerationError('当前项目还没有团队成员，请先添加联系人');
-      return;
-    }
-    if (projectMembers.length === 1) {
-      void handleGenerateForMember(projectMembers[0]);
-      return;
-    }
-    setMemberPickerSelectedId(projectMembers[0]?.contactId || null);
-    setMemberPickerOpen(true);
-  };
+  const canEdit = Boolean(selectedFile && !selectedFile.isBinary && selectedFile.writable !== false);
+  const canCopyCurrentContent = Boolean(selectedFile && !selectedFile.isBinary);
+  const hasUnsavedChanges = canEdit && selectedFile ? draftContent !== selectedFile.content : false;
+  const isMarkdownPreview = Boolean(
+    selectedFile
+    && !selectedFile.isBinary
+    && !isEditing
+    && isMarkdownFile(selectedFile.name, selectedFile.contentType),
+  );
+  const currentCopyText = canCopyCurrentContent
+    ? (isEditing ? draftContent : (selectedFile?.content || ''))
+    : '';
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <ProjectPreviewHeader
         selectedFile={selectedFile}
         selectedPath={selectedPath}
-        runnerScriptExists={runnerScriptExists}
-        generating={generating}
-        projectMembersLoading={projectMembersLoading}
-        runnerScriptChecking={runnerScriptChecking}
-        runStatus={runStatus}
-        runCatalogLoading={runCatalogLoading}
-        starting={starting}
-        stopping={stopping}
-        restarting={restarting}
-        runnerStartCommand={runnerStartCommand}
-        runnerStopCommand={runnerStopCommand}
-        runnerRestartCommand={runnerRestartCommand}
-        onGenerateClick={handleGenerateClick}
-        onRunnerStart={onRunnerStart}
-        onRunnerStop={onRunnerStop}
-        onRunnerRestart={onRunnerRestart}
-        onRefreshRunnerState={onRefreshRunnerState}
+        canCopyCurrentContent={canCopyCurrentContent}
+        copyStatus={copyStatus}
+        isEditing={isEditing}
+        canEdit={canEdit}
+        hasUnsavedChanges={hasUnsavedChanges}
+        savingFile={savingFile}
+        onCopyCurrentContent={() => {
+          if (!canCopyCurrentContent) {
+            return;
+          }
+
+          void (async () => {
+            try {
+              await copyTextToClipboard(currentCopyText);
+              setCopyStatus('success');
+            } catch {
+              setCopyStatus('error');
+            }
+          })();
+        }}
+        onStartEditing={() => {
+          if (!canEdit || !selectedFile) {
+            return;
+          }
+          setDraftContent(selectedFile.content);
+          setIsEditing(true);
+        }}
+        onCancelEditing={() => {
+          setDraftContent(selectedFile?.content || '');
+          setIsEditing(false);
+        }}
+        onSaveEditing={() => {
+          if (!selectedFile || !canEdit) {
+            return;
+          }
+          void (async () => {
+            const ok = await onSaveFile(selectedFile.path, draftContent);
+            if (ok) {
+              setIsEditing(false);
+            }
+          })();
+        }}
       />
 
-      {(mergedMessage || mergedError) && (
-        <div className="border-b border-border/70 bg-card px-4 py-1.5">
-          <div className={mergedError ? 'text-[11px] text-destructive' : 'text-[11px] text-emerald-600'}>
-            {mergedError || mergedMessage}
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-1 flex-col overflow-hidden">
-        {selectedFile && !selectedFile.isBinary && (
+        {selectedFile && !selectedFile.isBinary && !isEditing && !isMarkdownPreview && (
           <ProjectPreviewNavigation
             displayedToken={displayedToken}
             activeSearchQuery={activeSearchQuery}
@@ -192,6 +218,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
             navCapabilitiesError={navCapabilitiesError}
             navError={navError}
             activeNavLocationId={activeNavLocationId}
+            canGoBackFromNav={canGoBackFromNav}
             documentSymbolsExpanded={documentSymbolsExpanded}
             documentSymbolsLoading={documentSymbolsLoading}
             documentSymbolsError={documentSymbolsError}
@@ -199,20 +226,25 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
             documentSymbols={documentSymbols}
             targetLine={targetLine}
             onToggleDocumentSymbols={() => {
-              setDocumentSymbolsExpanded((value) => !value);
+              setDocumentSymbolsExpanded((value) => {
+                const next = !value;
+                if (next) {
+                  onRequestDocumentSymbols();
+                }
+                return next;
+              });
             }}
             onOpenPreviousSearchHit={onOpenPreviousSearchHit}
             onOpenNextSearchHit={onOpenNextSearchHit}
             onRequestDefinition={onRequestDefinition}
             onRequestReferences={onRequestReferences}
+            onGoBackFromNav={onGoBackFromNav}
             onSearchInProject={onSearchInProject}
             onClearTokenSelection={onClearTokenSelection}
             onOpenNavLocation={onOpenNavLocation}
             onOpenDocumentSymbol={onOpenDocumentSymbol}
           />
         )}
-
-        <DiffPanel selectedLog={selectedLog} />
 
         <div className="min-h-0 flex-1 overflow-hidden">
           {error ? (
@@ -223,6 +255,10 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               selectedPath={selectedPath}
               selectedEntry={selectedEntry}
               loadingFile={loadingFile}
+              saveError={saveError}
+              savingFile={savingFile}
+              isEditing={isEditing}
+              draftContent={draftContent}
               targetLine={targetLine}
               targetLineRevision={targetLineRevision}
               searchQuery={searchQuery}
@@ -232,33 +268,21 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               activeSearchHitId={activeSearchHitId}
               onActivateSearchHit={onActivateSearchHit}
               onTokenSelection={onTokenSelection}
+              onDraftContentChange={setDraftContent}
+              onSaveDraft={async () => {
+                if (!selectedFile || !canEdit) {
+                  return false;
+                }
+                const ok = await onSaveFile(selectedFile.path, draftContent);
+                if (ok) {
+                  setIsEditing(false);
+                }
+                return ok;
+              }}
             />
           )}
         </div>
       </div>
-
-      {memberPickerOpen && (
-        <ProjectRunnerMemberPickerDialog
-          projectMembers={projectMembers}
-          selectedMemberId={memberPickerSelectedId}
-          generationError={generationError}
-          generating={generating}
-          runnerScriptPath={runnerScriptPath}
-          onSelectMember={setMemberPickerSelectedId}
-          onClose={() => {
-            if (generating) return;
-            setMemberPickerOpen(false);
-          }}
-          onConfirm={() => {
-            if (!selectedMember) return;
-            void handleGenerateForMember(selectedMember).then((success) => {
-              if (success) {
-                setMemberPickerOpen(false);
-              }
-            });
-          }}
-        />
-      )}
     </div>
   );
 };

@@ -4,22 +4,22 @@ import type { SendMessageRuntimeOptions } from '../../types';
 interface SessionRuntimeLike {
   contactAgentId?: string | null;
   remoteConnectionId?: string | null;
+  selectedModelName?: string | null;
+  selectedThinkingLevel?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
 }
 
 interface RuntimeResolutionResult {
   effectiveContactAgentId: string | null;
   effectiveRemoteConnectionId: string | null;
+  effectiveModelName: string | null;
+  effectiveThinkingLevel: string | null;
   effectiveProjectId: string;
   effectiveProjectRoot: string | null;
   effectiveWorkspaceRoot: string | null;
   effectiveExecutionRoot: string | null;
-  effectiveMcpEnabled: boolean;
-  effectiveEnabledMcpIds: string[];
 }
 
 export const resolveRuntimeConfig = (
@@ -48,6 +48,20 @@ export const resolveRuntimeConfig = (
   const effectiveRemoteConnectionId = hasRequestedRemoteConnectionId
     ? (requestedRemoteConnectionId || null)
     : (sessionRemoteConnectionId || null);
+  const requestedModelName = typeof runtimeOptions?.modelName === 'string'
+    ? runtimeOptions.modelName.trim()
+    : '';
+  const sessionModelName = typeof sessionRuntime?.selectedModelName === 'string'
+    ? sessionRuntime.selectedModelName.trim()
+    : '';
+  const effectiveModelName = requestedModelName || sessionModelName || null;
+  const requestedThinkingLevel = typeof runtimeOptions?.thinkingLevel === 'string'
+    ? runtimeOptions.thinkingLevel.trim()
+    : '';
+  const sessionThinkingLevel = typeof sessionRuntime?.selectedThinkingLevel === 'string'
+    ? sessionRuntime.selectedThinkingLevel.trim()
+    : '';
+  const effectiveThinkingLevel = requestedThinkingLevel || sessionThinkingLevel || null;
   const sessionProjectId = typeof sessionRuntime?.projectId === 'string'
     ? sessionRuntime.projectId.trim()
     : '';
@@ -69,22 +83,16 @@ export const resolveRuntimeConfig = (
     ? null
     : (requestedProjectRoot || sessionProjectRoot || null);
   const effectiveExecutionRoot = effectiveWorkspaceRoot || effectiveProjectRoot;
-  const effectiveMcpEnabled = typeof runtimeOptions?.mcpEnabled === 'boolean'
-    ? runtimeOptions.mcpEnabled
-    : (sessionRuntime?.mcpEnabled ?? true);
-  const effectiveEnabledMcpIds = Array.isArray(runtimeOptions?.enabledMcpIds)
-    ? runtimeOptions.enabledMcpIds
-    : (sessionRuntime?.enabledMcpIds ?? []);
 
   return {
     effectiveContactAgentId,
     effectiveRemoteConnectionId,
+    effectiveModelName,
+    effectiveThinkingLevel,
     effectiveProjectId,
     effectiveProjectRoot,
     effectiveWorkspaceRoot,
     effectiveExecutionRoot,
-    effectiveMcpEnabled,
-    effectiveEnabledMcpIds,
   };
 };
 

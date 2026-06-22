@@ -26,6 +26,7 @@ pub fn router() -> Router {
         .route("/api/git/merge", post(merge_branch))
         .route("/api/git/stage", post(stage))
         .route("/api/git/unstage", post(unstage))
+        .route("/api/git/discard", post(discard))
         .route("/api/git/commit", post(commit))
 }
 
@@ -34,21 +35,27 @@ async fn client() -> (StatusCode, Json<Value>) {
 }
 
 async fn summary(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::summary(&query.root).await {
+    match git::summary(
+        &query.root,
+        query.preferred_repo_root.as_deref(),
+        query.force_refresh.unwrap_or(false),
+    )
+    .await
+    {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
 async fn branches(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::branches(&query.root).await {
+    match git::branches(&query.root, query.force_refresh.unwrap_or(false)).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
 }
 
 async fn status(Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    match git::status(&query.root).await {
+    match git::status(&query.root, query.force_refresh.unwrap_or(false)).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }
@@ -126,6 +133,13 @@ async fn unstage(Json(request): Json<GitPathRequest>) -> (StatusCode, Json<Value
 
 async fn commit(Json(request): Json<GitCommitRequest>) -> (StatusCode, Json<Value>) {
     match git::commit(request).await {
+        Ok(response) => (StatusCode::OK, Json(json!(response))),
+        Err(message) => error_response(message),
+    }
+}
+
+async fn discard(Json(request): Json<GitPathRequest>) -> (StatusCode, Json<Value>) {
+    match git::discard(request).await {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(message) => error_response(message),
     }

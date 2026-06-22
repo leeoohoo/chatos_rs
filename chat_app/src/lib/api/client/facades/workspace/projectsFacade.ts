@@ -2,13 +2,13 @@ import * as workspaceApi from '../../workspace';
 import type {
   DeleteSuccessResponse,
   PagingOptions,
-  ProjectChangeConfirmResponse,
-  ProjectChangeLogResponse,
-  ProjectChangeSummaryResponse,
+  ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
   ProjectRunExecuteResponse,
+  ProjectRunStateResponse,
 } from '../../types';
 import type ApiClient from '../../../client';
 
@@ -20,23 +20,32 @@ export interface WorkspaceProjectFacade {
   getProject(id: string): Promise<ProjectResponse>;
   analyzeProjectRun(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunCatalog(projectId: string): Promise<ProjectRunCatalogResponse>;
+  getProjectRunState(projectId: string): Promise<ProjectRunStateResponse>;
+  getProjectRunEnvironment(projectId: string): Promise<ProjectRunEnvironmentResponse>;
+  updateProjectRunEnvironment(
+    projectId: string,
+    data: {
+      selected_toolchains?: Record<string, string>;
+      custom_toolchains?: Record<string, { kind?: string; label?: string; path?: string }>;
+      env_vars?: Record<string, string>;
+      terminal_ui_enabled?: boolean;
+    },
+  ): Promise<ProjectRunEnvironmentResponse>;
   executeProjectRun(
     projectId: string,
-    data: { target_id?: string; cwd?: string; command?: string; create_if_missing?: boolean },
+    data: {
+      target_id?: string;
+      cwd?: string;
+      command?: string;
+      create_if_missing?: boolean;
+      terminal_id?: string;
+    },
   ): Promise<ProjectRunExecuteResponse>;
   setProjectRunDefault(projectId: string, targetId: string): Promise<ProjectRunCatalogResponse>;
   listProjectContacts(projectId: string, paging?: PagingOptions): Promise<ProjectContactLinkResponse[]>;
+  getProjectContactLock(projectId: string): Promise<ProjectContactLockResponse>;
   addProjectContact(projectId: string, data: { contact_id: string }): Promise<ProjectContactLinkResponse>;
   removeProjectContact(projectId: string, contactId: string): Promise<DeleteSuccessResponse>;
-  listProjectChangeLogs(
-    projectId: string,
-    params?: { path?: string; limit?: number; offset?: number },
-  ): Promise<ProjectChangeLogResponse[]>;
-  getProjectChangeSummary(projectId: string): Promise<ProjectChangeSummaryResponse>;
-  confirmProjectChanges(
-    projectId: string,
-    payload: { mode?: 'all' | 'paths' | 'change_ids'; paths?: string[]; change_ids?: string[] },
-  ): Promise<ProjectChangeConfirmResponse>;
 }
 
 export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient> = {
@@ -61,6 +70,15 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   async getProjectRunCatalog(projectId) {
     return workspaceApi.getProjectRunCatalog(this.getRequestFn(), projectId);
   },
+  async getProjectRunState(projectId) {
+    return workspaceApi.getProjectRunState(this.getRequestFn(), projectId);
+  },
+  async getProjectRunEnvironment(projectId) {
+    return workspaceApi.getProjectRunEnvironment(this.getRequestFn(), projectId);
+  },
+  async updateProjectRunEnvironment(projectId, data) {
+    return workspaceApi.updateProjectRunEnvironment(this.getRequestFn(), projectId, data);
+  },
   async executeProjectRun(projectId, data) {
     return workspaceApi.executeProjectRun(this.getRequestFn(), projectId, data);
   },
@@ -70,19 +88,13 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   async listProjectContacts(projectId, paging) {
     return workspaceApi.listProjectContacts(this.getRequestFn(), projectId, paging);
   },
+  async getProjectContactLock(projectId) {
+    return workspaceApi.getProjectContactLock(this.getRequestFn(), projectId);
+  },
   async addProjectContact(projectId, data) {
     return workspaceApi.addProjectContact(this.getRequestFn(), projectId, data);
   },
   async removeProjectContact(projectId, contactId) {
     return workspaceApi.removeProjectContact(this.getRequestFn(), projectId, contactId);
-  },
-  async listProjectChangeLogs(projectId, params) {
-    return workspaceApi.listProjectChangeLogs(this.getRequestFn(), projectId, params);
-  },
-  async getProjectChangeSummary(projectId) {
-    return workspaceApi.getProjectChangeSummary(this.getRequestFn(), projectId);
-  },
-  async confirmProjectChanges(projectId, payload) {
-    return workspaceApi.confirmProjectChanges(this.getRequestFn(), projectId, payload);
   },
 };

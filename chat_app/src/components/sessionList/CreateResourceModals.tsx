@@ -1,11 +1,14 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
+import ManagerFormDialog from '../ui/ManagerFormDialog';
 import { deriveNameFromPath } from './helpers';
 
 interface CreateResourceModalProps {
   isOpen: boolean;
   title: string;
   pathLabel: string;
+  previewLabel: string;
   pathValue: string;
   error: string | null;
   fallbackName: string;
@@ -19,6 +22,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   isOpen,
   title,
   pathLabel,
+  previewLabel,
   pathValue,
   error,
   fallbackName,
@@ -27,70 +31,69 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   onOpenPicker,
   onSubmit,
 }) => {
-  if (!isOpen) {
-    return null;
-  }
+  const { t } = useI18n();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-card border border-border rounded-lg shadow-xl w-[520px] p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-          <button
-            onClick={onClose}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div className="space-y-4">
+    <ManagerFormDialog
+      open={isOpen}
+      title={title}
+      widthClassName="max-w-xl"
+      onClose={onClose}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+        className="space-y-4"
+      >
+        <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
           <div>
             <label className="text-sm text-muted-foreground">{pathLabel}</label>
             <div className="mt-1 flex items-center gap-2">
               <input
                 value={pathValue}
                 onChange={(e) => onPathChange(e.target.value)}
-                className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="选择或输入本地目录路径"
+                className="flex-1 rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder={t('sessionList.resource.pathPlaceholder')}
+                autoFocus
               />
               <button
                 type="button"
                 onClick={onOpenPicker}
-                className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+                className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
               >
-                选择目录
+                {t('sessionList.resource.chooseDirectory')}
               </button>
             </div>
           </div>
-          {pathValue.trim() && (
+          {pathValue.trim() ? (
             <div className="text-xs text-muted-foreground">
-              {title.includes('项目') ? '项目名称将默认使用：' : '终端名称将默认使用：'}
+              {previewLabel}
               <span className="text-foreground">{deriveNameFromPath(pathValue, fallbackName)}</span>
             </div>
-          )}
-          {error && (
+          ) : null}
+          {error ? (
             <div className="text-xs text-destructive">{error}</div>
-          )}
+          ) : null}
         </div>
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="flex justify-end gap-2">
           <button
+            type="button"
             onClick={onClose}
-            className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+            className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
-            onClick={onSubmit}
-            className="px-4 py-2 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+            type="submit"
+            className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
           >
-            创建
+            {t('common.create')}
           </button>
         </div>
-      </div>
-    </div>
+      </form>
+    </ManagerFormDialog>
   );
 };
 
@@ -113,11 +116,14 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onOpenPicker,
   onCreate,
 }) => {
+  const { t } = useI18n();
+
   return (
     <CreateResourceModal
       isOpen={isOpen}
-      title="新增项目"
-      pathLabel="项目目录"
+      title={t('sessionList.resource.projectTitle')}
+      pathLabel={t('sessionList.resource.projectDirectory')}
+      previewLabel={t('sessionList.resource.projectDefaultName')}
       pathValue={projectRoot}
       error={projectError}
       fallbackName="Project"
@@ -148,11 +154,14 @@ export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
   onOpenPicker,
   onCreate,
 }) => {
+  const { t } = useI18n();
+
   return (
     <CreateResourceModal
       isOpen={isOpen}
-      title="新增终端"
-      pathLabel="终端目录"
+      title={t('sessionList.resource.terminalTitle')}
+      pathLabel={t('sessionList.resource.terminalDirectory')}
+      previewLabel={t('sessionList.resource.terminalDefaultName')}
       pathValue={terminalRoot}
       error={terminalError}
       fallbackName="Terminal"

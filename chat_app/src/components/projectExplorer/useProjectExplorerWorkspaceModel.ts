@@ -11,31 +11,29 @@ import type { UseProjectExplorerWorkspaceModelParams } from './workspaceModelTyp
 
 export const useProjectExplorerWorkspaceModel = ({
   project,
+  filesTabActive,
   client,
   state,
   pathHelpers,
   search,
   dataLoading,
-  logs,
   selection,
   runState,
   codeNav,
   treeStateOps,
-  handleGenerateRunnerScriptForContact,
 }: UseProjectExplorerWorkspaceModelParams) => {
   const modelParams = {
     project,
+    filesTabActive,
     client,
     state,
     pathHelpers,
     search,
     dataLoading,
-    logs,
     selection,
     runState,
     codeNav,
     treeStateOps,
-    handleGenerateRunnerScriptForContact,
   };
   const {
     handlePreviewTokenSelection,

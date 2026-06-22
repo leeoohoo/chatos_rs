@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { ProjectSearchHit } from '../../../types';
 import { normalizeProjectSearchHit } from '../../../lib/domain/projectSearch';
 import type { ProjectExplorerSearchApiClient } from './projectExplorerSearchTypes';
@@ -19,6 +20,7 @@ export const useProjectSearchData = ({
   searchCaseSensitive,
   searchWholeWord,
 }: UseProjectSearchDataOptions) => {
+  const { t } = useI18n();
   const [searchResults, setSearchResults] = useState<ProjectSearchHit[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export const useProjectSearchData = ({
         if (cancelled) return;
         setSearchResults([]);
         setSearchTruncated(false);
-        setSearchError(error instanceof Error ? error.message : '全文搜索失败');
+        setSearchError(error instanceof Error ? error.message : t('projectExplorer.search.failed'));
       } finally {
         if (!cancelled) {
           setSearchLoading(false);
@@ -78,6 +80,7 @@ export const useProjectSearchData = ({
     searchCaseSensitive,
     searchQuery,
     searchWholeWord,
+    t,
   ]);
 
   return {

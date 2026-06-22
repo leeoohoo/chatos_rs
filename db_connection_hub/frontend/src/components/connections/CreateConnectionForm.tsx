@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "../../api/client";
 import type { AuthMode, CreateDataSourcePayload, DbTypeDescriptor } from "../../types/models";
 import { buildPayload } from "./connectionFormPayload";
@@ -36,6 +36,9 @@ export function CreateConnectionForm({ dbTypes, loading, onCreate }: Props) {
   const [loadingMysqlDatabases, setLoadingMysqlDatabases] = useState(false);
   const [mysqlDatabasesError, setMysqlDatabasesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const discoverTimerRef = useRef<number | null>(null);
+  const discoverRequestSeqRef = useRef(0);
+  const activeDiscoverSeqRef = useRef(0);
 
   const selectedDb = useMemo(
     () => dbTypes.find((item) => item.db_type === dbType) || null,
@@ -108,10 +111,24 @@ export function CreateConnectionForm({ dbTypes, loading, onCreate }: Props) {
   }, [dbType]);
 
   useEffect(() => {
+    if (discoverTimerRef.current !== null) {
+      window.clearTimeout(discoverTimerRef.current);
+      discoverTimerRef.current = null;
+    }
     if (!shouldDiscoverMysqlDatabases) {
       return;
     }
-    void discoverMysqlDatabases();
+
+    discoverTimerRef.current = window.setTimeout(() => {
+      void discoverMysqlDatabases();
+    }, 300);
+
+    return () => {
+      if (discoverTimerRef.current !== null) {
+        window.clearTimeout(discoverTimerRef.current);
+        discoverTimerRef.current = null;
+      }
+    };
   }, [
     shouldDiscoverMysqlDatabases,
     name,
@@ -127,6 +144,10 @@ export function CreateConnectionForm({ dbTypes, loading, onCreate }: Props) {
   ]);
 
   async function discoverMysqlDatabases() {
+    const requestSeq = discoverRequestSeqRef.current + 1;
+    discoverRequestSeqRef.current = requestSeq;
+    activeDiscoverSeqRef.current = requestSeq;
+
     try {
       setMysqlDatabasesError(null);
       setLoadingMysqlDatabases(true);
@@ -154,6 +175,9 @@ export function CreateConnectionForm({ dbTypes, loading, onCreate }: Props) {
         page: 1,
         pageSize: 500
       });
+      if (activeDiscoverSeqRef.current !== requestSeq) {
+        return;
+      }
       const items = response.items.map((item) => item.name).filter((item) => item.trim() !== "");
       setMysqlDatabases(items);
 
@@ -161,12 +185,26 @@ export function CreateConnectionForm({ dbTypes, loading, onCreate }: Props) {
         setDatabase(items[0]);
       }
     } catch (caught) {
+      if (activeDiscoverSeqRef.current !== requestSeq) {
+        return;
+      }
       setMysqlDatabases([]);
       setMysqlDatabasesError(caught instanceof Error ? caught.message : "Discover databases failed");
     } finally {
-      setLoadingMysqlDatabases(false);
+      if (activeDiscoverSeqRef.current === requestSeq) {
+        setLoadingMysqlDatabases(false);
+      }
     }
   }
+
+  useEffect(() => () => {
+    discoverRequestSeqRef.current += 1;
+    activeDiscoverSeqRef.current = discoverRequestSeqRef.current;
+    if (discoverTimerRef.current !== null) {
+      window.clearTimeout(discoverTimerRef.current);
+      discoverTimerRef.current = null;
+    }
+  }, []);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, ReactNode } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
-import { useChatStore } from './index';
+import { useApiClientContext } from '../api/ApiClientContext';
 import { createChatStoreWithBackend } from './createChatStoreWithBackend';
 import type { ChatStore as ChatStoreHook, ChatState, ChatActions } from './createChatStoreWithBackend';
 import type ApiClient from '../api/client';
@@ -14,7 +14,6 @@ interface ChatStoreContextType {
   store: ChatStore;
   userId?: string;
   projectId?: string;
-  apiClient?: ApiClient;
 }
 
 // 创建Context
@@ -35,22 +34,23 @@ export const ChatStoreProvider: React.FC<ChatStoreProviderProps> = ({
   projectId,
   customApiClient
 }) => {
-  // 根据是否有自定义参数决定使用哪个store
+  const resolvedApiClient = useApiClientContext();
+  const effectiveApiClient = customApiClient || resolvedApiClient;
+
   const store = React.useMemo(() => {
-    if (userId || projectId || customApiClient) {
-      debugLog('🏪 创建自定义store:', { userId, projectId, hasCustomApiClient: !!customApiClient });
-      return createChatStoreWithBackend(customApiClient, {
-        userId: userId || undefined,
-        projectId: projectId || undefined,
-      });
-    } else {
-      debugLog('🏪 使用默认store');
-      return useChatStore;
-    }
-  }, [userId, projectId, customApiClient]);
+    debugLog('🏪 创建上下文 store:', {
+      userId,
+      projectId,
+      hasCustomApiClient: Boolean(customApiClient),
+    });
+    return createChatStoreWithBackend(effectiveApiClient, {
+      userId: userId || undefined,
+      projectId: projectId || undefined,
+    });
+  }, [customApiClient, effectiveApiClient, projectId, userId]);
 
   return (
-    <ChatStoreContext.Provider value={{ store, userId, projectId, apiClient: customApiClient }}>
+    <ChatStoreContext.Provider value={{ store, userId, projectId }}>
       {children}
     </ChatStoreContext.Provider>
   );
@@ -85,8 +85,7 @@ export const useOptionalChatStoreContext = (): ChatStore | null => {
 };
 
 export const useChatStoreResolved = (): ChatState & ChatActions => {
-  const context = useContext(ChatStoreContext);
-  const store = context?.store ?? useChatStore;
+  const store = useChatStoreContext();
   return useStoreWithEqualityFn(store, (state) => state);
 };
 
@@ -97,10 +96,4 @@ export const useChatRuntimeEnv = () => {
     return { userId: undefined, projectId: undefined } as const;
   }
   return { userId: context.userId, projectId: context.projectId } as const;
-};
-
-// 新增：从Context中获取自定义ApiClient（如果存在）
-export const useChatApiClientFromContext = () => {
-  const context = useContext(ChatStoreContext);
-  return context?.apiClient;
 };

@@ -3,6 +3,7 @@ import { debugLog } from '@/lib/utils';
 import { buildQuery } from './shared';
 import type {
   ActiveSystemContextResponse,
+  AiProviderModelsResponse,
   AiModelConfigResponse,
   AiModelConfigUpdatePayload,
   ApplicationResponse,
@@ -20,10 +21,61 @@ import type {
 } from './types';
 import type { ApiRequestFn } from './workspace';
 
-export const getMcpConfigs = (request: ApiRequestFn, userId?: string): Promise<McpConfigResponse[]> => {
+interface McpConfigCacheState {
+  data: McpConfigResponse[] | null;
+  inflight: Promise<McpConfigResponse[]> | null;
+}
+
+const mcpConfigCaches = new WeakMap<ApiRequestFn, McpConfigCacheState>();
+
+const getOrCreateMcpConfigCacheState = (request: ApiRequestFn): McpConfigCacheState => {
+  const existing = mcpConfigCaches.get(request);
+  if (existing) {
+    return existing;
+  }
+  const next: McpConfigCacheState = {
+    data: null,
+    inflight: null,
+  };
+  mcpConfigCaches.set(request, next);
+  return next;
+};
+
+export const invalidateMcpConfigCache = (request: ApiRequestFn): void => {
+  const cacheState = getOrCreateMcpConfigCacheState(request);
+  cacheState.data = null;
+  cacheState.inflight = null;
+};
+
+export const getMcpConfigs = (
+  request: ApiRequestFn,
+  userId?: string,
+  options?: { forceRefresh?: boolean },
+): Promise<McpConfigResponse[]> => {
   const query = buildQuery({ user_id: userId });
   debugLog('🔍 getMcpConfigs API调用:', { userId, query });
-  return request<McpConfigResponse[]>(`/mcp-configs${query}`);
+  const cacheState = getOrCreateMcpConfigCacheState(request);
+  if (!options?.forceRefresh && Array.isArray(cacheState.data)) {
+    return Promise.resolve([...cacheState.data]);
+  }
+  if (!options?.forceRefresh && cacheState.inflight) {
+    return cacheState.inflight.then((rows) => [...rows]);
+  }
+
+  const inflight = request<McpConfigResponse[]>(`/mcp-configs${query}`)
+    .then((rows) => {
+      const normalized = Array.isArray(rows) ? rows : [];
+      cacheState.data = normalized;
+      return normalized;
+    })
+    .finally(() => {
+      if (cacheState.inflight === inflight) {
+        cacheState.inflight = null;
+      }
+    });
+
+  cacheState.inflight = inflight;
+  return inflight.then((rows) => [...rows]);
 };
 
 export const createMcpConfig = (
@@ -44,6 +96,9 @@ export const createMcpConfig = (
   return request<McpConfigResponse>('/mcp-configs', {
     method: 'POST',
     body: JSON.stringify(data),
+  }).then((result) => {
+    invalidateMcpConfigCache(request);
+    return result;
   });
 };
 
@@ -56,19 +111,24 @@ export const updateMcpConfig = (
   return request<McpConfigResponse>(`/mcp-configs/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+  }).then((result) => {
+    invalidateMcpConfigCache(request);
+    return result;
   });
 };
 
 export const deleteMcpConfig = (request: ApiRequestFn, id: string): Promise<{ success?: boolean }> => {
   return request<{ success?: boolean }>(`/mcp-configs/${id}`, {
     method: 'DELETE',
+  }).then((result) => {
+    invalidateMcpConfigCache(request);
+    return result;
   });
 };
 
-export const getAiModelConfigs = (request: ApiRequestFn, userId?: string): Promise<AiModelConfigResponse[]> => {
-  const query = buildQuery({ user_id: userId });
-  debugLog('🔍 getAiModelConfigs API调用:', { userId, query });
-  return request<AiModelConfigResponse[]>(`/ai-model-configs${query}`);
+export const getAiModelConfigs = (request: ApiRequestFn): Promise<AiModelConfigResponse[]> => {
+  debugLog('🔍 getAiModelConfigs API调用');
+  return request<AiModelConfigResponse[]>('/ai-model-configs');
 };
 
 export const createAiModelConfig = (
@@ -81,7 +141,6 @@ export const createAiModelConfig = (
     thinking_level?: string;
     api_key: string;
     base_url: string;
-    user_id?: string;
     enabled: boolean;
     supports_images?: boolean;
     supports_reasoning?: boolean;
@@ -109,6 +168,15 @@ export const deleteAiModelConfig = (request: ApiRequestFn, id: string): Promise<
   return request<{ success?: boolean }>(`/ai-model-configs/${id}`, {
     method: 'DELETE',
   });
+};
+
+export const getAiProviderModels = (
+  request: ApiRequestFn,
+  id: string,
+  options?: { refresh?: boolean },
+): Promise<AiProviderModelsResponse> => {
+  const query = buildQuery({ refresh: options?.refresh ? 'true' : undefined });
+  return request<AiProviderModelsResponse>(`/ai-model-configs/${id}/models${query}`);
 };
 
 export const getSystemContexts = (request: ApiRequestFn, userId: string): Promise<SystemContextResponse[]> => {

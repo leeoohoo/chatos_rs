@@ -1,7 +1,8 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { asRecord, asString } from './value';
-import { RowsCard, StringListCard, TextBlockCard, renderCardHeader } from './primitives';
+import { RowsCard, StringListCard, TextBlockCard, formatToolCardCount, renderCardHeader } from './primitives';
 
 const isPrimitive = (value: unknown): value is string | number | boolean | null => (
   value === null
@@ -121,6 +122,7 @@ const ObjectListCard: React.FC<{ title: string; values: unknown[] }> = ({
   title,
   values,
 }) => {
+  const { t } = useI18n();
   const items = values
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -129,7 +131,7 @@ const ObjectListCard: React.FC<{ title: string; values: unknown[] }> = ({
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${items.length} 条`)}
+      {renderCardHeader(title, formatToolCardCount(t, 'items', items.length))}
       <div className="tool-detail-list">
         {items.map((item, index) => {
           const itemTitle = (

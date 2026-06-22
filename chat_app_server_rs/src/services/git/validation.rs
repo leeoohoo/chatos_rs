@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use super::process::{git_output, DEFAULT_GIT_TIMEOUT};
@@ -24,7 +25,7 @@ pub(super) fn parse_root(root: &str) -> Result<PathBuf, String> {
     std::fs::canonicalize(path).map_err(|err| format!("解析 root 路径失败: {}", err))
 }
 
-pub(super) async fn discover_repo_root(root: &Path) -> Result<Option<PathBuf>, String> {
+pub async fn discover_repo_root(root: &Path) -> Result<Option<PathBuf>, String> {
     match git_output(root, ["rev-parse", "--show-toplevel"], DEFAULT_GIT_TIMEOUT).await {
         Ok(output) => {
             let text = output.stdout.trim();
@@ -44,6 +45,72 @@ pub(super) async fn discover_repo_root(root: &Path) -> Result<Option<PathBuf>, S
             Ok(None)
         }
         Err(message) => Err(message),
+    }
+}
+
+pub async fn discover_child_repo_roots(root: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut discovered = BTreeSet::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if discovered.len() >= limit {
+            break;
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if matches!(
+                name.as_ref(),
+                ".git"
+                    | "node_modules"
+                    | "target"
+                    | "dist"
+                    | "build"
+                    | ".next"
+                    | ".nuxt"
+                    | ".turbo"
+                    | ".cache"
+            ) {
+                continue;
+            }
+            match discover_repo_root(path.as_path()).await? {
+                Some(repo_root) if repo_root == path => {
+                    discovered.insert(repo_root);
+                    if discovered.len() >= limit {
+                        break;
+                    }
+                }
+                _ => {
+                    stack.push(path);
+                }
+            }
+        }
+    }
+    Ok(discovered.into_iter().collect())
+}
+
+pub(super) fn parse_optional_root(root: Option<&str>) -> Result<Option<PathBuf>, String> {
+    match root {
+        Some(value) if !value.trim().is_empty() => parse_root(value).map(Some),
+        _ => Ok(None),
     }
 }
 

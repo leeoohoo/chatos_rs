@@ -2,96 +2,48 @@ import { useMemo } from 'react';
 
 import type { Message, ToolCall } from '../../types';
 import {
-  EMPTY_DERIVED_PROCESS_STATS,
+  isTaskRunnerAsyncPlanMessage,
+  isTaskRunnerCallbackMessage,
+} from '../../lib/domain/messages';
+import {
+  getCollapsedTextContentForRender,
   normalizeContentSegmentsForRender,
 } from './helpers';
-import type { DerivedProcessStats } from './types';
 import {
   getMessageContentSegments,
   getMessageHistoryFinalForTurnId,
   getMessageHistoryFinalForUserMessageId,
-  getMessageHistoryProcessThinkingCount,
-  getMessageHistoryProcessToolCount,
   getMessageHistoryProcessTurnId,
-  getMessageHistoryProcessUnavailableToolCount,
   getMessageHistoryProcessUserMessageId,
   getMessageKeepLastN,
   getMessagePrimaryToolCalls,
-  hasMessageHistoryProcess,
-  isMessageHistoryProcessExpanded,
-  isMessageHistoryProcessLoading,
 } from './messageReaders';
 
 interface UseMessageItemModelOptions {
   message: Message;
   isStreaming: boolean;
-  renderContext: 'chat' | 'process_drawer';
-  derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
-  linkedUserExpandedForAssistant?: boolean;
 }
 
 export const useMessageItemModel = ({
   message,
   isStreaming,
-  renderContext,
-  derivedProcessStatsByUserId,
-  linkedUserExpandedForAssistant,
 }: UseMessageItemModelOptions) => {
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
   const isSystem = message.role === 'system';
   const isTool = message.role === 'tool';
-
-  const derivedProcessStats = useMemo(() => {
-    if (!isUser) {
-      return EMPTY_DERIVED_PROCESS_STATS;
-    }
-
-    return derivedProcessStatsByUserId?.get(message.id) || EMPTY_DERIVED_PROCESS_STATS;
-  }, [
-    isUser,
-    message.id,
-    derivedProcessStatsByUserId,
-  ]);
-
-  const hasHistoryProcess = Boolean(
-    (isUser && (
-      hasMessageHistoryProcess(message)
-      || getMessageHistoryProcessToolCount(message) > 0
-      || getMessageHistoryProcessThinkingCount(message) > 0
-      || isMessageHistoryProcessLoading(message)
-    ))
-    || derivedProcessStats.hasProcess
-    || derivedProcessStats.hasStreamingAssistant
-    || derivedProcessStats.processMessageCount > 0
+  const isTaskRunnerAsyncAssistant = Boolean(
+    isAssistant
+    && (
+      isTaskRunnerCallbackMessage(message)
+      || isTaskRunnerAsyncPlanMessage(message)
+    ),
   );
-  const historyProcessExpanded = isUser
-    ? isMessageHistoryProcessExpanded(message)
-    : false;
-  const historyProcessLoading = isUser
-    ? isMessageHistoryProcessLoading(message)
-    : false;
-  const historyToolCount = Math.max(
-    getMessageHistoryProcessToolCount(message),
-    derivedProcessStats.toolCallCount,
-  );
-  const historyThinkingCount = Math.max(
-    getMessageHistoryProcessThinkingCount(message),
-    derivedProcessStats.thinkingCount,
-  );
-  const historyUnavailableToolCount = getMessageHistoryProcessUnavailableToolCount(message);
 
   const isProcessAssistant = (
     isAssistant
     && Boolean(getMessageHistoryProcessUserMessageId(message) || getMessageHistoryProcessTurnId(message))
   );
-  const linkedUserExpandedForFinalAssistant = useMemo(() => {
-    if (typeof linkedUserExpandedForAssistant === 'boolean') {
-      return linkedUserExpandedForAssistant;
-    }
-    return false;
-  }, [linkedUserExpandedForAssistant]);
-
   const isTurnLinkedAssistant = (
     isAssistant
     && Boolean(
@@ -104,8 +56,7 @@ export const useMessageItemModel = ({
   const collapseAssistantProcessByDefault = (
     isTurnLinkedAssistant
     && !isProcessAssistant
-    && !linkedUserExpandedForFinalAssistant
-    && renderContext !== 'process_drawer'
+    && !isTaskRunnerAsyncAssistant
   );
 
   const attachments = message.metadata?.attachments || [];
@@ -137,9 +88,42 @@ export const useMessageItemModel = ({
     && segment.content.trim().length > 0
   ));
   const hasVisibleToolCallSegment = renderContentSegments.some((segment) => segment.type === 'tool_call');
+  const reviewOutcomeRaw = typeof message.metadata?.task_turn_review === 'object'
+    ? (message.metadata?.task_turn_review as { outcome?: unknown }).outcome
+    : null;
+  const reviewOutcome = typeof reviewOutcomeRaw === 'string'
+    ? reviewOutcomeRaw.trim().toLowerCase()
+    : '';
+  const hasVisibleReviewOutcome = (
+    reviewOutcome === 'pass'
+    || reviewOutcome === 'needs_more_work'
+    || reviewOutcome === 'unknown'
+    || reviewOutcome === 'not_attempted'
+  );
+  const hasVisibleCollapsedAssistantText = (
+    collapseAssistantProcessByDefault
+      ? getCollapsedTextContentForRender(renderContentSegments).trim().length > 0
+      : false
+  );
+  const hasRenderableAssistantBody = renderContentSegments.length > 0
+    ? (
+      collapseAssistantProcessByDefault
+        ? (hasVisibleCollapsedAssistantText || hasVisibleReviewOutcome)
+        : (
+          hasVisibleTextSegment
+          || hasVisibleThinkingSegment
+          || hasVisibleToolCallSegment
+          || hasVisibleReviewOutcome
+        )
+    )
+    : (
+      (typeof message.content === 'string' && message.content.trim().length > 0)
+      || (!collapseAssistantProcessByDefault && toolCalls.length > 0)
+      || hasVisibleReviewOutcome
+    );
   const shouldHideEmptyStreamingAssistant = Boolean(
     isAssistant
-    && isStreaming
+    && (isStreaming || isTaskRunnerAsyncAssistant)
     && message.status === 'streaming'
     && (!message.content || message.content.trim().length === 0)
     && !hasVisibleTextSegment
@@ -147,18 +131,18 @@ export const useMessageItemModel = ({
     && !hasVisibleToolCallSegment
     && toolCalls.length === 0
   );
+  const shouldHideEmptyNonTaskRunnerAssistant = Boolean(
+    isAssistant
+    && !isTaskRunnerAsyncAssistant
+    && !hasRenderableAssistantBody
+  );
 
   return {
     isUser,
     isAssistant,
     isSystem,
     isTool,
-    hasHistoryProcess,
-    historyProcessExpanded,
-    historyProcessLoading,
-    historyToolCount,
-    historyThinkingCount,
-    historyUnavailableToolCount,
+    isTaskRunnerAsyncAssistant,
     collapseAssistantProcessByDefault,
     attachments,
     keepLastN,
@@ -166,5 +150,6 @@ export const useMessageItemModel = ({
     renderContentSegments,
     toolCallsById,
     shouldHideEmptyStreamingAssistant,
+    shouldHideEmptyNonTaskRunnerAssistant,
   };
 };

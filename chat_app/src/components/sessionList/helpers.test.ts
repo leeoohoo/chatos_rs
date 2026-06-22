@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildRemoteConnectionPayload,
-  deriveParentPath,
   type RemoteConnectionFormValues,
 } from './helpers';
 
@@ -141,11 +140,5 @@ describe('sessionList helpers', () => {
 
     expect(result.payload.jump_private_key_path).toBe('/tmp/jump_id_rsa');
     expect(result.payload.jump_certificate_path).toBe('/tmp/jump_id_rsa-cert.pub');
-  });
-
-  it('derives parent paths for unix and windows roots', () => {
-    expect(deriveParentPath('/srv/app/src')).toBe('/srv/app');
-    expect(deriveParentPath('C:\\workspace\\demo')).toBe('C:\\workspace');
-    expect(deriveParentPath('C:\\')).toBe('C:\\');
   });
 });

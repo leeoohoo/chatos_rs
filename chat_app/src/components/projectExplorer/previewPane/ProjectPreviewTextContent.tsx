@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { LazyMarkdownRenderer } from '../../LazyMarkdownRenderer';
 import { highlightCodeBlock, highlightCodeBlockAuto } from '../../../lib/tools/highlight';
 import { cn } from '../../../lib/utils';
 import type { FsReadResult, ProjectSearchHit } from '../../../types';
@@ -7,6 +9,7 @@ import {
   buildProjectSearchHitId,
   escapeHtml,
   getHighlightLanguage,
+  isMarkdownFile,
   splitTextByQuery,
 } from '../utils';
 import type { PreviewTokenSelection } from './previewPaneTypes';
@@ -15,6 +18,10 @@ import { usePreviewTextTokenSelection } from './usePreviewTextTokenSelection';
 interface ProjectPreviewTextContentProps {
   selectedFile: FsReadResult;
   selectedPath: string | null;
+  isEditing: boolean;
+  draftContent: string;
+  saveError: string | null;
+  savingFile: boolean;
   targetLine: number | null;
   targetLineRevision: number;
   searchQuery: string;
@@ -24,17 +31,19 @@ interface ProjectPreviewTextContentProps {
   activeSearchHitId: string | null;
   onActivateSearchHit: (hit: ProjectSearchHit) => void;
   onTokenSelection: (selection: PreviewTokenSelection | null) => void;
+  onDraftContentChange: (value: string) => void;
+  onSaveDraft: () => Promise<boolean>;
 }
 
-const highlightSelectedFile = (selectedFile: FsReadResult): string => {
-  const language = getHighlightLanguage(selectedFile.name);
+const highlightTextContent = (filename: string, content: string): string => {
+  const language = getHighlightLanguage(filename);
   try {
     if (language) {
-      return highlightCodeBlock(selectedFile.content, language).value;
+      return highlightCodeBlock(content, language).value;
     }
-    return highlightCodeBlockAuto(selectedFile.content).value;
+    return highlightCodeBlockAuto(content).value;
   } catch {
-    return escapeHtml(selectedFile.content);
+    return escapeHtml(content);
   }
 };
 
@@ -72,6 +81,10 @@ const buildFileSearchHitsByLine = ({
 export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps> = ({
   selectedFile,
   selectedPath,
+  isEditing,
+  draftContent,
+  saveError,
+  savingFile,
   targetLine,
   targetLineRevision,
   searchQuery,
@@ -81,10 +94,21 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
   activeSearchHitId,
   onActivateSearchHit,
   onTokenSelection,
+  onDraftContentChange,
+  onSaveDraft,
 }) => {
+  const { t } = useI18n();
   const lineRefMap = useRef<Record<number, HTMLDivElement | null>>({});
   const renderedFilePathRef = useRef<string | null>(null);
+  const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorBackdropRef = useRef<HTMLDivElement | null>(null);
+  const editorLineNumbersRef = useRef<HTMLDivElement | null>(null);
   const selectedFilePath = selectedFile.path || null;
+  const editorTextRenderStyle = useMemo<React.CSSProperties>(() => ({
+    fontVariantLigatures: 'none',
+    fontFeatureSettings: '"liga" 0, "calt" 0',
+    WebkitFontSmoothing: 'auto',
+  }), []);
 
   if (renderedFilePathRef.current !== selectedFilePath) {
     lineRefMap.current = {};
@@ -92,7 +116,7 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
   }
 
   useEffect(() => {
-    if (selectedFile.isBinary || !targetLine || targetLine < 1) {
+    if (isEditing || selectedFile.isBinary || !targetLine || targetLine < 1) {
       return;
     }
 
@@ -119,14 +143,40 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
     };
   }, [selectedFile, selectedFilePath, targetLine, targetLineRevision]);
 
+  const syncEditorScrollOffsets = useCallback((scrollTop: number, scrollLeft: number) => {
+    if (editorBackdropRef.current) {
+      editorBackdropRef.current.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px)`;
+    }
+    if (editorLineNumbersRef.current) {
+      editorLineNumbersRef.current.style.transform = `translateY(${-scrollTop}px)`;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isEditing) {
+      return;
+    }
+    if (editorTextareaRef.current) {
+      editorTextareaRef.current.scrollTop = 0;
+      editorTextareaRef.current.scrollLeft = 0;
+    }
+    syncEditorScrollOffsets(0, 0);
+  }, [isEditing, selectedFilePath, syncEditorScrollOffsets]);
+
   const activeSearchQuery = searchQuery.trim();
+  const displayedContent = isEditing ? draftContent : selectedFile.content;
+  const renderMarkdownPreview = !isEditing && isMarkdownFile(selectedFile.name, selectedFile.contentType);
   const rawLines = useMemo(
-    () => selectedFile.content.split(/\r?\n/),
-    [selectedFile.content],
+    () => displayedContent.split(/\r?\n/),
+    [displayedContent],
   );
   const highlightedLines = useMemo(
-    () => highlightSelectedFile(selectedFile).split(/\r?\n/),
-    [selectedFile],
+    () => (
+      renderMarkdownPreview
+        ? []
+        : highlightTextContent(selectedFile.name, displayedContent).split(/\r?\n/)
+    ),
+    [displayedContent, renderMarkdownPreview, selectedFile.name],
   );
   const fileSearchHitsByLine = useMemo(
     () => buildFileSearchHitsByLine({
@@ -142,6 +192,82 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
     rawLines,
     onTokenSelection,
   });
+
+  if (isEditing) {
+    return (
+      <div className="flex h-full flex-col bg-muted/30">
+        {saveError && (
+          <div className="border-b border-border bg-destructive/5 px-4 py-2 text-xs text-destructive">
+            {saveError}
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1 text-sm">
+          <div className="shrink-0 overflow-hidden border-r border-border bg-muted/40 text-right text-muted-foreground">
+            <div ref={editorLineNumbersRef} className="py-4 pl-2 pr-3">
+              {rawLines.map((_, idx) => (
+                <div key={idx} className="leading-5">
+                  {idx + 1}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="relative min-w-0 flex-1 overflow-hidden bg-background">
+            <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+              <div
+                ref={editorBackdropRef}
+                className="min-w-max py-4 pl-3 pr-4 font-mono text-sm leading-5 text-[#24292f] dark:text-[#c9d1d9]"
+                style={editorTextRenderStyle}
+              >
+                {highlightedLines.map((line, idx) => (
+                  <div
+                    key={idx}
+                    className="whitespace-pre"
+                    dangerouslySetInnerHTML={{ __html: line || '&nbsp;' }}
+                  />
+                ))}
+              </div>
+            </div>
+            <textarea
+              ref={editorTextareaRef}
+              value={draftContent}
+              onChange={(event) => onDraftContentChange(event.target.value)}
+              onScroll={(event) => {
+                syncEditorScrollOffsets(
+                  event.currentTarget.scrollTop,
+                  event.currentTarget.scrollLeft,
+                );
+              }}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+                  event.preventDefault();
+                  void onSaveDraft();
+                }
+              }}
+              wrap="off"
+              spellCheck={false}
+              disabled={savingFile}
+              className="relative z-10 h-full w-full resize-none overflow-auto border-0 bg-transparent px-3 py-4 font-mono text-sm leading-5 text-transparent outline-none disabled:cursor-not-allowed"
+              style={{
+                ...editorTextRenderStyle,
+                caretColor: 'hsl(var(--foreground))',
+                WebkitTextFillColor: 'transparent',
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (renderMarkdownPreview) {
+    return (
+      <div className="h-full overflow-auto bg-muted/30">
+        <div className="min-h-full px-4 py-4 text-sm">
+          <LazyMarkdownRenderer content={selectedFile.content} className="not-prose" />
+        </div>
+      </div>
+    );
+  }
 
   const renderSearchHighlightedLine = (
     lineText: string,
@@ -193,7 +319,7 @@ export const ProjectPreviewTextContent: React.FC<ProjectPreviewTextContentProps>
               ? 'bg-amber-500/80 text-black shadow-[0_0_0_1px_rgba(245,158,11,0.65)]'
               : 'bg-amber-300/60 hover:bg-amber-300/85',
           )}
-          title={`跳转到 L${hit.line}:C${hit.column}`}
+          title={t('projectExplorer.preview.jumpToHit', { line: hit.line, column: hit.column })}
         >
           {segment.text}
         </button>

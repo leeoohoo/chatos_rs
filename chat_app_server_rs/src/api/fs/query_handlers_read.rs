@@ -1,8 +1,8 @@
 use std::fs;
 
 use crate::core::auth::AuthUser;
-use axum::{extract::Query, Json};
 use axum::http::StatusCode;
+use axum::{extract::Query, Json};
 use base64::Engine;
 use serde_json::{json, Value};
 
@@ -45,7 +45,7 @@ pub(in super::super) async fn read_file(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": err.to_string() })),
-            )
+            );
         }
     };
     let size = meta.len();
@@ -66,7 +66,7 @@ pub(in super::super) async fn read_file(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": err.to_string() })),
-            )
+            );
         }
     };
 
@@ -96,6 +96,7 @@ pub(in super::super) async fn read_file(
             "size": size,
             "content_type": content_type,
             "is_binary": is_binary,
+            "writable": path.can_write,
             "modified_at": modified_at,
             "content": content
         })),

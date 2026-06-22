@@ -8,8 +8,8 @@ use tokio::sync::Mutex;
 
 use crate::core::auth::AuthUser;
 use crate::services::realtime::{
-    subscribe_user_events, RealtimeAckMessage, RealtimeClientControlMessage,
-    RealtimeErrorMessage, RealtimeSubscriptionSet,
+    subscribe_user_events, RealtimeAckMessage, RealtimeClientControlMessage, RealtimeErrorMessage,
+    RealtimeSubscriptionSet,
 };
 
 pub fn router() -> axum::Router {
@@ -86,11 +86,13 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                         };
                         send_control_response(
                             &outbound_tx,
-                            result.map(|topics| serde_json::to_string(&RealtimeAckMessage {
-                                message_type: "ack",
-                                acked: "subscribe",
-                                topics,
-                            })),
+                            result.map(|topics| {
+                                serde_json::to_string(&RealtimeAckMessage {
+                                    message_type: "ack",
+                                    acked: "subscribe",
+                                    topics,
+                                })
+                            }),
                         );
                     }
                     Ok(control) if control.message_type == "unsubscribe" => {
@@ -100,11 +102,13 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                         };
                         send_control_response(
                             &outbound_tx,
-                            result.map(|topics| serde_json::to_string(&RealtimeAckMessage {
-                                message_type: "ack",
-                                acked: "unsubscribe",
-                                topics,
-                            })),
+                            result.map(|topics| {
+                                serde_json::to_string(&RealtimeAckMessage {
+                                    message_type: "ack",
+                                    acked: "unsubscribe",
+                                    topics,
+                                })
+                            }),
                         );
                     }
                     Ok(_) => {}
@@ -130,7 +134,12 @@ fn is_ping_message(text: &str) -> bool {
     }
     serde_json::from_str::<serde_json::Value>(trimmed)
         .ok()
-        .and_then(|value| value.get("type").and_then(|item| item.as_str()).map(str::to_string))
+        .and_then(|value| {
+            value
+                .get("type")
+                .and_then(|item| item.as_str())
+                .map(str::to_string)
+        })
         .map(|value| value == "ping")
         .unwrap_or(false)
 }

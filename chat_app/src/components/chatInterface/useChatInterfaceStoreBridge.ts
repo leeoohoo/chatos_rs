@@ -1,16 +1,15 @@
-import { useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
 
-import { apiClient as globalApiClient } from '../../lib/api/client';
-import { useAuthStore } from '../../lib/auth/authStore';
+import { useApiClient } from '../../lib/api/ApiClientContext';
+import { useAuthStoreFromContext } from '../../lib/auth/authStore';
 import {
-  useChatApiClientFromContext,
   useChatStoreSelector,
 } from '../../lib/store/ChatStoreContext';
 
 export const useChatInterfaceStoreBridge = () => {
   const store = useChatStoreSelector((state) => ({
     currentSession: state.currentSession,
+    currentSessionId: state.currentSessionId,
     sessions: state.sessions,
     contacts: state.contacts,
     currentProject: state.currentProject,
@@ -20,42 +19,31 @@ export const useChatInterfaceStoreBridge = () => {
     projects: state.projects,
     activePanel: state.activePanel,
     messages: state.messages,
-    hasMoreMessages: state.hasMoreMessages,
+    hasMoreMessages: Boolean(
+      state.currentSessionId
+      && state.sessionMessagePaginationState?.[state.currentSessionId]?.nextBefore
+    ),
     error: state.error,
     loadProjects: state.loadProjects,
     loadMoreMessages: state.loadMoreMessages,
-    toggleTurnProcess: state.toggleTurnProcess,
     sendMessage: state.sendMessage,
     selectRemoteConnection: state.selectRemoteConnection,
     updateSession: state.updateSession,
     clearError: state.clearError,
-    setError: state.setError,
     sidebarOpen: state.sidebarOpen,
     toggleSidebar: state.toggleSidebar,
     aiModelConfigs: state.aiModelConfigs,
-    agents: state.agents,
     selectedModelId: state.selectedModelId,
-    selectedAgentId: state.selectedAgentId,
-    setSelectedModel: state.setSelectedModel,
     loadAiModelConfigs: state.loadAiModelConfigs,
     loadAgents: state.loadAgents,
     chatConfig: state.chatConfig,
     updateChatConfig: state.updateChatConfig,
-    abortCurrentConversation: state.abortCurrentConversation,
     sessionChatState: state.sessionChatState,
-    sessionRuntimeGuidanceState: state.sessionRuntimeGuidanceState,
-    taskReviewPanelsBySession: state.taskReviewPanelsBySession,
-    uiPromptPanelsBySession: state.uiPromptPanelsBySession,
-    submitRuntimeGuidance: state.submitRuntimeGuidance,
-    upsertTaskReviewPanel: state.upsertTaskReviewPanel,
-    removeTaskReviewPanel: state.removeTaskReviewPanel,
-    upsertUiPromptPanel: state.upsertUiPromptPanel,
-    removeUiPromptPanel: state.removeUiPromptPanel,
+    sessionMessagePaginationState: state.sessionMessagePaginationState,
   }), shallow);
 
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
-  const auth = useAuthStore();
+  const apiClient = useApiClient();
+  const auth = useAuthStoreFromContext();
 
   return {
     ...store,

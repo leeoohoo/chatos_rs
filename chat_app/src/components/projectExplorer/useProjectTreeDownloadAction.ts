@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { FsEntry } from '../../types';
 import { readProjectTreeErrorMessage } from './projectTreeActionHelpers';
 import type { UseProjectTreeActionsOptions } from './projectTreeActionTypes';
@@ -20,14 +21,16 @@ export const useProjectTreeDownloadAction = ({
   setActionError,
   setActionMessage,
 }: UseProjectTreeDownloadActionOptions) => {
+  const { t } = useI18n();
+
   const handleDownloadSelected = useCallback(async (entryOverride?: FsEntry) => {
     const targetEntry = entryOverride || selectedEntry;
     if (!targetEntry) {
-      setActionError('请先选择要下载的文件或目录');
+      setActionError(t('projectExplorer.action.downloadSelectFirst'));
       return;
     }
     if (typeof document === 'undefined') {
-      setActionError('当前环境不支持下载');
+      setActionError(t('projectExplorer.action.downloadUnsupported'));
       return;
     }
 
@@ -45,13 +48,13 @@ export const useProjectTreeDownloadAction = ({
       anchor.click();
       document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
-      setActionMessage(`开始下载：${anchor.download}`);
+      setActionMessage(t('projectExplorer.action.downloadStarted', { name: anchor.download }));
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '下载失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.action.downloadFailed')));
     } finally {
       setActionLoading(false);
     }
-  }, [client, selectedEntry, setActionError, setActionLoading, setActionMessage]);
+  }, [client, selectedEntry, setActionError, setActionLoading, setActionMessage, t]);
 
   return {
     handleDownloadSelected,

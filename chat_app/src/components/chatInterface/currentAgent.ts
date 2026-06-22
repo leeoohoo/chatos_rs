@@ -6,6 +6,7 @@ interface ResolveCurrentAgentParams {
   contacts: ContactRecord[] | null | undefined;
   agents: AgentConfig[] | null | undefined;
   selectedAgentId: string | null | undefined;
+  fallbackAgentName?: string;
 }
 
 const trimString = (value: unknown): string => (
@@ -42,6 +43,7 @@ export const resolveCurrentAgent = ({
   contacts,
   agents,
   selectedAgentId,
+  fallbackAgentName = 'Current agent',
 }: ResolveCurrentAgentParams): AgentConfig | null => {
   const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
   const runtimeContactId = trimString(runtime?.contactId);
@@ -82,6 +84,6 @@ export const resolveCurrentAgent = ({
 
   return createFallbackAgent(
     agentId,
-    matchedContactName || sessionTitle || '当前智能体',
+    matchedContactName || sessionTitle || fallbackAgentName,
   );
 };

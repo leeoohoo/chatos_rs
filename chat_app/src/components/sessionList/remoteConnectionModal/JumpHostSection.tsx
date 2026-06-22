@@ -1,9 +1,11 @@
 import type { FC } from 'react';
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { RemoteConnection } from '../../../types';
 import type {
   JumpHostMode,
   KeyFilePickerTarget,
 } from '../helpers';
+import { PasswordField } from './PasswordField';
 
 interface JumpHostSectionProps {
   editingRemoteConnectionId: string | null;
@@ -60,6 +62,7 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
   onRemoteJumpPasswordChange,
   onOpenKeyFilePicker,
 }) => {
+  const { t } = useI18n();
   const availableJumpConnections = remoteConnections.filter(
     (connection) => connection.id !== editingRemoteConnectionId,
   );
@@ -67,10 +70,10 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
     (connection) => connection.id === remoteJumpConnectionId,
   );
   const selectedJumpAuthLabel = selectedJumpConnection?.authType === 'password'
-    ? '密码'
+    ? t('remoteConnection.auth.password')
     : selectedJumpConnection?.authType === 'private_key_cert'
-      ? '私钥+证书'
-      : '私钥';
+      ? t('remoteConnection.auth.privateKeyCert')
+      : t('remoteConnection.auth.privateKey');
 
   return (
     <div className="rounded border border-border p-3 space-y-3">
@@ -80,13 +83,13 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
           checked={remoteJumpEnabled}
           onChange={(e) => onRemoteJumpEnabledChange(e.target.checked)}
         />
-        启用跳板机
+        {t('remoteConnection.jump.enable')}
       </label>
 
       {remoteJumpEnabled && (
         <div className="space-y-3">
           <div>
-            <label className="text-sm text-muted-foreground">跳板机来源</label>
+            <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.source')}</label>
             <div className="mt-1 grid grid-cols-2 gap-2 rounded-lg bg-muted/40 p-1">
               <button
                 type="button"
@@ -97,7 +100,7 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                选择已有连接
+                {t('remoteConnection.jump.existing')}
               </button>
               <button
                 type="button"
@@ -108,7 +111,7 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                手动填写
+                {t('remoteConnection.jump.manual')}
               </button>
             </div>
           </div>
@@ -116,7 +119,7 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
           {remoteJumpMode === 'existing' ? (
             <div className="space-y-2">
               <div>
-                <label className="text-sm text-muted-foreground">已有远端连接</label>
+                <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.existingConnection')}</label>
                 <select
                   value={remoteJumpConnectionId}
                   onChange={(e) => onRemoteJumpConnectionIdChange(e.target.value)}
@@ -125,8 +128,8 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                 >
                   <option value="">
                     {availableJumpConnections.length === 0
-                      ? '暂无可选连接'
-                      : '请选择一个远端连接'}
+                      ? t('remoteConnection.jump.noConnections')
+                      : t('remoteConnection.jump.selectConnection')}
                   </option>
                   {availableJumpConnections.map((connection) => (
                     <option key={connection.id} value={connection.id}>
@@ -137,20 +140,20 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
               </div>
               {selectedJumpConnection ? (
                 <div className="rounded border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  将直接引用该连接当前保存的 {selectedJumpAuthLabel} 认证配置作为跳板机：
+                  {t('remoteConnection.jump.referenceAuthHint', { auth: selectedJumpAuthLabel })}
                   {' '}
                   {selectedJumpConnection.username}@{selectedJumpConnection.host}:{selectedJumpConnection.port || 22}
                 </div>
               ) : (
                 <div className="text-xs text-muted-foreground">
-                  选择已有连接后，会保存这个连接引用，连接时直接读取它当前保存的认证配置。
+                  {t('remoteConnection.jump.existingHint')}
                 </div>
               )}
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm text-muted-foreground">跳板机主机</label>
+                <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.host')}</label>
                 <input
                   value={remoteJumpHost}
                   onChange={(e) => onRemoteJumpHostChange(e.target.value)}
@@ -159,7 +162,7 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                 />
               </div>
               <div>
-                <label className="text-sm text-muted-foreground">跳板机端口</label>
+                <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.port')}</label>
                 <input
                   value={remoteJumpPort}
                   onChange={(e) => onRemoteJumpPortChange(e.target.value)}
@@ -168,7 +171,7 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                 />
               </div>
               <div>
-                <label className="text-sm text-muted-foreground">跳板机用户名</label>
+                <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.username')}</label>
                 <input
                   value={remoteJumpUsername}
                   onChange={(e) => onRemoteJumpUsernameChange(e.target.value)}
@@ -177,7 +180,7 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                 />
               </div>
               <div>
-                <label className="text-sm text-muted-foreground">跳板机私钥路径（可选）</label>
+                <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.privateKeyPath')}</label>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     value={remoteJumpPrivateKeyPath}
@@ -190,12 +193,12 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                     onClick={() => onOpenKeyFilePicker('jump_private_key')}
                     className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
                   >
-                    选择文件
+                    {t('remoteConnection.selectFile')}
                   </button>
                 </div>
               </div>
               <div>
-                <label className="text-sm text-muted-foreground">跳板机证书路径（可选）</label>
+                <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.certificatePath')}</label>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     value={remoteJumpCertificatePath}
@@ -208,18 +211,17 @@ export const JumpHostSection: FC<JumpHostSectionProps> = ({
                     onClick={() => onOpenKeyFilePicker('jump_certificate')}
                     className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
                   >
-                    选择文件
+                    {t('remoteConnection.selectFile')}
                   </button>
                 </div>
               </div>
               <div className="col-span-2">
-                <label className="text-sm text-muted-foreground">跳板机密码（可选）</label>
-                <input
-                  type="password"
+                <label className="text-sm text-muted-foreground">{t('remoteConnection.jump.password')}</label>
+                <PasswordField
                   value={remoteJumpPassword}
-                  onChange={(e) => onRemoteJumpPasswordChange(e.target.value)}
-                  className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="留空则尝试私钥或已有 SSH Agent"
+                  onChange={onRemoteJumpPasswordChange}
+                  placeholder={t('remoteConnection.jump.passwordPlaceholder')}
+                  autoComplete="current-password"
                 />
               </div>
             </div>

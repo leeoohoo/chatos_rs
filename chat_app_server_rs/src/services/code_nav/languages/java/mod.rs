@@ -1,201 +1,71 @@
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+mod analysis;
 
-use once_cell::sync::Lazy;
-use regex::{Regex, RegexBuilder};
-use walkdir::{DirEntry, WalkDir};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::services::code_nav::fallback::extract_token_at_position;
+use crate::services::code_nav::languages::java::analysis::{
+    analyze_java_file, is_java_declaration_location, nav_location_from_symbol,
+    resolve_imported_type_paths, resolve_java_declaration_kind, score_java_definition_candidate,
+    search_java_occurrences, JavaSearchMatch, JavaSymbol, JAVA_EXTENSIONS, JAVA_IGNORED_DIRS,
+};
 use crate::services::code_nav::languages::shared_nav::{
-    count_char, declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
-    find_column, is_type_like, last_identifier, nav_location_from_coordinates, normalize_path,
-    push_unique_location,
+    impl_nav_search_match_like_for_field_struct, impl_nav_symbol_like_for_field_struct,
+    indexed_symbols_from, is_type_like, push_current_file_symbol_definitions,
+    push_definition_search_matches, push_indexed_definition_candidates, push_unique_location,
+    search_occurrences_with_fallback, select_reference_locations, sort_and_truncate_nav_locations,
+    HeuristicNavLanguage,
 };
-use crate::services::code_nav::symbol_index::{
-    nav_location_from_indexed_symbol, project_symbol_index, score_indexed_definition_candidate,
-    IndexedSymbol,
-};
-use crate::services::code_nav::types::{
-    DocumentSymbolItem, DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities,
-    NavLocation, NavPositionRequest, ProjectContext,
-};
-use crate::services::code_nav::languages::regex_utils::compile_static_regex;
-use crate::services::code_nav::CodeNavProvider;
+use crate::services::code_nav::symbol_index::project_symbol_index;
+use crate::services::code_nav::types::{NavLocation, NavPositionRequest, ProjectContext};
 
-const JAVA_IGNORED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "dist",
-    "build",
-    "target",
-    "out",
-    ".idea",
-    ".gradle",
-];
-
-const JAVA_EXTENSIONS: &[&str] = &["java"];
 const MAX_DEFINITION_RESULTS: usize = 20;
 const MAX_REFERENCE_RESULTS: usize = 100;
 const MAX_SYMBOL_RESULTS: usize = 200;
 
-static PACKAGE_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;"));
-static IMPORT_RE: Lazy<Regex> = Lazy::new(|| {
-    compile_static_regex(r"^\s*import\s+(static\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:\.\*)?)\s*;")
-});
-static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    compile_static_regex(r"\b(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)")
-});
-static FIELD_RE: Lazy<Regex> = Lazy::new(|| {
-    compile_static_regex(
-        r"^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:public|protected|private|static|final|transient|volatile)\s+)*(?:[\w.$\[\]<>?,]+\s+)+([A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^;]*)?;\s*$",
-    )
-});
+impl_nav_symbol_like_for_field_struct!(JavaSymbol);
+impl_nav_search_match_like_for_field_struct!(JavaSearchMatch);
 
-#[derive(Debug, Clone)]
-struct JavaImport {
-    path: String,
-    is_static: bool,
-    is_wildcard: bool,
-}
-
-#[derive(Debug, Clone)]
-struct JavaSymbol {
-    name: String,
-    kind: String,
-    line: usize,
-    column: usize,
-    end_line: usize,
-    end_column: usize,
-}
-
-#[derive(Debug, Clone)]
-struct JavaFileAnalysis {
-    package_name: Option<String>,
-    imports: Vec<JavaImport>,
-    symbols: Vec<JavaSymbol>,
-    primary_type: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct JavaSearchMatch {
-    path: String,
-    relative_path: String,
-    line: usize,
-    column: usize,
-    text: String,
-}
-
-fn indexed_java_symbols(path: &Path) -> Result<Vec<IndexedSymbol>, String> {
+fn indexed_java_symbols(
+    path: &Path,
+) -> Result<Vec<crate::services::code_nav::symbol_index::IndexedSymbol>, String> {
     let analysis = analyze_java_file(path)?;
-    Ok(analysis
-        .symbols
-        .into_iter()
-        .map(|symbol| IndexedSymbol {
-            name: symbol.name,
-            kind: symbol.kind,
-            line: symbol.line,
-            column: symbol.column,
-            end_line: symbol.end_line,
-            end_column: symbol.end_column,
-        })
-        .collect())
-}
-
-#[derive(Debug, Clone)]
-struct TypeScope {
-    name: String,
-    body_depth: i32,
+    Ok(indexed_symbols_from(&analysis.symbols))
 }
 
 #[derive(Default)]
 pub struct JavaCodeNavProvider;
 
-#[axum::async_trait]
-impl CodeNavProvider for JavaCodeNavProvider {
-    fn provider_id(&self) -> &'static str {
-        "java"
-    }
+impl HeuristicNavLanguage for JavaCodeNavProvider {
+    type Symbol = JavaSymbol;
 
-    fn language_id(&self) -> &'static str {
-        "java"
-    }
+    const PROVIDER_ID: &'static str = "java";
+    const LANGUAGE_ID: &'static str = "java";
+    const FILE_EXTENSION: &'static str = "java";
+    const MAX_SYMBOL_RESULTS: usize = self::MAX_SYMBOL_RESULTS;
 
-    fn definition_mode(&self) -> &'static str {
-        "provider-heuristic"
-    }
-
-    fn references_mode(&self) -> &'static str {
-        "provider-heuristic"
-    }
-
-    fn document_symbols_mode(&self) -> &'static str {
-        "provider-heuristic"
-    }
-
-    fn supports_file(&self, file_path: &Path) -> bool {
-        file_path.extension().and_then(|value| value.to_str()) == Some("java")
-    }
-
-    fn detect_project(&self, ctx: &ProjectContext) -> bool {
+    fn detect_project(ctx: &ProjectContext) -> bool {
         ctx.root.join("pom.xml").exists()
             || ctx.root.join("build.gradle").exists()
             || ctx.root.join("settings.gradle").exists()
     }
 
-    fn capabilities(&self, _ctx: &ProjectContext) -> NavCapabilities {
-        NavCapabilities {
-            supports_definition: true,
-            supports_references: true,
-            supports_document_symbols: true,
-        }
-    }
-
-    async fn definition(
-        &self,
+    fn definition(
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
         java_definition(ctx, req)
     }
 
-    async fn references(
-        &self,
+    fn references(
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
         java_references(ctx, req)
     }
 
-    async fn document_symbols(
-        &self,
-        ctx: &ProjectContext,
-        _req: &DocumentSymbolsRequest,
-    ) -> Result<DocumentSymbolsResponse, String> {
-        let analysis = analyze_java_file(&ctx.file_path)?;
-        let mut symbols: Vec<DocumentSymbolItem> = analysis
-            .symbols
-            .into_iter()
-            .map(|item| DocumentSymbolItem {
-                name: item.name,
-                kind: item.kind,
-                line: item.line,
-                column: item.column,
-                end_line: item.end_line,
-                end_column: item.end_column,
-            })
-            .collect();
-        if symbols.len() > MAX_SYMBOL_RESULTS {
-            symbols.truncate(MAX_SYMBOL_RESULTS);
-        }
-
-        Ok(DocumentSymbolsResponse {
-            provider: self.provider_id().to_string(),
-            language: self.language_id().to_string(),
-            mode: self.document_symbols_mode().to_string(),
-            symbols,
-        })
+    fn analyze_document_symbols(file_path: &Path) -> Result<Vec<Self::Symbol>, String> {
+        Ok(analyze_java_file(file_path)?.symbols)
     }
 }
 
@@ -218,20 +88,26 @@ fn java_definition(
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
 
-    for symbol in current
-        .symbols
-        .iter()
-        .filter(|item| item.name == token && item.line != req.line)
-    {
-        if let Some(location) = nav_location_from_symbol(&ctx.root, &ctx.file_path, symbol, 9.0)? {
-            push_unique_location(&mut candidates, &mut seen, location);
-        }
-    }
+    push_current_file_symbol_definitions(
+        &ctx.root,
+        &ctx.file_path,
+        &current.symbols,
+        &token,
+        req.line,
+        9.0,
+        nav_location_from_symbol,
+        &mut candidates,
+        &mut seen,
+    )?;
 
     for path in resolved_type_paths {
         let analysis = analyze_java_file(&path)?;
         for symbol in analysis.symbols.iter().filter(|item| item.name == token) {
-            let score = if is_type_like(&token) && is_type_symbol(&symbol.kind) {
+            let score = if is_type_like(&token)
+                && matches!(
+                    symbol.kind.as_str(),
+                    "class" | "interface" | "enum" | "record" | "type"
+                ) {
                 16.0
             } else {
                 11.0
@@ -250,75 +126,64 @@ fn java_definition(
         indexed_java_symbols,
     ) {
         if let Some(symbols) = index.symbols_by_name.get(&token) {
-            for indexed in symbols {
-                if indexed.relative_path == ctx.relative_path && indexed.symbol.line == req.line {
-                    continue;
-                }
-                let mut score = score_indexed_definition_candidate(ctx, req, indexed);
-                if resolved_path_set.contains(&indexed.path) {
-                    score += 10.0;
-                }
-                let location = match nav_location_from_indexed_symbol(&ctx.root, indexed, score) {
-                    Ok(location) => location,
-                    Err(_) => continue,
-                };
-                push_unique_location(&mut candidates, &mut seen, location);
-            }
+            push_indexed_definition_candidates(
+                ctx,
+                req,
+                symbols,
+                |indexed| {
+                    if resolved_path_set.contains(&indexed.path) {
+                        10.0
+                    } else {
+                        0.0
+                    }
+                },
+                &mut candidates,
+                &mut seen,
+            );
         }
     }
 
     if candidates.is_empty() {
         let mut analysis_cache = HashMap::new();
-        let mut search_matches =
-            search_java_occurrences(&ctx.root, &token, true, true, MAX_REFERENCE_RESULTS)?;
-        if search_matches.is_empty() {
-            search_matches =
-                search_java_occurrences(&ctx.root, &token, false, true, MAX_REFERENCE_RESULTS)?;
-        }
+        let search_matches = search_occurrences_with_fallback(|case_sensitive, whole_word| {
+            search_java_occurrences(
+                &ctx.root,
+                &token,
+                case_sensitive,
+                whole_word,
+                MAX_REFERENCE_RESULTS,
+            )
+        })?;
 
-        for entry in search_matches {
-            let Some(declaration_kind) = resolve_java_declaration_kind(
-                &mut analysis_cache,
-                &entry,
-                &token,
-                current.primary_type.as_deref(),
-            ) else {
-                continue;
-            };
-            let score = score_java_definition_candidate(
-                ctx,
-                req,
-                &token,
-                declaration_kind,
-                &entry,
-                &resolved_path_set,
-            );
-            let location = NavLocation {
-                path: entry.path,
-                relative_path: entry.relative_path,
-                line: entry.line,
-                column: entry.column,
-                end_line: entry.line,
-                end_column: entry.column + token.chars().count().saturating_sub(1),
-                preview: entry.text,
-                score,
-            };
-            push_unique_location(&mut candidates, &mut seen, location);
-        }
+        push_definition_search_matches(
+            ctx,
+            req,
+            &token,
+            search_matches,
+            |entry, token| {
+                resolve_java_declaration_kind(
+                    &mut analysis_cache,
+                    entry,
+                    token,
+                    current.primary_type.as_deref(),
+                )
+            },
+            |entry, token, declaration_kind| {
+                score_java_definition_candidate(
+                    ctx,
+                    req,
+                    token,
+                    declaration_kind,
+                    entry,
+                    &resolved_path_set,
+                )
+            },
+            &mut candidates,
+            &mut seen,
+        );
     }
 
-    candidates.sort_by(|left, right| {
-        right
-            .score
-            .partial_cmp(&left.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(left.relative_path.cmp(&right.relative_path))
-            .then(left.line.cmp(&right.line))
-            .then(left.column.cmp(&right.column))
-    });
-    if candidates.len() > MAX_DEFINITION_RESULTS {
-        candidates.truncate(MAX_DEFINITION_RESULTS);
-    }
+    sort_and_truncate_nav_locations(&mut candidates, MAX_DEFINITION_RESULTS);
 
     Ok(candidates)
 }
@@ -333,883 +198,41 @@ fn java_references(
     };
 
     let current = analyze_java_file(&ctx.file_path)?;
-    let mut matches =
-        search_java_occurrences(&ctx.root, &token, true, true, MAX_REFERENCE_RESULTS)?;
-    if matches.is_empty() {
-        matches = search_java_occurrences(&ctx.root, &token, false, true, MAX_REFERENCE_RESULTS)?;
-    }
-
-    let mut locations = Vec::new();
-    let mut seen = HashSet::new();
-
-    for entry in matches {
-        let location = NavLocation {
-            score: if entry.relative_path == ctx.relative_path {
-                1.5
-            } else {
-                1.0
-            },
-            path: entry.path,
-            relative_path: entry.relative_path,
-            line: entry.line,
-            column: entry.column,
-            end_line: entry.line,
-            end_column: entry.column + token.chars().count().saturating_sub(1),
-            preview: entry.text,
-        };
-        push_unique_location(&mut locations, &mut seen, location);
-    }
-
-    let mut declarations = Vec::new();
-    let mut references = Vec::new();
-    let mut classification_cache = HashMap::new();
-    for location in locations {
-        if is_java_declaration_location(
-            &mut classification_cache,
-            &location,
+    let matches = search_occurrences_with_fallback(|case_sensitive, whole_word| {
+        search_java_occurrences(
+            &ctx.root,
             &token,
-            current.primary_type.as_deref(),
-        ) {
-            declarations.push(location);
-        } else {
-            references.push(location);
-        }
-    }
-
-    let mut out = if references.is_empty() {
-        declarations
-    } else {
-        references
-    };
-    out.sort_by(|left, right| {
-        (left.relative_path != ctx.relative_path)
-            .cmp(&(right.relative_path != ctx.relative_path))
-            .then(left.relative_path.cmp(&right.relative_path))
-            .then(left.line.cmp(&right.line))
-            .then(left.column.cmp(&right.column))
-    });
-    if out.len() > MAX_REFERENCE_RESULTS {
-        out.truncate(MAX_REFERENCE_RESULTS);
-    }
-
-    Ok(out)
+            case_sensitive,
+            whole_word,
+            MAX_REFERENCE_RESULTS,
+        )
+    })?;
+    let mut classification_cache = HashMap::new();
+    Ok(select_reference_locations(
+        ctx,
+        req,
+        &token,
+        matches,
+        MAX_REFERENCE_RESULTS,
+        |location, token| {
+            is_java_declaration_location(
+                &mut classification_cache,
+                location,
+                token,
+                current.primary_type.as_deref(),
+            )
+        },
+    ))
 }
-
-fn analyze_java_file(path: &Path) -> Result<JavaFileAnalysis, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    let mut package_name = None;
-    let mut imports = Vec::new();
-    let mut symbols = Vec::new();
-    let mut primary_type = None;
-    let mut type_stack: Vec<TypeScope> = Vec::new();
-    let mut brace_depth: i32 = 0;
-    let mut in_block_comment = false;
-
-    for (index, raw_line) in content.lines().enumerate() {
-        let line_number = index + 1;
-        let sanitized = strip_java_comments(raw_line, &mut in_block_comment);
-        let trimmed = sanitized.trim();
-        if trimmed.is_empty() {
-            brace_depth += count_char(&sanitized, '{') as i32;
-            brace_depth -= count_char(&sanitized, '}') as i32;
-            pop_type_scopes(&mut type_stack, brace_depth);
-            continue;
-        }
-
-        if package_name.is_none() {
-            if let Some(capture) = PACKAGE_RE.captures(trimmed) {
-                package_name = Some(capture[1].to_string());
-            }
-        }
-
-        if let Some(capture) = IMPORT_RE.captures(trimmed) {
-            let path = capture[2].to_string();
-            imports.push(JavaImport {
-                is_static: capture.get(1).is_some(),
-                is_wildcard: path.ends_with(".*"),
-                path,
-            });
-        }
-
-        if let Some(capture) = TYPE_RE.captures(trimmed) {
-            let kind = capture[1].to_string();
-            let name = capture[2].to_string();
-            let column = find_column(raw_line, &name).unwrap_or(1);
-            let end_column = column + name.chars().count().saturating_sub(1);
-            if primary_type.is_none() {
-                primary_type = Some(name.clone());
-            }
-            symbols.push(JavaSymbol {
-                name: name.clone(),
-                kind,
-                line: line_number,
-                column,
-                end_line: line_number,
-                end_column,
-            });
-            type_stack.push(TypeScope {
-                name,
-                body_depth: brace_depth + 1,
-            });
-        }
-
-        if let Some(current_type) = type_stack.last() {
-            if brace_depth == current_type.body_depth {
-                if let Some((method_name, method_kind)) =
-                    extract_method_signature(trimmed, current_type.name.as_str())
-                {
-                    let column = find_column(raw_line, &method_name).unwrap_or(1);
-                    let end_column = column + method_name.chars().count().saturating_sub(1);
-                    symbols.push(JavaSymbol {
-                        name: method_name,
-                        kind: method_kind,
-                        line: line_number,
-                        column,
-                        end_line: line_number,
-                        end_column,
-                    });
-                } else if let Some(field_name) = extract_field_name(trimmed) {
-                    let column = find_column(raw_line, &field_name).unwrap_or(1);
-                    let end_column = column + field_name.chars().count().saturating_sub(1);
-                    symbols.push(JavaSymbol {
-                        name: field_name,
-                        kind: "field".to_string(),
-                        line: line_number,
-                        column,
-                        end_line: line_number,
-                        end_column,
-                    });
-                }
-            }
-        }
-
-        brace_depth += count_char(&sanitized, '{') as i32;
-        brace_depth -= count_char(&sanitized, '}') as i32;
-        pop_type_scopes(&mut type_stack, brace_depth);
-    }
-
-    symbols.sort_by(|left, right| {
-        left.line
-            .cmp(&right.line)
-            .then(left.column.cmp(&right.column))
-            .then(left.name.cmp(&right.name))
-    });
-
-    Ok(JavaFileAnalysis {
-        package_name,
-        imports,
-        symbols,
-        primary_type,
-    })
-}
-
-fn resolve_imported_type_paths(
-    root: &Path,
-    analysis: &JavaFileAnalysis,
-    token: &str,
-) -> Result<Vec<PathBuf>, String> {
-    if !is_type_like(token) {
-        return Ok(Vec::new());
-    }
-
-    let mut packages = Vec::new();
-    if let Some(package_name) = &analysis.package_name {
-        packages.push(package_name.clone());
-    }
-    for item in &analysis.imports {
-        if item.is_static {
-            continue;
-        }
-        if item.is_wildcard {
-            packages.push(item.path.trim_end_matches(".*").to_string());
-        } else if item.path.rsplit('.').next() == Some(token) {
-            let package_name = item
-                .path
-                .rsplit_once('.')
-                .map(|value| value.0.to_string())
-                .unwrap_or_default();
-            packages.push(package_name);
-        }
-    }
-
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for package_name in packages {
-        for path in resolve_type_file_by_package(root, &package_name, token)? {
-            let key = path.to_string_lossy().to_string();
-            if seen.insert(key) {
-                out.push(path);
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn resolve_type_file_by_package(
-    root: &Path,
-    package_name: &str,
-    token: &str,
-) -> Result<Vec<PathBuf>, String> {
-    let relative = if package_name.is_empty() {
-        PathBuf::from(format!("{token}.java"))
-    } else {
-        PathBuf::from(package_name.replace('.', "/")).join(format!("{token}.java"))
-    };
-
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for base in java_source_roots(root) {
-        let candidate = base.join(&relative);
-        if candidate.exists() {
-            let normalized = normalize_path(&candidate);
-            let key = normalized.to_string_lossy().to_string();
-            if seen.insert(key) {
-                out.push(normalized);
-            }
-        }
-    }
-
-    if !out.is_empty() {
-        return Ok(out);
-    }
-
-    let target_name = format!("{token}.java");
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|entry| should_visit_java_path(entry))
-    {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if entry.file_name().to_string_lossy() != target_name {
-            continue;
-        }
-        let normalized = normalize_path(entry.path());
-        let analysis = analyze_java_file(&normalized)?;
-        if analysis.package_name.as_deref().unwrap_or("") == package_name {
-            let key = normalized.to_string_lossy().to_string();
-            if seen.insert(key) {
-                out.push(normalized);
-            }
-        }
-    }
-
-    Ok(out)
-}
-
-fn search_java_occurrences(
-    root: &Path,
-    query: &str,
-    case_sensitive: bool,
-    whole_word: bool,
-    max_results: usize,
-) -> Result<Vec<JavaSearchMatch>, String> {
-    let pattern = if whole_word {
-        format!(r"\b{}\b", regex::escape(query))
-    } else {
-        regex::escape(query)
-    };
-    let regex = RegexBuilder::new(&pattern)
-        .case_insensitive(!case_sensitive)
-        .unicode(true)
-        .build()
-        .map_err(|err| err.to_string())?;
-
-    let mut out = Vec::new();
-
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|entry| should_visit_java_path(entry))
-    {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if entry.path().extension().and_then(|value| value.to_str()) != Some("java") {
-            continue;
-        }
-        let content = match fs::read_to_string(entry.path()) {
-            Ok(content) => content,
-            Err(_) => continue,
-        };
-        for (index, line) in content.lines().enumerate() {
-            let normalized_line = line.trim_end_matches('\r');
-            for found in regex.find_iter(normalized_line) {
-                if out.len() >= max_results {
-                    return Ok(out);
-                }
-                let column = normalized_line[..found.start()].chars().count() + 1;
-                let relative_path = pathdiff::diff_paths(entry.path(), root)
-                    .unwrap_or_else(|| entry.path().to_path_buf())
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                out.push(JavaSearchMatch {
-                    path: normalize_path(entry.path()).to_string_lossy().to_string(),
-                    relative_path,
-                    line: index + 1,
-                    column,
-                    text: if normalized_line.len() > 400 {
-                        normalized_line[..400].to_string()
-                    } else {
-                        normalized_line.to_string()
-                    },
-                });
-            }
-        }
-    }
-
-    Ok(out)
-}
-
-fn nav_location_from_symbol(
-    root: &Path,
-    path: &Path,
-    symbol: &JavaSymbol,
-    score: f64,
-) -> Result<Option<NavLocation>, String> {
-    nav_location_from_coordinates(
-        root,
-        path,
-        symbol.line,
-        symbol.column,
-        symbol.end_line,
-        symbol.end_column,
-        score,
-    )
-}
-
-fn score_java_definition_candidate(
-    ctx: &ProjectContext,
-    req: &NavPositionRequest,
-    token: &str,
-    declaration_kind: &str,
-    entry: &JavaSearchMatch,
-    resolved_type_paths: &HashSet<String>,
-) -> f64 {
-    let mut score = 0.0;
-    let is_same_file = entry.relative_path == ctx.relative_path;
-    let is_same_line = is_same_file && entry.line == req.line;
-    let file_stem = Path::new(&entry.relative_path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("");
-
-    if resolved_type_paths.contains(&entry.path) {
-        score += 10.0;
-    }
-    if file_stem == token {
-        score += 5.0;
-    }
-    if is_same_file {
-        score += 2.0;
-    }
-    if is_same_line {
-        score -= 5.0;
-    }
-
-    score += match declaration_kind {
-        "class" | "interface" | "enum" | "record" => 7.0,
-        "constructor" => 6.0,
-        "method" => 5.0,
-        "field" => 4.0,
-        _ => 1.0,
-    };
-
-    if is_type_like(token) && is_type_symbol(declaration_kind) {
-        score += 2.0;
-    }
-
-    score
-}
-
-fn resolve_java_declaration_kind(
-    analysis_cache: &mut HashMap<String, Option<JavaFileAnalysis>>,
-    entry: &JavaSearchMatch,
-    token: &str,
-    current_type_name: Option<&str>,
-) -> Option<&'static str> {
-    resolve_java_symbol_kind(analysis_cache, entry, token)
-        .or_else(|| classify_java_declaration(&entry.text, token, current_type_name))
-}
-
-fn is_java_declaration_location(
-    analysis_cache: &mut HashMap<String, Option<JavaFileAnalysis>>,
-    location: &NavLocation,
-    token: &str,
-    current_type_name: Option<&str>,
-) -> bool {
-    let entry = JavaSearchMatch {
-        path: location.path.clone(),
-        relative_path: location.relative_path.clone(),
-        line: location.line,
-        column: location.column,
-        text: location.preview.clone(),
-    };
-    resolve_java_declaration_kind(analysis_cache, &entry, token, current_type_name).is_some()
-}
-
-fn resolve_java_symbol_kind(
-    analysis_cache: &mut HashMap<String, Option<JavaFileAnalysis>>,
-    entry: &JavaSearchMatch,
-    token: &str,
-) -> Option<&'static str> {
-    let analysis = cached_java_analysis(analysis_cache, &entry.path)?;
-    let symbol = analysis
-        .symbols
-        .iter()
-        .find(|item| item.name == token && item.line == entry.line && item.column == entry.column)
-        .or_else(|| {
-            analysis
-                .symbols
-                .iter()
-                .find(|item| item.name == token && item.line == entry.line)
-        })?;
-    declaration_kind_from_symbol_kind(symbol.kind.as_str())
-}
-
-fn cached_java_analysis<'a>(
-    analysis_cache: &'a mut HashMap<String, Option<JavaFileAnalysis>>,
-    path: &str,
-) -> Option<&'a JavaFileAnalysis> {
-    if !analysis_cache.contains_key(path) {
-        analysis_cache.insert(path.to_string(), analyze_java_file(Path::new(path)).ok());
-    }
-    analysis_cache.get(path).and_then(|item| item.as_ref())
-}
-
-fn declaration_kind_from_symbol_kind(kind: &str) -> Option<&'static str> {
-    shared_declaration_kind_from_symbol_kind(kind)
-}
-
-fn classify_java_declaration(
-    line: &str,
-    token: &str,
-    current_type_name: Option<&str>,
-) -> Option<&'static str> {
-    let trimmed = line.trim();
-    if let Some(capture) = TYPE_RE.captures(trimmed) {
-        if capture.get(2).map(|value| value.as_str()) == Some(token) {
-            return match capture.get(1).map(|value| value.as_str()) {
-                Some("class") => Some("class"),
-                Some("interface") => Some("interface"),
-                Some("enum") => Some("enum"),
-                Some("record") => Some("record"),
-                _ => Some("type"),
-            };
-        }
-    }
-
-    if let Some((name, kind)) = extract_method_signature(trimmed, current_type_name.unwrap_or("")) {
-        if name == token {
-            return Some(if kind == "constructor" {
-                "constructor"
-            } else {
-                "method"
-            });
-        }
-    }
-
-    if let Some(field_name) = extract_field_name(trimmed) {
-        if field_name == token {
-            return Some("field");
-        }
-    }
-
-    None
-}
-
-fn extract_method_signature(line: &str, current_type_name: &str) -> Option<(String, String)> {
-    let line = strip_leading_java_annotations(line.trim());
-    if line.is_empty() || matches_java_non_method_statement(line) {
-        return None;
-    }
-
-    let open_paren = line.find('(')?;
-    let before_params = line[..open_paren].trim_end();
-    if let Some(close_end) = matching_java_paren_end(&line[open_paren..]) {
-        let after_params = line.get(open_paren + close_end..).unwrap_or("");
-        if !is_java_method_suffix(after_params) {
-            return None;
-        }
-    }
-    if before_params.contains('=') || before_params.contains("->") {
-        return None;
-    }
-
-    let name = last_identifier(before_params)?;
-    if matches!(
-        name.as_str(),
-        "if" | "for" | "while" | "switch" | "catch" | "return" | "throw" | "new"
-    ) {
-        return None;
-    }
-
-    let kind = if !current_type_name.is_empty() && name == current_type_name {
-        "constructor"
-    } else {
-        let declaration_prefix = before_params.strip_suffix(name.as_str())?.trim_end();
-        if !has_java_method_return_type(declaration_prefix) {
-            return None;
-        }
-        "method"
-    };
-    Some((name, kind.to_string()))
-}
-
-fn strip_leading_java_annotations(mut line: &str) -> &str {
-    loop {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('@') {
-            return trimmed;
-        }
-        let Some(rest) = consume_java_annotation(trimmed) else {
-            return trimmed;
-        };
-        line = rest;
-        if line.trim().is_empty() {
-            return "";
-        }
-    }
-}
-
-fn consume_java_annotation(line: &str) -> Option<&str> {
-    let mut index = '@'.len_utf8();
-    let name = line.get(index..)?;
-    let mut chars = name.char_indices();
-    let (_, first) = chars.next()?;
-    if !is_java_identifier_start(first) {
-        return None;
-    }
-    index += first.len_utf8();
-
-    for (offset, ch) in chars {
-        if is_java_identifier_part(ch) || ch == '.' {
-            index = '@'.len_utf8() + offset + ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-
-    let rest = line.get(index..)?.trim_start();
-    if rest.starts_with('(') {
-        let end = matching_java_paren_end(rest)?;
-        return rest.get(end..);
-    }
-    Some(rest)
-}
-
-fn matching_java_paren_end(value: &str) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut string_delim = '\0';
-    let mut escaped = false;
-
-    for (index, ch) in value.char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == string_delim {
-                in_string = false;
-                string_delim = '\0';
-            }
-            continue;
-        }
-
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            string_delim = ch;
-            continue;
-        }
-
-        if ch == '(' {
-            depth += 1;
-            continue;
-        }
-        if ch == ')' {
-            depth -= 1;
-            if depth == 0 {
-                return Some(index + ch.len_utf8());
-            }
-        }
-    }
-
-    None
-}
-
-fn matches_java_non_method_statement(line: &str) -> bool {
-    [
-        "return ", "throw ", "package ", "import ", "if ", "for ", "while ", "switch ", "case ",
-        "new ", "assert ",
-    ]
-    .iter()
-    .any(|prefix| line.starts_with(prefix))
-}
-
-fn is_java_method_suffix(value: &str) -> bool {
-    let suffix = value.trim_start();
-    suffix.is_empty()
-        || suffix.starts_with('{')
-        || suffix.starts_with(';')
-        || suffix.starts_with("throws ")
-        || suffix.starts_with("default ")
-}
-
-fn has_java_method_return_type(prefix: &str) -> bool {
-    let mut rest = prefix.trim();
-    loop {
-        let Some((word, after_word)) = split_first_java_word(rest) else {
-            break;
-        };
-        if !is_java_modifier(word) {
-            break;
-        }
-        rest = after_word.trim_start();
-    }
-
-    if rest.starts_with('<') {
-        if let Some(end) = matching_java_angle_end(rest) {
-            rest = rest.get(end..).unwrap_or("").trim_start();
-        }
-    }
-
-    !rest.is_empty()
-}
-
-fn split_first_java_word(value: &str) -> Option<(&str, &str)> {
-    let value = value.trim_start();
-    let mut end = None;
-    for (index, ch) in value.char_indices() {
-        if index == 0 && !is_java_identifier_start(ch) {
-            return None;
-        }
-        if is_java_identifier_part(ch) {
-            end = Some(index + ch.len_utf8());
-        } else {
-            break;
-        }
-    }
-    let end = end?;
-    Some((&value[..end], &value[end..]))
-}
-
-fn is_java_modifier(value: &str) -> bool {
-    matches!(
-        value,
-        "public"
-            | "protected"
-            | "private"
-            | "static"
-            | "final"
-            | "abstract"
-            | "synchronized"
-            | "native"
-            | "default"
-            | "strictfp"
-    )
-}
-
-fn matching_java_angle_end(value: &str) -> Option<usize> {
-    let mut depth = 0i32;
-    for (index, ch) in value.char_indices() {
-        if ch == '<' {
-            depth += 1;
-            continue;
-        }
-        if ch == '>' {
-            depth -= 1;
-            if depth == 0 {
-                return Some(index + ch.len_utf8());
-            }
-        }
-    }
-    None
-}
-
-fn is_java_identifier_start(value: char) -> bool {
-    value == '_' || value == '$' || value.is_alphabetic()
-}
-
-fn is_java_identifier_part(value: char) -> bool {
-    value == '_' || value == '$' || value.is_alphanumeric()
-}
-
-fn extract_field_name(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if line.contains('(') {
-        return None;
-    }
-    if matches_java_non_field_statement(trimmed) {
-        return None;
-    }
-    if let Some(capture) = FIELD_RE.captures(line) {
-        return Some(capture.get(1)?.as_str().to_string());
-    }
-
-    if !trimmed.ends_with(';') {
-        return None;
-    }
-
-    let declaration_head = trimmed
-        .trim_end_matches(';')
-        .split('=')
-        .next()
-        .unwrap_or("")
-        .trim_end();
-    last_identifier(declaration_head)
-}
-
-fn matches_java_non_field_statement(line: &str) -> bool {
-    [
-        "return ", "throw ", "package ", "import ", "if ", "for ", "while ", "switch ", "case ",
-        "new ", "assert ",
-    ]
-    .iter()
-    .any(|prefix| line.starts_with(prefix))
-}
-
-fn is_type_symbol(kind: &str) -> bool {
-    matches!(kind, "class" | "interface" | "enum" | "record" | "type")
-}
-
-fn should_visit_java_path(entry: &DirEntry) -> bool {
-    if entry.depth() == 0 {
-        return true;
-    }
-    let Some(name) = entry.file_name().to_str() else {
-        return true;
-    };
-    !JAVA_IGNORED_DIRS.contains(&name)
-}
-
-fn java_source_roots(root: &Path) -> Vec<PathBuf> {
-    let candidates = [
-        root.join("src/main/java"),
-        root.join("src/test/java"),
-        root.join("src/integrationTest/java"),
-        root.join("src/androidTest/java"),
-        root.join("app/src/main/java"),
-        root.to_path_buf(),
-    ];
-
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for candidate in candidates {
-        if candidate.exists() {
-            let normalized = normalize_path(&candidate);
-            let key = normalized.to_string_lossy().to_string();
-            if seen.insert(key) {
-                out.push(normalized);
-            }
-        }
-    }
-    out
-}
-
-fn pop_type_scopes(type_stack: &mut Vec<TypeScope>, brace_depth: i32) {
-    while type_stack
-        .last()
-        .map(|item| brace_depth < item.body_depth)
-        .unwrap_or(false)
-    {
-        type_stack.pop();
-    }
-}
-
-fn strip_java_comments(line: &str, in_block_comment: &mut bool) -> String {
-    let mut out = String::with_capacity(line.len());
-    let chars: Vec<char> = line.chars().collect();
-    let mut index = 0usize;
-    let mut in_string = false;
-    let mut string_delim = '\0';
-
-    while index < chars.len() {
-        let current = chars[index];
-        let next = chars.get(index + 1).copied();
-
-        if *in_block_comment {
-            if current == '*' && next == Some('/') {
-                *in_block_comment = false;
-                out.push(' ');
-                out.push(' ');
-                index += 2;
-            } else {
-                out.push(' ');
-                index += 1;
-            }
-            continue;
-        }
-
-        if in_string {
-            out.push(current);
-            if current == '\\' {
-                if let Some(next) = next {
-                    out.push(next);
-                    index += 2;
-                    continue;
-                }
-            }
-            if current == string_delim {
-                in_string = false;
-                string_delim = '\0';
-            }
-            index += 1;
-            continue;
-        }
-
-        if current == '"' || current == '\'' {
-            in_string = true;
-            string_delim = current;
-            out.push(current);
-            index += 1;
-            continue;
-        }
-
-        if current == '/' && next == Some('/') {
-            while index < chars.len() {
-                out.push(' ');
-                index += 1;
-            }
-            break;
-        }
-
-        if current == '/' && next == Some('*') {
-            *in_block_comment = true;
-            out.push(' ');
-            out.push(' ');
-            index += 2;
-            continue;
-        }
-
-        out.push(current);
-        index += 1;
-    }
-
-    out
-}
-
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        analyze_java_file, classify_java_declaration, extract_field_name, extract_method_signature,
-        java_definition, java_references,
+    use super::analysis::{
+        classify_java_declaration, extract_field_name, extract_method_signature,
     };
+    use super::{analyze_java_file, java_definition, java_references};
     use crate::services::code_nav::fallback::extract_token_at_position;
-    use crate::services::code_nav::types::NavPositionRequest;
-    use crate::services::code_nav::types::ProjectContext;
+    use crate::services::code_nav::types::{NavPositionRequest, ProjectContext};
     use std::fs;
     use std::path::PathBuf;
 

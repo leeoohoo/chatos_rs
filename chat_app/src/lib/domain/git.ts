@@ -7,6 +7,7 @@ import type {
   GitCompareResponse,
   GitDiffFileResponse,
   GitFileDiffResponse,
+  GitRepositoryCandidateResponse,
   GitStatusFileResponse,
   GitStatusResponse,
   GitSummaryResponse,
@@ -19,6 +20,7 @@ import type {
   GitCompareResult,
   GitDiffFile,
   GitFileDiff,
+  GitRepositoryCandidate,
   GitStatusFile,
   GitStatusResult,
   GitSummary,
@@ -34,6 +36,9 @@ export const normalizeGitSummary = (raw: GitSummaryResponse | null | undefined):
     isRepo: Boolean(raw?.is_repo ?? raw?.isRepo),
     root: raw?.root ?? null,
     worktreeRoot: raw?.worktree_root ?? raw?.worktreeRoot ?? null,
+    queryRoot: raw?.query_root ?? raw?.queryRoot ?? null,
+    resolvedRoot: raw?.resolved_root ?? raw?.resolvedRoot ?? null,
+    selectedRoot: raw?.selected_root ?? raw?.selectedRoot ?? null,
     head: raw?.head ?? null,
     currentBranch: raw?.current_branch ?? raw?.currentBranch ?? null,
     detached: Boolean(raw?.detached),
@@ -48,8 +53,21 @@ export const normalizeGitSummary = (raw: GitSummaryResponse | null | undefined):
       untracked: toNumber(changes?.untracked),
       conflicted: toNumber(changes?.conflicted),
     },
+    availableRepositories: Array.isArray(raw?.available_repositories)
+      ? raw.available_repositories.map(normalizeGitRepositoryCandidate).filter((item) => item.root)
+      : Array.isArray(raw?.availableRepositories)
+        ? raw.availableRepositories.map(normalizeGitRepositoryCandidate).filter((item) => item.root)
+        : [],
   };
 };
+
+export const normalizeGitRepositoryCandidate = (
+  raw: GitRepositoryCandidateResponse | null | undefined,
+): GitRepositoryCandidate => ({
+  root: String(raw?.root || ''),
+  label: String(raw?.label || raw?.relative_path || raw?.relativePath || raw?.root || ''),
+  relativePath: String(raw?.relative_path ?? raw?.relativePath ?? ''),
+});
 
 export const normalizeGitClientInfo = (raw: GitClientInfoResponse | null | undefined): GitClientInfo => ({
   available: Boolean(raw?.available),

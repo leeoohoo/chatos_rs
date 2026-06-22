@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
+import { deriveParentPath } from '../../lib/domain/filesystem';
 import type { FsEntry } from '../../types';
 import { normalizeFsEntry } from './fileUtils';
 
@@ -37,6 +39,10 @@ interface UseWorkspaceDirectoryPickerResult {
   handleSelectWorkspaceRoot: (path: string | null) => void;
 }
 
+const isVisibleWorkspaceDirectory = (entry: FsEntry): boolean => (
+  entry.isDir && !entry.name.startsWith('.')
+);
+
 export const useWorkspaceDirectoryPicker = ({
   client,
   showWorkspaceRootPicker,
@@ -46,6 +52,7 @@ export const useWorkspaceDirectoryPicker = ({
   normalizedWorkspaceRoot,
   onWorkspaceRootChange,
 }: UseWorkspaceDirectoryPickerOptions): UseWorkspaceDirectoryPickerResult => {
+  const { t } = useI18n();
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [workspaceParent, setWorkspaceParent] = useState<string | null>(null);
@@ -60,27 +67,27 @@ export const useWorkspaceDirectoryPicker = ({
     try {
       const data = await client.listFsDirectories(nextPath || undefined) as WorkspaceDirectoryResponse;
       const path = typeof data?.path === 'string' ? data.path : null;
-      const parent = typeof data?.parent === 'string' ? data.parent : null;
+      const parentFromApi = typeof data?.parent === 'string' ? data.parent : null;
       const entries = Array.isArray(data?.entries)
         ? data.entries
           .map((entry) => normalizeFsEntry(entry as Record<string, unknown>))
-          .filter((entry: FsEntry) => entry.isDir)
+          .filter(isVisibleWorkspaceDirectory)
         : [];
       const roots = Array.isArray(data?.roots)
         ? data.roots
           .map((entry) => normalizeFsEntry(entry as Record<string, unknown>))
-          .filter((entry: FsEntry) => entry.isDir)
+          .filter(isVisibleWorkspaceDirectory)
         : [];
       setWorkspacePath(path);
-      setWorkspaceParent(parent);
+      setWorkspaceParent(parentFromApi || (path ? deriveParentPath(path) : null));
       setWorkspaceEntries(entries);
       setWorkspaceRoots(roots);
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : '加载目录失败');
+      setWorkspaceError(error instanceof Error ? error.message : t('inputArea.workspace.loadFailed'));
     } finally {
       setWorkspaceLoading(false);
     }
-  }, [client]);
+  }, [client, t]);
 
   const handleToggleWorkspacePicker = useCallback(async () => {
     if (!showWorkspaceRootPicker || disabled || isStreaming || isStopping) {

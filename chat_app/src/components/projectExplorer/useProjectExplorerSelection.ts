@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
 import type {
   CodeNavLocation,
@@ -17,7 +18,7 @@ interface UseProjectExplorerSelectionParams {
   clearSearchNavigation: () => void;
   normalizePath: (path: string) => string;
   getParentPath: (path: string | null | undefined) => string;
-  loadEntries: (path: string) => Promise<void>;
+  loadEntries: (path: string, options?: { silent?: boolean; forceRefresh?: boolean }) => Promise<void>;
   setActionError: (value: string | null) => void;
   setSelectedPath: (value: string | null) => void;
   setSelectedFile: (value: FsReadResult | null) => void;
@@ -46,6 +47,8 @@ export const useProjectExplorerSelection = ({
   setError,
   setPreviewTargetLine,
 }: UseProjectExplorerSelectionParams) => {
+  const { t } = useI18n();
+
   const projectRootEntry = useMemo<FsEntry | null>(() => {
     if (!project?.rootPath) return null;
     return {
@@ -97,7 +100,7 @@ export const useProjectExplorerSelection = ({
       const data = await client.readFsFile(entry.path);
       setSelectedFile(normalizeFile(data));
     } catch (error) {
-      setError(readErrorMessage(error, '读取文件失败'));
+      setError(readErrorMessage(error, t('projectExplorer.error.readFile')));
     } finally {
       setLoadingFile(false);
     }
@@ -109,9 +112,16 @@ export const useProjectExplorerSelection = ({
     setLoadingFile,
     setSelectedFile,
     setSelectedPath,
+    t,
   ]);
 
-  const openCodeNavLocation = useCallback(async (location: CodeNavLocation) => {
+  const openCodeNavLocation = useCallback(async (
+    location: CodeNavLocation,
+    options?: {
+      preserveHistory?: boolean;
+      targetLine?: number | null;
+    },
+  ) => {
     await openFile({
       name: location.relativePath.split('/').filter(Boolean).pop() || location.path.split(/[\\/]/).pop() || location.path,
       path: location.path,
@@ -119,7 +129,7 @@ export const useProjectExplorerSelection = ({
       size: null,
       modifiedAt: null,
     });
-    setPreviewTargetLine(location.line);
+    setPreviewTargetLine(options?.targetLine ?? location.line);
   }, [openFile, setPreviewTargetLine]);
 
   const selectProjectRoot = useCallback(async () => {

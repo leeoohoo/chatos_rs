@@ -258,6 +258,7 @@ export interface RealtimeTerminalStatePayloadWrapper {
   status: string;
   busy: boolean;
   reason: string;
+  exit_code?: number | null;
 }
 
 export interface RealtimeTerminalListInvalidatedPayloadWrapper {
@@ -294,6 +295,20 @@ export interface RealtimeProjectRunStatePayloadWrapper {
   busy: boolean;
   running: boolean;
   reason: string;
+  exit_code?: number | null;
+}
+
+export interface RealtimeProjectRunInstancePayloadWrapper {
+  kind: 'project_run_instance';
+  project_id: string;
+  terminal_id: string;
+  terminal_name: string;
+  cwd: string;
+  status: string;
+  busy: boolean;
+  running: boolean;
+  reason: string;
+  exit_code?: number | null;
 }
 
 export interface RealtimeProjectRunCatalogPayloadWrapper {
@@ -301,8 +316,6 @@ export interface RealtimeProjectRunCatalogPayloadWrapper {
   project_id: string;
   reason: string;
   path?: string | null;
-  runner_script_exists?: boolean | null;
-  root_missing?: boolean | null;
 }
 
 export interface RealtimeProjectMembersUpdatedPayloadWrapper {
@@ -357,22 +370,6 @@ export interface RealtimeTaskBoardPayloadWrapper {
   timeout_ms?: number | null;
 }
 
-export interface RealtimeUiPromptPayloadWrapper {
-  kind: 'ui_prompt';
-  conversation_id: string;
-  conversation_turn_id?: string | null;
-  prompt_id: string;
-  action: string;
-  status?: string | null;
-  tool_call_id?: string | null;
-  prompt_kind?: string | null;
-  title?: string | null;
-  message?: string | null;
-  allow_cancel?: boolean | null;
-  timeout_ms?: number | null;
-  payload?: Record<string, unknown> | null;
-}
-
 export interface RealtimeChatStreamPayloadWrapper {
   kind: 'chat_stream';
   conversation_id: string;
@@ -385,12 +382,24 @@ export interface RealtimeChatStreamPayloadWrapper {
     timestamp?: string;
     content?: unknown;
     data?: unknown;
+    task_turn_review?: {
+      attempted?: boolean;
+      outcome?: string;
+      rounds?: number;
+      [key: string]: unknown;
+    } | null;
     success?: boolean;
     is_error?: boolean;
     code?: string;
     message?: string;
     result?: {
       content?: unknown;
+      task_turn_review?: {
+        attempted?: boolean;
+        outcome?: string;
+        rounds?: number;
+        [key: string]: unknown;
+      } | null;
       persisted_user_message?: unknown;
       persisted_user_message_id?: string | null;
       persisted_assistant_message?: unknown;
@@ -424,6 +433,7 @@ export type RealtimeProjectScopedPayload =
   | RealtimeTerminalStatePayloadWrapper
   | RealtimeTerminalListInvalidatedPayloadWrapper
   | RealtimeProjectRunStatePayloadWrapper
+  | RealtimeProjectRunInstancePayloadWrapper
   | RealtimeProjectRunCatalogPayloadWrapper
   | RealtimeProjectMembersUpdatedPayloadWrapper;
 
@@ -441,7 +451,6 @@ export interface RealtimeEventEnvelope {
     | RealtimeSessionsUpdatedPayloadWrapper
     | RealtimeProjectScopedPayload
     | RealtimeTaskBoardPayloadWrapper
-    | RealtimeUiPromptPayloadWrapper
     | RealtimeChatStreamPayloadWrapper
     | RealtimeRemoteSftpTransferPayloadWrapper;
   ts: string;

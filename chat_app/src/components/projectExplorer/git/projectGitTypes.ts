@@ -13,15 +13,16 @@ import type {
   GitClientInfo,
   GitCompareResult,
   GitFileDiff,
+  GitRepositoryCandidate,
   GitStatusResult,
   GitSummary,
 } from '../../../types';
 
 export interface ProjectGitApiClient {
   getGitClientInfo: () => Promise<GitClientInfoResponse>;
-  getGitSummary: (root: string) => Promise<GitSummaryResponse>;
-  getGitBranches: (root: string) => Promise<GitBranchesResponse>;
-  getGitStatus: (root: string) => Promise<GitStatusResponse>;
+  getGitSummary: (root: string, preferredRepoRoot?: string, forceRefresh?: boolean) => Promise<GitSummaryResponse>;
+  getGitBranches: (root: string, forceRefresh?: boolean) => Promise<GitBranchesResponse>;
+  getGitStatus: (root: string, forceRefresh?: boolean) => Promise<GitStatusResponse>;
   compareGitBranch: (root: string, target: string) => Promise<GitCompareResponse>;
   getGitDiff: (data: { root: string; path: string; target?: string; staged?: boolean }) => Promise<GitFileDiffResponse>;
   fetchGit: (data: { root: string; remote?: string }) => Promise<GitActionResponse>;
@@ -32,6 +33,7 @@ export interface ProjectGitApiClient {
   mergeGit: (data: { root: string; branch: string; mode?: 'default' | 'no-ff' | 'ff-only' | string }) => Promise<GitActionResponse>;
   stageGitPaths: (data: { root: string; paths: string[] }) => Promise<GitActionResponse>;
   unstageGitPaths: (data: { root: string; paths: string[] }) => Promise<GitActionResponse>;
+  discardGitPaths: (data: { root: string; paths: string[] }) => Promise<GitActionResponse>;
   commitGit: (data: { root: string; message: string; paths?: string[] }) => Promise<GitActionResponse>;
 }
 
@@ -39,12 +41,16 @@ export interface UseProjectGitOptions {
   client: ProjectGitApiClient;
   projectRoot: string;
   open?: boolean;
+  enabled?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
+  onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
 
 export interface UseProjectGitResult {
   clientInfo: GitClientInfo | null;
   summary: GitSummary | null;
+  activeRepoRoot: string | null;
+  availableRepositories: GitRepositoryCandidate[];
   branches: GitBranchesResult | null;
   status: GitStatusResult | null;
   compareResult: GitCompareResult | null;
@@ -72,9 +78,11 @@ export interface UseProjectGitResult {
   loadFileDiff: (path: string, target?: string, staged?: boolean) => Promise<void>;
   clearCompare: () => void;
   clearFileDiff: () => void;
+  selectRepository: (repoRoot: string | null) => Promise<void>;
   createBranch: (name: string, startPoint?: string) => Promise<void>;
   stageFiles: (paths: string[]) => Promise<void>;
   unstageFiles: (paths: string[]) => Promise<void>;
+  discardFiles: (paths: string[]) => Promise<void>;
   commitStaged: (message: string) => Promise<boolean>;
   commitSelected: (message: string, paths: string[]) => Promise<boolean>;
   clearMessages: () => void;

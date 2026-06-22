@@ -2,6 +2,7 @@ use super::types::{
     DocumentSymbolItem, DocumentSymbolsRequest, DocumentSymbolsResponse, NavLocation,
     NavLocationsResponse, NavPositionRequest, ProjectContext,
 };
+use crate::services::code_nav::languages::shared_nav::is_request_token_location;
 use crate::services::workspace_search::{
     search_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_RESULTS, DEFAULT_MAX_VISITS,
 };
@@ -49,7 +50,7 @@ pub fn fallback_definition(
     let mut locations: Vec<NavLocation> = outcome
         .entries
         .into_iter()
-        .map(|entry| {
+        .filter_map(|entry| {
             let score = rank_definition_candidate(
                 ctx,
                 req,
@@ -58,7 +59,10 @@ pub fn fallback_definition(
                 entry.line,
                 &entry.text,
             );
-            NavLocation {
+            if score < 2.0 {
+                return None;
+            }
+            let location = NavLocation {
                 path: entry.path,
                 relative_path: entry.relative_path,
                 line: entry.line,
@@ -67,7 +71,11 @@ pub fn fallback_definition(
                 end_column: entry.column + token.chars().count().saturating_sub(1),
                 preview: entry.text,
                 score,
+            };
+            if is_request_token_location(ctx, req, &token, &location) {
+                return None;
             }
+            Some(location)
         })
         .collect();
 
@@ -121,19 +129,25 @@ pub fn fallback_references(
     let mut locations: Vec<NavLocation> = outcome
         .entries
         .into_iter()
-        .map(|entry| NavLocation {
-            score: if entry.relative_path == ctx.relative_path {
-                1.5
-            } else {
-                1.0
-            },
-            path: entry.path,
-            relative_path: entry.relative_path,
-            line: entry.line,
-            column: entry.column,
-            end_line: entry.line,
-            end_column: entry.column + token.chars().count().saturating_sub(1),
-            preview: entry.text,
+        .filter_map(|entry| {
+            let location = NavLocation {
+                score: if entry.relative_path == ctx.relative_path {
+                    1.5
+                } else {
+                    1.0
+                },
+                path: entry.path,
+                relative_path: entry.relative_path,
+                line: entry.line,
+                column: entry.column,
+                end_line: entry.line,
+                end_column: entry.column + token.chars().count().saturating_sub(1),
+                preview: entry.text,
+            };
+            if is_request_token_location(ctx, req, &token, &location) {
+                return None;
+            }
+            Some(location)
         })
         .collect();
 
@@ -261,7 +275,6 @@ fn rank_definition_candidate(
         format!("var {} =", token_lower),
         format!("type {} ", token_lower),
         format!("impl {}", token_lower),
-        format!("{}(", token_lower),
     ];
 
     for pattern in definition_patterns {
@@ -270,11 +283,111 @@ fn rank_definition_candidate(
         }
     }
 
+    if looks_like_callable_definition(preview, token) {
+        score += 2.0;
+    }
+
     if lower.starts_with(&token_lower) {
         score += 1.0;
     }
 
     score
+}
+
+fn looks_like_callable_definition(preview: &str, token: &str) -> bool {
+    let Some(token_start) = preview.find(token) else {
+        return false;
+    };
+    let after_token = preview[token_start + token.len()..].trim_start();
+    if !after_token.starts_with('(') {
+        return false;
+    }
+
+    let before_token = preview[..token_start].trim_end();
+    if before_token.is_empty()
+        || before_token.ends_with('.')
+        || before_token.ends_with("::")
+        || before_token.contains('=')
+        || before_token.contains("->")
+    {
+        return false;
+    }
+
+    let lower_before = before_token.to_lowercase();
+    if lower_before.ends_with(" return")
+        || lower_before.ends_with(" throw")
+        || lower_before.ends_with(" new")
+    {
+        return false;
+    }
+
+    if looks_like_callable_declaration_prefix(before_token) {
+        return true;
+    }
+
+    let suffix = preview[token_start + token.len()..].trim();
+    suffix.ends_with('{') || suffix.ends_with(';') || suffix.contains(") {")
+}
+
+fn looks_like_callable_declaration_prefix(before_token: &str) -> bool {
+    let mut words = before_token
+        .split_whitespace()
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return false;
+    }
+
+    while words
+        .first()
+        .is_some_and(|word| is_common_declaration_modifier(word))
+    {
+        words.remove(0);
+    }
+
+    if words.is_empty() {
+        return false;
+    }
+    if words.len() > 3 {
+        return false;
+    }
+
+    words.iter().all(|word| looks_like_type_or_def_word(word))
+}
+
+fn is_common_declaration_modifier(word: &str) -> bool {
+    matches!(
+        word,
+        "public"
+            | "private"
+            | "protected"
+            | "static"
+            | "final"
+            | "abstract"
+            | "synchronized"
+            | "native"
+            | "default"
+            | "strictfp"
+            | "override"
+            | "internal"
+            | "open"
+            | "inline"
+            | "suspend"
+    )
+}
+
+fn looks_like_type_or_def_word(word: &str) -> bool {
+    if matches!(word, "def" | "void") {
+        return true;
+    }
+
+    word.chars().all(|ch| {
+        ch.is_alphanumeric()
+            || matches!(
+                ch,
+                '_' | '$' | '.' | '<' | '>' | '[' | ']' | '?' | ',' | ':' | '&'
+            )
+    })
 }
 
 pub(crate) fn extract_token_at_position(

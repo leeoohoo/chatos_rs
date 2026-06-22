@@ -1,213 +1,211 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type ApiClient from '../../../lib/api/client';
-import type { Project, ProjectRunTarget } from '../../../types';
+import type {
+  Project,
+  ProjectRunEnvironment,
+  ProjectRunTarget,
+} from '../../../types';
 import {
-  buildProjectRunnerTarget,
-  hasProjectRunnerScript,
-  isProjectRunnerPathMissingError,
-  loadProjectRunnerMembers,
-  patchProjectRunnerScriptStateSnapshot,
-  markProjectRunnerContactRowsStale,
-  markProjectRunnerScriptStateStale,
-  readProjectRunnerErrorMessage,
-  RUNNER_SCRIPT_REL_PATH,
-} from '../../../lib/domain/projectRunner';
-import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealtime';
-import type { ProjectRunnerMember } from '../../../lib/domain/projectRunner';
+  buildCustomToolchainDrafts,
+  buildEnvironmentHints,
+  buildEnvPreview,
+  buildEnvVarsPlaceholder,
+  buildMissingToolchainKinds,
+  buildSelectedToolchainOptions,
+  resolveCommandPreview,
+  serializeEnvVarsDraft,
+} from './projectRunnerEnvironmentState';
+import { resolveProjectRunnerStatus, resolveProjectRunTargetSelection } from './projectRunnerCatalogState';
+import { useProjectRunnerCatalogLifecycle } from './useProjectRunnerCatalogLifecycle';
+import { useProjectRunnerEnvironmentMutations } from './useProjectRunnerEnvironmentMutations';
 
 interface UseProjectRunnerCatalogStateOptions {
   client: ApiClient;
   project: Project | null;
+  enabled?: boolean;
 }
 
 export const useProjectRunnerCatalogState = ({
   client,
   project,
+  enabled = true,
 }: UseProjectRunnerCatalogStateOptions) => {
-  const [projectMembers, setProjectMembers] = useState<ProjectRunnerMember[]>([]);
-  const [projectMembersLoading, setProjectMembersLoading] = useState(false);
-  const [projectMembersError, setProjectMembersError] = useState<string | null>(null);
-  const [runnerScriptExists, setRunnerScriptExists] = useState(false);
-  const [runnerScriptChecking, setRunnerScriptChecking] = useState(false);
-  const [runnerScriptError, setRunnerScriptError] = useState<string | null>(null);
-  const [runnerRootMissing, setRunnerRootMissing] = useState(false);
+  const { t } = useI18n();
   const [selectedRunTargetId, setSelectedRunTargetId] = useState<string | null>(null);
+  const [runTargets, setRunTargets] = useState<ProjectRunTarget[]>([]);
+  const [runCatalogLoading, setRunCatalogLoading] = useState(false);
+  const [runCatalogError, setRunCatalogError] = useState<string | null>(null);
+  const [runEnvironment, setRunEnvironment] = useState<ProjectRunEnvironment | null>(null);
+  const [runEnvironmentLoading, setRunEnvironmentLoading] = useState(false);
+  const [runEnvironmentError, setRunEnvironmentError] = useState<string | null>(null);
+  const [customToolchainDrafts, setCustomToolchainDrafts] = useState<Record<string, string>>({});
+  const [envVarsDraft, setEnvVarsDraft] = useState('');
 
-  const loadProjectMembers = useCallback(async () => {
-    if (!project?.id) {
-      setProjectMembers([]);
-      setProjectMembersLoading(false);
-      setProjectMembersError(null);
-      return;
-    }
-
-    setProjectMembersLoading(true);
-    setProjectMembersError(null);
-    try {
-      setProjectMembers(await loadProjectRunnerMembers(client, project.id));
-    } catch (error) {
-      setProjectMembers([]);
-      setProjectMembersError(error instanceof Error ? error.message : '加载项目成员失败');
-    } finally {
-      setProjectMembersLoading(false);
-    }
-  }, [client, project?.id]);
-
-  const loadRunnerScriptState = useCallback(async () => {
-    if (!project?.rootPath) {
-      setRunnerScriptExists(false);
-      setRunnerScriptChecking(false);
-      setRunnerScriptError(null);
-      setRunnerRootMissing(false);
-      return;
-    }
-
-    setRunnerScriptChecking(true);
-    setRunnerScriptError(null);
-    try {
-      const exists = await hasProjectRunnerScript(client, project.rootPath);
-      setRunnerScriptExists(exists);
-      setRunnerRootMissing(false);
-    } catch (error) {
-      setRunnerScriptExists(false);
-      if (isProjectRunnerPathMissingError(error)) {
-        setRunnerRootMissing(true);
-        setRunnerScriptError('项目目录不存在，请检查项目路径');
-      } else {
-        setRunnerRootMissing(false);
-        setRunnerScriptError(readProjectRunnerErrorMessage(error, '检查启动脚本失败'));
-      }
-    } finally {
-      setRunnerScriptChecking(false);
-    }
-  }, [client, project?.rootPath]);
-
-  const refreshRunnerState = useCallback(async () => {
-    if (project?.id) {
-      markProjectRunnerContactRowsStale(client, project.id);
-    }
-    if (project?.rootPath) {
-      markProjectRunnerScriptStateStale(client, project.rootPath);
-    }
-    await Promise.all([
-      loadProjectMembers(),
-      loadRunnerScriptState(),
-    ]);
-  }, [client, loadProjectMembers, loadRunnerScriptState, project?.id, project?.rootPath]);
-
-  const resetRunnerCatalogState = useCallback(() => {
-    setProjectMembers([]);
-    setProjectMembersError(null);
-    setRunnerScriptExists(false);
-    setRunnerScriptError(null);
-    setRunnerRootMissing(false);
-    setSelectedRunTargetId(null);
+  const applyRunCatalog = useCallback((catalog: { targets: ProjectRunTarget[]; errorMessage?: string | null; defaultTargetId?: string | null }) => {
+    setRunTargets(catalog.targets);
+    setRunCatalogError(catalog.errorMessage || null);
+    setSelectedRunTargetId((prev) => resolveProjectRunTargetSelection({
+      currentSelectedRunTargetId: prev,
+      targets: catalog.targets,
+      defaultTargetId: catalog.defaultTargetId,
+    }));
   }, []);
 
-  useProjectRunRealtime({
-    enabled: Boolean(project?.id),
-    projectId: project?.id || null,
-    onCatalogUpdated: async (payload) => {
-      if (!project?.rootPath) {
-        return;
-      }
-      const hasRootMissing = typeof payload.root_missing === 'boolean';
-      const hasRunnerScriptExists = typeof payload.runner_script_exists === 'boolean';
-      if (hasRootMissing || hasRunnerScriptExists) {
-        if (hasRunnerScriptExists) {
-          patchProjectRunnerScriptStateSnapshot(client, project.rootPath, payload.runner_script_exists === true);
-          setRunnerScriptExists(payload.runner_script_exists === true);
-        }
-        if (hasRootMissing) {
-          setRunnerRootMissing(payload.root_missing === true);
-          setRunnerScriptError(
-            payload.root_missing === true ? '项目目录不存在，请检查项目路径' : null,
-          );
-          if (payload.root_missing === true) {
-            setRunnerScriptExists(false);
-          }
-        } else if (hasRunnerScriptExists) {
-          setRunnerRootMissing(false);
-          setRunnerScriptError(null);
-        }
-        setRunnerScriptChecking(false);
-        return;
-      }
-      markProjectRunnerScriptStateStale(client, project.rootPath);
-      await loadRunnerScriptState();
-    },
-    onMembersUpdated: async () => {
-      if (project?.id) {
-        markProjectRunnerContactRowsStale(client, project.id);
-      }
-      await loadProjectMembers();
-    },
+  const {
+    loadRunCatalog,
+    loadRunEnvironment,
+    refreshRunnerState,
+    invalidateRunnerCatalogState,
+    selectRunTarget,
+  } = useProjectRunnerCatalogLifecycle({
+    client,
+    project,
+    enabled,
+    setRunTargets,
+    setRunCatalogLoading,
+    setRunCatalogError,
+    setRunEnvironment,
+    setRunEnvironmentLoading,
+    setRunEnvironmentError,
+    setSelectedRunTargetId,
+    setCustomToolchainDrafts,
+    setEnvVarsDraft,
+    applyRunCatalog,
   });
 
-  const runStatus = useMemo(() => {
-    if (!project?.id) {
-      return 'idle';
-    }
-    if (runnerRootMissing) {
-      return 'missing_root';
-    }
-    if (runnerScriptChecking || projectMembersLoading) {
-      return 'loading';
-    }
-    if (runnerScriptError || projectMembersError) {
-      return 'error';
-    }
-    if (runnerScriptExists) {
-      return 'ready';
-    }
-    if (projectMembers.length === 0) {
-      return 'no_member';
-    }
-    return 'script_missing';
-  }, [
-    project?.id,
-    projectMembers.length,
-    projectMembersError,
-    projectMembersLoading,
-    runnerRootMissing,
-    runnerScriptChecking,
-    runnerScriptError,
-    runnerScriptExists,
-  ]);
+  const selectedRunTarget = useMemo(
+    () => runTargets.find((item) => item.id === selectedRunTargetId) || runTargets[0] || null,
+    [runTargets, selectedRunTargetId],
+  );
 
-  const runTargets = useMemo<ProjectRunTarget[]>(() => {
-    if (!project?.rootPath || !runnerScriptExists) {
-      return [];
-    }
-    return [buildProjectRunnerTarget(project.rootPath)];
-  }, [project?.rootPath, runnerScriptExists]);
+  const availableToolchainKinds = useMemo(() => (
+    selectedRunTarget?.requiredToolchains || []
+  ), [selectedRunTarget?.requiredToolchains]);
 
   useEffect(() => {
-    if (!runnerScriptExists || runTargets.length === 0) {
+    setCustomToolchainDrafts(
+      buildCustomToolchainDrafts(runEnvironment, availableToolchainKinds),
+    );
+  }, [availableToolchainKinds, runEnvironment]);
+
+  const selectedToolchainOptions = useMemo(
+    () => buildSelectedToolchainOptions(runEnvironment, availableToolchainKinds),
+    [availableToolchainKinds, runEnvironment],
+  );
+
+  const missingToolchainKinds = useMemo(
+    () => buildMissingToolchainKinds(availableToolchainKinds, runEnvironment),
+    [availableToolchainKinds, runEnvironment],
+  );
+
+  const updateCustomToolchainDraft = useCallback((kind: string, value: string) => {
+    const normalizedKind = kind.trim();
+    if (!normalizedKind) {
+      return;
+    }
+    setCustomToolchainDrafts((prev) => ({
+      ...prev,
+      [normalizedKind]: value,
+    }));
+  }, []);
+
+  const {
+    updateSelectedToolchain,
+    saveCustomToolchain,
+    saveEnvVarsDraft,
+    setTerminalUiEnabled,
+  } = useProjectRunnerEnvironmentMutations({
+    client,
+    project,
+    enabled,
+    runEnvironment,
+    customToolchainDrafts,
+    envVarsDraft,
+    setRunEnvironment,
+    setRunEnvironmentError,
+    setEnvVarsDraft,
+    loadRunEnvironment,
+  });
+
+  const commandPreview = useMemo(() => {
+    const command = resolveCommandPreview(selectedRunTarget?.command || '', selectedToolchainOptions);
+    const envPrefix = serializeEnvVarsDraft(runEnvironment?.envVars || {});
+    if (!envPrefix) {
+      return command;
+    }
+    return `${envPrefix}\n${command}`.trim();
+  }, [runEnvironment?.envVars, selectedRunTarget?.command, selectedToolchainOptions]);
+
+  const envPreview = useMemo(
+    () => buildEnvPreview(runEnvironment?.envVars || {}, selectedToolchainOptions),
+    [runEnvironment?.envVars, selectedToolchainOptions],
+  );
+
+  const environmentHints = useMemo(
+    () => buildEnvironmentHints(selectedRunTarget, selectedToolchainOptions, t),
+    [selectedRunTarget, selectedToolchainOptions, t],
+  );
+
+  const envVarsPlaceholder = useMemo(
+    () => buildEnvVarsPlaceholder(selectedRunTarget),
+    [selectedRunTarget],
+  );
+
+  const runStatus = useMemo(() => {
+    return resolveProjectRunnerStatus({
+      enabled,
+      projectId: project?.id || null,
+      loading: runCatalogLoading,
+      errorMessage: runCatalogError,
+      targetCount: runTargets.length,
+    });
+  }, [enabled, project?.id, runCatalogError, runCatalogLoading, runTargets.length]);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    if (runTargets.length === 0) {
       setSelectedRunTargetId(null);
       return;
     }
-    setSelectedRunTargetId((prev) => prev || runTargets[0].id);
-  }, [runTargets, runnerScriptExists]);
+    setSelectedRunTargetId((prev) => resolveProjectRunTargetSelection({
+      currentSelectedRunTargetId: prev,
+      targets: runTargets,
+      defaultTargetId: null,
+    }));
+  }, [enabled, runTargets]);
 
   return {
-    projectMembers,
-    projectMembersLoading,
-    projectMembersError,
-    runnerScriptExists,
-    runnerScriptChecking,
-    runnerScriptPath: RUNNER_SCRIPT_REL_PATH,
-    runnerRootMissing,
     runStatus,
     runTargets,
-    runCatalogLoading: runnerScriptChecking || projectMembersLoading,
-    runCatalogError: runnerScriptError || projectMembersError,
+    runCatalogLoading,
+    runCatalogError,
+    runEnvironment,
+    runEnvironmentLoading,
+    runEnvironmentError,
+    availableToolchainKinds,
+    selectedToolchainOptions,
+    missingToolchainKinds,
+    customToolchainDrafts,
+    envVarsDraft,
+    commandPreview,
+    envPreview,
+    environmentHints,
+    envVarsPlaceholder,
     selectedRunTargetId,
-    setSelectedRunTargetId,
-    loadProjectMembers,
-    loadRunnerScriptState,
+    selectRunTarget,
+    updateSelectedToolchain,
+    updateCustomToolchainDraft,
+    saveCustomToolchain,
+    setEnvVarsDraft,
+    saveEnvVarsDraft,
+    setTerminalUiEnabled,
+    loadRunCatalog,
+    loadRunEnvironment,
     refreshRunnerState,
-    resetRunnerCatalogState,
+    invalidateRunnerCatalogState,
   };
 };

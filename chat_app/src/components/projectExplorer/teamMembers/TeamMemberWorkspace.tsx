@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 
-import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/helpers';
+import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/viewHelpers';
 import { TeamMemberWorkspaceComposer } from './TeamMemberWorkspaceComposer';
 import { TeamMemberWorkspaceContent } from './TeamMemberWorkspaceContent';
 import type { TeamMemberWorkspaceProps } from './TeamMemberWorkspaceTypes';
@@ -8,7 +8,6 @@ import type { TeamMemberWorkspaceProps } from './TeamMemberWorkspaceTypes';
 const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   project,
   selectedContact,
-  currentAgent,
   selectedProjectSession,
   isSelectedSessionActive,
   sessionSummaryPaneVisible,
@@ -19,66 +18,29 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   deletingSummaryId,
   messages,
   hasMoreMessages,
-  chatIsLoading,
-  chatIsStreaming,
-  chatIsStopping,
+  anchorMessageId,
+  anchorRequestKey,
+  onAnchorClear,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   aiModelConfigs,
   supportsReasoning,
   reasoningEnabled,
-  mcpEnabled,
-  enabledMcpIds,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
   onLoadMore,
-  onToggleTurnProcess,
   onClearSummaries,
   onRefreshSummaries,
   onCloseSummary,
   onDeleteSummary,
   onSend,
-  onGuide,
-  onStop,
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   onReasoningToggle,
-  onMcpEnabledChange,
-  onEnabledMcpIdsChange,
-  mergedCurrentTurnTasks,
-  workbarHistoryTasks,
-  taskHistoryOpen,
-  activeConversationTurnId,
-  workbarLoading,
-  workbarHistoryLoading,
-  workbarError,
-  workbarHistoryError,
-  workbarActionLoadingTaskId,
-  taskModalOpen,
-  taskModalMode,
-  taskModalTask,
-  taskModalError,
-  reviewRepairRunning,
-  reviewRepairPendingCount,
-  reviewRepairDisabled,
-  onRefreshWorkbarTasks,
-  onOpenWorkbarHistory,
-  onTaskHistoryOpenChange,
-  onRunReviewRepair,
-  onCompleteTask,
-  onDeleteTask,
-  onEditTask,
-  onCloseTaskModal,
-  onSubmitTaskModal,
-  activeUiPromptPanel,
-  onUiPromptSubmit,
-  onUiPromptCancel,
-  activeTaskReviewPanel,
-  onTaskReviewConfirm,
-  onTaskReviewCancel,
-  runtimeGuidancePendingCount = 0,
-  runtimeGuidanceAppliedCount = 0,
-  runtimeGuidanceLastAppliedAt = null,
-  runtimeGuidanceItems = [],
 }) => {
   const { supportsImages } = useMemo(
     () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
@@ -105,11 +67,10 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
           deletingSummaryId={deletingSummaryId}
           messages={messages}
           hasMoreMessages={hasMoreMessages}
-          chatIsLoading={chatIsLoading}
-          chatIsStreaming={chatIsStreaming}
-          chatIsStopping={chatIsStopping}
+          anchorMessageId={anchorMessageId}
+          anchorRequestKey={anchorRequestKey}
+          onAnchorClear={onAnchorClear}
           onLoadMore={onLoadMore}
-          onToggleTurnProcess={onToggleTurnProcess}
           onClearSummaries={onClearSummaries}
           onRefreshSummaries={onRefreshSummaries}
           onCloseSummary={onCloseSummary}
@@ -120,63 +81,24 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
       <TeamMemberWorkspaceComposer
         project={project}
         selectedContact={selectedContact}
-        currentAgent={currentAgent}
         selectedProjectSession={selectedProjectSession}
         isSelectedSessionActive={isSelectedSessionActive}
-        chatIsStreaming={chatIsStreaming}
-        chatIsStopping={chatIsStopping}
         selectedModelId={selectedModelId}
+        selectedModelName={selectedModelName}
+        selectedThinkingLevel={selectedThinkingLevel}
         aiModelConfigs={aiModelConfigs}
         supportsReasoning={supportsReasoning}
         reasoningEnabled={reasoningEnabled}
-        mcpEnabled={mcpEnabled}
-        enabledMcpIds={enabledMcpIds}
         availableRemoteConnections={availableRemoteConnections}
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
         onSend={onSend}
-        onGuide={onGuide}
-        onStop={onStop}
         onModelChange={onModelChange}
+        onModelNameChange={onModelNameChange}
+        onThinkingLevelChange={onThinkingLevelChange}
+        onModelRuntimeChange={onModelRuntimeChange}
         onReasoningToggle={onReasoningToggle}
-        onMcpEnabledChange={onMcpEnabledChange}
-        onEnabledMcpIdsChange={onEnabledMcpIdsChange}
-        mergedCurrentTurnTasks={mergedCurrentTurnTasks}
-        workbarHistoryTasks={workbarHistoryTasks}
-        taskHistoryOpen={taskHistoryOpen}
-        activeConversationTurnId={activeConversationTurnId}
-        workbarLoading={workbarLoading}
-        workbarHistoryLoading={workbarHistoryLoading}
-        workbarError={workbarError}
-        workbarHistoryError={workbarHistoryError}
-        workbarActionLoadingTaskId={workbarActionLoadingTaskId}
-        taskModalOpen={taskModalOpen}
-        taskModalMode={taskModalMode}
-        taskModalTask={taskModalTask}
-        taskModalError={taskModalError}
-        reviewRepairRunning={reviewRepairRunning}
-        reviewRepairPendingCount={reviewRepairPendingCount}
-        reviewRepairDisabled={reviewRepairDisabled}
-        onRefreshWorkbarTasks={onRefreshWorkbarTasks}
-        onOpenWorkbarHistory={onOpenWorkbarHistory}
-        onTaskHistoryOpenChange={onTaskHistoryOpenChange}
-        onRunReviewRepair={onRunReviewRepair}
-        onCompleteTask={onCompleteTask}
-        onDeleteTask={onDeleteTask}
-        onEditTask={onEditTask}
-        onCloseTaskModal={onCloseTaskModal}
-        onSubmitTaskModal={onSubmitTaskModal}
-        activeUiPromptPanel={activeUiPromptPanel}
-        onUiPromptSubmit={onUiPromptSubmit}
-        onUiPromptCancel={onUiPromptCancel}
-        activeTaskReviewPanel={activeTaskReviewPanel}
-        onTaskReviewConfirm={onTaskReviewConfirm}
-        onTaskReviewCancel={onTaskReviewCancel}
         supportedFileTypes={supportedFileTypes}
-        runtimeGuidancePendingCount={runtimeGuidancePendingCount}
-        runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
-        runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
-        runtimeGuidanceItems={runtimeGuidanceItems}
       />
     </div>
   );

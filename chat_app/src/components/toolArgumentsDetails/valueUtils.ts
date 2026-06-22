@@ -1,3 +1,6 @@
+import type { UiLocale } from '../../i18n/messages';
+import { formatToolPrimitive } from '../../i18n/toolText';
+
 export const asRecord = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -41,15 +44,10 @@ export const formatCardTitle = (value: string): string => (
     .join(' ')
 );
 
-export const formatPrimitive = (value: string | number | boolean | null): string => {
-  if (typeof value === 'boolean') {
-    return value ? 'yes' : 'no';
-  }
-  if (value === null) {
-    return 'null';
-  }
-  return String(value);
-};
+export const formatPrimitive = (
+  value: string | number | boolean | null,
+  locale: UiLocale = 'zh-CN',
+): string => formatToolPrimitive(value, locale);
 
 export const isUrlLike = (value: string): boolean => /^https?:\/\//i.test(value.trim());
 

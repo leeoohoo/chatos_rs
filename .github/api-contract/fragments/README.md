@@ -7,8 +7,6 @@ This directory stores domain-split OpenAPI fragments to reduce merge conflicts.
 - `chat_app_server_rs/`
   - `_meta.yaml`: shared OpenAPI metadata (`openapi`, `info`, `servers`, `components`)
   - `NN-*.yaml`: domain path fragments (`paths`)
-- `memory_server/`
-  - same structure as above
 
 ## Commands
 

@@ -1,7 +1,4 @@
 import type {
-  RuntimeGuidanceSubmitPayload,
-  RuntimeGuidanceSubmitResponse,
-  StopChatResponse,
   StreamChatAttachmentPayload,
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
@@ -11,7 +8,6 @@ import {
   ApiRequestError,
   buildParsedJsonErrorPayload,
 } from './shared';
-import type { ApiRequestFn } from './workspace';
 
 export interface StreamApiContext {
   baseUrl: string;
@@ -35,71 +31,6 @@ const buildStreamHttpError = async (response: Response): Promise<ApiRequestError
   });
 };
 
-export const streamChat = async (
-  context: StreamApiContext,
-  conversationId: string,
-  content: string,
-  modelConfig: StreamChatModelConfigPayload,
-  userId?: string,
-  attachments?: StreamChatAttachmentPayload[],
-  reasoningEnabled?: boolean,
-  options?: StreamChatOptions,
-): Promise<ReadableStream> => {
-  const useResponses = modelConfig?.supports_responses === true;
-  const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
-  const hasRemoteConnectionId = Boolean(
-    options && Object.prototype.hasOwnProperty.call(options, 'remoteConnectionId'),
-  );
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {}),
-    },
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      content,
-      user_id: userId,
-      attachments: attachments || [],
-      reasoning_enabled: reasoningEnabled,
-      turn_id: options?.turnId,
-      contact_agent_id: options?.contactAgentId || undefined,
-      remote_connection_id: hasRemoteConnectionId
-        ? (options?.remoteConnectionId ?? null)
-        : undefined,
-      project_id: options?.projectId || undefined,
-      project_root: options?.projectRoot || undefined,
-      mcp_enabled: options?.mcpEnabled,
-      enabled_mcp_ids: options?.enabledMcpIds || [],
-      skills_enabled: options?.skillsEnabled === true,
-      selected_skill_ids: options?.selectedSkillIds || [],
-      ai_model_config: {
-        provider: modelConfig.provider,
-        model_name: modelConfig.model_name,
-        temperature: modelConfig.temperature || 0.7,
-        thinking_level: modelConfig.thinking_level,
-        api_key: modelConfig.api_key,
-        base_url: modelConfig.base_url,
-        supports_images: modelConfig.supports_images === true,
-        supports_reasoning: modelConfig.supports_reasoning === true,
-        supports_responses: modelConfig.supports_responses === true,
-      },
-    }),
-  });
-  context.applyRefreshedAccessToken(response);
-
-  if (!response.ok) {
-    throw await buildStreamHttpError(response);
-  }
-
-  if (!response.body) {
-    throw new Error('Response body is null');
-  }
-
-  return response.body;
-};
-
 export const sendChatCommand = async (
   context: StreamApiContext,
   conversationId: string,
@@ -110,8 +41,7 @@ export const sendChatCommand = async (
   reasoningEnabled?: boolean,
   options?: StreamChatOptions,
 ): Promise<StreamChatCommandResponse> => {
-  const useResponses = modelConfig?.supports_responses === true;
-  const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/send`;
+  const url = `${context.baseUrl}/agent/chat/send`;
   const hasRemoteConnectionId = Boolean(
     options && Object.prototype.hasOwnProperty.call(options, 'remoteConnectionId'),
   );
@@ -136,20 +66,12 @@ export const sendChatCommand = async (
         : undefined,
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
-      mcp_enabled: options?.mcpEnabled,
-      enabled_mcp_ids: options?.enabledMcpIds || [],
-      skills_enabled: options?.skillsEnabled === true,
-      selected_skill_ids: options?.selectedSkillIds || [],
+      workspace_root: options?.workspaceRoot || undefined,
+      model_config_id: modelConfig.id,
       ai_model_config: {
-        provider: modelConfig.provider,
-        model_name: modelConfig.model_name,
         temperature: modelConfig.temperature || 0.7,
-        thinking_level: modelConfig.thinking_level,
-        api_key: modelConfig.api_key,
-        base_url: modelConfig.base_url,
-        supports_images: modelConfig.supports_images === true,
-        supports_reasoning: modelConfig.supports_reasoning === true,
-        supports_responses: modelConfig.supports_responses === true,
+        model_name: modelConfig.model_name,
+        thinking_level: modelConfig.thinking_level || null,
       },
     }),
   });
@@ -177,34 +99,4 @@ export const sendChatCommand = async (
       turn_id: options?.turnId || null,
     };
   }
-};
-
-export const stopChat = (
-  request: ApiRequestFn,
-  conversationId: string,
-  options?: { useResponses?: boolean }
-): Promise<StopChatResponse> => {
-  const useResponses = options?.useResponses === true;
-  const path = useResponses ? '/agent_v3/chat/stop' : '/chat/stop';
-  return request<StopChatResponse>(path, {
-    method: 'POST',
-    body: JSON.stringify({
-      conversation_id: conversationId,
-    }),
-  });
-};
-
-export const submitRuntimeGuidance = (
-  request: ApiRequestFn,
-  payload: RuntimeGuidanceSubmitPayload,
-): Promise<RuntimeGuidanceSubmitResponse> => {
-  return request<RuntimeGuidanceSubmitResponse>('/agent_v3/chat/guide', {
-    method: 'POST',
-    body: JSON.stringify({
-      conversation_id: payload.conversationId,
-      turn_id: payload.turnId,
-      content: payload.content,
-      project_id: payload.projectId,
-    }),
-  });
 };

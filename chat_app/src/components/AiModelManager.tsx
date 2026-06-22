@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AiModelConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
+import ManagerFormDialog from './ui/ManagerFormDialog';
 import AiModelList from './aiModelManager/AiModelList';
 import AiModelManagerForm from './aiModelManager/AiModelManagerForm';
 import {
   buildAiModelConfig,
   canSubmitAiModelForm,
+  canSubmitAiModelFormWithOptions,
   getDefaultAiModelFormData,
   toAiModelFormData,
 } from './aiModelManager/helpers';
@@ -19,11 +22,12 @@ type AiModelManagerWindow = Window & {
 };
 
 const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externalStore }) => {
+  const { t } = useI18n();
   const internalStoreData = useChatStoreResolved();
   const storeData = externalStore ? externalStore() : internalStoreData;
 
   const { aiModelConfigs, loadAiModelConfigs, updateAiModelConfig, deleteAiModelConfig } = storeData;
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<AiModelConfig | null>(null);
   const [formData, setFormData] = useState<AiModelFormData>(getDefaultAiModelFormData());
   const { confirm } = useDialogService();
@@ -42,12 +46,18 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
   const resetForm = () => {
     setFormData(getDefaultAiModelFormData());
     setEditingConfig(null);
-    setShowAddForm(false);
+    setIsFormDialogOpen(false);
+  };
+
+  const openCreateDialog = () => {
+    setEditingConfig(null);
+    setFormData(getDefaultAiModelFormData());
+    setIsFormDialogOpen(true);
   };
 
   const handleAddServer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmitAiModelForm(formData)) {
+    if (!canSubmitAiModelFormWithOptions(formData, { requireApiKey: true })) {
       return;
     }
 
@@ -61,23 +71,27 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
       return;
     }
 
-    await updateAiModelConfig(buildAiModelConfig(formData, editingConfig));
+    await updateAiModelConfig(buildAiModelConfig(formData, editingConfig), {
+      clearApiKey: formData.clear_api_key,
+    });
     resetForm();
   };
 
   const startEdit = (config: AiModelConfig) => {
     setEditingConfig(config);
     setFormData(toAiModelFormData(config));
-    setShowAddForm(true);
+    setIsFormDialogOpen(true);
   };
 
   const handleDeleteServer = async (id: string) => {
     const config = aiModelConfigs.find((c: AiModelConfig) => c.id === id);
     const confirmed = await confirm({
-      title: '删除确认',
-      message: `确定要删除AI模型配置 "${config?.name || 'Unknown'}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: t('aiModelManager.confirmDeleteTitle'),
+      message: t('aiModelManager.confirmDeleteMessage', {
+        name: config?.name || t('common.unknown'),
+      }),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -109,7 +123,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
           <div className="flex items-center space-x-3">
             <BrainIcon />
             <h2 className="text-xl font-semibold text-foreground">
-              AI 模型管理
+              {t('aiModelManager.title')}
             </h2>
           </div>
           <button
@@ -121,15 +135,13 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
         </div>
 
         <div className="p-6 overflow-y-auto overflow-x-hidden max-h-[calc(80vh-120px)]">
-          <AiModelManagerForm
-            showAddForm={showAddForm}
-            editingConfig={editingConfig}
-            formData={formData}
-            onCreate={() => setShowAddForm(true)}
-            onSubmit={editingConfig ? handleEditServer : handleAddServer}
-            onCancel={resetForm}
-            onFormDataChange={handleFormDataChange}
-          />
+          <button
+            type="button"
+            onClick={openCreateDialog}
+            className="mb-6 flex w-full items-center justify-center rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition-colors hover:border-blue-500 hover:text-blue-600"
+          >
+            {t('aiModelManager.form.createButton')}
+          </button>
 
           <div className="space-y-3">
             <AiModelList
@@ -141,6 +153,22 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
           </div>
         </div>
       </div>
+
+      <ManagerFormDialog
+        open={isFormDialogOpen}
+        title={editingConfig ? t('aiModelManager.form.title.edit') : t('aiModelManager.form.title.create')}
+        widthClassName="max-w-2xl"
+        onClose={resetForm}
+      >
+        <AiModelManagerForm
+          editingConfig={editingConfig}
+          formData={formData}
+          showTitle={false}
+          onSubmit={editingConfig ? handleEditServer : handleAddServer}
+          onCancel={resetForm}
+          onFormDataChange={handleFormDataChange}
+        />
+      </ManagerFormDialog>
 
     </div>
   );

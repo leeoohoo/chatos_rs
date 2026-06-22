@@ -1,7 +1,9 @@
 use serde_json::Value;
 
 use crate::core::ai_settings::effective_reasoning_enabled;
-use crate::utils::model_config::{normalize_provider, normalize_thinking_level};
+use crate::utils::model_config::{
+    default_base_url_for_provider, normalize_provider, normalize_thinking_level,
+};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedChatModelConfig {
@@ -100,8 +102,10 @@ pub fn resolve_chat_model_config(
     let base_url = model_cfg
         .get("base_url")
         .and_then(|value| value.as_str())
-        .unwrap_or(default_base_url)
-        .to_string();
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_base_url_for_provider(&provider, default_base_url));
 
     let system_prompt = model_cfg
         .get("system_prompt")
@@ -177,6 +181,20 @@ mod tests {
         );
 
         assert!(resolved.effective_reasoning);
+    }
+
+    #[test]
+    fn fills_provider_default_base_url_when_profile_base_url_is_blank() {
+        let resolved = resolve_chat_model_config(
+            &json!({"provider": "deepseek", "base_url": ""}),
+            "deepseek-chat",
+            "k",
+            "https://api.openai.com/v1",
+            None,
+            true,
+        );
+
+        assert_eq!(resolved.base_url, "https://api.deepseek.com");
     }
 
     #[test]

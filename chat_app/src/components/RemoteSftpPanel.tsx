@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
-import { apiClient as globalApiClient } from '../lib/api/client';
+import React, { useEffect, useState } from 'react';
+import { useI18n } from '../i18n/I18nProvider';
+import { useApiClient } from '../lib/api/ApiClientContext';
+import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { cn } from '../lib/utils';
 import RemoteVerificationModal from './remote/RemoteVerificationModal';
 import { LocalBrowserPane, RemoteBrowserPane } from './remoteSftp/SftpBrowsers';
@@ -21,12 +22,12 @@ interface RemoteSftpPanelProps {
 }
 
 const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
+  const { t } = useI18n();
   const {
     currentRemoteConnection,
     selectRemoteConnection,
   } = useChatStoreFromContext();
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const client = useApiClient();
   const { confirm, prompt } = useDialogService();
   const currentRemoteConnectionId = currentRemoteConnection?.id ?? null;
   const currentRemoteDefaultPath = currentRemoteConnection?.defaultRemotePath || '.';
@@ -48,6 +49,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
   } = useRemoteSftpVerification({
     setError,
     setMessage,
+    t,
   });
   const {
     localPath,
@@ -74,6 +76,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     setError,
     getVerificationCode,
     onSecondFactorRequired: handleSecondFactorRequired,
+    t,
   });
   const {
     transfering,
@@ -95,6 +98,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     setError,
     getVerificationCode,
     onSecondFactorRequired: handleSecondFactorRequired,
+    t,
   });
   const {
     remoteActionLoading,
@@ -114,6 +118,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     prompt,
     confirm,
     onSecondFactorRequired: handleSecondFactorRequired,
+    t,
   });
 
   useEffect(() => {
@@ -127,7 +132,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
   const handleUpload = async () => {
     if (!currentRemoteConnection) return;
     if (!selectedLocal) {
-      setError('请先在右侧选择一个本地文件或目录');
+      setError(t('remote.sftp.error.selectLocal'));
       return;
     }
     const target = joinRemotePath(remotePath, selectedLocal.name);
@@ -135,19 +140,19 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       direction: 'upload',
       localSource: selectedLocal.path,
       remoteSource: target,
-      fallbackSuccess: `上传成功: ${selectedLocal.name}`,
-      label: `上传 ${selectedLocal.name}`,
+      fallbackSuccess: t('remote.sftp.success.upload', { name: selectedLocal.name }),
+      label: `${t('remote.sftp.transfer.uploading')} ${selectedLocal.name}`,
     });
   };
 
   const handleDownload = async () => {
     if (!currentRemoteConnection) return;
     if (!selectedRemote) {
-      setError('请先在左侧选择一个远端文件或目录');
+      setError(t('remote.sftp.error.selectRemote'));
       return;
     }
     if (!localPath) {
-      setError('请先在右侧进入一个本地目录');
+      setError(t('remote.sftp.error.enterLocalDir'));
       return;
     }
     const target = joinLocalPath(localPath, selectedRemote.name);
@@ -155,15 +160,15 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       direction: 'download',
       localSource: target,
       remoteSource: selectedRemote.path,
-      fallbackSuccess: `下载成功: ${selectedRemote.name}`,
-      label: `下载 ${selectedRemote.name}`,
+      fallbackSuccess: t('remote.sftp.success.download', { name: selectedRemote.name }),
+      label: `${t('remote.sftp.transfer.downloading')} ${selectedRemote.name}`,
     });
   };
 
   if (!currentRemoteConnection) {
     return (
       <div className={cn('flex h-full items-center justify-center text-muted-foreground', className)}>
-        请选择一个远端连接
+        {t('remote.common.chooseConnection')}
       </div>
     );
   }
@@ -172,7 +177,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     <div className={cn('flex h-full flex-col bg-card', className)}>
       <div className="flex items-center justify-between border-b border-border px-4 py-2 gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground truncate">SFTP · {currentRemoteConnection.name}</div>
+          <div className="text-sm font-medium text-foreground truncate">{t('remote.sftp.title', { name: currentRemoteConnection.name })}</div>
           <div className="text-xs text-muted-foreground truncate">
             {currentRemoteConnection.username}@{currentRemoteConnection.host}:{currentRemoteConnection.port}
           </div>
@@ -184,7 +189,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
             disabled={remoteActionLoading}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            上传 →
+            {t('remote.sftp.upload')}
           </button>
           <button
             type="button"
@@ -192,14 +197,14 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
             disabled={remoteActionLoading}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            ← 下载
+            {t('remote.sftp.download')}
           </button>
           <button
             type="button"
             onClick={() => void selectRemoteConnection(currentRemoteConnection.id)}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
           >
-            返回终端
+            {t('remote.sftp.backToTerminal')}
           </button>
         </div>
       </div>

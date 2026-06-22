@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { GitFileDiff } from '../../../types';
 import { diffLineView } from './gitBranchButtonShared';
@@ -17,6 +18,7 @@ export const DiffDialog: React.FC<{
   error,
   onClose,
 }) => {
+  const { t } = useI18n();
   if (!open) return null;
 
   const patch = fileDiff?.patch.trimEnd() || '';
@@ -24,10 +26,10 @@ export const DiffDialog: React.FC<{
   const addedCount = lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length;
   const deletedCount = lines.filter((line) => line.startsWith('-') && !line.startsWith('---')).length;
   const modeLabel = fileDiff?.target
-    ? `对比 ${fileDiff.target}`
+    ? t('git.diff.compareMode', { target: fileDiff.target })
     : fileDiff?.staged
-      ? 'Staged Diff'
-      : 'Worktree Diff';
+      ? t('git.stagedDiff')
+      : t('git.worktreeDiff');
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
@@ -40,15 +42,15 @@ export const DiffDialog: React.FC<{
                   {modeLabel}
                 </span>
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-600">
-                  新增 {addedCount}
+                  {t('git.diff.added', { count: addedCount })}
                 </span>
                 <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-600">
-                  删除 {deletedCount}
+                  {t('git.diff.deleted', { count: deletedCount })}
                 </span>
-                {loading && <span>加载中...</span>}
+                {loading && <span>{t('git.loading')}</span>}
               </div>
-              <div className="mt-2 truncate font-mono text-sm font-semibold text-foreground" title={fileDiff?.path || '文件 Diff'}>
-                {fileDiff?.path || '文件 Diff'}
+              <div className="mt-2 truncate font-mono text-sm font-semibold text-foreground" title={fileDiff?.path || t('git.diff.fileTitle')}>
+                {fileDiff?.path || t('git.diff.fileTitle')}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -58,14 +60,14 @@ export const DiffDialog: React.FC<{
                 onClick={() => { if (fileDiff?.patch) void navigator.clipboard?.writeText(fileDiff.patch); }}
                 className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                复制 Diff
+                {t('git.diff.copy')}
               </button>
               <button
                 type="button"
                 onClick={onClose}
                 className="h-8 rounded border border-border px-3 text-xs hover:bg-accent"
               >
-                关闭
+                {t('git.close')}
               </button>
             </div>
           </div>
@@ -83,12 +85,12 @@ export const DiffDialog: React.FC<{
               {error}
             </div>
           ) : lines.length === 0 ? (
-            <div className="p-5 text-sm text-muted-foreground">没有 diff 内容</div>
+            <div className="p-5 text-sm text-muted-foreground">{t('git.diff.noContent')}</div>
           ) : (
             <div className="h-full overflow-auto overscroll-contain">
               <div className="min-w-max py-3 font-mono text-[12px] leading-6">
                 {lines.map((line, index) => {
-                  const view = diffLineView(line);
+                  const view = diffLineView(line, t);
                   return (
                     <div
                       key={`${index}:${line}`}
@@ -107,7 +109,7 @@ export const DiffDialog: React.FC<{
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-border bg-background px-4 py-2 text-[11px] text-muted-foreground">
-          <span>左侧色块标识类型：绿色新增，红色删除，黄色是变更位置。</span>
+          <span>{t('git.diff.legend')}</span>
           {fileDiff?.target && <span className="truncate">Target: {fileDiff.target}</span>}
         </div>
       </div>

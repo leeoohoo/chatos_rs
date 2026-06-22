@@ -26,6 +26,21 @@ export interface MeResponse {
   role?: string;
 }
 
+export interface TaskRunnerAgentAccountResponse {
+  id: string;
+  username: string;
+  display_name?: string | null;
+  owner_user_id?: string;
+  owner_username?: string;
+  enabled?: boolean;
+}
+
+export interface WebSocketTicketResponse {
+  ticket?: string;
+  expires_in?: number;
+  expires_at?: string;
+}
+
 export interface UserSettingsResponse {
   user_id?: string;
   settings?: Record<string, unknown>;
@@ -35,9 +50,4 @@ export interface UserSettingsResponse {
 export interface UserSettingsUpdatePayload {
   user_id: string;
   settings: Record<string, unknown>;
-}
-
-export interface StopChatResponse {
-  success?: boolean;
-  message?: string;
 }

@@ -23,6 +23,9 @@ export class RealtimeClient {
   private baseUrl: string;
   private accessToken: string | null = null;
   private socket: WebSocket | null = null;
+  private issueWebSocketTicket: (() => Promise<string>) | null = null;
+  private connectInFlight: Promise<void> | null = null;
+  private connectAttemptId = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private manuallyClosed = false;
@@ -40,8 +43,9 @@ export class RealtimeClient {
   private lastEventAt: string | null = null;
   private recentEvents: RealtimeDebugEventRecord[] = [];
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, issueWebSocketTicket?: (() => Promise<string>) | null) {
     this.baseUrl = baseUrl;
+    this.issueWebSocketTicket = issueWebSocketTicket || null;
   }
 
   getConnectionState(): RealtimeConnectionState {
@@ -53,6 +57,13 @@ export class RealtimeClient {
       return;
     }
     this.baseUrl = baseUrl;
+    if (this.accessToken) {
+      this.reconnect();
+    }
+  }
+
+  setWebSocketTicketFactory(issueWebSocketTicket?: (() => Promise<string>) | null): void {
+    this.issueWebSocketTicket = issueWebSocketTicket || null;
     if (this.accessToken) {
       this.reconnect();
     }
@@ -176,91 +187,24 @@ export class RealtimeClient {
   }
 
   private connect(): void {
-    if (!this.accessToken) {
+    if (!this.accessToken || !this.issueWebSocketTicket) {
       return;
     }
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+    if (
+      this.socket
+      && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+    if (this.connectInFlight) {
       return;
     }
 
     this.manuallyClosed = false;
     this.setState('connecting');
 
-    const socket = new WebSocket(buildWsUrl(this.baseUrl, '/realtime/ws', this.accessToken));
-    this.socket = socket;
-
-    socket.onopen = () => {
-      if (this.socket !== socket) {
-        return;
-      }
-      this.reconnectAttempt = 0;
-      this.lastSentTopicKeys = new Set();
-      this.setState('connected');
-      this.syncTopics(true);
-    };
-
-    socket.onmessage = (message) => {
-      if (this.socket !== socket) {
-        return;
-      }
-      try {
-        const parsed = JSON.parse(String(message.data || '')) as
-          | RealtimeEventEnvelope
-          | RealtimeAckMessage
-          | RealtimeErrorMessage
-          | { type?: string; ts?: string };
-        if (parsed && parsed.type === 'event') {
-          this.recordDebugEvent(parsed as RealtimeEventEnvelope);
-          this.notifyDebugListeners();
-          this.eventListeners.forEach((listener) => {
-            try {
-              listener(parsed as RealtimeEventEnvelope);
-            } catch (error) {
-              console.error('Realtime listener failed:', error);
-            }
-          });
-          return;
-        }
-        if (parsed && parsed.type === 'ack') {
-          this.lastAck = parsed as RealtimeAckMessage;
-          this.lastError = null;
-          debugLog('[realtime] ack', this.lastAck);
-          this.notifyDebugListeners();
-          return;
-        }
-        if (parsed && parsed.type === 'error') {
-          this.lastError = parsed as RealtimeErrorMessage;
-          debugLog('[realtime] error', this.lastError);
-          this.notifyDebugListeners();
-          return;
-        }
-        if (parsed && parsed.type === 'pong') {
-          this.lastPongTs = typeof parsed.ts === 'string' ? parsed.ts : null;
-          this.notifyDebugListeners();
-        }
-      } catch (error) {
-        console.error('Failed to parse realtime event:', error);
-      }
-    };
-
-    socket.onerror = () => {
-      if (this.socket !== socket) {
-        return;
-      }
-      this.setState('error');
-    };
-
-    socket.onclose = () => {
-      if (this.socket === socket) {
-        this.socket = null;
-      }
-      if (this.manuallyClosed || !this.accessToken) {
-        this.setState(this.accessToken ? 'disconnected' : 'idle');
-        return;
-      }
-      this.setState('disconnected');
-      this.scheduleReconnect();
-    };
+    const attemptId = this.nextConnectAttemptId();
+    this.connectInFlight = this.openSocket(attemptId);
   }
 
   private reconnect(): void {
@@ -271,6 +215,7 @@ export class RealtimeClient {
 
   private close(manual: boolean): void {
     this.manuallyClosed = manual;
+    this.cancelPendingConnect();
     if (this.socket) {
       const socket = this.socket;
       this.socket = null;
@@ -428,6 +373,125 @@ export class RealtimeClient {
       }
     });
     this.notifyDebugListeners();
+  }
+
+  private nextConnectAttemptId(): number {
+    this.connectAttemptId += 1;
+    return this.connectAttemptId;
+  }
+
+  private cancelPendingConnect(): void {
+    this.connectAttemptId += 1;
+    this.connectInFlight = null;
+  }
+
+  private isCurrentConnectAttempt(attemptId: number): boolean {
+    return this.connectAttemptId === attemptId;
+  }
+
+  private async openSocket(attemptId: number): Promise<void> {
+    try {
+      const ticket = await this.issueWebSocketTicket?.();
+      if (!ticket?.trim()) {
+        throw new Error('缺少 WebSocket 连接票据');
+      }
+      if (!this.isCurrentConnectAttempt(attemptId) || !this.accessToken || this.manuallyClosed) {
+        return;
+      }
+
+      const socket = new WebSocket(buildWsUrl(this.baseUrl, '/realtime/ws', ticket));
+      this.socket = socket;
+
+      socket.onopen = () => {
+        if (this.socket !== socket) {
+          return;
+        }
+        this.reconnectAttempt = 0;
+        this.lastSentTopicKeys = new Set();
+        this.setState('connected');
+        this.syncTopics(true);
+      };
+
+      socket.onmessage = (message) => {
+        if (this.socket !== socket) {
+          return;
+        }
+        try {
+          const parsed = JSON.parse(String(message.data || '')) as
+            | RealtimeEventEnvelope
+            | RealtimeAckMessage
+            | RealtimeErrorMessage
+            | { type?: string; ts?: string };
+          if (parsed && parsed.type === 'event') {
+            this.recordDebugEvent(parsed as RealtimeEventEnvelope);
+            this.notifyDebugListeners();
+            this.eventListeners.forEach((listener) => {
+              try {
+                listener(parsed as RealtimeEventEnvelope);
+              } catch (error) {
+                console.error('Realtime listener failed:', error);
+              }
+            });
+            return;
+          }
+          if (parsed && parsed.type === 'ack') {
+            this.lastAck = parsed as RealtimeAckMessage;
+            this.lastError = null;
+            debugLog('[realtime] ack', this.lastAck);
+            this.notifyDebugListeners();
+            return;
+          }
+          if (parsed && parsed.type === 'error') {
+            this.lastError = parsed as RealtimeErrorMessage;
+            debugLog('[realtime] error', this.lastError);
+            this.notifyDebugListeners();
+            return;
+          }
+          if (parsed && parsed.type === 'pong') {
+            this.lastPongTs = typeof parsed.ts === 'string' ? parsed.ts : null;
+            this.notifyDebugListeners();
+          }
+        } catch (error) {
+          console.error('Failed to parse realtime event:', error);
+        }
+      };
+
+      socket.onerror = () => {
+        if (this.socket !== socket) {
+          return;
+        }
+        this.setState('error');
+      };
+
+      socket.onclose = () => {
+        if (this.socket === socket) {
+          this.socket = null;
+        }
+        if (this.manuallyClosed || !this.accessToken) {
+          this.setState(this.accessToken ? 'disconnected' : 'idle');
+          return;
+        }
+        this.setState('disconnected');
+        this.scheduleReconnect();
+      };
+    } catch (error) {
+      if (!this.isCurrentConnectAttempt(attemptId) || this.manuallyClosed || !this.accessToken) {
+        return;
+      }
+      console.error('Failed to issue realtime websocket ticket:', error);
+      this.lastError = {
+        type: 'error',
+        code: 'ws_ticket_failed',
+        message: error instanceof Error ? error.message : 'WebSocket 票据签发失败',
+      };
+      this.notifyDebugListeners();
+      this.setState('error');
+      this.scheduleReconnect();
+    } finally {
+      if (this.isCurrentConnectAttempt(attemptId)) {
+        this.connectInFlight = null;
+      }
+    }
   }
 
   private notifyDebugListeners(): void {

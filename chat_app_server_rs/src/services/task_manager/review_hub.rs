@@ -9,14 +9,16 @@ use crate::services::realtime::{publish_task_board_updated, resolve_conversation
 
 use super::normalizer::{normalize_task_drafts, trimmed_non_empty};
 use super::types::{
-    TaskCreateReviewPayload, TaskDraft, TaskReviewAction, TaskReviewDecision, REVIEW_NOT_FOUND_ERR,
-    REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT,
+    TaskCreateReviewPayload, TaskDraft, TaskReviewDecision, REVIEW_TIMEOUT_ERR,
+    REVIEW_TIMEOUT_MS_DEFAULT,
 };
+#[cfg(test)]
+use super::types::{TaskReviewAction, REVIEW_NOT_FOUND_ERR};
 
 #[derive(Debug)]
 struct PendingReviewEntry {
-    payload: TaskCreateReviewPayload,
-    sender: oneshot::Sender<TaskReviewDecision>,
+    _payload: TaskCreateReviewPayload,
+    _sender: oneshot::Sender<TaskReviewDecision>,
 }
 
 #[derive(Debug, Default)]
@@ -32,10 +34,17 @@ impl TaskReviewHub {
         let review_id = payload.review_id.clone();
         let (sender, receiver) = oneshot::channel();
         let mut pending = self.pending.lock().await;
-        pending.insert(review_id, PendingReviewEntry { payload, sender });
+        pending.insert(
+            review_id,
+            PendingReviewEntry {
+                _payload: payload,
+                _sender: sender,
+            },
+        );
         receiver
     }
 
+    #[cfg(test)]
     async fn resolve(
         &self,
         review_id: &str,
@@ -51,7 +60,7 @@ impl TaskReviewHub {
 
         let resolved_tasks = match action {
             TaskReviewAction::Confirm => {
-                let source_tasks = tasks.unwrap_or_else(|| entry.payload.draft_tasks.clone());
+                let source_tasks = tasks.unwrap_or_else(|| entry._payload.draft_tasks.clone());
                 let normalized = normalize_task_drafts(source_tasks)?;
                 if normalized.is_empty() {
                     return Err("tasks is required for confirm action".to_string());
@@ -62,7 +71,7 @@ impl TaskReviewHub {
         };
 
         entry
-            .sender
+            ._sender
             .send(TaskReviewDecision {
                 action,
                 tasks: resolved_tasks,
@@ -70,33 +79,7 @@ impl TaskReviewHub {
             })
             .map_err(|_| "review_listener_closed".to_string())?;
 
-        Ok(entry.payload)
-    }
-
-    async fn payload(&self, review_id: &str) -> Option<TaskCreateReviewPayload> {
-        let pending = self.pending.lock().await;
-        pending.get(review_id).map(|entry| entry.payload.clone())
-    }
-
-    async fn payloads_for_conversation(
-        &self,
-        conversation_id: &str,
-        limit: usize,
-    ) -> Vec<TaskCreateReviewPayload> {
-        let pending = self.pending.lock().await;
-        let mut payloads = pending
-            .values()
-            .filter_map(|entry| {
-                if entry.payload.conversation_id == conversation_id {
-                    Some(entry.payload.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        payloads.sort_by(|left, right| left.review_id.cmp(&right.review_id));
-        payloads.truncate(limit);
-        payloads
+        Ok(entry._payload)
     }
 
     async fn remove(&self, review_id: &str) {
@@ -161,6 +144,7 @@ pub async fn wait_for_task_review_decision(
     }
 }
 
+#[cfg(test)]
 pub async fn submit_task_review_decision(
     review_id: &str,
     action: TaskReviewAction,
@@ -196,6 +180,7 @@ async fn publish_review_required_event(payload: &TaskCreateReviewPayload) {
     );
 }
 
+#[cfg(test)]
 async fn publish_review_resolved_event(
     payload: &TaskCreateReviewPayload,
     action: TaskReviewAction,
@@ -220,23 +205,4 @@ async fn publish_review_resolved_event(
         None,
         None,
     );
-}
-
-pub async fn get_task_review_payload(review_id: &str) -> Option<TaskCreateReviewPayload> {
-    let review_id = trimmed_non_empty(review_id)?;
-    TASK_REVIEW_HUB.payload(review_id).await
-}
-
-pub async fn list_task_review_payloads_for_conversation(
-    conversation_id: &str,
-    limit: usize,
-) -> Vec<TaskCreateReviewPayload> {
-    let conversation_id = match trimmed_non_empty(conversation_id) {
-        Some(value) => value,
-        None => return Vec::new(),
-    };
-    let limit = limit.clamp(1, 200);
-    TASK_REVIEW_HUB
-        .payloads_for_conversation(conversation_id, limit)
-        .await
 }

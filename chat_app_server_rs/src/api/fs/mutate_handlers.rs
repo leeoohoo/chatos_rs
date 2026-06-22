@@ -2,6 +2,8 @@
 mod mutate_handlers_create;
 #[path = "mutate_handlers_delete.rs"]
 mod mutate_handlers_delete;
+#[path = "mutate_handlers_git.rs"]
+mod mutate_handlers_git;
 #[path = "mutate_handlers_move.rs"]
 mod mutate_handlers_move;
 
@@ -11,8 +13,12 @@ use serde_json::{json, Value};
 
 use super::policy::FsPolicyError;
 
+pub(super) use self::mutate_handlers_create::write_file;
 pub(super) use self::mutate_handlers_create::{create_dir, create_file};
 pub(super) use self::mutate_handlers_delete::delete_entry;
+pub(super) use self::mutate_handlers_git::{
+    append_gitignore_entry, discard_git_changes, open_path_externally,
+};
 pub(super) use self::mutate_handlers_move::move_entry;
 
 fn policy_error_tuple(err: FsPolicyError) -> (StatusCode, Json<Value>) {

@@ -1,4 +1,5 @@
 import { buildQuery } from './shared';
+import { getMcpConfigs } from './configs';
 import type {
   AiModelConfigResponse,
   ConversationAssistantResponse,
@@ -8,7 +9,6 @@ import type {
   ConversationMcpServersResponse,
   ConversationMessagePayload,
   McpConfigResourceResponse,
-  McpConfigResponse,
   SessionResponse,
   SessionMessageResponse,
 } from './types';
@@ -67,7 +67,6 @@ export const getAssistant = async (
           model_config: {
             model_name: defaultConfig.model_name,
             temperature: 0.7,
-            api_key: defaultConfig.api_key,
             base_url: defaultConfig.base_url,
           },
         },
@@ -97,7 +96,7 @@ export const getMcpServers = async (
   _conversationId?: string,
 ): Promise<ConversationMcpServersResponse> => {
   try {
-    const mcpConfigs = await request<McpConfigResponse[]>('/mcp-configs');
+    const mcpConfigs = await getMcpConfigs(request);
     const enabledServers = mcpConfigs
       .filter((config) => config.enabled)
       .map((config) => ({

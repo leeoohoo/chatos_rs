@@ -1,0 +1,20 @@
+[workspace]
+members = [
+  "chat_app_server_rs",
+  "crates/chatos_builtin_tools",
+  "crates/chatos_ai_runtime",
+  "crates/memory_engine_sdk",
+  "crates/chatos_mcp_runtime",
+  "task_runner_service/backend"
+]
+exclude = [
+  "memory_engine/backend",
+  "memory_engine/sdk"
+]
+
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

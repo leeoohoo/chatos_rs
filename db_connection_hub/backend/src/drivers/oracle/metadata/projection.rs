@@ -2,6 +2,7 @@ use crate::domain::metadata::{
     MetadataNode, MetadataNodeType, ObjectColumn, ObjectConstraint, ObjectDetailResponse,
     ObjectIndex, ObjectStatsResponse,
 };
+use crate::drivers::metadata_common;
 
 #[derive(Debug, Clone)]
 pub struct ParsedDetailNode {
@@ -87,19 +88,35 @@ pub fn table_projection_children(database: &str, schema: &str, table: &str) -> V
 
     vec![
         MetadataNode {
-            id: format!("index:{database}:{schema}:{normalized}:{index_name}"),
-            parent_id: format!("table:{database}:{schema}:{normalized}"),
+            id: metadata_common::make_node_id(
+                "index",
+                &[database, schema, &normalized, &index_name],
+            ),
+            parent_id: metadata_common::make_node_id("table", &[database, schema, &normalized]),
             node_type: MetadataNodeType::Index,
             display_name: index_name.clone(),
-            path: format!("{database}.{schema}.{normalized}.{index_name}"),
+            path: metadata_common::make_qualified_path(&[
+                database,
+                schema,
+                &normalized,
+                &index_name,
+            ]),
             has_children: false,
         },
         MetadataNode {
-            id: format!("trigger:{database}:{schema}:{normalized}:{trigger_name}"),
-            parent_id: format!("table:{database}:{schema}:{normalized}"),
+            id: metadata_common::make_node_id(
+                "trigger",
+                &[database, schema, &normalized, &trigger_name],
+            ),
+            parent_id: metadata_common::make_node_id("table", &[database, schema, &normalized]),
             node_type: MetadataNodeType::Trigger,
             display_name: trigger_name.clone(),
-            path: format!("{database}.{schema}.{normalized}.{trigger_name}"),
+            path: metadata_common::make_qualified_path(&[
+                database,
+                schema,
+                &normalized,
+                &trigger_name,
+            ]),
             has_children: false,
         },
     ]
@@ -127,30 +144,42 @@ pub fn projected_object_stats(database: &str, schema_count: u64) -> ObjectStatsR
 }
 
 pub fn parse_detail_node(node_id: &str) -> Option<ParsedDetailNode> {
-    let mut parts = node_id.split(':');
-    let prefix = parts.next()?;
-    let _database = parts.next()?;
-    let schema = parts.next()?.to_string();
-
-    match prefix {
-        "table" | "view" | "materialized_view" | "sequence" | "procedure" | "function"
-        | "synonym" | "package" => Some(ParsedDetailNode {
-            node_type: map_node_type(prefix)?,
-            schema,
-            object_name: parts.next()?.to_string(),
-            parent_table: None,
-        }),
-        "index" | "trigger" => {
-            let parent_table = parts.next()?.to_string();
-            Some(ParsedDetailNode {
+    for prefix in [
+        "table",
+        "view",
+        "materialized_view",
+        "sequence",
+        "procedure",
+        "function",
+        "synonym",
+        "package",
+    ] {
+        if let Some([_, schema, object_name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
+        {
+            return Some(ParsedDetailNode {
                 node_type: map_node_type(prefix)?,
                 schema,
-                object_name: parts.next()?.to_string(),
-                parent_table: Some(parent_table),
-            })
+                object_name,
+                parent_table: None,
+            });
         }
-        _ => None,
     }
+
+    for prefix in ["index", "trigger"] {
+        if let Some([_, schema, parent_table, object_name]) =
+            metadata_common::parse_prefixed_parts(node_id, prefix)
+        {
+            return Some(ParsedDetailNode {
+                node_type: map_node_type(prefix)?,
+                schema,
+                object_name,
+                parent_table: Some(parent_table),
+            });
+        }
+    }
+
+    None
 }
 
 pub fn build_projected_detail(node_id: &str, parsed: &ParsedDetailNode) -> ObjectDetailResponse {
@@ -266,31 +295,17 @@ fn make_schema_child(
     has_children: bool,
 ) -> MetadataNode {
     MetadataNode {
-        id: format!("{prefix}:{database}:{schema}:{name}"),
-        parent_id: format!("schema:{database}:{schema}"),
+        id: metadata_common::make_node_id(prefix, &[database, schema, name]),
+        parent_id: metadata_common::make_node_id("schema", &[database, schema]),
         node_type,
         display_name: name.to_string(),
-        path: format!("{database}.{schema}.{name}"),
+        path: metadata_common::make_qualified_path(&[database, schema, name]),
         has_children,
     }
 }
 
 fn map_node_type(prefix: &str) -> Option<MetadataNodeType> {
-    let node_type = match prefix {
-        "table" => MetadataNodeType::Table,
-        "view" => MetadataNodeType::View,
-        "materialized_view" => MetadataNodeType::MaterializedView,
-        "sequence" => MetadataNodeType::Sequence,
-        "procedure" => MetadataNodeType::Procedure,
-        "function" => MetadataNodeType::Function,
-        "synonym" => MetadataNodeType::Synonym,
-        "package" => MetadataNodeType::Package,
-        "index" => MetadataNodeType::Index,
-        "trigger" => MetadataNodeType::Trigger,
-        _ => return None,
-    };
-
-    Some(node_type)
+    metadata_common::node_type_from_prefix(prefix)
 }
 
 fn build_table_detail(

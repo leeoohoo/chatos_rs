@@ -10,13 +10,24 @@ data/
 logs/
 *.log
 .env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 .local/
 .cache/
+.vite/
 
 .DS_Store
 *.pyc
 *.pyo
 __pycache__/
+*.tsbuildinfo
 
 *.sqlite3
 *.sqlite3-shm
@@ -36,3 +47,9 @@ __pycache__/
 /chat_app_server_rs/docs
 /chat_app_server_rs/docs/*
 /docs/
+/memory_engine_ext/*
+/image.png
+/image copy.png
+/image copy 2.png
+/rustup-init.exe
+/.chatos

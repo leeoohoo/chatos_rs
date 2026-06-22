@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 
-import { apiClient } from '../lib/api/client';
+import { useI18n } from '../i18n/I18nProvider';
+import { useApiClient } from '../lib/api/ApiClientContext';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { McpConfig } from '../types';
 import { useDialogService } from './ui/DialogProvider';
+import ManagerFormDialog from './ui/ManagerFormDialog';
 import {
   getDefaultMcpFormData,
   getMcpConfigArgsInput,
@@ -24,13 +26,15 @@ type McpManagerWindow = Window & {
 };
 
 const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }) => {
+  const { t } = useI18n();
+  const apiClient = useApiClient();
   const internalStoreData = useChatStoreResolved();
   const storeData = externalStore ? externalStore() : internalStoreData;
 
   const { mcpConfigs, updateMcpConfig, deleteMcpConfig, loadMcpConfigs } = storeData;
   const { confirm } = useDialogService();
 
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<McpConfig | null>(null);
   const [formData, setFormData] = useState<McpFormData>(getDefaultMcpFormData());
 
@@ -52,10 +56,19 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const resetForm = () => {
     setFormData(getDefaultMcpFormData());
     setEditingConfig(null);
-    setShowAddForm(false);
+    setIsFormDialogOpen(false);
     setDynamicConfig({});
     setConfigError(null);
     setConfigLoading(false);
+  };
+
+  const openCreateDialog = () => {
+    setEditingConfig(null);
+    setFormData(getDefaultMcpFormData());
+    setDynamicConfig({});
+    setConfigError(null);
+    setConfigLoading(false);
+    setIsFormDialogOpen(true);
   };
 
   const handleAddServer = async (e: React.FormEvent) => {
@@ -114,7 +127,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
       cwd: config.cwd || '',
       argsInput: getMcpConfigArgsInput(config),
     });
-    setShowAddForm(true);
+    setIsFormDialogOpen(true);
     setDynamicConfig(normalizeDynamicConfig(config.config));
     setConfigError(null);
     setConfigLoading(false);
@@ -126,10 +139,12 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
       return;
     }
     const confirmed = await confirm({
-      title: '删除 MCP 服务器',
-      message: `确定要删除服务器 "${config?.name || 'Unknown'}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: t('mcpManager.confirmDeleteTitle'),
+      message: t('mcpManager.confirmDeleteMessage', {
+        name: config?.name || t('common.unknown'),
+      }),
+      confirmText: t('mcpManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -159,10 +174,10 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
       if (response.success && response.config) {
         setDynamicConfig(normalizeDynamicConfig(response.config));
       } else {
-        setConfigError('无法获取服务器可配置参数');
+        setConfigError(t('mcpManager.configFetchFailed'));
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : '获取配置失败';
+      const message = error instanceof Error ? error.message : t('mcpManager.configFetchError');
       setConfigError(message);
     } finally {
       setConfigLoading(false);
@@ -191,32 +206,25 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center space-x-3">
             <ServerIcon />
-            <h2 className="text-lg font-semibold text-foreground">MCP 服务器管理</h2>
+            <h2 className="text-lg font-semibold text-foreground">{t('mcpManager.title')}</h2>
           </div>
           <button
             onClick={onClose}
             className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-            title="关闭"
+            title={t('mcpManager.close')}
           >
             <XMarkIcon />
           </button>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto overflow-x-hidden">
-          <McpManagerForm
-            showAddForm={showAddForm}
-            editingConfig={editingConfig}
-            formData={formData}
-            dynamicConfig={dynamicConfig}
-            configLoading={configLoading}
-            configError={configError}
-            onCreate={() => setShowAddForm(true)}
-            onSubmit={editingConfig ? handleEditServer : handleAddServer}
-            onCancel={resetForm}
-            onFormDataChange={handleFormDataChange}
-            onFetchDynamicConfig={handleFetchDynamicConfig}
-            onDynamicConfigChange={handleDynamicConfigChange}
-          />
+          <button
+            type="button"
+            onClick={openCreateDialog}
+            className="mb-6 flex w-full items-center justify-center rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition-colors hover:border-blue-500 hover:text-blue-600"
+          >
+            + {t('mcpManager.form.createButton')}
+          </button>
 
           <div className="space-y-3">
             <McpServerList
@@ -227,6 +235,27 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
           </div>
         </div>
       </div>
+
+      <ManagerFormDialog
+        open={isFormDialogOpen}
+        title={editingConfig ? t('mcpManager.form.title.edit') : t('mcpManager.form.title.create')}
+        widthClassName="max-w-2xl"
+        onClose={resetForm}
+      >
+        <McpManagerForm
+          editingConfig={editingConfig}
+          formData={formData}
+          dynamicConfig={dynamicConfig}
+          configLoading={configLoading}
+          configError={configError}
+          showTitle={false}
+          onSubmit={editingConfig ? handleEditServer : handleAddServer}
+          onCancel={resetForm}
+          onFormDataChange={handleFormDataChange}
+          onFetchDynamicConfig={handleFetchDynamicConfig}
+          onDynamicConfigChange={handleDynamicConfigChange}
+        />
+      </ManagerFormDialog>
     </>
   );
 };

@@ -6,6 +6,7 @@ import {
   isPrimitive,
   truncateText,
 } from './valueUtils';
+import { UI_MESSAGES, type UiLocale } from '../../i18n/messages';
 
 const renderCardHeader = (title: string, meta?: string) => (
   <div className="tool-card-header">
@@ -14,17 +15,31 @@ const renderCardHeader = (title: string, meta?: string) => (
   </div>
 );
 
+const formatMessage = (
+  template: string,
+  params: Record<string, string | number>,
+) => template.replace(/\{(\w+)\}/g, (_match, key: string) => (
+  Object.prototype.hasOwnProperty.call(params, key) ? String(params[key]) : `{${key}}`
+));
+
+const formatCount = (locale: UiLocale, key: string, count: number): string => {
+  const dictionary = UI_MESSAGES[locale] || UI_MESSAGES['zh-CN'];
+  const fallback = UI_MESSAGES['zh-CN'];
+  return formatMessage(dictionary[key] || fallback[key] || '{count}', { count });
+};
+
 export const renderRowsCard = (
   title: string,
   rows: Array<{ key: string; value: string }>,
   fullWidth: boolean = false,
+  locale: UiLocale = 'zh-CN',
 ) => {
   const filtered = rows.filter((row) => row.value.trim().length > 0);
   if (filtered.length === 0) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title, `${filtered.length} 项`)}
+      {renderCardHeader(title, formatCount(locale, 'toolCard.count.rows', filtered.length))}
       <div className="tool-detail-rows">
         {filtered.map((row) => (
           <div key={`${title}-${row.key}`} className="tool-detail-row">
@@ -54,13 +69,14 @@ export const renderStringListCard = (
   values: string[],
   linkify: boolean = false,
   fullWidth: boolean = false,
+  locale: UiLocale = 'zh-CN',
 ) => {
   const filtered = values.map((item) => item.trim()).filter(Boolean);
   if (filtered.length === 0) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title, `${filtered.length} 项`)}
+      {renderCardHeader(title, formatCount(locale, 'toolCard.count.items', filtered.length))}
       <div className="tool-detail-list">
         {filtered.map((item, index) => (
           <div key={`${title}-${index}`} className="tool-detail-item">
@@ -130,7 +146,11 @@ const buildObjectItemBody = (record: Record<string, unknown>): string => {
   }
 };
 
-export const renderObjectListCard = (title: string, values: unknown[]) => {
+export const renderObjectListCard = (
+  title: string,
+  values: unknown[],
+  locale: UiLocale = 'zh-CN',
+) => {
   const items = values
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -139,7 +159,7 @@ export const renderObjectListCard = (title: string, values: unknown[]) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader(title, `${items.length} 条`)}
+      {renderCardHeader(title, formatCount(locale, 'toolCard.count.items', items.length))}
       <div className="tool-detail-list">
         {items.map((item, index) => {
           const itemTitle = (

@@ -5,6 +5,12 @@ export interface GitChangeCounts {
   conflicted: number;
 }
 
+export interface GitRepositoryCandidate {
+  root: string;
+  label: string;
+  relativePath: string;
+}
+
 export interface GitClientInfo {
   available: boolean;
   source: 'env' | 'bundled' | 'system' | string;
@@ -18,6 +24,9 @@ export interface GitSummary {
   isRepo: boolean;
   root?: string | null;
   worktreeRoot?: string | null;
+  queryRoot?: string | null;
+  resolvedRoot?: string | null;
+  selectedRoot?: string | null;
   head?: string | null;
   currentBranch?: string | null;
   detached: boolean;
@@ -27,6 +36,7 @@ export interface GitSummary {
   dirty: boolean;
   operationState?: string | null;
   changes: GitChangeCounts;
+  availableRepositories: GitRepositoryCandidate[];
 }
 
 export interface GitBranchInfo {

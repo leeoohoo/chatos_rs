@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.93-bookworm AS builder
+
+WORKDIR /workspace/user_service/backend
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev clang \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY user_service/backend/Cargo.toml user_service/backend/Cargo.lock ./
+COPY user_service/backend/src ./src
+
+RUN cargo build --release
+
+FROM debian:bookworm-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libsqlite3-0 libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/user_service/backend/target/release/user_service_backend /app/user_service_backend
+
+RUN mkdir -p /app/data
+
+ENV USER_SERVICE_HOST=0.0.0.0 \
+    USER_SERVICE_PORT=39190 \
+    USER_SERVICE_DATABASE_URL=sqlite:///app/data/user_service.db \
+    USER_SERVICE_JWT_ISSUER=user_service \
+    USER_SERVICE_USER_AUDIENCE=user_service \
+    USER_SERVICE_TASK_RUNNER_AUDIENCE=task_runner
+
+EXPOSE 39190
+
+CMD ["/app/user_service_backend"]

@@ -6,9 +6,13 @@ use crate::repositories::user_settings as repo;
 
 pub const USER_SETTING_KEYS: &[&str] = &[
     "MAX_ITERATIONS",
+    "TASK_FOLLOW_UP_MAX_ROUNDS",
     "LOG_LEVEL",
     "HISTORY_LIMIT",
     "CHAT_MAX_TOKENS",
+    "INTERNAL_CONTEXT_LOCALE",
+    "UI_LOCALE",
+    "TERMINAL_UI_ENABLED",
 ];
 
 fn coerce(value: &Value, key: &str) -> Value {
@@ -16,10 +20,37 @@ fn coerce(value: &Value, key: &str) -> Value {
         return Value::Null;
     }
     match key {
-        "MAX_ITERATIONS" | "HISTORY_LIMIT" | "CHAT_MAX_TOKENS" => parse_js_int_value(value)
-            .map(|n| Value::Number(serde_json::Number::from(n)))
-            .unwrap_or(Value::Null),
+        "MAX_ITERATIONS" | "TASK_FOLLOW_UP_MAX_ROUNDS" | "HISTORY_LIMIT" | "CHAT_MAX_TOKENS" => {
+            parse_js_int_value(value)
+                .map(|n| Value::Number(serde_json::Number::from(n)))
+                .unwrap_or(Value::Null)
+        }
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
+        "INTERNAL_CONTEXT_LOCALE" => Value::String(
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|item| matches!(*item, "zh-CN" | "en-US"))
+                .unwrap_or("zh-CN")
+                .to_string(),
+        ),
+        "UI_LOCALE" => Value::String(
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|item| matches!(*item, "zh-CN" | "en-US"))
+                .unwrap_or("zh-CN")
+                .to_string(),
+        ),
+        "TERMINAL_UI_ENABLED" => Value::Bool(match value {
+            Value::Bool(flag) => *flag,
+            Value::Number(number) => number.as_i64().unwrap_or(1) != 0,
+            Value::String(text) => {
+                let normalized = text.trim().to_ascii_lowercase();
+                !matches!(normalized.as_str(), "false" | "0" | "off")
+            }
+            _ => true,
+        }),
         _ => value.clone(),
     }
 }
@@ -30,6 +61,10 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(25);
+    let task_follow_up_max_rounds = std::env::var("TASK_FOLLOW_UP_MAX_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(3);
     let history_limit = std::env::var("HISTORY_LIMIT")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
@@ -43,9 +78,13 @@ pub fn get_default_user_settings() -> Result<Value, String> {
 
     Ok(json!({
         "MAX_ITERATIONS": max_iterations,
+        "TASK_FOLLOW_UP_MAX_ROUNDS": task_follow_up_max_rounds,
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,
         "CHAT_MAX_TOKENS": chat_max_tokens,
+        "INTERNAL_CONTEXT_LOCALE": "zh-CN",
+        "UI_LOCALE": "zh-CN",
+        "TERMINAL_UI_ENABLED": true,
     }))
 }
 

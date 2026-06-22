@@ -1,15 +1,15 @@
 import { useCallback } from 'react';
 
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { Project } from '../../types';
-import { useProjectExplorerDataLoading } from './useProjectExplorerDataLoading';
-import { useProjectExplorerLogs } from './useProjectExplorerLogs';
-import { useProjectExplorerPathHelpers } from './useProjectExplorerPathHelpers';
-import { useProjectExplorerState } from './useProjectExplorerState';
-import { useProjectExplorerSearch } from './useProjectExplorerSearch';
+import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
 import { useProjectExplorerCodeNav } from './useProjectExplorerCodeNav';
+import { useProjectExplorerDataLoading } from './useProjectExplorerDataLoading';
+import { useProjectExplorerPathHelpers } from './useProjectExplorerPathHelpers';
 import { useProjectExplorerRunState } from './useProjectExplorerRunState';
+import { useProjectExplorerSearch } from './useProjectExplorerSearch';
 import { useProjectExplorerSelection } from './useProjectExplorerSelection';
-import { useProjectExplorerSessionBridge } from './useProjectExplorerSessionBridge';
+import { useProjectExplorerState } from './useProjectExplorerState';
 import { useProjectExplorerTreeStateOps } from './useProjectExplorerTreeStateOps';
 import { useProjectExplorerWorkspaceModel } from './useProjectExplorerWorkspaceModel';
 
@@ -20,11 +20,12 @@ interface UseProjectExplorerViewModelParams {
 export const useProjectExplorerViewModel = ({
   project,
 }: UseProjectExplorerViewModelParams) => {
-  const { client, handleGenerateRunnerScriptForContact } = useProjectExplorerSessionBridge({
-    project,
-  });
+  const client = useApiClient();
 
   const state = useProjectExplorerState(project?.id);
+  const filesTabActive = state.workspaceTab === 'files';
+  const settingsTabActive = state.workspaceTab === 'settings';
+  const { terminalUiEnabled } = useTerminalUiSetting();
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
 
@@ -44,21 +45,9 @@ export const useProjectExplorerViewModel = ({
 
   const dataLoading = useProjectExplorerDataLoading({
     client,
-    projectId: project?.id,
-    summaryLoadingRef: state.summaryLoadingRef,
     setLoadingPaths: state.setLoadingPaths,
     setError: state.setError,
     setEntriesMap: state.setEntriesMap,
-    setChangeSummary: state.setChangeSummary,
-    setSummaryError: state.setSummaryError,
-    setLoadingSummary: state.setLoadingSummary,
-  });
-
-  const logs = useProjectExplorerLogs({
-    client,
-    projectId: project?.id,
-    selectedPath: state.selectedPath,
-    selectedFilePath: state.selectedFile?.path || null,
   });
 
   const selection = useProjectExplorerSelection({
@@ -81,18 +70,15 @@ export const useProjectExplorerViewModel = ({
   const runState = useProjectExplorerRunState({
     client,
     project,
-    selectedEntry: selection.selectedEntry,
-    selectedPath: state.selectedPath,
-    getParentPath: resolveParentPath,
-    setActionError: state.setActionError,
-    setActionLoading: state.setActionLoading,
-    setActionMessage: state.setActionMessage,
+    enabled: settingsTabActive,
+    terminalUiEnabled,
   });
 
   const codeNav = useProjectExplorerCodeNav({
     client,
     projectRootPath: project?.rootPath,
     selectedFilePath: state.selectedFile?.path || null,
+    targetLine: search.previewTargetLine,
     openLocation: selection.openCodeNavLocation,
   });
 
@@ -104,7 +90,6 @@ export const useProjectExplorerViewModel = ({
     normalizePath: pathHelpers.normalizePath,
     toExpandedKey: pathHelpers.toExpandedKey,
     loadEntries: dataLoading.loadEntries,
-    loadChangeSummary: dataLoading.loadChangeSummary,
     clearSearch: search.clearSearch,
     clearSearchNavigation: search.clearSearchNavigation,
     clearTokenSelection: codeNav.clearTokenSelection,
@@ -119,30 +104,36 @@ export const useProjectExplorerViewModel = ({
   const {
     treePaneProps,
     previewPaneProps,
+    projectSettingsProps,
     contextMenuStyle,
     isContextRootEntry,
-    canRunFile: workspaceCanRunFile,
-    handleRunFile: workspaceHandleRunFile,
     handleCreateDirectory: workspaceHandleCreateDirectory,
     handleCreateFile: workspaceHandleCreateFile,
     handleDownloadSelected: workspaceHandleDownloadSelected,
     handleDeleteSelected: workspaceHandleDeleteSelected,
+    handleCopyFilePath: workspaceHandleCopyFilePath,
+    handleCopyRelativeFilePath: workspaceHandleCopyRelativeFilePath,
+    handleIgnoreFile: workspaceHandleIgnoreFile,
+    handleIgnoreFolder: workspaceHandleIgnoreFolder,
+    handleIgnoreByExtension: workspaceHandleIgnoreByExtension,
+    handleOpenPathInDefaultProgram: workspaceHandleOpenPathInDefaultProgram,
+    handleRevealInFinder: workspaceHandleRevealInFinder,
+    handleOpenInCode: workspaceHandleOpenInCode,
     handleMoveConflictCancel,
     handleMoveConflictOverwrite,
     handleMoveConflictRename,
   } = useProjectExplorerWorkspaceModel({
     project,
+    filesTabActive,
     client,
     state,
     pathHelpers,
     search,
     dataLoading,
-    logs,
     selection,
     runState,
     codeNav,
     treeStateOps,
-    handleGenerateRunnerScriptForContact,
   });
 
   return {
@@ -158,11 +149,7 @@ export const useProjectExplorerViewModel = ({
     resizeStartWidth: state.resizeStartWidth,
     setIsResizing: state.setIsResizing,
     previewPaneProps,
-    loadingLogs: logs.loadingLogs,
-    logsError: logs.logsError,
-    changeLogs: logs.changeLogs,
-    selectedLogId: logs.selectedLogId,
-    setSelectedLogId: logs.setSelectedLogId,
+    projectSettingsProps,
     moveConflict: state.moveConflict,
     actionLoading: state.actionLoading,
     setMoveConflict: state.setMoveConflict,
@@ -173,11 +160,17 @@ export const useProjectExplorerViewModel = ({
     contextMenuStyle,
     isContextRootEntry,
     setContextMenu: state.setContextMenu,
-    workspaceCanRunFile,
     workspaceHandleCreateDirectory,
     workspaceHandleCreateFile,
-    workspaceHandleRunFile,
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
+    workspaceHandleCopyFilePath,
+    workspaceHandleCopyRelativeFilePath,
+    workspaceHandleIgnoreFile,
+    workspaceHandleIgnoreFolder,
+    workspaceHandleIgnoreByExtension,
+    workspaceHandleOpenPathInDefaultProgram,
+    workspaceHandleRevealInFinder,
+    workspaceHandleOpenInCode,
   };
 };

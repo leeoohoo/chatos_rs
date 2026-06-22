@@ -1,65 +1,59 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import DynamicConfigFields from './DynamicConfigFields';
 import type { McpManagerFormProps } from './types';
 
 const McpManagerForm = ({
-  showAddForm,
   editingConfig,
   formData,
   dynamicConfig,
   configLoading,
   configError,
-  onCreate,
+  showTitle = true,
   onSubmit,
   onCancel,
   onFormDataChange,
   onFetchDynamicConfig,
   onDynamicConfigChange,
 }: McpManagerFormProps) => {
-  if (!showAddForm) {
-    return (
-      <button
-        onClick={onCreate}
-        className="w-full mb-6 p-4 border-2 border-dashed border-border rounded-lg hover:border-blue-500 transition-colors flex items-center justify-center space-x-2 text-muted-foreground hover:text-blue-600"
-      >
-        <span>+ 添加 MCP 服务器</span>
-      </button>
-    );
-  }
+  const { t } = useI18n();
 
   return (
-    <form onSubmit={onSubmit} className="mb-6 p-4 bg-muted rounded-lg">
-      <h3 className="text-lg font-medium text-foreground mb-4">
-        {editingConfig ? '编辑服务器' : '添加新服务器'}
-      </h3>
+    <form onSubmit={onSubmit} className="space-y-4">
+      {showTitle ? (
+        <h3 className="text-lg font-medium text-foreground">
+          {editingConfig ? t('mcpManager.form.title.edit') : t('mcpManager.form.title.create')}
+        </h3>
+      ) : null}
 
-      <div className="space-y-4">
+      <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">服务器名称</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('mcpManager.form.name')}</label>
           <input
             type="text"
             value={formData.name}
             onChange={(event) => onFormDataChange({ name: event.target.value })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="例如: File System"
+            placeholder={t('mcpManager.form.namePlaceholder')}
+            autoFocus
             required
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">协议类型</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('mcpManager.form.protocol')}</label>
           <select
             value={formData.type}
             onChange={(event) => onFormDataChange({ type: event.target.value as 'http' | 'stdio' })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
           >
-            <option value="stdio">Stdio (标准输入输出)</option>
-            <option value="http">HTTP (网络协议)</option>
+            <option value="stdio">{t('mcpManager.form.stdioLabel')}</option>
+            <option value="http">{t('mcpManager.form.httpLabel')}</option>
           </select>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-foreground mb-2">
-            {formData.type === 'http' ? 'URL地址' : '命令'}
+            {formData.type === 'http' ? t('mcpManager.form.url') : t('mcpManager.form.command')}
           </label>
           <input
             type="text"
@@ -79,7 +73,7 @@ const McpManagerForm = ({
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
-                可执行地址（cwd）
+                {t('mcpManager.form.cwd')}
               </label>
               <input
                 type="text"
@@ -88,21 +82,21 @@ const McpManagerForm = ({
                 className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder="/absolute/path/to/executable"
               />
-              <p className="mt-1 text-xs text-muted-foreground">为空则使用当前页面的工作目录</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t('mcpManager.form.cwdHelp')}</p>
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"
                   className="px-3 py-1 text-xs bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80"
                   onClick={() => void onFetchDynamicConfig()}
                 >
-                  {configLoading ? '获取中…' : '获取配置'}
+                  {configLoading ? t('mcpManager.form.fetchingConfig') : t('mcpManager.form.fetchConfig')}
                 </button>
               </div>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
-                启动参数（args，逗号分隔）
+                {t('mcpManager.form.args')}
               </label>
               <input
                 type="text"
@@ -111,7 +105,7 @@ const McpManagerForm = ({
                 className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder="--flag, value, --opt"
               />
-              <p className="mt-1 text-xs text-muted-foreground">将自动转换为参数数组</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t('mcpManager.form.argsHelp')}</p>
             </div>
           </div>
         )}
@@ -120,7 +114,7 @@ const McpManagerForm = ({
           <div className="mt-4 p-3 border border-border rounded-md bg-card">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-foreground">
-                服务器可配置参数（动态解析）
+                {t('mcpManager.form.dynamicConfig')}
               </span>
             </div>
             {configError && <p className="text-xs text-red-600 mb-2">{configError}</p>}
@@ -129,19 +123,19 @@ const McpManagerForm = ({
         )}
       </div>
 
-      <div className="flex space-x-3 mt-6">
-        <button
-          type="submit"
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {editingConfig ? '更新' : '添加'}
-        </button>
+      <div className="flex items-center justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="rounded-lg bg-muted px-3 py-2 text-sm transition-colors hover:bg-accent"
         >
-          取消
+          {t('common.cancel')}
+        </button>
+        <button
+          type="submit"
+          className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          {editingConfig ? t('mcpManager.form.submitEdit') : t('mcpManager.form.submitCreate')}
         </button>
       </div>
     </form>

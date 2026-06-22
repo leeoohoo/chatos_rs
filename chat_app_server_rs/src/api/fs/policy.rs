@@ -28,6 +28,8 @@ pub(super) enum FsAllowedRootKind {
     CurrentDir,
     Workspace,
     Project,
+    ProjectParent,
+    RepoParent,
     Ssh,
     Home,
     Configured,
@@ -39,9 +41,11 @@ impl FsAllowedRootKind {
             Self::CurrentDir => 0,
             Self::Workspace => 1,
             Self::Project => 2,
-            Self::Ssh => 3,
-            Self::Home => 4,
-            Self::Configured => 5,
+            Self::ProjectParent => 3,
+            Self::RepoParent => 4,
+            Self::Ssh => 5,
+            Self::Home => 6,
+            Self::Configured => 7,
         }
     }
 
@@ -50,6 +54,8 @@ impl FsAllowedRootKind {
             Self::CurrentDir => "current_dir",
             Self::Workspace => "workspace",
             Self::Project => "project",
+            Self::ProjectParent => "project_parent",
+            Self::RepoParent => "repo_parent",
             Self::Ssh => "ssh",
             Self::Home => "home",
             Self::Configured => "configured",
@@ -59,7 +65,12 @@ impl FsAllowedRootKind {
     fn can_write(self) -> bool {
         matches!(
             self,
-            Self::CurrentDir | Self::Workspace | Self::Project | Self::Configured
+            Self::CurrentDir
+                | Self::Workspace
+                | Self::Project
+                | Self::ProjectParent
+                | Self::RepoParent
+                | Self::Configured
         )
     }
 }
@@ -73,7 +84,8 @@ pub(super) struct FsPathPolicy {
 pub(super) struct AuthorizedPath {
     pub(super) path: PathBuf,
     pub(super) navigation_root: PathBuf,
-    can_write: bool,
+    pub(super) project_root: Option<PathBuf>,
+    pub(super) can_write: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -175,12 +187,12 @@ impl FsPathPolicy {
         let metadata = match std::fs::symlink_metadata(&resolved) {
             Ok(value) => value,
             Err(err) if err.kind() == ErrorKind::NotFound => {
-                return Err(FsPolicyError::BadRequest(missing_message.to_string()))
+                return Err(FsPolicyError::BadRequest(missing_message.to_string()));
             }
             Err(err) if err.kind() == ErrorKind::PermissionDenied => {
                 return Err(FsPolicyError::Forbidden(
                     PATH_OUTSIDE_ALLOWED_ROOTS.to_string(),
-                ))
+                ));
             }
             Err(err) => return Err(FsPolicyError::Internal(err.to_string())),
         };
@@ -189,7 +201,8 @@ impl FsPathPolicy {
             let parent = resolved
                 .parent()
                 .ok_or_else(|| FsPolicyError::BadRequest(invalid_message.to_string()))?;
-            let canonical_parent = policy_paths::canonicalize_existing_path(parent, invalid_message)?;
+            let canonical_parent =
+                policy_paths::canonicalize_existing_path(parent, invalid_message)?;
             let file_name = resolved
                 .file_name()
                 .ok_or_else(|| FsPolicyError::BadRequest(invalid_message.to_string()))?;
@@ -258,6 +271,9 @@ impl FsPathPolicy {
             .ok_or_else(|| FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string()))?;
         Ok(AuthorizedPath {
             navigation_root: root.path.clone(),
+            project_root: self
+                .find_project_root(path.as_path())
+                .map(|project_root| project_root.path.clone()),
             path,
             can_write: root.kind.can_write(),
         })
@@ -272,9 +288,17 @@ impl FsPathPolicy {
 
     fn find_exact_allowed_root(&self, candidate: &Path) -> Option<&FsAllowedRoot> {
         let normalized = policy_paths::normalize_path_for_compare(candidate);
+        self.roots.iter().find(|root| {
+            policy_paths::normalize_path_for_compare(root.path.as_path()) == normalized
+        })
+    }
+
+    fn find_project_root(&self, candidate: &Path) -> Option<&FsAllowedRoot> {
         self.roots
             .iter()
-            .find(|root| policy_paths::normalize_path_for_compare(root.path.as_path()) == normalized)
+            .filter(|root| root.kind == FsAllowedRootKind::Project)
+            .filter(|root| policy_paths::path_is_within_root(candidate, root.path.as_path()))
+            .max_by_key(|root| policy_paths::normalize_path_for_compare(root.path.as_path()).len())
     }
 
     fn is_exact_allowed_root(&self, candidate: &Path) -> bool {
@@ -358,6 +382,7 @@ mod tests {
         let path = super::AuthorizedPath {
             path: canonical_child,
             navigation_root: canonical_root.clone(),
+            project_root: Some(canonical_root.clone()),
             can_write: true,
         };
 
@@ -377,7 +402,8 @@ mod tests {
         fs::create_dir_all(&nested_child).expect("create nested child");
 
         let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
-        let canonical_nested_root = fs::canonicalize(&nested_root).expect("canonicalize nested root");
+        let canonical_nested_root =
+            fs::canonicalize(&nested_root).expect("canonicalize nested root");
         let canonical_nested_child =
             fs::canonicalize(&nested_child).expect("canonicalize nested child");
 

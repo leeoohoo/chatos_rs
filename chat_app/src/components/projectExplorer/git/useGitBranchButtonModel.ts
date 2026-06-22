@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { useProjectChangeSummaryRealtime } from '../../../lib/realtime/useProjectChangeSummaryRealtime';
 import type { GitBranchInfo } from '../../../types';
 import type { ProjectGitApiClient } from './projectGitTypes';
@@ -9,15 +10,20 @@ interface UseGitBranchButtonModelOptions {
   client: ProjectGitApiClient;
   projectId?: string | null;
   projectRoot: string;
+  enabled?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
+  onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
 
 export const useGitBranchButtonModel = ({
   client,
   projectId,
   projectRoot,
+  enabled = true,
   onRepositoryChanged,
+  onRepositorySelectionChange,
 }: UseGitBranchButtonModelOptions) => {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [newBranchName, setNewBranchName] = useState('');
@@ -26,27 +32,36 @@ export const useGitBranchButtonModel = ({
   const [commitMessage, setCommitMessage] = useState('');
   const [selectedCommitPaths, setSelectedCommitPaths] = useState<Set<string>>(new Set());
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const git = useProjectGit({ client, projectRoot, open, onRepositoryChanged });
+  const git = useProjectGit({
+    client,
+    projectRoot,
+    open,
+    enabled,
+    onRepositoryChanged,
+    onRepositorySelectionChange,
+  });
+  const gitRef = useRef(git);
+  const openLoadTokenRef = useRef<string | null>(null);
 
   useProjectChangeSummaryRealtime({
     projectId,
-    enabled: Boolean(projectId),
+    enabled: enabled && Boolean(projectId),
     onInvalidate: async () => {
       git.markSummaryStale();
       git.markDetailsStale();
-      await git.refreshSummary();
-      if (open) {
-        await git.loadDetails();
-      }
     },
   });
 
   const branchLabel = useMemo(() => {
-    if (git.loadingSummary && !git.summary) return 'Git 检查中...';
-    if (!git.summary?.isRepo) return '无 Git 仓库';
+    if (git.loadingSummary && !git.summary) return t('git.checking');
+    if (!git.summary) return 'Git';
+    if (!git.summary?.isRepo && git.availableRepositories.length > 0) {
+      return t('git.repositoryCount', { count: git.availableRepositories.length });
+    }
+    if (!git.summary?.isRepo) return t('git.noRepositoryShort');
     if (git.summary.detached) return `detached: ${git.summary.head || '-'}`;
-    return git.summary.currentBranch || '未知分支';
-  }, [git.loadingSummary, git.summary]);
+    return git.summary.currentBranch || t('git.unknownBranch');
+  }, [git.availableRepositories.length, git.loadingSummary, git.summary, t]);
 
   const changeCount = git.summary
     ? git.summary.changes.staged
@@ -75,15 +90,30 @@ export const useGitBranchButtonModel = ({
   const allStatusFiles = git.status?.files || [];
   const selectableCommitFiles = allStatusFiles.filter((file) => !file.conflicted);
 
+  useEffect(() => {
+    gitRef.current = git;
+  }, [git]);
+
+  useEffect(() => {
+    if (!open) {
+      openLoadTokenRef.current = null;
+      return;
+    }
+    const loadToken = `${projectRoot}:${enabled ? '1' : '0'}:${client ? '1' : '0'}`;
+    if (openLoadTokenRef.current === loadToken) {
+      return;
+    }
+    openLoadTokenRef.current = loadToken;
+    const { clearMessages, refreshSummary, loadDetails } = gitRef.current;
+    clearMessages();
+    void (async () => {
+      await refreshSummary({ force: true });
+      await loadDetails({ force: true });
+    })();
+  }, [client, enabled, open, projectRoot]);
+
   const toggleOpen = () => {
-    setOpen((value) => {
-      const next = !value;
-      if (next) {
-        git.clearMessages();
-        void git.loadDetails();
-      }
-      return next;
-    });
+    setOpen((value) => !value);
   };
 
   const closePanel = () => {
@@ -178,6 +208,8 @@ export const useGitBranchButtonModel = ({
     panelRef,
     projectRoot,
     query,
+    gitAvailableRepositories: git.availableRepositories,
+    activeRepoRoot: git.activeRepoRoot,
     selectableCommitFiles,
     selectedCommitPaths,
     setCommitMessage,
@@ -186,6 +218,7 @@ export const useGitBranchButtonModel = ({
     setQuery,
     submitCommit,
     submitStagedCommit,
+    selectRepository: git.selectRepository,
     toggleCommitPath,
     toggleOpen,
   };

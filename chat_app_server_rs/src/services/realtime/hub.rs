@@ -4,30 +4,27 @@ use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
 
 use crate::core::time::now_rfc3339;
+use crate::models::memory_mapping_types::MemoryContactDto;
+use crate::models::memory_runtime_types::{
+    ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
+};
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
-use crate::models::terminal::Terminal;
 use crate::models::session_summary_v2::SessionSummaryV2;
-use crate::services::memory_server_client::{
-    MemoryContactDto, ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
-};
+use crate::models::terminal::Terminal;
 use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 use super::types::{
-    ChatStreamRealtimePayload,
-    ConversationSummariesUpdatedRealtimePayload,
-    ContactsUpdatedRealtimePayload,
-    NotepadUpdatedRealtimePayload,
-    ProjectChangeSummaryRealtimePayload, ProjectRunCatalogRealtimePayload,
-    ProjectMembersUpdatedRealtimePayload, ProjectRunStateRealtimePayload,
-    ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope,
-    RealtimeEventPayload,
-    RemoteConnectionsUpdatedRealtimePayload,
-    SessionsUpdatedRealtimePayload,
-    RemoteSftpTransferRealtimePayload, TaskBoardRealtimePayload, UiPromptRealtimePayload,
-    ReviewRepairRealtimePayload, TerminalListInvalidatedRealtimePayload,
-    TerminalStateRealtimePayload,
+    ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
+    ConversationSummariesUpdatedRealtimePayload, NotepadUpdatedRealtimePayload,
+    ProjectChangeSummaryRealtimePayload, ProjectMembersUpdatedRealtimePayload,
+    ProjectRunCatalogRealtimePayload, ProjectRunInstanceRealtimePayload,
+    ProjectRunStateRealtimePayload, ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope,
+    RealtimeEventPayload, RemoteConnectionsUpdatedRealtimePayload,
+    RemoteSftpTransferRealtimePayload, ReviewRepairRealtimePayload, SessionsUpdatedRealtimePayload,
+    TaskBoardRealtimePayload, TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
+    UiPromptRealtimePayload,
 };
 
 const REALTIME_CHANNEL_CAPACITY: usize = 512;
@@ -49,20 +46,12 @@ impl RealtimeHub {
     fn subscribe(&self) -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
         self.tx.subscribe()
     }
-
-    fn has_receivers(&self) -> bool {
-        self.tx.receiver_count() > 0
-    }
 }
 
 static REALTIME_HUB: Lazy<RealtimeHub> = Lazy::new(RealtimeHub::new);
 
 pub fn subscribe_user_events() -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
     REALTIME_HUB.subscribe()
-}
-
-pub fn user_has_realtime_listeners() -> bool {
-    REALTIME_HUB.has_receivers()
 }
 
 pub fn publish_review_repair_started_pending(
@@ -113,7 +102,10 @@ pub fn publish_review_repair_completed(
                 .contact_id
                 .clone()
                 .or_else(|| scope_req.contact_id.clone()),
-            agent_id: status.agent_id.clone().or_else(|| scope_req.agent_id.clone()),
+            agent_id: status
+                .agent_id
+                .clone()
+                .or_else(|| scope_req.agent_id.clone()),
             running: false,
             pending_message_count: Some(status.pending_message_count),
             running_job_count: Some(status.running_job_count),
@@ -334,6 +326,7 @@ pub fn publish_terminal_state_changed(
     terminal: &Terminal,
     busy: bool,
     reason: &str,
+    exit_code: Option<i32>,
 ) {
     let status = terminal.status.trim();
     let payload = TerminalStateRealtimePayload {
@@ -348,6 +341,7 @@ pub fn publish_terminal_state_changed(
         },
         busy,
         reason: reason.to_string(),
+        exit_code,
     };
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -393,6 +387,7 @@ pub fn publish_project_run_state_changed(
     running: bool,
     status: &str,
     reason: &str,
+    exit_code: Option<i32>,
 ) {
     let payload = ProjectRunStateRealtimePayload {
         project_id: project_id.to_string(),
@@ -403,6 +398,7 @@ pub fn publish_project_run_state_changed(
         busy,
         running,
         reason: reason.to_string(),
+        exit_code,
     };
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -415,13 +411,43 @@ pub fn publish_project_run_state_changed(
     });
 }
 
+pub fn publish_project_run_instance_changed(
+    user_id: &str,
+    project_id: &str,
+    terminal: &Terminal,
+    busy: bool,
+    running: bool,
+    status: &str,
+    reason: &str,
+    exit_code: Option<i32>,
+) {
+    let payload = ProjectRunInstanceRealtimePayload {
+        project_id: project_id.to_string(),
+        terminal_id: terminal.id.clone(),
+        terminal_name: terminal.name.clone(),
+        cwd: terminal.cwd.clone(),
+        status: status.to_string(),
+        busy,
+        running,
+        reason: reason.to_string(),
+        exit_code,
+    };
+    REALTIME_HUB.send(RealtimeEventEnvelope {
+        message_type: "event",
+        event: "project.run.instance_changed",
+        user_id: user_id.to_string(),
+        conversation_id: None,
+        project_id: Some(project_id.to_string()),
+        payload: RealtimeEventPayload::ProjectRunInstance(payload),
+        ts: now_rfc3339(),
+    });
+}
+
 pub fn publish_project_run_catalog_updated(
     user_id: &str,
     project_id: &str,
     reason: &str,
     path: Option<&str>,
-    runner_script_exists: Option<bool>,
-    root_missing: Option<bool>,
 ) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -433,8 +459,6 @@ pub fn publish_project_run_catalog_updated(
             project_id: project_id.to_string(),
             reason: reason.to_string(),
             path: path.map(|value| value.to_string()),
-            runner_script_exists,
-            root_missing,
         }),
         ts: now_rfc3339(),
     });
@@ -452,11 +476,13 @@ pub fn publish_project_members_updated(
         user_id: user_id.to_string(),
         conversation_id: None,
         project_id: Some(project_id.to_string()),
-        payload: RealtimeEventPayload::ProjectMembersUpdated(ProjectMembersUpdatedRealtimePayload {
-            project_id: project_id.to_string(),
-            reason: reason.to_string(),
-            contact_id: contact_id.map(|value| value.to_string()),
-        }),
+        payload: RealtimeEventPayload::ProjectMembersUpdated(
+            ProjectMembersUpdatedRealtimePayload {
+                project_id: project_id.to_string(),
+                reason: reason.to_string(),
+                contact_id: contact_id.map(|value| value.to_string()),
+            },
+        ),
         ts: now_rfc3339(),
     });
 }

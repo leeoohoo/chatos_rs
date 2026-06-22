@@ -1,13 +1,16 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { formatToolLineRangeLabel, translateToolTitle } from '../../../i18n/toolText';
 import { TextBlockCard } from '../shared/primitives';
-import { asNumber, asRecord, asString, buildLineRangeLabel } from '../shared/value';
+import { asNumber, asRecord, asString } from '../shared/value';
 
 interface ReadFileDetailsProps {
   result: unknown;
 }
 
 export const ReadFileDetails: React.FC<ReadFileDetailsProps> = ({ result }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -17,12 +20,11 @@ export const ReadFileDetails: React.FC<ReadFileDetailsProps> = ({ result }) => {
 
   return (
     <TextBlockCard
-      title="File content"
+      title={translateToolTitle('File content', locale)}
       content={content}
-      meta={buildLineRangeLabel(startLine, endLine) || undefined}
+      meta={formatToolLineRangeLabel(startLine, endLine, locale) || undefined}
     />
   );
 };
 
 export default ReadFileDetails;
-

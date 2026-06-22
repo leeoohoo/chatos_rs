@@ -2,21 +2,20 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 
+#[cfg(test)]
 use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
+#[cfg(test)]
 use tokio_util::sync::CancellationToken;
 
+use crate::core::mcp_tools::{ToolResult, ToolResultCallback};
+#[cfg(test)]
 use crate::core::messages::text_has_content;
 use crate::core::tool_call::{extract_tool_call_id, extract_tool_call_name};
-use crate::core::mcp_tools::{ToolResult, ToolResultCallback};
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
 
-pub(crate) const EMPTY_STREAM_RESPONSE_PARSE_ERROR: &str =
-    "stream response parse failed: no valid SSE events parsed from provider";
-
 pub(crate) struct ToolExecutionOutcome {
-    pub tool_results: Vec<ToolResult>,
     pub persisted_results: Vec<ToolResult>,
 }
 
@@ -26,6 +25,58 @@ pub(crate) struct AiStreamCallbacks {
     pub on_thinking: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct Utf8ChunkDecoder {
+    pending: Vec<u8>,
+}
+
+#[cfg(test)]
+impl Utf8ChunkDecoder {
+    fn push(&mut self, bytes: &[u8]) -> String {
+        self.pending.extend_from_slice(bytes);
+        let mut out = String::new();
+
+        loop {
+            match std::str::from_utf8(self.pending.as_slice()) {
+                Ok(text) => {
+                    out.push_str(text);
+                    self.pending.clear();
+                    break;
+                }
+                Err(err) => {
+                    let valid_up_to = err.valid_up_to();
+                    if valid_up_to > 0 {
+                        let valid =
+                            std::str::from_utf8(&self.pending[..valid_up_to]).unwrap_or_default();
+                        out.push_str(valid);
+                        self.pending.drain(..valid_up_to);
+                        continue;
+                    }
+
+                    if let Some(error_len) = err.error_len() {
+                        out.push('\u{FFFD}');
+                        self.pending.drain(..error_len);
+                        continue;
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        out
+    }
+
+    fn finish(&mut self) -> String {
+        if self.pending.is_empty() {
+            return String::new();
+        }
+        String::from_utf8_lossy(&std::mem::take(&mut self.pending)).to_string()
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
     let mut events = Vec::new();
 
@@ -56,6 +107,7 @@ pub(crate) fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
     events
 }
 
+#[cfg(test)]
 pub(crate) async fn consume_sse_stream<S, E, F>(
     mut stream: S,
     token: Option<CancellationToken>,
@@ -67,10 +119,11 @@ where
     F: FnMut(Value),
 {
     let mut buffer = String::new();
+    let mut decoder = Utf8ChunkDecoder::default();
 
     let mut process_chunk = |chunk: Result<bytes::Bytes, E>| -> Result<(), String> {
         let bytes = chunk.map_err(|err| err.to_string())?;
-        let text = String::from_utf8_lossy(&bytes).to_string();
+        let text = decoder.push(bytes.as_ref());
         buffer.push_str(&text);
 
         for event in drain_sse_json_events(&mut buffer) {
@@ -100,11 +153,16 @@ where
         }
     }
 
+    let tail_text = decoder.finish();
+    if !tail_text.is_empty() {
+        buffer.push_str(&tail_text);
+    }
     flush_stream_tail_events(&mut buffer, &mut on_event);
 
     Ok(())
 }
 
+#[cfg(test)]
 fn flush_stream_tail_events<F>(buffer: &mut String, on_event: &mut F)
 where
     F: FnMut(Value),
@@ -133,6 +191,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn emit_json_value<F>(value: Value, on_event: &mut F)
 where
     F: FnMut(Value),
@@ -207,7 +266,9 @@ pub(crate) fn build_aborted_tool_results(
             continue;
         }
 
-        let name = extract_tool_call_name(tool_call).unwrap_or("tool").to_string();
+        let name = extract_tool_call_name(tool_call)
+            .unwrap_or("tool")
+            .to_string();
 
         present.insert(id.clone());
         results.push(ToolResult {
@@ -246,6 +307,7 @@ pub(crate) fn build_tools_end_payload(tool_results: &[ToolResult]) -> Value {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn emit_stream_callbacks(
     callbacks: &AiStreamCallbacks,
     chunk: Option<String>,
@@ -264,6 +326,7 @@ pub(crate) fn emit_stream_callbacks(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parsed_stream_response_is_empty(
     parsed_event_count: usize,
     content: &str,
@@ -307,8 +370,10 @@ where
         return Err("aborted".to_string());
     }
 
-    let on_tools_stream_cb =
-        build_tool_stream_callback(callbacks.on_tools_stream.clone(), session_id.map(str::to_string));
+    let on_tools_stream_cb = build_tool_stream_callback(
+        callbacks.on_tools_stream.clone(),
+        session_id.map(str::to_string),
+    );
     let tool_results = execute(on_tools_stream_cb).await;
     let persisted_results = finalize_results(tool_results.as_slice());
 
@@ -330,8 +395,5 @@ where
         persist(persisted_results.clone()).await;
     }
 
-    Ok(ToolExecutionOutcome {
-        tool_results,
-        persisted_results,
-    })
+    Ok(ToolExecutionOutcome { persisted_results })
 }

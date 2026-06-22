@@ -2,7 +2,8 @@ import { useCallback, useRef } from 'react';
 
 import type { Session } from '../../types';
 import {
-  findLatestMatchedSession,
+  findBestMatchedSession,
+  hasSessionMessages,
   isSessionMatchedContactAndProject,
   normalizeProjectScopeId,
   resolveContactAgentIdFromSession,
@@ -25,8 +26,6 @@ type CreateSessionFn = (
     selectedModelId: string | null;
     projectId: string;
     projectRoot: string | null;
-    mcpEnabled: boolean;
-    enabledMcpIds: string[];
   },
   options?: { keepActivePanel?: boolean },
 ) => Promise<string | undefined | null>;
@@ -57,36 +56,20 @@ interface EnsureContactSessionOptions {
   title?: string;
   selectedModelId?: string | null;
   projectRoot?: string | null;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
-  createSessionOptions?: { keepActivePanel?: boolean };
+  preferredSessionId?: string | null;
+  preferredSessionHasMessages?: boolean;
+  createIfMissing?: boolean;
+  createSessionOptions?: { keepActivePanel?: boolean; activateSession?: boolean };
 }
 
 interface DisplayRuntimeSessionOptions {
   projectId?: string | null;
+  preferredSessionId?: string | null;
 }
 
 interface BuildDisplayRuntimeMapOptions extends DisplayRuntimeSessionOptions {
   keyPrefix?: string;
 }
-
-const sanitizeMcpIds = (ids: unknown): string[] => {
-  if (!Array.isArray(ids)) {
-    return [];
-  }
-  const out: string[] = [];
-  for (const item of ids) {
-    if (typeof item !== 'string') {
-      continue;
-    }
-    const trimmed = item.trim();
-    if (!trimmed || out.includes(trimmed)) {
-      continue;
-    }
-    out.push(trimmed);
-  }
-  return out;
-};
 
 const readStringField = (value: unknown, key: string): string => {
   if (!value || typeof value !== 'object') {
@@ -95,6 +78,10 @@ const readStringField = (value: unknown, key: string): string => {
   const raw = (value as Record<string, unknown>)[key];
   return typeof raw === 'string' ? raw.trim() : '';
 };
+
+const normalizeSessionId = (value: string | null | undefined): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
 
 export const useContactSessionResolver = ({
   sessions,
@@ -105,6 +92,8 @@ export const useContactSessionResolver = ({
   includeApiLookup = true,
 }: UseContactSessionResolverOptions) => {
   const sessionCacheRef = useRef<Record<string, string>>({});
+  const apiLookupResultRef = useRef<Record<string, string | null>>({});
+  const apiLookupInflightRef = useRef<Record<string, Promise<string | null>>>({});
 
   const resolveProjectId = useCallback((projectId?: string | null): string => {
     return normalizeProjectScopeId(projectId ?? defaultProjectId);
@@ -141,8 +130,14 @@ export const useContactSessionResolver = ({
   const findExistingSessionIdInStore = useCallback((
     contact: ContactSessionEntity,
     projectId?: string | null,
+    preferredSessionId?: string | null,
   ): string | null => {
-    const matched = findLatestMatchedSession(sessions || [], contact, resolveProjectId(projectId));
+    const matched = findBestMatchedSession(
+      sessions || [],
+      contact,
+      resolveProjectId(projectId),
+      preferredSessionId,
+    );
     const sessionId = typeof matched?.id === 'string' ? matched.id.trim() : '';
     return sessionId || null;
   }, [resolveProjectId, sessions]);
@@ -210,38 +205,119 @@ export const useContactSessionResolver = ({
     return fallback ? readStringField(fallback, 'id') : null;
   }, [apiClient, includeApiLookup, resolveProjectId]);
 
+  const readCachedSessionId = useCallback((
+    cacheKey: string,
+    contact: ContactSessionEntity,
+    projectId: string,
+    preferredSessionId?: string | null,
+  ): string | null => {
+    const cachedSessionId = sessionCacheRef.current[cacheKey];
+    const normalizedCached = typeof cachedSessionId === 'string' ? cachedSessionId.trim() : '';
+    if (!normalizedCached) {
+      delete sessionCacheRef.current[cacheKey];
+      return null;
+    }
+    if (isSessionIdStillMatched(normalizedCached, contact, projectId)) {
+      const cachedSession = findSessionInStoreById(normalizedCached);
+      const bestSession = findBestMatchedSession(sessions || [], contact, projectId, preferredSessionId);
+      if (
+        cachedSession
+        && bestSession?.id
+        && bestSession.id !== normalizedCached
+        && hasSessionMessages(bestSession)
+        && !hasSessionMessages(cachedSession)
+      ) {
+        delete sessionCacheRef.current[cacheKey];
+        return null;
+      }
+      return normalizedCached;
+    }
+    if (apiLookupResultRef.current[cacheKey] === normalizedCached) {
+      const bestSession = findBestMatchedSession(sessions || [], contact, projectId, preferredSessionId);
+      if (
+        bestSession?.id
+        && bestSession.id !== normalizedCached
+        && hasSessionMessages(bestSession)
+      ) {
+        delete sessionCacheRef.current[cacheKey];
+        return null;
+      }
+      return normalizedCached;
+    }
+    delete sessionCacheRef.current[cacheKey];
+    return null;
+  }, [findSessionInStoreById, isSessionIdStillMatched, sessions]);
+
+  const resolveExistingSessionIdFromApi = useCallback(async (
+    cacheKey: string,
+    contact: ContactSessionEntity,
+    projectId: string,
+  ): Promise<string | null> => {
+    if (Object.prototype.hasOwnProperty.call(apiLookupResultRef.current, cacheKey)) {
+      return apiLookupResultRef.current[cacheKey];
+    }
+
+    const existingInflight = apiLookupInflightRef.current[cacheKey];
+    if (existingInflight) {
+      return existingInflight;
+    }
+
+    const inflight = findExistingSessionIdFromApi(contact, projectId)
+      .then((sessionId) => {
+        apiLookupResultRef.current[cacheKey] = sessionId;
+        return sessionId;
+      })
+      .finally(() => {
+        delete apiLookupInflightRef.current[cacheKey];
+      });
+    apiLookupInflightRef.current[cacheKey] = inflight;
+    return inflight;
+  }, [findExistingSessionIdFromApi]);
+
   const resolveDisplayRuntimeSessionId = useCallback((
     contact: ContactSessionEntity,
     options?: DisplayRuntimeSessionOptions,
   ): string | null => {
     const normalizedProjectId = resolveProjectId(options?.projectId);
     const cacheKey = resolveCacheKey(contact.id, normalizedProjectId);
+    const preferredSessionId = normalizeSessionId(options?.preferredSessionId);
 
     const currentContactId = resolveContactIdFromSession(currentSession);
     const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
     const currentSessionProjectId = resolveSessionProjectScopeId(currentSession);
+    const normalizedContactId = typeof contact.id === 'string' ? contact.id.trim() : '';
+    const normalizedContactAgentId = typeof contact.agentId === 'string' ? contact.agentId.trim() : '';
     if (
       currentSession?.id
-      && (
-        (currentContactId && currentContactId === contact.id)
-        || (currentContactAgentId && currentContactAgentId === contact.agentId)
-      )
+      && (normalizedContactId
+        ? currentContactId === normalizedContactId
+        : Boolean(normalizedContactAgentId && currentContactAgentId === normalizedContactAgentId))
       && currentSessionProjectId === normalizedProjectId
+      && (
+        !preferredSessionId
+        || currentSession.id === preferredSessionId
+        || hasSessionMessages(currentSession)
+      )
     ) {
       sessionCacheRef.current[cacheKey] = currentSession.id;
       return currentSession.id;
     }
 
-    const cachedSessionId = sessionCacheRef.current[cacheKey];
-    if (cachedSessionId && cachedSessionId.trim()) {
-      const normalizedCached = cachedSessionId.trim();
-      if (isSessionIdStillMatched(normalizedCached, contact, normalizedProjectId)) {
-        return normalizedCached;
-      }
-      delete sessionCacheRef.current[cacheKey];
+    const cachedSessionId = readCachedSessionId(
+      cacheKey,
+      contact,
+      normalizedProjectId,
+      preferredSessionId,
+    );
+    if (cachedSessionId) {
+      return cachedSessionId;
     }
 
-    const localSessionId = findExistingSessionIdInStore(contact, normalizedProjectId);
+    const localSessionId = findExistingSessionIdInStore(
+      contact,
+      normalizedProjectId,
+      preferredSessionId,
+    );
     if (localSessionId) {
       sessionCacheRef.current[cacheKey] = localSessionId;
       return localSessionId;
@@ -250,7 +326,7 @@ export const useContactSessionResolver = ({
   }, [
     currentSession,
     findExistingSessionIdInStore,
-    isSessionIdStillMatched,
+    readCachedSessionId,
     resolveCacheKey,
     resolveProjectId,
   ]);
@@ -279,30 +355,56 @@ export const useContactSessionResolver = ({
   ): Promise<string | null> => {
     const normalizedProjectId = resolveProjectId(options?.projectId);
     const cacheKey = resolveCacheKey(contact.id, normalizedProjectId);
+    const preferredSessionId = normalizeSessionId(options?.preferredSessionId);
 
-    const cachedSessionId = sessionCacheRef.current[cacheKey];
-    if (cachedSessionId && cachedSessionId.trim()) {
-      const normalizedCached = cachedSessionId.trim();
-      if (isSessionIdStillMatched(normalizedCached, contact, normalizedProjectId)) {
-        return normalizedCached;
+    if (preferredSessionId && options?.preferredSessionHasMessages === true) {
+      const preferredLocalSession = findSessionInStoreById(preferredSessionId);
+      if (
+        !preferredLocalSession
+        || isSessionMatchedContactAndProject(preferredLocalSession, contact, normalizedProjectId)
+      ) {
+        sessionCacheRef.current[cacheKey] = preferredSessionId;
+        apiLookupResultRef.current[cacheKey] = preferredSessionId;
+        return preferredSessionId;
       }
-      delete sessionCacheRef.current[cacheKey];
     }
 
-    const runtimeSessionId = resolveDisplayRuntimeSessionId(contact, { projectId: normalizedProjectId });
-    if (runtimeSessionId) {
-      sessionCacheRef.current[cacheKey] = runtimeSessionId;
-      return runtimeSessionId;
+    const cachedSessionId = readCachedSessionId(
+      cacheKey,
+      contact,
+      normalizedProjectId,
+      preferredSessionId,
+    );
+    if (cachedSessionId) {
+      return cachedSessionId;
     }
 
     try {
-      const existingSessionId = await findExistingSessionIdFromApi(contact, normalizedProjectId);
+      const existingSessionId = await resolveExistingSessionIdFromApi(
+        cacheKey,
+        contact,
+        normalizedProjectId,
+      );
       if (existingSessionId) {
         sessionCacheRef.current[cacheKey] = existingSessionId;
         return existingSessionId;
       }
     } catch (error) {
       console.error('Failed to resolve existing contact session:', error);
+    }
+
+    const runtimeSessionId = resolveDisplayRuntimeSessionId(contact, {
+      projectId: normalizedProjectId,
+      preferredSessionId,
+    });
+    if (runtimeSessionId) {
+      sessionCacheRef.current[cacheKey] = runtimeSessionId;
+      return runtimeSessionId;
+    }
+
+    if (options?.createIfMissing === false) {
+      apiLookupResultRef.current[cacheKey] = null;
+      return null;
     }
 
     const createdSessionId = await createSession({
@@ -312,22 +414,22 @@ export const useContactSessionResolver = ({
       selectedModelId: options?.selectedModelId ?? null,
       projectId: normalizedProjectId,
       projectRoot: options?.projectRoot ?? null,
-      mcpEnabled: options?.mcpEnabled ?? true,
-      enabledMcpIds: sanitizeMcpIds(options?.enabledMcpIds ?? []),
     }, options?.createSessionOptions);
 
     const resolvedCreatedSessionId = typeof createdSessionId === 'string' ? createdSessionId.trim() : '';
     if (resolvedCreatedSessionId) {
       sessionCacheRef.current[cacheKey] = resolvedCreatedSessionId;
+      apiLookupResultRef.current[cacheKey] = resolvedCreatedSessionId;
       return resolvedCreatedSessionId;
     }
     return null;
   }, [
     createSession,
-    findExistingSessionIdFromApi,
-    isSessionIdStillMatched,
+    findSessionInStoreById,
+    readCachedSessionId,
     resolveCacheKey,
     resolveDisplayRuntimeSessionId,
+    resolveExistingSessionIdFromApi,
     resolveProjectId,
   ]);
 
@@ -346,6 +448,8 @@ export const useContactSessionResolver = ({
         continue;
       }
       delete sessionCacheRef.current[key];
+      delete apiLookupResultRef.current[key];
+      delete apiLookupInflightRef.current[key];
       const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
       if (normalizedSessionId && !removed.includes(normalizedSessionId)) {
         removed.push(normalizedSessionId);

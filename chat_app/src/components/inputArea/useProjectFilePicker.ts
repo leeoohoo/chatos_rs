@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 import type { FsEntry } from '../../types';
 import { compactSearchText, fuzzyMatch, normalizeFsEntry } from './fileUtils';
 
@@ -76,6 +77,7 @@ export const useProjectFilePicker = ({
   projectRootForFilePicker,
   addFiles,
 }: UseProjectFilePickerOptions): UseProjectFilePickerResult => {
+  const { t } = useI18n();
   const [projectFilePickerOpen, setProjectFilePickerOpen] = useState(false);
   const [projectFileEntries, setProjectFileEntries] = useState<FsEntry[]>([]);
   const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
@@ -221,7 +223,7 @@ export const useProjectFilePicker = ({
         setProjectFileSearchTruncated(Boolean(data?.truncated));
       } catch (error) {
         if (cancelled) return;
-        setProjectFileError(error instanceof Error ? error.message : '搜索项目文件失败');
+        setProjectFileError(error instanceof Error ? error.message : t('inputArea.projectFile.searchFailed'));
         setProjectFileSearchResults([]);
         setProjectFileSearchTruncated(false);
       } finally {
@@ -235,7 +237,7 @@ export const useProjectFilePicker = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [client, isHiddenProjectPath, projectFileFilter, projectFilePickerOpen, projectRootForFilePicker]);
+  }, [client, isHiddenProjectPath, projectFileFilter, projectFilePickerOpen, projectRootForFilePicker, t]);
 
   const loadProjectFileEntries = useCallback(async (nextPath?: string | null) => {
     if (!projectRootForFilePicker) return;
@@ -271,12 +273,12 @@ export const useProjectFilePicker = ({
       }
       setProjectFileEntries(normalizedEntries);
     } catch (error) {
-      setProjectFileError(error instanceof Error ? error.message : '加载项目文件失败');
+      setProjectFileError(error instanceof Error ? error.message : t('inputArea.projectFile.loadFailed'));
       setProjectFileEntries([]);
     } finally {
       setProjectFileLoading(false);
     }
-  }, [client, isHiddenProjectPath, projectRootForFilePicker]);
+  }, [client, isHiddenProjectPath, projectRootForFilePicker, t]);
 
   const handleToggleProjectFilePicker = useCallback(async () => {
     if (!showProjectFilePicker || disabled) return;
@@ -316,7 +318,7 @@ export const useProjectFilePicker = ({
       const rawFile = await client.readFsFile(entry.path) as FsFileReadResponse;
       const isBinary = rawFile?.is_binary ?? rawFile?.isBinary;
       if (isBinary) {
-        throw new Error('暂不支持二进制文件，请选择文本文件');
+        throw new Error(t('inputArea.projectFile.binaryUnsupported'));
       }
       const content = typeof rawFile?.content === 'string' ? rawFile.content : '';
       const rawContentType = String(rawFile?.content_type || rawFile?.contentType || '').trim().toLowerCase();
@@ -333,16 +335,16 @@ export const useProjectFilePicker = ({
       addFiles([fileToAttach]);
       setProjectFilePickerOpen(false);
     } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : '读取项目文件失败';
+      const rawMessage = error instanceof Error ? error.message : t('inputArea.projectFile.readFailed');
       if (String(rawMessage).includes('413')) {
-        setProjectFileError('文件过大，当前最多支持 2MB 的项目文件');
+        setProjectFileError(t('inputArea.projectFile.tooLarge'));
       } else {
         setProjectFileError(rawMessage);
       }
     } finally {
       setProjectFileAttachingPath(null);
     }
-  }, [addFiles, client, loadProjectFileEntries, projectRootForFilePicker, toRelativeProjectPath]);
+  }, [addFiles, client, loadProjectFileEntries, projectRootForFilePicker, t, toRelativeProjectPath]);
 
   return {
     projectFilePickerOpen,

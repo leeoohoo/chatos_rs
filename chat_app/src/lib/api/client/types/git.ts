@@ -5,12 +5,25 @@ export interface GitChangeCountsResponse {
   conflicted?: number;
 }
 
+export interface GitRepositoryCandidateResponse {
+  root?: string;
+  label?: string;
+  relative_path?: string;
+  relativePath?: string;
+}
+
 export interface GitSummaryResponse {
   is_repo?: boolean;
   isRepo?: boolean;
   root?: string | null;
   worktree_root?: string | null;
   worktreeRoot?: string | null;
+  query_root?: string | null;
+  queryRoot?: string | null;
+  resolved_root?: string | null;
+  resolvedRoot?: string | null;
+  selected_root?: string | null;
+  selectedRoot?: string | null;
   head?: string | null;
   current_branch?: string | null;
   currentBranch?: string | null;
@@ -22,6 +35,8 @@ export interface GitSummaryResponse {
   operation_state?: string | null;
   operationState?: string | null;
   changes?: GitChangeCountsResponse;
+  available_repositories?: GitRepositoryCandidateResponse[];
+  availableRepositories?: GitRepositoryCandidateResponse[];
 }
 
 export interface GitClientInfoResponse {

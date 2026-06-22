@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import { resolveRemoteSftpErrorMessage } from '../../lib/api/remoteConnectionErrors';
 import { useRealtimeConnectionState } from '../../lib/realtime/RealtimeProvider';
 import { useRemoteSftpTransferRealtime } from '../../lib/realtime/useRemoteSftpTransferRealtime';
@@ -30,6 +31,7 @@ interface UseRemoteSftpTransferOptions {
   setMessage: (message: string | null) => void;
   setError: (message: string | null) => void;
   getVerificationCode: () => string | null;
+  t: TranslateFn;
   onSecondFactorRequired: (
     error: unknown,
     retryWithCode: (code: string) => Promise<void>,
@@ -57,6 +59,7 @@ export const useRemoteSftpTransfer = ({
   setMessage,
   setError,
   getVerificationCode,
+  t,
   onSecondFactorRequired,
 }: UseRemoteSftpTransferOptions) => {
   const connectionState = useRealtimeConnectionState();
@@ -112,8 +115,8 @@ export const useRemoteSftpTransfer = ({
     setTransfering(false);
     activeTransferContextRef.current = null;
     transferStatusRef.current = latest;
-    setMessage(latest.message || '传输已取消');
-  }, [clearTransferRefreshTimer, setMessage]);
+    setMessage(latest.message || t('remote.sftp.success.transferCancelled'));
+  }, [clearTransferRefreshTimer, setMessage, t]);
 
   const finalizeTransferError = useCallback((
     latest: SftpTransferStatus,
@@ -128,7 +131,7 @@ export const useRemoteSftpTransfer = ({
       const handled = onSecondFactorRequired(
         {
           code: 'second_factor_required',
-          message: '需要二次验证',
+          message: t('remote.common.needsVerification'),
           payload: { challenge_prompt: secondFactorPrompt },
         },
         async (code) => {
@@ -145,8 +148,8 @@ export const useRemoteSftpTransfer = ({
         return;
       }
     }
-    setError(latest.error || '传输失败');
-  }, [clearTransferRefreshTimer, onSecondFactorRequired, setError]);
+    setError(latest.error || t('remote.sftp.error.transferFailed'));
+  }, [clearTransferRefreshTimer, onSecondFactorRequired, setError, t]);
 
   const refreshTransferStatusOnce = useCallback(async () => {
     const transferId = transferStatusRef.current?.id || '';
@@ -167,7 +170,7 @@ export const useRemoteSftpTransfer = ({
       if (latest.state === 'success') {
         await finalizeTransferSuccess(
           latest,
-          context?.fallbackSuccess || '传输完成',
+          context?.fallbackSuccess || t('remote.sftp.success.transferDone'),
         );
         return;
       }
@@ -189,6 +192,7 @@ export const useRemoteSftpTransfer = ({
     finalizeTransferCancelled,
     finalizeTransferError,
     finalizeTransferSuccess,
+    t,
   ]);
 
   const scheduleTransferStatusRefresh = useCallback((delayMs = REMOTE_SFTP_REFRESH_DELAY_MS) => {
@@ -254,7 +258,7 @@ export const useRemoteSftpTransfer = ({
       })) {
         return;
       }
-      setError(resolveRemoteSftpErrorMessage(error, '启动传输失败'));
+      setError(resolveRemoteSftpErrorMessage(error, t('remote.sftp.error.startTransfer')));
     }
   }, [
     client,
@@ -267,6 +271,7 @@ export const useRemoteSftpTransfer = ({
     remotePathRef,
     setError,
     setMessage,
+    t,
     clearTransferRefreshTimer,
     connectionState,
     scheduleTransferStatusRefresh,
@@ -282,21 +287,24 @@ export const useRemoteSftpTransfer = ({
     setQueuedTransfers((previous) => {
       const next = [...previous, queuedRequest];
       if (previous.length > 0 || transfering) {
-        setMessage(`已加入队列：${queuedRequest.label}（当前队列 ${next.length}）`);
+        setMessage(t('remote.sftp.queue.added', { label: queuedRequest.label, count: next.length }));
         setError(null);
       }
       return next;
     });
-  }, [setError, setMessage, transfering]);
+  }, [setError, setMessage, t, transfering]);
 
   useEffect(() => {
     if (!currentRemoteConnectionId || transfering || queuedTransfers.length === 0) return;
     const [next, ...rest] = queuedTransfers;
     setQueuedTransfers(rest);
-    setMessage(`开始队列任务：${next.label}${rest.length > 0 ? `（剩余 ${rest.length}）` : ''}`);
+    setMessage(t('remote.sftp.queue.started', {
+      label: next.label,
+      suffix: rest.length > 0 ? t('remote.sftp.queue.remainingSuffix', { count: rest.length }) : '',
+    }));
     setError(null);
     void startTransfer(next.direction, next.localSource, next.remoteSource, next.fallbackSuccess);
-  }, [currentRemoteConnectionId, queuedTransfers, setError, setMessage, startTransfer, transfering]);
+  }, [currentRemoteConnectionId, queuedTransfers, setError, setMessage, startTransfer, t, transfering]);
 
   useEffect(() => () => clearTransferRefreshTimer(), [clearTransferRefreshTimer]);
 
@@ -310,7 +318,7 @@ export const useRemoteSftpTransfer = ({
       if (latest.state === 'success') {
         await finalizeTransferSuccess(
           latest,
-          activeTransferContextRef.current?.fallbackSuccess || '传输完成',
+          activeTransferContextRef.current?.fallbackSuccess || t('remote.sftp.success.transferDone'),
         );
         return;
       }
@@ -378,9 +386,9 @@ export const useRemoteSftpTransfer = ({
   const handleClearQueuedTransfers = useCallback(() => {
     if (queuedTransfers.length === 0) return;
     setQueuedTransfers([]);
-    setMessage('已清空传输队列');
+    setMessage(t('remote.sftp.queue.cleared'));
     setError(null);
-  }, [queuedTransfers.length, setError, setMessage]);
+  }, [queuedTransfers.length, setError, setMessage, t]);
 
   const handleCancelTransfer = useCallback(async () => {
     if (!currentRemoteConnectionId || !transferStatus?.id || !transfering) return;
@@ -396,7 +404,7 @@ export const useRemoteSftpTransfer = ({
         scheduleTransferStatusRefresh();
       }
     } catch (error) {
-      setError(resolveRemoteSftpErrorMessage(error, '取消传输失败'));
+      setError(resolveRemoteSftpErrorMessage(error, t('remote.sftp.error.cancelTransfer')));
     }
   }, [
     client,
@@ -405,6 +413,7 @@ export const useRemoteSftpTransfer = ({
     scheduleTransferStatusRefresh,
     setError,
     setMessage,
+    t,
     transferStatus?.id,
     transfering,
   ]);

@@ -1,18 +1,20 @@
 # Chatos RS
 
+Cross-platform installation guide: [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md)
+
 ## Positioning
 `Chatos RS` is an AI platform for engineering and collaborative workflows.  
-It combines conversational interaction, tool execution, long-term memory, and OpenAI-compatible access in one system so AI can run as a reliable ongoing worker, not only a one-shot chatbot.
+It combines conversational interaction, tool execution, and long-term memory in one system so AI can run as a reliable ongoing worker, not only a one-shot chatbot.
 
 ## What Problems It Solves
 Typical issues in engineering-grade chat AI systems:
 - Context is trapped in a single session and is hard to carry forward.
 - Token cost keeps increasing as history grows.
 - Tool integration is fragmented and expensive to maintain.
-- External integrations are difficult when protocol expectations differ.
+- Engineering workflows are hard to operate when tool execution is not observable.
 
 `Chatos RS` addresses these with a layered architecture:
-main chat service + memory service + compatibility gateway.
+main chat service + external memory platform integration + MCP-style tool orchestration.
 
 ## Core Advantages
 1. Long-term memory by design
@@ -25,16 +27,17 @@ main chat service + memory service + compatibility gateway.
 - Built for tool calls and MCP-like workflows, making it practical for real engineering pipelines.
 
 4. Scalable architecture
-- Frontend, backend, memory domain, and gateway are decoupled and can scale independently.
+- Frontend, backend, and external memory platform are decoupled and can scale independently.
 
-5. Strong ecosystem compatibility
-- Exposes OpenAI-compatible APIs so existing clients and SDKs can integrate with low migration effort.
+5. Operable engineering workflows
+- Keeps tool calls, task execution, and memory-backed context visible and maintainable.
 
 ## Architecture Layers
 - `chat_app/`: frontend interaction layer
 - `chat_app_server_rs/`: main orchestration backend (sessions, messages, tools, streaming)
-- `memory_server/`: memory domain (summaries, rollups, memory retrieval, admin console)
-- `openai-codex-gateway/`: OpenAI-compatible gateway layer
+- `user_service/`: unified identity service for real users, agent accounts, and Task Runner delegation tokens
+- `task_runner_service/`: task execution and agent runtime service
+- `memory_engine/`: independent long-term memory microservice
 
 ## Quick Start
 Run from repository root:
@@ -43,32 +46,133 @@ Run from repository root:
 ./restart_services.sh restart
 ```
 
+Run the full local stack:
+
+```bash
+./restart_all_services.sh restart
+```
+
+Unified root tasks:
+
+```bash
+make help
+make build
+make test
+make smoke
+```
+
+`make smoke` runs repo governance checks plus lightweight cross-subproject probes.
+It also validates root startup script syntax and the Git-relevant large-file policy.
+
+Shared local configuration entrypoint:
+
+- repository root [`.env.example`](./.env.example)
+- `./restart_services.sh` loads root `.env` before applying defaults
+- if `chat_app_server_rs/.env` exists, backend-specific keys there still override the shared root defaults
+
 Useful commands:
 
 ```bash
 ./restart_services.sh status
 ./restart_services.sh stop
+./restart_all_services.sh status
+./restart_all_services.sh stop
 ```
 
+## WSL Rust Dev Flow
+If Windows Smart App Control / Code Integrity blocks `cargo run` or `cargo test`,
+use the WSL-based Rust dev flow instead of executing Rust artifacts directly on Windows.
+
+Bootstrap WSL once:
+
+```powershell
+wsl.exe --install -d Ubuntu
+make bootstrap-wsl
+```
+
+Run ChatOS inside WSL from Windows:
+
+```powershell
+make restart-wsl
+make status-wsl
+make stop-wsl
+```
+
+Run the full stack inside WSL from Windows:
+
+```powershell
+make restart-all-wsl
+make status-all-wsl
+make stop-all-wsl
+```
+
+Run only `user_service` inside WSL from Windows:
+
+```powershell
+make restart-user-service-wsl
+make status-user-service-wsl
+make stop-user-service-wsl
+```
+
+Optional root `.env` keys for the WSL helper:
+
+- `WSL_DEV_DISTRO`
+- `WSL_CARGO_TARGET_DIR`
+- `WSL_RUNTIME_DIR`
+- `WSL_USER_SERVICE_RUNTIME_DIR`
+- `WSL_TASK_RUNNER_RUNTIME_DIR`
+- `WSL_MEMORY_ENGINE_RUNTIME_DIR`
+
+Unified user-service local run:
+
+```bash
+bash user_service/restart_services.sh restart
+make status-user-service
+make stop-user-service
+```
+
+If root `.env` keeps `START_USER_SERVICE=1` and
+`CHATOS_USER_SERVICE_BASE_URL=http://127.0.0.1:39190`, then
+`./restart_services.sh restart` will also start the local `user_service`.
+
+Containerized local run:
+
+```bash
+docker compose up -d user-service-backend user-service-frontend backend frontend
+```
+
+Current limitation:
+- `docker compose config` has been validated for this repository.
+- On the current Windows machine, Smart App Control / Code Integrity can block Rust-generated EXE/DLL artifacts during `cargo run` or `cargo test`; use the WSL flow above to avoid that execution-policy issue.
+
+Default container URLs:
+- ChatOS frontend: `http://127.0.0.1:8080`
+- ChatOS backend: `http://127.0.0.1:3997`
+- user_service frontend: `http://127.0.0.1:39191`
+- user_service backend: `http://127.0.0.1:39190`
+
 Default runtime logs:
-- `/tmp/chatos_rs_dev/backend.log`
-- `/tmp/chatos_rs_dev/frontend.log`
-- `/tmp/chatos_rs_dev/memory_backend.log`
-- `/tmp/chatos_rs_dev/memory_frontend.log`
+- `/tmp/chatos_rs_dev_<repo-hash>/backend.log`
+- `/tmp/chatos_rs_dev_<repo-hash>/frontend.log`
+- `/tmp/chatos_rs_user_service_<repo-hash>/backend.log`
+- `/tmp/chatos_rs_user_service_<repo-hash>/frontend.log`
 
 ## Development Plans Archive
-Historical plans/assessments/contracts are centralized at:
-- local `docs/plans/` directory (intentionally excluded from git)
+Historical plans/assessments/contracts may live in root-level historical files or local `docs/plans/` archives.
 
 ## Per-Project READMEs
 - [chat_app English](./chat_app/README.en.md)
 - [chat_app 中文](./chat_app/README.zh-CN.md)
 - [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
 - [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
-- [memory_server English](./memory_server/README.en.md)
-- [memory_server 中文](./memory_server/README.zh-CN.md)
-- [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
-- [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
+- [db_connection_hub backend](./db_connection_hub/backend/README.md)
+- [db_connection_hub frontend](./db_connection_hub/frontend/README.md)
+
+## Unified User Service Docs
+- [user_service](./user_service/README.md)
+- [unified user-service status](./CHATOS_UNIFIED_USER_SERVICE_STATUS_20260619.md)
+- [user_service local runbook](./USER_SERVICE_LOCAL_RUNBOOK_20260619.md)
+- [WSL Rust dev flow](./WSL_RUST_DEV_FLOW_20260619.md)
 
 ## License
 This project is licensed under the [MIT License](./LICENSE).

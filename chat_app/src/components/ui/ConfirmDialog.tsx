@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -21,15 +22,19 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   message,
   description,
   details,
-  detailsTitle = '详情/建议操作',
+  detailsTitle,
   detailsLines,
-  confirmText = '确认',
-  cancelText = '取消',
+  confirmText,
+  cancelText,
   onConfirm,
   onCancel,
   type = 'danger'
 }) => {
+  const { t } = useI18n();
   if (!isOpen) return null;
+  const effectiveDetailsTitle = detailsTitle || t('dialog.detailsTitle');
+  const effectiveConfirmText = confirmText || t('common.confirm');
+  const effectiveCancelText = cancelText || t('common.cancel');
   const normalizedDetailLines = (detailsLines || [])
     .map((line) => (line || '').trim())
     .filter((line) => line.length > 0);
@@ -51,7 +56,6 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-card rounded-lg shadow-lg w-full max-w-sm border border-border animate-breathing-border">
-        {/* 内容区域 */}
         <div className="p-6">
           <h3 className="text-lg font-medium text-foreground mb-2">
             {title}
@@ -62,7 +66,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           {detailBlocks.length > 0 && (
             <div className="mb-6 rounded border border-border bg-muted/40 px-3 py-2 text-xs text-foreground/80 whitespace-pre-wrap">
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-foreground/70">
-                {detailsTitle}
+                {effectiveDetailsTitle}
               </div>
               <div className="space-y-1">
                 {detailBlocks.map((line, index) => (
@@ -73,19 +77,18 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           )}
           {detailBlocks.length === 0 && <div className="mb-6" />}
 
-          {/* 按钮区域 */}
           <div className="flex gap-3">
             <button
               onClick={onCancel}
               className="flex-1 px-4 py-2 text-sm border border-border rounded-md hover:bg-accent transition-colors"
             >
-              {cancelText}
+              {effectiveCancelText}
             </button>
             <button
               onClick={onConfirm}
               className={`flex-1 px-4 py-2 text-sm rounded-md transition-colors ${getConfirmButtonStyle()}`}
             >
-              {confirmText}
+              {effectiveConfirmText}
             </button>
           </div>
         </div>

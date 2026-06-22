@@ -6,6 +6,10 @@ export interface ProjectResponse {
   description?: string | null;
   user_id?: string | null;
   userId?: string | null;
+  latest_session_id?: string | null;
+  latestSessionId?: string | null;
+  last_message_at?: string | null;
+  lastMessageAt?: string | null;
   created_at?: string;
   createdAt?: string;
   updated_at?: string;
@@ -16,12 +20,19 @@ export interface ProjectRunTargetResponse {
   id: string;
   label?: string;
   kind?: string;
+  language?: string | null;
   cwd?: string;
   command?: string;
   source?: string;
   confidence?: number;
   is_default?: boolean;
   isDefault?: boolean;
+  entrypoint?: string | null;
+  entry_point?: string | null;
+  manifest_path?: string | null;
+  manifestPath?: string | null;
+  required_toolchains?: string[];
+  requiredToolchains?: string[];
 }
 
 export interface ProjectRunCatalogResponse {
@@ -52,6 +63,92 @@ export interface ProjectRunExecuteResponse {
   cwd?: string;
   message?: string;
   error?: string;
+  env_overrides?: Record<string, string>;
+  envOverrides?: Record<string, string>;
+}
+
+export interface ProjectRunStateResponse {
+  project_id?: string;
+  projectId?: string;
+  running?: boolean;
+  busy?: boolean;
+  status?: string;
+  terminal_id?: string | null;
+  terminalId?: string | null;
+  terminal_name?: string | null;
+  terminalName?: string | null;
+  cwd?: string | null;
+  terminal?: import('./terminal').TerminalResponse | null;
+  instances?: Array<{
+    terminal_id?: string | null;
+    terminalId?: string | null;
+    terminal_name?: string | null;
+    terminalName?: string | null;
+    cwd?: string | null;
+    status?: string;
+    busy?: boolean;
+    running?: boolean;
+    terminal?: import('./terminal').TerminalResponse | null;
+  }>;
+}
+
+export interface ProjectRunToolchainOptionResponse {
+  id: string;
+  kind?: string;
+  label?: string;
+  version?: string | null;
+  path?: string;
+  source?: string;
+  is_default?: boolean;
+  isDefault?: boolean;
+}
+
+export interface ProjectRunConfigFileSummaryResponse {
+  kind?: string;
+  label?: string;
+  path?: string;
+  preview?: string | null;
+  source?: string;
+}
+
+export interface ProjectRunValidationIssueResponse {
+  kind?: string;
+  message?: string;
+  target_id?: string | null;
+  targetId?: string | null;
+  target_label?: string | null;
+  targetLabel?: string | null;
+  path?: string | null;
+  hint?: string | null;
+}
+
+export interface ProjectRunCustomToolchainResponse {
+  kind?: string;
+  label?: string;
+  path?: string;
+}
+
+export interface ProjectRunEnvironmentResponse {
+  project_id?: string;
+  projectId?: string;
+  user_id?: string | null;
+  userId?: string | null;
+  options_by_kind?: Record<string, ProjectRunToolchainOptionResponse[]>;
+  optionsByKind?: Record<string, ProjectRunToolchainOptionResponse[]>;
+  config_files?: ProjectRunConfigFileSummaryResponse[];
+  configFiles?: ProjectRunConfigFileSummaryResponse[];
+  validation_issues?: ProjectRunValidationIssueResponse[];
+  validationIssues?: ProjectRunValidationIssueResponse[];
+  selected_toolchains?: Record<string, string>;
+  selectedToolchains?: Record<string, string>;
+  custom_toolchains?: Record<string, ProjectRunCustomToolchainResponse>;
+  customToolchains?: Record<string, ProjectRunCustomToolchainResponse>;
+  env_vars?: Record<string, string>;
+  envVars?: Record<string, string>;
+  terminal_ui_enabled?: boolean;
+  terminalUiEnabled?: boolean;
+  updated_at?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface ProjectContactLinkResponse {
@@ -61,62 +158,18 @@ export interface ProjectContactLinkResponse {
   agentId?: string;
   agent_name_snapshot?: string | null;
   agentNameSnapshot?: string | null;
+  latest_session_id?: string | null;
+  latestSessionId?: string | null;
+  last_bound_at?: string | null;
+  lastBoundAt?: string | null;
+  last_message_at?: string | null;
+  lastMessageAt?: string | null;
   updated_at?: string | null;
   updatedAt?: string | null;
 }
 
-export interface ProjectChangeLogResponse {
-  id: string;
-  server_name?: string;
-  serverName?: string;
-  path?: string;
-  action?: string;
-  change_kind?: 'create' | 'edit' | 'delete' | string;
-  changeKind?: 'create' | 'edit' | 'delete' | string;
-  bytes?: number;
-  sha256?: string | null;
-  diff?: string | null;
-  conversation_id?: string | null;
-  conversationId?: string | null;
-  run_id?: string | null;
-  runId?: string | null;
-  confirmed?: boolean;
-  confirmed_at?: string | null;
-  confirmedAt?: string | null;
-  confirmed_by?: string | null;
-  confirmedBy?: string | null;
-  created_at?: string;
-  createdAt?: string;
-  conversation_title?: string | null;
-  conversationTitle?: string | null;
-}
-
-export interface ProjectChangeMarkResponse {
-  path?: string;
-  relative_path?: string;
-  relativePath?: string;
-  kind?: 'create' | 'edit' | 'delete' | string;
-  last_change_id?: string;
-  lastChangeId?: string;
-  updated_at?: string;
-  updatedAt?: string;
-}
-
-export interface ProjectChangeSummaryResponse {
-  file_marks?: ProjectChangeMarkResponse[];
-  fileMarks?: ProjectChangeMarkResponse[];
-  deleted_marks?: ProjectChangeMarkResponse[];
-  deletedMarks?: ProjectChangeMarkResponse[];
-  counts?: {
-    create?: number;
-    edit?: number;
-    delete?: number;
-    total?: number;
-  };
-}
-
-export interface ProjectChangeConfirmResponse {
-  confirmed?: number;
-  requested?: number;
-  mode?: 'all' | 'paths' | 'change_ids' | string;
+export interface ProjectContactLockResponse {
+  locked?: boolean;
+  error?: string;
+  detail?: string;
 }

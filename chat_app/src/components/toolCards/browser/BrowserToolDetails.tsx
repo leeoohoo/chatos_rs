@@ -1,7 +1,9 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import { ExtractResultsBriefCard, SearchResultsBriefCard } from '../shared/researchCards';
-import { RowsCard, StringListCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, StringListCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const isMeaningfulBrowserUrl = (url: string): boolean => {
@@ -22,18 +24,19 @@ const isMeaningfulBrowserUrl = (url: string): boolean => {
 };
 
 const PageStateCard: React.FC<{ record: Record<string, unknown> }> = ({ record }) => {
+  const { locale, t } = useI18n();
   const title = asString(record.title).trim();
   const rawUrl = asString(record.url).trim();
   const url = isMeaningfulBrowserUrl(rawUrl) ? rawUrl : '';
   const warning = asString(record.page_state_warning ?? record.pageStateWarning).trim();
   const pageStateAvailable = asBoolean(record.page_state_available ?? record.pageStateAvailable);
-  const state = !title && !url && pageStateAvailable === false ? '未打开页面' : '';
+  const state = !title && !url && pageStateAvailable === false ? t('toolSummary.noOpenPage') : '';
 
   if (!title && !url && !warning && !state) return null;
 
   return (
     <RowsCard
-      title="Page state"
+      title={translateToolTitle('Page state', locale)}
       rows={[
         { key: 'state', value: state },
         { key: 'title', value: title },
@@ -45,6 +48,7 @@ const PageStateCard: React.FC<{ record: Record<string, unknown> }> = ({ record }
 };
 
 const ConsolePreviewCards: React.FC<{ record: Record<string, unknown> }> = ({ record }) => {
+  const { locale, t } = useI18n();
   const messages = asArray(record.messages_brief ?? record.messagesBrief)
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -56,7 +60,10 @@ const ConsolePreviewCards: React.FC<{ record: Record<string, unknown> }> = ({ re
     <>
       {messages.length > 0 && (
         <div className="tool-detail-card tool-detail-card--full">
-          {renderCardHeader('Console messages', `${messages.length} 条`)}
+          {renderCardHeader(
+            translateToolTitle('Console messages', locale),
+            formatToolCardCount(t, 'messages', messages.length),
+          )}
           <div className="tool-detail-list">
             {messages.map((item, index) => (
               <div key={`console-msg-${index}`} className="tool-detail-item">
@@ -74,7 +81,10 @@ const ConsolePreviewCards: React.FC<{ record: Record<string, unknown> }> = ({ re
 
       {errors.length > 0 && (
         <div className="tool-detail-card tool-detail-card--full">
-          {renderCardHeader('JavaScript errors', `${errors.length} 条`)}
+          {renderCardHeader(
+            translateToolTitle('JavaScript errors', locale),
+            formatToolCardCount(t, 'errors', errors.length),
+          )}
           <div className="tool-detail-list">
             {errors.map((item, index) => (
               <div key={`console-err-${index}`} className="tool-detail-item">
@@ -99,6 +109,7 @@ export const BrowserToolDetails: React.FC<BrowserToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale, t } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -117,25 +128,28 @@ export const BrowserToolDetails: React.FC<BrowserToolDetailsProps> = ({
       {displayName === 'browser_console' && (
         <>
           <RowsCard
-            title="JavaScript result"
+            title={translateToolTitle('JavaScript result', locale)}
             rows={[
               { key: 'preview', value: asString(record.result_preview ?? record.resultPreview).trim() },
             ]}
             fullWidth
           />
           {resultRecord && (
-            <TextBlockCard title="Result payload" content={JSON.stringify(resultRecord, null, 2)} />
+            <TextBlockCard title={translateToolTitle('Result payload', locale)} content={JSON.stringify(resultRecord, null, 2)} />
           )}
         </>
       )}
 
       {(displayName === 'browser_vision' || displayName === 'browser_inspect' || displayName === 'browser_research') && (
-        <TextBlockCard title="Vision analysis" content={asString(record.analysis)} />
+        <TextBlockCard title={translateToolTitle('Vision analysis', locale)} content={asString(record.analysis)} />
       )}
 
       {displayName === 'browser_get_images' && images.length > 0 && (
         <div className="tool-detail-card tool-detail-card--full">
-          {renderCardHeader('Images', `${images.length} 张`)}
+          {renderCardHeader(
+            translateToolTitle('Images', locale),
+            formatToolCardCount(t, 'images', images.length),
+          )}
           <div className="tool-detail-list">
             {images.map((item, index) => (
               <div key={`image-${index}`} className="tool-detail-item">
@@ -153,23 +167,23 @@ export const BrowserToolDetails: React.FC<BrowserToolDetailsProps> = ({
         </div>
       )}
 
-      <TextBlockCard title="Inspection warning" content={asString(record.inspection_warning ?? record.inspectionWarning)} fullWidth={false} />
-      <TextBlockCard title="Research warning" content={asString(record.research_warning ?? record.researchWarning)} fullWidth={false} />
+      <TextBlockCard title={translateToolTitle('Inspection warning', locale)} content={asString(record.inspection_warning ?? record.inspectionWarning)} fullWidth={false} />
+      <TextBlockCard title={translateToolTitle('Research warning', locale)} content={asString(record.research_warning ?? record.researchWarning)} fullWidth={false} />
 
-      <StringListCard
-        title="Selected URLs"
+        <StringListCard
+        title={translateToolTitle('Selected URLs', locale)}
         values={asArray(record.selected_urls ?? record.selectedUrls).map((item) => asString(item))}
         linkify
         fullWidth
       />
 
       <SearchResultsBriefCard
-        title="Search hits"
+        title={translateToolTitle('Search hits', locale)}
         items={asArray(searchRecord?.results_brief ?? searchRecord?.resultsBrief ?? record.results_brief ?? record.resultsBrief)}
       />
 
       <ExtractResultsBriefCard
-        title="Extracted sources"
+        title={translateToolTitle('Extracted sources', locale)}
         items={asArray(extractRecord?.results_brief ?? extractRecord?.resultsBrief)}
       />
     </div>

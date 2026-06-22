@@ -1,22 +1,3 @@
-pub mod agent_builder;
-pub(crate) mod browser_command_support;
-pub mod browser_runtime;
-pub(crate) mod browser_page_state_view;
-pub mod browser_tools;
-pub(crate) mod browser_page_insights;
 pub mod code_maintainer;
-pub mod memory_command_reader;
-pub mod memory_plugin_reader;
-pub mod memory_skill_reader;
-pub mod notepad;
-pub(crate) mod research_findings;
-pub(crate) mod research_payloads;
-pub(crate) mod research_output;
-pub(crate) mod research_summary;
-pub(crate) mod research_summary_view;
 pub mod remote_connection_controller;
 pub mod terminal_controller;
-pub mod ui_prompter;
-pub mod web_tools;
-
-pub mod task_manager;

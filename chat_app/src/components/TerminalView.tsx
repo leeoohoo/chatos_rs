@@ -1,15 +1,11 @@
 import React from 'react';
-import '@xterm/xterm/css/xterm.css';
 
-import { useAuthStore } from '../lib/auth/authStore';
-import { apiClient } from '../lib/api/client';
-import { useChatApiClientFromContext, useChatStoreSelector } from '../lib/store/ChatStoreContext';
-import { cn } from '../lib/utils';
+import { useApiClient } from '../lib/api/ApiClientContext';
+import { useAuthStoreSelector } from '../lib/auth/authStore';
+import { useChatStoreSelector } from '../lib/store/ChatStoreContext';
 import { useTheme } from '../hooks/useTheme';
-import TerminalCommandHistoryPanel from './terminal/TerminalCommandHistoryPanel';
-import TerminalHeader from './terminal/TerminalHeader';
-import TerminalStatusBanners from './terminal/TerminalStatusBanners';
-import { useTerminalRuntime } from './terminal/useTerminalRuntime';
+import EmbeddedTerminalView from './terminal/EmbeddedTerminalView';
+import { useI18n } from '../i18n/I18nProvider';
 
 interface TerminalViewProps {
   className?: string;
@@ -18,75 +14,21 @@ interface TerminalViewProps {
 export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const currentTerminal = useChatStoreSelector((state) => state.currentTerminal);
   const loadTerminals = useChatStoreSelector((state) => state.loadTerminals);
-  const apiClientFromContext = useChatApiClientFromContext();
+  const client = useApiClient();
   const { actualTheme } = useTheme();
-
-  const client = apiClientFromContext ?? apiClient;
-  const accessToken = useAuthStore((state) => state.accessToken);
-
-  const {
-    containerRef,
-    connectionState,
-    historyState,
-    historyBusy,
-    canLoadMoreHistory,
-    historyModeHint,
-    errorMessage,
-    commandHistoryCount,
-    displayHistory,
-    reconnect,
-    loadMoreHistory,
-  } = useTerminalRuntime({
-    currentTerminal,
-    loadTerminals,
-    client,
-    accessToken,
-    actualTheme,
-  });
-
-  if (!currentTerminal) {
-    return (
-      <div className={cn('flex h-full items-center justify-center text-muted-foreground', className)}>
-        请选择一个终端
-      </div>
-    );
-  }
-
-  const terminalTitle = currentTerminal?.name || '终端';
-  const terminalCwd = currentTerminal?.cwd || '';
-  const terminalStatus = currentTerminal?.status || 'unknown';
+  const accessToken = useAuthStoreSelector((state) => state.accessToken);
+  const { t } = useI18n();
 
   return (
-    <div className={cn('flex h-full flex-col bg-card', className)}>
-      <TerminalHeader
-        terminalTitle={terminalTitle}
-        terminalCwd={terminalCwd}
-        connectionState={connectionState}
-        terminalStatus={terminalStatus}
-        historyState={historyState}
-        historyBusy={historyBusy}
-        canLoadMoreHistory={canLoadMoreHistory}
-        onLoadMoreHistory={loadMoreHistory}
-        onReconnect={reconnect}
-      />
-
-      <TerminalStatusBanners
-        historyState={historyState}
-        historyModeHint={historyModeHint}
-        errorMessage={errorMessage}
-      />
-
-      <div className="flex flex-1 overflow-hidden bg-background">
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <div ref={containerRef} className="h-full w-full" />
-        </div>
-
-        <TerminalCommandHistoryPanel
-          commandHistoryCount={commandHistoryCount}
-          displayHistory={displayHistory}
-        />
-      </div>
-    </div>
+    <EmbeddedTerminalView
+      terminal={currentTerminal}
+      className={className}
+      emptyText={t('terminal.empty.select')}
+      loadTerminals={loadTerminals}
+      client={client}
+      accessToken={accessToken}
+      actualTheme={actualTheme}
+    />
   );
 };
 

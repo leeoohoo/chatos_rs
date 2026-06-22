@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import { CommitDialog, ComparePanel, DiffDialog } from './GitBranchDialogs';
 import {
@@ -48,13 +49,16 @@ export const GitBranchTrigger: React.FC<{
 export const GitBranchDropdown: React.FC<{
   model: GitBranchButtonModel;
 }> = ({ model }) => {
+  const { t } = useI18n();
   const {
+    activeRepoRoot,
     allStatusFiles,
     branchLabel,
     changeCount,
     closePanel,
     createBranch,
     filteredBranches,
+    gitAvailableRepositories,
     git,
     newBranchName,
     openCommitDialog,
@@ -63,6 +67,7 @@ export const GitBranchDropdown: React.FC<{
     query,
     setNewBranchName,
     setQuery,
+    selectRepository,
   } = model;
 
   return (
@@ -71,7 +76,7 @@ export const GitBranchDropdown: React.FC<{
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索分支和动作"
+          placeholder={t('git.searchPlaceholder')}
           className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
           autoFocus
         />
@@ -94,15 +99,53 @@ export const GitBranchDropdown: React.FC<{
           onRefresh={git.refreshClientInfo}
         />
 
+        {gitAvailableRepositories.length > 0 && (
+          <div className="mb-2 rounded-md border border-border bg-background p-3 text-xs">
+            <div className="mb-2 text-[11px] text-muted-foreground">{t('git.repositorySelect')}</div>
+            <div className="space-y-2">
+              {gitAvailableRepositories.map((repo) => {
+                const selected = (activeRepoRoot || '') === repo.root;
+                return (
+                  <button
+                    key={repo.root}
+                    type="button"
+                    onClick={() => { void selectRepository(repo.root); }}
+                    className={cn(
+                      'flex w-full items-start justify-between rounded border px-3 py-2 text-left transition-colors',
+                      selected
+                        ? 'border-primary bg-primary/5 text-foreground'
+                        : 'border-border hover:bg-accent text-muted-foreground'
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-foreground">{repo.label}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {repo.relativePath || '.'}
+                      </span>
+                    </span>
+                    {selected && (
+                      <span className="ml-3 shrink-0 text-[11px] text-primary">{t('git.current')}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {!git.summary?.isRepo ? (
           <div className="space-y-3 p-3 text-sm text-muted-foreground">
-            <div>当前项目目录不是 Git 仓库。</div>
+            <div>
+              {gitAvailableRepositories.length > 0
+                ? t('git.notRepoWithCandidates')
+                : t('git.notRepo')}
+            </div>
             <button
               type="button"
-              onClick={() => { void git.refreshSummary(); }}
+              onClick={() => { void git.refreshSummary({ force: true }); }}
               className="h-8 rounded border border-border px-3 text-xs hover:bg-accent"
             >
-              刷新
+              {t('git.refresh')}
             </button>
           </div>
         ) : (
@@ -127,6 +170,7 @@ export const GitBranchDropdown: React.FC<{
               onLoadDiff={openDiffDialog}
               onStageFiles={git.stageFiles}
               onUnstageFiles={git.unstageFiles}
+              onDiscardFiles={git.discardFiles}
             />
             <ComparePanel
               compareResult={git.compareResult}
@@ -169,14 +213,14 @@ export const GitBranchDropdown: React.FC<{
 
       <div className="flex items-center justify-between border-t border-border px-3 py-2">
         <span className="text-[11px] text-muted-foreground">
-          {git.loadingSummary || git.loadingBranches || git.loadingStatus ? '加载中...' : projectRoot}
+          {git.loadingSummary || git.loadingBranches || git.loadingStatus ? t('git.loading') : activeRepoRoot || projectRoot}
         </span>
         <button
           type="button"
           onClick={closePanel}
           className="h-7 rounded border border-border px-2 text-xs hover:bg-accent"
         >
-          关闭
+          {t('git.close')}
         </button>
       </div>
     </div>

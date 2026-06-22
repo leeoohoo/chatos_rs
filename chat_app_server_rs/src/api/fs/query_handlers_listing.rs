@@ -1,12 +1,15 @@
 use crate::core::auth::AuthUser;
-use axum::{extract::Query, Json};
 use axum::http::StatusCode;
+use axum::{extract::Query, Json};
 use serde_json::{json, Value};
 
 use super::super::contracts::FsQuery;
 use super::super::helpers::read_dir_entries;
 use super::super::policy::FsPathPolicy;
 use super::policy_error_tuple;
+use crate::services::project_fs_cache::{
+    read_cached_directory_listing, write_cached_directory_listing,
+};
 
 pub(in super::super) async fn list_dirs(
     auth: AuthUser,
@@ -54,13 +57,20 @@ async fn list_entries_impl(
         Err(err) => return policy_error_tuple(err),
     };
 
-    let entries = match read_dir_entries(&path.path, &path.navigation_root, include_files) {
+    let force_refresh = query.force_refresh.unwrap_or(false);
+    let entries = match load_directory_entries(
+        path.project_root.as_ref(),
+        &path.path,
+        &path.navigation_root,
+        include_files,
+        force_refresh,
+    ) {
         Ok(v) => v,
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": err })),
-            )
+            );
         }
     };
     let parent = policy.parent_for(&path);
@@ -70,8 +80,40 @@ async fn list_entries_impl(
         Json(json!({
             "path": path.path.to_string_lossy(),
             "parent": parent,
+            "writable": path.can_write,
             "entries": entries,
             "roots": Vec::<Value>::new()
         })),
     )
+}
+
+fn load_directory_entries(
+    project_root: Option<&std::path::PathBuf>,
+    path: &std::path::Path,
+    navigation_root: &std::path::Path,
+    include_files: bool,
+    force_refresh: bool,
+) -> Result<Vec<Value>, String> {
+    if !force_refresh {
+        if let Some(project_root) = project_root {
+            if let Some(cached) = read_cached_directory_listing(
+                project_root.to_string_lossy().as_ref(),
+                path,
+                include_files,
+            )? {
+                return Ok(cached);
+            }
+        }
+    }
+
+    let entries = read_dir_entries(path, navigation_root, include_files)?;
+    if let Some(project_root) = project_root {
+        let _ = write_cached_directory_listing(
+            project_root.to_string_lossy().as_ref(),
+            path,
+            include_files,
+            entries.as_slice(),
+        );
+    }
+    Ok(entries)
 }

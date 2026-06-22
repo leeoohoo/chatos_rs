@@ -6,6 +6,7 @@ use crate::{
         datasource::DataSource,
         metadata::{MetadataNode, MetadataNodeType, MetadataNodesResponse},
     },
+    drivers::metadata_common,
     error::AppResult,
 };
 
@@ -68,17 +69,17 @@ async fn list_database_children(
         }
         let (id, node_type, has_children) = match info.collection_type {
             CollectionType::View => (
-                format!("view:{database}:{name}"),
+                metadata_common::make_node_id("view", &[database, &name]),
                 MetadataNodeType::View,
                 false,
             ),
             CollectionType::Collection | CollectionType::Timeseries => (
-                format!("collection:{database}:{name}"),
+                metadata_common::make_node_id("collection", &[database, &name]),
                 MetadataNodeType::Collection,
                 true,
             ),
             _ => (
-                format!("collection:{database}:{name}"),
+                metadata_common::make_node_id("collection", &[database, &name]),
                 MetadataNodeType::Collection,
                 true,
             ),
@@ -86,10 +87,10 @@ async fn list_database_children(
 
         nodes.push(MetadataNode {
             id,
-            parent_id: format!("db:{database}"),
+            parent_id: metadata_common::make_node_id("db", &[database]),
             node_type,
             display_name: name.clone(),
-            path: format!("{database}.{name}"),
+            path: metadata_common::make_qualified_path(&[database, &name]),
             has_children,
         });
     }
@@ -120,11 +121,11 @@ async fn list_collection_children(
     {
         let name = index_name(&index);
         nodes.push(MetadataNode {
-            id: format!("index:{database}:{collection}:{name}"),
-            parent_id: format!("collection:{database}:{collection}"),
+            id: metadata_common::make_node_id("index", &[database, collection, &name]),
+            parent_id: metadata_common::make_node_id("collection", &[database, collection]),
             node_type: MetadataNodeType::Index,
             display_name: name.clone(),
-            path: format!("{database}.{collection}.{name}"),
+            path: metadata_common::make_qualified_path(&[database, collection, &name]),
             has_children: false,
         });
     }

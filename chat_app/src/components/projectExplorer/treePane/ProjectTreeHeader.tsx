@@ -1,9 +1,9 @@
 import React from 'react';
 
-import type { FsEntry, Project, ProjectChangeSummary, ProjectSearchHit } from '../../../types';
+import { useI18n } from '../../../i18n/I18nProvider';
+import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 import {
-  ProjectTreeChangeCounters,
   ProjectTreeHeaderActions,
   ProjectTreeHeaderMessages,
 } from './ProjectTreeHeaderActions';
@@ -18,11 +18,6 @@ interface ProjectTreeHeaderProps {
   dropTargetDirPath: string | null;
   actionLoading: boolean;
   actionReloadPath: string | null;
-  canConfirmCurrent: boolean;
-  showOnlyChanged: boolean;
-  changeSummary: ProjectChangeSummary;
-  loadingSummary: boolean;
-  summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
   searchQuery: string;
@@ -39,12 +34,9 @@ interface ProjectTreeHeaderProps {
   normalizePath: (value: string) => string;
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
   onSelectProjectRoot: () => void;
-  onToggleShowOnlyChanged: () => void;
   onCreateDirectoryAtRoot: () => void;
   onCreateFileAtRoot: () => void;
   onRefresh: () => void;
-  onConfirmCurrent: () => void;
-  onConfirmAll: () => void;
   onSearchQueryChange: (value: string) => void;
   onToggleSearchCaseSensitive: () => void;
   onToggleSearchWholeWord: () => void;
@@ -67,11 +59,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   dropTargetDirPath,
   actionLoading,
   actionReloadPath,
-  canConfirmCurrent,
-  showOnlyChanged,
-  changeSummary,
-  loadingSummary,
-  summaryError,
   actionMessage,
   actionError,
   searchQuery,
@@ -88,12 +75,9 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   normalizePath,
   canDropToDirectory,
   onSelectProjectRoot,
-  onToggleShowOnlyChanged,
   onCreateDirectoryAtRoot,
   onCreateFileAtRoot,
   onRefresh,
-  onConfirmCurrent,
-  onConfirmAll,
   onSearchQueryChange,
   onToggleSearchCaseSensitive,
   onToggleSearchWholeWord,
@@ -107,6 +91,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   onClearDragExpandTimer,
   onClearDragAutoScroll,
 }) => {
+  const { t } = useI18n();
   const {
     handleRootDragEnter,
     handleRootDragLeave,
@@ -140,7 +125,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
       onDragLeave={handleRootDragLeave}
       onDrop={handleRootDrop}
     >
-      <div className="text-xs text-muted-foreground">项目目录</div>
+      <div className="text-xs text-muted-foreground">{t('projectExplorer.tree.title')}</div>
       <div className="truncate text-sm font-medium text-foreground" title={project.rootPath}>
         {project.name}
       </div>
@@ -148,7 +133,9 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         {project.rootPath}
       </div>
       <div className="truncate text-[11px] text-muted-foreground" title={selectedEntry?.path || ''}>
-        当前选择：{selectedEntry ? selectedEntry.path : '未选择'}
+        {t('projectExplorer.tree.currentSelection', {
+          path: selectedEntry ? selectedEntry.path : t('projectExplorer.tree.noSelection'),
+        })}
       </div>
       <button
         type="button"
@@ -158,25 +145,16 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         }}
         className="text-left text-[11px] text-blue-600 hover:underline"
       >
-        选中项目根目录
+        {t('projectExplorer.tree.selectRoot')}
       </button>
-      <ProjectTreeChangeCounters changeSummary={changeSummary} />
       <ProjectTreeHeaderActions
         actionLoading={actionLoading}
         actionReloadPath={actionReloadPath}
-        canConfirmCurrent={canConfirmCurrent}
-        showOnlyChanged={showOnlyChanged}
-        totalChangeCount={changeSummary.counts.total}
         onCreateDirectoryAtRoot={onCreateDirectoryAtRoot}
         onCreateFileAtRoot={onCreateFileAtRoot}
         onRefresh={onRefresh}
-        onConfirmCurrent={onConfirmCurrent}
-        onConfirmAll={onConfirmAll}
-        onToggleShowOnlyChanged={onToggleShowOnlyChanged}
       />
-      <div className="text-[11px] text-muted-foreground">
-        目录/文件的新建、下载、删除请右键对应项操作
-      </div>
+      <div className="text-[11px] text-muted-foreground">{t('projectExplorer.tree.gitHint')}</div>
       <ProjectTreeSearchControls
         searchQuery={searchQuery}
         searchCaseSensitive={searchCaseSensitive}
@@ -197,8 +175,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         onOpenNextSearchHit={onOpenNextSearchHit}
       />
       <ProjectTreeHeaderMessages
-        loadingSummary={loadingSummary}
-        summaryError={summaryError}
         actionMessage={actionMessage}
         actionError={actionError}
       />

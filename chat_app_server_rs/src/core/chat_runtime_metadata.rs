@@ -12,6 +12,7 @@ pub struct ChatRuntimeMetadata {
     pub mcp_enabled: Option<bool>,
     #[serde(default)]
     pub enabled_mcp_ids: Vec<String>,
+    pub auto_create_task: Option<bool>,
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -73,18 +74,22 @@ pub fn metadata_string_list(metadata: Option<&Value>, path: &[&str]) -> Vec<Stri
 }
 
 fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
-    paths.iter().find_map(|path| metadata_string(metadata, path))
+    paths
+        .iter()
+        .find_map(|path| metadata_string_with_source(metadata, path))
 }
 
 fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<bool> {
-    paths.iter().find_map(|path| metadata_bool(metadata, path))
+    paths
+        .iter()
+        .find_map(|path| metadata_bool_with_source(metadata, path))
 }
 
 fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Vec<String> {
     paths
         .iter()
         .find_map(|path| {
-            let values = metadata_string_list(metadata, path);
+            let values = metadata_string_list_with_source(metadata, path);
             if values.is_empty() {
                 None
             } else {
@@ -92,6 +97,36 @@ fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> 
             }
         })
         .unwrap_or_default()
+}
+
+fn with_source_metadata_prefix<'a>(path: &'a [&'a str]) -> Vec<&'a str> {
+    let mut source_path = Vec::with_capacity(path.len() + 1);
+    source_path.push("source_metadata");
+    source_path.extend_from_slice(path);
+    source_path
+}
+
+fn metadata_string_with_source(metadata: Option<&Value>, path: &[&str]) -> Option<String> {
+    metadata_string(metadata, path).or_else(|| {
+        let source_path = with_source_metadata_prefix(path);
+        metadata_string(metadata, source_path.as_slice())
+    })
+}
+
+fn metadata_bool_with_source(metadata: Option<&Value>, path: &[&str]) -> Option<bool> {
+    metadata_bool(metadata, path).or_else(|| {
+        let source_path = with_source_metadata_prefix(path);
+        metadata_bool(metadata, source_path.as_slice())
+    })
+}
+
+fn metadata_string_list_with_source(metadata: Option<&Value>, path: &[&str]) -> Vec<String> {
+    let values = metadata_string_list(metadata, path);
+    if !values.is_empty() {
+        return values;
+    }
+    let source_path = with_source_metadata_prefix(path);
+    metadata_string_list(metadata, source_path.as_slice())
 }
 
 impl ChatRuntimeMetadata {
@@ -108,6 +143,8 @@ impl ChatRuntimeMetadata {
                     &["ui_contact", "agentId"],
                     &["ui_chat_selection", "selected_agent_id"],
                     &["ui_chat_selection", "selectedAgentId"],
+                    &["legacy_session_mapping", "agent_id"],
+                    &["legacy_session_mapping", "agentId"],
                 ],
             ),
             contact_id: metadata_string_aliases(
@@ -119,6 +156,8 @@ impl ChatRuntimeMetadata {
                     &["contact", "contactId"],
                     &["ui_contact", "contact_id"],
                     &["ui_contact", "contactId"],
+                    &["legacy_session_mapping", "contact_id"],
+                    &["legacy_session_mapping", "contactId"],
                 ],
             ),
             project_id: metadata_string_aliases(
@@ -126,6 +165,8 @@ impl ChatRuntimeMetadata {
                 &[
                     &["chat_runtime", "project_id"],
                     &["chat_runtime", "projectId"],
+                    &["legacy_session_mapping", "project_id"],
+                    &["legacy_session_mapping", "projectId"],
                 ],
             ),
             project_root: metadata_string_aliases(
@@ -161,6 +202,13 @@ impl ChatRuntimeMetadata {
                 &[
                     &["chat_runtime", "enabled_mcp_ids"],
                     &["chat_runtime", "enabledMcpIds"],
+                ],
+            ),
+            auto_create_task: metadata_bool_aliases(
+                metadata,
+                &[
+                    &["chat_runtime", "auto_create_task"],
+                    &["chat_runtime", "autoCreateTask"],
                 ],
             ),
         }

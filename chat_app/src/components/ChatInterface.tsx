@@ -7,6 +7,7 @@ import ChatInterfaceOverlays from './chatInterface/ChatInterfaceOverlays';
 import { useChatInterfaceModel } from './chatInterface/useChatInterfaceModel';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
+import { useI18n } from '../i18n/I18nProvider';
 
 const SystemContextEditor = lazy(() => import('./SystemContextEditor'));
 
@@ -15,6 +16,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onMessageSend,
   customRenderer,
 }) => {
+  const { t } = useI18n();
   const {
     user,
     logout,
@@ -27,10 +29,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     activePanel,
     showSystemContextEditor,
     setShowSystemContextEditor,
-    showMcpManager,
-    setShowMcpManager,
     showAiModelManager,
     setShowAiModelManager,
+    showAgentManager,
+    setShowAgentManager,
     showNotepadPanel,
     setShowNotepadPanel,
     showUserSettings,
@@ -45,7 +47,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     handleToggleSessionSummary,
     sessionListProps,
     conversationPaneProps,
-    uiPromptHistoryProps,
     runtimeContextProps,
   } = useChatInterfaceModel({
     onMessageSend,
@@ -56,7 +57,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return (
       <Suspense fallback={(
         <div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">
-          系统提示词工作区加载中...
+          {t('chat.systemContextLoading')}
         </div>
       )}>
         <SystemContextEditor onClose={() => setShowSystemContextEditor(false)} />
@@ -75,8 +76,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onToggleSidebar={toggleSidebar}
         onOpenNotepad={() => setShowNotepadPanel(true)}
         onOpenApplications={() => setShowApplicationsPanel(true)}
-        onOpenMcpManager={() => setShowMcpManager(true)}
         onOpenAiModelManager={() => setShowAiModelManager(true)}
+        onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
         onOpenUserSettings={() => setShowUserSettings(true)}
         onLogout={logout}
@@ -101,14 +102,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       />
 
       <ChatInterfaceOverlays
-        uiPromptHistoryProps={uiPromptHistoryProps}
         runtimeContextProps={runtimeContextProps}
-        showMcpManager={showMcpManager}
-        setShowMcpManager={setShowMcpManager}
         showNotepadPanel={showNotepadPanel}
         setShowNotepadPanel={setShowNotepadPanel}
         showAiModelManager={showAiModelManager}
         setShowAiModelManager={setShowAiModelManager}
+        showAgentManager={showAgentManager}
+        setShowAgentManager={setShowAgentManager}
         showUserSettings={showUserSettings}
         setShowUserSettings={setShowUserSettings}
         showApplicationsPanel={showApplicationsPanel}

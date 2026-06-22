@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 import type { NoteMeta } from './utils';
 
 export type ContextMenuTarget =
@@ -34,6 +35,8 @@ export const NotepadContextMenu: React.FC<NotepadContextMenuProps> = ({
   onContextDelete,
   onContextDeleteSelectedNote,
 }) => {
+  const { t } = useI18n();
+
   if (!contextMenu || !contextMenuStyle) {
     return null;
   }
@@ -47,22 +50,22 @@ export const NotepadContextMenu: React.FC<NotepadContextMenuProps> = ({
     >
       <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
         {contextMenu.target.type === 'folder'
-          ? `目录：${contextMenu.target.folderPath || 'root'}`
-          : `笔记：${contextMenu.target.note.title || 'Untitled'}`}
+          ? t('notepad.context.folderLabel', { name: contextMenu.target.folderPath || t('notepad.rootFolder') })
+          : t('notepad.context.noteLabel', { name: contextMenu.target.note.title || t('notepad.tree.noteUntitled') })}
       </div>
       <button
         type="button"
         onClick={onContextCreateFolder}
         className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
       >
-        新建目录
+        {t('notepad.action.createFolder')}
       </button>
       <button
         type="button"
         onClick={onContextCreateNote}
         className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
       >
-        新建笔记
+        {t('notepad.action.createNote')}
       </button>
       {(contextMenu.target.type === 'note' || selectedNoteMeta) && (
         <button
@@ -70,7 +73,7 @@ export const NotepadContextMenu: React.FC<NotepadContextMenuProps> = ({
           onClick={onContextCopyText}
           className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
         >
-          复制文本
+          {t('notepad.action.copyText')}
         </button>
       )}
       {(contextMenu.target.type === 'note' || selectedNoteMeta) && (
@@ -79,7 +82,7 @@ export const NotepadContextMenu: React.FC<NotepadContextMenuProps> = ({
           onClick={onContextCopyAsMd}
           className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
         >
-          复制为.md 文件
+          {t('notepad.action.copyAsMdFile')}
         </button>
       )}
       <button
@@ -87,7 +90,7 @@ export const NotepadContextMenu: React.FC<NotepadContextMenuProps> = ({
         onClick={onContextDelete}
         className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10"
       >
-        {contextMenu.target.type === 'folder' ? '删除当前目录' : '删除当前笔记'}
+        {contextMenu.target.type === 'folder' ? t('notepad.action.deleteFolder') : t('notepad.action.deleteNote')}
       </button>
       {contextMenu.target.type === 'folder' && selectedNoteMeta && (
         <button
@@ -95,7 +98,7 @@ export const NotepadContextMenu: React.FC<NotepadContextMenuProps> = ({
           onClick={onContextDeleteSelectedNote}
           className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10"
         >
-          删除当前选中笔记
+          {t('notepad.action.deleteSelectedNote')}
         </button>
       )}
     </div>

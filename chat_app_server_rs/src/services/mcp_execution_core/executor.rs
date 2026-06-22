@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::Value;
 
-use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback, ToolSchemaFormat};
+use crate::core::mcp_tools::{ToolInfo, ToolResult, ToolResultCallback};
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
-use super::{
-    codex_gateway_request_tools, execute_tools_stream_with_registry, should_parallelize_tool_batch,
-    McpToolState,
-};
+use super::{codex_gateway_request_tools, execute_tools_stream_with_registry, McpToolState};
+
+#[cfg(test)]
+use super::should_parallelize_tool_batch;
 
 #[derive(Clone)]
 pub(crate) struct McpExecutorCore {
@@ -32,26 +33,19 @@ impl McpExecutorCore {
         }
     }
 
-    pub(crate) async fn build_tools(
-        &mut self,
-        schema_format: ToolSchemaFormat,
-    ) -> Result<(), String> {
+    pub(crate) async fn build_tools(&mut self) -> Result<(), String> {
         self.state
             .build_all(
                 self.mcp_servers.as_slice(),
                 self.stdio_mcp_servers.as_slice(),
                 self.builtin_mcp_servers.as_slice(),
-                schema_format,
             )
             .await
     }
 
-    pub(crate) fn build_builtin_only(
-        &mut self,
-        schema_format: ToolSchemaFormat,
-    ) -> Result<(), String> {
+    pub(crate) fn build_builtin_only(&mut self) -> Result<(), String> {
         self.state
-            .build_builtin_only(self.builtin_mcp_servers.as_slice(), schema_format)
+            .build_builtin_only(self.builtin_mcp_servers.as_slice())
     }
 
     pub(crate) fn available_tools(&self) -> Vec<Value> {
@@ -86,6 +80,7 @@ impl McpExecutorCore {
         session_id: Option<&str>,
         conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
+        caller_model_runtime: Option<&ToolCallerModelRuntime>,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         execute_tools_stream_with_registry(
@@ -93,6 +88,7 @@ impl McpExecutorCore {
             session_id,
             conversation_turn_id,
             caller_model,
+            caller_model_runtime,
             on_tool_result,
             self.state.tool_metadata(),
             self.state.builtin_services(),
@@ -100,6 +96,7 @@ impl McpExecutorCore {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) fn should_parallelize_tool_batch(&self, tool_calls: &[Value]) -> bool {
         should_parallelize_tool_batch(tool_calls, self.state.tool_metadata())
     }

@@ -3,6 +3,7 @@ use crate::{
         datasource::DataSource,
         metadata::{MetadataNode, MetadataNodeType, MetadataNodesResponse},
     },
+    drivers::metadata_common,
     error::{AppError, AppResult},
 };
 use sqlx::Row;
@@ -86,17 +87,17 @@ async fn list_database_children(
                 (MetadataNodeType::Table, true)
             };
             let id = if matches!(node_type, MetadataNodeType::Table) {
-                format!("table:{database}:{name}")
+                metadata_common::make_node_id("table", &[database, &name])
             } else {
-                format!("view:{database}:{name}")
+                metadata_common::make_node_id("view", &[database, &name])
             };
 
             MetadataNode {
                 id,
-                parent_id: format!("db:{database}"),
+                parent_id: metadata_common::make_node_id("db", &[database]),
                 node_type,
                 display_name: name.clone(),
-                path: format!("{database}.{name}"),
+                path: metadata_common::make_qualified_path(&[database, &name]),
                 has_children,
             }
         })
@@ -105,18 +106,18 @@ async fn list_database_children(
     nodes.extend(routine_rows.into_iter().map(|row| {
         let name = row.try_get::<String, _>("name").unwrap_or_default();
         let routine_type = row.try_get::<String, _>("routine_type").unwrap_or_default();
-        let node_type = if routine_type.eq_ignore_ascii_case("FUNCTION") {
-            MetadataNodeType::Function
+        let (node_type, prefix) = if routine_type.eq_ignore_ascii_case("FUNCTION") {
+            (MetadataNodeType::Function, "function")
         } else {
-            MetadataNodeType::Procedure
+            (MetadataNodeType::Procedure, "procedure")
         };
 
         MetadataNode {
-            id: format!("routine:{database}:{name}"),
-            parent_id: format!("db:{database}"),
+            id: metadata_common::make_node_id(prefix, &[database, &name]),
+            parent_id: metadata_common::make_node_id("db", &[database]),
             node_type,
             display_name: name.clone(),
-            path: format!("{database}.{name}"),
+            path: metadata_common::make_qualified_path(&[database, &name]),
             has_children: false,
         }
     }));
@@ -160,11 +161,11 @@ async fn list_table_children(
         .map(|row| {
             let name = row.try_get::<String, _>("index_name").unwrap_or_default();
             MetadataNode {
-                id: format!("index:{database}:{table}:{name}"),
-                parent_id: format!("table:{database}:{table}"),
+                id: metadata_common::make_node_id("index", &[database, table, &name]),
+                parent_id: metadata_common::make_node_id("table", &[database, table]),
                 node_type: MetadataNodeType::Index,
                 display_name: name.clone(),
-                path: format!("{database}.{table}.{name}"),
+                path: metadata_common::make_qualified_path(&[database, table, &name]),
                 has_children: false,
             }
         })
@@ -173,11 +174,11 @@ async fn list_table_children(
     nodes.extend(trigger_rows.into_iter().map(|row| {
         let name = row.try_get::<String, _>("trigger_name").unwrap_or_default();
         MetadataNode {
-            id: format!("trigger:{database}:{table}:{name}"),
-            parent_id: format!("table:{database}:{table}"),
+            id: metadata_common::make_node_id("trigger", &[database, table, &name]),
+            parent_id: metadata_common::make_node_id("table", &[database, table]),
             node_type: MetadataNodeType::Trigger,
             display_name: name.clone(),
-            path: format!("{database}.{table}.{name}"),
+            path: metadata_common::make_qualified_path(&[database, table, &name]),
             has_children: false,
         }
     }));

@@ -19,6 +19,8 @@ export const normalizeProject = (raw: ProjectResponse | unknown): Project => {
     rootPath: (readValue(record, 'root_path') ?? readValue(record, 'rootPath') ?? '') as Project['rootPath'],
     description: (readValue(record, 'description') ?? null) as Project['description'],
     userId: (readValue(record, 'user_id') ?? readValue(record, 'userId') ?? null) as Project['userId'],
+    latestSessionId: (readValue(record, 'latest_session_id') ?? readValue(record, 'latestSessionId') ?? null) as Project['latestSessionId'],
+    lastMessageAt: (readValue(record, 'last_message_at') ?? readValue(record, 'lastMessageAt') ?? null) as Project['lastMessageAt'],
     createdAt: normalizeDate(createdAtSource),
     updatedAt: normalizeDate(updatedAtSource),
   };

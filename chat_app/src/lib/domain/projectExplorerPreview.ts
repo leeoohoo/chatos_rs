@@ -63,6 +63,26 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   dockerfile: 'dockerfile',
 };
 
+const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd', 'mkdn']);
+
+export const isMarkdownFile = (
+  filename: string,
+  contentType?: string | null,
+): boolean => {
+  const normalizedContentType = (contentType || '').toLowerCase();
+  if (normalizedContentType.includes('markdown')) {
+    return true;
+  }
+
+  const lower = filename.toLowerCase();
+  const parts = lower.split('.');
+  if (parts.length < 2) {
+    return false;
+  }
+
+  return MARKDOWN_EXTENSIONS.has(parts[parts.length - 1]);
+};
+
 export const getHighlightLanguage = (filename: string): string | null => {
   const lower = filename.toLowerCase();
   if (lower === 'dockerfile') return isHighlightLanguageRegistered('dockerfile') ? 'dockerfile' : null;

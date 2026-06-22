@@ -1,5 +1,4 @@
 import type {
-  ChangeLogItem,
   CodeNavCapabilities,
   CodeNavDocumentSymbolsResult,
   CodeNavLocation,
@@ -8,7 +7,6 @@ import type {
   FsReadResult,
   ProjectSearchHit,
 } from '../../../types';
-import type { ProjectRunnerMember } from '../useProjectExplorerRunState';
 
 export interface PreviewTokenSelection {
   token: string;
@@ -22,6 +20,8 @@ export interface ProjectPreviewPaneProps {
   selectedEntry: FsEntry | null;
   loadingFile: boolean;
   error: string | null;
+  saveError: string | null;
+  savingFile: boolean;
   searchQuery: string;
   searchCaseSensitive: boolean;
   searchWholeWord: boolean;
@@ -41,38 +41,21 @@ export interface ProjectPreviewPaneProps {
   navLoading: boolean;
   navError: string | null;
   activeNavLocationId: string | null;
+  canGoBackFromNav: boolean;
   documentSymbols: CodeNavDocumentSymbolsResult | null;
   documentSymbolsLoading: boolean;
   documentSymbolsError: string | null;
-  selectedLog: ChangeLogItem | null;
-  runStatus: string;
-  runCatalogLoading: boolean;
-  projectMembers: ProjectRunnerMember[];
-  projectMembersLoading: boolean;
-  runnerScriptExists: boolean;
-  runnerScriptChecking: boolean;
-  runnerScriptPath: string;
-  runnerStartCommand: string;
-  runnerStopCommand: string;
-  runnerRestartCommand: string;
-  starting: boolean;
-  stopping: boolean;
-  restarting: boolean;
-  runnerMessage: string | null;
-  runnerError: string | null;
+  onRequestDocumentSymbols: () => void;
   onTokenSelection: (selection: PreviewTokenSelection | null) => void;
   onClearTokenSelection: () => void;
   onRequestDefinition: () => void;
   onRequestReferences: () => void;
+  onGoBackFromNav: () => void;
   onSearchInProject: (query: string) => void;
   onOpenPreviousSearchHit: () => void;
   onOpenNextSearchHit: () => void;
   onActivateSearchHit: (hit: ProjectSearchHit) => void;
   onOpenNavLocation: (location: CodeNavLocation) => void;
   onOpenDocumentSymbol: (line: number) => void;
-  onRunnerStart: () => void;
-  onRunnerStop: () => void;
-  onRunnerRestart: () => void;
-  onRefreshRunnerState: () => void;
-  onGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
+  onSaveFile: (path: string, content: string) => Promise<boolean>;
 }

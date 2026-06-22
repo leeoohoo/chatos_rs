@@ -1,6 +1,10 @@
-use super::utils::{generate_id, now_iso, resolve_state_dir};
 use crate::db::{get_db_sync, Database};
 use crate::models::project::ProjectService;
+use crate::repositories::change_logs::{
+    ProjectChangeCounts, ProjectChangeMark, ProjectChangeSummarySnapshot,
+};
+use crate::services::project_local_cache::write_cache_json;
+use crate::services::project_run::classify_project_run_path_change;
 use crate::services::realtime::{
     publish_project_change_summary_updated, publish_project_run_catalog_updated,
 };
@@ -10,8 +14,12 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::warn;
+
+use chatos_builtin_tools::code_maintainer::{generate_id, now_iso, resolve_state_dir};
+
+const PROJECT_CHANGE_SUMMARY_CACHE_PATH: &str = "project_changes/summary.json";
 
 #[derive(Clone)]
 pub struct ChangeLogStore {
@@ -158,9 +166,15 @@ impl ChangeLogStore {
 }
 
 fn publish_project_change_summary_for_record(project_id: &str, record: &ChangeRecord) {
+    let Ok(_handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
     let project_id = project_id.to_string();
     let conversation_id = record.conversation_id.clone();
     let path = record.path.clone();
+    let change_kind = record.change_kind.clone();
+    let record_id = record.id.clone();
+    let created_at = record.created_at.clone();
     tokio::spawn(async move {
         let Some(project) = ProjectService::get_by_id(project_id.as_str())
             .await
@@ -172,6 +186,13 @@ fn publish_project_change_summary_for_record(project_id: &str, record: &ChangeRe
         let Some(user_id) = project.user_id.as_deref() else {
             return;
         };
+        persist_project_change_summary_snapshot(
+            &project,
+            &path,
+            &change_kind,
+            &record_id,
+            &created_at,
+        );
         publish_project_change_summary_updated(
             user_id,
             project_id.as_str(),
@@ -179,37 +200,97 @@ fn publish_project_change_summary_for_record(project_id: &str, record: &ChangeRe
             Some(conversation_id.as_str()),
             Some(path.as_str()),
         );
-        if is_runner_script_change_path(path.as_str()) {
+        if let Some(kind) =
+            classify_project_run_path_change(path.as_str(), Some(change_kind.as_str()))
+        {
             publish_project_run_catalog_updated(
                 user_id,
                 project_id.as_str(),
-                "runner_script_changed",
+                kind.realtime_reason(),
                 Some(path.as_str()),
-                Some(detect_runner_script_exists(project.root_path.as_str())),
-                Some(project_root_missing(project.root_path.as_str())),
             );
         }
     });
 }
 
-fn is_runner_script_change_path(path: &str) -> bool {
-    let normalized = path.trim().replace('\\', "/");
-    normalized == ".chatos/project_runner.sh" || normalized.ends_with("/.chatos/project_runner.sh")
-}
-
-fn project_root_missing(project_root: &str) -> bool {
-    let root = project_root.trim();
-    root.is_empty() || !Path::new(root).is_dir()
-}
-
-fn detect_runner_script_exists(project_root: &str) -> bool {
-    let root = project_root.trim();
-    if root.is_empty() {
-        return false;
+fn persist_project_change_summary_snapshot(
+    project: &crate::models::project::Project,
+    absolute_path: &str,
+    change_kind: &str,
+    change_id: &str,
+    created_at: &str,
+) {
+    let normalized_absolute_path = absolute_path.trim().to_string();
+    if normalized_absolute_path.is_empty() {
+        return;
     }
-    Path::new(root)
-        .join(".chatos/project_runner.sh")
-        .is_file()
+    let relative_path = normalized_absolute_path
+        .strip_prefix(project.root_path.trim_end_matches('/'))
+        .unwrap_or(normalized_absolute_path.as_str())
+        .trim_start_matches('/')
+        .to_string();
+
+    let mut snapshot =
+        crate::services::project_local_cache::read_cache_json::<ProjectChangeSummarySnapshot>(
+            project.root_path.as_str(),
+            PROJECT_CHANGE_SUMMARY_CACHE_PATH,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    snapshot
+        .file_marks
+        .retain(|mark| mark.path != normalized_absolute_path);
+    snapshot
+        .deleted_marks
+        .retain(|mark| mark.path != normalized_absolute_path);
+
+    let mark = ProjectChangeMark {
+        path: normalized_absolute_path.clone(),
+        relative_path,
+        kind: change_kind.to_string(),
+        last_change_id: change_id.to_string(),
+        updated_at: created_at.to_string(),
+    };
+
+    if change_kind == "delete" {
+        snapshot.deleted_marks.push(mark);
+    } else {
+        snapshot.file_marks.push(mark);
+    }
+    snapshot
+        .file_marks
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    snapshot
+        .deleted_marks
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    snapshot.counts = ProjectChangeCounts {
+        create: snapshot
+            .file_marks
+            .iter()
+            .chain(snapshot.deleted_marks.iter())
+            .filter(|mark| mark.kind == "create")
+            .count(),
+        edit: snapshot
+            .file_marks
+            .iter()
+            .chain(snapshot.deleted_marks.iter())
+            .filter(|mark| mark.kind == "edit")
+            .count(),
+        delete: snapshot
+            .file_marks
+            .iter()
+            .chain(snapshot.deleted_marks.iter())
+            .filter(|mark| mark.kind == "delete")
+            .count(),
+        total: snapshot.file_marks.len() + snapshot.deleted_marks.len(),
+    };
+    let _ = write_cache_json(
+        project.root_path.as_str(),
+        PROJECT_CHANGE_SUMMARY_CACHE_PATH,
+        &snapshot,
+    );
 }
 
 fn default_jsonl_path(server_name: &str) -> PathBuf {

@@ -3,6 +3,7 @@ export interface FsEntryResponse {
   path?: string;
   is_dir?: boolean;
   isDir?: boolean;
+  writable?: boolean;
   size?: number | null;
   modified_at?: string | null;
   modifiedAt?: string | null;
@@ -11,9 +12,14 @@ export interface FsEntryResponse {
 export interface FsEntriesResponse {
   path?: string | null;
   parent?: string | null;
+  writable?: boolean;
   entries?: FsEntryResponse[];
   roots?: FsEntryResponse[];
   truncated?: boolean;
+}
+
+export interface FsListEntriesOptions {
+  forceRefresh?: boolean;
 }
 
 export interface FsReadFileResponse {
@@ -24,6 +30,7 @@ export interface FsReadFileResponse {
   contentType?: string;
   is_binary?: boolean;
   isBinary?: boolean;
+  writable?: boolean | null;
   modified_at?: string | null;
   modifiedAt?: string | null;
   content?: string;
@@ -62,4 +69,19 @@ export interface FsMoveResponse extends FsMutationResponse {
 export interface FsMoveOptions {
   targetName?: string;
   replaceExisting?: boolean;
+}
+
+export interface FsAppendGitignoreResponse extends FsMutationResponse {
+  pattern?: string;
+  created?: boolean;
+  appended?: boolean;
+}
+
+export interface FsOpenPathResponse extends FsMutationResponse {
+  mode?: string;
+}
+
+export interface FsDiscardGitChangesResponse extends FsMutationResponse {
+  stdout?: string | null;
+  stderr?: string | null;
 }

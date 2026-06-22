@@ -3,7 +3,7 @@ use sqlx::Row;
 
 use crate::core::values::optional_string_bson;
 use crate::models::project_run::{ProjectRunCatalog, ProjectRunTarget};
-use crate::repositories::db::{to_doc, with_db};
+use crate::repositories::db::{mongo_find_one_doc, mongo_upsert_set_doc, with_db};
 
 fn parse_targets_from_doc(doc: &Document) -> Vec<ProjectRunTarget> {
     if let Some(Bson::Array(arr)) = doc.get("targets") {
@@ -41,11 +41,9 @@ pub async fn get_catalog_by_project_id(
         |db| {
             let project_id = project_id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("project_run_catalogs")
-                    .find_one(doc! { "project_id": project_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc =
+                    mongo_find_one_doc(db, "project_run_catalogs", doc! { "project_id": project_id })
+                        .await?;
                 Ok(doc.as_ref().and_then(normalize_doc))
             })
         },
@@ -103,16 +101,13 @@ pub async fn upsert_catalog(catalog: &ProjectRunCatalog) -> Result<(), String> {
                 set_doc.insert("error_message", optional_string_bson(catalog.error_message.clone()));
                 set_doc.insert("analyzed_at", optional_string_bson(catalog.analyzed_at.clone()));
                 set_doc.insert("updated_at", catalog.updated_at.clone());
-                db.collection::<Document>("project_run_catalogs")
-                    .update_one(
-                        doc! { "project_id": &catalog.project_id },
-                        doc! { "$set": to_doc(set_doc) },
-                        mongodb::options::UpdateOptions::builder()
-                            .upsert(true)
-                            .build(),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_upsert_set_doc(
+                    db,
+                    "project_run_catalogs",
+                    doc! { "project_id": &catalog.project_id },
+                    set_doc,
+                )
+                .await?;
                 Ok(())
             })
         },

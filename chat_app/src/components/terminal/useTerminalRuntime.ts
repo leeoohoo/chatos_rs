@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 
 import type { TerminalLogResponse } from '../../lib/api/client/types';
@@ -13,9 +13,12 @@ import { useTerminalAppendCommands } from './useTerminalAppendCommands';
 import { useTerminalInstanceLifecycle } from './useTerminalInstanceLifecycle';
 import { useTerminalSocketLifecycle } from './useTerminalSocketLifecycle';
 import { useTerminalViewState } from './useTerminalViewState';
+import { useI18n } from '../../i18n/I18nProvider';
+import type { TerminalRuntimeText } from './terminalRuntimeText';
 
 interface TerminalApiClient {
   getBaseUrl(): string;
+  issueWebSocketTicket(): Promise<string>;
   listTerminalLogs(
     terminalId: string,
     params?: { limit?: number; offset?: number; before?: string },
@@ -51,8 +54,23 @@ export const useTerminalRuntime = ({
   accessToken,
   actualTheme,
 }: UseTerminalRuntimeParams): UseTerminalRuntimeResult => {
+  const { t } = useI18n();
   const state = useTerminalViewState(actualTheme);
-  const apiBaseUrl = client.getBaseUrl();
+  const runtimeTextRef = useRef<TerminalRuntimeText>({
+    genericError: t('terminal.error.generic'),
+    realtimeConnectionFailed: t('terminal.error.realtimeConnectionFailed'),
+    authFailed: t('terminal.error.authFailed'),
+    historyLoadFailed: t('terminal.error.historyLoadFailed'),
+  });
+
+  useEffect(() => {
+    runtimeTextRef.current = {
+      genericError: t('terminal.error.generic'),
+      realtimeConnectionFailed: t('terminal.error.realtimeConnectionFailed'),
+      authFailed: t('terminal.error.authFailed'),
+      historyLoadFailed: t('terminal.error.historyLoadFailed'),
+    };
+  }, [t]);
 
   const appendCommands = useTerminalAppendCommands({
     currentTerminalId: currentTerminal?.id ?? null,
@@ -101,11 +119,12 @@ export const useTerminalRuntime = ({
     setHistoryBusy: state.setHistoryBusy,
     setHistoryModeHint: state.setHistoryModeHint,
     appendCommands,
+    runtimeTextRef,
   });
 
   useTerminalSocketLifecycle({
     currentTerminal,
-    apiBaseUrl,
+    client,
     accessToken,
     connectSeq: state.connectSeq,
     loadTerminals,
@@ -126,6 +145,7 @@ export const useTerminalRuntime = ({
     snapshotRequestContextRef: state.snapshotRequestContextRef,
     setConnectionState: state.setConnectionState,
     setErrorMessage: state.setErrorMessage,
+    runtimeTextRef,
   });
 
   useEffect(() => {

@@ -40,6 +40,14 @@ pub(super) fn spawn_terminal_output_persist(
     output: String,
 ) {
     handle.spawn(async move {
+        if terminals::get_terminal_by_id(terminal_id.as_str())
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return;
+        }
         let _ = terminals::touch_terminal(terminal_id.as_str()).await;
         let log = TerminalLog::new(terminal_id, "output".to_string(), output);
         let _ = terminal_logs::create_terminal_log(&log).await;

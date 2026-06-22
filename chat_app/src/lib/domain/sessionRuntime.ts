@@ -3,8 +3,8 @@ export interface SessionRuntimeMetadata {
   contactId: string | null;
   remoteConnectionId: string | null;
   selectedModelId: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
+  selectedModelName: string | null;
+  selectedThinkingLevel: string | null;
   projectId: string | null;
   projectRoot: string | null;
   workspaceRoot: string | null;
@@ -18,20 +18,6 @@ const normalizeId = (value: unknown): string | null => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-};
-
-const normalizeIdArray = (value: unknown): string[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const out: string[] = [];
-  for (const item of value) {
-    const normalized = normalizeId(item);
-    if (!normalized) continue;
-    if (out.includes(normalized)) continue;
-    out.push(normalized);
-  }
-  return out;
 };
 
 const asMetadataRecord = (value: unknown): MetadataRecord => (
@@ -57,6 +43,19 @@ const parseSessionMetadata = (metadata: unknown): MetadataRecord => {
   return {};
 };
 
+const getSessionMetadataSource = (metadata: unknown): MetadataRecord => {
+  const meta = parseSessionMetadata(metadata);
+  const source = asMetadataRecord(meta.source_metadata);
+  return Object.keys(source).length > 0 ? source : meta;
+};
+
+const getMutableSessionMetadataSource = (metadata: MetadataRecord): MetadataRecord => {
+  const source = asMetadataRecord(metadata.source_metadata);
+  return Object.keys(source).length > 0
+    ? { ...source }
+    : { ...metadata };
+};
+
 const readUiChatSelectionModelId = (metadata: MetadataRecord): string | null => {
   const uiChatSelection = asMetadataRecord(metadata.ui_chat_selection);
   if (!uiChatSelection || typeof uiChatSelection !== 'object' || Array.isArray(uiChatSelection)) {
@@ -76,7 +75,7 @@ const readUiChatSelectionAgentId = (metadata: MetadataRecord): string | null => 
 export const readSessionRuntimeFromMetadata = (
   metadata: unknown,
 ): SessionRuntimeMetadata | null => {
-  const meta = parseSessionMetadata(metadata);
+  const meta = getSessionMetadataSource(metadata);
   const runtime = asMetadataRecord(meta.chat_runtime);
   const contact = asMetadataRecord(meta.contact);
   const uiContact = asMetadataRecord(meta.ui_contact);
@@ -84,6 +83,12 @@ export const readSessionRuntimeFromMetadata = (
   const selectedModelId = normalizeId(
     runtime.selected_model_id ?? runtime.selectedModelId,
   ) || readUiChatSelectionModelId(meta);
+  const selectedModelName = normalizeId(
+    runtime.selected_model_name ?? runtime.selectedModelName,
+  );
+  const selectedThinkingLevel = normalizeId(
+    runtime.selected_thinking_level ?? runtime.selectedThinkingLevel,
+  );
 
   const contactAgentId = normalizeId(
     contact.agent_id
@@ -109,20 +114,16 @@ export const readSessionRuntimeFromMetadata = (
   const workspaceRoot = normalizeId(
     runtime.workspace_root ?? runtime.workspaceRoot,
   );
-  const mcpEnabledRaw = runtime.mcp_enabled ?? runtime.mcpEnabled;
-  const mcpEnabled = typeof mcpEnabledRaw === 'boolean' ? mcpEnabledRaw : true;
-  const enabledMcpIds = normalizeIdArray(runtime.enabled_mcp_ids ?? runtime.enabledMcpIds);
-
   if (
     !selectedModelId
+    && !selectedModelName
+    && !selectedThinkingLevel
     && !contactAgentId
     && !contactId
     && !remoteConnectionId
     && !projectId
     && !projectRoot
     && !workspaceRoot
-    && enabledMcpIds.length === 0
-    && mcpEnabled
   ) {
     return null;
   }
@@ -132,8 +133,8 @@ export const readSessionRuntimeFromMetadata = (
     contactId,
     remoteConnectionId,
     selectedModelId,
-    mcpEnabled,
-    enabledMcpIds,
+    selectedModelName,
+    selectedThinkingLevel,
     projectId,
     projectRoot,
     workspaceRoot,
@@ -145,6 +146,7 @@ export const mergeSessionRuntimeIntoMetadata = (
   runtime: Partial<SessionRuntimeMetadata>,
 ): MetadataRecord => {
   const next = parseSessionMetadata(metadata);
+  const source = getMutableSessionMetadataSource(next);
   const existingRuntime = readSessionRuntimeFromMetadata(next);
 
   const hasOwn = (key: keyof SessionRuntimeMetadata): boolean => (
@@ -152,6 +154,14 @@ export const mergeSessionRuntimeIntoMetadata = (
   );
   const selectedModelId = normalizeId(
     hasOwn('selectedModelId') ? runtime.selectedModelId : existingRuntime?.selectedModelId,
+  );
+  const selectedModelName = normalizeId(
+    hasOwn('selectedModelName') ? runtime.selectedModelName : existingRuntime?.selectedModelName,
+  );
+  const selectedThinkingLevel = normalizeId(
+    hasOwn('selectedThinkingLevel')
+      ? runtime.selectedThinkingLevel
+      : existingRuntime?.selectedThinkingLevel,
   );
   const contactAgentId = normalizeId(
     hasOwn('contactAgentId') ? runtime.contactAgentId : existingRuntime?.contactAgentId,
@@ -171,36 +181,37 @@ export const mergeSessionRuntimeIntoMetadata = (
   const workspaceRoot = normalizeId(
     hasOwn('workspaceRoot') ? runtime.workspaceRoot : existingRuntime?.workspaceRoot,
   );
-  const mcpEnabled = typeof runtime.mcpEnabled === 'boolean'
-    ? runtime.mcpEnabled
-    : (existingRuntime?.mcpEnabled ?? true);
-  const enabledMcpIds = runtime.enabledMcpIds
-    ? normalizeIdArray(runtime.enabledMcpIds)
-    : (existingRuntime?.enabledMcpIds ?? []);
-
-  next.chat_runtime = {
+  source.chat_runtime = {
     selected_model_id: selectedModelId,
+    selected_model_name: selectedModelName,
+    selected_thinking_level: selectedThinkingLevel,
     contact_agent_id: contactAgentId,
     remote_connection_id: remoteConnectionId,
-    mcp_enabled: mcpEnabled,
-    enabled_mcp_ids: enabledMcpIds,
     project_id: projectId,
     project_root: projectRoot,
     workspace_root: workspaceRoot,
   };
-  next.contact = {
+  source.contact = {
     type: 'memory_agent',
     agent_id: contactAgentId,
     contact_id: contactId,
   };
-  next.ui_chat_selection = {
+  source.ui_chat_selection = {
     selected_model_id: selectedModelId,
+    selected_model_name: selectedModelName,
+    selected_thinking_level: selectedThinkingLevel,
     selected_agent_id: contactAgentId,
   };
-  next.ui_contact = {
+  source.ui_contact = {
     type: 'memory_agent',
     agent_id: contactAgentId,
     contact_id: contactId,
   };
+
+  if (Object.keys(asMetadataRecord(next.source_metadata)).length > 0) {
+    next.source_metadata = source;
+  } else {
+    Object.assign(next, source);
+  }
   return next;
 };

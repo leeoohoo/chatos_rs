@@ -1,5 +1,3 @@
-import type { FormEvent } from 'react';
-
 import type { Application } from '../../types';
 
 export interface ApplicationsPanelProps {
@@ -27,14 +25,8 @@ export interface ApplicationFormData {
 
 export interface ApplicationsManageViewProps {
   applications: Application[];
-  showAddForm: boolean;
-  editingId: string | null;
-  formData: ApplicationFormData;
   compact?: boolean;
-  onToggleForm: () => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-  onCancel: () => void;
-  onFormDataChange: (patch: Partial<ApplicationFormData>) => void;
+  onCreate: () => void;
   onEdit: (app: Application) => void;
   onDelete: (id: string) => Promise<void>;
 }

@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { Application } from '../types';
 import ApplicationsBrowseView from './applicationsPanel/ApplicationsBrowseView';
 import ApplicationsManageView from './applicationsPanel/ApplicationsManageView';
+import ManagerFormDialog from './ui/ManagerFormDialog';
 import {
   canSubmitApplicationForm,
   getDefaultApplicationFormData,
@@ -24,6 +26,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
   layout = 'modal',
   onApplicationSelect,
 }) => {
+    const { t } = useI18n();
     const storeData: ApplicationPanelStore = useChatStoreResolved();
 
     const {
@@ -36,7 +39,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
 
     // 已移除 iframe 降级与选择逻辑，仅保留弹窗打开
     const [showManageMode, setShowManageMode] = useState(manageOnly ? true : false);
-    const [showAddForm, setShowAddForm] = useState(false);
+    const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [formData, setFormData] = useState<ApplicationFormData>(getDefaultApplicationFormData());
 
@@ -52,7 +55,13 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
     const resetForm = () => {
         setEditingId(null);
         setFormData(getDefaultApplicationFormData());
-        setShowAddForm(false);
+        setIsFormDialogOpen(false);
+    };
+
+    const openCreateDialog = () => {
+        setEditingId(null);
+        setFormData(getDefaultApplicationFormData());
+        setIsFormDialogOpen(true);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -81,8 +90,8 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
 
     const handleEditApp = (app: Application) => {
         setEditingId(app.id);
-        setShowAddForm(true);
         setFormData(toApplicationFormData(app));
+        setIsFormDialogOpen(true);
     };
 
     const handleToggleManageMode = () => {
@@ -100,7 +109,73 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
     const shouldRender = layout === 'modal' ? !!isOpen : true;
     if (!shouldRender) return null;
     const effectiveManageMode = manageOnly ? true : showManageMode;
-    const effectiveTitle = title ?? (effectiveManageMode ? '应用管理' : '应用列表');
+    const effectiveTitle = title ?? (effectiveManageMode ? t('applications.manageTitle') : t('applications.title'));
+    const formDialog = (
+        <ManagerFormDialog
+            open={isFormDialogOpen}
+            title={editingId ? t('applications.form.titleEdit') : t('applications.form.titleCreate')}
+            widthClassName="max-w-lg"
+            onClose={resetForm}
+        >
+            <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
+                <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
+                    <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                            {t('applications.form.name')}
+                        </label>
+                        <input
+                            type="text"
+                            value={formData.name}
+                            onChange={(event) => handleFormDataChange({ name: event.target.value })}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            placeholder={t('applications.form.namePlaceholder')}
+                            autoFocus
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                            {t('applications.form.url')}
+                        </label>
+                        <input
+                            type="text"
+                            value={formData.url}
+                            onChange={(event) => handleFormDataChange({ url: event.target.value })}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            placeholder={t('applications.form.urlPlaceholder')}
+                        />
+                    </div>
+                    <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                            {t('applications.form.iconUrl')}
+                        </label>
+                        <input
+                            type="text"
+                            value={formData.iconUrl}
+                            onChange={(event) => handleFormDataChange({ iconUrl: event.target.value })}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            placeholder={t('applications.form.iconUrlPlaceholder')}
+                        />
+                    </div>
+                </div>
+                <div className="flex items-center justify-end space-x-2">
+                    <button
+                        type="button"
+                        className="rounded-lg bg-muted px-3 py-2 text-sm transition-colors hover:bg-accent"
+                        onClick={resetForm}
+                    >
+                        {t('common.cancel')}
+                    </button>
+                    <button
+                        type="submit"
+                        className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
+                    >
+                        {editingId ? t('applications.form.submitEdit') : t('applications.form.submitCreate')}
+                    </button>
+                </div>
+            </form>
+        </ManagerFormDialog>
+    );
 
     // modal 布局：保留原来的居中弹窗
     if (layout === 'modal') {
@@ -119,13 +194,13 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                                     onClick={handleToggleManageMode}
                                     className="px-3 py-1.5 text-sm rounded bg-muted hover:bg-accent transition-colors"
                                 >
-                                    {effectiveManageMode ? '浏览模式' : '管理模式'}
+                                    {effectiveManageMode ? t('applications.mode.browse') : t('applications.mode.manage')}
                                 </button>
                             )}
                             <button
                                 onClick={onClose}
                                 className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-                                title="关闭"
+                                title={t('common.close')}
                             >
                                 <XMarkIcon />
                             </button>
@@ -135,13 +210,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                         {effectiveManageMode ? (
                             <ApplicationsManageView
                                 applications={applications || []}
-                                showAddForm={showAddForm}
-                                editingId={editingId}
-                                formData={formData}
-                                onToggleForm={() => setShowAddForm((current) => !current)}
-                                onSubmit={handleSubmit}
-                                onCancel={resetForm}
-                                onFormDataChange={handleFormDataChange}
+                                onCreate={openCreateDialog}
                                 onEdit={handleEditApp}
                                 onDelete={async (id) => deleteApplication?.(id)}
                             />
@@ -154,6 +223,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                         )}
                     </div>
                 </div>
+                {formDialog}
             </>
         );
     }
@@ -172,14 +242,14 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                             onClick={handleToggleManageMode}
                             className="px-2 py-1 text-xs rounded bg-muted hover:bg-accent transition-colors"
                         >
-                            {effectiveManageMode ? '浏览模式' : '管理模式'}
+                            {effectiveManageMode ? t('applications.mode.browse') : t('applications.mode.manage')}
                         </button>
                     )}
                     {onClose && (
                         <button
                             onClick={onClose}
                             className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-                            title="关闭"
+                            title={t('common.close')}
                         >
                             <XMarkIcon className="w-4 h-4" />
                         </button>
@@ -190,22 +260,8 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                 {effectiveManageMode ? (
                     <ApplicationsManageView
                         applications={applications || []}
-                        showAddForm={showAddForm}
-                        editingId={editingId}
-                        formData={formData}
                         compact
-                        onToggleForm={() => {
-                            if (showAddForm) {
-                                resetForm();
-                                return;
-                            }
-                            setEditingId(null);
-                            setShowAddForm(true);
-                            setFormData(getDefaultApplicationFormData());
-                        }}
-                        onSubmit={handleSubmit}
-                        onCancel={resetForm}
-                        onFormDataChange={handleFormDataChange}
+                        onCreate={openCreateDialog}
                         onEdit={handleEditApp}
                         onDelete={async (id) => deleteApplication?.(id)}
                     />
@@ -218,6 +274,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
                     />
                 )}
             </div>
+            {formDialog}
         </div>
     );
 };

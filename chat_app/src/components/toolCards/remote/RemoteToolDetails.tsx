@@ -1,10 +1,13 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
 import GenericStructuredResultDetails from '../shared/GenericStructuredResultDetails';
-import { RowsCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { RowsCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const ConnectionListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { locale, t } = useI18n();
   const connections = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -13,7 +16,10 @@ const ConnectionListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Connections', `${connections.length} 个`)}
+      {renderCardHeader(
+        translateToolTitle('Connections', locale),
+        formatToolCardCount(t, 'connections', connections.length),
+      )}
       <div className="tool-detail-list">
         {connections.map((connection, index) => {
           const title = asString(connection.name).trim() || `connection ${index + 1}`;
@@ -44,6 +50,7 @@ const ConnectionListCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 };
 
 const RemoteEntriesCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { locale, t } = useI18n();
   const entries = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -52,7 +59,10 @@ const RemoteEntriesCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Remote entries', `${entries.length} 项`)}
+      {renderCardHeader(
+        translateToolTitle('Remote entries', locale),
+        formatToolCardCount(t, 'entries', entries.length),
+      )}
       <div className="tool-detail-list">
         {entries.map((entry, index) => (
           <div key={`remote-entry-${index}`} className="tool-detail-item">
@@ -83,6 +93,7 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -90,7 +101,7 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Connection summary"
+          title={translateToolTitle('Connection summary', locale)}
           rows={[
             { key: 'count', value: asNumber(record.count) ?? asArray(record.connections).length },
           ]}
@@ -104,7 +115,7 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Remote command"
+          title={translateToolTitle('Remote command', locale)}
           rows={[
             { key: 'connection', value: asString(record.name).trim() },
             { key: 'host', value: asString(record.host).trim() },
@@ -115,7 +126,7 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
           ]}
           fullWidth
         />
-        <TextBlockCard title="Command output" content={asString(record.output)} />
+        <TextBlockCard title={translateToolTitle('Command output', locale)} content={asString(record.output)} />
       </div>
     );
   }
@@ -124,7 +135,7 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Remote directory"
+          title={translateToolTitle('Remote directory', locale)}
           rows={[
             { key: 'path', value: asString(record.path).trim() },
             { key: 'entries', value: asNumber(record.count) },
@@ -140,14 +151,14 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Remote file"
+          title={translateToolTitle('Remote file', locale)}
           rows={[
             { key: 'path', value: asString(record.path).trim() },
             { key: 'truncated', value: asBoolean(record.truncated) },
             { key: 'source size', value: asNumber(record.source_size_bytes ?? record.sourceSizeBytes) },
           ]}
         />
-        <TextBlockCard title="Remote file content" content={asString(record.content)} />
+        <TextBlockCard title={translateToolTitle('Remote file content', locale)} content={asString(record.content)} />
       </div>
     );
   }
@@ -158,7 +169,7 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Connection target"
+          title={translateToolTitle('Connection target', locale)}
           rows={[
             { key: 'name', value: asString(record.name).trim() },
             { key: 'host', value: asString(record.host).trim() },
@@ -168,7 +179,7 @@ export const RemoteToolDetails: React.FC<RemoteToolDetailsProps> = ({
         />
         {connectionResult ? (
           <RowsCard
-            title="Connection result"
+            title={translateToolTitle('Connection result', locale)}
             rows={[
               { key: 'success', value: asBoolean(connectionResult.success) },
               { key: 'remote host', value: asString(connectionResult.remote_host ?? connectionResult.remoteHost).trim() },

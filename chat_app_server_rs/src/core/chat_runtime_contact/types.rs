@@ -1,10 +1,15 @@
-use crate::services::memory_server_client::MemorySkillPluginCommandDto;
+#[cfg(test)]
+use crate::models::chatos_agent_types::ChatosSkillPluginCommandDto;
 
+#[cfg(test)]
 pub const CONTACT_SKILL_READER_TOOL_NAME: &str = "memory_skill_reader_get_skill_detail";
+#[cfg(test)]
 pub const CONTACT_COMMAND_READER_TOOL_NAME: &str = "memory_command_reader_get_command_detail";
+#[cfg(test)]
 pub const CONTACT_PLUGIN_READER_TOOL_NAME: &str = "memory_plugin_reader_get_plugin_detail";
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct ParsedContactCommandInvocation {
     pub command_ref: String,
     pub name: String,
@@ -17,6 +22,7 @@ pub struct ParsedContactCommandInvocation {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct ParsedImplicitCommandSelection {
     pub command_ref: Option<String>,
     pub name: Option<String>,
@@ -25,6 +31,7 @@ pub struct ParsedImplicitCommandSelection {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct ContactSelectedSkillPrompt {
     pub skill_ref: String,
     pub id: String,
@@ -38,6 +45,7 @@ pub struct ContactSelectedSkillPrompt {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct ContactSelectedPluginPrompt {
     pub plugin_ref: String,
     pub source: String,
@@ -48,26 +56,30 @@ pub struct ContactSelectedPluginPrompt {
     pub repository: Option<String>,
     pub branch: Option<String>,
     pub content: Option<String>,
-    pub commands: Vec<MemorySkillPluginCommandDto>,
+    pub commands: Vec<ChatosSkillPluginCommandDto>,
     pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub enum ContactSkillPromptMode {
     Disabled,
+    #[cfg(test)]
     Summary {
         force_skill_first: bool,
     },
+    #[cfg(test)]
     SelectedFull {
         skills: Vec<ContactSelectedSkillPrompt>,
         plugins: Vec<ContactSelectedPluginPrompt>,
     },
 }
 
+#[cfg(test)]
 pub fn contact_skill_ref(index: usize) -> String {
     format!("SK{}", index + 1)
 }
 
+#[cfg(test)]
 pub fn contact_plugin_ref(index: usize) -> String {
     format!("PL{}", index + 1)
 }

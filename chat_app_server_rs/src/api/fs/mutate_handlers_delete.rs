@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
+use crate::services::project_fs_cache::invalidate_directory_listing_cache_for_path;
 use crate::services::workspace_realtime_watcher::{
     note_workspace_path_changed, suppress_logged_path,
 };
@@ -53,7 +54,7 @@ pub(in super::super) async fn delete_entry(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": err.to_string() })),
-            )
+            );
         }
     };
     let is_symlink = metadata.file_type().is_symlink();
@@ -76,6 +77,12 @@ pub(in super::super) async fn delete_entry(
         );
     }
     invalidate_project_symbol_indexes_for_path(path.path.as_path());
+    if let Some(project_root) = path.project_root.as_ref() {
+        let _ = invalidate_directory_listing_cache_for_path(
+            project_root.to_string_lossy().as_ref(),
+            path.path.as_path(),
+        );
+    }
     let deleted_path = path.path.to_string_lossy().to_string();
     suppress_logged_path(deleted_path.as_str());
     note_workspace_path_changed(deleted_path.as_str());

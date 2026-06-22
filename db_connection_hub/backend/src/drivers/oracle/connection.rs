@@ -7,6 +7,11 @@ use crate::{
         datasource::{ConnectionTestResult, ConnectionTestStageResult, DataSource},
         meta::AuthMode,
     },
+    drivers::connection_common::{
+        connect_timeout_ms, require_network_host, require_network_port,
+        validate_file_key_reference, validate_network_host_port, validate_password_auth,
+        validate_supported_auth_mode, validate_tls_client_cert_auth,
+    },
     error::{AppError, AppResult},
 };
 
@@ -54,16 +59,9 @@ pub async fn test_connection(datasource: &DataSource) -> AppResult<ConnectionTes
 }
 
 pub async fn probe_tcp(datasource: &DataSource) -> AppResult<()> {
-    let host = datasource
-        .network
-        .host
-        .as_deref()
-        .ok_or_else(|| AppError::BadRequest("network.host is required".to_string()))?;
-    let port = datasource
-        .network
-        .port
-        .ok_or_else(|| AppError::BadRequest("network.port is required".to_string()))?;
-    let connect_timeout_ms = datasource.options.connect_timeout_ms.unwrap_or(5_000);
+    let host = require_network_host(datasource)?;
+    let port = require_network_port(datasource)?;
+    let connect_timeout_ms = connect_timeout_ms(datasource);
     let address = format!("{host}:{port}");
 
     timeout(
@@ -77,20 +75,17 @@ pub async fn probe_tcp(datasource: &DataSource) -> AppResult<()> {
 }
 
 fn validate_connection_payload(datasource: &DataSource) -> AppResult<()> {
-    if datasource
-        .network
-        .host
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::BadRequest("network.host is required".to_string()));
-    }
-
-    if datasource.network.port.is_none() {
-        return Err(AppError::BadRequest("network.port is required".to_string()));
-    }
+    validate_network_host_port(datasource)?;
+    validate_supported_auth_mode(
+        datasource,
+        &[
+            AuthMode::Password,
+            AuthMode::TlsClientCert,
+            AuthMode::FileKey,
+            AuthMode::Integrated,
+        ],
+        "oracle currently supports password/tls_client_cert/file_key/integrated",
+    )?;
 
     let has_target = datasource
         .network
@@ -115,73 +110,16 @@ fn validate_connection_payload(datasource: &DataSource) -> AppResult<()> {
 
     match datasource.auth.mode {
         AuthMode::Password => {
-            if datasource
-                .auth
-                .username
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("username is required".to_string()));
-            }
-            if datasource
-                .auth
-                .password
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("password is required".to_string()));
-            }
+            validate_password_auth(datasource)?;
         }
         AuthMode::TlsClientCert => {
-            if datasource
-                .auth
-                .client_cert
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("client_cert is required".to_string()));
-            }
-            if datasource
-                .auth
-                .client_key
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("client_key is required".to_string()));
-            }
+            validate_tls_client_cert_auth(datasource)?;
         }
         AuthMode::FileKey => {
-            let has_ref = datasource
-                .auth
-                .key_ref
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-                || datasource
-                    .auth
-                    .wallet_ref
-                    .as_deref()
-                    .is_some_and(|value| !value.trim().is_empty());
-            if !has_ref {
-                return Err(AppError::BadRequest(
-                    "key_ref or wallet_ref is required".to_string(),
-                ));
-            }
+            validate_file_key_reference(datasource)?;
         }
         AuthMode::Integrated => {}
-        _ => {
-            return Err(AppError::BadRequest(
-                "oracle currently supports password/tls_client_cert/file_key/integrated"
-                    .to_string(),
-            ));
-        }
+        _ => {}
     }
 
     Ok(())

@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { MessageList } from '../../MessageList';
 import type { SessionSummaryItem } from '../../../features/sessionSummary/useSessionSummaryPanel';
 import type { Message } from '../../../types';
@@ -15,11 +16,7 @@ interface TeamMemberSummaryViewProps {
   deletingSummaryId: string | null;
   messages: Message[];
   hasMoreMessages: boolean;
-  chatIsLoading: boolean;
-  chatIsStreaming: boolean;
-  chatIsStopping: boolean;
   onLoadMore: () => void;
-  onToggleTurnProcess: (userMessageId: string) => void;
   onClearSummaries: () => void;
   onRefreshSummaries: () => void;
   onCloseSummary: () => void;
@@ -48,24 +45,22 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
   deletingSummaryId,
   messages,
   hasMoreMessages,
-  chatIsLoading,
-  chatIsStreaming,
-  chatIsStopping,
   onLoadMore,
-  onToggleTurnProcess,
   onClearSummaries,
   onRefreshSummaries,
   onCloseSummary,
   onDeleteSummary,
 }) => {
+  const { t } = useI18n();
+
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden">
       <div className="basis-[42%] min-h-[170px] bg-card/40 flex flex-col overflow-hidden border-b border-border">
         <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <div className="text-sm font-medium truncate">会话总结</div>
+            <div className="text-sm font-medium truncate">{t('teamMembers.summaryTitle')}</div>
             <div className="text-[11px] text-muted-foreground truncate">
-              {contactName || sessionTitle || '当前联系人'}
+              {contactName || sessionTitle || t('teamMembers.currentContact')}
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -75,7 +70,7 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
               disabled={clearingSummaries || summaryLoading}
               onClick={onClearSummaries}
             >
-              {clearingSummaries ? '清空中...' : '清空所有总结'}
+              {clearingSummaries ? t('teamMembers.clearingSummaries') : t('teamMembers.clearAllSummaries')}
             </button>
             <button
               type="button"
@@ -83,14 +78,14 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
               disabled={summaryLoading}
               onClick={onRefreshSummaries}
             >
-              {summaryLoading ? '刷新中...' : '刷新'}
+              {summaryLoading ? t('teamMembers.refreshing') : t('teamMembers.refresh')}
             </button>
             <button
               type="button"
               className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
               onClick={onCloseSummary}
             >
-              关闭
+              {t('common.close')}
             </button>
           </div>
         </div>
@@ -99,9 +94,9 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
             <div className="text-xs text-destructive">{summaryError}</div>
           ) : null}
           {summaryLoading ? (
-            <div className="text-xs text-muted-foreground">正在加载会话总结...</div>
+            <div className="text-xs text-muted-foreground">{t('teamMembers.loadingSummaries')}</div>
           ) : summaryItems.length === 0 ? (
-            <div className="text-xs text-muted-foreground">当前会话暂无总结。</div>
+            <div className="text-xs text-muted-foreground">{t('teamMembers.emptySummaries')}</div>
           ) : (
             summaryItems.map((item) => (
               <div key={item.id} className="rounded-md border border-border bg-background/80 p-2">
@@ -120,12 +115,15 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
                       onClick={() => onDeleteSummary(item.id)}
                       disabled={deletingSummaryId === item.id}
                     >
-                      {deletingSummaryId === item.id ? '删除中' : '删除'}
+                      {deletingSummaryId === item.id ? t('teamMembers.deleting') : t('teamMembers.delete')}
                     </button>
                   </div>
                 </div>
                 <div className="mt-1 text-[11px] text-muted-foreground">
-                  {`消息 ${item.sourceMessageCount} · 估算 ${item.sourceEstimatedTokens} tok`}
+                  {t('teamMembers.summaryMeta', {
+                    messages: item.sourceMessageCount,
+                    tokens: item.sourceEstimatedTokens,
+                  })}
                 </div>
                 {item.status && item.status !== 'summarized' && (
                   <div className="mt-1 text-[11px] text-amber-600">
@@ -138,7 +136,7 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
                   </div>
                 )}
                 <div className="mt-2 text-sm leading-6 whitespace-pre-wrap break-words">
-                  {item.summaryText || '(空总结)'}
+                  {item.summaryText || t('teamMembers.emptySummary')}
                 </div>
               </div>
             ))
@@ -154,12 +152,12 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
           key={`project-team-messages-${sessionId}-summary`}
           sessionId={sessionId}
           messages={messages}
-          isLoading={chatIsLoading}
-          isStreaming={chatIsStreaming}
-          isStopping={chatIsStopping}
+          isLoading={false}
+          isStreaming={false}
+          isStopping={false}
+          assistantContactName={contactName}
           hasMore={hasMoreMessages}
           onLoadMore={onLoadMore}
-          onToggleTurnProcess={onToggleTurnProcess}
         />
       </div>
     </div>

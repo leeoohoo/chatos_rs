@@ -2,7 +2,6 @@ use serde_json::json;
 
 use super::{
     build_function_tool_schema, normalize_json_schema, parse_tool_definition, truncate_tool_text,
-    ToolSchemaFormat,
 };
 
 #[test]
@@ -17,32 +16,23 @@ fn parse_tool_definition_rejects_blank_name() {
 }
 
 #[test]
-fn build_legacy_function_tool_schema_matches_expected_shape() {
+fn build_function_tool_schema_matches_responses_shape() {
     let parameters = json!({"type": "object", "properties": {"q": {"type": "string"}}});
-    let schema = build_function_tool_schema(
-        "search",
-        "search docs",
-        &parameters,
-        ToolSchemaFormat::LegacyChatCompletions,
-    );
+    let schema = build_function_tool_schema("search", "search docs", &parameters);
 
     assert_eq!(
         schema.get("type").and_then(|v| v.as_str()),
         Some("function")
     );
+    assert_eq!(schema.get("name").and_then(|v| v.as_str()), Some("search"));
+    assert!(schema.get("function").is_none());
     assert_eq!(
         schema
-            .get("function")
-            .and_then(|v| v.get("name"))
-            .and_then(|v| v.as_str()),
-        Some("search")
-    );
-    assert_eq!(
-        schema
-            .get("function")
-            .and_then(|v| v.get("parameters"))
-            .cloned(),
-        Some(parameters)
+            .get("parameters")
+            .and_then(|v| v.get("required"))
+            .and_then(|v| v.as_array())
+            .map(|items| items.contains(&json!("q"))),
+        Some(true)
     );
 }
 

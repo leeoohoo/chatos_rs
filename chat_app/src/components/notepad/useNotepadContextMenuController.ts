@@ -1,12 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 import type React from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { ContextMenuState, ContextMenuTarget } from './NotepadContextMenu';
 import { buildContextMenuStyle } from './controllerHelpers';
 import type { NoteMeta } from './utils';
 
 interface UseNotepadContextMenuControllerOptions {
   selectedNoteMeta: NoteMeta | null;
+  t: TranslateFn;
   setSelectedFolder: React.Dispatch<React.SetStateAction<string>>;
   ensureFolderExpanded: (folderPath: string) => void;
   createFolder: (parentFolder?: string) => Promise<void>;
@@ -20,6 +22,7 @@ interface UseNotepadContextMenuControllerOptions {
 
 export const useNotepadContextMenuController = ({
   selectedNoteMeta,
+  t,
   setSelectedFolder,
   ensureFolderExpanded,
   createFolder,
@@ -104,11 +107,11 @@ export const useNotepadContextMenuController = ({
       : selectedNoteMeta;
     setContextMenu(null);
     if (!targetNote) {
-      setError('请先选中笔记');
+      setError(t('notepad.error.selectNoteFirst'));
       return;
     }
     await copyText(targetNote);
-  }, [contextMenu, copyText, selectedNoteMeta, setError]);
+  }, [contextMenu, copyText, selectedNoteMeta, setError, t]);
 
   const handleContextCopyAsMd = useCallback(async () => {
     if (!contextMenu) {
@@ -119,11 +122,11 @@ export const useNotepadContextMenuController = ({
       : selectedNoteMeta;
     setContextMenu(null);
     if (!targetNote) {
-      setError('请先选中笔记');
+      setError(t('notepad.error.selectNoteFirst'));
       return;
     }
     await copyAsMd(targetNote);
-  }, [contextMenu, copyAsMd, selectedNoteMeta, setError]);
+  }, [contextMenu, copyAsMd, selectedNoteMeta, setError, t]);
 
   const contextMenuStyle = useMemo(
     () => buildContextMenuStyle(contextMenu),

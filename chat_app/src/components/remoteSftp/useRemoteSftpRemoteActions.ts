@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import { resolveRemoteSftpErrorMessage } from '../../lib/api/remoteConnectionErrors';
 import type { RemoteConnection } from '../../types';
 import type { DialogConfirmOptions, DialogPromptOptions } from '../ui/DialogProvider';
@@ -23,6 +24,7 @@ interface UseRemoteSftpRemoteActionsOptions {
   setError: (message: string | null) => void;
   prompt: (options: DialogPromptOptions) => Promise<string | null>;
   confirm: (options: DialogConfirmOptions) => Promise<boolean>;
+  t: TranslateFn;
   onSecondFactorRequired: (
     error: unknown,
     retryWithCode: (code: string) => Promise<void>,
@@ -51,6 +53,7 @@ export const useRemoteSftpRemoteActions = ({
   setError,
   prompt,
   confirm,
+  t,
   onSecondFactorRequired,
 }: UseRemoteSftpRemoteActionsOptions) => {
   const [remoteActionLoading, setRemoteActionLoading] = useState(false);
@@ -58,18 +61,18 @@ export const useRemoteSftpRemoteActions = ({
   const handleCreateRemoteDirectory = useCallback(async () => {
     if (!currentRemoteConnection) return;
     const name = await prompt({
-      title: '新建远端目录',
-      message: '请输入新目录名称',
-      inputLabel: '目录名称',
-      placeholder: '例如 logs',
+      title: t('remote.sftp.prompt.createRemoteDirTitle'),
+      message: t('remote.sftp.prompt.createRemoteDirMessage'),
+      inputLabel: t('remote.sftp.prompt.createRemoteDirInput'),
+      placeholder: t('remote.sftp.prompt.createRemoteDirPlaceholder'),
       defaultValue: '',
-      confirmText: '创建',
-      cancelText: '取消',
+      confirmText: t('applications.form.submitCreate'),
+      cancelText: t('common.cancel'),
       type: 'info',
     });
     if (name === null) return;
     const trimmedName = name.trim();
-    const validationError = validateRemoteEntryName(trimmedName, '目录名称不能为空', '目录名称不合法');
+    const validationError = validateRemoteEntryName(trimmedName, t('remote.sftp.error.dirNameRequired'), t('remote.sftp.error.dirNameInvalid'));
     if (validationError) {
       setError(validationError);
       return;
@@ -85,7 +88,7 @@ export const useRemoteSftpRemoteActions = ({
         trimmedName,
         activeVerificationCode || undefined,
       );
-      setMessage(`已创建目录: ${trimmedName}`);
+      setMessage(t('remote.sftp.success.createdDir', { name: trimmedName }));
       await loadRemote(remotePath);
     } catch (err) {
       if (onSecondFactorRequired(err, async (code) => {
@@ -95,12 +98,12 @@ export const useRemoteSftpRemoteActions = ({
           trimmedName,
           code,
         );
-        setMessage(`已创建目录: ${trimmedName}`);
+        setMessage(t('remote.sftp.success.createdDir', { name: trimmedName }));
         await loadRemote(remotePath, code);
       })) {
         return;
       }
-      setError(resolveRemoteSftpErrorMessage(err, '创建目录失败'));
+      setError(resolveRemoteSftpErrorMessage(err, t('remote.sftp.error.createDir')));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -114,26 +117,27 @@ export const useRemoteSftpRemoteActions = ({
     remotePath,
     setError,
     setMessage,
+    t,
   ]);
 
   const handleRenameRemoteEntry = useCallback(async () => {
     if (!currentRemoteConnection) return;
     if (!selectedRemote) {
-      setError('请先选择远端文件或目录');
+      setError(t('remote.sftp.error.selectRemoteEntry'));
       return;
     }
     const nextName = await prompt({
-      title: '重命名远端条目',
-      message: `请输入 "${selectedRemote.name}" 的新名称`,
-      inputLabel: '新名称',
+      title: t('remote.sftp.prompt.renameTitle'),
+      message: t('remote.sftp.prompt.renameMessage', { name: selectedRemote.name }),
+      inputLabel: t('remote.sftp.prompt.renameInput'),
       defaultValue: selectedRemote.name,
-      confirmText: '重命名',
-      cancelText: '取消',
+      confirmText: t('remote.sftp.browser.rename'),
+      cancelText: t('common.cancel'),
       type: 'info',
     });
     if (nextName === null) return;
     const trimmedName = nextName.trim();
-    const validationError = validateRemoteEntryName(trimmedName, '新名称不能为空', '新名称不合法');
+    const validationError = validateRemoteEntryName(trimmedName, t('remote.sftp.error.newNameRequired'), t('remote.sftp.error.newNameInvalid'));
     if (validationError) {
       setError(validationError);
       return;
@@ -153,7 +157,7 @@ export const useRemoteSftpRemoteActions = ({
         targetPath,
         activeVerificationCode || undefined,
       );
-      setMessage(`已重命名: ${selectedRemote.name} → ${trimmedName}`);
+      setMessage(t('remote.sftp.success.renamed', { from: selectedRemote.name, to: trimmedName }));
       setSelectedRemote(null);
       await loadRemote(remotePath);
     } catch (err) {
@@ -164,13 +168,13 @@ export const useRemoteSftpRemoteActions = ({
           targetPath,
           code,
         );
-        setMessage(`已重命名: ${selectedRemote.name} → ${trimmedName}`);
+        setMessage(t('remote.sftp.success.renamed', { from: selectedRemote.name, to: trimmedName }));
         setSelectedRemote(null);
         await loadRemote(remotePath, code);
       })) {
         return;
       }
-      setError(resolveRemoteSftpErrorMessage(err, '重命名失败'));
+      setError(resolveRemoteSftpErrorMessage(err, t('remote.sftp.error.rename')));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -186,20 +190,24 @@ export const useRemoteSftpRemoteActions = ({
     setError,
     setMessage,
     setSelectedRemote,
+    t,
   ]);
 
   const handleDeleteRemoteEntry = useCallback(async () => {
     if (!currentRemoteConnection) return;
     if (!selectedRemote) {
-      setError('请先选择远端文件或目录');
+      setError(t('remote.sftp.error.selectRemoteEntry'));
       return;
     }
 
     const confirmed = await confirm({
-      title: selectedRemote.isDir ? '删除远端目录' : '删除远端文件',
-      message: `确认删除${selectedRemote.isDir ? '目录' : '文件'} "${selectedRemote.name}" 吗？`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: selectedRemote.isDir ? t('remote.sftp.confirm.deleteEntryTitleDir') : t('remote.sftp.confirm.deleteEntryTitleFile'),
+      message: t('remote.sftp.confirm.deleteEntryMessage', {
+        kind: selectedRemote.isDir ? t('remote.sftp.confirm.entryKindDir') : t('remote.sftp.confirm.entryKindFile'),
+        name: selectedRemote.name,
+      }),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) return;
@@ -207,11 +215,11 @@ export const useRemoteSftpRemoteActions = ({
     let recursive = false;
     if (selectedRemote.isDir) {
       recursive = await confirm({
-        title: '目录删除方式',
-        message: '是否递归删除该目录及其全部内容？',
-        description: '选择“仅删除空目录”将只在目录为空时执行删除。',
-        confirmText: '递归删除',
-        cancelText: '仅删除空目录',
+        title: t('remote.sftp.confirm.deleteModeTitle'),
+        message: t('remote.sftp.confirm.deleteModeMessage'),
+        description: t('remote.sftp.confirm.deleteModeDescription'),
+        confirmText: t('remote.sftp.confirm.deleteModeRecursive'),
+        cancelText: t('remote.sftp.confirm.deleteModeEmptyOnly'),
         type: 'warning',
       });
     }
@@ -226,7 +234,7 @@ export const useRemoteSftpRemoteActions = ({
         recursive,
         activeVerificationCode || undefined,
       );
-      setMessage(`已删除: ${selectedRemote.name}`);
+      setMessage(t('remote.sftp.success.deleted', { name: selectedRemote.name }));
       setSelectedRemote(null);
       await loadRemote(remotePath);
     } catch (err) {
@@ -237,13 +245,13 @@ export const useRemoteSftpRemoteActions = ({
           recursive,
           code,
         );
-        setMessage(`已删除: ${selectedRemote.name}`);
+        setMessage(t('remote.sftp.success.deleted', { name: selectedRemote.name }));
         setSelectedRemote(null);
         await loadRemote(remotePath, code);
       })) {
         return;
       }
-      setError(resolveRemoteSftpErrorMessage(err, '删除失败'));
+      setError(resolveRemoteSftpErrorMessage(err, t('remote.sftp.error.delete')));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -259,6 +267,7 @@ export const useRemoteSftpRemoteActions = ({
     setError,
     setMessage,
     setSelectedRemote,
+    t,
   ]);
 
   return {

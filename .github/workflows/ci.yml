@@ -53,6 +53,15 @@ jobs:
       - name: OpenAPI contract advisory
         run: bash scripts/check_openapi_contract_advisory.sh
 
+      - name: Root startup scripts syntax
+        run: |
+          bash -n restart_services.sh
+          bash -n restart_agentforge.sh
+          bash -n db_connection_hub/restart_services.sh
+
+      - name: Large file policy
+        run: bash scripts/check-large-files.sh --fail
+
       - name: OpenAPI contract gate
         run: bash scripts/check_openapi_contract_gate.sh
 
@@ -192,12 +201,12 @@ jobs:
       - name: cargo test
         run: cargo test -q
 
-  memory-server-backend:
-    name: memory_server/backend (Rust)
+  agentforge:
+    name: agentforge (Rust workspace)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: memory_server/backend
+        working-directory: agentforge
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -208,16 +217,13 @@ jobs:
       - name: Cache Rust deps
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: memory_server/backend -> target
+          workspaces: agentforge -> target-shared
 
-      - name: cargo check
-        run: cargo check
+      - name: cargo check workspace
+        run: cargo check --workspace --offline
 
-      - name: non-test unwrap/expect audit
-        run: python ../../scripts/check-non-test-unwrap-expect.py
-
-      - name: cargo test
-        run: cargo test -q
+      - name: cargo test workspace
+        run: cargo test --workspace --offline -q
 
   chat-app-frontend:
     name: chat_app (TypeScript)
@@ -254,12 +260,36 @@ jobs:
       - name: hotspot line budgets
         run: bash ../scripts/check-hotspot-line-budgets.sh
 
-  memory-server-frontend:
-    name: memory_server/frontend (TypeScript)
+  db-connection-hub-backend:
+    name: db_connection_hub backend (Rust)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: memory_server/frontend
+        working-directory: db_connection_hub/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: db_connection_hub/backend -> target
+
+      - name: cargo build
+        run: cargo build
+
+      - name: cargo test
+        run: cargo test -q
+
+  db-connection-hub-frontend:
+    name: db_connection_hub frontend (TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: db_connection_hub/frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -269,7 +299,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: memory_server/frontend/package-lock.json
+          cache-dependency-path: db_connection_hub/frontend/package-lock.json
 
       - name: npm ci
         run: npm ci
@@ -279,27 +309,3 @@ jobs:
 
       - name: build
         run: npm run build
-
-  openai-codex-gateway:
-    name: openai-codex-gateway (Python)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: openai-codex-gateway
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
-
-      - name: Gateway unit regression
-        run: make test
-
-      - name: CLI smoke check
-        run: python server.py --help

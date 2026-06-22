@@ -7,7 +7,10 @@ use crate::core::update_fields::{
     mongo_set_doc_from_optional_strings, sqlite_update_parts_from_optional_strings,
 };
 use crate::models::project::{Project, ProjectRow};
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_one_doc, mongo_find_one_doc, mongo_insert_doc,
+    mongo_update_set_doc, to_doc, with_db,
+};
 
 fn normalize_doc(doc: &Document) -> Option<Project> {
     Some(Project {
@@ -16,6 +19,8 @@ fn normalize_doc(doc: &Document) -> Option<Project> {
         root_path: doc.get_str("root_path").ok()?.to_string(),
         description: doc.get_str("description").ok().map(|s| s.to_string()),
         user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
+        latest_session_id: None,
+        last_message_at: None,
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
     })
@@ -60,11 +65,7 @@ pub async fn get_project_by_id(id: &str) -> Result<Option<Project>, String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("projects")
-                    .find_one(doc! { "id": id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(db, "projects", doc! { "id": id }).await?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
@@ -102,7 +103,7 @@ pub async fn create_project(project: &Project) -> Result<String, String> {
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("projects").insert_one(doc, None).await.map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "projects", doc).await?;
                 Ok(proj_mongo.id.clone())
             })
         },
@@ -150,10 +151,7 @@ pub async fn update_project(
                     ("description", desc_mongo),
                 ]);
                 set_doc.insert("updated_at", now_mongo.clone());
-                db.collection::<Document>("projects")
-                    .update_one(doc! { "id": id }, doc! { "$set": set_doc }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_update_set_doc(db, "projects", doc! { "id": id }, set_doc).await?;
                 Ok(())
             })
         },
@@ -185,10 +183,7 @@ pub async fn delete_project(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("projects")
-                    .delete_one(doc! { "id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_one_doc(db, "projects", doc! { "id": &id }).await?;
                 Ok(())
             })
         },

@@ -2,21 +2,24 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
+use chatos_mcp_runtime::ToolCallerModelRuntime;
 use serde_json::{json, Value};
-use tokio::task::JoinSet;
-use tracing::warn;
+use tokio::task::{Id, JoinSet};
+use tracing::{error, warn};
 
-use crate::core::tool_call::{
-    clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name,
-};
 use crate::core::mcp_tools::{
     execute_tools_stream as execute_tools_stream_common, inject_agent_builder_args,
     jsonrpc_http_call, jsonrpc_stdio_call, to_text_and_structured_result, BuiltinToolService,
     ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
 };
+use crate::core::tool_call::{
+    clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name,
+};
 use crate::utils::abort_registry;
 
 use super::parallelism::should_parallelize_tool_batch;
+
+const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
 
 pub(crate) fn tool_call_name(tool_call: &Value) -> Option<&str> {
     extract_tool_call_name(tool_call)
@@ -39,6 +42,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
     builtin_services: &HashMap<String, BuiltinToolService>,
@@ -49,6 +53,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
             session_id,
             conversation_turn_id,
             caller_model,
+            caller_model_runtime,
             on_tool_result,
             tool_metadata,
             builtin_services,
@@ -70,6 +75,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
                 session_id,
                 conversation_turn_id,
                 caller_model,
+                caller_model_runtime,
                 on_stream_chunk,
             )
             .await
@@ -86,6 +92,7 @@ pub(crate) async fn call_tool_once(
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 ) -> Result<(String, Option<Value>), String> {
     let info = tool_metadata
@@ -94,8 +101,10 @@ pub(crate) async fn call_tool_once(
 
     if info.server_type == "http" {
         let url = info.server_url.clone().ok_or("missing server url")?;
+        let headers = http_tool_call_headers(info, session_id, conversation_turn_id);
         let result = jsonrpc_http_call(
             &url,
+            headers.as_ref(),
             "tools/call",
             json!({"name": info.original_name, "arguments": args}),
         )
@@ -117,6 +126,7 @@ pub(crate) async fn call_tool_once(
             args,
             session_id,
             conversation_turn_id,
+            caller_model_runtime,
             on_stream_chunk,
         )?;
         Ok(to_text_and_structured_result(&result))
@@ -133,11 +143,37 @@ pub(crate) async fn call_tool_once(
     }
 }
 
+fn http_tool_call_headers(
+    info: &ToolInfo,
+    session_id: Option<&str>,
+    conversation_turn_id: Option<&str>,
+) -> Option<HashMap<String, String>> {
+    let mut headers = info.server_headers.clone().unwrap_or_default();
+    if info.server_name == TASK_RUNNER_MCP_SERVER_NAME {
+        if let Some(session_id) = normalized_context_value(session_id) {
+            headers.insert("X-Chatos-Session-Id".to_string(), session_id.clone());
+            headers.insert("X-Chatos-Conversation-Id".to_string(), session_id);
+        }
+        if let Some(turn_id) = normalized_context_value(conversation_turn_id) {
+            headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
+        }
+    }
+    (!headers.is_empty()).then_some(headers)
+}
+
+fn normalized_context_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 async fn execute_tools_stream_parallel_with_registry(
     tool_calls: &[Value],
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
     builtin_services: &HashMap<String, BuiltinToolService>,
@@ -150,12 +186,14 @@ async fn execute_tools_stream_parallel_with_registry(
         session_id,
         conversation_turn_id,
         caller_model,
+        caller_model_runtime,
         on_tool_result,
         move |tool_name,
               args,
               session_id_owned,
               turn_id_owned,
               caller_model_owned,
+              caller_model_runtime_owned,
               on_stream_chunk| {
             let tool_metadata = tool_metadata.clone();
             let builtin_services = builtin_services.clone();
@@ -168,6 +206,7 @@ async fn execute_tools_stream_parallel_with_registry(
                     session_id_owned.as_deref(),
                     turn_id_owned.as_deref(),
                     caller_model_owned.as_deref(),
+                    caller_model_runtime_owned.as_ref(),
                     on_stream_chunk,
                 )
                 .await
@@ -182,6 +221,7 @@ pub(crate) async fn execute_tools_stream_parallel<E, Fut>(
     session_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
+    caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     execute_one: E,
 ) -> Vec<ToolResult>
@@ -192,6 +232,7 @@ where
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<ToolCallerModelRuntime>,
             Option<ToolStreamChunkCallback>,
         ) -> Fut
         + Clone
@@ -207,6 +248,7 @@ where
 
     let mut results: Vec<Option<ToolResult>> = vec![None; tool_calls.len()];
     let mut join_set: JoinSet<(usize, ToolResult)> = JoinSet::new();
+    let mut pending_contexts: HashMap<Id, PendingToolContext> = HashMap::new();
 
     for (index, tool_call) in tool_calls.iter().enumerate() {
         if is_aborted(session_id) {
@@ -279,13 +321,18 @@ where
         let session_id_owned = session_id.map(|value| value.to_string());
         let turn_id_owned = conversation_turn_id.map(|value| value.to_string());
         let caller_model_owned = caller_model.map(|value| value.to_string());
-        join_set.spawn(async move {
+        let caller_model_runtime_owned = caller_model_runtime.cloned();
+        let pending_call_id = call_id.clone();
+        let pending_tool_name = tool_name.clone();
+        let pending_turn_id = stream_turn_id_for_result.clone();
+        let task = join_set.spawn(async move {
             let outcome = execute_one(
                 tool_name.clone(),
                 args,
                 session_id_owned,
                 turn_id_owned,
                 caller_model_owned,
+                caller_model_runtime_owned,
                 on_stream_chunk,
             )
             .await;
@@ -315,12 +362,46 @@ where
 
             (index, result)
         });
+        pending_contexts.insert(
+            task.id(),
+            PendingToolContext {
+                index,
+                call_id: pending_call_id,
+                tool_name: pending_tool_name,
+                conversation_turn_id: pending_turn_id,
+            },
+        );
     }
 
-    while let Some(joined) = join_set.join_next().await {
+    while let Some(joined) = join_set.join_next_with_id().await {
         match joined {
-            Ok((index, result)) => results[index] = Some(result),
-            Err(err) => warn!("parallel tool join error: {}", err),
+            Ok((task_id, (index, result))) => {
+                pending_contexts.remove(&task_id);
+                results[index] = Some(result);
+            }
+            Err(err) => {
+                let task_id = err.id();
+                if let Some(context) = pending_contexts.remove(&task_id) {
+                    error!(
+                        tool_name = %context.tool_name,
+                        tool_call_id = %context.call_id,
+                        "parallel tool task panicked or was cancelled: {}",
+                        err
+                    );
+                    results[context.index] = Some(build_tool_result(
+                        context.call_id,
+                        context.tool_name,
+                        false,
+                        true,
+                        false,
+                        context.conversation_turn_id,
+                        build_join_error_message(&err),
+                        None,
+                    ));
+                } else {
+                    warn!("parallel tool join error without context: {}", err);
+                }
+            }
         }
 
         if is_aborted(session_id) {
@@ -381,4 +462,21 @@ fn build_tool_result(
 
 fn is_active(session_id: Option<&str>) -> bool {
     !is_aborted(session_id)
+}
+
+fn build_join_error_message(err: &tokio::task::JoinError) -> String {
+    if err.is_cancelled() {
+        "工具执行失败: parallel task cancelled before completion".to_string()
+    } else if err.is_panic() {
+        "工具执行失败: internal panic in parallel tool execution".to_string()
+    } else {
+        format!("工具执行失败: parallel tool task join error: {}", err)
+    }
+}
+
+struct PendingToolContext {
+    index: usize,
+    call_id: String,
+    tool_name: String,
+    conversation_turn_id: Option<String>,
 }

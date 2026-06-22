@@ -4,6 +4,7 @@ import type { Message, ToolCall } from '../../types';
 import type { RenderSegment, ToolCallLookupMap } from './types';
 import { ToolCallTimeline } from './ToolCallTimeline';
 import { getCollapsedTextContentForRender, normalizeMetaId } from './helpers';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface MessageContentRendererProps {
   message: Message;
@@ -30,8 +31,32 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
   collapseAssistantProcessByDefault,
   onApplyCode,
 }) => {
+  const { t } = useI18n();
   const hasContent = message.content && message.content.trim().length > 0;
   const isCurrentlyStreaming = isStreaming && isLast;
+  const reviewOutcomeRaw = typeof message.metadata?.task_turn_review === 'object'
+    ? (
+      (message.metadata?.task_turn_review as { outcome?: unknown }).outcome
+    )
+    : null;
+  const reviewOutcome = typeof reviewOutcomeRaw === 'string'
+    ? reviewOutcomeRaw.trim().toLowerCase()
+    : '';
+  const reviewOutcomeText = reviewOutcome === 'pass'
+    ? t('messageContent.reviewOutcome.pass')
+    : (
+      reviewOutcome === 'needs_more_work'
+        ? t('messageContent.reviewOutcome.needsMoreWork')
+        : (
+          reviewOutcome === 'unknown'
+            ? t('messageContent.reviewOutcome.unknown')
+            : (
+              reviewOutcome === 'not_attempted'
+                ? t('messageContent.reviewOutcome.notAttempted')
+                : ''
+            )
+        )
+    );
 
   if (renderContentSegments.length > 0) {
     if (collapseAssistantProcessByDefault) {
@@ -140,7 +165,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
               className="group rounded-md border border-gray-200 bg-muted px-3 py-2 dark:border-gray-700"
             >
               <summary className="cursor-pointer select-none text-xs text-gray-500 dark:text-gray-400">
-                Thinking
+                {t('messageContent.thinking')}
               </summary>
               <div className="mt-1">
                 <LazyMarkdownRenderer
@@ -161,7 +186,14 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
       index += 1;
     }
 
-    return <div className="space-y-0.5">{nodes}</div>;
+    return (
+      <div className="space-y-0.5">
+        {nodes}
+        {reviewOutcomeText && (
+          <div className="text-xs text-muted-foreground">{reviewOutcomeText}</div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -183,6 +215,9 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
             toolResultById={toolResultById}
           />
         </div>
+      )}
+      {reviewOutcomeText && (
+        <div className="text-xs text-muted-foreground">{reviewOutcomeText}</div>
       )}
     </div>
   );

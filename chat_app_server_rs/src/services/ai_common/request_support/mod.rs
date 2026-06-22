@@ -4,23 +4,21 @@ mod request_transport;
 mod user_message;
 
 pub(crate) use self::assistant_response::{
-    build_ai_client_success_payload, build_assistant_message_metadata, completion_failed_error,
-    extract_response_id_from_metadata, extract_response_status_from_metadata,
-    is_non_terminal_response_status, persist_assistant_response_with_policy,
-    should_persist_assistant_message, AssistantResponsePersistenceRequest,
+    attach_ai_client_success_extra, build_ai_client_success_payload,
+    build_assistant_message_metadata, completion_failed_error, is_non_terminal_response_status,
+    is_task_runner_async_plan_message_mode, normalize_task_runner_async_plan_metadata,
+    normalize_task_runner_async_tool_call_metadata, persist_assistant_response_with_policy,
+    should_persist_assistant_message, terminal_empty_response_error,
+    AssistantResponsePersistenceRequest, TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE,
 };
-pub(crate) use self::error_classify::handle_transient_retry;
-#[cfg(test)]
 pub(crate) use self::error_classify::{
-    is_response_parse_error, is_transient_network_error,
-    is_transient_transport_or_parse_error,
-};
-pub(crate) use self::request_transport::{
-    build_abort_token, normalize_reasoning_effort, read_error_response_text,
-    send_bearer_json_request, validate_request_payload_size,
-};
-pub(crate) use self::user_message::{
-    normalize_turn_id, persist_user_message_and_build_content_parts,
+    classify_user_facing_ai_error, handle_transient_retry, is_retryable_provider_backpressure_error,
 };
 #[cfg(test)]
-pub(crate) use self::request_transport::{await_with_optional_abort, format_error_response, truncate_log};
+pub(crate) use self::request_transport::{
+    await_with_optional_abort, format_error_response, truncate_log,
+};
+pub(crate) use self::request_transport::{build_abort_token, validate_request_payload_size};
+pub(crate) use self::user_message::{
+    build_user_content_parts, normalize_turn_id, persist_user_message_and_build_content_parts,
+};

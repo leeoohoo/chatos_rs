@@ -8,7 +8,7 @@ export interface McpManagerProps {
     mcpConfigs: McpConfig[];
     updateMcpConfig: (config: McpConfig) => Promise<McpConfig | null>;
     deleteMcpConfig: (id: string) => Promise<void>;
-    loadMcpConfigs: () => Promise<void>;
+    loadMcpConfigs: (options?: { forceRefresh?: boolean }) => Promise<void>;
   };
 }
 
@@ -25,13 +25,12 @@ export type DynamicConfigValue = boolean | number | string | string[] | null;
 export type DynamicConfigRecord = Record<string, DynamicConfigValue>;
 
 export interface McpManagerFormProps {
-  showAddForm: boolean;
   editingConfig: McpConfig | null;
   formData: McpFormData;
   dynamicConfig: DynamicConfigRecord;
   configLoading: boolean;
   configError: string | null;
-  onCreate: () => void;
+  showTitle?: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCancel: () => void;
   onFormDataChange: (patch: Partial<McpFormData>) => void;

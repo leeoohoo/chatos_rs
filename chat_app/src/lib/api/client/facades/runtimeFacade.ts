@@ -3,6 +3,7 @@ import * as notepadApi from '../notepad';
 import * as streamApi from '../stream';
 import * as summaryApi from '../summary';
 import * as tasksApi from '../tasks';
+import { buildQuery } from '../shared';
 import type {
   AuthResponse,
   MeResponse,
@@ -18,38 +19,22 @@ import type {
   NotepadTagsResponse,
   NotepadUpdatePayload,
   RegisterPayload,
-  RuntimeGuidanceSubmitPayload,
-  RuntimeGuidanceSubmitResponse,
+  AgentToolsResponse,
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
-  SessionSummaryJobConfigPayload,
-  SessionSummaryJobConfigResponse,
-  StopChatResponse,
   StreamChatAttachmentPayload,
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
   StreamChatOptions,
   TaskManagerTaskResponse,
+  TaskRunnerAgentAccountResponse,
   TaskManagerUpdatePayload,
-  TaskReviewDecisionPayload,
-  TaskReviewItemResponse,
-  UiPromptItemResponse,
-  UiPromptResponsePayload,
   UserSettingsResponse,
 } from '../types';
 import type ApiClient from '../../client';
 
 export interface RuntimeFacade {
-  streamChat(
-    conversationId: string,
-    content: string,
-    modelConfig: StreamChatModelConfigPayload,
-    userId?: string,
-    attachments?: StreamChatAttachmentPayload[],
-    reasoningEnabled?: boolean,
-    options?: StreamChatOptions,
-  ): Promise<ReadableStream>;
   sendChatCommand(
     conversationId: string,
     content: string,
@@ -59,7 +44,16 @@ export interface RuntimeFacade {
     reasoningEnabled?: boolean,
     options?: StreamChatOptions,
   ): Promise<StreamChatCommandResponse>;
-  submitRuntimeGuidance(payload: RuntimeGuidanceSubmitPayload): Promise<RuntimeGuidanceSubmitResponse>;
+  getAgentTools(options?: {
+    conversationId?: string | null;
+    mcpEnabled?: boolean;
+    enabledMcpIds?: string[];
+    projectId?: string | null;
+    projectRoot?: string | null;
+    contactAgentId?: string | null;
+    skillsEnabled?: boolean;
+    selectedSkillIds?: string[];
+  }): Promise<AgentToolsResponse>;
   getTaskManagerTasks(
     conversationId: string,
     options?: { conversationTurnId?: string; includeDone?: boolean; limit?: number },
@@ -75,20 +69,6 @@ export interface RuntimeFacade {
     payload?: Partial<TaskManagerUpdatePayload>,
   ): Promise<TaskManagerTaskResponse>;
   deleteTaskManagerTask(conversationId: string, taskId: string): Promise<{ success?: boolean }>;
-  submitTaskReviewDecision(
-    reviewId: string,
-    payload: TaskReviewDecisionPayload,
-  ): Promise<{ success?: boolean; status?: string }>;
-  getPendingTaskReviews(conversationId: string, options?: { limit?: number }): Promise<TaskReviewItemResponse[]>;
-  getPendingUiPrompts(conversationId: string, options?: { limit?: number }): Promise<UiPromptItemResponse[]>;
-  getUiPromptHistory(
-    conversationId: string,
-    options?: { limit?: number; includePending?: boolean },
-  ): Promise<UiPromptItemResponse[]>;
-  submitUiPromptResponse(
-    promptId: string,
-    payload: UiPromptResponsePayload,
-  ): Promise<{ success?: boolean; status?: string }>;
   notepadInit(): Promise<NotepadInitResponse>;
   listNotepadFolders(): Promise<NotepadFoldersResponse>;
   createNotepadFolder(payload: { folder: string }): Promise<NotepadFolderMutationResponse>;
@@ -101,9 +81,6 @@ export interface RuntimeFacade {
   deleteNotepadNote(noteId: string): Promise<NotepadDeleteNoteResponse>;
   listNotepadTags(): Promise<NotepadTagsResponse>;
   searchNotepadNotes(options: NotepadSearchOptions): Promise<NotepadNotesResponse>;
-  getConversationSummaryJobConfig(userId?: string): Promise<SessionSummaryJobConfigResponse>;
-  updateConversationSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
-  patchConversationSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
   getConversationSummaries(
     conversationId: string,
     options?: { limit?: number; offset?: number },
@@ -115,24 +92,12 @@ export interface RuntimeFacade {
   register(data: RegisterPayload): Promise<AuthResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
-  stopChat(conversationId: string, options?: { useResponses?: boolean }): Promise<StopChatResponse>;
+  listTaskRunnerAgentAccounts(): Promise<TaskRunnerAgentAccountResponse[]>;
   getUserSettings(userId?: string): Promise<UserSettingsResponse>;
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<UserSettingsResponse>;
 }
 
 export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
-  async streamChat(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
-    return streamApi.streamChat(
-      this.getStreamApiContext(),
-      conversationId,
-      content,
-      modelConfig,
-      userId,
-      attachments,
-      reasoningEnabled,
-      options,
-    );
-  },
   async sendChatCommand(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
     return streamApi.sendChatCommand(
       this.getStreamApiContext(),
@@ -145,8 +110,22 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
       options,
     );
   },
-  async submitRuntimeGuidance(payload) {
-    return streamApi.submitRuntimeGuidance(this.getRequestFn(), payload);
+  async getAgentTools(options) {
+    const query = buildQuery({
+      conversation_id: options?.conversationId,
+      mcp_enabled: typeof options?.mcpEnabled === 'boolean' ? options.mcpEnabled : undefined,
+      enabled_mcp_ids: Array.isArray(options?.enabledMcpIds)
+        ? options.enabledMcpIds.join(',')
+        : undefined,
+      project_id: options?.projectId,
+      project_root: options?.projectRoot,
+      contact_agent_id: options?.contactAgentId,
+      skills_enabled: typeof options?.skillsEnabled === 'boolean' ? options.skillsEnabled : undefined,
+      selected_skill_ids: Array.isArray(options?.selectedSkillIds) && options?.selectedSkillIds.length > 0
+        ? options?.selectedSkillIds.join(',')
+        : undefined,
+    });
+    return this.getRequestFn()<AgentToolsResponse>(`/agent/tools${query}`);
   },
   async getTaskManagerTasks(conversationId, options) {
     return tasksApi.getTaskManagerTasks(this.getRequestFn(), conversationId, options);
@@ -159,21 +138,6 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async deleteTaskManagerTask(conversationId, taskId) {
     return tasksApi.deleteTaskManagerTask(this.getRequestFn(), conversationId, taskId);
-  },
-  async submitTaskReviewDecision(reviewId, payload) {
-    return tasksApi.submitTaskReviewDecision(this.getRequestFn(), reviewId, payload);
-  },
-  async getPendingTaskReviews(conversationId, options) {
-    return tasksApi.getPendingTaskReviews(this.getRequestFn(), conversationId, options);
-  },
-  async getPendingUiPrompts(conversationId, options) {
-    return tasksApi.getPendingUiPrompts(this.getRequestFn(), conversationId, options);
-  },
-  async getUiPromptHistory(conversationId, options) {
-    return tasksApi.getUiPromptHistory(this.getRequestFn(), conversationId, options);
-  },
-  async submitUiPromptResponse(promptId, payload) {
-    return tasksApi.submitUiPromptResponse(this.getRequestFn(), promptId, payload);
   },
   async notepadInit() {
     return notepadApi.notepadInit(this.getRequestFn());
@@ -211,15 +175,6 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async searchNotepadNotes(options) {
     return notepadApi.searchNotepadNotes(this.getRequestFn(), options);
   },
-  async getConversationSummaryJobConfig(userId) {
-    return summaryApi.getConversationSummaryJobConfig(this.getRequestFn(), userId);
-  },
-  async updateConversationSummaryJobConfig(payload) {
-    return summaryApi.updateConversationSummaryJobConfig(this.getRequestFn(), payload);
-  },
-  async patchConversationSummaryJobConfig(payload) {
-    return summaryApi.patchConversationSummaryJobConfig(this.getRequestFn(), payload);
-  },
   async getConversationSummaries(conversationId, options) {
     return summaryApi.getConversationSummaries(this.getRequestFn(), conversationId, options);
   },
@@ -244,8 +199,8 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async getMe() {
     return accountApi.getMe(this.getRequestFn());
   },
-  async stopChat(conversationId, options) {
-    return streamApi.stopChat(this.getRequestFn(), conversationId, options);
+  async listTaskRunnerAgentAccounts() {
+    return accountApi.listTaskRunnerAgentAccounts(this.getRequestFn());
   },
   async getUserSettings(userId) {
     return accountApi.getUserSettings(this.getRequestFn(), userId);

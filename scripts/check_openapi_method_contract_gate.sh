@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASELINE_FILE="$ROOT_DIR/.github/api-path-baseline.txt"
 MAIN_CONTRACT="$ROOT_DIR/.github/api-contract/chat_app_server_rs.openapi.yaml"
-MEMORY_CONTRACT="$ROOT_DIR/.github/api-contract/memory_server.openapi.yaml"
 POLICY_FILE="${OPENAPI_GATE_POLICY_FILE:-$ROOT_DIR/.github/api-contract/openapi-gate-policy.env}"
 
 to_ratio() {
@@ -88,7 +87,6 @@ is_non_negative_number() {
 load_policy() {
   OPENAPI_METHOD_GATE_MODE="advisory"
   OPENAPI_METHOD_MAIN_MIN_COVERAGE_RATIO="0"
-  OPENAPI_METHOD_MEMORY_MIN_COVERAGE_RATIO="0"
   OPENAPI_GATE_WAIVER_FILE=".github/api-contract/waivers/openapi_gate_waiver.env"
   OPENAPI_GATE_WAIVER_MAX_HOURS="24"
 
@@ -166,7 +164,6 @@ extract_baseline_methods() {
   local section="$1"
   awk -v section="$section" '
     /^## chat_app_server_rs endpoints/ { active=(section=="main"); next }
-    /^## memory_server endpoints/ { active=(section=="memory"); next }
     /^## / { active=0 }
     active && /^[A-Z]+ / { print }
   ' "$BASELINE_FILE" \
@@ -206,25 +203,16 @@ fi
 
 main_baseline_file="$(mktemp)"
 main_contract_file="$(mktemp)"
-memory_baseline_file="$(mktemp)"
-memory_contract_file="$(mktemp)"
-trap 'rm -f "$main_baseline_file" "$main_contract_file" "$memory_baseline_file" "$memory_contract_file"' EXIT
+trap 'rm -f "$main_baseline_file" "$main_contract_file"' EXIT
 
 extract_baseline_methods "main" > "$main_baseline_file"
-extract_baseline_methods "memory" > "$memory_baseline_file"
 extract_openapi_methods "$MAIN_CONTRACT" > "$main_contract_file"
-extract_openapi_methods "$MEMORY_CONTRACT" > "$memory_contract_file"
-
 main_baseline_count="$(wc -l < "$main_baseline_file" | tr -d ' ')"
-memory_baseline_count="$(wc -l < "$memory_baseline_file" | tr -d ' ')"
 main_contract_count="$(wc -l < "$main_contract_file" | tr -d ' ')"
-memory_contract_count="$(wc -l < "$memory_contract_file" | tr -d ' ')"
 
 main_covered_count="$(comm -12 "$main_baseline_file" "$main_contract_file" | wc -l | tr -d ' ')"
-memory_covered_count="$(comm -12 "$memory_baseline_file" "$memory_contract_file" | wc -l | tr -d ' ')"
 
 main_ratio="$(to_ratio "$main_covered_count" "$main_baseline_count")"
-memory_ratio="$(to_ratio "$memory_covered_count" "$memory_baseline_count")"
 
 echo "[INFO] OpenAPI method gate snapshot:"
 echo "  mode:                                 $OPENAPI_METHOD_GATE_MODE"
@@ -233,11 +221,6 @@ echo "  main backend contract method-endpoints:   $main_contract_count"
 echo "  main backend covered method-endpoints:    $main_covered_count"
 echo "  main backend method coverage ratio:       ${main_ratio}%"
 echo "  main backend minimum ratio:               ${OPENAPI_METHOD_MAIN_MIN_COVERAGE_RATIO}%"
-echo "  memory backend baseline method-endpoints: $memory_baseline_count"
-echo "  memory backend contract method-endpoints: $memory_contract_count"
-echo "  memory backend covered method-endpoints:  $memory_covered_count"
-echo "  memory backend method coverage ratio:     ${memory_ratio}%"
-echo "  memory backend minimum ratio:             ${OPENAPI_METHOD_MEMORY_MIN_COVERAGE_RATIO}%"
 
 if [[ "$OPENAPI_METHOD_GATE_MODE" == "advisory" ]]; then
   echo "[OK] OpenAPI method gate is in advisory mode (non-blocking)."
@@ -245,17 +228,12 @@ if [[ "$OPENAPI_METHOD_GATE_MODE" == "advisory" ]]; then
 fi
 
 main_ok="false"
-memory_ok="false"
 
 if ratio_meets_threshold "$main_ratio" "$OPENAPI_METHOD_MAIN_MIN_COVERAGE_RATIO"; then
   main_ok="true"
 fi
 
-if ratio_meets_threshold "$memory_ratio" "$OPENAPI_METHOD_MEMORY_MIN_COVERAGE_RATIO"; then
-  memory_ok="true"
-fi
-
-if [[ "$main_ok" == "true" && "$memory_ok" == "true" ]]; then
+if [[ "$main_ok" == "true" ]]; then
   echo "[OK] OpenAPI method required gate passed."
   exit 0
 fi
@@ -269,9 +247,6 @@ fi
 echo "[ERROR] OpenAPI method required gate failed."
 if [[ "$main_ok" != "true" ]]; then
   echo "  - main backend method coverage ${main_ratio}% is below ${OPENAPI_METHOD_MAIN_MIN_COVERAGE_RATIO}%"
-fi
-if [[ "$memory_ok" != "true" ]]; then
-  echo "  - memory backend method coverage ${memory_ratio}% is below ${OPENAPI_METHOD_MEMORY_MIN_COVERAGE_RATIO}%"
 fi
 echo "[INFO] Add missing OpenAPI operations or apply a time-bounded emergency waiver:"
 echo "       $waiver_file"

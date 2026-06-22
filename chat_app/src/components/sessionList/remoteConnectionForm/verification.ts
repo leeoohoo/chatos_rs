@@ -1,3 +1,4 @@
+import { UI_MESSAGES } from '../../../i18n/messages';
 import type { RemoteConnectionTestResult } from './types';
 
 interface SecondFactorErrorPayload {
@@ -20,11 +21,14 @@ export const isSecondFactorRequired = (error: unknown): boolean => {
   return typeof candidate?.code === 'string' && candidate.code === 'second_factor_required';
 };
 
-export const extractSecondFactorPrompt = (error: unknown): string => {
+export const extractSecondFactorPrompt = (
+  error: unknown,
+  fallback = UI_MESSAGES['zh-CN']['remoteConnection.verificationPrompt'] || 'remoteConnection.verificationPrompt',
+): string => {
   const candidate = error as SecondFactorErrorLike | null;
   const prompt = candidate?.payload?.challenge_prompt ?? candidate?.payload?.challengePrompt;
   if (typeof prompt === 'string' && prompt.trim()) {
     return prompt.trim();
   }
-  return '请输入短信验证码或 OTP';
+  return fallback;
 };

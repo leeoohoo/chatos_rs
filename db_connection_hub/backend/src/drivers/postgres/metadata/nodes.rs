@@ -3,13 +3,17 @@ use crate::{
         datasource::DataSource,
         metadata::{MetadataNode, MetadataNodeType, MetadataNodesResponse},
     },
+    drivers::metadata_common,
     error::{AppError, AppResult},
 };
 use sqlx::Row;
 
 use super::{
     super::connection::connect_pool,
-    common::{make_db_node, paginate_nodes, parse_schema_node, parse_table_node},
+    common::{
+        function_display_name, make_db_node, paginate_nodes, parse_database_node,
+        parse_schema_node, parse_table_node,
+    },
     dbs::list_databases,
 };
 
@@ -23,8 +27,8 @@ pub async fn list_nodes(
 
     let items = if parent == "root" {
         list_database_nodes(datasource).await?
-    } else if let Some(database) = parent.strip_prefix("db:") {
-        list_schema_nodes(datasource, database).await?
+    } else if let Some(database) = parse_database_node(parent) {
+        list_schema_nodes(datasource, &database).await?
     } else if let Some((database, schema)) = parse_schema_node(parent) {
         list_schema_children(datasource, &database, &schema).await?
     } else if let Some((database, schema, table)) = parse_table_node(parent) {
@@ -63,11 +67,11 @@ async fn list_schema_nodes(
         .map(|row| {
             let schema = row.try_get::<String, _>("nspname").unwrap_or_default();
             MetadataNode {
-                id: format!("schema:{database}:{schema}"),
-                parent_id: format!("db:{database}"),
+                id: metadata_common::make_node_id("schema", &[database, &schema]),
+                parent_id: metadata_common::make_node_id("db", &[database]),
                 node_type: MetadataNodeType::Schema,
                 display_name: schema.clone(),
-                path: format!("{database}.{schema}"),
+                path: metadata_common::make_qualified_path(&[database, &schema]),
                 has_children: true,
             }
         })
@@ -94,7 +98,7 @@ async fn list_schema_children(
     .map_err(|err| AppError::BadRequest(format!("failed to list schema objects: {err}")))?;
 
     let function_rows = sqlx::query(
-        "select p.proname
+        "select p.proname, pg_get_function_identity_arguments(p.oid) as identity_args
          from pg_proc p
          join pg_namespace n on n.oid = p.pronamespace
          where n.nspname = $1
@@ -118,21 +122,27 @@ async fn list_schema_children(
                 _ => (MetadataNodeType::Table, false),
             };
             let id = match node_type {
-                MetadataNodeType::Table => format!("table:{database}:{schema}:{name}"),
-                MetadataNodeType::View => format!("view:{database}:{schema}:{name}"),
-                MetadataNodeType::MaterializedView => {
-                    format!("materialized_view:{database}:{schema}:{name}")
+                MetadataNodeType::Table => {
+                    metadata_common::make_node_id("table", &[database, schema, &name])
                 }
-                MetadataNodeType::Sequence => format!("sequence:{database}:{schema}:{name}"),
-                _ => format!("object:{database}:{schema}:{name}"),
+                MetadataNodeType::View => {
+                    metadata_common::make_node_id("view", &[database, schema, &name])
+                }
+                MetadataNodeType::MaterializedView => {
+                    metadata_common::make_node_id("materialized_view", &[database, schema, &name])
+                }
+                MetadataNodeType::Sequence => {
+                    metadata_common::make_node_id("sequence", &[database, schema, &name])
+                }
+                _ => metadata_common::make_node_id("object", &[database, schema, &name]),
             };
 
             MetadataNode {
                 id,
-                parent_id: format!("schema:{database}:{schema}"),
+                parent_id: metadata_common::make_node_id("schema", &[database, schema]),
                 node_type,
                 display_name: name.clone(),
-                path: format!("{database}.{schema}.{name}"),
+                path: metadata_common::make_qualified_path(&[database, schema, &name]),
                 has_children,
             }
         })
@@ -140,12 +150,19 @@ async fn list_schema_children(
 
     nodes.extend(function_rows.into_iter().map(|row| {
         let name = row.try_get::<String, _>("proname").unwrap_or_default();
+        let identity_args = row
+            .try_get::<String, _>("identity_args")
+            .unwrap_or_default();
+        let display_name = function_display_name(&name, &identity_args);
         MetadataNode {
-            id: format!("function:{database}:{schema}:{name}"),
-            parent_id: format!("schema:{database}:{schema}"),
+            id: metadata_common::make_node_id(
+                "function",
+                &[database, schema, &name, &identity_args],
+            ),
+            parent_id: metadata_common::make_node_id("schema", &[database, schema]),
             node_type: MetadataNodeType::Function,
-            display_name: name.clone(),
-            path: format!("{database}.{schema}.{name}"),
+            display_name: display_name.clone(),
+            path: metadata_common::make_qualified_path(&[database, schema, &display_name]),
             has_children: false,
         }
     }));
@@ -192,11 +209,11 @@ async fn list_table_children(
         .map(|row| {
             let name = row.try_get::<String, _>("index_name").unwrap_or_default();
             MetadataNode {
-                id: format!("index:{database}:{schema}:{table}:{name}"),
-                parent_id: format!("table:{database}:{schema}:{table}"),
+                id: metadata_common::make_node_id("index", &[database, schema, table, &name]),
+                parent_id: metadata_common::make_node_id("table", &[database, schema, table]),
                 node_type: MetadataNodeType::Index,
                 display_name: name.clone(),
-                path: format!("{database}.{schema}.{table}.{name}"),
+                path: metadata_common::make_qualified_path(&[database, schema, table, &name]),
                 has_children: false,
             }
         })
@@ -205,11 +222,11 @@ async fn list_table_children(
     nodes.extend(trigger_rows.into_iter().map(|row| {
         let name = row.try_get::<String, _>("tgname").unwrap_or_default();
         MetadataNode {
-            id: format!("trigger:{database}:{schema}:{table}:{name}"),
-            parent_id: format!("table:{database}:{schema}:{table}"),
+            id: metadata_common::make_node_id("trigger", &[database, schema, table, &name]),
+            parent_id: metadata_common::make_node_id("table", &[database, schema, table]),
             node_type: MetadataNodeType::Trigger,
             display_name: name.clone(),
-            path: format!("{database}.{schema}.{table}.{name}"),
+            path: metadata_common::make_qualified_path(&[database, schema, table, &name]),
             has_children: false,
         }
     }));

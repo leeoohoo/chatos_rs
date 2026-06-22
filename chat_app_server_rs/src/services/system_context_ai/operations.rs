@@ -40,12 +40,51 @@ pub async fn generate_draft(input: GenerateDraftInput) -> Result<Value, SystemCo
     let input_text =
         serde_json::to_string_pretty(&input_payload).unwrap_or_else(|_| input_payload.to_string());
 
-    let system_prompt = r#"你是一个资深 system prompt 设计助手。
+    let system_prompt = if input.internal_context_locale.is_english() {
+        r#"You are an expert system-prompt design assistant.
+Your task is to generate production-ready system prompt candidates based on the requirements.
+You must output JSON only. Do not output Markdown, explanatory prose, or fenced code blocks."#
+    } else {
+        r#"你是一个资深 system prompt 设计助手。
 你的任务是根据需求生成可直接投入生产的 system prompt 候选。
-你必须只输出 JSON，不允许输出 Markdown、解释性文字或代码块围栏。"#;
+你必须只输出 JSON，不允许输出 Markdown、解释性文字或代码块围栏。"#
+    };
 
-    let user_prompt = format!(
-        r#"请基于下面输入生成 {candidate_count} 个 system prompt 候选。
+    let user_prompt = if input.internal_context_locale.is_english() {
+        format!(
+            r#"Generate {candidate_count} system prompt candidates based on the input below.
+
+Input:
+{input_text}
+
+Requirements:
+1. Each candidate must be a complete, directly usable system prompt.
+2. Match the requested language when possible.
+3. Make rules executable, boundaries clear, and avoid conflicts.
+4. Return JSON only, using exactly this structure:
+{{
+  "candidates": [
+    {{
+      "title": "Candidate name",
+      "content": "Full system prompt",
+      "score": 0,
+      "highlights": ["Highlights"],
+      "report": {{
+        "clarity": 0,
+        "constraint_completeness": 0,
+        "conflict_risk": 0,
+        "verbosity": 0,
+        "overall": 0,
+        "warnings": ["Optional"]
+      }}
+    }}
+  ]
+}}
+All score and report fields must be in the range 0-100."#,
+        )
+    } else {
+        format!(
+            r#"请基于下面输入生成 {candidate_count} 个 system prompt 候选。
 
 输入：
 {input_text}
@@ -74,10 +113,13 @@ pub async fn generate_draft(input: GenerateDraftInput) -> Result<Value, SystemCo
   ]
 }}
 score 与 report 字段取值范围均为 0-100。"#,
-    );
+        )
+    };
 
     let raw = match run_text_prompt(
-        input.ai_model_config,
+        input.model_config_id,
+        input.user_id.clone(),
+        input.ai_model_config.and_then(|value| value.into_value()),
         system_prompt,
         user_prompt.as_str(),
         Some(2200),
@@ -127,12 +169,43 @@ pub async fn optimize_draft(input: OptimizeDraftInput) -> Result<Value, SystemCo
     let input_text =
         serde_json::to_string_pretty(&input_payload).unwrap_or_else(|_| input_payload.to_string());
 
-    let system_prompt = r#"你是一个 system prompt 优化助手。
+    let system_prompt = if input.internal_context_locale.is_english() {
+        r#"You are a system-prompt optimization assistant.
+Optimize the prompt while preserving original intent as much as possible, and make constraints clear, formatting consistent, and instructions executable.
+You must output JSON only. Do not output Markdown or any extra explanation."#
+    } else {
+        r#"你是一个 system prompt 优化助手。
 请在尽量保留原意的前提下优化提示词，并保证约束清晰、格式一致、执行性强。
-你必须只输出 JSON，不允许输出 Markdown 或其他解释。"#;
+你必须只输出 JSON，不允许输出 Markdown 或其他解释。"#
+    };
 
-    let user_prompt = format!(
-        r#"请优化下面的 system prompt。
+    let user_prompt = if input.internal_context_locale.is_english() {
+        format!(
+            r#"Optimize the following system prompt.
+
+Input:
+{input_text}
+
+Return JSON only, using exactly this structure:
+{{
+  "optimized_content": "优化后的完整文本",
+  "score_before": 0,
+  "score_after": 0,
+  "report_after": {{
+    "clarity": 0,
+    "constraint_completeness": 0,
+    "conflict_risk": 0,
+    "verbosity": 0,
+    "overall": 0,
+    "warnings": ["可选"]
+  }},
+    "warnings": ["Optional"]
+}}
+All score fields must be in the range 0-100."#,
+        )
+    } else {
+        format!(
+            r#"请优化下面的 system prompt。
 
 输入：
 {input_text}
@@ -153,10 +226,13 @@ pub async fn optimize_draft(input: OptimizeDraftInput) -> Result<Value, SystemCo
   "warnings": ["可选"]
 }}
 所有分数字段取值范围为 0-100。"#,
-    );
+        )
+    };
 
     let raw = match run_text_prompt(
-        input.ai_model_config,
+        input.model_config_id,
+        input.user_id.clone(),
+        input.ai_model_config.and_then(|value| value.into_value()),
         system_prompt,
         user_prompt.as_str(),
         Some(2400),
@@ -200,12 +276,38 @@ pub async fn evaluate_draft(input: EvaluateDraftInput) -> Result<Value, SystemCo
         });
     }
 
-    let system_prompt = r#"你是 system prompt 质量评估助手。
+    let system_prompt = if input.internal_context_locale.is_english() {
+        r#"You are a system-prompt quality evaluation assistant.
+Evaluate clarity, constraint completeness, conflict risk, and verbosity, then output structured JSON.
+You must output JSON only. Do not output Markdown or extra explanation."#
+    } else {
+        r#"你是 system prompt 质量评估助手。
 请评估文本的清晰度、约束完整度、冲突风险、冗长度，并输出结构化 JSON。
-你必须只输出 JSON，不允许输出 Markdown 或额外解释。"#;
+你必须只输出 JSON，不允许输出 Markdown 或额外解释。"#
+    };
 
-    let user_prompt = format!(
-        r#"请评估下面这段 system prompt：
+    let user_prompt = if input.internal_context_locale.is_english() {
+        format!(
+            r#"Evaluate the following system prompt:
+
+{content}
+
+Return JSON only, using exactly this structure:
+{{
+  "report": {{
+    "clarity": 0,
+    "constraint_completeness": 0,
+    "conflict_risk": 0,
+    "verbosity": 0,
+    "overall": 0,
+    "warnings": ["Optional"]
+  }}
+}}
+All score fields must be in the range 0-100."#,
+        )
+    } else {
+        format!(
+            r#"请评估下面这段 system prompt：
 
 {content}
 
@@ -221,10 +323,13 @@ pub async fn evaluate_draft(input: EvaluateDraftInput) -> Result<Value, SystemCo
   }}
 }}
 所有分数字段取值范围为 0-100。"#,
-    );
+        )
+    };
 
     let report = match run_text_prompt(
-        input.ai_model_config,
+        input.model_config_id,
+        None,
+        input.ai_model_config.and_then(|value| value.into_value()),
         system_prompt,
         user_prompt.as_str(),
         Some(1200),

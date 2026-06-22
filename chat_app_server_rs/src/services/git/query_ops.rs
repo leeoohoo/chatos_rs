@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 use super::contracts::*;
 use super::inspection::{ahead_behind, is_tracked_path, untracked_file_patch};
@@ -8,7 +9,55 @@ use super::parsing::{
 };
 use super::process::{git_output, git_version, resolve_git_binary, DEFAULT_GIT_TIMEOUT};
 use super::shared::{comparison_range, read_repo_summary};
-use super::validation::{discover_repo_root, parse_root, require_repo_root, validate_relative_paths};
+use super::validation::{
+    discover_child_repo_roots, discover_repo_root, parse_optional_root, parse_root,
+    require_repo_root, validate_relative_paths,
+};
+use crate::services::project_local_cache::{cache_key, read_cache_json, write_cache_json};
+
+const CHILD_REPO_DISCOVERY_LIMIT: usize = 32;
+const GIT_SUMMARY_CACHE_NAMESPACE: &str = "git";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GitSummaryCacheEntry {
+    summary: GitSummary,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GitBranchesCacheEntry {
+    branches: GitBranches,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GitStatusCacheEntry {
+    status: GitStatus,
+}
+
+fn git_summary_cache_path(query_root: &str, preferred_repo_root: Option<&str>) -> String {
+    let key = format!(
+        "{}|{}",
+        query_root.trim(),
+        preferred_repo_root.unwrap_or("").trim(),
+    );
+    format!(
+        "{GIT_SUMMARY_CACHE_NAMESPACE}/summary-{}.json",
+        cache_key(key.as_str())
+    )
+}
+
+fn git_branches_cache_path(root: &str) -> String {
+    format!(
+        "{GIT_SUMMARY_CACHE_NAMESPACE}/branches-{}.json",
+        cache_key(root)
+    )
+}
+
+fn git_status_cache_path(root: &str) -> String {
+    format!(
+        "{GIT_SUMMARY_CACHE_NAMESPACE}/status-{}.json",
+        cache_key(root)
+    )
+}
 
 pub async fn client_info() -> GitClientInfo {
     let git_bin = resolve_git_binary();
@@ -31,15 +80,167 @@ pub async fn client_info() -> GitClientInfo {
     }
 }
 
-pub async fn summary(root: &str) -> Result<GitSummary, String> {
-    let root = parse_root(root)?;
-    let Some(repo_root) = discover_repo_root(root.as_path()).await? else {
-        return Ok(non_repo_summary());
+pub async fn summary(
+    root: &str,
+    preferred_repo_root: Option<&str>,
+    force_refresh: bool,
+) -> Result<GitSummary, String> {
+    let preferred_repo_root_text = preferred_repo_root.map(|value| value.trim().to_string());
+    if !force_refresh {
+        if let Some(cached) = read_cache_json::<GitSummaryCacheEntry>(
+            root,
+            git_summary_cache_path(root, preferred_repo_root_text.as_deref()).as_str(),
+        )? {
+            return Ok(cached.summary);
+        }
+    }
+    let query_root = parse_root(root)?;
+    let preferred_root = parse_optional_root(preferred_repo_root)?;
+    if let Some(preferred_root) = preferred_root.as_ref() {
+        if !preferred_root.starts_with(query_root.as_path()) {
+            return Err("preferred_repo_root 不在当前项目路径内".to_string());
+        }
+    }
+
+    let direct_repo_root = discover_repo_root(query_root.as_path()).await?;
+    let preferred_repo_root =
+        resolve_preferred_repo_root(query_root.as_path(), preferred_root.as_deref()).await?;
+    let available_roots = collect_available_repo_roots(
+        query_root.as_path(),
+        direct_repo_root.as_deref(),
+        preferred_repo_root.as_deref(),
+    )
+    .await?;
+    let selected_repo_root = select_repo_root(
+        direct_repo_root.as_deref(),
+        preferred_repo_root.as_deref(),
+        &available_roots,
+    );
+
+    let query_root_text = normalize_path_string(query_root.as_path());
+    let candidates = available_roots
+        .iter()
+        .map(|repo_root| build_repository_candidate(query_root.as_path(), repo_root.as_path()))
+        .collect::<Vec<_>>();
+
+    let Some(selected_repo_root) = selected_repo_root else {
+        let mut summary = non_repo_summary();
+        summary.query_root = Some(query_root_text);
+        summary.available_repositories = candidates;
+        return Ok(summary);
     };
-    read_repo_summary(repo_root.as_path()).await
+
+    let mut summary = read_repo_summary(selected_repo_root.as_path()).await?;
+    let selected_root_text = normalize_path_string(selected_repo_root.as_path());
+    summary.query_root = Some(query_root_text);
+    summary.resolved_root = Some(selected_root_text.clone());
+    summary.selected_root = Some(selected_root_text);
+    summary.available_repositories = candidates;
+    let _ = write_cache_json(
+        root,
+        git_summary_cache_path(root, preferred_repo_root_text.as_deref()).as_str(),
+        &GitSummaryCacheEntry {
+            summary: summary.clone(),
+        },
+    );
+    Ok(summary)
 }
 
-pub async fn branches(root: &str) -> Result<GitBranches, String> {
+async fn resolve_preferred_repo_root(
+    query_root: &Path,
+    preferred_root: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
+    let Some(preferred_root) = preferred_root else {
+        return Ok(None);
+    };
+    let Some(repo_root) = discover_repo_root(preferred_root).await? else {
+        return Ok(None);
+    };
+    if !repo_root.starts_with(query_root) {
+        return Ok(None);
+    }
+    Ok(Some(repo_root))
+}
+
+async fn collect_available_repo_roots(
+    query_root: &Path,
+    direct_repo_root: Option<&Path>,
+    preferred_repo_root: Option<&Path>,
+) -> Result<Vec<PathBuf>, String> {
+    let mut repos = BTreeMap::<String, PathBuf>::new();
+    if let Some(repo_root) = direct_repo_root {
+        repos.insert(normalize_path_string(repo_root), repo_root.to_path_buf());
+    } else {
+        for repo_root in discover_child_repo_roots(query_root, CHILD_REPO_DISCOVERY_LIMIT).await? {
+            repos.insert(normalize_path_string(repo_root.as_path()), repo_root);
+        }
+    }
+    if let Some(repo_root) = preferred_repo_root {
+        repos.insert(normalize_path_string(repo_root), repo_root.to_path_buf());
+    }
+    Ok(repos.into_values().collect())
+}
+
+fn select_repo_root(
+    direct_repo_root: Option<&Path>,
+    preferred_repo_root: Option<&Path>,
+    available_roots: &[PathBuf],
+) -> Option<PathBuf> {
+    if let Some(preferred_repo_root) = preferred_repo_root {
+        if let Some(found) = available_roots
+            .iter()
+            .find(|repo_root| repo_root.as_path() == preferred_repo_root)
+        {
+            return Some(found.clone());
+        }
+    }
+    if let Some(direct_repo_root) = direct_repo_root {
+        if let Some(found) = available_roots
+            .iter()
+            .find(|repo_root| repo_root.as_path() == direct_repo_root)
+        {
+            return Some(found.clone());
+        }
+        return Some(direct_repo_root.to_path_buf());
+    }
+    available_roots.first().cloned()
+}
+
+fn build_repository_candidate(query_root: &Path, repo_root: &Path) -> GitRepositoryCandidate {
+    let relative_path = repo_root
+        .strip_prefix(query_root)
+        .ok()
+        .map(normalize_path_string)
+        .unwrap_or_default();
+    let label = if relative_path.is_empty() {
+        repo_root
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| normalize_path_string(repo_root))
+    } else {
+        relative_path.clone()
+    };
+    GitRepositoryCandidate {
+        root: normalize_path_string(repo_root),
+        label,
+        relative_path,
+    }
+}
+
+fn normalize_path_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+pub async fn branches(root: &str, force_refresh: bool) -> Result<GitBranches, String> {
+    if !force_refresh {
+        if let Some(cached) =
+            read_cache_json::<GitBranchesCacheEntry>(root, git_branches_cache_path(root).as_str())?
+        {
+            return Ok(cached.branches);
+        }
+    }
     let repo_root = require_repo_root(root).await?;
     let current = read_repo_summary(repo_root.as_path()).await?.current_branch;
 
@@ -133,14 +334,29 @@ pub async fn branches(root: &str) -> Result<GitBranches, String> {
     locals.sort_by(|left, right| left.name.cmp(&right.name));
     remotes.sort_by(|left, right| left.name.cmp(&right.name));
 
-    Ok(GitBranches {
+    let branches = GitBranches {
         current,
         locals,
         remotes,
-    })
+    };
+    let _ = write_cache_json(
+        root,
+        git_branches_cache_path(root).as_str(),
+        &GitBranchesCacheEntry {
+            branches: branches.clone(),
+        },
+    );
+    Ok(branches)
 }
 
-pub async fn status(root: &str) -> Result<GitStatus, String> {
+pub async fn status(root: &str, force_refresh: bool) -> Result<GitStatus, String> {
+    if !force_refresh {
+        if let Some(cached) =
+            read_cache_json::<GitStatusCacheEntry>(root, git_status_cache_path(root).as_str())?
+        {
+            return Ok(cached.status);
+        }
+    }
     let repo_root = require_repo_root(root).await?;
     let output = git_output(
         repo_root.as_path(),
@@ -148,14 +364,23 @@ pub async fn status(root: &str) -> Result<GitStatus, String> {
         DEFAULT_GIT_TIMEOUT,
     )
     .await?;
-    Ok(GitStatus {
-        files: parse_status_files(&output.stdout),
-    })
+    let status = GitStatus {
+        files: parse_status_files(repo_root.as_path(), &output.stdout),
+    };
+    let _ = write_cache_json(
+        root,
+        git_status_cache_path(root).as_str(),
+        &GitStatusCacheEntry {
+            status: status.clone(),
+        },
+    );
+    Ok(status)
 }
 
 pub async fn compare(query: GitCompareQuery) -> Result<GitCompareResult, String> {
     let repo_root = require_repo_root(&query.root).await?;
-    let (current, target, range) = comparison_range(repo_root.as_path(), query.target.trim()).await?;
+    let (current, target, range) =
+        comparison_range(repo_root.as_path(), query.target.trim()).await?;
 
     let diff_output = git_output(
         repo_root.as_path(),

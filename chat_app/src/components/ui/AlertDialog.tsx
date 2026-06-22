@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface AlertDialogProps {
   isOpen: boolean;
@@ -15,11 +16,13 @@ const AlertDialog: React.FC<AlertDialogProps> = ({
   title,
   message,
   description,
-  confirmText = '知道了',
+  confirmText,
   type = 'info',
   onConfirm,
 }) => {
+  const { t } = useI18n();
   if (!isOpen) return null;
+  const effectiveConfirmText = confirmText || t('common.gotIt');
 
   const getConfirmButtonStyle = () => {
     switch (type) {
@@ -49,7 +52,7 @@ const AlertDialog: React.FC<AlertDialogProps> = ({
               onClick={onConfirm}
               className={`rounded-md px-4 py-2 text-sm transition-colors ${getConfirmButtonStyle()}`}
             >
-              {confirmText}
+              {effectiveConfirmText}
             </button>
           </div>
         </div>

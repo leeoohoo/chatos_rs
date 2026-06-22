@@ -1,0 +1,661 @@
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  Form,
+  Modal,
+  Space,
+  message,
+} from 'antd';
+
+import { useI18n } from '../i18n/I18nProvider';
+import {
+  buildSchedulePayload,
+  completeEnabledBuiltinKindDependencies,
+  formatScheduleInput,
+  type TaskFormValues,
+  type RunTaskFormValues,
+} from './tasks/taskPageUtils';
+import { buildTaskTableColumns } from './tasks/taskTableColumns';
+import { TaskStatsCards } from './tasks/TaskStatsCards';
+import {
+  TaskMemoryDrawer,
+  type TaskMemoryRoleFilter,
+  type TaskMemorySummaryFilter,
+} from './tasks/TaskMemoryDrawer';
+import { TaskDetailDrawer } from './tasks/TaskDetailDrawer';
+import { TaskEditorDrawer } from './tasks/TaskEditorDrawer';
+import { BatchTaskRunModal, TaskRunModal } from './tasks/TaskRunModals';
+import { TaskBatchActionsBar } from './tasks/TaskBatchActionsBar';
+import { TaskListToolbar } from './tasks/TaskListToolbar';
+import { TaskListTable } from './tasks/TaskListTable';
+import { TaskMcpPromptPreviewModal } from './tasks/TaskMcpPromptPreviewModal';
+import { useTaskMutations } from './tasks/useTaskMutations';
+import { useTasksPageData } from './tasks/useTasksPageData';
+import type {
+  CreateTaskPayload,
+  StartTaskRunPayload,
+  TaskRecord,
+  TaskStatus,
+} from '../types';
+
+export function TasksPage() {
+  const { locale, t } = useI18n();
+  const DEFAULT_PAGE_SIZE = 8;
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [messageApi, contextHolder] = message.useMessage();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
+  const [runningTask, setRunningTask] = useState<TaskRecord | null>(null);
+  const [batchRunTaskIds, setBatchRunTaskIds] = useState<string[]>([]);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [detailTaskPreview, setDetailTaskPreview] = useState<TaskRecord | null>(null);
+  const [memoryTask, setMemoryTask] = useState<TaskRecord | null>(null);
+  const [draftMcpPreviewOpen, setDraftMcpPreviewOpen] = useState(false);
+  const [mcpPreviewTask, setMcpPreviewTask] = useState<TaskRecord | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<'all' | TaskStatus>('all');
+  const [keywordFilter, setKeywordFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState<string | undefined>(undefined);
+  const [scheduledOnly, setScheduledOnly] = useState(false);
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskPageSize, setTaskPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [memoryRoleFilter, setMemoryRoleFilter] = useState<TaskMemoryRoleFilter>('all');
+  const [memorySummaryFilter, setMemorySummaryFilter] =
+    useState<TaskMemorySummaryFilter>('all');
+  const [memoryLimit, setMemoryLimit] = useState<number>(50);
+  const [form] = Form.useForm<TaskFormValues>();
+  const [runForm] = Form.useForm<RunTaskFormValues>();
+  const [batchRunForm] = Form.useForm<RunTaskFormValues>();
+  const routeTaskId = searchParams.get('task_id');
+  const routeModelConfigId = searchParams.get('model_config_id') || undefined;
+
+  const {
+    tasksQuery,
+    taskStatsQuery,
+    selectedTaskQuery,
+    taskRecentRunsQuery,
+    detailLastRunId,
+    detailLastRunQuery,
+    detailLastRunEventsQuery,
+    taskFollowUpQuery,
+    taskRunDerivedQuery,
+    taskPromptsQuery,
+    mcpCatalogQuery,
+    remoteServersQuery,
+    externalMcpConfigsQuery,
+    taskMemoryContextQuery,
+    taskMemoryRecordsQuery,
+    taskMcpPromptPreviewQuery,
+    scheduleModeLabels,
+    statusFilterOptions,
+    taskStatusLabel,
+    modelOptions,
+    modelNameMap,
+    modelLabelMap,
+    taskSummaryMap,
+    prerequisiteTaskOptions,
+    tagOptions,
+    remoteServerMap,
+    externalMcpConfigMap,
+    selectedTask,
+    detailResultSummary,
+    detailRemoteOperations,
+    detailRemoteOperationStats,
+    latestRemoteOperation,
+    recentRemoteOperations,
+    taskRowRemoteActivityByTaskId,
+    pendingPromptCountByTaskId,
+    batchRunTasks,
+  } = useTasksPageData({
+    t,
+    statusFilter,
+    keywordFilter,
+    tagFilter,
+    routeModelConfigId,
+    scheduledOnly,
+    taskPage,
+    taskPageSize,
+    detailTaskId,
+    detailTaskPreview,
+    memoryTask,
+    memoryRoleFilter,
+    memorySummaryFilter,
+    memoryLimit,
+    mcpPreviewTask,
+    batchRunTaskIds,
+    editingTaskId: editingTask?.id,
+  });
+
+  useEffect(() => {
+    if (!tasksQuery.data) {
+      return;
+    }
+    const visibleIds = new Set(tasksQuery.data.items.map((task) => task.id));
+    setSelectedTaskIds((current) => current.filter((taskId) => visibleIds.has(taskId)));
+  }, [tasksQuery.data]);
+
+  useEffect(() => {
+    setTaskPage(1);
+  }, [statusFilter, keywordFilter, tagFilter, routeModelConfigId, scheduledOnly]);
+
+  useEffect(() => {
+    if (routeTaskId) {
+      setDetailTaskId(routeTaskId);
+      setDetailTaskPreview((current) => {
+        if (current?.id === routeTaskId) {
+          return current;
+        }
+        return tasksQuery.data?.items.find((task) => task.id === routeTaskId) || null;
+      });
+      return;
+    }
+    setDetailTaskId(null);
+    setDetailTaskPreview(null);
+  }, [routeTaskId, tasksQuery.data]);
+
+  const {
+    createTaskMutation,
+    updateTaskMutation,
+    deleteTaskMutation,
+    runTaskMutation,
+    batchUpdateTaskStatusMutation,
+    batchDeleteTasksMutation,
+    batchStartTaskRunsMutation,
+    summarizeTaskMemoryMutation,
+    draftMcpPreviewMutation,
+  } = useTaskMutations({
+    t,
+    messageApi,
+    onTaskSaved: closeTaskDrawer,
+    onRunStarted: closeRunModal,
+    onBatchRunStarted: closeBatchRunModal,
+    onClearSelectedTasks: () => setSelectedTaskIds([]),
+  });
+
+  const hasSelectedTasks = selectedTaskIds.length > 0;
+  const batchActionPending =
+    batchUpdateTaskStatusMutation.isPending ||
+    batchDeleteTasksMutation.isPending ||
+    batchStartTaskRunsMutation.isPending;
+
+  const columns = buildTaskTableColumns({
+    t,
+    navigate,
+    modelNameMap,
+    pendingPromptCountByTaskId,
+    scheduleModeLabels,
+    taskRowRemoteActivityByTaskId,
+    onOpenDetail: openDetailDrawer,
+    onOpenEdit: openEditDrawer,
+    onOpenMemory: openMemoryDrawer,
+    onOpenRun: openRunModal,
+    onConfirmDelete: confirmDelete,
+  });
+  function closeTaskDrawer() {
+    setDrawerOpen(false);
+    setDraftMcpPreviewOpen(false);
+    setEditingTask(null);
+    form.resetFields();
+  }
+
+  function closeRunModal() {
+    setRunningTask(null);
+    runForm.resetFields();
+  }
+
+  function closeBatchRunModal() {
+    setBatchRunTaskIds([]);
+    batchRunForm.resetFields();
+  }
+
+  function closeDetailDrawer() {
+    setMcpPreviewTask(null);
+    const next = new URLSearchParams(searchParams);
+    next.delete('task_id');
+    setSearchParams(next);
+  }
+
+  function closeMemoryDrawer() {
+    setMemoryTask(null);
+  }
+
+  function closeTaskMcpPreviewModal() {
+    setMcpPreviewTask(null);
+  }
+
+  function closeDraftMcpPreviewModal() {
+    setDraftMcpPreviewOpen(false);
+  }
+
+  function openCreateDrawer() {
+    setEditingTask(null);
+    form.setFieldsValue({
+      title: '',
+      objective: '',
+      description: '',
+      priority: 0,
+      status: 'draft',
+      default_model_config_id: undefined,
+      prerequisite_task_ids: [],
+      tagsText: '',
+      mcpEnabled: true,
+      mcpInitMode: 'builtin_only',
+      builtinPromptMode: 'effective',
+      builtinPromptLocale: locale,
+      enabledBuiltinKinds: (mcpCatalogQuery.data || []).map((entry) => entry.kind),
+      workspaceDir: '',
+      defaultRemoteServerId: undefined,
+      externalMcpConfigIds: [],
+      scheduleMode: 'manual',
+      scheduleRunAt: undefined,
+      scheduleIntervalSeconds: undefined,
+    });
+    setDrawerOpen(true);
+  }
+
+  function openEditDrawer(task: TaskRecord) {
+    setEditingTask(task);
+    form.setFieldsValue({
+      title: task.title,
+      objective: task.objective,
+      description: task.description || '',
+      priority: task.priority,
+      status: task.status,
+      default_model_config_id: task.default_model_config_id || undefined,
+      prerequisite_task_ids: task.prerequisite_task_ids || [],
+      tagsText: task.tags.join(', '),
+      mcpEnabled: task.mcp_config.enabled,
+      mcpInitMode: task.mcp_config.init_mode,
+      builtinPromptMode: task.mcp_config.builtin_prompt_mode,
+      builtinPromptLocale: task.mcp_config.builtin_prompt_locale,
+      enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
+      workspaceDir: task.mcp_config.workspace_dir || '',
+      defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
+      externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
+      scheduleMode: task.schedule.mode,
+      scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
+      scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
+    });
+    setDrawerOpen(true);
+  }
+
+  function openDetailDrawer(task: TaskRecord) {
+    setDetailTaskId(task.id);
+    setDetailTaskPreview(task);
+    const next = new URLSearchParams(searchParams);
+    next.set('task_id', task.id);
+    setSearchParams(next);
+  }
+
+  function openRunModal(task: TaskRecord) {
+    setRunningTask(task);
+    runForm.setFieldsValue({
+      model_config_id: task.default_model_config_id || undefined,
+      prompt_override: '',
+    });
+  }
+
+  function openBatchRunModal() {
+    if (!selectedTaskIds.length) {
+      return;
+    }
+    setBatchRunTaskIds(selectedTaskIds);
+    batchRunForm.setFieldsValue({
+      model_config_id: undefined,
+      prompt_override: '',
+    });
+  }
+
+  function openMemoryDrawer(task: TaskRecord) {
+    setMemoryTask(task);
+    setMemoryRoleFilter('all');
+    setMemorySummaryFilter('all');
+    setMemoryLimit(50);
+  }
+
+  function openTaskMcpPreviewModal(task: TaskRecord) {
+    setMcpPreviewTask(task);
+  }
+
+  function openDraftMcpPreviewModal() {
+    const values = form.getFieldsValue([
+      'mcpEnabled',
+      'mcpInitMode',
+      'builtinPromptMode',
+      'builtinPromptLocale',
+      'enabledBuiltinKinds',
+      'workspaceDir',
+      'defaultRemoteServerId',
+    ]) as Partial<TaskFormValues>;
+    setDraftMcpPreviewOpen(true);
+    draftMcpPreviewMutation.mutate({
+      enabled: values.mcpEnabled ?? true,
+      init_mode: values.mcpInitMode ?? 'builtin_only',
+      builtin_prompt_mode: values.builtinPromptMode ?? 'effective',
+      builtin_prompt_locale: values.builtinPromptLocale || locale,
+      enabled_builtin_kinds: completeEnabledBuiltinKindDependencies(values.enabledBuiltinKinds),
+      workspace_dir: values.workspaceDir?.trim() || undefined,
+      default_remote_server_id: values.defaultRemoteServerId,
+    });
+  }
+
+  function jumpToRunHistory(taskId: string, runId?: string) {
+    const search = new URLSearchParams();
+    search.set('task_id', taskId);
+    if (runId) {
+      search.set('run_id', runId);
+    }
+    navigate(`/runs?${search.toString()}`);
+  }
+
+  function confirmDelete(task: TaskRecord) {
+    Modal.confirm({
+      title: t('tasks.deleteConfirmTitle', { title: task.title }),
+      content: t('tasks.deleteConfirmContent'),
+      okButtonProps: { danger: true },
+      onOk: () => deleteTaskMutation.mutate(task.id),
+    });
+  }
+
+  function confirmBatchDelete() {
+    if (!selectedTaskIds.length) {
+      return;
+    }
+    Modal.confirm({
+      title: t('tasks.batchDeleteConfirmTitle', { count: selectedTaskIds.length }),
+      content: t('tasks.batchDeleteConfirmContent'),
+      okButtonProps: { danger: true },
+      onOk: () => batchDeleteTasksMutation.mutate({ task_ids: selectedTaskIds }),
+    });
+  }
+
+  function buildTaskPayload(values: TaskFormValues): CreateTaskPayload | null {
+    const schedule = buildSchedulePayload(values);
+    if (!schedule) {
+      messageApi.error(t('tasks.scheduleInvalid'));
+      return null;
+    }
+
+    const enabledBuiltinKinds = completeEnabledBuiltinKindDependencies(
+      values.enabledBuiltinKinds,
+    );
+
+    return {
+      title: values.title,
+      objective: values.objective,
+      description: values.description?.trim() || undefined,
+      priority: values.priority,
+      status: values.status,
+      default_model_config_id: values.default_model_config_id,
+      prerequisite_task_ids: values.prerequisite_task_ids || [],
+      tags: values.tagsText
+        ?.split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      schedule,
+      mcp_config: {
+        enabled: values.mcpEnabled,
+        init_mode: values.mcpInitMode,
+        builtin_prompt_mode: values.builtinPromptMode,
+        builtin_prompt_locale: values.builtinPromptLocale,
+        enabled_builtin_kinds: enabledBuiltinKinds,
+        workspace_dir: values.workspaceDir?.trim() || undefined,
+        default_remote_server_id: values.defaultRemoteServerId,
+        external_mcp_config_ids: values.externalMcpConfigIds || [],
+      },
+    };
+  }
+
+  function handleSubmit(values: TaskFormValues) {
+    const payload = buildTaskPayload(values);
+    if (!payload) {
+      return;
+    }
+
+    if (editingTask) {
+      updateTaskMutation.mutate({ id: editingTask.id, payload });
+    } else {
+      createTaskMutation.mutate(payload);
+    }
+  }
+
+  function handleRunTask(values: RunTaskFormValues) {
+    if (!runningTask) {
+      return;
+    }
+    const payload: StartTaskRunPayload = {
+      model_config_id: values.model_config_id,
+      prompt_override: values.prompt_override?.trim() || undefined,
+    };
+    runTaskMutation.mutate({ taskId: runningTask.id, payload });
+  }
+
+  function handleBatchRunTask(values: RunTaskFormValues) {
+    if (!batchRunTaskIds.length) {
+      return;
+    }
+    batchStartTaskRunsMutation.mutate({
+      task_ids: batchRunTaskIds,
+      model_config_id: values.model_config_id,
+      prompt_override: values.prompt_override?.trim() || undefined,
+    });
+  }
+
+  return (
+    <>
+      {contextHolder}
+      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+        <TaskListToolbar
+          t={t}
+          keywordFilter={keywordFilter}
+          tagFilter={tagFilter}
+          modelConfigId={routeModelConfigId}
+          statusFilter={statusFilter}
+          scheduledOnly={scheduledOnly}
+          tagOptions={tagOptions}
+          modelOptions={modelOptions}
+          statusFilterOptions={statusFilterOptions}
+          onKeywordFilterChange={setKeywordFilter}
+          onTagFilterChange={setTagFilter}
+          onModelFilterChange={(value) => {
+            const next = new URLSearchParams(searchParams);
+            if (value) {
+              next.set('model_config_id', value);
+            } else {
+              next.delete('model_config_id');
+            }
+            setSearchParams(next);
+          }}
+          onStatusFilterChange={setStatusFilter}
+          onScheduledOnlyChange={setScheduledOnly}
+          onRefresh={() => {
+            void Promise.all([tasksQuery.refetch(), taskStatsQuery.refetch()]);
+          }}
+          onCreateTask={openCreateDrawer}
+        />
+
+        <TaskStatsCards
+          t={t}
+          stats={taskStatsQuery.data}
+          loading={taskStatsQuery.isLoading}
+        />
+
+        <TaskBatchActionsBar
+          t={t}
+          selectedCount={selectedTaskIds.length}
+          hasSelectedTasks={hasSelectedTasks}
+          pending={batchActionPending}
+          batchRunLoading={batchStartTaskRunsMutation.isPending}
+          batchUpdateLoading={batchUpdateTaskStatusMutation.isPending}
+          batchDeleteLoading={batchDeleteTasksMutation.isPending}
+          onOpenBatchRun={openBatchRunModal}
+          onSetReady={() =>
+            batchUpdateTaskStatusMutation.mutate({
+              task_ids: selectedTaskIds,
+              status: 'ready',
+            })
+          }
+          onArchive={() =>
+            batchUpdateTaskStatusMutation.mutate({
+              task_ids: selectedTaskIds,
+              status: 'archived',
+            })
+          }
+          onDelete={confirmBatchDelete}
+        />
+
+        <TaskListTable
+          t={t}
+          selectedTaskIds={selectedTaskIds}
+          loading={tasksQuery.isLoading}
+          columns={columns}
+          tasks={tasksQuery.data?.items || []}
+          page={taskPage}
+          pageSize={taskPageSize}
+          total={tasksQuery.data?.total || 0}
+          onSelectedTaskIdsChange={setSelectedTaskIds}
+          onPageChange={(page, pageSize) => {
+            setTaskPage(page);
+            setTaskPageSize(pageSize);
+          }}
+        />
+      </Space>
+
+      <TaskDetailDrawer
+        t={t}
+        open={Boolean(detailTaskId)}
+        task={selectedTask}
+        loading={selectedTaskQuery.isLoading}
+        detailLastRunId={detailLastRunId}
+        detailResultSummary={detailResultSummary}
+        remoteOperations={detailRemoteOperations}
+        remoteOperationStats={detailRemoteOperationStats}
+        latestRemoteOperation={latestRemoteOperation}
+        recentRemoteOperations={recentRemoteOperations}
+        remoteOperationsLoading={detailLastRunEventsQuery.isLoading || detailLastRunQuery.isLoading}
+        recentRuns={taskRecentRunsQuery.data}
+        recentRunsLoading={taskRecentRunsQuery.isLoading}
+        prompts={taskPromptsQuery.data}
+        promptsLoading={taskPromptsQuery.isLoading}
+        followUps={taskFollowUpQuery.data}
+        followUpsLoading={taskFollowUpQuery.isLoading}
+        runDerivedTasks={taskRunDerivedQuery.data}
+        runDerivedTasksLoading={taskRunDerivedQuery.isLoading}
+        modelLabelMap={modelLabelMap}
+        taskSummaryMap={taskSummaryMap}
+        remoteServerMap={remoteServerMap}
+        externalMcpConfigMap={externalMcpConfigMap}
+        taskStatusLabel={taskStatusLabel}
+        onClose={closeDetailDrawer}
+        onEditTask={openEditDrawer}
+        onRunTask={openRunModal}
+        onOpenMemory={openMemoryDrawer}
+        onPreviewMcpPrompt={openTaskMcpPreviewModal}
+        onOpenRunHistory={jumpToRunHistory}
+        onOpenPrompts={(taskId, promptId) => {
+          const search = new URLSearchParams();
+          search.set('task_id', taskId);
+          if (promptId) {
+            search.set('prompt_id', promptId);
+          }
+          navigate(`/prompts?${search.toString()}`);
+        }}
+        onOpenModel={(modelId) =>
+          navigate(`/models?model_id=${encodeURIComponent(modelId)}`)
+        }
+        onOpenServers={(serverId) => {
+          if (serverId) {
+            navigate(`/servers?server_id=${encodeURIComponent(serverId)}`);
+            return;
+          }
+          navigate('/servers');
+        }}
+        onOpenDetail={openDetailDrawer}
+      />
+
+      <TaskEditorDrawer
+        t={t}
+        open={drawerOpen}
+        editingTask={editingTask}
+        form={form}
+        saving={createTaskMutation.isPending || updateTaskMutation.isPending}
+        modelOptions={modelOptions}
+        prerequisiteTaskOptions={prerequisiteTaskOptions}
+        mcpCatalogEntries={mcpCatalogQuery.data}
+        remoteServers={remoteServersQuery.data}
+        externalMcpConfigs={externalMcpConfigsQuery.data}
+        onClose={closeTaskDrawer}
+        onSubmit={handleSubmit}
+        onPreviewPrompt={openDraftMcpPreviewModal}
+        onManageServers={() => navigate('/servers')}
+        onViewMcpCatalog={() => navigate('/mcp')}
+      />
+
+      <TaskMcpPromptPreviewModal
+        t={t}
+        title={mcpPreviewTask
+          ? t('tasks.preview.titleWithName', { title: mcpPreviewTask.title })
+          : t('tasks.preview.title')}
+        open={Boolean(mcpPreviewTask)}
+        preview={taskMcpPromptPreviewQuery.data}
+        loading={taskMcpPromptPreviewQuery.isLoading}
+        onClose={closeTaskMcpPreviewModal}
+      />
+
+      <TaskMcpPromptPreviewModal
+        t={t}
+        title={t('tasks.preview.formTitle')}
+        open={draftMcpPreviewOpen}
+        preview={draftMcpPreviewMutation.data}
+        loading={draftMcpPreviewMutation.isPending}
+        onClose={closeDraftMcpPreviewModal}
+      />
+
+      <TaskMemoryDrawer
+        t={t}
+        task={memoryTask}
+        roleFilter={memoryRoleFilter}
+        summaryFilter={memorySummaryFilter}
+        limit={memoryLimit}
+        context={taskMemoryContextQuery.data}
+        contextLoading={taskMemoryContextQuery.isLoading}
+        records={taskMemoryRecordsQuery.data}
+        recordsLoading={taskMemoryRecordsQuery.isLoading}
+        summarizeLoading={summarizeTaskMemoryMutation.isPending}
+        onClose={closeMemoryDrawer}
+        onRoleFilterChange={setMemoryRoleFilter}
+        onSummaryFilterChange={setMemorySummaryFilter}
+        onLimitChange={setMemoryLimit}
+        onRefresh={() => {
+          void Promise.all([
+            taskMemoryContextQuery.refetch(),
+            taskMemoryRecordsQuery.refetch(),
+          ]);
+        }}
+        onSummarize={(taskId) => summarizeTaskMemoryMutation.mutate(taskId)}
+      />
+
+      <TaskRunModal
+        t={t}
+        task={runningTask}
+        form={runForm}
+        modelOptions={modelOptions}
+        loading={runTaskMutation.isPending}
+        onClose={closeRunModal}
+        onSubmit={handleRunTask}
+      />
+
+      <BatchTaskRunModal
+        t={t}
+        taskIds={batchRunTaskIds}
+        tasks={batchRunTasks}
+        form={batchRunForm}
+        modelOptions={modelOptions}
+        loading={batchStartTaskRunsMutation.isPending}
+        onClose={closeBatchRunModal}
+        onSubmit={handleBatchRunTask}
+      />
+    </>
+  );
+}

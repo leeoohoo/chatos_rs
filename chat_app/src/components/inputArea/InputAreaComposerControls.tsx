@@ -1,39 +1,37 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
 import { InputAreaFloatingModelPicker } from './InlineWidgets';
 import type { InputAreaComposerProps } from './InputAreaComposerTypes';
 import {
-  InputAreaMcpPicker,
   InputAreaProjectFilePicker,
   InputAreaProjectSelector,
   InputAreaRemoteConnectionPicker,
-  InputAreaSkillPicker,
   InputAreaWorkspacePicker,
 } from './PickerWidgets';
 
 export function InputAreaComposerControls({
   disabled,
-  isStreaming,
-  isStopping,
   effectiveAllowAttachments,
   showModelSelector,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   availableProjects,
   selectedProjectId,
   onProjectChange,
   showProjectSelector,
   showWorkspaceRootPicker,
   currentRemoteConnectionId,
-  currentAgent,
   availableRemoteConnections,
   onRemoteConnectionChange,
-  mcpEnabled,
-  onMcpEnabledChange,
   reasoningSupported,
   reasoningEnabled,
   onReasoningToggle,
   pickerRef,
-  mcpPickerRef,
   workspacePickerRef,
   projectFilePickerRef,
   fileInputRef,
@@ -41,6 +39,8 @@ export function InputAreaComposerControls({
   pickerOpen,
   hasAiOptions,
   currentAiLabel,
+  effectiveModelName,
+  effectiveThinkingLevel,
   enabledModels,
   projectForFilePicker,
   showProjectFilePicker,
@@ -69,38 +69,11 @@ export function InputAreaComposerControls({
   handleToggleWorkspacePicker,
   loadWorkspaceDirectories,
   handleSelectWorkspaceRoot,
-  mcpPickerOpen,
-  handleToggleMcpPicker,
-  isAllMcpSelected,
-  selectableMcpIds,
-  selectedMcpCount,
-  mcpConfigsLoading,
-  mcpConfigsError,
-  availableMcpConfigs,
-  builtinMcpConfigs,
-  customMcpConfigs,
-  mcpToolsetPresets,
-  projectScopeKey,
-  hasProjectMcpDefault,
-  hasDirectoryContext,
-  hasRemoteContext,
-  isProjectRequiredMcpId,
-  isRemoteRequiredMcpId,
-  sanitizedEnabledMcpIds,
-  loadAvailableMcpConfigs,
-  handleSelectAllMcp,
-  handleToggleMcpSelection,
-  handleApplyMcpToolsetPreset,
-  handleSaveProjectMcpDefault,
-  handleApplyProjectMcpDefault,
-  skillsEnabled,
-  onSkillsEnabledChange,
-  skillsLoading,
-  availableSkillOptions,
-  selectedSkillIds,
-  onToggleSelectedSkill,
-  onClearSelectedSkills,
 }: InputAreaComposerProps) {
+  const { t } = useI18n();
+  const onText = t('composer.toggle.on');
+  const offText = t('composer.toggle.off');
+
   return (
     <>
       <InputAreaFloatingModelPicker
@@ -109,11 +82,18 @@ export function InputAreaComposerControls({
         pickerRef={pickerRef}
         disabled={disabled}
         currentAiLabel={currentAiLabel}
+        effectiveModelName={effectiveModelName}
+        effectiveThinkingLevel={effectiveThinkingLevel}
         pickerOpen={pickerOpen}
         setPickerOpen={setPickerOpen}
         enabledModels={enabledModels}
         selectedModelId={selectedModelId}
+        selectedModelName={selectedModelName}
+        selectedThinkingLevel={selectedThinkingLevel}
         onModelChange={onModelChange}
+        onModelNameChange={onModelNameChange}
+        onThinkingLevelChange={onThinkingLevelChange}
+        onModelRuntimeChange={onModelRuntimeChange}
       />
 
       {effectiveAllowAttachments && (
@@ -137,7 +117,7 @@ export function InputAreaComposerControls({
         projectFileAttachingPath={projectFileAttachingPath}
         projectFilePickerOpen={projectFilePickerOpen}
         onTogglePicker={() => { void handleToggleProjectFilePicker(); }}
-        projectName={projectForFilePicker?.name || '当前项目'}
+        projectName={projectForFilePicker?.name || t('composer.currentProject')}
         projectFilePathLabel={projectFilePathLabel}
         projectFileFilter={projectFileFilter}
         onProjectFileFilterChange={setProjectFileFilter}
@@ -157,16 +137,16 @@ export function InputAreaComposerControls({
         selectedProjectId={selectedProjectId}
         onProjectChange={onProjectChange}
         disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
+        isStreaming={false}
+        isStopping={false}
       />
 
       <InputAreaWorkspacePicker
         showWorkspaceRootPicker={showWorkspaceRootPicker}
         workspacePickerRef={workspacePickerRef}
         disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
+        isStreaming={false}
+        isStopping={false}
         onToggleWorkspacePicker={() => { void handleToggleWorkspacePicker(); }}
         normalizedWorkspaceRoot={normalizedWorkspaceRoot}
         workspaceRootDisplayName={workspaceRootDisplayName}
@@ -185,72 +165,25 @@ export function InputAreaComposerControls({
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
         disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-      />
-
-      <InputAreaSkillPicker
-        currentAgent={currentAgent}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        skillsEnabled={skillsEnabled}
-        onSkillsEnabledChange={onSkillsEnabledChange}
-        skillsLoading={skillsLoading}
-        availableSkillOptions={availableSkillOptions}
-        selectedSkillIds={selectedSkillIds}
-        onToggleSelectedSkill={onToggleSelectedSkill}
-        onClearSelectedSkills={onClearSelectedSkills}
-      />
-
-      <InputAreaMcpPicker
-        mcpPickerRef={mcpPickerRef}
-        mcpEnabled={mcpEnabled}
-        onMcpEnabledChange={onMcpEnabledChange}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        onToggleMcpPicker={() => { void handleToggleMcpPicker(); }}
-        mcpPickerOpen={mcpPickerOpen}
-        isAllMcpSelected={isAllMcpSelected}
-        selectableMcpIds={selectableMcpIds}
-        selectedMcpCount={selectedMcpCount}
-        mcpConfigsLoading={mcpConfigsLoading}
-        mcpConfigsError={mcpConfigsError}
-        availableMcpConfigs={availableMcpConfigs}
-        builtinMcpConfigs={builtinMcpConfigs}
-        customMcpConfigs={customMcpConfigs}
-        mcpToolsetPresets={mcpToolsetPresets}
-        projectScopeKey={projectScopeKey}
-        hasProjectMcpDefault={hasProjectMcpDefault}
-        hasDirectoryContext={hasDirectoryContext}
-        hasRemoteContext={hasRemoteContext}
-        isProjectRequiredMcpId={isProjectRequiredMcpId}
-        isRemoteRequiredMcpId={isRemoteRequiredMcpId}
-        sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-        onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs(); }}
-        onSelectAllMcp={handleSelectAllMcp}
-        onToggleMcpSelection={handleToggleMcpSelection}
-        onApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
-        onSaveProjectMcpDefault={handleSaveProjectMcpDefault}
-        onApplyProjectMcpDefault={handleApplyProjectMcpDefault}
+        isStreaming={false}
+        isStopping={false}
       />
 
       {reasoningSupported && (
         <button
           type="button"
           onClick={() => onReasoningToggle?.(!reasoningEnabled)}
-          disabled={disabled || isStreaming || isStopping}
+          disabled={disabled}
           className={cn(
             'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
             reasoningEnabled
               ? 'bg-primary text-primary-foreground hover:bg-primary/90'
               : 'bg-muted text-muted-foreground hover:text-foreground',
-            (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
+            disabled && 'opacity-50 cursor-not-allowed',
           )}
-          title={reasoningEnabled ? '推理已开启' : '推理已关闭'}
+          title={reasoningEnabled ? t('composer.reasoning.onTitle') : t('composer.reasoning.offTitle')}
         >
-          推理 {reasoningEnabled ? '开' : '关'}
+          {t('composer.reasoning.label', { state: reasoningEnabled ? onText : offText })}
         </button>
       )}
     </>

@@ -4,10 +4,8 @@ import type {
   FsEntry,
   FsReadResult,
   Project,
-  ProjectChangeSummary,
   ProjectSearchHit,
 } from '../../../types';
-import type { ChangeKind } from '../utils';
 
 export interface UseProjectExplorerTreePanePropsParams {
   project: Project;
@@ -22,11 +20,6 @@ export interface UseProjectExplorerTreePanePropsParams {
   dropTargetDirPath: string | null;
   actionLoading: boolean;
   actionReloadPath: string | null;
-  canConfirmCurrent: boolean;
-  showOnlyChanged: boolean;
-  changeSummary: ProjectChangeSummary;
-  loadingSummary: boolean;
-  summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
   searchQuery: string;
@@ -39,13 +32,11 @@ export interface UseProjectExplorerTreePanePropsParams {
   activeSearchHitId: string | null;
   activeSearchHitIndex: number;
   totalSearchHits: number;
-  aggregatedChangeKindByPath: Map<string, ChangeKind>;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
   canDropToDirectory: (sourcePath: string, targetDirPath: string) => boolean;
   setSelectedPath: React.Dispatch<React.SetStateAction<string | null>>;
   setSelectedFile: React.Dispatch<React.SetStateAction<FsReadResult | null>>;
-  setShowOnlyChanged: React.Dispatch<React.SetStateAction<boolean>>;
   setDraggingEntryPath: React.Dispatch<React.SetStateAction<string | null>>;
   setDropTargetDirPath: React.Dispatch<React.SetStateAction<string | null>>;
   clearDragExpandTimer: () => void;
@@ -59,8 +50,6 @@ export interface UseProjectExplorerTreePanePropsParams {
   handleCreateDirectory: (path: string) => Promise<void>;
   handleCreateFile: (path: string) => Promise<void>;
   handleRefresh: () => Promise<void>;
-  handleConfirmCurrentChanges: () => Promise<void>;
-  handleConfirmAllChanges: () => Promise<void>;
   handleSearchQueryChange: (value: string) => void;
   handleSearchCaseSensitiveChange: React.Dispatch<React.SetStateAction<boolean>>;
   handleSearchWholeWordChange: React.Dispatch<React.SetStateAction<boolean>>;

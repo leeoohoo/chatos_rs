@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useDialogService } from '../../components/ui/DialogProvider';
+import { useI18n } from '../../i18n/I18nProvider';
 import type { SessionSummariesListResponse } from '../../lib/api/client/types';
 import type { SessionSummaryItem } from '../../lib/domain/configs';
 import {
@@ -53,6 +54,7 @@ export const useSessionSummaryPanel = (
   apiClient: SessionSummaryApiClient,
 ): UseSessionSummaryPanelResult => {
   const { confirm } = useDialogService();
+  const { t } = useI18n();
   const [summaryPaneSessionId, setSummaryPaneSessionIdState] = useState<string | null>(null);
   const [summaryItems, setSummaryItems] = useState<SessionSummaryItem[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -114,7 +116,7 @@ export const useSessionSummaryPanel = (
       return;
     }
     const normalized = applyConversationSummaryItemsSnapshot(apiClient, sessionId, payload, {
-      loadedLimit: 200,
+      loadedLimit: 100,
     });
     summaryStaleSessionsRef.current.delete(sessionId);
     if (currentSummarySessionIdRef.current !== sessionId) {
@@ -177,7 +179,7 @@ export const useSessionSummaryPanel = (
     try {
       const normalized = await loadConversationSummaryItems(apiClient, sessionId, {
         force,
-        limit: 200,
+        limit: 100,
       });
       if (
         summaryLoadSeqRef.current !== requestSeq
@@ -195,7 +197,7 @@ export const useSessionSummaryPanel = (
       ) {
         return;
       }
-      setSummaryError(error instanceof Error ? error.message : '加载会话总结失败');
+      setSummaryError(error instanceof Error ? error.message : t('sessionSummary.loadFailed'));
       setSummaryItems([]);
     } finally {
       if (
@@ -205,7 +207,7 @@ export const useSessionSummaryPanel = (
         setSummaryLoading(false);
       }
     }
-  }, [apiClient, summaryItems.length, summaryLoadedSessionId]);
+  }, [apiClient, summaryItems.length, summaryLoadedSessionId, t]);
 
   const openSummaryForSession = useCallback(async (sessionId: string) => {
     if (!sessionId) {
@@ -235,11 +237,11 @@ export const useSessionSummaryPanel = (
       markSessionSummariesStale(sessionId);
       await loadSessionSummaries(sessionId, { silent: true, force: true });
     } catch (error) {
-      setSummaryError(error instanceof Error ? error.message : '删除总结失败');
+      setSummaryError(error instanceof Error ? error.message : t('sessionSummary.deleteFailed'));
     } finally {
       setDeletingSummaryId((prev) => (prev === summaryId ? null : prev));
     }
-  }, [apiClient, loadSessionSummaries, markSessionSummariesStale]);
+  }, [apiClient, loadSessionSummaries, markSessionSummariesStale, t]);
 
   const clearSummaries = useCallback(async (
     sessionId: string,
@@ -250,10 +252,10 @@ export const useSessionSummaryPanel = (
     }
     const confirmed = options?.skipConfirm === true
       || await confirm({
-        title: '清空会话总结',
-        message: options?.confirmMessage || '确定清空当前会话的所有总结吗？',
-        confirmText: '清空',
-        cancelText: '取消',
+        title: t('sessionSummary.clearTitle'),
+        message: options?.confirmMessage || t('sessionSummary.clearMessage'),
+        confirmText: t('sessionSummary.clearConfirm'),
+        cancelText: t('common.cancel'),
         type: 'danger',
       });
     if (!confirmed) {
@@ -266,11 +268,11 @@ export const useSessionSummaryPanel = (
       markSessionSummariesStale(sessionId);
       await loadSessionSummaries(sessionId, { silent: true, force: true });
     } catch (error) {
-      setSummaryError(error instanceof Error ? error.message : '清空总结失败');
+      setSummaryError(error instanceof Error ? error.message : t('sessionSummary.clearFailed'));
     } finally {
       setClearingSummaries(false);
     }
-  }, [apiClient, confirm, loadSessionSummaries, markSessionSummariesStale]);
+  }, [apiClient, confirm, loadSessionSummaries, markSessionSummariesStale, t]);
 
   return {
     summaryPaneSessionId,

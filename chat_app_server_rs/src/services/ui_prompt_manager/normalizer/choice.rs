@@ -12,13 +12,6 @@ pub struct ChoiceOption {
     pub description: String,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum LimitMode {
-    Clamp,
-    #[allow(dead_code)]
-    Strict,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChoiceLimits {
     pub min_selections: i64,
@@ -66,34 +59,14 @@ pub fn normalize_choice_limits(
     min: Option<i64>,
     max: Option<i64>,
     option_count: usize,
-    mode: LimitMode,
     single_min: Option<i64>,
     single_max: Option<i64>,
 ) -> Result<ChoiceLimits, String> {
     let count = option_count as i64;
 
     if !multiple {
-        let min_value = match mode {
-            LimitMode::Clamp => single_min.unwrap_or(0).clamp(0, 1),
-            LimitMode::Strict => {
-                let raw = single_min.unwrap_or(0);
-                if !(0..=1).contains(&raw) {
-                    return Err("single-choice min must be 0 or 1".to_string());
-                }
-                raw
-            }
-        };
-
-        let max_value = match mode {
-            LimitMode::Clamp => single_max.unwrap_or(1).clamp(0, 1),
-            LimitMode::Strict => {
-                let raw = single_max.unwrap_or(1);
-                if !(0..=1).contains(&raw) {
-                    return Err("single-choice max must be 0 or 1".to_string());
-                }
-                raw
-            }
-        };
+        let min_value = single_min.unwrap_or(0).clamp(0, 1);
+        let max_value = single_max.unwrap_or(1).clamp(0, 1);
 
         if min_value > max_value {
             return Err("minSelections must be <= maxSelections".to_string());
@@ -105,44 +78,22 @@ pub fn normalize_choice_limits(
         });
     }
 
-    if matches!(mode, LimitMode::Clamp) {
-        let min_raw = min.unwrap_or(0);
-        let max_raw = max.unwrap_or(count);
-        let min_value = if min_raw >= 0 {
-            min_raw.clamp(0, count)
-        } else {
-            0
-        };
-        let max_value = if max_raw >= 1 {
-            max_raw.clamp(1, count)
-        } else {
-            count
-        };
-        return Ok(ChoiceLimits {
-            min_selections: min_value.min(max_value),
-            max_selections: max_value,
-        });
-    }
-
     let min_raw = min.unwrap_or(0);
     let max_raw = max.unwrap_or(count);
-    if min_raw < 0 || min_raw > count {
-        return Err(format!(
-            "minSelections must be an int between 0 and {count}"
-        ));
-    }
-    if max_raw < 1 || max_raw > count {
-        return Err(format!(
-            "maxSelections must be an int between 1 and {count}"
-        ));
-    }
-    if min_raw > max_raw {
-        return Err("minSelections must be <= maxSelections".to_string());
-    }
+    let min_value = if min_raw >= 0 {
+        min_raw.clamp(0, count)
+    } else {
+        0
+    };
+    let max_value = if max_raw >= 1 {
+        max_raw.clamp(1, count)
+    } else {
+        count
+    };
 
     Ok(ChoiceLimits {
-        min_selections: min_raw,
-        max_selections: max_raw,
+        min_selections: min_value.min(max_value),
+        max_selections: max_value,
     })
 }
 

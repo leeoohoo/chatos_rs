@@ -13,8 +13,14 @@ import type { ApiRequestFn } from './common';
 export const getGitSummary = (
   request: ApiRequestFn,
   root: string,
+  preferredRepoRoot?: string,
+  forceRefresh?: boolean,
 ): Promise<GitSummaryResponse> => {
-  return request<GitSummaryResponse>(`/git/summary${buildQuery({ root })}`);
+  return request<GitSummaryResponse>(`/git/summary${buildQuery({
+    root,
+    preferred_repo_root: preferredRepoRoot,
+    force_refresh: forceRefresh,
+  })}`);
 };
 
 export const getGitClientInfo = (
@@ -26,15 +32,17 @@ export const getGitClientInfo = (
 export const getGitBranches = (
   request: ApiRequestFn,
   root: string,
+  forceRefresh?: boolean,
 ): Promise<GitBranchesResponse> => {
-  return request<GitBranchesResponse>(`/git/branches${buildQuery({ root })}`);
+  return request<GitBranchesResponse>(`/git/branches${buildQuery({ root, force_refresh: forceRefresh })}`);
 };
 
 export const getGitStatus = (
   request: ApiRequestFn,
   root: string,
+  forceRefresh?: boolean,
 ): Promise<GitStatusResponse> => {
-  return request<GitStatusResponse>(`/git/status${buildQuery({ root })}`);
+  return request<GitStatusResponse>(`/git/status${buildQuery({ root, force_refresh: forceRefresh })}`);
 };
 
 export const compareGitBranch = (
@@ -177,6 +185,19 @@ export const commitGit = (
     body: JSON.stringify({
       root: data.root,
       message: data.message,
+      paths: data.paths,
+    }),
+  });
+};
+
+export const discardGitPaths = (
+  request: ApiRequestFn,
+  data: { root: string; paths: string[] },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/discard', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
       paths: data.paths,
     }),
   });

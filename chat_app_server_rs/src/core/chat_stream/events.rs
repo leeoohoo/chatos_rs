@@ -5,11 +5,14 @@ use serde_json::{json, Value};
 
 use crate::core::messages::message_turn_id;
 use crate::models::message::Message;
+use crate::services::ai_common::classify_user_facing_ai_error;
+use crate::services::chatos_sessions;
 use crate::services::realtime::publish_chat_stream_event;
-use crate::services::memory_server_client;
 use crate::utils::abort_registry;
 use crate::utils::events::Events;
 use crate::utils::sse::SseSender;
+
+const PERSISTED_TURN_MESSAGES_PAGE_SIZE: i64 = 200;
 
 #[derive(Clone, Debug, Default)]
 pub struct ChatRealtimeStreamContext {
@@ -31,12 +34,7 @@ impl ChatEventSink {
         Self { sse, realtime }
     }
 
-    pub fn send_json_event(
-        &self,
-        event_name: &'static str,
-        stream_type: &str,
-        payload: Value,
-    ) {
+    pub fn send_json_event(&self, event_name: &'static str, stream_type: &str, payload: Value) {
         if let Some(sender) = &self.sse {
             sender.send_json(&payload);
         }
@@ -130,38 +128,102 @@ async fn resolve_persisted_turn_messages(
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
 
-    let messages = memory_server_client::list_messages(conversation_id, None, 0, true)
+    let normalized_user_message_id = user_message_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut user_message =
+        resolve_persisted_user_message_by_id(conversation_id, normalized_user_message_id).await;
+    let mut assistant_message = None;
+    let mut offset = 0_i64;
+
+    loop {
+        let batch = chatos_sessions::list_messages_including_hidden(
+            conversation_id,
+            Some(PERSISTED_TURN_MESSAGES_PAGE_SIZE),
+            offset,
+            false,
+        )
         .await
         .ok()?;
-    if messages.is_empty() {
-        return None;
+        let batch_len = batch.len();
+        if batch_len == 0 {
+            break;
+        }
+
+        select_persisted_turn_messages_from_desc_page(
+            batch.into_iter(),
+            turn_id,
+            normalized_user_message_id,
+            &mut user_message,
+            &mut assistant_message,
+        );
+        if user_message.is_some() && assistant_message.is_some() {
+            break;
+        }
+
+        offset += batch_len as i64;
+        if batch_len < PERSISTED_TURN_MESSAGES_PAGE_SIZE as usize {
+            break;
+        }
     }
 
-    let user_message = if let Some(user_id) = user_message_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        messages
-            .iter()
-            .find(|message| message.id == user_id && message.role == "user")
-            .cloned()
-    } else {
-        None
+    user_message.map(|user_message| (user_message, assistant_message))
+}
+
+async fn resolve_persisted_user_message_by_id(
+    conversation_id: &str,
+    user_message_id: Option<&str>,
+) -> Option<Message> {
+    let user_message_id = user_message_id?;
+    let session = chatos_sessions::get_session_by_id(conversation_id)
+        .await
+        .ok()
+        .flatten()?;
+    chatos_sessions::get_message_by_id_in_session(&session, user_message_id)
+        .await
+        .ok()
+        .flatten()
+        .filter(|message| message.role == "user" && !message_hidden(message))
+}
+
+pub(super) fn select_persisted_turn_messages_from_desc_page(
+    messages: impl IntoIterator<Item = Message>,
+    turn_id: &str,
+    user_message_id: Option<&str>,
+    user_message: &mut Option<Message>,
+    assistant_message: &mut Option<Message>,
+) {
+    for message in messages {
+        if message_hidden(&message) {
+            continue;
+        }
+
+        let role = message.role.as_str();
+        let message_matches_turn = message_turn_id(&message) == Some(turn_id);
+        if user_message.is_none()
+            && role == "user"
+            && (user_message_id == Some(message.id.as_str()) || message_matches_turn)
+        {
+            *user_message = Some(message.clone());
+        }
+
+        if assistant_message.is_none() && role == "assistant" && message_matches_turn {
+            *assistant_message = Some(message);
+        }
+
+        if user_message.is_some() && assistant_message.is_some() {
+            break;
+        }
     }
-    .or_else(|| {
-        messages
-            .iter()
-            .find(|message| message.role == "user" && message_turn_id(message) == Some(turn_id))
-            .cloned()
-    })?;
+}
 
-    let assistant_message = messages
-        .iter()
-        .rev()
-        .find(|message| message.role == "assistant" && message_turn_id(message) == Some(turn_id))
-        .cloned();
-
-    Some((user_message, assistant_message))
+fn message_hidden(message: &Message) -> bool {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("hidden"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub async fn enrich_chat_result_with_persisted_messages(
@@ -170,12 +232,10 @@ pub async fn enrich_chat_result_with_persisted_messages(
     user_message_id: Option<&str>,
     result: Value,
 ) -> Value {
-    let Some((user_message, assistant_message)) = resolve_persisted_turn_messages(
-        conversation_id,
-        conversation_turn_id,
-        user_message_id,
-    )
-    .await else {
+    let Some((user_message, assistant_message)) =
+        resolve_persisted_turn_messages(conversation_id, conversation_turn_id, user_message_id)
+            .await
+    else {
         return result;
     };
 
@@ -247,28 +307,41 @@ pub fn send_cancelled_event(sink: &ChatEventSink, result: Option<&Value>) {
     );
 }
 
-pub fn send_error_event(sink: &ChatEventSink, error: &str, result: Option<&Value>) {
+pub(super) fn build_error_event_payload(error: &str, result: Option<&Value>) -> Value {
+    let (message, code, detail) = match classify_user_facing_ai_error(error) {
+        Some((code, message)) => (message, Some(code.to_string()), Some(error.to_string())),
+        None => (error.to_string(), None, None),
+    };
     let mut payload = serde_json::Map::new();
     payload.insert("type".to_string(), Value::String(Events::ERROR.to_string()));
     payload.insert(
         "timestamp".to_string(),
         Value::String(crate::core::time::now_rfc3339()),
     );
-    payload.insert("message".to_string(), Value::String(error.to_string()));
+    payload.insert("message".to_string(), Value::String(message.clone()));
+    if let Some(code) = code.clone() {
+        payload.insert("code".to_string(), Value::String(code));
+    }
     payload.insert(
         "data".to_string(),
         json!({
-            "error": error,
-            "message": error
+            "error": message,
+            "message": message,
+            "code": code,
+            "detail": detail
         }),
     );
     if let Some(result) = result {
         payload.insert("result".to_string(), result.clone());
     }
+    Value::Object(payload)
+}
+
+pub fn send_error_event(sink: &ChatEventSink, error: &str, result: Option<&Value>) {
     sink.send_json_event(
         "chat.turn.failed",
         Events::ERROR,
-        Value::Object(payload),
+        build_error_event_payload(error, result),
     );
 }
 

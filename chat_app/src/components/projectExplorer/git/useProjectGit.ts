@@ -1,11 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   GitBranchesResult,
   GitClientInfo,
+  GitRepositoryCandidate,
   GitStatusResult,
   GitSummary,
 } from '../../../types';
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { GitActionResponse } from '../../../lib/api/client/types';
 import {
   normalizeGitAction,
@@ -43,25 +45,51 @@ import { useProjectGitActions } from './useProjectGitActions';
 import { useProjectGitCompare } from './useProjectGitCompare';
 import { useProjectGitLifecycle } from './useProjectGitLifecycle';
 
+const resolveActiveRepoRoot = (summary: GitSummary | null): string | null => (
+  summary?.selectedRoot
+  || summary?.resolvedRoot
+  || summary?.root
+  || summary?.worktreeRoot
+  || null
+);
+
+const resolveAvailableRepositories = (summary: GitSummary | null): GitRepositoryCandidate[] => (
+  summary?.availableRepositories || []
+);
+
+const mergeSummaryContext = (
+  nextSummary: GitSummary,
+  previousSummary: GitSummary | null,
+  fallbackSelectedRoot: string | null,
+): GitSummary => ({
+  ...nextSummary,
+  queryRoot: nextSummary.queryRoot ?? previousSummary?.queryRoot ?? null,
+  resolvedRoot: nextSummary.resolvedRoot ?? fallbackSelectedRoot ?? previousSummary?.resolvedRoot ?? null,
+  selectedRoot: nextSummary.selectedRoot ?? fallbackSelectedRoot ?? previousSummary?.selectedRoot ?? null,
+  availableRepositories: nextSummary.availableRepositories.length > 0
+    ? nextSummary.availableRepositories
+    : previousSummary?.availableRepositories || [],
+});
+
 export const useProjectGit = ({
   client,
   projectRoot,
   open = false,
+  enabled = true,
   onRepositoryChanged,
+  onRepositorySelectionChange,
 }: UseProjectGitOptions): UseProjectGitResult => {
   const { confirm } = useDialogService();
+  const { t } = useI18n();
+  const [preferredRepoRoot, setPreferredRepoRoot] = useState<string | null>(null);
   const [clientInfo, setClientInfo] = useState<GitClientInfo | null>(
     () => peekGitClientInfoCacheEntry(client)?.clientInfo || null,
   );
   const [summary, setSummary] = useState<GitSummary | null>(
     () => peekGitSummaryCacheEntry(client, projectRoot)?.summary || null,
   );
-  const [branches, setBranches] = useState<GitBranchesResult | null>(
-    () => peekGitDetailsCacheEntry(client, projectRoot)?.branches || null,
-  );
-  const [status, setStatus] = useState<GitStatusResult | null>(
-    () => peekGitDetailsCacheEntry(client, projectRoot)?.status || null,
-  );
+  const [branches, setBranches] = useState<GitBranchesResult | null>(null);
+  const [status, setStatus] = useState<GitStatusResult | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingClientInfo, setLoadingClientInfo] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
@@ -76,6 +104,17 @@ export const useProjectGit = ({
   const detailsLoadedRootRef = useRef<string | null>(null);
   const summaryStaleRef = useRef(true);
   const detailsStaleRef = useRef(true);
+  const preferredRepoRootRef = useRef<string | null>(null);
+  const activeRepoRootRef = useRef<string | null>(null);
+
+  const activeRepoRoot = resolveActiveRepoRoot(summary);
+  const availableRepositories = resolveAvailableRepositories(summary);
+  activeRepoRootRef.current = activeRepoRoot;
+
+  useEffect(() => {
+    preferredRepoRootRef.current = null;
+    setPreferredRepoRoot(null);
+  }, [projectRoot]);
 
   const clearMessages = useCallback(() => {
     setError(null);
@@ -83,23 +122,43 @@ export const useProjectGit = ({
   }, []);
 
   const hydrateCachedState = useCallback((nextProjectRoot: string) => {
+    if (!enabled) {
+      setClientInfo(null);
+      setSummary(null);
+      summaryRef.current = null;
+      summaryLoadedRootRef.current = null;
+      summaryStaleRef.current = true;
+      setBranches(null);
+      setStatus(null);
+      branchesRef.current = null;
+      statusRef.current = null;
+      detailsLoadedRootRef.current = null;
+      detailsStaleRef.current = true;
+      return;
+    }
     setClientInfo(peekGitClientInfoCacheEntry(client)?.clientInfo || null);
     const cachedSummary = peekGitSummaryCacheEntry(client, nextProjectRoot);
-    setSummary(cachedSummary?.summary || null);
-    summaryRef.current = cachedSummary?.summary || null;
+    const nextSummary = cachedSummary?.summary || null;
+    setSummary(nextSummary);
+    summaryRef.current = nextSummary;
     summaryLoadedRootRef.current = cachedSummary ? nextProjectRoot : null;
     summaryStaleRef.current = cachedSummary?.stale ?? true;
 
-    const cachedDetails = peekGitDetailsCacheEntry(client, nextProjectRoot);
+    const nextRepoRoot = resolveActiveRepoRoot(nextSummary);
+    const cachedDetails = nextRepoRoot ? peekGitDetailsCacheEntry(client, nextRepoRoot) : null;
     setBranches(cachedDetails?.branches || null);
     setStatus(cachedDetails?.status || null);
     branchesRef.current = cachedDetails?.branches || null;
     statusRef.current = cachedDetails?.status || null;
-    detailsLoadedRootRef.current = cachedDetails ? nextProjectRoot : null;
+    detailsLoadedRootRef.current = cachedDetails ? nextRepoRoot : null;
     detailsStaleRef.current = cachedDetails?.stale ?? true;
-  }, [client]);
+  }, [client, enabled]);
 
   const refreshClientInfo = useCallback(async () => {
+    if (!enabled) {
+      setClientInfo(null);
+      return;
+    }
     const cached = peekGitClientInfoCacheEntry(client);
     if (cached) {
       setClientInfo(cached.clientInfo);
@@ -125,7 +184,7 @@ export const useProjectGit = ({
           source: 'unknown' as const,
           path: 'git',
           version: null,
-          error: err instanceof Error ? err.message : '加载 Git 客户端信息失败',
+          error: err instanceof Error ? err.message : t('git.error.clientInfoLoadFailed'),
           bundledCandidates: [],
         }))
         .then((normalized) => {
@@ -143,38 +202,48 @@ export const useProjectGit = ({
         source: 'unknown',
         path: 'git',
         version: null,
-        error: err instanceof Error ? err.message : '加载 Git 客户端信息失败',
+        error: err instanceof Error ? err.message : t('git.error.clientInfoLoadFailed'),
         bundledCandidates: [],
       });
     } finally {
       setLoadingClientInfo(false);
     }
-  }, [client]);
+  }, [client, enabled, t]);
 
   const markSummaryStale = useCallback(() => {
+    if (!enabled) {
+      return;
+    }
     if (projectRoot) {
       markGitSummaryCacheStale(client, projectRoot);
     }
     summaryStaleRef.current = true;
-  }, [client, projectRoot]);
+  }, [client, enabled, projectRoot]);
 
   const markDetailsStale = useCallback(() => {
-    if (projectRoot) {
-      markGitDetailsCacheStale(client, projectRoot);
+    if (!enabled) {
+      return;
+    }
+    const nextActiveRepoRoot = activeRepoRootRef.current;
+    if (nextActiveRepoRoot) {
+      markGitDetailsCacheStale(client, nextActiveRepoRoot);
     }
     detailsStaleRef.current = true;
-  }, [client, projectRoot]);
+  }, [client, enabled]);
 
-  const refreshSummary = useCallback(async (options?: { force?: boolean }) => {
-    if (!projectRoot) {
+  const refreshSummary = useCallback(async (options?: { force?: boolean; preferredRepoRoot?: string | null }) => {
+    if (!enabled || !projectRoot) {
       setSummary(null);
       summaryRef.current = null;
       summaryLoadedRootRef.current = null;
       summaryStaleRef.current = true;
       return;
     }
-    const force = options?.force === true;
-    if (!force) {
+    const effectivePreferredRepoRoot = options?.preferredRepoRoot !== undefined
+      ? options.preferredRepoRoot
+      : preferredRepoRootRef.current;
+    const shouldForceRefresh = options?.force === true || summaryStaleRef.current;
+    if (!shouldForceRefresh) {
       const cached = peekGitSummaryCacheEntry(client, projectRoot);
       if (cached?.summary) {
         setSummary(cached.summary);
@@ -183,10 +252,12 @@ export const useProjectGit = ({
         summaryStaleRef.current = cached.stale;
       }
     }
-    if (!force && !summaryStaleRef.current && summaryLoadedRootRef.current === projectRoot && summaryRef.current) {
+    if (!shouldForceRefresh && !summaryStaleRef.current && summaryLoadedRootRef.current === projectRoot && summaryRef.current) {
       return;
     }
-    const existingInflight = getGitSummaryInflight(client, projectRoot);
+    const existingInflight = shouldForceRefresh
+      ? null
+      : getGitSummaryInflight(client, projectRoot);
     if (existingInflight) {
       setLoadingSummary(true);
       setError(null);
@@ -194,13 +265,15 @@ export const useProjectGit = ({
         const normalized = await existingInflight;
         setSummary(normalized);
         summaryRef.current = normalized;
+        activeRepoRootRef.current = resolveActiveRepoRoot(normalized);
         summaryLoadedRootRef.current = projectRoot;
         summaryStaleRef.current = false;
       } catch (err) {
         setSummary(null);
         summaryRef.current = null;
+        activeRepoRootRef.current = null;
         summaryLoadedRootRef.current = null;
-        setError(err instanceof Error ? err.message : '加载 Git 状态失败');
+        setError(err instanceof Error ? err.message : t('git.error.statusLoadFailed'));
       } finally {
         setLoadingSummary(false);
       }
@@ -209,7 +282,11 @@ export const useProjectGit = ({
     setLoadingSummary(true);
     setError(null);
     try {
-      const inflight = client.getGitSummary(projectRoot)
+      const summaryRequest = client.getGitSummary(
+        projectRoot,
+        effectivePreferredRepoRoot || undefined,
+        shouldForceRefresh,
+      )
         .then((raw) => normalizeGitSummary(raw))
         .then((normalized) => {
           setGitSummaryCacheEntry(client, projectRoot, normalized);
@@ -218,24 +295,27 @@ export const useProjectGit = ({
         .finally(() => {
           setGitSummaryInflight(client, projectRoot, null);
         });
-      setGitSummaryInflight(client, projectRoot, inflight);
-      const normalized = await inflight;
+      setGitSummaryInflight(client, projectRoot, summaryRequest);
+      const normalized = await summaryRequest;
       setSummary(normalized);
       summaryRef.current = normalized;
+      activeRepoRootRef.current = resolveActiveRepoRoot(normalized);
       summaryLoadedRootRef.current = projectRoot;
       summaryStaleRef.current = false;
     } catch (err) {
       setSummary(null);
       summaryRef.current = null;
+      activeRepoRootRef.current = null;
       summaryLoadedRootRef.current = null;
-      setError(err instanceof Error ? err.message : '加载 Git 状态失败');
+      setError(err instanceof Error ? err.message : t('git.error.statusLoadFailed'));
     } finally {
       setLoadingSummary(false);
     }
-  }, [client, projectRoot]);
+  }, [client, enabled, projectRoot, t]);
 
   const loadDetails = useCallback(async (options?: { force?: boolean }) => {
-    if (!projectRoot) {
+    const latestRepoRoot = resolveActiveRepoRoot(summaryRef.current) || activeRepoRootRef.current || activeRepoRoot;
+    if (!enabled || !latestRepoRoot) {
       setBranches(null);
       setStatus(null);
       branchesRef.current = null;
@@ -244,22 +324,24 @@ export const useProjectGit = ({
       detailsStaleRef.current = true;
       return;
     }
-    const force = options?.force === true;
-    if (!force) {
-      const cached = peekGitDetailsCacheEntry(client, projectRoot);
+    const shouldForceRefresh = options?.force === true || detailsStaleRef.current;
+    if (!shouldForceRefresh) {
+      const cached = peekGitDetailsCacheEntry(client, latestRepoRoot);
       if (cached) {
         setBranches(cached.branches);
         setStatus(cached.status);
         branchesRef.current = cached.branches;
         statusRef.current = cached.status;
-        detailsLoadedRootRef.current = projectRoot;
+        detailsLoadedRootRef.current = latestRepoRoot;
         detailsStaleRef.current = cached.stale;
       }
     }
-    if (!force && !detailsStaleRef.current && detailsLoadedRootRef.current === projectRoot && branchesRef.current && statusRef.current) {
+    if (!shouldForceRefresh && !detailsStaleRef.current && detailsLoadedRootRef.current === latestRepoRoot && branchesRef.current && statusRef.current) {
       return;
     }
-    const existingInflight = getGitDetailsInflight(client, projectRoot);
+    const existingInflight = shouldForceRefresh
+      ? null
+      : getGitDetailsInflight(client, latestRepoRoot);
     if (existingInflight) {
       setError(null);
       setLoadingBranches(true);
@@ -270,13 +352,13 @@ export const useProjectGit = ({
         setStatus(resolved.status);
         branchesRef.current = resolved.branches;
         statusRef.current = resolved.status;
-        detailsLoadedRootRef.current = projectRoot;
+        detailsLoadedRootRef.current = latestRepoRoot;
         detailsStaleRef.current = false;
       } catch (err) {
         branchesRef.current = null;
         statusRef.current = null;
         detailsLoadedRootRef.current = null;
-        setError(err instanceof Error ? err.message : '加载 Git 详情失败');
+        setError(err instanceof Error ? err.message : t('git.error.detailsLoadFailed'));
       } finally {
         setLoadingBranches(false);
         setLoadingStatus(false);
@@ -288,40 +370,38 @@ export const useProjectGit = ({
     setLoadingStatus(true);
     try {
       const inflight = Promise.all([
-        client.getGitBranches(projectRoot),
-        client.getGitStatus(projectRoot),
+        client.getGitBranches(latestRepoRoot, shouldForceRefresh),
+        client.getGitStatus(latestRepoRoot, shouldForceRefresh),
       ])
         .then(([branchesRaw, statusRaw]) => ({
           branches: normalizeGitBranches(branchesRaw),
           status: normalizeGitStatus(statusRaw),
         }))
         .then((resolved) => {
-          setGitDetailsCacheEntry(client, projectRoot, resolved);
+          setGitDetailsCacheEntry(client, latestRepoRoot, resolved);
           return resolved;
         })
         .finally(() => {
-          setGitDetailsInflight(client, projectRoot, null);
+          setGitDetailsInflight(client, latestRepoRoot, null);
         });
-      setGitDetailsInflight(client, projectRoot, inflight);
+      setGitDetailsInflight(client, latestRepoRoot, inflight);
       const resolved = await inflight;
-      const normalizedBranches = resolved.branches;
-      const normalizedStatus = resolved.status;
-      setBranches(normalizedBranches);
-      setStatus(normalizedStatus);
-      branchesRef.current = normalizedBranches;
-      statusRef.current = normalizedStatus;
-      detailsLoadedRootRef.current = projectRoot;
+      setBranches(resolved.branches);
+      setStatus(resolved.status);
+      branchesRef.current = resolved.branches;
+      statusRef.current = resolved.status;
+      detailsLoadedRootRef.current = latestRepoRoot;
       detailsStaleRef.current = false;
     } catch (err) {
       branchesRef.current = null;
       statusRef.current = null;
       detailsLoadedRootRef.current = null;
-      setError(err instanceof Error ? err.message : '加载 Git 详情失败');
+      setError(err instanceof Error ? err.message : t('git.error.detailsLoadFailed'));
     } finally {
       setLoadingBranches(false);
       setLoadingStatus(false);
     }
-  }, [client, projectRoot]);
+  }, [activeRepoRoot, client, enabled, t]);
 
   const runAction = useCallback(async (
     action: () => Promise<GitActionResponse>,
@@ -334,12 +414,13 @@ export const useProjectGit = ({
     try {
       const result = normalizeGitAction(await action());
       if (result.summary) {
-        setSummary(result.summary);
-        summaryRef.current = result.summary;
+        const nextSummary = mergeSummaryContext(result.summary, summaryRef.current, activeRepoRoot);
+        setSummary(nextSummary);
+        summaryRef.current = nextSummary;
         summaryLoadedRootRef.current = projectRoot || null;
         summaryStaleRef.current = false;
         if (projectRoot) {
-          setGitSummaryCacheEntry(client, projectRoot, result.summary);
+          setGitSummaryCacheEntry(client, projectRoot, nextSummary);
         }
       } else {
         await refreshSummary({ force: true });
@@ -356,12 +437,12 @@ export const useProjectGit = ({
       setActionMessage(actionOutputMessage(result, fallbackMessage));
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Git 操作失败');
+      setError(err instanceof Error ? err.message : t('git.error.actionFailed'));
       return false;
     } finally {
       setActionLoading(false);
     }
-  }, [loadDetails, onRepositoryChanged, projectRoot, refreshSummary]);
+  }, [activeRepoRoot, client, loadDetails, onRepositoryChanged, projectRoot, refreshSummary, t]);
 
   const {
     compareResult,
@@ -374,7 +455,7 @@ export const useProjectGit = ({
     loadFileDiff,
   } = useProjectGitCompare({
     client,
-    projectRoot,
+    projectRoot: activeRepoRoot,
     setError,
   });
 
@@ -387,16 +468,48 @@ export const useProjectGit = ({
     createBranch,
     stageFiles,
     unstageFiles,
+    discardFiles,
     commitStaged,
     commitSelected,
   } = useProjectGitActions({
     client,
-    projectRoot,
+    projectRoot: activeRepoRoot,
     summary,
     confirm,
     runAction,
     setError,
   });
+
+  const selectRepository = useCallback(async (repoRoot: string | null) => {
+    const normalized = typeof repoRoot === 'string' && repoRoot.trim() ? repoRoot.trim() : null;
+    if ((normalized || null) === (preferredRepoRoot || null)) {
+      return;
+    }
+    setPreferredRepoRoot(normalized);
+    preferredRepoRootRef.current = normalized;
+    clearMessages();
+    clearCompare();
+    clearFileDiff();
+    setBranches(null);
+    setStatus(null);
+    branchesRef.current = null;
+    statusRef.current = null;
+    detailsLoadedRootRef.current = null;
+    detailsStaleRef.current = true;
+    summaryLoadedRootRef.current = null;
+    summaryStaleRef.current = true;
+    await onRepositorySelectionChange?.(normalized);
+    await refreshSummary({ force: true, preferredRepoRoot: normalized });
+    await loadDetails({ force: true });
+  }, [
+    clearCompare,
+    clearFileDiff,
+    clearMessages,
+    loadDetails,
+    onRepositorySelectionChange,
+    preferredRepoRoot,
+    refreshSummary,
+  ]);
 
   useProjectGitLifecycle({
     open,
@@ -415,6 +528,8 @@ export const useProjectGit = ({
   return useMemo(() => ({
     clientInfo,
     summary,
+    activeRepoRoot,
+    availableRepositories,
     branches,
     status,
     compareResult,
@@ -442,32 +557,36 @@ export const useProjectGit = ({
     loadFileDiff,
     clearCompare,
     clearFileDiff,
+    selectRepository,
     createBranch,
     stageFiles,
     unstageFiles,
+    discardFiles,
     commitStaged,
     commitSelected,
     clearMessages,
   }), [
     actionLoading,
     actionMessage,
+    activeRepoRoot,
+    availableRepositories,
     branches,
     checkoutBranch,
     clearCompare,
     clearFileDiff,
     clearMessages,
     clientInfo,
-    commitStaged,
     commitSelected,
+    commitStaged,
     compareBranch,
     compareResult,
     createBranch,
+    discardFiles,
     error,
     fetchRemote,
     fileDiff,
     loadDetails,
     loadFileDiff,
-    mergeBranch,
     loadingBranches,
     loadingClientInfo,
     loadingCompare,
@@ -476,10 +595,12 @@ export const useProjectGit = ({
     loadingSummary,
     markDetailsStale,
     markSummaryStale,
+    mergeBranch,
     pullCurrent,
     pushCurrent,
     refreshClientInfo,
     refreshSummary,
+    selectRepository,
     stageFiles,
     status,
     summary,

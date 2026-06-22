@@ -2,14 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { useI18n } from '../i18n/I18nProvider';
 import {
   resolveRemoteConnectionErrorMessage,
   resolveRemoteTerminalWsErrorMessage,
 } from '../lib/api/remoteConnectionErrors';
+import { useApiClient } from '../lib/api/ApiClientContext';
 import RemoteVerificationModal from './remote/RemoteVerificationModal';
-import { useChatStoreSelector, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
-import { apiClient as globalApiClient } from '../lib/api/client';
-import { useAuthStore } from '../lib/auth/authStore';
+import { useChatStoreSelector } from '../lib/store/ChatStoreContext';
+import { useAuthStoreSelector } from '../lib/auth/authStore';
 import { useTheme } from '../hooks/useTheme';
 import { cn } from '../lib/utils';
 import { RemoteTerminalHeader } from './remoteTerminal/RemoteTerminalHeader';
@@ -28,11 +29,11 @@ interface RemoteTerminalViewProps {
 }
 
 const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) => {
+  const { t } = useI18n();
   const currentRemoteConnection = useChatStoreSelector((state) => state.currentRemoteConnection);
   const openRemoteSftp = useChatStoreSelector((state) => state.openRemoteSftp);
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = apiClientFromContext || globalApiClient;
-  const { accessToken } = useAuthStore();
+  const client = useApiClient();
+  const accessToken = useAuthStoreSelector((state) => state.accessToken);
   const { actualTheme } = useTheme();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -44,6 +45,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const paletteRef = useRef(getThemeColors(actualTheme));
   const skippedStrictModeProbeRef = useRef(false);
   const pendingVerificationCodeRef = useRef<string | null>(null);
+  const terminalErrorHandledRef = useRef(false);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -73,11 +75,11 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setConnectionState('disconnected');
       setBusy(false);
     } catch (error) {
-      setErrorMessage(resolveRemoteConnectionErrorMessage(error, '断开连接失败'));
+      setErrorMessage(resolveRemoteConnectionErrorMessage(error, t('remote.terminal.disconnectFailed')));
     } finally {
       setDisconnecting(false);
     }
-  }, [client, currentRemoteConnection?.id, disconnecting]);
+  }, [client, currentRemoteConnection?.id, disconnecting, t]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -150,6 +152,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       pendingVerificationCodeRef.current = null;
       lastConnectionIdRef.current = null;
       lastSnapshotRef.current = '';
+      terminalErrorHandledRef.current = false;
       return;
     }
 
@@ -175,19 +178,17 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setVerificationPrompt('');
       setVerificationCode('');
       pendingVerificationCodeRef.current = null;
+      terminalErrorHandledRef.current = false;
     }
 
     const verificationCodeForAttempt = pendingVerificationCodeRef.current;
-    const wsUrl = buildWsUrl(
-      apiBaseUrl,
-      `/remote-connections/${currentRemoteConnection.id}/ws`,
-      accessToken,
-      verificationCodeForAttempt,
-    );
-    const ws = new WebSocket(wsUrl);
-    socketRef.current = ws;
+    terminalErrorHandledRef.current = false;
     setConnectionState('connecting');
     setErrorMessage(null);
+    setBusy(false);
+
+    let disposed = false;
+    let ws: WebSocket | null = null;
 
     const clearVerificationCodeForAttempt = () => {
       if (
@@ -199,92 +200,125 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       }
     };
 
-    ws.onopen = () => {
-      if (socketRef.current !== ws) return;
-      setConnectionState('connected');
-      if (terminalRef.current) {
-        ws.send(JSON.stringify({
-          type: 'resize',
-          cols: terminalRef.current.cols,
-          rows: terminalRef.current.rows,
-        }));
-      }
-      term.focus();
-    };
-
-    ws.onmessage = (event) => {
-      if (socketRef.current !== ws) return;
+    void (async () => {
       try {
-        const payload = JSON.parse(event.data as string);
-        if (payload?.type === 'output' && typeof payload.data === 'string') {
-          clearVerificationCodeForAttempt();
-          terminalRef.current?.write(payload.data);
+        const webSocketTicket = await client.issueWebSocketTicket();
+        if (disposed) {
           return;
         }
-        if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
-          clearVerificationCodeForAttempt();
-          if (payload.data === lastSnapshotRef.current) {
+        const wsUrl = buildWsUrl(
+          apiBaseUrl,
+          `/remote-connections/${currentRemoteConnection.id}/ws`,
+          webSocketTicket,
+        );
+        const socket = new WebSocket(wsUrl);
+        ws = socket;
+        socketRef.current = socket;
+
+        socket.onopen = () => {
+          if (socketRef.current !== socket) return;
+          setConnectionState('connected');
+          if (verificationCodeForAttempt) {
+            socket.send(JSON.stringify({ type: 'verification', code: verificationCodeForAttempt }));
+          }
+          if (terminalRef.current) {
+            socket.send(JSON.stringify({
+              type: 'resize',
+              cols: terminalRef.current.cols,
+              rows: terminalRef.current.rows,
+            }));
+          }
+          term.focus();
+        };
+
+        socket.onmessage = (event) => {
+          if (socketRef.current !== socket) return;
+          try {
+            const payload = JSON.parse(event.data as string);
+            if (payload?.type === 'output' && typeof payload.data === 'string') {
+              clearVerificationCodeForAttempt();
+              terminalRef.current?.write(payload.data);
+              return;
+            }
+            if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+              clearVerificationCodeForAttempt();
+              if (payload.data === lastSnapshotRef.current) {
+                return;
+              }
+              lastSnapshotRef.current = payload.data;
+              terminalRef.current?.reset();
+              terminalRef.current?.write(payload.data);
+              return;
+            }
+            if (payload?.type === 'state') {
+              clearVerificationCodeForAttempt();
+              setBusy(Boolean(payload.busy));
+              return;
+            }
+            if (payload?.type === 'error') {
+              terminalErrorHandledRef.current = true;
+              setConnectionState('error');
+              setBusy(false);
+              if (payload?.code === 'second_factor_required') {
+                pendingVerificationCodeRef.current = null;
+                setVerificationPrompt(
+                  typeof payload?.challenge_prompt === 'string' ? payload.challenge_prompt : '',
+                );
+                setVerificationOpen(true);
+                setErrorMessage(
+                  verificationCodeForAttempt
+                    ? t('remote.common.needsVerificationRetry')
+                    : t('remote.common.needsVerification'),
+                );
+                return;
+              }
+              setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, t('remote.terminal.wsError')));
+              return;
+            }
+          } catch {
+            // ignore parse errors to keep terminal usable
+          }
+        };
+
+        socket.onerror = () => {
+          if (socketRef.current !== socket) return;
+          if (terminalErrorHandledRef.current) {
             return;
           }
-          lastSnapshotRef.current = payload.data;
-          terminalRef.current?.reset();
-          terminalRef.current?.write(payload.data);
+          setConnectionState('error');
+          setBusy(false);
+          setErrorMessage(t('remote.terminal.connectionError'));
+        };
+
+        socket.onclose = () => {
+          if (socketRef.current !== socket) return;
+          setConnectionState((prev) => (terminalErrorHandledRef.current ? prev : 'disconnected'));
+          setBusy(false);
+        };
+      } catch (error) {
+        if (disposed) {
           return;
         }
-        if (payload?.type === 'state') {
-          clearVerificationCodeForAttempt();
-          setBusy(Boolean(payload.busy));
-          return;
-        }
-        if (payload?.type === 'error') {
-          if (payload?.code === 'second_factor_required') {
-            pendingVerificationCodeRef.current = null;
-            setVerificationPrompt(
-              typeof payload?.challenge_prompt === 'string' ? payload.challenge_prompt : '',
-            );
-            setVerificationOpen(true);
-            setConnectionState('error');
-            setBusy(false);
-            setErrorMessage(
-              verificationCodeForAttempt
-                ? '验证码未通过或已过期，请重新输入后继续连接'
-                : '需要验证码，请输入后继续连接',
-            );
-            return;
-          }
-          setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, '远端终端错误'));
-          return;
-        }
-      } catch {
-        // ignore parse errors to keep terminal usable
+        terminalErrorHandledRef.current = true;
+        setConnectionState('error');
+        setBusy(false);
+        setErrorMessage(resolveRemoteConnectionErrorMessage(error, t('remote.terminal.connectionError')));
       }
-    };
-
-    ws.onerror = () => {
-      if (socketRef.current !== ws) return;
-      setConnectionState('error');
-      setBusy(false);
-      setErrorMessage('远端终端连接异常，请重试');
-    };
-
-    ws.onclose = () => {
-      if (socketRef.current !== ws) return;
-      setConnectionState('disconnected');
-      setBusy(false);
-    };
+    })();
 
     return () => {
+      disposed = true;
       if (socketRef.current === ws) {
         socketRef.current = null;
       }
       closeWebSocketSafely(ws);
     };
-  }, [currentRemoteConnection?.id, apiBaseUrl, accessToken, connectSeq]);
+  }, [currentRemoteConnection?.id, apiBaseUrl, accessToken, connectSeq, t]);
 
   if (!currentRemoteConnection) {
     return (
       <div className={cn('flex h-full items-center justify-center text-muted-foreground', className)}>
-        请选择一个远端连接
+        {t('remote.common.chooseConnection')}
       </div>
     );
   }

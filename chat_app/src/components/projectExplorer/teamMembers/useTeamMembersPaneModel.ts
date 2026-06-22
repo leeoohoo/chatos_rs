@@ -1,23 +1,30 @@
-import type { ComponentProps } from 'react';
+import { useCallback, useMemo, type ComponentProps } from 'react';
 
 import type { Project } from '../../../types';
 import TurnRuntimeContextDrawer from '../../chatInterface/TurnRuntimeContextDrawer';
-import { ProjectContactPickerModal } from '../../sessionList/ProjectContactPickerModal';
 import TeamMemberWorkspace from './TeamMemberWorkspace';
-import TeamMembersSidebar from './TeamMembersSidebar';
 import { useTeamMembersPaneSessionResources } from './useTeamMembersPaneSessionResources';
 import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
-import { useTeamMembersPaneViewProps } from './useTeamMembersPaneViewProps';
+import { useTeamMemberRuntimeContextDrawerProps } from './useTeamMemberOverlayProps';
+import { useTeamMemberWorkspaceProps } from './useTeamMemberWorkspaceProps';
 
 interface UseTeamMembersPaneModelOptions {
   project: Project;
 }
 
 interface UseTeamMembersPaneModelResult {
-  sidebarProps: ComponentProps<typeof TeamMembersSidebar>;
   workspaceProps: ComponentProps<typeof TeamMemberWorkspace>;
   runtimeContextDrawerProps: ComponentProps<typeof TurnRuntimeContextDrawer>;
-  memberPickerProps: ComponentProps<typeof ProjectContactPickerModal>;
+  userMessageSidebarActions: {
+    summaryActive: boolean;
+    runtimeContextActive: boolean;
+    summaryLoading: boolean;
+    runtimeContextLoading: boolean;
+    summaryDisabled: boolean;
+    runtimeContextDisabled: boolean;
+    onOpenSummary: () => void;
+    onOpenRuntimeContext: () => void;
+  };
 }
 
 export const useTeamMembersPaneModel = ({
@@ -25,5 +32,63 @@ export const useTeamMembersPaneModel = ({
 }: UseTeamMembersPaneModelOptions): UseTeamMembersPaneModelResult => {
   const store = useTeamMembersPaneStoreBridge();
   const resources = useTeamMembersPaneSessionResources({ project, store });
-  return useTeamMembersPaneViewProps({ project, store, resources });
+  const options = { project, store, resources };
+  const workspaceProps = useTeamMemberWorkspaceProps(options);
+  const runtimeContextDrawerProps = useTeamMemberRuntimeContextDrawerProps(options);
+  const selectedContact = resources.conversation.selectedContact;
+  const selectedSessionId = resources.conversation.selectedProjectSession?.id || null;
+
+  const handleOpenSelectedSummary = useCallback(() => {
+    if (!selectedContact) {
+      return;
+    }
+    void resources.conversation.handleOpenSummary(selectedContact);
+  }, [resources.conversation.handleOpenSummary, selectedContact]);
+
+  const handleOpenSelectedRuntimeContext = useCallback(() => {
+    if (!selectedContact) {
+      return;
+    }
+    void resources.runtimeContext.handleOpenRuntimeContext(selectedContact);
+  }, [resources.runtimeContext.handleOpenRuntimeContext, selectedContact]);
+
+  const userMessageSidebarActions = useMemo(() => ({
+    summaryActive: Boolean(
+      selectedSessionId
+      && resources.summary.summaryPaneSessionId === selectedSessionId,
+    ),
+    runtimeContextActive: Boolean(
+      selectedSessionId
+      && resources.runtimeContext.runtimeContextOpen
+      && resources.runtimeContext.runtimeContextSessionId === selectedSessionId,
+    ),
+    summaryLoading: Boolean(
+      selectedContact?.id
+      && resources.conversation.openingSummaryContactId === selectedContact.id,
+    ),
+    runtimeContextLoading: Boolean(
+      selectedContact?.id
+      && resources.runtimeContext.openingRuntimeContextContactId === selectedContact.id,
+    ),
+    summaryDisabled: !selectedContact,
+    runtimeContextDisabled: !selectedContact,
+    onOpenSummary: handleOpenSelectedSummary,
+    onOpenRuntimeContext: handleOpenSelectedRuntimeContext,
+  }), [
+    handleOpenSelectedRuntimeContext,
+    handleOpenSelectedSummary,
+    resources.conversation.openingSummaryContactId,
+    resources.runtimeContext.openingRuntimeContextContactId,
+    resources.runtimeContext.runtimeContextOpen,
+    resources.runtimeContext.runtimeContextSessionId,
+    resources.summary.summaryPaneSessionId,
+    selectedContact,
+    selectedSessionId,
+  ]);
+
+  return {
+    workspaceProps,
+    runtimeContextDrawerProps,
+    userMessageSidebarActions,
+  };
 };

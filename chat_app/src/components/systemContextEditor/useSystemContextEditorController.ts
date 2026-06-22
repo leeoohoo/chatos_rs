@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
 import { useDialogService } from '../ui/DialogProvider';
 import { splitLines, readContextContent, readContextName } from './helpers';
 import type {
@@ -12,17 +13,18 @@ import type {
   ViewMode,
 } from './types';
 
-const DEFAULT_ASSISTANT_FORM: AssistantFormState = {
+const buildDefaultAssistantForm = (t: TranslateFn): AssistantFormState => ({
   scene: '',
-  style: '专业、简洁',
-  language: '中文',
-  outputFormat: '结构化：结论/步骤/代码/风险',
+  style: t('systemContext.assistant.defaultStyle'),
+  language: t('systemContext.assistant.defaultLanguage'),
+  outputFormat: t('systemContext.assistant.defaultOutputFormat'),
   constraintsText: '',
   forbiddenText: '',
-  optimizeGoal: '提升约束完整性与可执行性',
-};
+  optimizeGoal: t('systemContext.assistant.defaultOptimizeGoal'),
+});
 
 export function useSystemContextEditorController(storeData: SystemContextEditorStoreLike) {
+  const { t } = useI18n();
   const {
     systemContexts,
     loadSystemContexts,
@@ -44,7 +46,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [assistantForm, setAssistantForm] = useState<AssistantFormState>(DEFAULT_ASSISTANT_FORM);
+  const [assistantForm, setAssistantForm] = useState<AssistantFormState>(() => buildDefaultAssistantForm(t));
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<PromptCandidate[]>([]);
@@ -107,11 +109,6 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     }
 
     return {
-      model_name: selectedModelConfig.model_name || selectedModelConfig.model,
-      model: selectedModelConfig.model,
-      provider: selectedModelConfig.provider,
-      api_key: selectedModelConfig.api_key,
-      base_url: selectedModelConfig.base_url,
       temperature: 0.5,
     };
   }, [selectedModelConfig]);
@@ -147,7 +144,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     const name = formData.name.trim();
     const content = formData.content.trim();
     if (!name || !content) {
-      setActionError('名称和内容不能为空。');
+      setActionError(t('systemContext.error.required'));
       return;
     }
 
@@ -166,7 +163,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
       await loadSystemContexts();
       setViewMode('list');
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '保存失败。');
+      setActionError(error instanceof Error ? error.message : t('systemContext.error.save'));
     } finally {
       setIsSaving(false);
     }
@@ -179,14 +176,15 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
     selectedContextId,
     updateSystemContext,
     viewMode,
+    t,
   ]);
 
   const handleDelete = useCallback(async (context: SystemContextLike) => {
     const confirmed = await confirm({
-      title: '删除系统提示词',
-      message: `确定删除 "${readContextName(context)}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: t('systemContext.confirm.deleteTitle'),
+      message: t('systemContext.confirm.deleteMessage', { name: readContextName(context) }),
+      confirmText: t('aiModelManager.action.delete'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed || !context.id) {
@@ -203,9 +201,9 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
       }
       await loadSystemContexts();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '删除失败。');
+      setActionError(error instanceof Error ? error.message : t('systemContext.error.delete'));
     }
-  }, [confirm, deleteSystemContext, loadSystemContexts, selectedContextId]);
+  }, [confirm, deleteSystemContext, loadSystemContexts, selectedContextId, t]);
 
   const handleBackToList = useCallback(() => {
     setViewMode('list');
@@ -225,13 +223,13 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
 
   const handleAiGenerate = useCallback(async () => {
     if (typeof generateSystemContextDraft !== 'function') {
-      setAssistantError('当前环境不可用 AI 生成功能。');
+      setAssistantError(t('systemContext.error.generateUnavailable'));
       return;
     }
 
     const scene = assistantForm.scene.trim() || formData.name.trim();
     if (!scene) {
-      setAssistantError('请先填写 AI 场景。');
+      setAssistantError(t('systemContext.error.generateMissingScene'));
       return;
     }
 
@@ -246,6 +244,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         constraints: splitLines(assistantForm.constraintsText),
         forbidden: splitLines(assistantForm.forbiddenText),
         candidate_count: 3,
+        model_config_id: selectedModelConfig?.id,
         ai_model_config: getModelPayload(),
       });
 
@@ -256,7 +255,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         : [];
 
       if (resultCandidates.length === 0) {
-        setAssistantError('AI 未返回可用候选内容。');
+        setAssistantError(t('systemContext.error.generateEmpty'));
         return;
       }
 
@@ -265,7 +264,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         handleSelectCandidate(resultCandidates[0]);
       }
     } catch (error) {
-      setAssistantError(error instanceof Error ? error.message : 'AI 生成失败。');
+      setAssistantError(error instanceof Error ? error.message : t('systemContext.error.generateFailed'));
     } finally {
       setAssistantBusy(false);
     }
@@ -285,13 +284,13 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
 
   const handleAiOptimize = useCallback(async () => {
     if (typeof optimizeSystemContextDraft !== 'function') {
-      setAssistantError('当前环境不可用 AI 优化功能。');
+      setAssistantError(t('systemContext.error.optimizeUnavailable'));
       return;
     }
 
     const content = formData.content.trim();
     if (!content) {
-      setAssistantError('请先输入内容再进行 AI 优化。');
+      setAssistantError(t('systemContext.error.optimizeMissingContent'));
       return;
     }
 
@@ -302,6 +301,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         content,
         goal: assistantForm.optimizeGoal.trim() || undefined,
         keep_intent: true,
+        model_config_id: selectedModelConfig?.id,
         ai_model_config: getModelPayload(),
       });
 
@@ -309,7 +309,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         ? response.optimized_content.trim()
         : '';
       if (!optimized) {
-        setAssistantError('AI 优化返回为空。');
+        setAssistantError(t('systemContext.error.optimizeEmpty'));
         return;
       }
 
@@ -319,7 +319,7 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
       }));
       setCandidates([
         {
-          title: '优化结果',
+          title: t('systemContext.optimizeResult'),
           content: optimized,
           score: response?.score_after,
           report: response?.report_after,
@@ -329,39 +329,42 @@ export function useSystemContextEditorController(storeData: SystemContextEditorS
         setQualityReport(response.report_after);
       }
     } catch (error) {
-      setAssistantError(error instanceof Error ? error.message : 'AI 优化失败。');
+      setAssistantError(error instanceof Error ? error.message : t('systemContext.error.optimizeFailed'));
     } finally {
       setAssistantBusy(false);
     }
-  }, [assistantForm.optimizeGoal, formData.content, getModelPayload, optimizeSystemContextDraft]);
+  }, [assistantForm.optimizeGoal, formData.content, getModelPayload, optimizeSystemContextDraft, t]);
 
   const handleAiEvaluate = useCallback(async () => {
     if (typeof evaluateSystemContextDraft !== 'function') {
-      setAssistantError('当前环境不可用 AI 评估功能。');
+      setAssistantError(t('systemContext.error.evaluateUnavailable'));
       return;
     }
 
     const content = formData.content.trim();
     if (!content) {
-      setAssistantError('请先输入内容再进行 AI 评估。');
+      setAssistantError(t('systemContext.error.evaluateMissingContent'));
       return;
     }
 
     setAssistantBusy(true);
     setAssistantError(null);
     try {
-      const response = await evaluateSystemContextDraft({ content });
+      const response = await evaluateSystemContextDraft({
+        content,
+        model_config_id: selectedModelConfig?.id,
+      });
       if (response?.report) {
         setQualityReport(response.report);
       } else {
-        setAssistantError('AI 评估未返回报告。');
+        setAssistantError(t('systemContext.error.evaluateEmpty'));
       }
     } catch (error) {
-      setAssistantError(error instanceof Error ? error.message : 'AI 评估失败。');
+      setAssistantError(error instanceof Error ? error.message : t('systemContext.error.evaluateFailed'));
     } finally {
       setAssistantBusy(false);
     }
-  }, [evaluateSystemContextDraft, formData.content]);
+  }, [evaluateSystemContextDraft, formData.content, selectedModelConfig?.id, t]);
 
   const handleNameChange = useCallback((value: string) => {
     setFormData((prev) => ({ ...prev, name: value }));

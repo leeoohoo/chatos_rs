@@ -15,6 +15,8 @@ export type MessageUnavailableToolLike = {
   createdAt?: string;
 };
 
+export const UNAVAILABLE_TOOL_REASON_FALLBACK_KEY = 'message.unavailableToolFallback';
+
 type ToolCallSeed = Partial<Omit<MessageToolCallLike, 'createdAt'>> & {
   createdAt?: unknown;
 };
@@ -70,10 +72,6 @@ export const getMessageHistoryProcessRecord = (message: Message): UnknownRecord 
 
 export const isMessageHistoryProcessExpanded = (message: Message): boolean => (
   readBoolean(getMessageHistoryProcessRecord(message), 'expanded') === true
-);
-
-export const isMessageHistoryProcessLoading = (message: Message): boolean => (
-  readBoolean(getMessageHistoryProcessRecord(message), 'loading') === true
 );
 
 export const hasMessageHistoryProcess = (message: Message): boolean => (
@@ -244,7 +242,7 @@ export const normalizeUnavailableTools = (value: unknown): MessageUnavailableToo
       toolName: normalizeMetaId(
         readValue(record, 'toolName') || readValue(record, 'tool_name'),
       ) || 'unknown_tool',
-      reason: normalizeMetaId(readValue(record, 'reason')) || '工具当前不可用',
+      reason: normalizeMetaId(readValue(record, 'reason')) || UNAVAILABLE_TOOL_REASON_FALLBACK_KEY,
       createdAt: normalizeMetaId(
         readValue(record, 'createdAt') || readValue(record, 'created_at'),
       ) || undefined,

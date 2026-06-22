@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { apiClient as globalApiClient } from '../../lib/api/client';
+import { useI18n } from '../../i18n/I18nProvider';
+import { useApiClient } from '../../lib/api/ApiClientContext';
+import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
 import {
-  useChatApiClientFromContext,
   useOptionalChatStoreContext,
 } from '../../lib/store/ChatStoreContext';
-import { useChatStore } from '../../lib/store';
 import { useDialogService } from '../ui/DialogProvider';
 import {
   useContactSessionCreator,
@@ -18,7 +18,6 @@ import { useInlineActionMenus } from './useInlineActionMenus';
 import { useSectionExpansion } from './useSectionExpansion';
 import { useSessionListBootstrap } from './useSessionListBootstrap';
 import { useLocalFsPickers } from './useLocalFsPickers';
-import { useProjectRunState } from './useProjectRunState';
 import { useSessionListDeleteActions } from './useSessionListDeleteActions';
 import { useSessionListActions } from './useSessionListActions';
 import { useSessionListStoreState } from './useSessionListStoreState';
@@ -27,6 +26,8 @@ import { useContactsRealtime } from '../../lib/realtime/useContactsRealtime';
 import { useProjectsRealtime } from '../../lib/realtime/useProjectsRealtime';
 import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnectionsRealtime';
 import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
+import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
+import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 import type { ContactItem } from './types';
 
 const CONTACT_CREATE_LIKE_REASONS = new Set(['contact_created', 'contact_upserted']);
@@ -37,9 +38,12 @@ const REMOTE_CONNECTION_CREATE_LIKE_REASONS = new Set(['remote_connection_create
 const REMOTE_CONNECTION_UPDATE_LIKE_REASONS = new Set(['remote_connection_updated']);
 const SESSION_CREATE_LIKE_REASONS = new Set(['session_created']);
 const SESSION_UPDATE_LIKE_REASONS = new Set(['session_updated']);
+const TERMINAL_CREATE_LIKE_REASONS = new Set(['created', 'ensured_running']);
+const TERMINAL_UPDATE_LIKE_REASONS = new Set(['updated']);
+const TERMINAL_REFRESH_LIKE_REASONS = new Set(['closed']);
 
 interface SessionListControllerParams {
-  store?: typeof useChatStore;
+  store?: SessionListStoreHook;
   activeSummarySessionId?: string | null;
   onOpenSessionSummary?: (sessionId: string) => void;
   onOpenSessionRuntimeContext?: (sessionId: string) => void;
@@ -53,8 +57,12 @@ export const useSessionListController = ({
   onOpenSessionRuntimeContext,
   isCollapsed,
 }: SessionListControllerParams) => {
+  const { t } = useI18n();
   const contextStoreHook = useOptionalChatStoreContext();
-  const storeToUse = store || contextStoreHook || useChatStore;
+  const storeToUse = store || contextStoreHook;
+  if (!storeToUse) {
+    throw new Error('useSessionListController requires ChatStoreProvider or an explicit store');
+  }
 
   const {
     sessions,
@@ -65,6 +73,7 @@ export const useSessionListController = ({
     loadSessions,
     loadContacts: loadContactsAction,
     createContact: createContactAction,
+    updateContactTaskRunnerConfig,
     deleteContact: deleteContactAction,
     markContactsStale,
     removeContactLocally,
@@ -80,8 +89,6 @@ export const useSessionListController = ({
     refreshSessionById,
     loadAgents,
     sessionChatState,
-    taskReviewPanelsBySession = {},
-    uiPromptPanelsBySession = {},
     projects,
     currentProject,
     loadProjects,
@@ -128,13 +135,18 @@ export const useSessionListController = ({
   const [terminalModalOpen, setTerminalModalOpen] = useState(false);
   const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [taskRunnerContactId, setTaskRunnerContactId] = useState<string | null>(null);
+  const [taskRunnerAgentAccounts, setTaskRunnerAgentAccounts] = useState<TaskRunnerAgentAccountResponse[]>([]);
+  const [taskRunnerAgentAccountsLoading, setTaskRunnerAgentAccountsLoading] = useState(false);
+  const [taskRunnerError, setTaskRunnerError] = useState<string | null>(null);
+  const [taskRunnerSaving, setTaskRunnerSaving] = useState(false);
 
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = apiClientFromContext || globalApiClient;
+  const apiClient = useApiClient();
   const { confirm, alert } = useDialogService();
 
   const remoteForm = useRemoteConnectionForm({
     apiClient,
+    t,
     remoteConnections,
     createRemoteConnection,
     updateRemoteConnection,
@@ -142,6 +154,7 @@ export const useSessionListController = ({
 
   const localFsPickers = useLocalFsPickers({
     apiClient,
+    t,
     projectRoot,
     terminalRoot,
     remotePrivateKeyPath: remoteForm.remotePrivateKeyPath,
@@ -161,7 +174,13 @@ export const useSessionListController = ({
     [contacts],
   );
 
+  const taskRunnerContact = useMemo(
+    () => (contacts || []).find((item: ContactItem) => item.id === taskRunnerContactId) || null,
+    [contacts, taskRunnerContactId],
+  );
+
   const contactSessionState = useContactSessionListState({
+    t,
     contacts,
     sessions: sessions || [],
     currentSession,
@@ -172,6 +191,7 @@ export const useSessionListController = ({
   });
 
   const contactSessionCreator = useContactSessionCreator({
+    t,
     agents,
     currentSessionId: currentSession?.id || null,
     loadContacts: loadContactsAction,
@@ -183,7 +203,67 @@ export const useSessionListController = ({
 
   const inlineActionMenus = useInlineActionMenus();
 
+  const openTaskRunnerConfig = async (displaySessionId: string) => {
+    const contactId = displaySessionId.startsWith('contact-placeholder:')
+      ? displaySessionId.replace('contact-placeholder:', '').trim()
+      : '';
+    const contact = (contacts || []).find((item: ContactItem) => item.id === contactId);
+    if (!contact) {
+      setTaskRunnerError(t('taskRunnerConfig.contactMissing'));
+      return;
+    }
+    setTaskRunnerContactId(contact.id);
+    setTaskRunnerError(null);
+    setTaskRunnerAgentAccountsLoading(true);
+    try {
+      const items = await apiClient.listTaskRunnerAgentAccounts();
+      setTaskRunnerAgentAccounts(Array.isArray(items) ? items : []);
+    } catch (error) {
+      setTaskRunnerAgentAccounts([]);
+      setTaskRunnerError(error instanceof Error ? error.message : t('taskRunnerConfig.loadAgentAccountsFailed'));
+    } finally {
+      setTaskRunnerAgentAccountsLoading(false);
+    }
+  };
+
+  const closeTaskRunnerConfig = () => {
+    setTaskRunnerContactId(null);
+    setTaskRunnerAgentAccounts([]);
+    setTaskRunnerAgentAccountsLoading(false);
+    setTaskRunnerError(null);
+  };
+
+  const saveTaskRunnerConfig = async (values: {
+    enabled: boolean;
+    agentAccountId: string;
+  }) => {
+    if (!taskRunnerContact) {
+      return;
+    }
+    const agentAccountId = values.agentAccountId.trim();
+    if (values.enabled && !agentAccountId) {
+      setTaskRunnerError(t('taskRunnerConfig.agentAccountMissing'));
+      return;
+    }
+    setTaskRunnerSaving(true);
+    setTaskRunnerError(null);
+    try {
+      await updateContactTaskRunnerConfig(taskRunnerContact.id, {
+        ...values,
+        agentAccountId,
+        username: '',
+        clearPassword: true,
+      });
+      closeTaskRunnerConfig();
+    } catch (error) {
+      setTaskRunnerError(error instanceof Error ? error.message : t('taskRunnerConfig.saveFailed'));
+    } finally {
+      setTaskRunnerSaving(false);
+    }
+  };
+
   const sessionListActions = useSessionListActions({
+    t,
     contacts: contacts as ContactItem[],
     currentSession,
     terminals,
@@ -224,7 +304,33 @@ export const useSessionListController = ({
     onFocusRemote: sessionListActions.focusRemotePanel,
   });
 
+  const {
+    terminalUiEnabled,
+    terminalUiResolved,
+  } = useTerminalUiSetting();
+  const terminalVisibility = useMemo(() => ({
+    terminalUiEnabled,
+    terminalUiResolved,
+    showTerminalSection: terminalUiResolved && terminalUiEnabled,
+  }), [terminalUiEnabled, terminalUiResolved]);
+
+  useEffect(() => {
+    if (!terminalVisibility.terminalUiResolved || terminalVisibility.terminalUiEnabled) {
+      return;
+    }
+    if (activePanel === 'terminal') {
+      setActivePanel(currentProject ? 'project' : 'chat');
+    }
+  }, [
+    activePanel,
+    currentProject,
+    setActivePanel,
+    terminalVisibility.terminalUiEnabled,
+    terminalVisibility.terminalUiResolved,
+  ]);
+
   const deleteActions = useSessionListDeleteActions({
+    t,
     projects,
     terminals,
     remoteConnections,
@@ -250,30 +356,39 @@ export const useSessionListController = ({
     loadTerminals,
     loadRemoteConnections,
     isCollapsed,
+    terminalsEnabled: terminalVisibility.showTerminalSection,
     terminalsExpanded: sectionExpansion.terminalsExpanded,
     remoteExpanded: sectionExpansion.remoteExpanded,
   });
 
   useTerminalListRealtime({
-    enabled: true,
+    enabled: terminalVisibility.showTerminalSection,
     onInvalidate: (payload) => {
       const reason = String(payload.reason || '').trim();
       const terminalId = String(payload.terminal_id || '').trim();
       if (reason === 'deleted' && terminalId) {
+        if (currentTerminal?.id === terminalId) {
+          setActivePanel('chat');
+        }
         removeTerminalLocally(terminalId);
         return;
       }
-      if (payload.terminal) {
+      if (payload.terminal && (TERMINAL_CREATE_LIKE_REASONS.has(reason) || TERMINAL_UPDATE_LIKE_REASONS.has(reason))) {
         applyRealtimeTerminalSnapshot(payload.terminal);
         return;
       }
-      if (terminalId) {
+      if (terminalId && (TERMINAL_REFRESH_LIKE_REASONS.has(reason) || !payload.terminal)) {
         void refreshTerminalById(terminalId).then((terminal) => {
           if (!terminal && reason === 'created') {
             markTerminalsStale();
             void loadTerminals();
           }
         });
+        return;
+      }
+      if (terminalId) {
+        markTerminalsStale(undefined);
+        void loadTerminals();
         return;
       }
       markTerminalsStale();
@@ -421,16 +536,6 @@ export const useSessionListController = ({
     },
   });
 
-  const projectRunState = useProjectRunState({
-    apiClient,
-    projects,
-    terminals,
-    loadTerminals,
-    handleSelectTerminal: sessionListActions.handleSelectTerminal,
-    setActivePanel,
-    enabled: activePanel !== 'project',
-  });
-
   return {
     agents,
     apiClient,
@@ -446,10 +551,10 @@ export const useSessionListController = ({
     isRefreshingRemote,
     isRefreshingTerminals,
     localFsPickers,
+    openTaskRunnerConfig,
     projectError,
     projectModalOpen,
     projectRoot,
-    projectRunState,
     projects,
     remoteConnections,
     remoteForm,
@@ -461,11 +566,17 @@ export const useSessionListController = ({
     setProjectRoot,
     setTerminalModalOpen,
     setTerminalRoot,
-    taskReviewPanelsBySession,
+    taskRunnerContact,
+    taskRunnerAgentAccounts,
+    taskRunnerAgentAccountsLoading,
+    taskRunnerError,
+    taskRunnerSaving,
+    closeTaskRunnerConfig,
+    saveTaskRunnerConfig,
     terminals,
+    terminalVisibility,
     terminalError,
     terminalModalOpen,
     terminalRoot,
-    uiPromptPanelsBySession,
   };
 };

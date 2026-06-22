@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use portable_pty::{native_pty_system, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, MasterPty, PtySize};
 use tokio::sync::broadcast;
 
-use crate::models::terminal::Terminal;
+use crate::models::terminal::{Terminal, TERMINAL_KIND_PROJECT_RUN};
 use crate::services::realtime::{
-    publish_project_run_state_changed, publish_terminal_list_invalidated,
-    publish_terminal_state_changed,
+    publish_project_run_instance_changed, publish_project_run_state_changed,
+    publish_terminal_list_invalidated, publish_terminal_state_changed,
 };
 
 use super::directory_guard::{
@@ -30,6 +30,7 @@ pub struct TerminalSession {
     pub(super) sender: broadcast::Sender<TerminalEvent>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
+    child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     output_history: Mutex<OutputHistory>,
     root_cwd: PathBuf,
     current_cwd: Mutex<PathBuf>,
@@ -65,6 +66,7 @@ impl TerminalSession {
             .map_err(|e| format!("open pty failed: {e}"))?;
 
         let child = spawn_shell(root_cwd.as_path(), pair.slave)?;
+        let child_killer = child.clone_killer();
 
         let mut reader = pair
             .master
@@ -83,6 +85,7 @@ impl TerminalSession {
             sender,
             writer: Mutex::new(writer),
             master: Mutex::new(pair.master),
+            child_killer: Mutex::new(child_killer),
             output_history: Mutex::new(OutputHistory::default()),
             root_cwd: root_cwd.clone(),
             current_cwd: Mutex::new(root_cwd),
@@ -175,6 +178,50 @@ impl TerminalSession {
         });
 
         Ok((session, child))
+    }
+
+    fn terminate_with_signal(&self, _signal: i32) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            if let Ok(master) = self.master.lock() {
+                if let Some(process_group_leader) = master.process_group_leader() {
+                    let signal_result =
+                        unsafe { libc::kill(-(process_group_leader as i32), _signal) };
+                    if signal_result == 0 {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        let mut killer = self
+            .child_killer
+            .lock()
+            .map_err(|_| "child killer lock failed".to_string())?;
+        killer.kill().map_err(|e| format!("kill child failed: {e}"))
+    }
+
+    pub fn terminate(&self) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            return self.terminate_with_signal(libc::SIGTERM);
+        }
+
+        #[cfg(not(unix))]
+        {
+            self.terminate_with_signal(0)
+        }
+    }
+
+    pub fn force_terminate(&self) -> Result<(), String> {
+        #[cfg(unix)]
+        {
+            return self.terminate_with_signal(libc::SIGKILL);
+        }
+
+        #[cfg(not(unix))]
+        {
+            self.terminate_with_signal(0)
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<TerminalEvent> {
@@ -413,15 +460,28 @@ impl TerminalSession {
                     &self.terminal,
                     busy,
                     if busy { "busy_started" } else { "busy_cleared" },
+                    None,
                 );
-                publish_terminal_list_invalidated(
-                    user_id,
-                    Some(self.terminal.id.as_str()),
-                    self.terminal.project_id.as_deref(),
-                    if busy { "busy_started" } else { "busy_cleared" },
-                    Some(&self.terminal),
-                );
+                if self.terminal.kind != TERMINAL_KIND_PROJECT_RUN {
+                    publish_terminal_list_invalidated(
+                        user_id,
+                        Some(self.terminal.id.as_str()),
+                        self.terminal.project_id.as_deref(),
+                        if busy { "busy_started" } else { "busy_cleared" },
+                        Some(&self.terminal),
+                    );
+                }
                 if let Some(project_id) = self.terminal.project_id.as_deref() {
+                    publish_project_run_instance_changed(
+                        user_id,
+                        project_id,
+                        &self.terminal,
+                        busy,
+                        true,
+                        "running",
+                        if busy { "busy_started" } else { "busy_cleared" },
+                        None,
+                    );
                     publish_project_run_state_changed(
                         user_id,
                         project_id,
@@ -430,6 +490,7 @@ impl TerminalSession {
                         true,
                         "running",
                         if busy { "busy_started" } else { "busy_cleared" },
+                        None,
                     );
                 }
             }

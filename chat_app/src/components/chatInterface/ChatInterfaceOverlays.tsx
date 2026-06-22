@@ -1,23 +1,22 @@
-import { Suspense, lazy, type ComponentProps } from 'react';
+import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
-import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
+import { useI18n } from '../../i18n/I18nProvider';
 
 const AiModelManager = lazy(() => import('../AiModelManager'));
+const AgentManager = lazy(() => import('../AgentManager'));
 const ApplicationsPanel = lazy(() => import('../ApplicationsPanel'));
-const McpManager = lazy(() => import('../McpManager'));
 const NotepadPanel = lazy(() => import('../NotepadPanel'));
 const UserSettingsPanel = lazy(() => import('../UserSettingsPanel'));
 
 interface ChatInterfaceOverlaysProps {
-  uiPromptHistoryProps: ComponentProps<typeof UiPromptHistoryDrawer>;
   runtimeContextProps: ComponentProps<typeof TurnRuntimeContextDrawer>;
-  showMcpManager: boolean;
-  setShowMcpManager: (value: boolean) => void;
   showNotepadPanel: boolean;
   setShowNotepadPanel: (value: boolean) => void;
   showAiModelManager: boolean;
   setShowAiModelManager: (value: boolean) => void;
+  showAgentManager: boolean;
+  setShowAgentManager: (value: boolean) => void;
   showUserSettings: boolean;
   setShowUserSettings: (value: boolean) => void;
   showApplicationsPanel: boolean;
@@ -26,62 +25,68 @@ interface ChatInterfaceOverlaysProps {
 
 const OverlayFallback = () => null;
 
+interface LazyOverlayProps {
+  children: ReactNode;
+  open: boolean;
+}
+
+const LazyOverlay = ({ children, open }: LazyOverlayProps) => {
+  if (!open) {
+    return null;
+  }
+  return (
+    <Suspense fallback={<OverlayFallback />}>
+      {children}
+    </Suspense>
+  );
+};
+
 export default function ChatInterfaceOverlays({
-  uiPromptHistoryProps,
   runtimeContextProps,
-  showMcpManager,
-  setShowMcpManager,
   showNotepadPanel,
   setShowNotepadPanel,
   showAiModelManager,
   setShowAiModelManager,
+  showAgentManager,
+  setShowAgentManager,
   showUserSettings,
   setShowUserSettings,
   showApplicationsPanel,
   setShowApplicationsPanel,
 }: ChatInterfaceOverlaysProps) {
+  const { t } = useI18n();
+
   return (
     <>
-      <UiPromptHistoryDrawer {...uiPromptHistoryProps} />
       <TurnRuntimeContextDrawer {...runtimeContextProps} />
 
-      {showMcpManager && (
-        <Suspense fallback={<OverlayFallback />}>
-          <McpManager onClose={() => setShowMcpManager(false)} />
-        </Suspense>
-      )}
+      <LazyOverlay open={showNotepadPanel}>
+        <NotepadPanel
+          isOpen={showNotepadPanel}
+          onClose={() => setShowNotepadPanel(false)}
+        />
+      </LazyOverlay>
 
-      {showNotepadPanel && (
-        <Suspense fallback={<OverlayFallback />}>
-          <NotepadPanel
-            isOpen={showNotepadPanel}
-            onClose={() => setShowNotepadPanel(false)}
-          />
-        </Suspense>
-      )}
+      <LazyOverlay open={showAiModelManager}>
+        <AiModelManager onClose={() => setShowAiModelManager(false)} />
+      </LazyOverlay>
 
-      {showAiModelManager && (
-        <Suspense fallback={<OverlayFallback />}>
-          <AiModelManager onClose={() => setShowAiModelManager(false)} />
-        </Suspense>
-      )}
+      <LazyOverlay open={showAgentManager}>
+        <AgentManager onClose={() => setShowAgentManager(false)} />
+      </LazyOverlay>
 
-      {showUserSettings && (
-        <Suspense fallback={<OverlayFallback />}>
-          <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
-        </Suspense>
-      )}
+      <LazyOverlay open={showUserSettings}>
+        <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
+      </LazyOverlay>
 
-      {showApplicationsPanel && (
-        <Suspense fallback={<OverlayFallback />}>
-          <ApplicationsPanel
-            isOpen={showApplicationsPanel}
-            onClose={() => setShowApplicationsPanel(false)}
-            title="应用列表"
-            layout="modal"
-          />
-        </Suspense>
-      )}
+      <LazyOverlay open={showApplicationsPanel}>
+        <ApplicationsPanel
+          isOpen={showApplicationsPanel}
+          onClose={() => setShowApplicationsPanel(false)}
+          title={t('applications.title')}
+          layout="modal"
+        />
+      </LazyOverlay>
     </>
   );
 }

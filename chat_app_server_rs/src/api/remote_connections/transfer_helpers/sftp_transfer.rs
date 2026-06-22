@@ -91,7 +91,7 @@ fn ensure_remote_dir_recursive(sftp: &ssh2::Sftp, dir_path: &str) -> Result<(), 
                             return Err(TransferJobError::remote(format!(
                                 "创建远端目录失败 ({}): {err}",
                                 current
-                            )))
+                            )));
                         }
                     }
                 }

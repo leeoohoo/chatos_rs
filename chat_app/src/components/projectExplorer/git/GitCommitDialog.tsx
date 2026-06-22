@@ -1,7 +1,8 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { GitStatusFile } from '../../../types';
-import { statusLabel } from './gitBranchButtonShared';
+import { getGitStatusLabel } from './gitBranchButtonShared';
 
 const CommitFileGroup: React.FC<{
   title: string;
@@ -18,6 +19,7 @@ const CommitFileGroup: React.FC<{
   onTogglePath,
   onSetPathsSelected,
 }) => {
+  const { t } = useI18n();
   const paths = files.map((file) => file.path);
   const selectedCount = paths.filter((path) => selectedPaths.has(path)).length;
   const allSelected = selectedCount === paths.length;
@@ -35,7 +37,7 @@ const CommitFileGroup: React.FC<{
           onClick={() => onSetPathsSelected(paths, !allSelected)}
           className="h-7 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent"
         >
-          {allSelected ? '取消本组' : '选择本组'}
+          {allSelected ? t('git.commit.deselectGroup') : t('git.commit.selectGroup')}
         </button>
       </div>
       {files.map((file) => (
@@ -50,7 +52,7 @@ const CommitFileGroup: React.FC<{
           />
           <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
           <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            {statusLabel[file.status] || file.status}
+            {getGitStatusLabel(file.status, t)}
           </span>
         </label>
       ))}
@@ -81,20 +83,21 @@ export const CommitDialog: React.FC<{
   onSubmit,
   onSubmitStagedOnly,
 }) => {
+  const { t } = useI18n();
   const stagedOnlyFiles = files.filter((file) => file.staged && !file.unstaged);
   const mixedFiles = files.filter((file) => file.staged && file.unstaged);
   const unstagedFiles = files.filter((file) => !file.staged && file.unstaged && file.status !== 'untracked');
   const untrackedFiles = files.filter((file) => file.status === 'untracked');
   const hasStagedFiles = stagedOnlyFiles.length > 0 || mixedFiles.length > 0;
   const groups = [
-    { title: 'Staged only', hint: '只包含已 staged 内容', files: stagedOnlyFiles },
+    { title: 'Staged only', hint: t('git.commit.hint.stagedOnly'), files: stagedOnlyFiles },
     {
       title: 'Mixed',
-      hint: '同一路径同时有 staged 和 unstaged；普通 Commit 会先 Stage 整个文件',
+      hint: t('git.commit.hint.mixed'),
       files: mixedFiles,
     },
-    { title: 'Unstaged', hint: '提交前会先 Stage 选中的文件', files: unstagedFiles },
-    { title: 'Untracked', hint: '提交前会先 git add', files: untrackedFiles },
+    { title: 'Unstaged', hint: t('git.commit.hint.unstaged'), files: unstagedFiles },
+    { title: 'Untracked', hint: t('git.commit.hint.untracked'), files: untrackedFiles },
   ].filter((group) => group.files.length > 0);
 
   return (
@@ -103,7 +106,7 @@ export const CommitDialog: React.FC<{
         <div className="border-b border-border px-4 py-3">
           <div className="text-sm font-medium text-foreground">Git Commit</div>
           <div className="mt-1 text-xs text-muted-foreground">
-            普通 Commit 会先 Stage 选中的文件；如果只想提交 index 里已有内容，请用 Commit staged only。
+            {t('git.commit.description')}
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
@@ -116,7 +119,7 @@ export const CommitDialog: React.FC<{
           <div className="mt-3 space-y-3">
             {files.length === 0 ? (
               <div className="rounded border border-border px-3 py-2 text-sm text-muted-foreground">
-                没有可提交文件
+                {t('git.commit.noFiles')}
               </div>
             ) : groups.map((group) => (
               <CommitFileGroup
@@ -133,7 +136,7 @@ export const CommitDialog: React.FC<{
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
           <span className="text-xs text-muted-foreground">
-            已选择 {selectedPaths.size} 个文件
+            {t('git.commit.selectedFiles', { count: selectedPaths.size })}
           </span>
           <div className="flex justify-end gap-2">
             <button
@@ -142,14 +145,14 @@ export const CommitDialog: React.FC<{
               disabled={actionLoading}
               className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50"
             >
-              取消
+              {t('common.cancel')}
             </button>
             <button
               type="button"
               onClick={onSubmitStagedOnly}
               disabled={actionLoading || !message.trim() || !hasStagedFiles}
               className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50"
-              title={!hasStagedFiles ? '没有 staged 文件' : undefined}
+              title={!hasStagedFiles ? t('git.commit.noStagedFiles') : undefined}
             >
               Commit staged only
             </button>
@@ -159,7 +162,7 @@ export const CommitDialog: React.FC<{
               disabled={actionLoading || !message.trim() || selectedPaths.size === 0}
               className="h-8 rounded bg-primary px-3 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {actionLoading ? '提交中...' : 'Commit'}
+              {actionLoading ? t('git.commit.committing') : 'Commit'}
             </button>
           </div>
         </div>

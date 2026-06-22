@@ -1,20 +1,18 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { FsEntry, FsReadResult, ProjectChangeSummary } from '../../types';
+import { useEffect, type Dispatch, type SetStateAction } from 'react';
+import type { FsEntry, FsReadResult } from '../../types';
 import type { MoveConflictState } from './Overlays';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
-import { useProjectChangeSummaryRealtime } from '../../lib/realtime/useProjectChangeSummaryRealtime';
 
 interface UseProjectExplorerProjectLifecycleOptions {
   projectId?: string | null;
   projectRootPath?: string | null;
+  filesTabActive: boolean;
   toExpandedKey: (path: string) => string;
   keyToPath: (key: string) => string;
-  loadEntries: (path: string) => Promise<void>;
-  loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
+  loadEntries: (path: string, options?: { silent?: boolean; forceRefresh?: boolean }) => Promise<void>;
+  tryLoadEntries: (path: string, options?: { silent?: boolean; forceRefresh?: boolean }) => Promise<boolean>;
   clearDragExpandTimer: () => void;
   clearDragAutoScroll: () => void;
-  resetLogsState: () => void;
-  summaryLoadingRef: MutableRefObject<boolean>;
   setEntriesMap: Dispatch<SetStateAction<Record<string, FsEntry[]>>>;
   setExpandedPaths: Dispatch<SetStateAction<Set<string>>>;
   setSelectedPath: Dispatch<SetStateAction<string | null>>;
@@ -26,24 +24,19 @@ interface UseProjectExplorerProjectLifecycleOptions {
   setMoveConflict: Dispatch<SetStateAction<MoveConflictState | null>>;
   setDraggingEntryPath: Dispatch<SetStateAction<string | null>>;
   setDropTargetDirPath: Dispatch<SetStateAction<string | null>>;
-  setChangeSummary: Dispatch<SetStateAction<ProjectChangeSummary>>;
-  setSummaryError: Dispatch<SetStateAction<string | null>>;
-  setLoadingSummary: Dispatch<SetStateAction<boolean>>;
   setExpandedReady: Dispatch<SetStateAction<boolean>>;
-  emptyChangeSummary: ProjectChangeSummary;
 }
 
 export const useProjectExplorerProjectLifecycle = ({
   projectId,
   projectRootPath,
+  filesTabActive,
   toExpandedKey,
   keyToPath,
   loadEntries,
-  loadChangeSummary,
+  tryLoadEntries,
   clearDragExpandTimer,
   clearDragAutoScroll,
-  resetLogsState,
-  summaryLoadingRef,
   setEntriesMap,
   setExpandedPaths,
   setSelectedPath,
@@ -55,11 +48,7 @@ export const useProjectExplorerProjectLifecycle = ({
   setMoveConflict,
   setDraggingEntryPath,
   setDropTargetDirPath,
-  setChangeSummary,
-  setSummaryError,
-  setLoadingSummary,
   setExpandedReady,
-  emptyChangeSummary,
 }: UseProjectExplorerProjectLifecycleOptions) => {
   useEffect(() => {
     if (!projectRootPath) {
@@ -76,12 +65,11 @@ export const useProjectExplorerProjectLifecycle = ({
       setMoveConflict(null);
       setDraggingEntryPath(null);
       setDropTargetDirPath(null);
-      resetLogsState();
-      setChangeSummary(emptyChangeSummary);
-      setSummaryError(null);
-      setLoadingSummary(false);
-      summaryLoadingRef.current = false;
       setExpandedReady(false);
+      return;
+    }
+
+    if (!filesTabActive) {
       return;
     }
 
@@ -118,63 +106,67 @@ export const useProjectExplorerProjectLifecycle = ({
     setMoveConflict(null);
     setDraggingEntryPath(null);
     setDropTargetDirPath(null);
-    resetLogsState();
-    setChangeSummary(emptyChangeSummary);
-    setSummaryError(null);
 
     void loadEntries(root);
-    void loadChangeSummary();
-    nextExpanded.forEach((expandedPath) => {
-      if (!expandedPath) return;
-      const full = keyToPath(expandedPath);
-      if (full !== root) {
-        void loadEntries(full);
+    void (async () => {
+      const expandedQueue = Array.from(nextExpanded)
+        .filter(Boolean)
+        .map((expandedPath) => ({
+          expandedPath,
+          full: keyToPath(expandedPath),
+        }))
+        .filter(({ full }) => full !== root)
+        .slice(0, 10);
+
+      if (expandedQueue.length === 0) {
+        return;
       }
-    });
+
+      const validExpanded = new Set<string>();
+      const concurrency = 2;
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(concurrency, expandedQueue.length) }, async () => {
+        while (cursor < expandedQueue.length) {
+          const currentIndex = cursor;
+          cursor += 1;
+          const current = expandedQueue[currentIndex];
+          if (!current) {
+            return;
+          }
+          const ok = await tryLoadEntries(current.full, { silent: true });
+          if (ok) {
+            validExpanded.add(current.expandedPath);
+          }
+        }
+      });
+
+      await Promise.all(workers);
+
+      if (validExpanded.size > 0 && validExpanded.size !== nextExpanded.size) {
+        setExpandedPaths(validExpanded);
+      }
+    })();
   }, [
     clearDragAutoScroll,
     clearDragExpandTimer,
-    emptyChangeSummary,
+    filesTabActive,
     keyToPath,
-    loadChangeSummary,
     loadEntries,
     projectId,
     projectRootPath,
-    resetLogsState,
     setActionError,
     setActionLoading,
     setActionMessage,
-    setChangeSummary,
     setContextMenu,
     setDropTargetDirPath,
     setDraggingEntryPath,
     setEntriesMap,
     setExpandedPaths,
     setExpandedReady,
-    setLoadingSummary,
     setMoveConflict,
     setSelectedFile,
     setSelectedPath,
-    setSummaryError,
-    summaryLoadingRef,
     toExpandedKey,
+    tryLoadEntries,
   ]);
-};
-
-interface UseProjectExplorerSummaryRealtimeOptions {
-  projectId?: string | null;
-  loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
-}
-
-export const useProjectExplorerSummaryRealtime = ({
-  projectId,
-  loadChangeSummary,
-}: UseProjectExplorerSummaryRealtimeOptions) => {
-  useProjectChangeSummaryRealtime({
-    projectId,
-    enabled: Boolean(projectId),
-    onInvalidate: () => {
-      void loadChangeSummary({ silent: true });
-    },
-  });
 };

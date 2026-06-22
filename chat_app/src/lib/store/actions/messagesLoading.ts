@@ -1,17 +1,19 @@
 import type ApiClient from '../../api/client';
-import {
-  applyTurnProcessCache,
-  fetchSessionMessages,
-} from '../helpers/messages';
+import { fetchSessionMessages } from '../helpers/messages';
 import type {
   ChatStoreGet,
   ChatStoreSet,
+  SessionMessagePaginationState,
 } from '../types';
 import {
-  countLoadedBaseMessages,
-  ensureSessionTurnMaps,
-  mergeMessagesWithStreamingDraft,
-} from './messagesState';
+  extractCompactHistoryMessages,
+  mergeLatestCompactHistorySnapshot,
+  readSessionMessagesCache,
+  readVisibleSessionMessagesSnapshot,
+  SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+  cloneStreamingMessageDraft,
+  writeSessionMessagesCache,
+} from './sessionsUtils';
 
 interface LoadingDeps {
   set: ChatStoreSet;
@@ -20,32 +22,63 @@ interface LoadingDeps {
 }
 
 export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
+  const backgroundSyncInflight = new Map<string, Promise<void>>();
+  const writePaginationState = (
+    target: Record<string, SessionMessagePaginationState>,
+    sessionId: string,
+    result: Awaited<ReturnType<typeof fetchSessionMessages>>,
+    loaded: boolean,
+  ) => {
+    target[sessionId] = {
+      nextBefore: result.nextBefore,
+      loaded,
+    };
+  };
+
   const applySessionMessagesSnapshot = (
     sessionId: string,
-    messages: Awaited<ReturnType<typeof fetchSessionMessages>>,
+    result: Awaited<ReturnType<typeof fetchSessionMessages>>,
     options: {
       updateVisibleMessages: boolean;
       settleGlobalLoading: boolean;
     },
-  ) => {
+    ) => {
+    const { messages } = result;
+    const visibleSnapshot = readVisibleSessionMessagesSnapshot(get(), sessionId);
+    const preservedSnapshot = visibleSnapshot ?? readSessionMessagesCache(get(), sessionId);
+    const mergedSnapshot = mergeLatestCompactHistorySnapshot(
+      messages,
+      result.nextBefore,
+      preservedSnapshot,
+    );
     set((state) => {
-      ensureSessionTurnMaps(state, sessionId);
-
-      const nextMessages = mergeMessagesWithStreamingDraft(state, sessionId, messages);
-      const mergedMessages = applyTurnProcessCache(
-        nextMessages,
-        state.sessionTurnProcessCache?.[sessionId],
-        state.sessionTurnProcessState?.[sessionId],
-      );
-
       if (options.updateVisibleMessages || state.currentSessionId === sessionId) {
-        state.messages = mergedMessages;
-        state.hasMoreMessages = messages.length >= 50;
+        state.messages = mergedSnapshot.messages;
+        state.hasMoreMessages = Boolean(mergedSnapshot.nextBefore);
       }
+      if (!state.sessionMessagePaginationState) {
+        state.sessionMessagePaginationState = {};
+      }
+      writePaginationState(
+        state.sessionMessagePaginationState,
+        sessionId,
+        {
+          ...result,
+          nextBefore: mergedSnapshot.nextBefore,
+        },
+        true,
+      );
 
       if (options.settleGlobalLoading) {
         state.isLoading = false;
       }
+    });
+    set((state) => {
+      writeSessionMessagesCache(state, sessionId, {
+        messages: mergedSnapshot.messages,
+        nextBefore: state.sessionMessagePaginationState?.[sessionId]?.nextBefore ?? mergedSnapshot.nextBefore,
+        loaded: true,
+      });
     });
   };
 
@@ -57,8 +90,11 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           state.error = null;
         });
 
-        const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
-        applySessionMessagesSnapshot(sessionId, messages, {
+        const result = await fetchSessionMessages(client, sessionId, {
+          limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+          before: null,
+        });
+        applySessionMessagesSnapshot(sessionId, result, {
           updateVisibleMessages: true,
           settleGlobalLoading: true,
         });
@@ -72,35 +108,75 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
     },
 
     syncSessionMessagesInBackground: async (sessionId: string) => {
+      const normalizedSessionId = String(sessionId || '').trim();
+      if (!normalizedSessionId) {
+        return;
+      }
+      const existingInflight = backgroundSyncInflight.get(normalizedSessionId);
+      if (existingInflight) {
+        await existingInflight;
+        return;
+      }
+      const request = (async () => {
+        try {
+          const result = await fetchSessionMessages(client, normalizedSessionId, {
+            limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+            before: null,
+          });
+          applySessionMessagesSnapshot(normalizedSessionId, result, {
+            updateVisibleMessages: false,
+            settleGlobalLoading: false,
+          });
+        } catch (error) {
+          console.error('Failed to sync session messages in background:', error);
+        } finally {
+          backgroundSyncInflight.delete(normalizedSessionId);
+        }
+      })();
+      backgroundSyncInflight.set(normalizedSessionId, request);
       try {
-        const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
-        applySessionMessagesSnapshot(sessionId, messages, {
-          updateVisibleMessages: false,
-          settleGlobalLoading: false,
-        });
-      } catch (error) {
-        console.error('Failed to sync session messages in background:', error);
+        await request;
+      } catch {
+        // request already handled its own errors
       }
     },
 
     loadMoreMessages: async (sessionId: string) => {
       try {
         const current = get();
-        const offset = countLoadedBaseMessages(current.messages);
-        const page = await fetchSessionMessages(client, sessionId, { limit: 50, offset });
+        const before = current.sessionMessagePaginationState?.[sessionId]?.nextBefore ?? null;
+        if (!before) {
+          set((state) => {
+            state.hasMoreMessages = false;
+          });
+          return;
+        }
+        const result = await fetchSessionMessages(client, sessionId, {
+          limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+          before,
+        });
+        const page = result.messages;
+        let mergedSnapshotMessages = extractCompactHistoryMessages(current.messages);
         set((state) => {
-          ensureSessionTurnMaps(state, sessionId);
+          if (!state.sessionMessagePaginationState) {
+            state.sessionMessagePaginationState = {};
+          }
 
           const existingIds = new Set(state.messages.map((message) => message.id));
           const older = page.filter((message) => !existingIds.has(message.id));
           const merged = [...older, ...state.messages];
+          mergedSnapshotMessages = cloneStreamingMessageDraft(extractCompactHistoryMessages(merged));
 
-          state.messages = applyTurnProcessCache(
-            merged,
-            state.sessionTurnProcessCache?.[sessionId],
-            state.sessionTurnProcessState?.[sessionId],
-          );
-          state.hasMoreMessages = page.length >= 50;
+          state.messages = merged;
+          writePaginationState(state.sessionMessagePaginationState, sessionId, result, true);
+          state.hasMoreMessages = Boolean(state.sessionMessagePaginationState[sessionId]?.nextBefore);
+        });
+        set((state) => {
+          writeSessionMessagesCache(state, sessionId, {
+            messages: mergedSnapshotMessages,
+            nextBefore: state.sessionMessagePaginationState?.[sessionId]?.nextBefore ?? result.nextBefore,
+            loaded: true,
+          });
         });
       } catch (error) {
         console.error('Failed to load more messages:', error);

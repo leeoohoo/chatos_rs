@@ -8,9 +8,11 @@ use std::path::Path;
 use self::helpers::extension_matches;
 use self::resolution::{find_definitions, find_references};
 
+use crate::services::code_nav::languages::shared_nav::{
+    document_symbols_response, heuristic_nav_capabilities, NavSymbolLike,
+};
 use crate::services::code_nav::types::{
-    DocumentSymbolItem, DocumentSymbolsResponse, NavCapabilities, NavLocation, NavPositionRequest,
-    ProjectContext,
+    DocumentSymbolsResponse, NavCapabilities, NavLocation, NavPositionRequest, ProjectContext,
 };
 
 const MAX_SYMBOL_RESULTS: usize = 200;
@@ -23,6 +25,32 @@ pub struct BasicSymbol {
     pub column: usize,
     pub end_line: usize,
     pub end_column: usize,
+}
+
+impl NavSymbolLike for BasicSymbol {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    fn line(&self) -> usize {
+        self.line
+    }
+
+    fn column(&self) -> usize {
+        self.column
+    }
+
+    fn end_line(&self) -> usize {
+        self.end_line
+    }
+
+    fn end_column(&self) -> usize {
+        self.end_column
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -58,11 +86,7 @@ impl BasicLanguageSpec {
     }
 
     pub fn capabilities(&self) -> NavCapabilities {
-        NavCapabilities {
-            supports_definition: true,
-            supports_references: true,
-            supports_document_symbols: true,
-        }
+        heuristic_nav_capabilities()
     }
 
     pub fn document_symbols(
@@ -70,28 +94,13 @@ impl BasicLanguageSpec {
         ctx: &ProjectContext,
     ) -> Result<DocumentSymbolsResponse, String> {
         let analysis = (self.analyze_file)(&ctx.file_path)?;
-        let mut symbols: Vec<DocumentSymbolItem> = analysis
-            .symbols
-            .into_iter()
-            .map(|item| DocumentSymbolItem {
-                name: item.name,
-                kind: item.kind,
-                line: item.line,
-                column: item.column,
-                end_line: item.end_line,
-                end_column: item.end_column,
-            })
-            .collect();
-        if symbols.len() > MAX_SYMBOL_RESULTS {
-            symbols.truncate(MAX_SYMBOL_RESULTS);
-        }
-
-        Ok(DocumentSymbolsResponse {
-            provider: self.provider_id.to_string(),
-            language: self.language_id.to_string(),
-            mode: "provider-heuristic".to_string(),
-            symbols,
-        })
+        Ok(document_symbols_response(
+            self.provider_id,
+            self.language_id,
+            "provider-heuristic",
+            &analysis.symbols,
+            MAX_SYMBOL_RESULTS,
+        ))
     }
 
     pub fn definition(

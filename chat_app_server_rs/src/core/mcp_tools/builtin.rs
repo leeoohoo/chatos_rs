@@ -1,21 +1,27 @@
-use crate::builtin::agent_builder::{AgentBuilderOptions, AgentBuilderService};
-use crate::builtin::browser_tools::{BrowserToolsOptions, BrowserToolsService};
-use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
-use crate::builtin::memory_command_reader::{
-    MemoryCommandReaderOptions, MemoryCommandReaderService,
-};
-use crate::builtin::memory_plugin_reader::{MemoryPluginReaderOptions, MemoryPluginReaderService};
-use crate::builtin::memory_skill_reader::{MemorySkillReaderOptions, MemorySkillReaderService};
-use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
-use crate::builtin::remote_connection_controller::{
-    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
-};
-use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
-use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
-use crate::builtin::ui_prompter::{UiPrompterOptions, UiPrompterService};
-use crate::builtin::web_tools::{WebToolsOptions, WebToolsService};
+use crate::builtin::remote_connection_controller::ChatosRemoteConnectionControllerStore;
+use crate::builtin::terminal_controller::ChatosTerminalControllerStore;
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::McpBuiltinServer;
+use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
+use crate::services::shared_builtin_browser_tools::ChatosBrowserVisionAdapter;
+use crate::services::shared_builtin_code_maintainer::ChatosCodeMaintainerHooks;
+use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
+use crate::services::shared_builtin_notepad::ChatosNotepadStore;
+use crate::services::shared_builtin_task_manager::ChatosTaskManagerStore;
+use crate::services::shared_builtin_ui_prompter::ChatosUiPrompterStore;
+use chatos_builtin_tools::{
+    AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, BrowserToolCallContext,
+    BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapterRef, CodeMaintainerHooksRef,
+    CodeMaintainerOptions, CodeMaintainerService, MemoryCommandReaderOptions,
+    MemoryCommandReaderService, MemoryPluginReaderOptions, MemoryPluginReaderService,
+    MemoryReaderStoreRef, MemorySkillReaderOptions, MemorySkillReaderService,
+    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
+    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef, TaskManagerOptions,
+    TaskManagerService, TaskManagerStoreRef, TerminalControllerOptions, TerminalControllerService,
+    TerminalControllerStoreRef, UiPrompterOptions, UiPrompterService, UiPrompterStoreRef,
+    WebToolsOptions, WebToolsService,
+};
+use std::sync::Arc;
 
 use super::ToolStreamChunkCallback;
 
@@ -59,6 +65,7 @@ impl BuiltinToolService {
         args: serde_json::Value,
         conversation_id: Option<&str>,
         conversation_turn_id: Option<&str>,
+        caller_model_runtime: Option<&chatos_mcp_runtime::ToolCallerModelRuntime>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<serde_json::Value, String> {
         match self {
@@ -88,7 +95,17 @@ impl BuiltinToolService {
             ),
             Self::RemoteConnectionController(service) => service.call_tool(name, args),
             Self::WebTools(service) => service.call_tool(name, args),
-            Self::BrowserTools(service) => service.call_tool(name, args, conversation_id),
+            Self::BrowserTools(service) => service.call_tool_with_context(
+                name,
+                args,
+                BrowserToolCallContext {
+                    conversation_id: conversation_id
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned),
+                    caller_model_runtime: caller_model_runtime.cloned(),
+                },
+            ),
             Self::MemorySkillReader(service) => service.call_tool(name, args),
             Self::MemoryCommandReader(service) => service.call_tool(name, args),
             Self::MemoryPluginReader(service) => service.call_tool(name, args),
@@ -121,6 +138,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 conversation_id: None,
                 run_id: None,
                 db_path: None,
+                hooks: None,
             })?;
             Ok(BuiltinToolService::CodeMaintainer(service))
         }
@@ -138,6 +156,9 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 conversation_id: None,
                 run_id: None,
                 db_path: None,
+                hooks: Some(CodeMaintainerHooksRef::new(Arc::new(
+                    ChatosCodeMaintainerHooks,
+                ))),
             })?;
             Ok(BuiltinToolService::CodeMaintainer(service))
         }
@@ -149,6 +170,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 idle_timeout_ms: 5_000,
                 max_wait_ms: 60_000,
                 max_output_chars: 20_000,
+                store: TerminalControllerStoreRef::new(Arc::new(ChatosTerminalControllerStore)),
             })?;
             Ok(BuiltinToolService::TerminalController(service))
         }
@@ -156,13 +178,21 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = TaskManagerService::new(TaskManagerOptions {
                 server_name: server.name.clone(),
                 review_timeout_ms: crate::services::task_manager::REVIEW_TIMEOUT_MS_DEFAULT,
+                auto_create_task: server.auto_create_task,
+                store: TaskManagerStoreRef::new(Arc::new(ChatosTaskManagerStore)),
             })?;
             Ok(BuiltinToolService::TaskManager(service))
         }
         BuiltinMcpKind::Notepad => {
+            let user_id = server
+                .user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("builtin");
             let service = NotepadBuiltinService::new(NotepadOptions {
                 server_name: server.name.clone(),
-                user_id: server.user_id.clone(),
+                store: NotepadStoreRef::new(Arc::new(ChatosNotepadStore::new(user_id)?)),
             })?;
             Ok(BuiltinToolService::Notepad(service))
         }
@@ -170,6 +200,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = AgentBuilderService::new(AgentBuilderOptions {
                 server_name: server.name.clone(),
                 user_id: server.user_id.clone(),
+                store: Some(AgentBuilderStoreRef::new(Arc::new(ChatosAgentBuilderStore))),
             })?;
             Ok(BuiltinToolService::AgentBuilder(service))
         }
@@ -177,6 +208,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = UiPrompterService::new(UiPrompterOptions {
                 server_name: server.name.clone(),
                 prompt_timeout_ms: crate::services::ui_prompt_manager::UI_PROMPT_TIMEOUT_MS_DEFAULT,
+                store: UiPrompterStoreRef::new(Arc::new(ChatosUiPrompterStore)),
             })?;
             Ok(BuiltinToolService::UiPrompter(service))
         }
@@ -190,6 +222,9 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                     max_command_timeout_seconds: 120,
                     max_output_chars: 20_000,
                     max_read_file_bytes: 256 * 1024,
+                    store: RemoteConnectionControllerStoreRef::new(Arc::new(
+                        ChatosRemoteConnectionControllerStore,
+                    )),
                 })?;
             Ok(BuiltinToolService::RemoteConnectionController(service))
         }
@@ -205,6 +240,9 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = BrowserToolsService::new(BrowserToolsOptions {
                 server_name: server.name.clone(),
                 workspace_dir: std::path::PathBuf::from(&server.workspace_dir),
+                vision_adapter: Some(BrowserVisionAdapterRef::new(Arc::new(
+                    ChatosBrowserVisionAdapter,
+                ))),
                 ..Default::default()
             })?;
             Ok(BuiltinToolService::BrowserTools(service))
@@ -219,6 +257,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = MemorySkillReaderService::new(MemorySkillReaderOptions {
                 server_name: server.name.clone(),
                 agent_id: agent_id.to_string(),
+                store: MemoryReaderStoreRef::new(Arc::new(ChatosMemoryReaderStore)),
             })?;
             Ok(BuiltinToolService::MemorySkillReader(service))
         }
@@ -232,6 +271,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = MemoryCommandReaderService::new(MemoryCommandReaderOptions {
                 server_name: server.name.clone(),
                 agent_id: agent_id.to_string(),
+                store: MemoryReaderStoreRef::new(Arc::new(ChatosMemoryReaderStore)),
             })?;
             Ok(BuiltinToolService::MemoryCommandReader(service))
         }
@@ -245,6 +285,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = MemoryPluginReaderService::new(MemoryPluginReaderOptions {
                 server_name: server.name.clone(),
                 agent_id: agent_id.to_string(),
+                store: MemoryReaderStoreRef::new(Arc::new(ChatosMemoryReaderStore)),
             })?;
             Ok(BuiltinToolService::MemoryPluginReader(service))
         }

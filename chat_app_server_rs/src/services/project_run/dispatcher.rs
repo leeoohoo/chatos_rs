@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::env;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::project_run::ProjectRunCatalog;
-use crate::models::terminal::TerminalService;
+use crate::models::terminal::{TerminalService, TERMINAL_KIND_PROJECT_RUN};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::terminal_manager::get_terminal_manager;
 
@@ -112,9 +115,12 @@ pub(crate) fn resolve_execution(
 pub(crate) async fn dispatch_command(
     user_id: &str,
     project_id: Option<&str>,
+    project_root: &str,
     cwd: &str,
     command: &str,
     create_if_missing: bool,
+    env_overrides: HashMap<String, String>,
+    preferred_terminal_id: Option<&str>,
 ) -> Result<RunDispatchResult, String> {
     let cwd = normalized_cwd(cwd);
     if cwd.is_empty() {
@@ -124,37 +130,47 @@ pub(crate) async fn dispatch_command(
         return Err("运行命令不能为空".to_string());
     }
     validate_command_preflight(command, cwd.as_str())?;
-    let mut terminals = TerminalService::list(Some(user_id.to_string())).await?;
-    terminals.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
+    let project_root = normalized_cwd(project_root);
+    if project_root.is_empty() {
+        return Err("项目根目录不能为空".to_string());
+    }
+    let project_root_path = PathBuf::from(project_root.as_str());
+    if !project_root_path.exists() || !project_root_path.is_dir() {
+        return Err("项目根目录不存在或不是目录".to_string());
+    }
 
     let manager = get_terminal_manager();
-    let reusable = terminals.into_iter().find(|terminal| {
-        if terminal.status != "running" {
-            return false;
-        }
-        if !is_same_cwd(terminal.cwd.as_str(), cwd.as_str()) {
-            return false;
-        }
-        if let Some(pid) = project_id {
-            if terminal.project_id.as_deref() != Some(pid) {
-                return false;
-            }
-        }
-        !manager.get_busy(terminal.id.as_str()).unwrap_or(false)
-    });
+    let reusable = if let Some(terminal_id) = preferred_terminal_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let terminal = TerminalService::get_by_id(terminal_id).await?;
+        terminal.filter(|item| {
+            item.kind == TERMINAL_KIND_PROJECT_RUN
+                && item.user_id.as_deref() == Some(user_id)
+                && item.status == "running"
+                && project_id
+                    .map(|pid| item.project_id.as_deref() == Some(pid))
+                    .unwrap_or(true)
+        })
+    } else {
+        None
+    };
 
     let (terminal, reused) = if let Some(terminal) = reusable {
         (terminal, true)
     } else if create_if_missing {
-        let name = Path::new(cwd.as_str())
+        let name = Path::new(project_root.as_str())
             .file_name()
             .map(|value| value.to_string_lossy().to_string())
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "Terminal".to_string());
+            .map(|value| format!("{value} 运行实例"))
+            .unwrap_or_else(|| "项目运行终端".to_string());
         let created = manager
             .create(
                 name,
-                cwd.clone(),
+                project_root.clone(),
+                TERMINAL_KIND_PROJECT_RUN.to_string(),
                 Some(user_id.to_string()),
                 project_id.map(|value| value.to_string()),
             )
@@ -165,8 +181,19 @@ pub(crate) async fn dispatch_command(
     };
 
     let session = manager.ensure_running(&terminal).await?;
-    let input = format!("{}\n", command.trim());
+    let input = build_project_run_input(
+        terminal.cwd.as_str(),
+        cwd.as_str(),
+        command.trim(),
+        &env_overrides,
+    )?;
     session.write_input(input.as_str())?;
+    let logged_input = build_project_run_log_input(
+        terminal.cwd.as_str(),
+        cwd.as_str(),
+        command.trim(),
+        &env_overrides,
+    );
     let _ = TerminalLogService::create(TerminalLog::new(
         terminal.id.clone(),
         "command".to_string(),
@@ -176,16 +203,158 @@ pub(crate) async fn dispatch_command(
     let _ = TerminalLogService::create(TerminalLog::new(
         terminal.id.clone(),
         "input".to_string(),
-        input,
+        logged_input,
     ))
     .await;
     let _ = TerminalService::touch(terminal.id.as_str()).await;
 
+    let terminal_id = terminal.id.clone();
+    let terminal_name = terminal.name.clone();
     Ok(RunDispatchResult {
-        terminal_id: terminal.id,
-        terminal_name: terminal.name,
+        terminal_id,
+        terminal_name,
         terminal_reused: reused,
-        cwd: terminal.cwd,
+        terminal_status: terminal.status.clone(),
+        cwd: cwd.to_string(),
         executed_command: command.trim().to_string(),
     })
+}
+
+fn shell_quote_path(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "'\"'\"'"))
+}
+
+fn shell_quote_value(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn build_env_assignment_lines(env_overrides: &HashMap<String, String>) -> String {
+    let mut entries = env_overrides.iter().collect::<Vec<_>>();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut payload = String::new();
+    for (key, value) in entries {
+        let normalized_key = key.trim();
+        if normalized_key.is_empty() {
+            continue;
+        }
+        payload.push_str(
+            format!("export {}={}\n", normalized_key, shell_quote_value(value),).as_str(),
+        );
+    }
+    payload
+}
+
+fn project_run_script_path(project_root: &str) -> PathBuf {
+    let script_dir = Path::new(project_root).join(".chatos").join("project-run");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    script_dir.join(format!("run-{timestamp}.sh"))
+}
+
+fn build_project_run_script(
+    project_root: &str,
+    target_cwd: &str,
+    command: &str,
+    env_overrides: &HashMap<String, String>,
+) -> Result<PathBuf, String> {
+    let script_path = project_run_script_path(project_root);
+    let script_dir = script_path
+        .parent()
+        .ok_or_else(|| "无法创建项目运行脚本目录".to_string())?;
+    fs::create_dir_all(script_dir).map_err(|e| format!("创建项目运行脚本目录失败: {e}"))?;
+
+    let mut script = String::new();
+    script.push_str("#!/bin/sh\n");
+    script.push_str("set -e\n");
+    script.push_str(format!("cd {}\n", shell_quote_path(project_root)).as_str());
+    if !is_same_cwd(project_root, target_cwd) {
+        script.push_str(format!("cd {}\n", shell_quote_path(target_cwd)).as_str());
+    }
+    script.push_str(build_env_assignment_lines(env_overrides).as_str());
+    script.push_str("exec ");
+    script.push_str(command.trim());
+    script.push('\n');
+
+    fs::write(script_path.as_path(), script).map_err(|e| format!("写入项目运行脚本失败: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = fs::Permissions::from_mode(0o755);
+        fs::set_permissions(script_path.as_path(), permissions)
+            .map_err(|e| format!("设置项目运行脚本权限失败: {e}"))?;
+    }
+
+    Ok(script_path)
+}
+
+fn build_project_run_input(
+    project_root: &str,
+    target_cwd: &str,
+    command: &str,
+    env_overrides: &HashMap<String, String>,
+) -> Result<String, String> {
+    let mut payload = String::new();
+    payload.push_str(format!("cd {}\n", shell_quote_path(project_root)).as_str());
+    let script_path = build_project_run_script(project_root, target_cwd, command, env_overrides)?;
+    payload.push_str(format!("{}\n", shell_quote_path(&script_path.to_string_lossy())).as_str());
+    Ok(payload)
+}
+
+fn build_project_run_log_input(
+    project_root: &str,
+    target_cwd: &str,
+    command: &str,
+    env_overrides: &HashMap<String, String>,
+) -> String {
+    let mut payload = String::new();
+    payload.push_str(format!("cd {}\n", shell_quote_path(project_root)).as_str());
+    if !is_same_cwd(project_root, target_cwd) {
+        payload.push_str(format!("cd {}\n", shell_quote_path(target_cwd)).as_str());
+    }
+    let env_lines = build_env_assignment_lines(env_overrides);
+    payload.push_str(env_lines.as_str());
+    payload.push_str(command.trim());
+    payload.push('\n');
+    payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_project_run_input, build_project_run_log_input};
+    use std::collections::HashMap;
+
+    #[test]
+    fn build_project_run_log_input_keeps_env_preview_readable() {
+        let mut env = HashMap::new();
+        env.insert("NODE_ENV".to_string(), "development".to_string());
+        env.insert("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string());
+
+        let payload = build_project_run_log_input(
+            "/tmp/demo",
+            "/tmp/demo/web",
+            "/usr/local/bin/npm run dev",
+            &env,
+        );
+
+        assert!(payload.contains("cd '/tmp/demo'"));
+        assert!(payload.contains("cd '/tmp/demo/web'"));
+        assert!(payload.contains("export NODE_ENV='development'"));
+        assert!(payload.contains("export PATH='/usr/local/bin:/usr/bin'"));
+        assert!(payload.contains("/usr/local/bin/npm run dev"));
+    }
+
+    #[test]
+    fn build_project_run_input_executes_temp_script_in_terminal() {
+        let env = HashMap::new();
+        let payload =
+            build_project_run_input("/tmp/demo", "/tmp/demo", "/usr/local/bin/npm run dev", &env)
+                .expect("payload");
+
+        assert!(payload.contains("cd '/tmp/demo'"));
+        assert!(payload.contains(".chatos/project-run/run-"));
+        assert!(!payload.contains("/usr/local/bin/npm run dev\n"));
+    }
 }

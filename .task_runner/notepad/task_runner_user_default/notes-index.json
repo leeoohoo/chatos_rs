@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "notes": [
+    {
+      "id": "dfd6f5d3-9a99-4ab4-9f00-8edb714864cf",
+      "title": "UAT 图生图页面测试 - coder-uat.immotors.com - 2026-06-17",
+      "folder": "uat-tests",
+      "tags": [
+        "uat",
+        "browser-test",
+        "img2img",
+        "auth-blocker",
+        "immotors"
+      ],
+      "created_at": "2026-06-17T07:33:17.042345+00:00",
+      "updated_at": "2026-06-17T07:33:17.042345+00:00"
+    }
+  ]
+}

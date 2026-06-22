@@ -2,7 +2,7 @@ use mongodb::bson::{doc, Document};
 
 use crate::core::mongo_cursor::collect_string_field;
 use crate::core::sql_rows::collect_string_column;
-use crate::repositories::db::with_db;
+use crate::repositories::db::{mongo_delete_many_doc, with_db};
 
 pub async fn get_app_ids_for_mcp_config(config_id: &str) -> Result<Vec<String>, String> {
     with_db(
@@ -40,10 +40,12 @@ pub async fn set_app_ids_for_mcp_config(config_id: &str, app_ids: &[String]) -> 
             let config_id = config_id.to_string();
             let app_ids = app_ids.to_vec();
             Box::pin(async move {
-                db.collection::<Document>("mcp_config_applications")
-                    .delete_many(doc! { "mcp_config_id": &config_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_many_doc(
+                    db,
+                    "mcp_config_applications",
+                    doc! { "mcp_config_id": &config_id },
+                )
+                .await?;
                 if !app_ids.is_empty() {
                     let now = crate::core::time::now_rfc3339();
                     let docs: Vec<Document> = app_ids

@@ -1,5 +1,4 @@
 import type { UseProjectTreeActionsOptions } from './projectTreeActionTypes';
-import { useProjectTreeChangeActions } from './useProjectTreeChangeActions';
 import { useProjectTreeMoveActions } from './useProjectTreeMoveActions';
 import { useProjectTreeMutationActions } from './useProjectTreeMutationActions';
 
@@ -8,16 +7,12 @@ export const useProjectTreeActions = ({
   selectedDirPath,
   selectedEntry,
   selectedFilePath,
-  selectedPath,
   projectRootPath,
-  projectId,
   actionReloadPath,
   normalizePath,
   getParentPath,
   toExpandedKey,
   loadEntries,
-  loadChangeSummary,
-  hasPendingChangesForPath,
   pruneDeletedPath,
   replaceExpandedPathPrefix,
   reloadTreeWithExpanded,
@@ -31,6 +26,8 @@ export const useProjectTreeActions = ({
   setActionLoading,
   setActionError,
   setActionMessage,
+  setSavingFile,
+  setSaveError,
   setMoveConflict,
   openFile,
 }: UseProjectTreeActionsOptions) => {
@@ -45,7 +42,6 @@ export const useProjectTreeActions = ({
     getParentPath,
     toExpandedKey,
     loadEntries,
-    loadChangeSummary,
     pruneDeletedPath,
     setExpandedPaths,
     setSelectedPath,
@@ -53,19 +49,10 @@ export const useProjectTreeActions = ({
     setActionError,
     setActionLoading,
     setActionMessage,
+    setSavingFile,
+    setSaveError,
     setMoveConflict,
     openFile,
-  });
-
-  const changeActions = useProjectTreeChangeActions({
-    client,
-    projectId,
-    selectedPath,
-    hasPendingChangesForPath,
-    loadChangeSummary,
-    setActionError,
-    setActionLoading,
-    setActionMessage,
   });
 
   const moveActions = useProjectTreeMoveActions({
@@ -88,7 +75,6 @@ export const useProjectTreeActions = ({
 
   return {
     ...mutationActions,
-    ...changeActions,
     ...moveActions,
   };
 };

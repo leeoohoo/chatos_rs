@@ -38,15 +38,16 @@ struct McpConfigRequest {
     app_ids: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct AiModelConfigRequest {
+    id: Option<String>,
     name: Option<String>,
     provider: Option<String>,
     model: Option<String>,
     thinking_level: Option<String>,
     api_key: Option<String>,
+    clear_api_key: Option<bool>,
     base_url: Option<String>,
-    user_id: Option<String>,
     enabled: Option<bool>,
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,
@@ -86,6 +87,10 @@ pub fn router() -> Router {
             get(ai_model::list_ai_model_configs).post(ai_model::create_ai_model_config),
         )
         .route(
+            "/api/ai-model-configs/:config_id/models",
+            get(ai_model::list_ai_provider_models),
+        )
+        .route(
             "/api/ai-model-configs/:config_id",
             put(ai_model::update_ai_model_config).delete(ai_model::delete_ai_model_config),
         )
@@ -105,7 +110,7 @@ async fn list_mcp_configs(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "获取MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let mut out = Vec::new();
@@ -118,7 +123,7 @@ async fn list_mcp_configs(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "获取MCP配置失败", "detail": err})),
-                )
+                );
             }
         };
         out.push(json!({
@@ -207,13 +212,13 @@ async fn create_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建MCP配置失败"})),
-            )
+            );
         }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let app_ids = match mcp_repo::get_app_ids_for_mcp_config(&id).await {
@@ -222,7 +227,7 @@ async fn create_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "创建MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let mut obj = mcp_config_value(&saved_cfg);
@@ -298,13 +303,13 @@ async fn update_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新MCP配置失败"})),
-            )
+            );
         }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let app_ids = match mcp_repo::get_app_ids_for_mcp_config(&config_id).await {
@@ -313,7 +318,7 @@ async fn update_mcp_config(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "更新MCP配置失败", "detail": err})),
-            )
+            );
         }
     };
     let mut obj = mcp_config_value(&cfg);

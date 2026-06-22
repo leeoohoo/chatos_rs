@@ -4,6 +4,10 @@ import {
   resolveSessionProjectScopeId,
 } from '../../features/contactSession/sessionResolver';
 import type { Project, Session } from '../../types';
+import {
+  beginSessionLoadRequest,
+  isLoadRequestCurrent,
+} from './sessionLoadGuard';
 
 interface ContactProjectScopeApiClient {
   getContactProjects: (
@@ -20,6 +24,13 @@ interface ContactProjectScopeProject {
 interface ContactProjectLinkRow {
   project_id?: string;
 }
+
+interface ContactProjectScopeCacheEntry {
+  projectIds: string[];
+}
+
+const contactProjectScopeCache = new Map<string, ContactProjectScopeCacheEntry>();
+const contactProjectScopeInflight = new Map<string, Promise<string[]>>();
 
 interface UseContactProjectScopeOptions<TProject extends ContactProjectScopeProject = Project> {
   apiClient: ContactProjectScopeApiClient;
@@ -66,7 +77,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
       return '';
     }
     if (currentProjectIdForMemory === '0') {
-      return '未选择项目';
+      return '';
     }
     const matched = (projects || []).find((item) => item.id === currentProjectIdForMemory);
     return matched?.name || '';
@@ -92,24 +103,45 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
       return;
     }
 
-    const loadSeq = ++contactProjectsLoadSeqRef.current;
-    void apiClient.getContactProjects(contactId, { limit: 1000, offset: 0 })
-      .then((rows) => {
-        if (loadSeq !== contactProjectsLoadSeqRef.current) {
-          return;
-        }
-        const ids = Array.from(new Set(
+    const cached = contactProjectScopeCache.get(contactId);
+    if (cached) {
+      setContactScopedProjectIds(cached.projectIds);
+      return;
+    }
+
+    const loadSeq = beginSessionLoadRequest(contactProjectsLoadSeqRef);
+    const existingInflight = contactProjectScopeInflight.get(contactId);
+    const request = existingInflight || apiClient.getContactProjects(contactId, { limit: 1000, offset: 0 })
+      .then((rows) => (
+        Array.from(new Set(
           (Array.isArray(rows) ? rows : [])
             .map((item) => {
               const row = (item && typeof item === 'object' ? item : {}) as ContactProjectLinkRow;
               return typeof row.project_id === 'string' ? row.project_id.trim() : '';
             })
             .filter((projectId: string) => projectId.length > 0 && projectId !== '0'),
-        ));
+        ))
+      ))
+      .finally(() => {
+        const current = contactProjectScopeInflight.get(contactId);
+        if (current === request) {
+          contactProjectScopeInflight.delete(contactId);
+        }
+      });
+    if (!existingInflight) {
+      contactProjectScopeInflight.set(contactId, request);
+    }
+
+    void request
+      .then((ids) => {
+        if (!isLoadRequestCurrent(contactProjectsLoadSeqRef, loadSeq)) {
+          return;
+        }
+        contactProjectScopeCache.set(contactId, { projectIds: ids });
         setContactScopedProjectIds(ids);
       })
       .catch((error) => {
-        if (loadSeq !== contactProjectsLoadSeqRef.current) {
+        if (!isLoadRequestCurrent(contactProjectsLoadSeqRef, loadSeq)) {
           return;
         }
         console.error('Failed to load contact projects:', error);

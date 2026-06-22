@@ -5,7 +5,6 @@ import type {
   ChatStoreSet,
 } from '../types';
 import { createMessageLoadingActions } from './messagesLoading';
-import { createTurnProcessActions } from './messagesTurnProcess';
 
 interface Deps {
   set: ChatStoreSet;
@@ -16,11 +15,9 @@ interface Deps {
 
 export function createMessageActions({ set, get, client }: Deps) {
   const loadingActions = createMessageLoadingActions({ set, get, client });
-  const turnProcessActions = createTurnProcessActions({ set, get, client });
 
   return {
     ...loadingActions,
-    ...turnProcessActions,
 
     updateMessage: async (messageId: string, _updates: Partial<Message>) => {
       try {

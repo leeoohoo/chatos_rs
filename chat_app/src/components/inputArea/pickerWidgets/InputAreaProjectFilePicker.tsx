@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { FsEntry } from '../../../types';
 
@@ -46,6 +47,8 @@ export const InputAreaProjectFilePicker: React.FC<InputAreaProjectFilePickerProp
   toRelativeProjectPath,
   projectFileSearchTruncated,
 }) => {
+  const { t } = useI18n();
+
   if (!allowAttachments || !showProjectFilePicker) {
     return null;
   }
@@ -61,34 +64,34 @@ export const InputAreaProjectFilePicker: React.FC<InputAreaProjectFilePickerProp
           'text-muted-foreground hover:text-foreground hover:bg-accent',
           (disabled || projectFileAttachingPath !== null) && 'opacity-50 cursor-not-allowed',
         )}
-        title="从当前项目选择文件"
+        title={t('inputArea.projectFile.chooseTitle')}
       >
-        项目文件
+        {t('inputArea.projectFile.button')}
         <span className="ml-1">▾</span>
       </button>
       {projectFilePickerOpen && (
         <div className="absolute left-0 bottom-full mb-2 z-30 w-80 bg-popover text-popover-foreground border rounded-md shadow-lg">
           <div className="px-3 py-2 border-b space-y-2">
             <div className="space-y-1">
-              <div className="text-[11px] text-muted-foreground truncate" title={projectName || '当前项目'}>
-                项目: {projectName || '当前项目'}
+              <div className="text-[11px] text-muted-foreground truncate" title={projectName || t('inputArea.projectFile.currentProject')}>
+                {t('inputArea.projectFile.projectLabel', { name: projectName || t('inputArea.projectFile.currentProject') })}
               </div>
               <div className="text-[11px] text-muted-foreground truncate font-mono" title={projectFilePathLabel || '/'}>
-                路径: {projectFilePathLabel || '/'}
+                {t('inputArea.projectFile.pathLabel', { path: projectFilePathLabel || '/' })}
               </div>
             </div>
             <input
               type="text"
               value={projectFileFilter}
               onChange={(event) => onProjectFileFilterChange(event.target.value)}
-              placeholder="筛选文件（不区分大小写，支持模糊）..."
+              placeholder={t('inputArea.projectFile.filterPlaceholder')}
               className="w-full rounded border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
             />
           </div>
           <div className="max-h-64 overflow-auto py-1">
             {projectFileBusy ? (
               <div className="px-3 py-2 text-xs text-muted-foreground">
-                {projectFileKeywordActive ? '搜索中...' : '加载中...'}
+                {projectFileKeywordActive ? t('inputArea.projectFile.searching') : t('inputArea.projectFile.loading')}
               </div>
             ) : (
               <>
@@ -130,18 +133,18 @@ export const InputAreaProjectFilePicker: React.FC<InputAreaProjectFilePickerProp
                       )}
                     </span>
                     {projectFileAttachingPath === entry.path && (
-                      <span className="text-[11px] text-muted-foreground">处理中...</span>
+                      <span className="text-[11px] text-muted-foreground">{t('inputArea.projectFile.processing')}</span>
                     )}
                   </button>
                 ))}
                 {displayedProjectFileEntries.length === 0 && !projectFileBusy && (
                   <div className="px-3 py-2 text-xs text-muted-foreground">
-                    {projectFileKeywordActive ? '没有匹配的文件' : '当前目录没有可选文件'}
+                    {projectFileKeywordActive ? t('inputArea.projectFile.noMatches') : t('inputArea.projectFile.noFiles')}
                   </div>
                 )}
                 {projectFileKeywordActive && projectFileSearchTruncated && (
                   <div className="px-3 py-2 text-[11px] text-muted-foreground border-t">
-                    结果过多，已截断显示前 300 条
+                    {t('inputArea.projectFile.truncated')}
                   </div>
                 )}
               </>

@@ -17,10 +17,6 @@ where
     Ok(out)
 }
 
-pub async fn collect_documents(cursor: Cursor<Document>) -> Result<Vec<Document>, String> {
-    collect_and_map(cursor, |doc| Some(doc.clone())).await
-}
-
 pub async fn collect_string_field(
     mut cursor: Cursor<Document>,
     field: &str,

@@ -3,12 +3,19 @@ import type ApiClient from '../../../api/client';
 import { debugLog } from '@/lib/utils';
 import {
   getConversationTurnId,
+  isTaskRunnerCallbackMessage,
   isMeaningfulReasoning,
   isNonEmptyString,
   normalizeRawMessages,
   normalizeTurnId,
 } from '../messageNormalization';
 import { createDefaultHistoryProcessState } from '../../actions/sendMessage/types';
+
+export type CompactHistoryPageResult = {
+  messages: Message[];
+  hasMore: boolean;
+  nextBefore: string | null;
+};
 
 const countThinkingSegments = (message: Message): number => {
   const segments = message.metadata?.contentSegments;
@@ -27,6 +34,40 @@ const isSessionSummaryMessage = (message: Message): boolean => (
   message.role === 'assistant' && message.metadata?.type === 'session_summary'
 );
 
+const stripTaskRunnerCallbackTurnLinkage = (message: Message): Message => {
+  if (!isTaskRunnerCallbackMessage(message)) {
+    return message;
+  }
+
+  const sourceTurnId = normalizeTurnId(
+    message.metadata?.task_runner_async?.source_turn_id
+      || message.metadata?.conversation_turn_id
+      || message.metadata?.conversationTurnId
+      || message.metadata?.historyFinalForTurnId
+      || message.metadata?.historyProcessTurnId
+      || message.metadata?.historyProcess?.turnId,
+  );
+  const metadata = { ...(message.metadata || {}) };
+  delete metadata.conversation_turn_id;
+  delete metadata.conversationTurnId;
+  delete metadata.historyFinalForUserMessageId;
+  delete metadata.historyFinalForTurnId;
+  delete metadata.historyProcessUserMessageId;
+  delete metadata.historyProcessTurnId;
+  delete metadata.historyProcessPlaceholder;
+  if (sourceTurnId) {
+    metadata.task_runner_async = {
+      ...(metadata.task_runner_async || {}),
+      source_turn_id: sourceTurnId,
+    };
+  }
+
+  return {
+    ...message,
+    metadata,
+  };
+};
+
 const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
   if (!Array.isArray(messages) || messages.length === 0) {
     return messages;
@@ -39,6 +80,10 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
     return messages
       .filter((message) => message.metadata?.historyProcessPlaceholder !== true)
       .map((message) => {
+        if (isTaskRunnerCallbackMessage(message)) {
+          return stripTaskRunnerCallbackTurnLinkage(message);
+        }
+
         if (message.role === 'user') {
           const process = message.metadata?.historyProcess;
           if (!process || typeof process !== 'object') {
@@ -72,7 +117,6 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
           ...message,
           metadata: {
             ...(message.metadata || {}),
-            historyProcessExpanded: message.metadata?.historyProcessExpanded === true,
             ...(finalTurnId ? { historyFinalForTurnId: finalTurnId } : {}),
           },
         };
@@ -99,11 +143,16 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
     const userMessage = messages[userIndex];
     const userMessageId = userMessage.id;
     const conversationTurnId = getConversationTurnId(userMessage);
+    const callbackUpdates: Message[] = [];
 
     let finalAssistantIndex = -1;
     for (let i = nextUserIndex - 1; i > userIndex; i -= 1) {
       const candidate = messages[i];
-      if (candidate.role !== 'assistant' || isSessionSummaryMessage(candidate)) {
+      if (
+        candidate.role !== 'assistant'
+        || isSessionSummaryMessage(candidate)
+        || isTaskRunnerCallbackMessage(candidate)
+      ) {
         continue;
       }
       finalAssistantIndex = i;
@@ -118,6 +167,11 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
 
     for (let i = userIndex + 1; i < nextUserIndex; i += 1) {
       const message = messages[i];
+      if (isTaskRunnerCallbackMessage(message)) {
+        callbackUpdates.push(stripTaskRunnerCallbackTurnLinkage(message));
+        continue;
+      }
+
       if (message.role === 'assistant' && !isSessionSummaryMessage(message)) {
         toolCallCount += message.metadata?.toolCalls?.length || 0;
         thinkingCount += countThinkingSegments(message);
@@ -134,7 +188,6 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
             ...(message.metadata || {}),
             hidden: false,
             historyProcessPlaceholder: false,
-            historyProcessLoaded: true,
             historyProcessUserMessageId: userMessageId,
             ...(conversationTurnId ? { historyProcessTurnId: conversationTurnId } : {}),
           },
@@ -159,11 +212,11 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
           thinkingCount,
           processMessageCount,
         },
-        ...(processMessageCount > 0 ? { historyProcessInlineMessages: inlineProcessMessages } : {}),
       },
     });
 
     if (finalAssistantIndex < 0) {
+      result.push(...callbackUpdates);
       return;
     }
 
@@ -181,9 +234,10 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
         hidden: false,
         historyFinalForUserMessageId: userMessageId,
         ...(conversationTurnId ? { historyFinalForTurnId: conversationTurnId } : {}),
-        historyProcessExpanded: false,
       },
     });
+
+    result.push(...callbackUpdates);
   });
 
   return result;
@@ -192,23 +246,32 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
 export const fetchSessionMessages = async (
   client: ApiClient,
   sessionId: string,
-  options: { limit?: number; offset?: number } = { limit: 50, offset: 0 },
-): Promise<Message[]> => {
+  options: { limit?: number; before?: string | null } = { limit: 50, before: null },
+): Promise<CompactHistoryPageResult> => {
   const limit = options.limit ?? 50;
-  const offset = options.offset ?? 0;
 
-  const rawMessages = await client.getConversationMessages(sessionId, {
+  const response = await client.getConversationCompactHistory(sessionId, {
     limit,
-    offset,
-    compact: true,
-    strategy: 'v2',
+    before: options.before ?? null,
   });
 
-  const normalized = ensureCompactHistoryShape(normalizeRawMessages(rawMessages, sessionId));
+  const rawMessages = Array.isArray(response?.items) ? response.items : [];
+  const messages = ensureCompactHistoryShape(normalizeRawMessages(rawMessages, sessionId));
+  const hasMore = response?.has_more === true;
+  const nextBefore = typeof response?.next_before === 'string' && response.next_before.trim().length > 0
+    ? response.next_before.trim()
+    : null;
   debugLog('[Store] Loaded compact session messages', {
     sessionId,
-    requested: { limit, offset },
-    received: normalized.length,
+    requested: { limit, before: options.before ?? null },
+    received: rawMessages.length,
+    returned: messages.length,
+    hasMore,
+    nextBefore,
   });
-  return normalized;
+  return {
+    messages,
+    hasMore,
+    nextBefore,
+  };
 };

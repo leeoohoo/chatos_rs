@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface PromptDialogProps {
   isOpen: boolean;
@@ -22,18 +23,22 @@ const PromptDialog: React.FC<PromptDialogProps> = ({
   title,
   message,
   description,
-  inputLabel = '输入内容',
+  inputLabel,
   placeholder,
   value,
   error,
-  confirmText = '确认',
-  cancelText = '取消',
+  confirmText,
+  cancelText,
   type = 'info',
   onValueChange,
   onConfirm,
   onCancel,
 }) => {
+  const { t } = useI18n();
   if (!isOpen) return null;
+  const effectiveInputLabel = inputLabel || t('dialog.inputLabel');
+  const effectiveConfirmText = confirmText || t('common.confirm');
+  const effectiveCancelText = cancelText || t('common.cancel');
 
   const getConfirmButtonStyle = () => {
     switch (type) {
@@ -58,7 +63,7 @@ const PromptDialog: React.FC<PromptDialogProps> = ({
           </p>
 
           <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-foreground/70">
-            {inputLabel}
+            {effectiveInputLabel}
           </label>
           <input
             autoFocus
@@ -88,14 +93,14 @@ const PromptDialog: React.FC<PromptDialogProps> = ({
               onClick={onCancel}
               className="flex-1 rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-accent"
             >
-              {cancelText}
+              {effectiveCancelText}
             </button>
             <button
               type="button"
               onClick={onConfirm}
               className={`flex-1 rounded-md px-4 py-2 text-sm transition-colors ${getConfirmButtonStyle()}`}
             >
-              {confirmText}
+              {effectiveConfirmText}
             </button>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { RemoteConnection } from '../../../types';
 
@@ -20,6 +21,8 @@ export const InputAreaRemoteConnectionPicker: React.FC<InputAreaRemoteConnection
   isStreaming,
   isStopping,
 }) => {
+  const { t } = useI18n();
+
   if (!Array.isArray(availableRemoteConnections) || availableRemoteConnections.length === 0) {
     return null;
   }
@@ -37,14 +40,14 @@ export const InputAreaRemoteConnectionPicker: React.FC<InputAreaRemoteConnection
         'text-foreground focus:outline-none focus:ring-1 focus:ring-primary max-w-[220px]',
         (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed',
       )}
-      title="选择远程服务器（会透传给 AI 工具）"
+      title={t('inputArea.remote.selectTitle')}
     >
       <option value="">
-        服务器: 不选择
+        {t('inputArea.remote.none')}
       </option>
       {availableRemoteConnections.map((connection) => (
         <option key={connection.id} value={connection.id}>
-          {`服务器: ${connection.name || connection.host}`}
+          {t('inputArea.remote.label', { name: connection.name || connection.host })}
         </option>
       ))}
     </select>

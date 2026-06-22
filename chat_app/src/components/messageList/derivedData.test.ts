@@ -70,4 +70,209 @@ describe('buildVisibleMessageState', () => {
     expect(assistantMessages).toHaveLength(1);
     expect(assistantMessages[0]?.id).toBe('assistant-2');
   });
+
+  it('keeps the final assistant visible when the same turn also has many process messages and tool traces', () => {
+    const messages: Message[] = [
+      buildUser({
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyProcess: {
+            hasProcess: true,
+            toolCallCount: 2,
+            thinkingCount: 2,
+            processMessageCount: 3,
+            userMessageId: 'user-9',
+            turnId: 'turn-9',
+            finalAssistantMessageId: 'assistant-final-9',
+            expanded: false,
+            loaded: true,
+            loading: false,
+          },
+        },
+        id: 'user-9',
+        content: '帮我查一下并执行',
+      }),
+      buildAssistant({
+        id: 'assistant-process-1',
+        content: '',
+        createdAt: new Date('2026-05-07T10:00:01.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyProcessUserMessageId: 'user-9',
+          historyProcessTurnId: 'turn-9',
+          hidden: true,
+          contentSegments: [
+            { type: 'thinking', content: '先分析需求' },
+            { type: 'tool_call', toolCallId: 'tool-call-1', content: '' as never },
+          ],
+          toolCalls: [{
+            id: 'tool-call-1',
+            messageId: 'assistant-process-1',
+            name: 'search_docs',
+            arguments: {},
+            createdAt: new Date('2026-05-07T10:00:01.000Z'),
+          }],
+        },
+      }),
+      {
+        id: 'tool-result-1',
+        sessionId: 'session-1',
+        role: 'tool',
+        content: '搜索结果',
+        status: 'completed',
+        createdAt: new Date('2026-05-07T10:00:02.000Z'),
+        metadata: {
+          toolCallId: 'tool-call-1',
+          historyProcessUserMessageId: 'user-9',
+          historyProcessTurnId: 'turn-9',
+          hidden: true,
+        },
+      },
+      buildAssistant({
+        id: 'assistant-process-2',
+        content: '',
+        createdAt: new Date('2026-05-07T10:00:03.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyProcessUserMessageId: 'user-9',
+          historyProcessTurnId: 'turn-9',
+          hidden: true,
+          contentSegments: [
+            { type: 'thinking', content: '继续执行' },
+            { type: 'tool_call', toolCallId: 'tool-call-2', content: '' as never },
+          ],
+          toolCalls: [{
+            id: 'tool-call-2',
+            messageId: 'assistant-process-2',
+            name: 'run_task',
+            arguments: {},
+            createdAt: new Date('2026-05-07T10:00:03.000Z'),
+          }],
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-final-9',
+        content: '已经查完并执行好了',
+        createdAt: new Date('2026-05-07T10:00:04.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-9',
+          historyFinalForTurnId: 'turn-9',
+          historyFinalForUserMessageId: 'user-9',
+          contentSegments: [
+            { type: 'text', content: '已经查完并执行好了' },
+          ],
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual(['user-9', 'assistant-final-9']);
+  });
+
+  it('filters inline process assistant messages from the main visible message list', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-inline-1',
+        metadata: {
+          conversation_turn_id: 'turn-inline-1',
+          historyProcess: {
+            hasProcess: true,
+            toolCallCount: 1,
+            thinkingCount: 1,
+            processMessageCount: 1,
+            userMessageId: 'user-inline-1',
+            turnId: 'turn-inline-1',
+            finalAssistantMessageId: 'assistant-final-inline-1',
+            expanded: true,
+            loaded: true,
+            loading: false,
+          },
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-inline-process-1',
+        content: '',
+        metadata: {
+          conversation_turn_id: 'turn-inline-1',
+          historyProcessUserMessageId: 'user-inline-1',
+          historyProcessTurnId: 'turn-inline-1',
+          hidden: false,
+          contentSegments: [
+            { type: 'thinking', content: '分析一下' },
+          ],
+        },
+      }),
+      buildAssistant({
+        id: 'assistant-final-inline-1',
+        content: '最终答案',
+        metadata: {
+          conversation_turn_id: 'turn-inline-1',
+          historyFinalForUserMessageId: 'user-inline-1',
+          historyFinalForTurnId: 'turn-inline-1',
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-inline-1',
+      'assistant-final-inline-1',
+    ]);
+  });
+
+  it('filters hidden tool messages from the main visible message list', () => {
+    const messages: Message[] = [
+      buildUser({
+        id: 'user-tool-only-1',
+        metadata: {
+          conversation_turn_id: 'turn-tool-only-1',
+          historyProcess: {
+            hasProcess: false,
+            toolCallCount: 0,
+            thinkingCount: 0,
+            processMessageCount: 0,
+            userMessageId: 'user-tool-only-1',
+            turnId: 'turn-tool-only-1',
+            finalAssistantMessageId: 'assistant-final-tool-only-1',
+            expanded: false,
+            loaded: true,
+            loading: false,
+          },
+        },
+      }),
+      {
+        id: 'tool-only-1',
+        sessionId: 'session-1',
+        role: 'tool',
+        content: 'tool output only',
+        status: 'completed',
+        createdAt: new Date('2026-05-07T10:00:01.000Z'),
+        metadata: {
+          toolCallId: 'tool-call-only-1',
+          historyProcessUserMessageId: 'user-tool-only-1',
+          historyProcessTurnId: 'turn-tool-only-1',
+          hidden: true,
+        },
+      },
+      buildAssistant({
+        id: 'assistant-final-tool-only-1',
+        content: '最终回复',
+        createdAt: new Date('2026-05-07T10:00:02.000Z'),
+        metadata: {
+          conversation_turn_id: 'turn-tool-only-1',
+          historyFinalForUserMessageId: 'user-tool-only-1',
+          historyFinalForTurnId: 'turn-tool-only-1',
+        },
+      }),
+    ];
+
+    const state = buildVisibleMessageState(messages.map(parseMessageForList));
+
+    expect(state.visibleMessages.map((message) => message.id)).toEqual([
+      'user-tool-only-1',
+      'assistant-final-tool-only-1',
+    ]);
+  });
 });

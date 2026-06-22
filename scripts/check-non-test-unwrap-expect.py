@@ -11,7 +11,6 @@ PATTERN = re.compile(r"\b(?:unwrap|expect)\s*\(")
 
 TARGET_ROOTS = [
     ROOT / "chat_app_server_rs" / "src",
-    ROOT / "memory_server" / "backend" / "src",
 ]
 
 ALLOWLIST = {
@@ -48,6 +47,8 @@ def scan_file(path: Path) -> list[tuple[int, str]]:
 def main() -> int:
     failures: list[tuple[Path, list[tuple[int, str]]]] = []
     for root in TARGET_ROOTS:
+        if not root.exists():
+            continue
         for path in sorted(root.rglob("*.rs")):
             if should_skip(path):
                 continue

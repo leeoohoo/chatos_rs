@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 import type { SftpTransferRequest, SftpTransferStatus } from './types';
 
 interface TransferStatusBannerProps {
@@ -14,6 +15,7 @@ export const TransferStatusBanner: React.FC<TransferStatusBannerProps> = ({
   formatBytes,
   onCancelTransfer,
 }) => {
+  const { t } = useI18n();
   if (!transferStatus || !transfering) {
     return null;
   }
@@ -23,10 +25,10 @@ export const TransferStatusBanner: React.FC<TransferStatusBannerProps> = ({
       <div className="flex items-center justify-between text-xs text-foreground">
         <span>
           {transferStatus.state === 'cancelling'
-            ? '取消中...'
+            ? t('remote.sftp.transfer.cancelling')
             : transferStatus.direction === 'upload'
-              ? '上传中'
-              : '下载中'}
+              ? t('remote.sftp.transfer.uploading')
+              : t('remote.sftp.transfer.downloading')}
         </span>
         <div className="flex items-center gap-2">
           <span>
@@ -40,7 +42,7 @@ export const TransferStatusBanner: React.FC<TransferStatusBannerProps> = ({
             disabled={transferStatus.state === 'cancelling'}
             className="rounded border border-border px-2 py-0.5 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            取消
+            {t('common.cancel')}
           </button>
         </div>
       </div>
@@ -72,6 +74,7 @@ export const TransferQueuePanel: React.FC<TransferQueuePanelProps> = ({
   onClearQueuedTransfers,
   onRemoveQueuedTransfer,
 }) => {
+  const { t } = useI18n();
   if (queuedTransfers.length === 0) {
     return null;
   }
@@ -79,13 +82,13 @@ export const TransferQueuePanel: React.FC<TransferQueuePanelProps> = ({
   return (
     <div className="px-4 py-2 border-b border-border bg-muted/20">
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>排队任务：{queuedTransfers.length}</span>
+        <span>{t('remote.sftp.queue.title', { count: queuedTransfers.length })}</span>
         <button
           type="button"
           onClick={onClearQueuedTransfers}
           className="rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-accent"
         >
-          清空队列
+          {t('remote.sftp.queue.clear')}
         </button>
       </div>
       <div className="mt-1 space-y-1">
@@ -100,12 +103,12 @@ export const TransferQueuePanel: React.FC<TransferQueuePanelProps> = ({
               onClick={() => onRemoveQueuedTransfer(item.id)}
               className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
             >
-              移除
+              {t('remote.sftp.queue.remove')}
             </button>
           </div>
         ))}
         {queuedTransfers.length > 3 && (
-          <div className="text-[11px] text-muted-foreground">还有 {queuedTransfers.length - 3} 项待传输…</div>
+          <div className="text-[11px] text-muted-foreground">{t('remote.sftp.queue.more', { count: queuedTransfers.length - 3 })}</div>
         )}
       </div>
     </div>

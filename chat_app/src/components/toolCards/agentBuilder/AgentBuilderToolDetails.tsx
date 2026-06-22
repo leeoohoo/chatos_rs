@@ -1,6 +1,8 @@
 import React from 'react';
 
-import { RowsCard, StringListCard, TextBlockCard, renderCardHeader } from '../shared/primitives';
+import { useI18n } from '../../../i18n/I18nProvider';
+import { translateToolTitle } from '../../../i18n/toolText';
+import { RowsCard, StringListCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
 
 const truncateText = (value: string, maxLength: number = 260): string => {
@@ -12,6 +14,7 @@ const truncateText = (value: string, maxLength: number = 260): string => {
 };
 
 const SkillItemsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { t } = useI18n();
   const skills = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -20,7 +23,7 @@ const SkillItemsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Available skills', `${skills.length} 个`)}
+      {renderCardHeader('Available skills', formatToolCardCount(t, 'skills', skills.length))}
       <div className="tool-detail-list">
         {skills.map((skill, index) => (
           <div key={`agent-skill-${index}`} className="tool-detail-item">
@@ -41,6 +44,7 @@ const SkillItemsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 };
 
 const EmbeddedSkillsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
+  const { t } = useI18n();
   const skills = items
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => item !== null);
@@ -49,7 +53,7 @@ const EmbeddedSkillsCard: React.FC<{ items: unknown[] }> = ({ items }) => {
 
   return (
     <div className="tool-detail-card tool-detail-card--full">
-      {renderCardHeader('Embedded skills', `${skills.length} 个`)}
+      {renderCardHeader('Embedded skills', formatToolCardCount(t, 'skills', skills.length))}
       <div className="tool-detail-list">
         {skills.map((skill, index) => (
           <div key={`embedded-skill-${index}`} className="tool-detail-item">
@@ -130,6 +134,7 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
   displayName,
   result,
 }) => {
+  const { locale } = useI18n();
   const record = asRecord(result);
   if (!record) return null;
 
@@ -137,17 +142,17 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Recommended profile"
+          title={translateToolTitle('Recommended profile', locale)}
           rows={[
             { key: 'name', value: asString(record.name).trim() },
             { key: 'category', value: asString(record.category).trim() },
           ]}
           fullWidth
         />
-        <TextBlockCard title="Description" content={asString(record.description)} fullWidth={false} />
-        <TextBlockCard title="Role definition" content={asString(record.role_definition ?? record.roleDefinition)} />
+        <TextBlockCard title={translateToolTitle('Description', locale)} content={asString(record.description)} fullWidth={false} />
+        <TextBlockCard title={translateToolTitle('Role definition', locale)} content={asString(record.role_definition ?? record.roleDefinition)} />
         <StringListCard
-          title="Suggested skills"
+          title={translateToolTitle('Suggested skills', locale)}
           values={asArray(record.suggested_skill_ids ?? record.suggestedSkillIds).map((item) => asString(item)).filter(Boolean)}
           fullWidth
         />
@@ -158,7 +163,7 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
   if (displayName === 'list_available_skills') {
     return (
       <div className="tool-detail-stack">
-        <RowsCard title="Skill catalog" rows={[{ key: 'count', value: asNumber(record.count) }]} />
+        <RowsCard title={translateToolTitle('Skill catalog', locale)} rows={[{ key: 'count', value: asNumber(record.count) }]} />
         <SkillItemsCard items={asArray(record.items)} />
       </div>
     );
@@ -168,13 +173,13 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title={displayName === 'create_memory_agent' ? 'Creation result' : 'Update result'}
+          title={translateToolTitle(displayName === 'create_memory_agent' ? 'Creation result' : 'Update result', locale)}
           rows={[
             { key: 'created', value: asBoolean(record.created) },
             { key: 'updated', value: asBoolean(record.updated) },
           ]}
         />
-        <AgentCard title="Agent" value={record.agent} />
+        <AgentCard title={translateToolTitle('Agent', locale)} value={record.agent} />
       </div>
     );
   }
@@ -183,7 +188,7 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
     return (
       <div className="tool-detail-stack">
         <RowsCard
-          title="Context preview"
+          title={translateToolTitle('Context preview', locale)}
           rows={[
             { key: 'role chars', value: asNumber(record.role_definition_chars ?? record.roleDefinitionChars) },
             { key: 'plugin sources', value: asNumber(record.plugin_sources_count ?? record.pluginSourcesCount) },
@@ -191,7 +196,7 @@ export const AgentBuilderToolDetails: React.FC<AgentBuilderToolDetailsProps> = (
             { key: 'skill ids', value: asNumber(record.skill_ids_count ?? record.skillIdsCount) },
           ]}
         />
-        <TextBlockCard title="Preview" content={asString(record.preview)} />
+        <TextBlockCard title={translateToolTitle('Preview', locale)} content={asString(record.preview)} />
       </div>
     );
   }

@@ -1,30 +1,20 @@
-import { useProjectExplorerChangeTracking } from './useProjectExplorerChangeTracking';
 import { useProjectExplorerDnd } from './useProjectExplorerDnd';
 import { useProjectTreeActions } from './useProjectTreeActions';
 
 interface UseProjectExplorerWorkspaceActionsParams {
-  changeTracking: Parameters<typeof useProjectExplorerChangeTracking>[0];
   dnd: Parameters<typeof useProjectExplorerDnd>[0];
   treeActions: Omit<
     Parameters<typeof useProjectTreeActions>[0],
-    'hasPendingChangesForPath'
-    | 'canDropToDirectory'
+    'canDropToDirectory'
     | 'clearDragExpandTimer'
     | 'clearDragAutoScroll'
   >;
 }
 
 export const useProjectExplorerWorkspaceActions = ({
-  changeTracking,
   dnd,
   treeActions,
 }: UseProjectExplorerWorkspaceActionsParams) => {
-  const {
-    hasPendingChangesForPath,
-    canConfirmCurrent,
-    aggregatedChangeKindByPath,
-  } = useProjectExplorerChangeTracking(changeTracking);
-
   const {
     canDropToDirectory,
     clearDragExpandTimer,
@@ -37,27 +27,26 @@ export const useProjectExplorerWorkspaceActions = ({
   const {
     handleCreateDirectory,
     handleCreateFile,
+    handleCopyFilePath,
+    handleCopyRelativeFilePath,
+    handleAppendGitignore,
+    handleOpenExternally,
     handleDeleteSelected,
     handleDownloadSelected,
     handleRefresh,
-    handleConfirmCurrentChanges,
-    handleConfirmAllChanges,
+    handleSaveFile,
     handleMoveEntryByDrop,
     handleMoveConflictCancel,
     handleMoveConflictOverwrite,
     handleMoveConflictRename,
   } = useProjectTreeActions({
     ...treeActions,
-    hasPendingChangesForPath,
     canDropToDirectory,
     clearDragExpandTimer,
     clearDragAutoScroll,
   });
 
   return {
-    hasPendingChangesForPath,
-    canConfirmCurrent,
-    aggregatedChangeKindByPath,
     canDropToDirectory,
     clearDragExpandTimer,
     cancelDragExpandIfMatches,
@@ -66,11 +55,14 @@ export const useProjectExplorerWorkspaceActions = ({
     startDragAutoScroll,
     handleCreateDirectory,
     handleCreateFile,
+    handleCopyFilePath,
+    handleCopyRelativeFilePath,
+    handleAppendGitignore,
+    handleOpenExternally,
     handleDeleteSelected,
     handleDownloadSelected,
     handleRefresh,
-    handleConfirmCurrentChanges,
-    handleConfirmAllChanges,
+    handleSaveFile,
     handleMoveEntryByDrop,
     handleMoveConflictCancel,
     handleMoveConflictOverwrite,

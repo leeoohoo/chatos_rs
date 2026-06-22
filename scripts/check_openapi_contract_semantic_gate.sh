@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAIN_CONTRACT="$ROOT_DIR/.github/api-contract/chat_app_server_rs.openapi.yaml"
-MEMORY_CONTRACT="$ROOT_DIR/.github/api-contract/memory_server.openapi.yaml"
 POLICY_FILE="${OPENAPI_GATE_POLICY_FILE:-$ROOT_DIR/.github/api-contract/openapi-gate-policy.env}"
 
 ratio_meets_threshold() {
@@ -263,7 +262,6 @@ fi
 metrics_file="$(mktemp)"
 trap 'rm -f "$metrics_file"' EXIT
 collect_metrics "$MAIN_CONTRACT" "main" > "$metrics_file"
-collect_metrics "$MEMORY_CONTRACT" "memory" >> "$metrics_file"
 
 # shellcheck disable=SC1090
 source "$metrics_file"
@@ -274,10 +272,6 @@ echo "  main operationId ratio:                    ${main_operation_id_ratio:-0}
 echo "  main operationId uniqueness ratio:         ${main_operation_id_uniqueness_ratio:-0}%"
 echo "  main success-json-schema ratio:            ${main_success_json_schema_ratio:-0}%"
 echo "  main requestBody-json-schema ratio:        ${main_request_body_json_schema_ratio:-0}%"
-echo "  memory operationId ratio:                  ${memory_operation_id_ratio:-0}%"
-echo "  memory operationId uniqueness ratio:       ${memory_operation_id_uniqueness_ratio:-0}%"
-echo "  memory success-json-schema ratio:          ${memory_success_json_schema_ratio:-0}%"
-echo "  memory requestBody-json-schema ratio:      ${memory_request_body_json_schema_ratio:-0}%"
 echo "  thresholds:"
 echo "    operationId ratio >= ${OPENAPI_SEMANTIC_MIN_OPERATION_ID_RATIO}%"
 echo "    operationId uniqueness ratio >= ${OPENAPI_SEMANTIC_MIN_OPERATION_ID_UNIQUENESS_RATIO}%"
@@ -290,7 +284,6 @@ if [[ "$OPENAPI_SEMANTIC_GATE_MODE" == "advisory" ]]; then
 fi
 
 main_ok="true"
-memory_ok="true"
 
 check_service_metrics() {
   local service="$1"
@@ -327,16 +320,7 @@ if ! check_service_metrics \
   main_ok="false"
 fi
 
-if ! check_service_metrics \
-  "memory backend" \
-  "${memory_operation_id_ratio:-0}" \
-  "${memory_operation_id_uniqueness_ratio:-0}" \
-  "${memory_success_json_schema_ratio:-0}" \
-  "${memory_request_body_json_schema_ratio:-0}"; then
-  memory_ok="false"
-fi
-
-if [[ "$main_ok" == "true" && "$memory_ok" == "true" ]]; then
+if [[ "$main_ok" == "true" ]]; then
   echo "[OK] OpenAPI semantic required gate passed."
   exit 0
 fi

@@ -4,8 +4,9 @@ use std::path::Path;
 use regex::RegexBuilder;
 use walkdir::{DirEntry, WalkDir};
 
-pub(super) use crate::services::code_nav::languages::shared_nav::push_unique_location;
-use crate::services::code_nav::languages::shared_nav::nav_location_from_coordinates;
+use crate::services::code_nav::languages::shared_nav::{
+    indexed_symbols_from, nav_location_from_coordinates, NavSearchMatchLike,
+};
 use crate::services::code_nav::symbol_index::IndexedSymbol;
 use crate::services::code_nav::types::NavLocation;
 
@@ -23,23 +24,34 @@ pub(super) struct BasicSearchMatch {
     pub(super) text: String,
 }
 
+impl NavSearchMatchLike for BasicSearchMatch {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+
+    fn line(&self) -> usize {
+        self.line
+    }
+
+    fn column(&self) -> usize {
+        self.column
+    }
+
+    fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 pub(super) fn indexed_basic_symbols(
     path: &Path,
     analyze_file: fn(&Path) -> Result<BasicFileAnalysis, String>,
 ) -> Result<Vec<IndexedSymbol>, String> {
     let analysis = analyze_file(path)?;
-    Ok(analysis
-        .symbols
-        .into_iter()
-        .map(|symbol| IndexedSymbol {
-            name: symbol.name,
-            kind: symbol.kind,
-            line: symbol.line,
-            column: symbol.column,
-            end_line: symbol.end_line,
-            end_column: symbol.end_column,
-        })
-        .collect())
+    Ok(indexed_symbols_from(&analysis.symbols))
 }
 
 pub(super) fn search_occurrences(

@@ -21,8 +21,7 @@ export const closeWebSocketSafely = (socket: WebSocket | null | undefined) => {
 export const buildWsUrl = (
   baseUrl: string,
   path: string,
-  accessToken?: string | null,
-  verificationCode?: string | null,
+  webSocketTicket?: string | null,
 ) => {
   const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   const cleanedPath = path.startsWith('/') ? path : `/${path}`;
@@ -34,13 +33,9 @@ export const buildWsUrl = (
         return `${wsProtocol}//${host}${cleanedBase}${cleanedPath}`;
       })();
   const wsUrl = new URL(rawUrl);
-  const token = (accessToken || '').trim();
-  if (token) {
-    wsUrl.searchParams.set('access_token', token);
-  }
-  const code = (verificationCode || '').trim();
-  if (code) {
-    wsUrl.searchParams.set('verification_code', code);
+  const ticket = (webSocketTicket || '').trim();
+  if (ticket) {
+    wsUrl.searchParams.set('ws_ticket', ticket);
   }
   return wsUrl.toString();
 };

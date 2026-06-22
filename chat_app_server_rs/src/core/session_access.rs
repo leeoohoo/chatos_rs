@@ -1,6 +1,6 @@
 use crate::core::auth::AuthUser;
 use crate::models::session::Session;
-use crate::services::memory_server_client;
+use crate::services::chatos_sessions;
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
@@ -20,7 +20,7 @@ pub async fn ensure_owned_session(
     session_id: &str,
     auth: &AuthUser,
 ) -> Result<Session, SessionAccessError> {
-    match memory_server_client::get_session_by_id(session_id).await {
+    match chatos_sessions::get_session_by_id(session_id).await {
         Ok(Some(session)) => {
             if is_owned_session(&session, auth) {
                 Ok(session)
@@ -63,6 +63,25 @@ pub fn map_session_access_error_with_success(err: SessionAccessError) -> (Status
         SessionAccessError::Internal(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"success": false, "error": err})),
+        ),
+    }
+}
+
+pub fn map_session_access_error_compat(err: SessionAccessError) -> (StatusCode, Json<Value>) {
+    match err {
+        SessionAccessError::NotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "session not found"})),
+        ),
+        SessionAccessError::Forbidden => {
+            (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})))
+        }
+        SessionAccessError::Internal(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "load session failed",
+                "detail": err,
+            })),
         ),
     }
 }

@@ -1,0 +1,25 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::Argon2;
+use chrono::Utc;
+use parking_lot::RwLock;
+use rand::rngs::OsRng;
+use uuid::Uuid;
+
+use crate::config::AppConfig;
+use crate::models::{
+    now_rfc3339, AgentTokenResponse, AuthUser, CreateUserRequest, LoginResponse, UpdateUserRequest,
+    UserRecord, UserRole, UserSummaryRecord,
+};
+use crate::store::AppStore;
+
+const AGENT_TOKEN_TTL_SECONDS: i64 = 3600;
+
+mod current_user;
+mod service;
+mod support;
+
+pub use current_user::CurrentUser;
+pub use service::AuthService;

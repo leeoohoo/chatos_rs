@@ -1,8 +1,6 @@
 import { shallow } from 'zustand/shallow';
 
-import { useChatStore } from '../../lib/store';
-
-type SessionListStoreHook = typeof useChatStore;
+import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
 
 export const useSessionListStoreState = (storeToUse: SessionListStoreHook) => {
   return storeToUse((state) => ({
@@ -14,6 +12,7 @@ export const useSessionListStoreState = (storeToUse: SessionListStoreHook) => {
     loadSessions: state.loadSessions,
     loadContacts: state.loadContacts,
     createContact: state.createContact,
+    updateContactTaskRunnerConfig: state.updateContactTaskRunnerConfig,
     deleteContact: state.deleteContact,
     markContactsStale: state.markContactsStale,
     removeContactLocally: state.removeContactLocally,
@@ -29,8 +28,6 @@ export const useSessionListStoreState = (storeToUse: SessionListStoreHook) => {
     refreshSessionById: state.refreshSessionById,
     loadAgents: state.loadAgents,
     sessionChatState: state.sessionChatState,
-    taskReviewPanelsBySession: state.taskReviewPanelsBySession,
-    uiPromptPanelsBySession: state.uiPromptPanelsBySession,
     projects: state.projects,
     currentProject: state.currentProject,
     loadProjects: state.loadProjects,

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
 import {
@@ -7,6 +8,7 @@ import {
   resolveContactIdFromSession,
 } from '../../features/contactSession/sessionResolver';
 import { useContactSessionResolver } from '../../features/contactSession/useContactSessionResolver';
+import { translateSessionListMessage } from './helpers';
 
 export const CONTACT_CHAT_PROJECT_ID = '0';
 const CONTACT_PLACEHOLDER_PREFIX = 'contact-placeholder:';
@@ -15,6 +17,9 @@ export interface SessionListContact {
   id: string;
   agentId: string;
   name: string;
+  taskRunner?: {
+    enabled: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -27,8 +32,6 @@ type CreateSessionFn = (
     selectedModelId: string | null;
     projectId: string;
     projectRoot: string | null;
-    mcpEnabled: boolean;
-    enabledMcpIds: string[];
   },
   options?: { keepActivePanel?: boolean },
 ) => Promise<string | undefined | null>;
@@ -46,6 +49,7 @@ interface SessionResolverApiClient {
 }
 
 interface UseContactSessionListStateOptions {
+  t?: TranslateFn;
   contacts: SessionListContact[];
   sessions: Session[];
   currentSession: Session | null | undefined;
@@ -58,6 +62,7 @@ interface UseContactSessionListStateOptions {
 interface UseContactSessionListStateResult {
   ensureSessionForContact: (contact: SessionListContact) => Promise<string | null>;
   displaySessionRuntimeIdMap: Record<string, string>;
+  taskRunnerEnabledBySessionId: Record<string, boolean>;
   displaySessions: Session[];
   currentDisplaySessionId: string | null;
   activeSummaryDisplaySessionId: string | null;
@@ -65,6 +70,7 @@ interface UseContactSessionListStateResult {
 }
 
 export const useContactSessionListState = ({
+  t,
   contacts,
   sessions,
   currentSession,
@@ -88,13 +94,11 @@ export const useContactSessionListState = ({
   const ensureSessionForContact = useCallback((contact: SessionListContact): Promise<string | null> => {
     return ensureContactSession(contact, {
       projectId: CONTACT_CHAT_PROJECT_ID,
-      title: contact.name || '联系人',
+      title: contact.name || translateSessionListMessage(t, 'contactModal.fallbackName'),
       selectedModelId: null,
       projectRoot: null,
-      mcpEnabled: true,
-      enabledMcpIds: [],
     });
-  }, [ensureContactSession]);
+  }, [ensureContactSession, t]);
 
   const displaySessionRuntimeIdMap = useMemo<Record<string, string>>(() => {
     return buildDisplayRuntimeSessionIdMap(contacts || [], {
@@ -126,12 +130,18 @@ export const useContactSessionListState = ({
           selectedModelId: null,
           projectId: CONTACT_CHAT_PROJECT_ID,
           projectRoot: null,
-          mcpEnabled: true,
-          enabledMcpIds: [],
         }),
       } as Session;
     });
   }, [contacts, displaySessionRuntimeIdMap, sessions]);
+
+  const taskRunnerEnabledBySessionId = useMemo<Record<string, boolean>>(() => {
+    const out: Record<string, boolean> = {};
+    for (const contact of contacts || []) {
+      out[`${CONTACT_PLACEHOLDER_PREFIX}${contact.id}`] = Boolean(contact.taskRunner?.enabled);
+    }
+    return out;
+  }, [contacts]);
 
   const currentDisplaySessionId = useMemo(() => {
     if (activePanel !== 'chat') {
@@ -166,6 +176,7 @@ export const useContactSessionListState = ({
   return {
     ensureSessionForContact,
     displaySessionRuntimeIdMap,
+    taskRunnerEnabledBySessionId,
     displaySessions,
     currentDisplaySessionId,
     activeSummaryDisplaySessionId,

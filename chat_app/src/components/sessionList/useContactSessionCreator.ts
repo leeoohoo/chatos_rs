@@ -1,17 +1,21 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { AgentConfig, Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
 import { CONTACT_CHAT_PROJECT_ID } from './useContactSessionListState';
+import { translateSessionListMessage } from './helpers';
 import type { ContactItem } from './types';
+import type { SessionSelectOptions } from '../../lib/store/types';
 
 interface UseContactSessionCreatorOptions {
+  t?: TranslateFn;
   agents: AgentConfig[];
   currentSessionId: string | null;
   loadContacts: () => Promise<unknown>;
   createContact: (agentId: string, name?: string) => Promise<ContactItem>;
   ensureSessionForContact: (contact: ContactItem) => Promise<string | null>;
   updateSession: (sessionId: string, patch: Partial<Session>) => Promise<unknown>;
-  selectSession: (sessionId: string) => Promise<unknown>;
+  selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<unknown>;
 }
 
 interface UseContactSessionCreatorResult {
@@ -26,6 +30,7 @@ interface UseContactSessionCreatorResult {
 }
 
 export const useContactSessionCreator = ({
+  t,
   agents,
   currentSessionId,
   loadContacts,
@@ -44,10 +49,10 @@ export const useContactSessionCreator = ({
     try {
       await loadContacts();
     } catch (error) {
-      setContactError(error instanceof Error ? error.message : '加载联系人失败');
+      setContactError(error instanceof Error ? error.message : translateSessionListMessage(t, 'contactModal.error.loadFailed'));
     }
     setCreateContactModalOpen(true);
-  }, [loadContacts]);
+  }, [loadContacts, t]);
 
   const closeCreateSessionModal = useCallback(() => {
     setCreateContactModalOpen(false);
@@ -58,12 +63,12 @@ export const useContactSessionCreator = ({
   const handleCreateContactSession = useCallback(async () => {
     const agentId = selectedContactAgentId?.trim();
     if (!agentId) {
-      setContactError('请先选择一个联系人');
+      setContactError(translateSessionListMessage(t, 'contactModal.error.selectFirst'));
       return;
     }
     const selectedAgent = (agents || []).find((agent) => agent.id === agentId);
     if (!selectedAgent) {
-      setContactError('联系人不存在或不可用');
+      setContactError(translateSessionListMessage(t, 'contactModal.error.unavailable'));
       return;
     }
     try {
@@ -87,12 +92,12 @@ export const useContactSessionCreator = ({
           selectedModelId: null,
           projectId: CONTACT_CHAT_PROJECT_ID,
           projectRoot: null,
-          mcpEnabled: true,
-          enabledMcpIds: [],
         });
         await updateSession(ensuredSessionId, { metadata } as Partial<Session>);
         if (currentSessionId !== ensuredSessionId) {
-          await selectSession(ensuredSessionId);
+          await selectSession(ensuredSessionId, {
+            skipBackgroundSync: true,
+          });
         }
       }
 
@@ -100,7 +105,7 @@ export const useContactSessionCreator = ({
       closeCreateSessionModal();
     } catch (error) {
       console.error('Failed to create session:', error);
-      setContactError(error instanceof Error ? error.message : '添加联系人失败');
+      setContactError(error instanceof Error ? error.message : translateSessionListMessage(t, 'contactModal.error.addFailed'));
     }
   }, [
     agents,
@@ -111,6 +116,7 @@ export const useContactSessionCreator = ({
     loadContacts,
     selectedContactAgentId,
     selectSession,
+    t,
     updateSession,
   ]);
 

@@ -14,17 +14,14 @@ interface UseInputAreaMessageDraftOptions {
   currentRemoteConnectionId: string | null;
   disabled: boolean;
   effectiveAllowAttachments: boolean;
-  isGuidingMode: boolean;
   maxLength: number;
-  mcpEnabled: boolean;
   normalizedWorkspaceRoot: string | null;
-  onGuide?: InputAreaProps['onGuide'];
   onSend: InputAreaProps['onSend'];
   requireModelSelection: () => boolean;
-  sanitizedEnabledMcpIds: string[];
   selectedRuntimeProject: Project | null;
-  selectedSkillIds: string[];
-  skillsEnabled: boolean;
+  selectedModelId: string | null;
+  effectiveModelName: string | null;
+  effectiveThinkingLevel: string | null;
 }
 
 export const useInputAreaMessageDraft = ({
@@ -33,17 +30,14 @@ export const useInputAreaMessageDraft = ({
   currentRemoteConnectionId,
   disabled,
   effectiveAllowAttachments,
-  isGuidingMode,
   maxLength,
-  mcpEnabled,
   normalizedWorkspaceRoot,
-  onGuide,
   onSend,
   requireModelSelection,
-  sanitizedEnabledMcpIds,
   selectedRuntimeProject,
-  selectedSkillIds,
-  skillsEnabled,
+  selectedModelId,
+  effectiveModelName,
+  effectiveThinkingLevel,
 }: UseInputAreaMessageDraftOptions) => {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -84,15 +78,6 @@ export const useInputAreaMessageDraft = ({
       return;
     }
 
-    if (isGuidingMode) {
-      if (!trimmedMessage) {
-        return;
-      }
-      onGuide?.(trimmedMessage);
-      resetComposer();
-      return;
-    }
-
     if (requireModelSelection()) {
       return;
     }
@@ -104,14 +89,13 @@ export const useInputAreaMessageDraft = ({
     const runtimeWorkspaceRoot = normalizedWorkspaceRoot || null;
 
     onSend(trimmedMessage, attachments, {
-      mcpEnabled,
-      enabledMcpIds: sanitizedEnabledMcpIds,
+      modelConfigId: selectedModelId,
+      modelName: effectiveModelName,
+      thinkingLevel: effectiveThinkingLevel,
       remoteConnectionId: currentRemoteConnectionId,
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
       workspaceRoot: runtimeWorkspaceRoot,
-      skillsEnabled,
-      selectedSkillIds: skillsEnabled ? selectedSkillIds : [],
     });
     resetComposer();
   }, [
@@ -119,18 +103,15 @@ export const useInputAreaMessageDraft = ({
     currentRemoteConnectionId,
     disabled,
     effectiveAllowAttachments,
-    isGuidingMode,
-    mcpEnabled,
     message,
     normalizedWorkspaceRoot,
-    onGuide,
     onSend,
     requireModelSelection,
     resetComposer,
-    sanitizedEnabledMcpIds,
     selectedRuntimeProject,
-    selectedSkillIds,
-    skillsEnabled,
+    selectedModelId,
+    effectiveModelName,
+    effectiveThinkingLevel,
   ]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -146,6 +127,6 @@ export const useInputAreaMessageDraft = ({
     handleInputChange,
     handleKeyDown,
     handleSend,
-    canSend: Boolean(message.trim() || (!isGuidingMode && attachments.length > 0)),
+    canSend: Boolean(message.trim() || attachments.length > 0),
   };
 };

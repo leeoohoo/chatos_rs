@@ -113,9 +113,8 @@ pub(super) fn strip_ansi(input: &str) -> String {
     }
     static ANSI_CSI_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
         once_cell::sync::Lazy::new(|| compile_regex(r"\x1B\[[0-?]*[ -/]*[@-~]"));
-    static ANSI_OSC_RE: once_cell::sync::Lazy<Option<regex::Regex>> = once_cell::sync::Lazy::new(|| {
-        compile_regex(r"\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)")
-    });
+    static ANSI_OSC_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
+        once_cell::sync::Lazy::new(|| compile_regex(r"\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)"));
     static ANSI_ESC_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
         once_cell::sync::Lazy::new(|| compile_regex(r"\x1B[@-_]"));
 

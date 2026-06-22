@@ -42,6 +42,7 @@ export interface AiModelConfig {
   provider: string;
   base_url: string;
   api_key: string;
+  has_api_key: boolean;
   model_name: string;
   thinking_level?: string;
   enabled: boolean;
@@ -56,8 +57,10 @@ export interface AgentConfig {
   id: string;
   name: string;
   description?: string;
+  category?: string;
   ai_model_config_id: string;
   enabled: boolean;
+  task_runner_agent_account_id?: string | null;
   project_id?: string | null;
   workspace_dir?: string | null;
   role_definition?: string;
@@ -84,6 +87,7 @@ export interface AgentConfig {
   }>;
   mcp_policy?: UnknownRecord | null;
   project_policy?: UnknownRecord | null;
+  ui_status?: 'creating';
   createdAt: Date;
   updatedAt: Date;
   app_ids?: string[];

@@ -1,5 +1,8 @@
+use axum::extract::ws::Message;
 use axum::http::StatusCode;
 use serde_json::json;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use super::{
     error_support::{remote_connectivity_error_status_and_code, remote_terminal_error_code},
@@ -97,4 +100,31 @@ fn emits_internal_error_payload_with_code() {
             "code": remote_connection_codes::REMOTE_CONNECTION_DELETE_FAILED
         })
     );
+}
+
+#[tokio::test]
+async fn startup_error_shutdown_flushes_error_message_before_exit() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let (done_tx, done_rx) = oneshot::channel::<Vec<Message>>();
+    let forward_task = tokio::spawn(async move {
+        let mut messages = Vec::new();
+        while let Some(message) = rx.recv().await {
+            messages.push(message);
+        }
+        let _ = done_tx.send(messages);
+    });
+    let challenge_task = tokio::task::spawn_blocking(|| {});
+
+    super::terminal_ws_api::send_startup_error_and_shutdown(
+        tx,
+        "startup failed".to_string(),
+        challenge_task,
+        forward_task,
+    )
+    .await;
+
+    let messages = done_rx
+        .await
+        .expect("forward task should flush queued messages");
+    assert_eq!(messages, vec![Message::Text("startup failed".to_string())]);
 }

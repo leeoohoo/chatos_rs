@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import type { Message } from '../types';
+import { useI18n } from '../i18n/I18nProvider';
 import { resolveToolFamily } from '../lib/tools/catalog';
 import { getToolDisplayName } from '../lib/tools/displayName';
 import type { MessageToolCallLike } from './messageItem/messageReaders';
@@ -44,6 +45,7 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   toolResultById,
   className,
 }) => {
+  const { locale, t } = useI18n();
   const [showDetails, setShowDetails] = useState(false);
   const displayToolName = useMemo(() => getToolDisplayName(toolCall.name), [toolCall.name]);
 
@@ -158,8 +160,8 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
     if (!showDetails || !hasStructuredResult || !isResearchToolName(toolCall.name)) {
       return '';
     }
-    return 'Raw research payload is trimmed here for readability. Use the findings card, selected URLs, and results_brief entries for the most useful details.';
-  }, [hasStructuredResult, showDetails, toolCall.name]);
+    return t('toolPanel.structuredResearchNote');
+  }, [hasStructuredResult, showDetails, t, toolCall.name]);
 
   const extractSummary = useMemo(
     () => (showDetails ? buildExtractSummary(parsedResult) : null),
@@ -197,8 +199,10 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   );
 
   const statusText = hasError
-    ? '错误'
-    : (hasFinalResult ? '完成' : (hasStreamLog ? '运行中' : '等待中'));
+    ? t('toolPanel.error')
+    : (hasFinalResult
+      ? t('turnProcess.status.completed')
+      : (hasStreamLog ? t('turnProcess.status.running') : t('turnProcess.status.waiting')));
   const statusClass = hasError
     ? 'error'
     : (hasFinalResult ? 'success' : 'pending');
@@ -208,12 +212,12 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
     [displayToolName, toolCall.name],
   );
   const toolFamilyLabel = useMemo(
-    () => getToolFamilyLabel(toolFamily),
-    [toolFamily],
+    () => getToolFamilyLabel(toolFamily, locale),
+    [locale, toolFamily],
   );
   const toolDescription = useMemo(
-    () => getToolFamilyDescription(toolFamily, displayToolName),
-    [displayToolName, toolFamily],
+    () => getToolFamilyDescription(toolFamily, displayToolName, locale),
+    [displayToolName, locale, toolFamily],
   );
   const resultRenderContext = useMemo<ToolResultRenderContext>(() => ({
     toolName: toolCall.name,
@@ -238,11 +242,11 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   );
   const executionTime = useMemo(() => {
     const date = new Date(toolCall.createdAt);
-    return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString();
-  }, [toolCall.createdAt]);
-  const toolSourceLabel = resultRenderer.sourceLabel;
-  const toggleTitle = showDetails ? '收起详情' : '查看详情';
-  const toggleLabel = showDetails ? '收起' : '展开';
+    return Number.isNaN(date.getTime()) ? t('toolPanel.timeUnknown') : date.toLocaleString();
+  }, [t, toolCall.createdAt]);
+  const toolSourceLabel = resultRenderer.sourceLabel(locale);
+  const toggleTitle = showDetails ? t('toolPanel.toggle.collapseTitle') : t('toolPanel.toggle.expandTitle');
+  const toggleLabel = showDetails ? t('toolPanel.toggle.collapse') : t('toolPanel.toggle.expand');
   const toggleDetails = () => setShowDetails((prev) => !prev);
 
   return (

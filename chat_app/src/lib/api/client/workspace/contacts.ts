@@ -5,6 +5,7 @@ import type {
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
   ContactResponse,
+  ContactTaskRunnerUpdatePayload,
   DeleteSuccessResponse,
 } from '../types';
 import type { ApiRequestFn, ContactPaging } from './common';
@@ -45,6 +46,17 @@ export const deleteContact = (
 ): Promise<DeleteSuccessResponse> => {
   return request<DeleteSuccessResponse>(`/contacts/${contactId}`, {
     method: 'DELETE',
+  });
+};
+
+export const updateContactTaskRunnerConfig = (
+  request: ApiRequestFn,
+  contactId: string,
+  data: ContactTaskRunnerUpdatePayload,
+): Promise<ContactResponse> => {
+  return request<ContactResponse>(`/contacts/${encodeURIComponent(contactId)}/task-runner`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
   });
 };
 

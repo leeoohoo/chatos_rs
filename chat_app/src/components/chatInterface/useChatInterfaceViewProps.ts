@@ -16,10 +16,7 @@ export const useChatInterfaceViewProps = ({
     actions: conversationActions,
   });
 
-  const {
-    uiPromptHistoryProps,
-    runtimeContextProps,
-  } = useOverlayDrawerProps({
+  const { runtimeContextProps } = useOverlayDrawerProps({
     overlay,
     actions: overlayActions,
   });
@@ -27,7 +24,6 @@ export const useChatInterfaceViewProps = ({
   return {
     sessionListProps,
     conversationPaneProps,
-    uiPromptHistoryProps,
     runtimeContextProps,
   };
 };

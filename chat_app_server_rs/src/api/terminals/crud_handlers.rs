@@ -8,7 +8,7 @@ use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::{normalize_non_empty, validate_existing_dir};
-use crate::models::terminal::TerminalService;
+use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::project_run::validate_command_preflight;
 use crate::services::realtime::publish_terminal_list_invalidated;
@@ -31,7 +31,8 @@ pub(super) async fn list_terminals(
     let manager = get_terminal_manager();
     match TerminalService::list(Some(user_id)).await {
         Ok(list) => {
-            let items = list
+            let active_terminals = cleanup_exited_terminals(list).await;
+            let items = active_terminals
                 .into_iter()
                 .map(|t| attach_busy(&manager, t))
                 .collect::<Vec<_>>();
@@ -42,6 +43,28 @@ pub(super) async fn list_terminals(
             Json(serde_json::json!({ "error": err })),
         ),
     }
+}
+
+async fn cleanup_exited_terminals(terminals: Vec<Terminal>) -> Vec<Terminal> {
+    let mut active = Vec::with_capacity(terminals.len());
+    for terminal in terminals {
+        if terminal.status.trim().eq_ignore_ascii_case("exited") {
+            let _ = TerminalLogService::delete_by_terminal(terminal.id.as_str()).await;
+            let _ = TerminalService::delete(terminal.id.as_str()).await;
+            if let Some(user_id) = terminal.user_id.as_deref() {
+                publish_terminal_list_invalidated(
+                    user_id,
+                    Some(terminal.id.as_str()),
+                    terminal.project_id.as_deref(),
+                    "deleted",
+                    None,
+                );
+            }
+            continue;
+        }
+        active.push(terminal);
+    }
+    active
 }
 
 pub(super) async fn create_terminal(
@@ -77,7 +100,13 @@ pub(super) async fn create_terminal(
 
     let manager = get_terminal_manager();
     match manager
-        .create(name, cwd, Some(user_id), normalize_non_empty(project_id))
+        .create(
+            name,
+            cwd,
+            TERMINAL_KIND_SHARED.to_string(),
+            Some(user_id),
+            normalize_non_empty(project_id),
+        )
         .await
     {
         Ok(terminal) => (StatusCode::CREATED, Json(attach_busy(&manager, terminal))),
@@ -110,7 +139,7 @@ pub(super) async fn delete_terminal(
     let terminal_user_id = owned_terminal.user_id.clone();
     let terminal_project_id = owned_terminal.project_id.clone();
     let manager = get_terminal_manager();
-    let _ = manager.close(&id).await;
+    let _ = manager.close_silently(&id).await;
     let _ = TerminalLogService::delete_by_terminal(&id).await;
     match TerminalService::delete(&id).await {
         Ok(_) => {
@@ -241,6 +270,7 @@ pub(super) async fn dispatch_terminal_command(
             .create(
                 name,
                 cwd.clone(),
+                TERMINAL_KIND_SHARED.to_string(),
                 Some(user_id.clone()),
                 normalized_project_id.clone(),
             )
@@ -307,6 +337,36 @@ pub(super) async fn interrupt_terminal_command(
         Err(err) => return map_terminal_access_error(err),
     };
     let manager = get_terminal_manager();
+    let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
+    if reason == "project_run_restart" {
+        match manager.close(&id).await {
+            Ok(_) => {
+                let _ = TerminalService::touch(terminal.id.as_str()).await;
+                let _ = TerminalLogService::create(TerminalLog::new(
+                    terminal.id.clone(),
+                    "signal".to_string(),
+                    format!("terminate:{reason}"),
+                ))
+                .await;
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "terminal_id": terminal.id,
+                        "terminal_name": terminal.name,
+                        "interrupted": true,
+                        "signal": "SIGTERM",
+                        "reason": reason,
+                    })),
+                );
+            }
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": err })),
+                );
+            }
+        }
+    }
     let session = match manager.ensure_running(&terminal).await {
         Ok(session) => session,
         Err(err) => {
@@ -322,7 +382,6 @@ pub(super) async fn interrupt_terminal_command(
             Json(serde_json::json!({ "error": err })),
         );
     }
-    let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
     let _ = TerminalLogService::create(TerminalLog::new(
         terminal.id.clone(),
         "signal".to_string(),

@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:20-alpine AS builder
+
+WORKDIR /workspace/user_service/frontend
+
+COPY user_service/frontend/package.json user_service/frontend/package-lock.json ./
+RUN npm ci
+
+COPY user_service/frontend/ ./
+RUN npm run build
+
+FROM nginx:1.27-alpine AS runtime
+
+COPY docker/nginx/user_service.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /workspace/user_service/frontend/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

@@ -1,11 +1,14 @@
 import { useCallback, useMemo } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type { AiModelConfig, Project } from '../../types';
 
 interface UseInputAreaContextModelOptions {
   availableModels: AiModelConfig[];
   availableProjects: Project[];
   selectedModelId: string | null;
+  selectedModelName: string | null;
+  selectedThinkingLevel: string | null;
   selectedProjectId: string | null;
   workspaceRoot: string | null;
   isGuidingMode: boolean;
@@ -16,11 +19,14 @@ export const useInputAreaContextModel = ({
   availableModels,
   availableProjects,
   selectedModelId,
+  selectedModelName,
+  selectedThinkingLevel,
   selectedProjectId,
   workspaceRoot,
   isGuidingMode,
   showProjectFileButton,
 }: UseInputAreaContextModelOptions) => {
+  const { t } = useI18n();
   const normalizePath = useCallback((value: string) => {
     const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
     if (normalized.length > 1 && normalized.endsWith('/')) {
@@ -50,6 +56,14 @@ export const useInputAreaContextModel = ({
     () => (availableModels || []).filter((model) => model.enabled),
     [availableModels],
   );
+  const effectiveModelName = useMemo(() => {
+    const explicit = typeof selectedModelName === 'string' ? selectedModelName.trim() : '';
+    return explicit || selectedModel?.model_name || null;
+  }, [selectedModel?.model_name, selectedModelName]);
+  const effectiveThinkingLevel = useMemo(() => {
+    const explicit = typeof selectedThinkingLevel === 'string' ? selectedThinkingLevel.trim() : '';
+    return explicit || selectedModel?.thinking_level || null;
+  }, [selectedModel?.thinking_level, selectedThinkingLevel]);
 
   const hasAiOptions = Boolean(availableModels && availableModels.length > 0);
   const projectForFilePicker = useMemo(
@@ -70,7 +84,7 @@ export const useInputAreaContextModel = ({
 
   const workspaceRootDisplayName = useMemo(() => {
     if (!normalizedWorkspaceRoot) {
-      return '未选择';
+      return t('inputArea.workspace.empty');
     }
 
     const normalized = normalizePath(normalizedWorkspaceRoot);
@@ -79,11 +93,17 @@ export const useInputAreaContextModel = ({
       return normalized;
     }
     return segments[segments.length - 1] || normalized;
-  }, [normalizePath, normalizedWorkspaceRoot]);
+  }, [normalizePath, normalizedWorkspaceRoot, t]);
 
   const currentAiLabel = useMemo(
-    () => (selectedModel ? `Model: ${selectedModel.name}` : '选择模型'),
-    [selectedModel],
+    () => {
+      if (!selectedModel) {
+        return t('inputArea.model.selectTitle');
+      }
+      const modelName = effectiveModelName || selectedModel.model_name;
+      return modelName ? `${selectedModel.name} / ${modelName}` : selectedModel.name;
+    },
+    [effectiveModelName, selectedModel, t],
   );
 
   return {
@@ -92,6 +112,8 @@ export const useInputAreaContextModel = ({
     normalizedWorkspaceRoot,
     selectedModel,
     enabledModels,
+    effectiveModelName,
+    effectiveThinkingLevel,
     hasAiOptions,
     projectForFilePicker,
     projectRootForFilePicker,

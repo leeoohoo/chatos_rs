@@ -4,6 +4,8 @@ export interface Project {
   rootPath: string;
   description?: string | null;
   userId?: string | null;
+  latestSessionId?: string | null;
+  lastMessageAt?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -12,11 +14,15 @@ export interface ProjectRunTarget {
   id: string;
   label: string;
   kind: string;
+  language?: string | null;
   cwd: string;
   command: string;
   source: string;
   confidence: number;
   isDefault?: boolean;
+  entrypoint?: string | null;
+  manifestPath?: string | null;
+  requiredToolchains: string[];
 }
 
 export interface ProjectRunCatalog {
@@ -29,10 +35,89 @@ export interface ProjectRunCatalog {
   updatedAt?: string | null;
 }
 
+export interface ProjectRunToolchainOption {
+  id: string;
+  kind: string;
+  label: string;
+  version?: string | null;
+  path: string;
+  source: string;
+  isDefault?: boolean;
+}
+
+export interface ProjectRunConfigFileSummary {
+  kind: string;
+  label: string;
+  path: string;
+  preview?: string | null;
+  source: string;
+}
+
+export interface ProjectRunValidationIssue {
+  kind: string;
+  message: string;
+  targetId?: string | null;
+  targetLabel?: string | null;
+  path?: string | null;
+  hint?: string | null;
+}
+
+export interface ProjectRunCustomToolchain {
+  kind: string;
+  label: string;
+  path: string;
+}
+
+export interface ProjectRunEnvironment {
+  projectId: string;
+  userId?: string | null;
+  optionsByKind: Record<string, ProjectRunToolchainOption[]>;
+  configFiles: ProjectRunConfigFileSummary[];
+  validationIssues: ProjectRunValidationIssue[];
+  selectedToolchains: Record<string, string>;
+  customToolchains: Record<string, ProjectRunCustomToolchain>;
+  envVars: Record<string, string>;
+  terminalUiEnabled: boolean;
+  updatedAt?: string | null;
+}
+
+export interface ProjectRunResolutionSuggestion {
+  id: string;
+  label: string;
+  detail?: string | null;
+  actionKind: 'select_toolchain' | 'switch_target';
+  toolchainKind?: string | null;
+  optionId?: string | null;
+  targetId?: string | null;
+}
+
+export interface ProjectRunState {
+  projectId: string;
+  running: boolean;
+  busy: boolean;
+  status: string;
+  terminalId?: string | null;
+  terminalName?: string | null;
+  cwd?: string | null;
+  terminal: Terminal | null;
+  instances?: ProjectRunInstance[];
+}
+
+export interface ProjectRunInstance {
+  terminalId: string;
+  terminalName: string;
+  cwd: string;
+  status: string;
+  busy: boolean;
+  running: boolean;
+  terminal: Terminal | null;
+}
+
 export interface Terminal {
   id: string;
   name: string;
   cwd: string;
+  kind?: string | null;
   userId?: string | null;
   projectId?: string | null;
   status: string;
@@ -81,6 +166,13 @@ export interface ContactRecord {
   agentId: string;
   name: string;
   status: string;
+  taskRunner?: {
+    enabled: boolean;
+    baseUrl: string;
+    agentAccountId?: string | null;
+    username: string;
+    hasPassword: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,6 +181,7 @@ export interface FsEntry {
   name: string;
   path: string;
   isDir: boolean;
+  writable?: boolean | null;
   size?: number | null;
   modifiedAt?: string | null;
 }
@@ -99,6 +192,7 @@ export interface FsReadResult {
   size: number;
   contentType: string;
   isBinary: boolean;
+  writable?: boolean | null;
   modifiedAt?: string | null;
   content: string;
 }
@@ -153,41 +247,4 @@ export interface CodeNavDocumentSymbolsResult {
   language: string;
   mode: string;
   symbols: CodeNavDocumentSymbol[];
-}
-
-export interface ChangeLogItem {
-  id: string;
-  serverName: string;
-  path: string;
-  action: string;
-  changeKind: 'create' | 'edit' | 'delete';
-  bytes: number;
-  sha256?: string | null;
-  diff?: string | null;
-  sessionId?: string | null;
-  runId?: string | null;
-  confirmed: boolean;
-  confirmedAt?: string | null;
-  confirmedBy?: string | null;
-  createdAt: string;
-  sessionTitle?: string | null;
-}
-
-export interface ProjectChangeMark {
-  path: string;
-  relativePath: string;
-  kind: 'create' | 'edit' | 'delete';
-  lastChangeId: string;
-  updatedAt: string;
-}
-
-export interface ProjectChangeSummary {
-  fileMarks: ProjectChangeMark[];
-  deletedMarks: ProjectChangeMark[];
-  counts: {
-    create: number;
-    edit: number;
-    delete: number;
-    total: number;
-  };
 }

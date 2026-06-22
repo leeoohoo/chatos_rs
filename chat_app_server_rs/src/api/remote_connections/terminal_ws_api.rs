@@ -1,6 +1,6 @@
 use axum::{
     extract::ws::{Message, WebSocket},
-    extract::{Path, Query, WebSocketUpgrade},
+    extract::{Path, WebSocketUpgrade},
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
@@ -16,13 +16,25 @@ use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService
 
 use super::{
     get_remote_terminal_manager, resolve_jump_connection_snapshot, ws_error_output,
-    RemoteTerminalEvent, RemoteTerminalWsQuery, WsInput, WsOutput,
+    RemoteTerminalEvent, WsInput, WsOutput,
 };
+
+pub(super) async fn send_startup_error_and_shutdown(
+    outbound_tx: mpsc::UnboundedSender<Message>,
+    payload: String,
+    challenge_task: tokio::task::JoinHandle<()>,
+    forward_task: tokio::task::JoinHandle<()>,
+) {
+    let _ = outbound_tx.send(Message::Text(payload));
+    challenge_task.abort();
+    let _ = challenge_task.await;
+    drop(outbound_tx);
+    let _ = forward_task.await;
+}
 
 pub(super) async fn remote_terminal_ws(
     auth: AuthUser,
     Path(id): Path<String>,
-    Query(query): Query<RemoteTerminalWsQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     let connection = match ensure_owned_remote_connection(&id, &auth).await {
@@ -39,10 +51,7 @@ pub(super) async fn remote_terminal_ws(
         .into_response(),
     };
 
-    let verification_code = query.verification_code;
-    ws.on_upgrade(move |socket| {
-        handle_remote_terminal_socket(resolved_connection, verification_code.clone(), socket)
-    })
+    ws.on_upgrade(move |socket| handle_remote_terminal_socket(resolved_connection, None, socket))
 }
 
 async fn handle_remote_terminal_socket(
@@ -120,26 +129,26 @@ async fn handle_remote_terminal_socket(
                             error = err.as_str(),
                             "Remote terminal startup failed"
                         );
-                        let _ = outbound_tx.send(Message::Text(
+                        send_startup_error_and_shutdown(
+                            outbound_tx,
                             serde_json::to_string(&ws_error_output(err)).unwrap_or_default(),
-                        ));
-                        challenge_task.abort();
-                        forward_task.abort();
-                        let _ = challenge_task.await;
-                        let _ = forward_task.await;
+                            challenge_task,
+                            forward_task,
+                        )
+                        .await;
                         return;
                     }
                     Err(err) => {
-                        let _ = outbound_tx.send(Message::Text(
+                        send_startup_error_and_shutdown(
+                            outbound_tx,
                             serde_json::to_string(&ws_error_output(format!(
                                 "remote terminal startup task failed: {err}"
                             )))
                             .unwrap_or_default(),
-                        ));
-                        challenge_task.abort();
-                        forward_task.abort();
-                        let _ = challenge_task.await;
-                        let _ = forward_task.await;
+                            challenge_task,
+                            forward_task,
+                        )
+                        .await;
                         return;
                     }
                 };

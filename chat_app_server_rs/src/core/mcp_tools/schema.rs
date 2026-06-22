@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{ParsedToolDefinition, ToolSchemaFormat};
+use super::ParsedToolDefinition;
 
 pub fn parse_tool_definition(tool: &Value) -> Option<ParsedToolDefinition> {
     let name = tool
@@ -26,28 +26,13 @@ pub fn parse_tool_definition(tool: &Value) -> Option<ParsedToolDefinition> {
     })
 }
 
-pub fn build_function_tool_schema(
-    name: &str,
-    description: &str,
-    parameters: &Value,
-    format: ToolSchemaFormat,
-) -> Value {
-    match format {
-        ToolSchemaFormat::LegacyChatCompletions => json!({
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-                "parameters": parameters
-            }
-        }),
-        ToolSchemaFormat::ResponsesStrict => json!({
-            "type": "function",
-            "name": name,
-            "description": description,
-            "parameters": normalize_json_schema(parameters)
-        }),
-    }
+pub fn build_function_tool_schema(name: &str, description: &str, parameters: &Value) -> Value {
+    json!({
+        "type": "function",
+        "name": name,
+        "description": description,
+        "parameters": normalize_json_schema(parameters)
+    })
 }
 
 fn default_tool_parameters() -> Value {

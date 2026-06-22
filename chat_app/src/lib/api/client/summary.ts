@@ -2,38 +2,8 @@ import type {
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
-  SessionSummaryJobConfigPayload,
-  SessionSummaryJobConfigResponse,
 } from './types';
 import type { ApiRequestFn } from './workspace';
-
-export const getConversationSummaryJobConfig = (
-  request: ApiRequestFn,
-  userId?: string,
-): Promise<SessionSummaryJobConfigResponse> => {
-  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-  return request<SessionSummaryJobConfigResponse>(`/session-summary-job-config${params}`);
-};
-
-export const updateConversationSummaryJobConfig = (
-  request: ApiRequestFn,
-  payload: SessionSummaryJobConfigPayload,
-): Promise<SessionSummaryJobConfigResponse> => {
-  return request<SessionSummaryJobConfigResponse>('/session-summary-job-config', {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  });
-};
-
-export const patchConversationSummaryJobConfig = (
-  request: ApiRequestFn,
-  payload: SessionSummaryJobConfigPayload,
-): Promise<SessionSummaryJobConfigResponse> => {
-  return request<SessionSummaryJobConfigResponse>('/session-summary-job-config', {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-};
 
 export const getConversationSummaries = async (
   request: ApiRequestFn,

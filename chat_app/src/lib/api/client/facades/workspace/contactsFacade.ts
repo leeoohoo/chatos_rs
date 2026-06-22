@@ -5,6 +5,7 @@ import type {
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
   ContactResponse,
+  ContactTaskRunnerUpdatePayload,
   DeleteSuccessResponse,
   PagingOptions,
 } from '../../types';
@@ -15,6 +16,7 @@ export interface WorkspaceContactFacade {
   getContact(contactId: string): Promise<ContactResponse>;
   createContact(data: { agent_id: string; agent_name_snapshot?: string; user_id?: string }): Promise<ContactCreateResponse>;
   deleteContact(contactId: string): Promise<DeleteSuccessResponse>;
+  updateContactTaskRunnerConfig(contactId: string, data: ContactTaskRunnerUpdatePayload): Promise<ContactResponse>;
   getContactProjectMemories(
     contactId: string,
     projectId: string,
@@ -36,6 +38,9 @@ export const workspaceContactFacade: WorkspaceContactFacade & ThisType<ApiClient
   },
   async deleteContact(contactId) {
     return workspaceApi.deleteContact(this.getRequestFn(), contactId);
+  },
+  async updateContactTaskRunnerConfig(contactId, data) {
+    return workspaceApi.updateContactTaskRunnerConfig(this.getRequestFn(), contactId, data);
   },
   async getContactProjectMemories(contactId, projectId, paging) {
     return workspaceApi.getContactProjectMemories(this.getRequestFn(), contactId, projectId, paging);

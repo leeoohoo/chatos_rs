@@ -1,5 +1,6 @@
 import React from 'react';
-import { useChatStore } from '../lib/store';
+import { useI18n } from '../i18n/I18nProvider';
+import type { ChatStore as SessionListStoreHook } from '../lib/store/createChatStoreWithBackend';
 import { cn } from '../lib/utils';
 import { SessionListDialogs } from './sessionList/SessionListDialogs';
 import {
@@ -20,7 +21,7 @@ interface SessionListProps {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   className?: string;
-  store?: typeof useChatStore;
+  store?: SessionListStoreHook;
   onSelectSession?: (sessionId: string) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
   onOpenSessionRuntimeContext?: (sessionId: string) => void;
@@ -40,6 +41,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     activeSummarySessionId,
     activeRuntimeContextSessionId,
   } = props;
+  const { t, locale } = useI18n();
   const isCollapsed = collapsed ?? !isOpen;
   const controller = useSessionListController({
     store,
@@ -48,6 +50,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     onOpenSessionRuntimeContext,
     isCollapsed,
   });
+  const formatTimeAgoForLocale = React.useCallback(
+    (date: string | Date | undefined | null) => formatTimeAgo(date, t, locale),
+    [locale, t],
+  );
 
   return (
     <div
@@ -67,9 +73,8 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             summarySessionId={controller.contactSessionState.activeSummaryDisplaySessionId}
             runtimeContextSessionId={activeRuntimeContextSessionId}
             displaySessionRuntimeIdMap={controller.contactSessionState.displaySessionRuntimeIdMap}
+            taskRunnerEnabledBySessionId={controller.contactSessionState.taskRunnerEnabledBySessionId}
             sessionChatState={controller.sessionChatState}
-            taskReviewPanelsBySession={controller.taskReviewPanelsBySession}
-            uiPromptPanelsBySession={controller.uiPromptPanelsBySession}
             hasMore={false}
             isRefreshing={controller.isRefreshing}
             isLoadingMore={false}
@@ -87,11 +92,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             }}
             onOpenSummary={controller.sessionListActions.handleOpenSummary}
             onOpenRuntimeContext={controller.sessionListActions.handleOpenRuntimeContext}
+            onOpenTaskRunnerConfig={controller.openTaskRunnerConfig}
             onDeleteSession={controller.deleteActions.handleDeleteSession}
             onLoadMore={() => {}}
             onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgo}
+            formatTimeAgo={formatTimeAgoForLocale}
             getSessionStatus={getSessionStatus}
           />
 
@@ -101,22 +107,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             expanded={controller.sectionExpansion.projectsExpanded}
             projects={controller.projects}
             currentProjectId={controller.currentProject?.id}
-            projectRunStateById={controller.projectRunState.projectRunStateById}
-            runningProjectId={controller.projectRunState.runningProjectId}
-            projectLiveStateById={controller.projectRunState.projectLiveStateById}
             onToggle={controller.sectionExpansion.handleToggleProjectsSection}
             onCreate={controller.sessionListActions.openProjectModal}
             onSelect={(projectId) => {
               void controller.sessionListActions.handleSelectProject(projectId);
-            }}
-            onRunProject={(project, targetId) => {
-              void controller.projectRunState.handleRunProject(project.id, targetId);
-            }}
-            onStopProject={(project) => {
-              void controller.projectRunState.handleStopProject(project.id);
-            }}
-            onRestartProject={(project) => {
-              void controller.projectRunState.handleRestartProject(project.id);
             }}
             onArchive={(projectId) => {
               void controller.deleteActions.handleArchiveProject(projectId);
@@ -125,24 +119,28 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
           />
 
-          <div className="my-2 border-t border-border" />
+          {controller.terminalVisibility.showTerminalSection && (
+            <>
+              <div className="my-2 border-t border-border" />
 
-          <TerminalSection
-            expanded={controller.sectionExpansion.terminalsExpanded}
-            terminals={controller.terminals}
-            currentTerminalId={controller.currentTerminal?.id}
-            isRefreshing={controller.isRefreshingTerminals}
-            onToggle={controller.sectionExpansion.handleToggleTerminalsSection}
-            onRefresh={controller.sessionListActions.handleRefreshTerminals}
-            onCreate={controller.sessionListActions.openTerminalModal}
-            onSelect={(terminalId) => {
-              void controller.sessionListActions.handleSelectTerminal(terminalId);
-            }}
-            onDelete={controller.deleteActions.handleDeleteTerminal}
-            onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
-            closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgo}
-          />
+              <TerminalSection
+                expanded={controller.sectionExpansion.terminalsExpanded}
+                terminals={controller.terminals}
+                currentTerminalId={controller.currentTerminal?.id}
+                isRefreshing={controller.isRefreshingTerminals}
+                onToggle={controller.sectionExpansion.handleToggleTerminalsSection}
+                onRefresh={controller.sessionListActions.handleRefreshTerminals}
+                onCreate={controller.sessionListActions.openTerminalModal}
+                onSelect={(terminalId) => {
+                  void controller.sessionListActions.handleSelectTerminal(terminalId);
+                }}
+                onDelete={controller.deleteActions.handleDeleteTerminal}
+                onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
+                closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
+                formatTimeAgo={formatTimeAgoForLocale}
+              />
+            </>
+          )}
 
           <div className="my-2 border-t border-border" />
 
@@ -168,7 +166,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             onDelete={controller.deleteActions.handleDeleteRemoteConnection}
             onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
             closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
-            formatTimeAgo={formatTimeAgo}
+            formatTimeAgo={formatTimeAgoForLocale}
           />
         </div>
       )}
@@ -182,6 +180,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setSelectedContactAgentId={controller.contactSessionCreator.setSelectedContactAgentId}
         setContactError={controller.contactSessionCreator.setContactError}
         handleCreateContactSession={controller.contactSessionCreator.handleCreateContactSession}
+        taskRunnerContact={controller.taskRunnerContact}
+        taskRunnerAgentAccounts={controller.taskRunnerAgentAccounts}
+        taskRunnerAgentAccountsLoading={controller.taskRunnerAgentAccountsLoading}
+        taskRunnerError={controller.taskRunnerError}
+        taskRunnerSaving={controller.taskRunnerSaving}
+        closeTaskRunnerConfig={controller.closeTaskRunnerConfig}
+        saveTaskRunnerConfig={controller.saveTaskRunnerConfig}
         projectModalOpen={controller.projectModalOpen}
         projectRoot={controller.projectRoot}
         projectError={controller.projectError}
@@ -270,6 +275,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         dirPickerTarget={controller.localFsPickers.dirPickerTarget}
         dirPickerPath={controller.localFsPickers.dirPickerPath}
         dirPickerParent={controller.localFsPickers.dirPickerParent}
+        dirPickerWritable={controller.localFsPickers.dirPickerWritable}
         dirPickerLoading={controller.localFsPickers.dirPickerLoading}
         dirPickerItems={controller.localFsPickers.dirPickerItems}
         dirPickerError={controller.localFsPickers.dirPickerError}

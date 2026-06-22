@@ -1,177 +1,32 @@
 import type {
-  ProjectChangeLogResponse,
-  ProjectChangeMarkResponse,
-  ProjectChangeSummaryResponse,
+  ProjectRunConfigFileSummaryResponse,
+  ProjectRunCustomToolchainResponse,
+  ProjectRunEnvironmentResponse,
+  ProjectRunValidationIssueResponse,
   ProjectRunCatalogResponse,
   ProjectRunTargetResponse,
+  ProjectRunToolchainOptionResponse,
 } from '../api/client/types';
 import type {
-  ChangeLogItem,
-  ProjectChangeMark,
-  ProjectChangeSummary,
+  ProjectRunConfigFileSummary,
+  ProjectRunCustomToolchain,
   ProjectRunCatalog,
+  ProjectRunEnvironment,
+  ProjectRunState,
   ProjectRunTarget,
+  ProjectRunToolchainOption,
+  ProjectRunValidationIssue,
 } from '../../types';
-
-export type ChangeKind = 'create' | 'edit' | 'delete';
-
-type UnknownRecord = Record<string, unknown>;
-
-const asRecord = (value: unknown): UnknownRecord | null => (
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as UnknownRecord
-    : null
-);
-
-const readValue = (record: UnknownRecord | null, key: string): unknown => record?.[key];
-
-const readFirst = (record: UnknownRecord | null, keys: string[]): unknown => {
-  for (const key of keys) {
-    const value = readValue(record, key);
-    if (value !== undefined) {
-      return value;
-    }
-  }
-  return undefined;
-};
-
-const readString = (record: UnknownRecord | null, key: string, fallback = ''): string => {
-  const value = readValue(record, key);
-  return typeof value === 'string' ? value : fallback;
-};
-
-const readStringFirst = (record: UnknownRecord | null, keys: string[], fallback = ''): string => {
-  const value = readFirst(record, keys);
-  return typeof value === 'string' ? value : fallback;
-};
-
-const readNullableStringFirst = (record: UnknownRecord | null, keys: string[]): string | null => {
-  const value = readFirst(record, keys);
-  return typeof value === 'string' ? value : null;
-};
-
-const readNumberFirst = (record: UnknownRecord | null, keys: string[], fallback = 0): number => {
-  const value = Number(readFirst(record, keys));
-  return Number.isFinite(value) ? value : fallback;
-};
-
-const readBooleanFirst = (record: UnknownRecord | null, keys: string[], fallback = false): boolean => (
-  Boolean(readFirst(record, keys) ?? fallback)
-);
-
-export const normalizeChangeKind = (value: unknown): ChangeKind => {
-  const kind = String(value ?? '').trim().toLowerCase();
-  if (kind === 'create') return 'create';
-  if (kind === 'delete') return 'delete';
-  return 'edit';
-};
-
-export const normalizeChangeLog = (raw: ProjectChangeLogResponse | unknown): ChangeLogItem => {
-  const record = asRecord(raw);
-  const action = readString(record, 'action');
-  return {
-    id: readString(record, 'id'),
-    serverName: readStringFirst(record, ['server_name', 'serverName']),
-    path: readString(record, 'path'),
-    action,
-    changeKind: (readFirst(record, ['change_kind', 'changeKind']) ?? (action === 'delete' ? 'delete' : 'edit')) as ChangeLogItem['changeKind'],
-    bytes: readNumberFirst(record, ['bytes']),
-    sha256: readNullableStringFirst(record, ['sha256']),
-    diff: readNullableStringFirst(record, ['diff']),
-    sessionId: readNullableStringFirst(record, ['conversation_id', 'conversationId']),
-    runId: readNullableStringFirst(record, ['run_id', 'runId']),
-    confirmed: readBooleanFirst(record, ['confirmed']),
-    confirmedAt: readNullableStringFirst(record, ['confirmed_at', 'confirmedAt']),
-    confirmedBy: readNullableStringFirst(record, ['confirmed_by', 'confirmedBy']),
-    createdAt: readStringFirst(record, ['created_at', 'createdAt']),
-    sessionTitle: readNullableStringFirst(record, ['conversation_title', 'conversationTitle']),
-  };
-};
-
-const normalizeProjectChangeMark = (raw: ProjectChangeMarkResponse | unknown): ProjectChangeMark => {
-  const record = asRecord(raw);
-  return {
-    path: readString(record, 'path'),
-    relativePath: readStringFirst(record, ['relative_path', 'relativePath']),
-    kind: normalizeChangeKind(readValue(record, 'kind')),
-    lastChangeId: readStringFirst(record, ['last_change_id', 'lastChangeId']),
-    updatedAt: readStringFirst(record, ['updated_at', 'updatedAt']),
-  };
-};
-
-const areChangeMarksEqual = (left: ProjectChangeMark[], right: ProjectChangeMark[]): boolean => {
-  if (left.length !== right.length) return false;
-  for (let i = 0; i < left.length; i += 1) {
-    const a = left[i];
-    const b = right[i];
-    if (
-      a.path !== b.path ||
-      a.relativePath !== b.relativePath ||
-      a.kind !== b.kind ||
-      a.lastChangeId !== b.lastChangeId ||
-      a.updatedAt !== b.updatedAt
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
-
-export const EMPTY_CHANGE_SUMMARY: ProjectChangeSummary = {
-  fileMarks: [],
-  deletedMarks: [],
-  counts: {
-    create: 0,
-    edit: 0,
-    delete: 0,
-    total: 0,
-  },
-};
-
-export const normalizeProjectChangeSummary = (raw: ProjectChangeSummaryResponse | unknown): ProjectChangeSummary => {
-  const record = asRecord(raw);
-  const rawFileMarks = readFirst(record, ['file_marks', 'fileMarks']);
-  const rawDeletedMarks = readFirst(record, ['deleted_marks', 'deletedMarks']);
-  const fileMarks = Array.isArray(rawFileMarks)
-    ? rawFileMarks.map(normalizeProjectChangeMark)
-    : [];
-  const deletedMarks = Array.isArray(rawDeletedMarks)
-    ? rawDeletedMarks.map(normalizeProjectChangeMark)
-    : [];
-  const countsRaw = asRecord(readValue(record, 'counts')) ?? {};
-  const create = Number(readValue(countsRaw, 'create') ?? 0);
-  const edit = Number(readValue(countsRaw, 'edit') ?? 0);
-  const del = Number(readValue(countsRaw, 'delete') ?? 0);
-  const total = Number(readValue(countsRaw, 'total') ?? create + edit + del);
-  return {
-    fileMarks,
-    deletedMarks,
-    counts: {
-      create: Number.isFinite(create) ? create : 0,
-      edit: Number.isFinite(edit) ? edit : 0,
-      delete: Number.isFinite(del) ? del : 0,
-      total: Number.isFinite(total) ? total : 0,
-    },
-  };
-};
-
-export const isProjectChangeSummaryEqual = (
-  left: ProjectChangeSummary,
-  right: ProjectChangeSummary,
-): boolean => {
-  if (
-    left.counts.create !== right.counts.create ||
-    left.counts.edit !== right.counts.edit ||
-    left.counts.delete !== right.counts.delete ||
-    left.counts.total !== right.counts.total
-  ) {
-    return false;
-  }
-  return (
-    areChangeMarksEqual(left.fileMarks, right.fileMarks)
-    && areChangeMarksEqual(left.deletedMarks, right.deletedMarks)
-  );
-};
+import {
+  asRecord,
+  readBooleanFirst,
+  readFirst,
+  readNumberFirst,
+  readString,
+  readStringFirst,
+  readValue,
+} from './normalizerUtils';
+import { normalizeTerminal } from './terminals';
 
 export const normalizeProjectRunTarget = (raw: ProjectRunTargetResponse | unknown): ProjectRunTarget => {
   const record = asRecord(raw);
@@ -180,11 +35,19 @@ export const normalizeProjectRunTarget = (raw: ProjectRunTargetResponse | unknow
     id: String(readValue(record, 'id') || ''),
     label: String(readValue(record, 'label') || command || ''),
     kind: String(readValue(record, 'kind') || 'custom'),
+    language: readStringFirst(record, ['language']) || null,
     cwd: String(readValue(record, 'cwd') || ''),
     command,
     source: String(readValue(record, 'source') || 'auto'),
     confidence: readNumberFirst(record, ['confidence']),
     isDefault: readBooleanFirst(record, ['is_default', 'isDefault']),
+    entrypoint: readStringFirst(record, ['entrypoint', 'entry_point']) || null,
+    manifestPath: readStringFirst(record, ['manifest_path', 'manifestPath']) || null,
+    requiredToolchains: Array.isArray(readFirst(record, ['required_toolchains', 'requiredToolchains']))
+      ? (readFirst(record, ['required_toolchains', 'requiredToolchains']) as unknown[])
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+      : [],
   };
 };
 
@@ -203,5 +66,165 @@ export const normalizeProjectRunCatalog = (raw: ProjectRunCatalogResponse | unkn
     errorMessage: (readFirst(record, ['error_message', 'errorMessage']) ?? null) as ProjectRunCatalog['errorMessage'],
     analyzedAt: (readFirst(record, ['analyzed_at', 'analyzedAt']) ?? null) as ProjectRunCatalog['analyzedAt'],
     updatedAt: (readFirst(record, ['updated_at', 'updatedAt']) ?? null) as ProjectRunCatalog['updatedAt'],
+  };
+};
+
+export const normalizeProjectRunToolchainOption = (
+  raw: ProjectRunToolchainOptionResponse | unknown,
+): ProjectRunToolchainOption => {
+  const record = asRecord(raw);
+  return {
+    id: String(readValue(record, 'id') || ''),
+    kind: String(readValue(record, 'kind') || ''),
+    label: String(readValue(record, 'label') || readValue(record, 'path') || ''),
+    version: readStringFirst(record, ['version']) || null,
+    path: String(readValue(record, 'path') || ''),
+    source: String(readValue(record, 'source') || 'auto'),
+    isDefault: readBooleanFirst(record, ['is_default', 'isDefault']),
+  };
+};
+
+export const normalizeProjectRunCustomToolchain = (
+  raw: ProjectRunCustomToolchainResponse | unknown,
+): ProjectRunCustomToolchain => {
+  const record = asRecord(raw);
+  return {
+    kind: String(readValue(record, 'kind') || ''),
+    label: String(readValue(record, 'label') || ''),
+    path: String(readValue(record, 'path') || ''),
+  };
+};
+
+export const normalizeProjectRunConfigFileSummary = (
+  raw: ProjectRunConfigFileSummaryResponse | unknown,
+): ProjectRunConfigFileSummary => {
+  const record = asRecord(raw);
+  return {
+    kind: String(readValue(record, 'kind') || ''),
+    label: String(readValue(record, 'label') || ''),
+    path: String(readValue(record, 'path') || ''),
+    preview: readStringFirst(record, ['preview']) || null,
+    source: String(readValue(record, 'source') || 'project-local'),
+  };
+};
+
+export const normalizeProjectRunValidationIssue = (
+  raw: ProjectRunValidationIssueResponse | unknown,
+): ProjectRunValidationIssue => {
+  const record = asRecord(raw);
+  return {
+    kind: String(readValue(record, 'kind') || ''),
+    message: String(readValue(record, 'message') || ''),
+    targetId: readStringFirst(record, ['target_id', 'targetId']) || null,
+    targetLabel: readStringFirst(record, ['target_label', 'targetLabel']) || null,
+    path: readStringFirst(record, ['path']) || null,
+    hint: readStringFirst(record, ['hint']) || null,
+  };
+};
+
+export const normalizeProjectRunEnvironment = (
+  raw: ProjectRunEnvironmentResponse | unknown,
+): ProjectRunEnvironment => {
+  const record = asRecord(raw);
+  const rawOptions = asRecord(readFirst(record, ['options_by_kind', 'optionsByKind'])) || {};
+  const optionsByKind = Object.fromEntries(
+    Object.entries(rawOptions).map(([kind, value]) => [
+      kind,
+      Array.isArray(value)
+        ? value
+          .map(normalizeProjectRunToolchainOption)
+          .filter((item) => item.id && item.path)
+        : [],
+    ]),
+  );
+
+  const selectedToolchains = asRecord(readFirst(record, ['selected_toolchains', 'selectedToolchains'])) || {};
+  const customToolchains = asRecord(readFirst(record, ['custom_toolchains', 'customToolchains'])) || {};
+  const envVars = asRecord(readFirst(record, ['env_vars', 'envVars'])) || {};
+  const rawConfigFiles = readFirst(record, ['config_files', 'configFiles']);
+  const rawValidationIssues = readFirst(record, ['validation_issues', 'validationIssues']);
+
+  return {
+    projectId: String(readFirst(record, ['project_id', 'projectId']) ?? ''),
+    userId: readStringFirst(record, ['user_id', 'userId']) || null,
+    optionsByKind,
+    configFiles: Array.isArray(rawConfigFiles)
+      ? rawConfigFiles
+        .map(normalizeProjectRunConfigFileSummary)
+        .filter((item) => item.kind && item.path)
+      : [],
+    validationIssues: Array.isArray(rawValidationIssues)
+      ? rawValidationIssues
+        .map(normalizeProjectRunValidationIssue)
+        .filter((item) => item.kind && item.message)
+      : [],
+    selectedToolchains: Object.fromEntries(
+      Object.entries(selectedToolchains)
+        .map(([key, value]) => [key, String(value || '').trim()])
+        .filter(([, value]) => Boolean(value)),
+    ),
+    customToolchains: (() => {
+      const out: Record<string, ProjectRunCustomToolchain> = {};
+      Object.entries(customToolchains as Record<string, unknown>).forEach(([key, value]) => {
+        const normalized = normalizeProjectRunCustomToolchain(value);
+        const normalizedKind = normalized.kind.trim() || key.trim();
+        if (!normalizedKind || !normalized.path.trim()) {
+          return;
+        }
+        out[normalizedKind] = {
+          ...normalized,
+          kind: normalizedKind,
+        };
+      });
+      return out;
+    })(),
+    envVars: Object.fromEntries(
+      Object.entries(envVars)
+        .map(([key, value]) => [key, String(value ?? '')]),
+    ),
+    terminalUiEnabled: readBooleanFirst(record, ['terminal_ui_enabled', 'terminalUiEnabled'], true),
+    updatedAt: readStringFirst(record, ['updated_at', 'updatedAt']) || null,
+  };
+};
+
+export const normalizeProjectRunState = (
+  raw: import('../api/client/types').ProjectRunStateResponse | unknown,
+): ProjectRunState => {
+  const record = asRecord(raw);
+  const terminalRaw = readValue(record, 'terminal');
+  const terminal = terminalRaw ? normalizeTerminal(terminalRaw) : null;
+  const rawInstances = readValue(record, 'instances');
+  const instances = Array.isArray(rawInstances)
+    ? rawInstances
+      .map((item) => {
+        const entry = asRecord(item);
+        const terminalValue = readValue(entry, 'terminal');
+        const normalizedTerminal = terminalValue ? normalizeTerminal(terminalValue) : null;
+        const terminalId = readStringFirst(entry, ['terminal_id', 'terminalId']) || normalizedTerminal?.id || '';
+        if (!terminalId) {
+          return null;
+        }
+        return {
+          terminalId,
+          terminalName: readStringFirst(entry, ['terminal_name', 'terminalName']) || normalizedTerminal?.name || terminalId,
+          cwd: readString(entry, 'cwd') || normalizedTerminal?.cwd || '',
+          status: readString(entry, 'status') || normalizedTerminal?.status || 'idle',
+          busy: readBooleanFirst(entry, ['busy']),
+          running: readBooleanFirst(entry, ['running']),
+          terminal: normalizedTerminal,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    : [];
+  return {
+    projectId: readStringFirst(record, ['project_id', 'projectId']),
+    running: readBooleanFirst(record, ['running']),
+    busy: readBooleanFirst(record, ['busy']),
+    status: readString(record, 'status') || 'idle',
+    terminalId: readStringFirst(record, ['terminal_id', 'terminalId']) || terminal?.id || null,
+    terminalName: readStringFirst(record, ['terminal_name', 'terminalName']) || terminal?.name || null,
+    cwd: readString(record, 'cwd') || terminal?.cwd || null,
+    terminal,
+    instances,
   };
 };

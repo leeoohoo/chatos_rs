@@ -1,6 +1,10 @@
 import type { FsEntry, RemoteConnection, Session } from '../../types';
 import type { FsEntryResponse } from '../../lib/api/client/types';
-import { normalizeFsEntry as normalizeDomainFsEntry } from '../../lib/domain/filesystem';
+import {
+  normalizeFsEntry as normalizeDomainFsEntry,
+} from '../../lib/domain/filesystem';
+import type { TranslateFn } from '../../i18n/I18nProvider';
+import { UI_MESSAGES } from '../../i18n/messages';
 
 export type RemoteAuthType = 'private_key' | 'private_key_cert' | 'password';
 export type HostKeyPolicy = 'strict' | 'accept_new';
@@ -55,12 +59,38 @@ export interface RemoteConnectionFormValues {
   jumpPassword: string;
 }
 
-export const formatTimeAgo = (date: string | Date | undefined | null) => {
+const formatFallbackMessage = (
+  template: string,
+  params?: Record<string, string | number>,
+): string => {
+  if (!params) {
+    return template;
+  }
+  return template.replace(/\{(\w+)\}/g, (_match, key: string) => (
+    Object.prototype.hasOwnProperty.call(params, key)
+      ? String(params[key])
+      : `{${key}}`
+  ));
+};
+
+export const translateSessionListMessage = (
+  t: TranslateFn | undefined,
+  key: string,
+  params?: Record<string, string | number>,
+): string => (
+  t ? t(key, params) : formatFallbackMessage(UI_MESSAGES['zh-CN'][key] || key, params)
+);
+
+export const formatTimeAgo = (
+  date: string | Date | undefined | null,
+  t?: TranslateFn,
+  locale = 'zh-CN',
+) => {
   const now = new Date();
   let past: Date;
 
   if (!date) {
-    return '时间未知';
+    return translateSessionListMessage(t, 'sessionList.time.unknown');
   }
 
   if (typeof date === 'string') {
@@ -74,16 +104,22 @@ export const formatTimeAgo = (date: string | Date | undefined | null) => {
   }
 
   if (!past || isNaN(past.getTime())) {
-    return '时间未知';
+    return translateSessionListMessage(t, 'sessionList.time.unknown');
   }
 
   const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
 
-  if (diffInSeconds < 60) return '刚刚';
-  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}分钟前`;
-  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}小时前`;
-  if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)}天前`;
-  return past.toLocaleDateString('zh-CN');
+  if (diffInSeconds < 60) return translateSessionListMessage(t, 'sessionList.time.justNow');
+  if (diffInSeconds < 3600) {
+    return translateSessionListMessage(t, 'sessionList.time.minutesAgo', { count: Math.floor(diffInSeconds / 60) });
+  }
+  if (diffInSeconds < 86400) {
+    return translateSessionListMessage(t, 'sessionList.time.hoursAgo', { count: Math.floor(diffInSeconds / 3600) });
+  }
+  if (diffInSeconds < 2592000) {
+    return translateSessionListMessage(t, 'sessionList.time.daysAgo', { count: Math.floor(diffInSeconds / 86400) });
+  }
+  return past.toLocaleDateString(locale === 'en-US' ? 'en-US' : 'zh-CN');
 };
 
 export const getSessionStatus = (session: Session): 'active' | 'archiving' | 'archived' => {
@@ -101,44 +137,28 @@ export const deriveNameFromPath = (path: string, fallback: string): string => {
   return parts[parts.length - 1] || fallback;
 };
 
-export const deriveParentPath = (path: string): string | null => {
-  const trimmed = path.trim();
-  if (/^[A-Za-z]:[\\/]?$/.test(trimmed)) {
-    return `${trimmed.slice(0, 2)}\\`;
-  }
-  const normalized = path.trim().replace(/[\\/]+$/, '');
-  if (!normalized) return null;
-  const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
-  if (idx < 0) return null;
-  if (idx === 0) return normalized[0];
-  const parent = normalized.slice(0, idx);
-  if (/^[A-Za-z]:$/.test(parent)) {
-    return `${parent}\\`;
-  }
-  return parent;
-};
-
 export const normalizeFsEntry = (raw: FsEntryResponse | unknown, fallbackIsDir: boolean): FsEntry => {
   return normalizeDomainFsEntry(raw, { fallbackIsDir });
 };
 
-export const getKeyFilePickerTitle = (target: KeyFilePickerTarget): string => {
+export const getKeyFilePickerTitle = (target: KeyFilePickerTarget, t?: TranslateFn): string => {
   if (target === 'private_key') {
-    return '选择私钥文件';
+    return translateSessionListMessage(t, 'sessionList.keyFilePicker.privateKey');
   }
   if (target === 'certificate') {
-    return '选择证书文件';
+    return translateSessionListMessage(t, 'sessionList.keyFilePicker.certificate');
   }
   if (target === 'jump_certificate') {
-    return '选择跳板机证书文件';
+    return translateSessionListMessage(t, 'sessionList.keyFilePicker.jumpCertificate');
   }
-  return '选择跳板机私钥文件';
+  return translateSessionListMessage(t, 'sessionList.keyFilePicker.jumpPrivateKey');
 };
 
 export const buildRemoteConnectionPayload = (
   values: RemoteConnectionFormValues,
   availableRemoteConnections: RemoteConnection[] = [],
   editingRemoteConnectionId?: string | null,
+  t?: TranslateFn,
 ): { payload: RemoteConnectionFormPayload } | { error: string } => {
   const {
     name,
@@ -163,19 +183,19 @@ export const buildRemoteConnectionPayload = (
   } = values;
 
   if (!host.trim()) {
-    return { error: '请输入主机地址' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.hostRequired') };
   }
   if (!username.trim()) {
-    return { error: '请输入用户名' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.usernameRequired') };
   }
   if (authType === 'password' && !password.trim()) {
-    return { error: '密码模式需要填写密码' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.passwordRequired') };
   }
   if (authType !== 'password' && !privateKeyPath.trim()) {
-    return { error: '请输入私钥路径' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.privateKeyRequired') };
   }
   if (authType === 'private_key_cert' && !certificatePath.trim()) {
-    return { error: '私钥+证书模式需要证书路径' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.certificateRequired') };
   }
   const normalizedJumpConnectionId = jumpConnectionId.trim();
   const selectedJumpConnection = availableRemoteConnections.find(
@@ -183,7 +203,7 @@ export const buildRemoteConnectionPayload = (
   );
 
   if (jumpEnabled && jumpMode === 'existing' && !selectedJumpConnection) {
-    return { error: '请选择已有远端连接作为跳板机' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.jumpExistingRequired') };
   }
   if (
     jumpEnabled
@@ -191,24 +211,24 @@ export const buildRemoteConnectionPayload = (
     && editingRemoteConnectionId
     && normalizedJumpConnectionId === editingRemoteConnectionId
   ) {
-    return { error: '跳板机不能选择当前正在编辑的连接' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.jumpCannotUseSelf') };
   }
   if (jumpEnabled && jumpMode === 'manual' && (!jumpHost.trim() || !jumpUsername.trim())) {
-    return { error: '启用跳板机后需填写跳板机主机和用户名' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.jumpHostRequired') };
   }
   if (jumpEnabled && jumpMode === 'manual' && jumpCertificatePath.trim() && !jumpPrivateKeyPath.trim()) {
-    return { error: '跳板机证书模式需要先填写跳板机私钥路径' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.jumpCertificateNeedsKey') };
   }
 
   const parsedPort = Number(port);
   if (!Number.isFinite(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
-    return { error: '端口范围必须在 1-65535' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.portRange') };
   }
   const effectiveJumpPort = jumpMode === 'existing'
     ? Number(selectedJumpConnection?.port ?? 22)
     : Number(jumpPort);
   if (jumpEnabled && (!Number.isFinite(effectiveJumpPort) || effectiveJumpPort < 1 || effectiveJumpPort > 65535)) {
-    return { error: '跳板机端口范围必须在 1-65535' };
+    return { error: translateSessionListMessage(t, 'remoteConnection.error.jumpPortRange') };
   }
   const effectiveJumpHost = jumpMode === 'existing'
     ? selectedJumpConnection?.host

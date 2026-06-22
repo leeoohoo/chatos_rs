@@ -172,10 +172,171 @@ where
 }
 
 fn parse_tool_args(args_val: Value) -> Result<Value, serde_json::Error> {
-    if let Some(raw) = args_val.as_str() {
-        serde_json::from_str::<Value>(raw)
+    match args_val {
+        Value::String(raw) => parse_tool_args_from_str(raw.as_str()),
+        other => Ok(other),
+    }
+}
+
+fn parse_tool_args_from_str(raw: &str) -> Result<Value, serde_json::Error> {
+    if let Ok(value) = serde_json::from_str::<Value>(raw) {
+        return parse_nested_json_string_value(value);
+    }
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return serde_json::from_str::<Value>(raw);
+    }
+
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(stripped) = strip_markdown_fence(trimmed) {
+        candidates.push(stripped);
+    }
+    if let Some(embedded) = extract_bracket_json(trimmed, '{', '}') {
+        candidates.push(embedded);
+    }
+    if let Some(embedded) = extract_bracket_json(trimmed, '[', ']') {
+        candidates.push(embedded);
+    }
+    candidates.push(trimmed.to_string());
+
+    for candidate in candidates {
+        if let Ok(value) = serde_json::from_str::<Value>(candidate.as_str()) {
+            return parse_nested_json_string_value(value);
+        }
+        let repaired = remove_trailing_commas(candidate.as_str());
+        if repaired != candidate {
+            if let Ok(value) = serde_json::from_str::<Value>(repaired.as_str()) {
+                return parse_nested_json_string_value(value);
+            }
+        }
+    }
+
+    serde_json::from_str::<Value>(raw)
+}
+
+fn parse_nested_json_string_value(value: Value) -> Result<Value, serde_json::Error> {
+    let Some(inner) = value.as_str() else {
+        return Ok(value);
+    };
+    let trimmed = inner.trim();
+    if trimmed.is_empty() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+    parse_tool_args_from_str(trimmed).or(Ok(value))
+}
+
+fn strip_markdown_fence(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if !trimmed.starts_with("```") {
+        return None;
+    }
+    let mut lines = trimmed.lines();
+    let first_line = lines.next().unwrap_or_default();
+    if !first_line.trim_start().starts_with("```") {
+        return None;
+    }
+
+    let mut payload_lines = Vec::new();
+    for line in lines {
+        if line.trim_start().starts_with("```") {
+            break;
+        }
+        payload_lines.push(line);
+    }
+
+    let joined = payload_lines.join("\n");
+    let candidate = joined.trim();
+    if candidate.is_empty() {
+        None
     } else {
-        Ok(args_val)
+        Some(candidate.to_string())
+    }
+}
+
+fn extract_bracket_json(raw: &str, open: char, close: char) -> Option<String> {
+    let start = raw.find(open)?;
+    let end = raw.rfind(close)?;
+    if end <= start {
+        return None;
+    }
+    let candidate = raw[start..=end].trim();
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_string())
+    }
+}
+
+fn remove_trailing_commas(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut escape = false;
+
+    for ch in raw.chars() {
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+
+        if ch == '}' || ch == ']' {
+            while out.ends_with(char::is_whitespace) {
+                out.pop();
+            }
+            if out.ends_with(',') {
+                out.pop();
+            }
+            out.push(ch);
+            continue;
+        }
+
+        out.push(ch);
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::parse_tool_args;
+
+    #[test]
+    fn parse_tool_args_accepts_nested_json_string() {
+        let nested = serde_json::to_string("{\"title\":\"demo\"}").expect("escape nested json");
+        let value =
+            parse_tool_args(serde_json::Value::String(nested)).expect("nested json should parse");
+        assert_eq!(value, json!({"title": "demo"}));
+    }
+
+    #[test]
+    fn parse_tool_args_accepts_markdown_fenced_json() {
+        let raw = "```json\n{\"title\":\"demo\"}\n```".to_string();
+        let value =
+            parse_tool_args(serde_json::Value::String(raw)).expect("fenced json should parse");
+        assert_eq!(value, json!({"title": "demo"}));
+    }
+
+    #[test]
+    fn parse_tool_args_accepts_trailing_commas() {
+        let raw = "{\"tasks\":[{\"title\":\"a\",},],}".to_string();
+        let value = parse_tool_args(serde_json::Value::String(raw))
+            .expect("json with trailing commas should parse");
+        assert_eq!(value, json!({"tasks": [{"title": "a"}]}));
     }
 }
 

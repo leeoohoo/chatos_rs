@@ -33,10 +33,23 @@ const parseSessionMetadata = (metadata: unknown): Record<string, unknown> => {
   return {};
 };
 
+const getSessionMetadataSource = (metadata: unknown): Record<string, unknown> => {
+  const meta = parseSessionMetadata(metadata);
+  const source = asRecord(readValue(meta, 'source_metadata'));
+  return source ?? meta;
+};
+
+const getMutableSessionMetadataSource = (metadata: Record<string, unknown>): Record<string, unknown> => {
+  const source = asRecord(readValue(metadata, 'source_metadata'));
+  return source
+    ? { ...source }
+    : { ...metadata };
+};
+
 export const readSessionAiSelectionFromMetadata = (
   metadata: unknown,
 ): SessionAiSelection | null => {
-  const meta = parseSessionMetadata(metadata);
+  const meta = getSessionMetadataSource(metadata);
   const raw = asRecord(readValue(meta, SESSION_AI_SELECTION_KEY));
   const runtime = asRecord(readValue(meta, 'chat_runtime'));
   const contact = asRecord(readValue(meta, 'contact'));
@@ -68,31 +81,43 @@ export const mergeSessionAiSelectionIntoMetadata = (
   selection: SessionAiSelection,
 ): Record<string, unknown> => {
   const next = parseSessionMetadata(metadata);
+  const source = getMutableSessionMetadataSource(next);
   const selectedModelId = normalizeId(selection.selectedModelId);
   const selectedAgentId = normalizeId(selection.selectedAgentId);
 
   if (!selectedModelId && !selectedAgentId) {
-    delete next[SESSION_AI_SELECTION_KEY];
+    delete source[SESSION_AI_SELECTION_KEY];
+    if (asRecord(next.source_metadata)) {
+      next.source_metadata = source;
+    } else {
+      Object.assign(next, source);
+    }
     return next;
   }
 
-  next[SESSION_AI_SELECTION_KEY] = {
+  source[SESSION_AI_SELECTION_KEY] = {
     selected_model_id: selectedModelId,
     selected_agent_id: selectedAgentId,
   };
-  next.chat_runtime = {
-    ...(asRecord(next.chat_runtime) ?? {}),
+  source.chat_runtime = {
+    ...(asRecord(source.chat_runtime) ?? {}),
     selected_model_id: selectedModelId,
     contact_agent_id: selectedAgentId,
   };
-  next.contact = {
-    ...(asRecord(next.contact) ?? {}),
+  source.contact = {
+    ...(asRecord(source.contact) ?? {}),
     type: 'memory_agent',
     agent_id: selectedAgentId,
   };
-  next.ui_contact = {
+  source.ui_contact = {
     type: 'memory_agent',
     agent_id: selectedAgentId,
   };
+
+  if (asRecord(next.source_metadata)) {
+    next.source_metadata = source;
+  } else {
+    Object.assign(next, source);
+  }
   return next;
 };

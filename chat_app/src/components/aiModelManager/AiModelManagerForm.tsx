@@ -1,53 +1,45 @@
+import { useI18n } from '../../i18n/I18nProvider';
 import {
   AI_MODEL_PROVIDERS,
   AI_MODEL_THINKING_LEVELS,
   applyProviderChange,
 } from './helpers';
-import { PlusIcon } from './icons';
 import type { AiModelManagerFormProps } from './types';
 
 const AiModelManagerForm = ({
-  showAddForm,
   editingConfig,
   formData,
-  onCreate,
+  showTitle = true,
   onSubmit,
   onCancel,
   onFormDataChange,
 }: AiModelManagerFormProps) => {
-  if (!showAddForm) {
-    return (
-      <button
-        onClick={onCreate}
-        className="w-full mb-6 p-4 border-2 border-dashed border-border rounded-lg hover:border-blue-500 transition-colors flex items-center justify-center space-x-2 text-muted-foreground hover:text-blue-600"
-      >
-        <PlusIcon />
-        <span>添加 AI 模型</span>
-      </button>
-    );
-  }
+  const { t } = useI18n();
 
   return (
-    <form onSubmit={onSubmit} className="mb-6 p-4 bg-muted rounded-lg">
-      <h3 className="text-lg font-medium text-foreground mb-4">
-        {editingConfig ? '编辑 AI 模型' : '添加 AI 模型'}
-      </h3>
+    <form onSubmit={onSubmit} className="space-y-4">
+      {showTitle ? (
+        <h3 className="text-lg font-medium text-foreground">
+          {editingConfig ? t('aiModelManager.form.title.edit') : t('aiModelManager.form.title.create')}
+        </h3>
+      ) : null}
 
-      <div className="space-y-4">
+      <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">配置名称</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.name')}</label>
           <input
             type="text"
             value={formData.name}
             onChange={(event) => onFormDataChange({ name: event.target.value })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="例如: OpenAI GPT-4"
+            placeholder={t('aiModelManager.form.namePlaceholder')}
+            autoFocus
             required
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">供应商</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.provider')}</label>
           <select
             value={formData.provider}
             onChange={(event) =>
@@ -64,43 +56,70 @@ const AiModelManagerForm = ({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">Base URL</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.baseUrl')}</label>
           <input
             type="url"
             value={formData.base_url}
             onChange={(event) => onFormDataChange({ base_url: event.target.value })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="例如: https://api.openai.com/v1"
+            placeholder={t('aiModelManager.form.baseUrlPlaceholder')}
             required
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">API Key</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.apiKey')}</label>
           <input
             type="password"
             value={formData.api_key}
-            onChange={(event) => onFormDataChange({ api_key: event.target.value })}
+            onChange={(event) => onFormDataChange({
+              api_key: event.target.value,
+              clear_api_key: false,
+            })}
+            disabled={editingConfig !== null && formData.clear_api_key}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="输入API密钥"
-            required
+            placeholder={editingConfig
+              ? t('aiModelManager.form.apiKeyPlaceholderEdit')
+              : t('aiModelManager.form.apiKeyPlaceholder')}
+            required={editingConfig === null}
           />
+          {editingConfig && formData.has_stored_api_key ? (
+            <div className="mt-2 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t('aiModelManager.form.apiKeyHintKeep')}
+              </p>
+              <label className="flex items-center text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={formData.clear_api_key}
+                  onChange={(event) => onFormDataChange({
+                    clear_api_key: event.target.checked,
+                    api_key: event.target.checked ? '' : formData.api_key,
+                  })}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <span className="ml-2">{t('aiModelManager.form.clearSavedApiKey')}</span>
+              </label>
+            </div>
+          ) : null}
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">模型名称</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.modelName')}</label>
           <input
             type="text"
             value={formData.model_name}
             onChange={(event) => onFormDataChange({ model_name: event.target.value })}
             className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="例如: gpt-4"
-            required
+            placeholder={t('aiModelManager.form.modelNamePlaceholder')}
           />
+          <p className="mt-2 text-xs text-muted-foreground">
+            Optional. Leave blank to pick the concrete runtime model later in the chat composer.
+          </p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-2">思考等级</label>
+          <label className="block text-sm font-medium text-foreground mb-2">{t('aiModelManager.form.thinkingLevel')}</label>
           <select
             value={formData.thinking_level}
             onChange={(event) => onFormDataChange({ thinking_level: event.target.value })}
@@ -109,7 +128,7 @@ const AiModelManagerForm = ({
           >
             {AI_MODEL_THINKING_LEVELS.map((level) => (
               <option key={level || 'empty'} value={level}>
-                {level || '不指定'}
+                {level || t('aiModelManager.form.thinkingLevelAuto')}
               </option>
             ))}
           </select>
@@ -124,7 +143,7 @@ const AiModelManagerForm = ({
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
           <label htmlFor="enabled" className="ml-2 block text-sm text-foreground">
-            启用此模型
+            {t('aiModelManager.form.enabled')}
           </label>
         </div>
 
@@ -137,7 +156,7 @@ const AiModelManagerForm = ({
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
           <label htmlFor="supports_images" className="ml-2 block text-sm text-foreground">
-            支持图片输入
+            {t('aiModelManager.form.supportsImages')}
           </label>
         </div>
 
@@ -150,7 +169,7 @@ const AiModelManagerForm = ({
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
           <label htmlFor="supports_reasoning" className="ml-2 block text-sm text-foreground">
-            支持推理输出
+            {t('aiModelManager.form.supportsReasoning')}
           </label>
         </div>
 
@@ -163,24 +182,24 @@ const AiModelManagerForm = ({
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
           <label htmlFor="supports_responses" className="ml-2 block text-sm text-foreground">
-            支持 Responses API
+            {t('aiModelManager.form.supportsResponses')}
           </label>
         </div>
       </div>
 
-      <div className="flex space-x-3 mt-6">
-        <button
-          type="submit"
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {editingConfig ? '更新' : '添加'}
-        </button>
+      <div className="flex items-center justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring"
+          className="rounded-lg bg-muted px-3 py-2 text-sm transition-colors hover:bg-accent"
         >
-          取消
+          {t('common.cancel')}
+        </button>
+        <button
+          type="submit"
+          className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          {editingConfig ? t('aiModelManager.form.submitEdit') : t('aiModelManager.form.submitCreate')}
         </button>
       </div>
     </form>

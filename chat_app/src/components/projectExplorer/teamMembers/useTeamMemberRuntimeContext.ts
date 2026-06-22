@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import {
   resolveSessionProjectScopeId,
 } from '../../../features/contactSession/sessionResolver';
@@ -10,7 +11,7 @@ import {
   markRuntimeContextStale,
 } from '../../../lib/runtimeContext/cache';
 import type { Session } from '../../../types';
-import type { ContactItem } from './types';
+import type { ContactItem, EnsureProjectContactSessionOptions } from './types';
 
 interface RuntimeContextApiClient {
   getConversationLatestTurnRuntimeContext: (
@@ -23,7 +24,10 @@ interface UseTeamMemberRuntimeContextOptions {
   sessions: Session[];
   normalizedProjectId: string;
   runtimeContextRefreshNonce: number;
-  ensureContactSession: (contact: ContactItem) => Promise<string | null>;
+  ensureContactSession: (
+    contact: ContactItem,
+    options?: EnsureProjectContactSessionOptions,
+  ) => Promise<string | null>;
   setSelectedContactId: (contactId: string | null) => void;
 }
 
@@ -35,6 +39,7 @@ export const useTeamMemberRuntimeContext = ({
   ensureContactSession,
   setSelectedContactId,
 }: UseTeamMemberRuntimeContextOptions) => {
+  const { t } = useI18n();
   const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
   const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
   const [runtimeContextData, setRuntimeContextData] =
@@ -45,6 +50,7 @@ export const useTeamMemberRuntimeContext = ({
   const latestSessionIdRef = useRef<string | null>(null);
   const refreshNonceRef = useRef(runtimeContextRefreshNonce);
   const lastRefreshSignatureRef = useRef<string | null>(null);
+  const latestOpenRequestSeqRef = useRef(0);
 
   refreshNonceRef.current = runtimeContextRefreshNonce;
 
@@ -69,26 +75,31 @@ export const useTeamMemberRuntimeContext = ({
     } catch (error) {
       console.error('Failed to load turn runtime context in team pane:', error);
       if (latestSessionIdRef.current === sessionId) {
-        setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
+        setRuntimeContextError(error instanceof Error ? error.message : t('teamMembers.error.loadRuntimeContextFailed'));
       }
     } finally {
       if (latestSessionIdRef.current === sessionId && !options?.silent) {
         setRuntimeContextLoading(false);
       }
     }
-  }, [apiClient]);
+  }, [apiClient, t]);
 
   const handleOpenRuntimeContext = useCallback(async (contact: ContactItem) => {
+    const requestSeq = latestOpenRequestSeqRef.current + 1;
+    latestOpenRequestSeqRef.current = requestSeq;
     setOpeningRuntimeContextContactId(contact.id);
     setSelectedContactId(contact.id);
     try {
-      const sessionId = await ensureContactSession(contact);
+      const sessionId = await ensureContactSession(contact, { createIfMissing: false });
+      if (latestOpenRequestSeqRef.current !== requestSeq) {
+        return;
+      }
       if (!sessionId) {
         return;
       }
       const targetSession = sessions.find((item) => item.id === sessionId) || null;
       if (targetSession && resolveSessionProjectScopeId(targetSession) !== normalizedProjectId) {
-        setRuntimeContextError('检测到跨项目会话，已阻止加载上下文');
+        setRuntimeContextError(t('teamMembers.error.crossProjectRuntimeContext'));
         setRuntimeContextOpen(false);
         return;
       }
@@ -96,6 +107,7 @@ export const useTeamMemberRuntimeContext = ({
         setRuntimeContextOpen(false);
         return;
       }
+      latestSessionIdRef.current = sessionId;
       setRuntimeContextOpen(true);
       setRuntimeContextSessionId(sessionId);
       setRuntimeContextData(getCachedRuntimeContextData(apiClient, sessionId));
@@ -110,6 +122,7 @@ export const useTeamMemberRuntimeContext = ({
     runtimeContextSessionId,
     sessions,
     setSelectedContactId,
+    t,
   ]);
 
   const handleRefreshRuntimeContext = useCallback(() => {

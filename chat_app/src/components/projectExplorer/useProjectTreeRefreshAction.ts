@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { readProjectTreeErrorMessage } from './projectTreeActionHelpers';
 import type { UseProjectTreeActionsOptions } from './projectTreeActionTypes';
 
@@ -9,7 +10,6 @@ type UseProjectTreeRefreshActionOptions = Pick<
   | 'projectRootPath'
   | 'normalizePath'
   | 'loadEntries'
-  | 'loadChangeSummary'
   | 'setActionLoading'
   | 'setActionError'
   | 'setActionMessage'
@@ -20,11 +20,11 @@ export const useProjectTreeRefreshAction = ({
   projectRootPath,
   normalizePath,
   loadEntries,
-  loadChangeSummary,
   setActionLoading,
   setActionError,
   setActionMessage,
 }: UseProjectTreeRefreshActionOptions) => {
+  const { t } = useI18n();
   const handleRefresh = useCallback(async () => {
     if (!actionReloadPath) return;
 
@@ -32,29 +32,28 @@ export const useProjectTreeRefreshAction = ({
     setActionError(null);
     setActionMessage(null);
     try {
-      await loadEntries(actionReloadPath);
+      await loadEntries(actionReloadPath, { forceRefresh: true });
       if (
         projectRootPath
         && normalizePath(actionReloadPath) !== normalizePath(projectRootPath)
       ) {
-        await loadEntries(projectRootPath);
+        await loadEntries(projectRootPath, { forceRefresh: true });
       }
-      await loadChangeSummary();
-      setActionMessage('目录已刷新');
+      setActionMessage(t('projectExplorer.refresh.success'));
     } catch (err) {
-      setActionError(readProjectTreeErrorMessage(err, '刷新失败'));
+      setActionError(readProjectTreeErrorMessage(err, t('projectExplorer.refresh.failed')));
     } finally {
       setActionLoading(false);
     }
   }, [
     actionReloadPath,
-    loadChangeSummary,
     loadEntries,
     normalizePath,
     projectRootPath,
     setActionError,
     setActionLoading,
     setActionMessage,
+    t,
   ]);
 
   return {

@@ -48,6 +48,13 @@ pub struct TextSearchResponse {
     pub visited_dirs: usize,
 }
 
+fn truncate_snippet(value: &str, max_chars: usize) -> String {
+    match value.char_indices().nth(max_chars) {
+        Some((boundary, _)) => value[..boundary].to_string(),
+        None => value.to_string(),
+    }
+}
+
 pub fn search_text(request: &TextSearchRequest) -> Result<TextSearchResponse, String> {
     let root = request.root.clone();
     if !root.exists() {
@@ -130,11 +137,7 @@ pub fn search_text(request: &TextSearchRequest) -> Result<TextSearchResponse, St
 
         for (index, line) in content.split('\n').enumerate() {
             let normalized = line.trim_end_matches('\r');
-            let snippet = if normalized.len() > 400 {
-                normalized[..400].to_string()
-            } else {
-                normalized.to_string()
-            };
+            let snippet = truncate_snippet(normalized, 400);
             let path = entry.path().to_string_lossy().to_string();
             let relative_path = pathdiff::diff_paths(entry.path(), &root)
                 .unwrap_or_else(|| entry.path().to_path_buf())
@@ -357,6 +360,33 @@ mod tests {
         assert_eq!(response.entries[0].column, 1);
         assert_eq!(response.entries[1].column, 5);
         assert_eq!(response.entries[2].column, 9);
+
+        fs::remove_dir_all(root).expect("cleanup root");
+    }
+
+    #[test]
+    fn search_text_handles_multibyte_lines_and_truncates_snippet_safely() {
+        let root = make_temp_root();
+        let long_line = format!("{}关键字", "页".repeat(450));
+        fs::write(root.join("notes.md"), format!("{long_line}\n")).expect("write file");
+
+        let response = search_text(&TextSearchRequest {
+            root: root.clone(),
+            query: "关键字".to_string(),
+            max_results: 50,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_visits: DEFAULT_MAX_VISITS,
+            case_sensitive: true,
+            whole_word: false,
+        })
+        .expect("search text");
+
+        assert_eq!(response.entries.len(), 1);
+        let hit = &response.entries[0];
+        assert_eq!(hit.relative_path, "notes.md");
+        assert_eq!(hit.column, 451);
+        assert_eq!(hit.text.chars().count(), 400);
+        assert!(hit.text.chars().all(|ch| ch == '页'));
 
         fs::remove_dir_all(root).expect("cleanup root");
     }

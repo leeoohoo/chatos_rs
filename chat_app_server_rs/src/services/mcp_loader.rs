@@ -11,6 +11,7 @@ use crate::utils::workspace::resolve_workspace_dir;
 pub struct McpHttpServer {
     pub name: String,
     pub url: String,
+    pub headers: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +32,7 @@ pub struct McpBuiltinServer {
     pub project_id: Option<String>,
     pub remote_connection_id: Option<String>,
     pub contact_agent_id: Option<String>,
+    pub auto_create_task: bool,
     pub allow_writes: bool,
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
@@ -93,6 +95,7 @@ fn build_servers_from_configs(
                 project_id: project_id.clone(),
                 remote_connection_id: None,
                 contact_agent_id: None,
+                auto_create_task: false,
                 allow_writes,
                 max_file_bytes: 256 * 1024,
                 max_write_bytes: 5 * 1024 * 1024,
@@ -104,6 +107,7 @@ fn build_servers_from_configs(
             http_servers.push(McpHttpServer {
                 name: server_name,
                 url: cfg.command,
+                headers: None,
             });
         } else if cfg.r#type == "stdio" {
             let args = parse_args_json_array_or_whitespace(&cfg.args);

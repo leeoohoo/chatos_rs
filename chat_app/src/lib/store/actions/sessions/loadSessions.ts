@@ -1,15 +1,16 @@
 import type { Session } from '../../../../types';
-import { debugLog, generateId } from '@/lib/utils';
+import { debugLog } from '@/lib/utils';
 import { ApiRequestError } from '../../../api/client/shared';
 import { normalizeSession } from '../../helpers/sessions';
 import type { ContactRecord } from '../../types';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
-import { mergeSessionRuntimeIntoMetadata } from '../../helpers/sessionRuntime';
 import type { ChatStoreDraft } from '../../types';
 import {
   type MemoryContact,
   isSessionActive,
+  resetCurrentSessionViewState,
   splitSessionsByMappedContacts,
+  syncCurrentProjectFromSession,
 } from '../sessionsUtils';
 import type {
   LoadSessionsOptions,
@@ -69,10 +70,9 @@ export function createLoadSessionActions({
         const matched = deduped.find((session) => session.id === state.currentSessionId);
         if (matched) {
           state.currentSession = matched;
+          syncCurrentProjectFromSession(state, matched);
         } else {
-          state.currentSessionId = null;
-          state.currentSession = null;
-          state.messages = [];
+          resetCurrentSessionViewState(state);
         }
       }
     });
@@ -141,44 +141,11 @@ export function createLoadSessionActions({
             ? rawSessions.map(normalizeSession)
             : [];
 
-          const { matchedSessions: filteredByContacts, missingContacts } = splitSessionsByMappedContacts(
+          const { matchedSessions: filteredByContacts } = splitSessionsByMappedContacts(
             sessions,
             memoryContacts,
           );
-
-          const backfilledSessions: Session[] = [];
-          for (const contact of missingContacts) {
-            const metadata = mergeSessionRuntimeIntoMetadata(null, {
-              contactAgentId: contact.agent_id,
-              contactId: contact.id,
-              selectedModelId: null,
-              projectId: '0',
-              projectRoot: null,
-              mcpEnabled: true,
-              enabledMcpIds: [],
-            });
-            try {
-              const created = await client.createSession({
-                id: generateId(),
-                title: contact.agent_name_snapshot || '联系人',
-                user_id: userId,
-                project_id: '0',
-                metadata,
-              });
-              backfilledSessions.push(normalizeSession(created));
-            } catch (error) {
-              debugLog('🔍 联系人补建会话失败，忽略', {
-                contactId: contact.id,
-                agentId: contact.agent_id,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-          }
-
-          const mergedByContact = [
-            ...filteredByContacts,
-            ...backfilledSessions,
-          ];
+          const mergedByContact = filteredByContacts;
           debugLog('🔍 loadSessions 返回结果:', mergedByContact);
 
           const existing = options.append ? (get().sessions || []) : [];
@@ -274,11 +241,7 @@ export function createLoadSessionActions({
             const remaining = (state.sessions || []).filter((session) => session.id !== trimmed);
             state.sessions = normalizeTrackedSessions(remaining, state.contacts || []);
             if (state.currentSessionId === trimmed) {
-              state.currentSessionId = null;
-              state.currentSession = null;
-              state.selectedModelId = null;
-              state.selectedAgentId = null;
-              state.messages = [];
+              resetCurrentSessionViewState(state);
             }
             if (state.activePanel === 'chat' && state.currentSessionId === null) {
               state.activePanel = state.currentProjectId ? 'project' : 'chat';

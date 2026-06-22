@@ -3,6 +3,10 @@ use crate::{
         datasource::{ConnectionTestResult, ConnectionTestStageResult, DataSource},
         meta::{AuthMode, SslMode},
     },
+    drivers::connection_common::{
+        require_network_host, require_network_port, require_password, require_username,
+        validate_network_host_port, validate_password_auth, validate_supported_auth_mode,
+    },
     error::{AppError, AppResult},
 };
 use tiberius::{AuthMethod, Client, Config, EncryptionLevel, Row};
@@ -59,26 +63,11 @@ pub async fn connect_client(
 ) -> AppResult<SqlServerClient> {
     validate_connection_payload(datasource)?;
 
-    let host = datasource
-        .network
-        .host
-        .clone()
-        .ok_or_else(|| AppError::BadRequest("network.host is required".to_string()))?;
-    let port = datasource
-        .network
-        .port
-        .ok_or_else(|| AppError::BadRequest("network.port is required".to_string()))?;
+    let host = require_network_host(datasource)?;
+    let port = require_network_port(datasource)?;
 
-    let username = datasource
-        .auth
-        .username
-        .clone()
-        .ok_or_else(|| AppError::BadRequest("username is required".to_string()))?;
-    let password = datasource
-        .auth
-        .password
-        .clone()
-        .ok_or_else(|| AppError::BadRequest("password is required".to_string()))?;
+    let username = require_username(datasource)?;
+    let password = require_password(datasource)?;
 
     let mut config = Config::new();
     config.host(&host);
@@ -135,52 +124,13 @@ fn configure_tls(config: &mut Config, datasource: &DataSource) {
 }
 
 fn validate_connection_payload(datasource: &DataSource) -> AppResult<()> {
-    match datasource.auth.mode {
-        AuthMode::Password | AuthMode::TlsClientCert => {}
-        _ => {
-            return Err(AppError::BadRequest(
-                "sql_server currently supports password/tls_client_cert".to_string(),
-            ))
-        }
-    }
-
-    if datasource
-        .network
-        .host
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::BadRequest("network.host is required".to_string()));
-    }
-
-    if datasource.network.port.is_none() {
-        return Err(AppError::BadRequest("network.port is required".to_string()));
-    }
-
-    if datasource
-        .auth
-        .username
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::BadRequest("username is required".to_string()));
-    }
-
-    if datasource
-        .auth
-        .password
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::BadRequest("password is required".to_string()));
-    }
-
+    validate_supported_auth_mode(
+        datasource,
+        &[AuthMode::Password, AuthMode::TlsClientCert],
+        "sql_server currently supports password/tls_client_cert",
+    )?;
+    validate_network_host_port(datasource)?;
+    validate_password_auth(datasource)?;
     Ok(())
 }
 

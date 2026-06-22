@@ -1,13 +1,13 @@
 import { buildQuery } from '../shared';
 import type {
   DeleteSuccessResponse,
-  ProjectChangeConfirmResponse,
-  ProjectChangeLogResponse,
-  ProjectChangeSummaryResponse,
+  ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
   ProjectRunExecuteResponse,
+  ProjectRunStateResponse,
 } from '../types';
 import type { ApiRequestFn, ContactPaging } from './common';
 
@@ -71,10 +71,41 @@ export const executeProjectRun = (
     cwd?: string;
     command?: string;
     create_if_missing?: boolean;
+    terminal_id?: string;
   },
 ): Promise<ProjectRunExecuteResponse> => {
   return request<ProjectRunExecuteResponse>(`/projects/${encodeURIComponent(projectId)}/run/execute`, {
     method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const getProjectRunState = (
+  request: ApiRequestFn,
+  projectId: string,
+): Promise<ProjectRunStateResponse> => {
+  return request<ProjectRunStateResponse>(`/projects/${encodeURIComponent(projectId)}/run/state`);
+};
+
+export const getProjectRunEnvironment = (
+  request: ApiRequestFn,
+  projectId: string,
+): Promise<ProjectRunEnvironmentResponse> => {
+  return request<ProjectRunEnvironmentResponse>(`/projects/${encodeURIComponent(projectId)}/run/environment`);
+};
+
+export const updateProjectRunEnvironment = (
+  request: ApiRequestFn,
+  projectId: string,
+  data: {
+    selected_toolchains?: Record<string, string>;
+    custom_toolchains?: Record<string, { kind?: string; label?: string; path?: string }>;
+    env_vars?: Record<string, string>;
+    terminal_ui_enabled?: boolean;
+  },
+): Promise<ProjectRunEnvironmentResponse> => {
+  return request<ProjectRunEnvironmentResponse>(`/projects/${encodeURIComponent(projectId)}/run/environment`, {
+    method: 'PUT',
     body: JSON.stringify(data),
   });
 };
@@ -102,6 +133,15 @@ export const listProjectContacts = (
   return request<ProjectContactLinkResponse[]>(`/projects/${encodeURIComponent(projectId)}/contacts${query}`);
 };
 
+export const getProjectContactLock = (
+  request: ApiRequestFn,
+  projectId: string,
+): Promise<ProjectContactLockResponse> => {
+  return request<ProjectContactLockResponse>(
+    `/projects/${encodeURIComponent(projectId)}/contacts/lock`,
+  );
+};
+
 export const addProjectContact = (
   request: ApiRequestFn,
   projectId: string,
@@ -122,35 +162,4 @@ export const removeProjectContact = (
     `/projects/${encodeURIComponent(projectId)}/contacts/${encodeURIComponent(contactId)}`,
     { method: 'DELETE' },
   );
-};
-
-export const listProjectChangeLogs = (
-  request: ApiRequestFn,
-  projectId: string,
-  params?: { path?: string; limit?: number; offset?: number },
-): Promise<ProjectChangeLogResponse[]> => {
-  const query = buildQuery({
-    path: params?.path,
-    limit: params?.limit,
-    offset: params?.offset,
-  });
-  return request<ProjectChangeLogResponse[]>(`/projects/${projectId}/changes${query}`);
-};
-
-export const getProjectChangeSummary = (
-  request: ApiRequestFn,
-  projectId: string,
-): Promise<ProjectChangeSummaryResponse> => {
-  return request<ProjectChangeSummaryResponse>(`/projects/${projectId}/changes/summary`);
-};
-
-export const confirmProjectChanges = (
-  request: ApiRequestFn,
-  projectId: string,
-  payload: { mode?: 'all' | 'paths' | 'change_ids'; paths?: string[]; change_ids?: string[] },
-): Promise<ProjectChangeConfirmResponse> => {
-  return request<ProjectChangeConfirmResponse>(`/projects/${projectId}/changes/confirm`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
 };

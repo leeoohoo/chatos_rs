@@ -6,6 +6,7 @@ import {
   readSessionAiSelectionFromMetadata,
 } from '../../helpers/sessionAiSelection';
 import { mergeSessionRuntimeIntoMetadata } from '../../helpers/sessionRuntime';
+import { findBestMatchedSession } from '../../../domain/contactSessions';
 import type {
   ChatStoreDraft,
   SessionAiSelection,
@@ -16,7 +17,7 @@ import {
   deleteSessionMessagesCacheEntry,
   matchSessionContactProjectScope,
   normalizeProjectScopeId,
-  resolveSessionTimestamp,
+  syncCurrentProjectFromSession,
 } from '../sessionsUtils';
 import type { SessionActionDeps } from './types';
 import { normalizeTrackedSessions, upsertSessionCaches } from './cache';
@@ -35,6 +36,7 @@ export function createSessionCreateActions({
       options: SessionCreateOptions = {},
     ) => {
       try {
+        const shouldActivateSession = options.activateSession !== false;
         const payloadObject: SessionCreatePayload = typeof payload === 'string'
           ? { title: payload }
           : (payload || {});
@@ -64,17 +66,25 @@ export function createSessionCreateActions({
             : null);
 
         if (contactId || contactAgentId) {
-          const existingSession = (stateBeforeCreate.sessions || []).find((session: Session) => (
-            matchSessionContactProjectScope(session, {
-              contactId,
-              contactAgentId,
-              projectId: effectiveProjectId,
-            })
-          ));
+          const existingSession = contactId
+            ? findBestMatchedSession(
+              stateBeforeCreate.sessions || [],
+              { id: contactId, agentId: contactAgentId || '' },
+              effectiveProjectId,
+            )
+            : (stateBeforeCreate.sessions || []).find((session: Session) => (
+              matchSessionContactProjectScope(session, {
+                contactId,
+                contactAgentId,
+                projectId: effectiveProjectId,
+              })
+            ));
           if (existingSession) {
-            await get().selectSession(existingSession.id, {
-              keepActivePanel: options.keepActivePanel,
-            });
+            if (shouldActivateSession) {
+              await get().selectSession(existingSession.id, {
+                keepActivePanel: options.keepActivePanel,
+              });
+            }
             return existingSession.id;
           }
 
@@ -92,16 +102,21 @@ export function createSessionCreateActions({
                   contactAgentId,
                   projectId: effectiveProjectId,
                 })
-              ))
-              .sort((left: Session, right: Session) =>
-                resolveSessionTimestamp(right) - resolveSessionTimestamp(left),
-              );
+              ));
 
-            const remoteExisting = remoteMatched[0];
+            const remoteExisting = contactId
+              ? findBestMatchedSession(
+                remoteMatched,
+                { id: contactId, agentId: contactAgentId || '' },
+                effectiveProjectId,
+              )
+              : remoteMatched[0];
             if (remoteExisting?.id) {
-              await get().selectSession(remoteExisting.id, {
-                keepActivePanel: options.keepActivePanel,
-              });
+              if (shouldActivateSession) {
+                await get().selectSession(remoteExisting.id, {
+                  keepActivePanel: options.keepActivePanel,
+                });
+              }
               return remoteExisting.id;
             }
           } catch (error) {
@@ -128,8 +143,6 @@ export function createSessionCreateActions({
           selectedModelId,
           projectId: effectiveProjectId,
           projectRoot: effectiveProjectRoot,
-          mcpEnabled: payloadObject.mcpEnabled ?? true,
-          enabledMcpIds: payloadObject.enabledMcpIds ?? [],
         });
 
         debugLog('🔍 createSession 使用参数:', { userId, projectId: effectiveProjectId, title });
@@ -173,8 +186,6 @@ export function createSessionCreateActions({
             [formattedSession, ...(state.sessions || [])],
             state.contacts || [],
           );
-          state.currentSessionId = formattedSession.id;
-          state.currentSession = formattedSession;
           if (!state.sessionAiSelectionBySession) {
             state.sessionAiSelectionBySession = {};
           }
@@ -182,22 +193,27 @@ export function createSessionCreateActions({
             selectedModelId: effectiveSelection.selectedModelId,
             selectedAgentId: effectiveSelection.selectedAgentId,
           };
-          state.selectedModelId = effectiveSelection.selectedModelId;
-          state.selectedAgentId = effectiveSelection.selectedAgentId;
-          state.messages = [];
-          if (!state.sessionStreamingMessageDrafts) {
-            state.sessionStreamingMessageDrafts = {};
-          }
-          state.sessionStreamingMessageDrafts[formattedSession.id] = null;
-          if (!options.keepActivePanel) {
-            state.activePanel = 'chat';
+          if (shouldActivateSession) {
+            state.currentSessionId = formattedSession.id;
+            state.currentSession = formattedSession;
+            syncCurrentProjectFromSession(state, formattedSession);
+            state.selectedModelId = effectiveSelection.selectedModelId;
+            state.selectedAgentId = effectiveSelection.selectedAgentId;
+            state.messages = [];
+            if (!options.keepActivePanel) {
+              state.activePanel = 'chat';
+            }
           }
           state.error = null;
         });
 
-        deleteSessionMessagesCacheEntry(formattedSession.id);
-        localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId}`, formattedSession.id);
-        debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);
+        set((state: ChatStoreDraft) => {
+          deleteSessionMessagesCacheEntry(state, formattedSession.id);
+        });
+        if (shouldActivateSession) {
+          localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId}`, formattedSession.id);
+          debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);
+        }
 
         return formattedSession.id;
       } catch (error) {

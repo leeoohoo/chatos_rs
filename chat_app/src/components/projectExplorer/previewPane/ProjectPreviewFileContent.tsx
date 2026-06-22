@@ -16,6 +16,10 @@ interface ProjectPreviewFileContentProps {
   selectedPath: string | null;
   selectedEntry: FsEntry | null;
   loadingFile: boolean;
+  saveError: string | null;
+  savingFile: boolean;
+  isEditing: boolean;
+  draftContent: string;
   targetLine: number | null;
   targetLineRevision: number;
   searchQuery: string;
@@ -25,6 +29,8 @@ interface ProjectPreviewFileContentProps {
   activeSearchHitId: string | null;
   onActivateSearchHit: (hit: ProjectSearchHit) => void;
   onTokenSelection: (selection: PreviewTokenSelection | null) => void;
+  onDraftContentChange: (value: string) => void;
+  onSaveDraft: () => Promise<boolean>;
 }
 
 export const ProjectPreviewFileContent: React.FC<ProjectPreviewFileContentProps> = ({
@@ -32,6 +38,10 @@ export const ProjectPreviewFileContent: React.FC<ProjectPreviewFileContentProps>
   selectedPath,
   selectedEntry,
   loadingFile,
+  saveError,
+  savingFile,
+  isEditing,
+  draftContent,
   targetLine,
   targetLineRevision,
   searchQuery,
@@ -41,6 +51,8 @@ export const ProjectPreviewFileContent: React.FC<ProjectPreviewFileContentProps>
   activeSearchHitId,
   onActivateSearchHit,
   onTokenSelection,
+  onDraftContentChange,
+  onSaveDraft,
 }) => {
   if (loadingFile) {
     return <ProjectPreviewLoadingState />;
@@ -63,6 +75,10 @@ export const ProjectPreviewFileContent: React.FC<ProjectPreviewFileContentProps>
     <ProjectPreviewTextContent
       selectedFile={selectedFile}
       selectedPath={selectedPath}
+      isEditing={isEditing}
+      draftContent={draftContent}
+      saveError={saveError}
+      savingFile={savingFile}
       targetLine={targetLine}
       targetLineRevision={targetLineRevision}
       searchQuery={searchQuery}
@@ -72,6 +88,8 @@ export const ProjectPreviewFileContent: React.FC<ProjectPreviewFileContentProps>
       activeSearchHitId={activeSearchHitId}
       onActivateSearchHit={onActivateSearchHit}
       onTokenSelection={onTokenSelection}
+      onDraftContentChange={onDraftContentChange}
+      onSaveDraft={onSaveDraft}
     />
   );
 };

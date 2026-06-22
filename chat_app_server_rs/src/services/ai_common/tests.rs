@@ -3,11 +3,28 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::*;
 use super::request_support::{format_error_response, truncate_log};
+use super::*;
 use crate::core::mcp_tools::ToolResult;
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
+
+#[test]
+fn build_abort_token_only_cancels_matching_turn() {
+    let session_id = "build_abort_token_turn_match";
+    abort_registry::clear(session_id);
+
+    let token = build_abort_token(Some(session_id), Some("turn_new")).expect("token");
+    assert!(!token.is_cancelled());
+
+    assert!(!abort_registry::abort_turn(session_id, Some("turn_old")));
+    assert!(!token.is_cancelled());
+
+    assert!(abort_registry::abort_turn(session_id, Some("turn_new")));
+    assert!(token.is_cancelled());
+
+    abort_registry::clear(session_id);
+}
 
 #[test]
 fn normalize_turn_id_trims_and_filters_empty_values() {
@@ -62,9 +79,23 @@ fn completion_failed_error_uses_finish_reason_and_preview() {
 }
 
 #[test]
+fn terminal_empty_response_error_detects_terminal_empty_payload() {
+    let err = terminal_empty_response_error(Some("completed"), "", None, None, None)
+        .expect("terminal empty response should fail");
+    assert!(err.contains("terminal empty response"));
+    assert!(err.contains("finish_reason=completed"));
+
+    assert!(terminal_empty_response_error(Some("in_progress"), "", None, None, None).is_none());
+    assert!(terminal_empty_response_error(Some("completed"), "hello", None, None, None).is_none());
+    assert!(
+        terminal_empty_response_error(Some("completed"), "", Some("thought"), None, None).is_none()
+    );
+}
+
+#[test]
 fn build_assistant_message_metadata_skips_empty_fields() {
-    assert!(build_assistant_message_metadata(None, None, None, None).is_none());
-    assert!(build_assistant_message_metadata(None, Some("   "), None, None).is_none());
+    assert!(build_assistant_message_metadata(None, None, None, None, None).is_none());
+    assert!(build_assistant_message_metadata(None, Some("   "), None, None, None).is_none());
 }
 
 #[test]
@@ -75,6 +106,7 @@ fn build_assistant_message_metadata_keeps_response_id_and_tool_calls() {
         Some("resp_123"),
         Some("turn_123"),
         Some("completed"),
+        None,
     );
 
     assert_eq!(
@@ -115,6 +147,12 @@ fn should_persist_assistant_message_skips_empty_non_terminal_responses() {
         None,
         Some("in_progress"),
     ));
+    assert!(!should_persist_assistant_message(
+        "",
+        None,
+        None,
+        Some("completed"),
+    ));
     assert!(should_persist_assistant_message(
         "hello",
         None,
@@ -127,6 +165,72 @@ fn should_persist_assistant_message_skips_empty_non_terminal_responses() {
         None,
         Some("queued"),
     ));
+}
+
+#[test]
+fn task_runner_async_plan_message_mode_matches_expected_value() {
+    assert!(is_task_runner_async_plan_message_mode(Some(
+        TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE
+    )));
+    assert!(is_task_runner_async_plan_message_mode(Some(
+        " task_runner_async_plan "
+    )));
+    assert!(!is_task_runner_async_plan_message_mode(Some("model")));
+    assert!(!is_task_runner_async_plan_message_mode(None));
+}
+
+#[test]
+fn normalize_task_runner_async_plan_metadata_marks_plan_summary_mode() {
+    let metadata = normalize_task_runner_async_plan_metadata(Some(json!({
+        "response_id": "resp_1"
+    })))
+    .expect("metadata");
+
+    assert_eq!(
+        metadata.get("response_id").and_then(|value| value.as_str()),
+        Some("resp_1")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("mode"))
+            .and_then(|value| value.as_str()),
+        Some("contact_async")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("message_kind"))
+            .and_then(|value| value.as_str()),
+        Some("plan_summary")
+    );
+}
+
+#[test]
+fn normalize_task_runner_async_tool_call_metadata_marks_tool_call_mode() {
+    let metadata = normalize_task_runner_async_tool_call_metadata(Some(json!({
+        "response_id": "resp_1"
+    })))
+    .expect("metadata");
+
+    assert_eq!(
+        metadata.get("response_id").and_then(|value| value.as_str()),
+        Some("resp_1")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("mode"))
+            .and_then(|value| value.as_str()),
+        Some("contact_async")
+    );
+    assert_eq!(
+        metadata
+            .get("task_runner_async")
+            .and_then(|value| value.get("message_kind"))
+            .and_then(|value| value.as_str()),
+        Some("tool_call")
+    );
 }
 
 #[test]
@@ -151,7 +255,9 @@ fn build_ai_client_success_payload_preserves_response_shape() {
         Some("think")
     );
     assert_eq!(
-        payload.get("finish_reason").and_then(|value| value.as_str()),
+        payload
+            .get("finish_reason")
+            .and_then(|value| value.as_str()),
         Some("stop")
     );
     assert_eq!(
@@ -159,6 +265,34 @@ fn build_ai_client_success_payload_preserves_response_shape() {
         Some(2)
     );
     assert_eq!(payload.get("tool_calls"), Some(&Value::Null));
+}
+
+#[test]
+fn attach_ai_client_success_extra_merges_fields() {
+    let payload = build_ai_client_success_payload(
+        "hello".to_string(),
+        Some("think".to_string()),
+        Some("stop".to_string()),
+        2,
+    );
+    let merged = attach_ai_client_success_extra(
+        payload,
+        json!({
+            "task_turn_review": {
+                "attempted": true,
+                "outcome": "pass",
+                "rounds": 1
+            }
+        }),
+    );
+    assert_eq!(
+        merged
+            .get("task_turn_review")
+            .and_then(|value| value.get("outcome"))
+            .and_then(Value::as_str),
+        Some("pass")
+    );
+    assert_eq!(merged.get("content").and_then(Value::as_str), Some("hello"));
 }
 
 #[test]
@@ -411,7 +545,6 @@ async fn execute_tool_lifecycle_runs_callbacks_and_persists_results() {
     .await
     .expect("tool execution should succeed");
 
-    assert_eq!(outcome.tool_results.len(), 1);
     assert_eq!(outcome.persisted_results.len(), 1);
     assert_eq!(started.lock().expect("lock poisoned").len(), 1);
     assert_eq!(ended.lock().expect("lock poisoned").len(), 1);
@@ -552,7 +685,11 @@ fn emit_stream_callbacks_forwards_chunk_and_thinking() {
         }),
     };
 
-    emit_stream_callbacks(&callbacks, Some("hello".to_string()), Some("think".to_string()));
+    emit_stream_callbacks(
+        &callbacks,
+        Some("hello".to_string()),
+        Some("think".to_string()),
+    );
 
     assert_eq!(
         chunks.lock().expect("lock poisoned").as_slice(),
@@ -641,6 +778,38 @@ async fn consume_sse_stream_parses_trailing_plain_json_response() {
             .get("output_text")
             .and_then(|value| value.as_str()),
         Some("summary text")
+    );
+}
+
+#[tokio::test]
+async fn consume_sse_stream_preserves_utf8_split_across_chunks() {
+    use bytes::Bytes;
+    use futures::stream;
+
+    let packet = "data: {\"type\":\"delta\",\"text\":\"我是\"}\n\n";
+    let bytes = packet.as_bytes();
+    let split_char = "是".as_bytes();
+    let split_at = bytes
+        .windows(split_char.len())
+        .position(|window| window == split_char)
+        .expect("test packet should contain split character");
+    let chunks = vec![
+        Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[..split_at + 1])),
+        Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[split_at + 1..split_at + 2])),
+        Ok::<Bytes, String>(Bytes::copy_from_slice(&bytes[split_at + 2..])),
+    ];
+
+    let mut events = Vec::new();
+    consume_sse_stream(stream::iter(chunks), None, |event| {
+        events.push(event);
+    })
+    .await
+    .expect("stream parsing should succeed");
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].get("text").and_then(|value| value.as_str()),
+        Some("我是")
     );
 }
 

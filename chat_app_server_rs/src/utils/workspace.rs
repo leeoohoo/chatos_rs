@@ -26,17 +26,6 @@ pub fn normalize_workspace_dir(raw: Option<&str>) -> String {
     }
 }
 
-pub fn sanitize_workspace_dir(raw: Option<String>) -> Option<String> {
-    raw.and_then(|v| {
-        let trimmed = v.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
 pub fn resolve_workspace_dir(raw: Option<&str>) -> String {
     let normalized = normalize_workspace_dir(raw);
     let expanded = expand_tilde(&normalized);

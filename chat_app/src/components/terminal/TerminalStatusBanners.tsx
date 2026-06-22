@@ -1,6 +1,7 @@
 import React from 'react';
 
 import type { TerminalHistoryState } from './TerminalHeader';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface TerminalStatusBannersProps {
   historyState: TerminalHistoryState;
@@ -12,18 +13,25 @@ const TerminalStatusBanners: React.FC<TerminalStatusBannersProps> = ({
   historyState,
   historyModeHint,
   errorMessage,
-}) => (
-  <>
-    {historyState === 'loading' && (
-      <div className="px-4 py-2 text-xs text-muted-foreground">加载历史记录中...</div>
-    )}
-    {historyModeHint && !errorMessage && (
-      <div className="px-4 py-2 text-xs text-muted-foreground">{historyModeHint}</div>
-    )}
-    {errorMessage && (
-      <div className="px-4 py-2 text-xs text-destructive">{errorMessage}</div>
-    )}
-  </>
-);
+}) => {
+  const { t } = useI18n();
+  const translatedHistoryModeHint = historyModeHint?.startsWith('terminal.')
+    ? t(historyModeHint)
+    : historyModeHint;
+
+  return (
+    <>
+      {historyState === 'loading' && (
+        <div className="px-4 py-2 text-xs text-muted-foreground">{t('terminal.history.loading')}</div>
+      )}
+      {translatedHistoryModeHint && !errorMessage && (
+        <div className="px-4 py-2 text-xs text-muted-foreground">{translatedHistoryModeHint}</div>
+      )}
+      {errorMessage && (
+        <div className="px-4 py-2 text-xs text-destructive">{errorMessage}</div>
+      )}
+    </>
+  );
+};
 
 export default TerminalStatusBanners;

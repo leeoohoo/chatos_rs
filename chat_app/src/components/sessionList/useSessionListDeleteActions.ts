@@ -1,13 +1,15 @@
 import { useCallback } from 'react';
 
+import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { Project, RemoteConnection, Session, Terminal } from '../../types';
 import { resolveRemoteConnectionErrorFeedback } from '../../lib/api/remoteConnectionErrors';
 import { readSessionRuntimeFromMetadata } from '../../lib/store/helpers/sessionRuntime';
 import type { DialogAlertOptions, DialogConfirmOptions } from '../ui/DialogProvider';
-import { getSessionStatus } from './helpers';
+import { getSessionStatus, translateSessionListMessage } from './helpers';
 import type { ContactItem } from './types';
 
 interface UseSessionListDeleteActionsParams {
+  t?: TranslateFn;
   projects: Project[];
   terminals: Terminal[];
   remoteConnections: RemoteConnection[];
@@ -26,6 +28,7 @@ interface UseSessionListDeleteActionsParams {
 }
 
 export const useSessionListDeleteActions = ({
+  t,
   projects,
   terminals,
   remoteConnections,
@@ -44,11 +47,12 @@ export const useSessionListDeleteActions = ({
 }: UseSessionListDeleteActionsParams) => {
   const handleArchiveProject = useCallback(async (projectId: string) => {
     const project = projects.find((p: Project) => p.id === projectId);
+    const projectName = project?.name || 'Untitled';
     const confirmed = await confirmDialog({
-      title: '归档确认',
-      message: `确定要归档项目 "${project?.name || 'Untitled'}" 吗？归档后将从项目列表移除。`,
-      confirmText: '归档',
-      cancelText: '取消',
+      title: translateSessionListMessage(t, 'sessionList.confirm.archiveProjectTitle'),
+      message: translateSessionListMessage(t, 'sessionList.confirm.archiveProjectMessage', { name: projectName }),
+      confirmText: translateSessionListMessage(t, 'common.archive'),
+      cancelText: translateSessionListMessage(t, 'common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -59,15 +63,16 @@ export const useSessionListDeleteActions = ({
     } catch (error) {
       console.error('Failed to archive project:', error);
     }
-  }, [confirmDialog, deleteProject, projects]);
+  }, [confirmDialog, deleteProject, projects, t]);
 
   const handleDeleteTerminal = useCallback(async (terminalId: string) => {
     const terminal = terminals.find((t: Terminal) => t.id === terminalId);
+    const terminalName = terminal?.name || 'Untitled';
     const confirmed = await confirmDialog({
-      title: '删除确认',
-      message: `确定要删除终端 "${terminal?.name || 'Untitled'}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: translateSessionListMessage(t, 'sessionList.confirm.deleteTitle'),
+      message: translateSessionListMessage(t, 'sessionList.confirm.deleteTerminalMessage', { name: terminalName }),
+      confirmText: translateSessionListMessage(t, 'common.delete'),
+      cancelText: translateSessionListMessage(t, 'common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -77,16 +82,24 @@ export const useSessionListDeleteActions = ({
       await deleteTerminal(terminalId);
     } catch (error) {
       console.error('Failed to delete terminal:', error);
+      const message = error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.deleteTerminalFailed');
+      await alertDialog({
+        title: translateSessionListMessage(t, 'sessionList.confirm.deleteFailedTitle'),
+        message,
+        confirmText: translateSessionListMessage(t, 'common.gotIt'),
+        type: 'info',
+      });
     }
-  }, [confirmDialog, deleteTerminal, terminals]);
+  }, [alertDialog, confirmDialog, deleteTerminal, terminals, t]);
 
   const handleDeleteRemoteConnection = useCallback(async (connectionId: string) => {
     const connection = remoteConnections.find((item: RemoteConnection) => item.id === connectionId);
+    const connectionName = connection?.name || 'Untitled';
     const confirmed = await confirmDialog({
-      title: '删除确认',
-      message: `确定要删除远端连接 "${connection?.name || 'Untitled'}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: translateSessionListMessage(t, 'sessionList.confirm.deleteTitle'),
+      message: translateSessionListMessage(t, 'sessionList.confirm.deleteRemoteMessage', { name: connectionName }),
+      confirmText: translateSessionListMessage(t, 'common.delete'),
+      cancelText: translateSessionListMessage(t, 'common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -95,16 +108,19 @@ export const useSessionListDeleteActions = ({
     try {
       await deleteRemoteConnection(connectionId);
     } catch (error) {
-      const feedback = resolveRemoteConnectionErrorFeedback(error, '删除远端连接失败');
+      const feedback = resolveRemoteConnectionErrorFeedback(
+        error,
+        translateSessionListMessage(t, 'remoteConnection.error.deleteFailed'),
+      );
       await alertDialog({
-        title: '删除失败',
+        title: translateSessionListMessage(t, 'sessionList.confirm.deleteFailedTitle'),
         message: feedback.message,
         description: feedback.action || undefined,
-        confirmText: '知道了',
+        confirmText: translateSessionListMessage(t, 'common.gotIt'),
         type: 'info',
       });
     }
-  }, [alertDialog, confirmDialog, deleteRemoteConnection, remoteConnections]);
+  }, [alertDialog, confirmDialog, deleteRemoteConnection, remoteConnections, t]);
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     const session = displaySessions.find((s: Session) => s.id === sessionId);
@@ -113,11 +129,12 @@ export const useSessionListDeleteActions = ({
     }
     const runtime = readSessionRuntimeFromMetadata(session.metadata);
     const contactAgentId = runtime?.contactAgentId || null;
+    const sessionName = session.title || 'Untitled';
     const confirmed = await confirmDialog({
-      title: '删除联系人',
-      message: `确定要删除联系人 "${session.title || 'Untitled'}" 吗？`,
-      confirmText: '删除',
-      cancelText: '取消',
+      title: translateSessionListMessage(t, 'sessionList.confirm.deleteContactTitle'),
+      message: translateSessionListMessage(t, 'sessionList.confirm.deleteContactMessage', { name: sessionName }),
+      confirmText: translateSessionListMessage(t, 'common.delete'),
+      cancelText: translateSessionListMessage(t, 'common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -156,6 +173,7 @@ export const useSessionListDeleteActions = ({
     deleteSession,
     displaySessions,
     loadContactsAction,
+    t,
   ]);
 
   return {

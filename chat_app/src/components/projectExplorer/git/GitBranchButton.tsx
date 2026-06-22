@@ -12,20 +12,26 @@ interface GitBranchButtonProps {
   client: ProjectGitApiClient;
   projectId?: string | null;
   projectRoot: string;
+  enabled?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
+  onRepositorySelectionChange?: (repoRoot: string | null) => Promise<void> | void;
 }
 
 export const GitBranchButton: React.FC<GitBranchButtonProps> = ({
   client,
   projectId,
   projectRoot,
+  enabled = true,
   onRepositoryChanged,
+  onRepositorySelectionChange,
 }) => {
   const model = useGitBranchButtonModel({
     client,
     projectId,
     projectRoot,
+    enabled,
     onRepositoryChanged,
+    onRepositorySelectionChange,
   });
 
   return (

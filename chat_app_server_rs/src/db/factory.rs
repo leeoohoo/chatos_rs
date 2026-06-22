@@ -7,7 +7,7 @@ use tracing::warn;
 
 use super::mongodb::init_mongodb;
 use super::sqlite::init_sqlite;
-use super::types::{Database, DatabaseConfig, DatabaseType, MongoConfig, SqliteConfig};
+use super::types::{Database, DatabaseConfig, DatabaseType};
 
 static DB_FACTORY: OnceCell<Arc<DatabaseFactory>> = OnceCell::new();
 
@@ -109,6 +109,7 @@ impl DatabaseFactory {
         }
     }
 
+    #[cfg(test)]
     pub async fn switch_database(
         &self,
         new_config: DatabaseConfig,
@@ -120,18 +121,20 @@ impl DatabaseFactory {
         Ok(adapter)
     }
 
+    #[cfg(test)]
     pub async fn switch_to_sqlite(&self, db_path: Option<String>) -> Result<Arc<Database>, String> {
         let cfg = DatabaseConfig {
             db_type: Some(DatabaseType::Sqlite),
-            sqlite: Some(SqliteConfig {
+            sqlite: Some(super::types::SqliteConfig {
                 db_path,
-                ..SqliteConfig::default()
+                ..super::types::SqliteConfig::default()
             }),
             ..DatabaseConfig::default()
         };
         self.switch_database(cfg).await
     }
 
+    #[cfg(test)]
     pub async fn switch_to_mongodb(
         &self,
         host: Option<String>,
@@ -140,11 +143,11 @@ impl DatabaseFactory {
     ) -> Result<Arc<Database>, String> {
         let cfg = DatabaseConfig {
             db_type: Some(DatabaseType::Mongodb),
-            mongodb: Some(MongoConfig {
+            mongodb: Some(super::types::MongoConfig {
                 host,
                 port,
                 database,
-                ..MongoConfig::default()
+                ..super::types::MongoConfig::default()
             }),
             ..DatabaseConfig::default()
         };

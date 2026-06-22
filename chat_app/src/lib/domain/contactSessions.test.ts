@@ -7,6 +7,7 @@ import {
   normalizeContactSessions,
   normalizeMemoryContact,
   resolveSessionProjectScopeId,
+  splitSessionsByMappedContacts,
 } from './contactSessions';
 
 const buildSession = (overrides: Partial<Session>): Session => ({
@@ -73,6 +74,80 @@ describe('domain/contactSessions', () => {
     expect(normalized).toHaveLength(1);
     expect(normalized[0]?.id).toBe('session_new');
     expect(matched?.id).toBe('session_new');
+  });
+
+  it('does not match another contact just because the agent id is the same', () => {
+    const session = buildSession({
+      id: 'session_contact_1',
+      metadata: {
+        chat_runtime: { project_id: 'project_1', contact_agent_id: 'agent_shared' },
+        contact: { contact_id: 'contact_1' },
+      },
+    });
+
+    expect(matchSessionContactProjectScope(session, {
+      contactId: 'contact_2',
+      contactAgentId: 'agent_shared',
+      projectId: 'project_1',
+    })).toBe(false);
+
+    expect(findLatestMatchedSession([session], {
+      id: 'contact_2',
+      agentId: 'agent_shared',
+    }, 'project_1')).toBeNull();
+  });
+
+  it('keeps same-agent contacts missing until each has its own contact session', () => {
+    const sessions = [
+      buildSession({
+        id: 'session_contact_1',
+        metadata: {
+          chat_runtime: { project_id: 'project_1', contact_agent_id: 'agent_shared' },
+          contact: { contact_id: 'contact_1' },
+        },
+      }),
+    ];
+    const { matchedSessions, missingContacts } = splitSessionsByMappedContacts(sessions, [
+      {
+        id: 'contact_1',
+        user_id: 'user_1',
+        agent_id: 'agent_shared',
+      },
+      {
+        id: 'contact_2',
+        user_id: 'user_1',
+        agent_id: 'agent_shared',
+      },
+    ]);
+
+    expect(matchedSessions.map((session) => session.id)).toEqual(['session_contact_1']);
+    expect(missingContacts.map((contact) => contact.id)).toEqual(['contact_2']);
+  });
+
+  it('does not assign an agent-only legacy session when same-agent contacts are ambiguous', () => {
+    const sessions = [
+      buildSession({
+        id: 'session_agent_only',
+        metadata: {
+          chat_runtime: { project_id: 'project_1', contact_agent_id: 'agent_shared' },
+        },
+      }),
+    ];
+    const { matchedSessions, missingContacts } = splitSessionsByMappedContacts(sessions, [
+      {
+        id: 'contact_1',
+        user_id: 'user_1',
+        agent_id: 'agent_shared',
+      },
+      {
+        id: 'contact_2',
+        user_id: 'user_1',
+        agent_id: 'agent_shared',
+      },
+    ]);
+
+    expect(matchedSessions).toHaveLength(0);
+    expect(missingContacts.map((contact) => contact.id)).toEqual(['contact_1', 'contact_2']);
   });
 
   it('normalizes memory contact payloads defensively', () => {

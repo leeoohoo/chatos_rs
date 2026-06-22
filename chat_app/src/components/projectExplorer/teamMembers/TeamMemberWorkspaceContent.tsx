@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { MessageList } from '../../MessageList';
 import TeamMemberSummaryView from './TeamMemberSummaryView';
 import type { TeamMemberWorkspaceProps } from './TeamMemberWorkspaceTypes';
@@ -17,11 +18,10 @@ type TeamMemberWorkspaceContentProps = Pick<
   | 'deletingSummaryId'
   | 'messages'
   | 'hasMoreMessages'
-  | 'chatIsLoading'
-  | 'chatIsStreaming'
-  | 'chatIsStopping'
+  | 'anchorMessageId'
+  | 'anchorRequestKey'
+  | 'onAnchorClear'
   | 'onLoadMore'
-  | 'onToggleTurnProcess'
   | 'onClearSummaries'
   | 'onRefreshSummaries'
   | 'onCloseSummary'
@@ -40,34 +40,35 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
   deletingSummaryId,
   messages,
   hasMoreMessages,
-  chatIsLoading,
-  chatIsStreaming,
-  chatIsStopping,
+  anchorMessageId,
+  anchorRequestKey,
+  onAnchorClear,
   onLoadMore,
-  onToggleTurnProcess,
   onClearSummaries,
   onRefreshSummaries,
   onCloseSummary,
   onDeleteSummary,
 }) => {
+  const { t } = useI18n();
+
   if (!selectedContact) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-        请选择一个团队成员开始对话
+        {t('teamMembers.selectPrompt')}
       </div>
     );
   }
   if (!selectedProjectSession) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-        正在准备会话...
+        {t('teamMembers.preparingSession')}
       </div>
     );
   }
   if (!isSelectedSessionActive) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-        正在切换到 {selectedContact.name} 的会话...
+        {t('teamMembers.switchingSession', { name: selectedContact.name })}
       </div>
     );
   }
@@ -84,11 +85,7 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
         deletingSummaryId={deletingSummaryId}
         messages={messages}
         hasMoreMessages={hasMoreMessages}
-        chatIsLoading={chatIsLoading}
-        chatIsStreaming={chatIsStreaming}
-        chatIsStopping={chatIsStopping}
         onLoadMore={onLoadMore}
-        onToggleTurnProcess={onToggleTurnProcess}
         onClearSummaries={onClearSummaries}
         onRefreshSummaries={onRefreshSummaries}
         onCloseSummary={onCloseSummary}
@@ -102,12 +99,14 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
       key={`project-team-messages-${selectedProjectSession.id}`}
       sessionId={selectedProjectSession.id}
       messages={messages}
-      isLoading={chatIsLoading}
-      isStreaming={chatIsStreaming}
-      isStopping={chatIsStopping}
-      hasMore={hasMoreMessages}
-      onLoadMore={onLoadMore}
-      onToggleTurnProcess={onToggleTurnProcess}
+      isLoading={false}
+      isStreaming={false}
+      isStopping={false}
+      assistantContactName={selectedContact.name}
+      anchorMessageId={anchorMessageId}
+      anchorRequestKey={anchorRequestKey}
+      autoScrollToLatest={false}
+      onAnchorClear={onAnchorClear}
     />
   );
 };

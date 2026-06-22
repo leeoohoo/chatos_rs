@@ -4,10 +4,16 @@ use crate::domain::{
     datasource::DatabaseInfo,
     metadata::{MetadataNodeType, ObjectColumn, ObjectDetailResponse, ObjectStatsResponse},
 };
+use crate::drivers::metadata_common;
 
 use super::{common::*, MockCatalog};
 
 pub fn build() -> MockCatalog {
+    let orclpdb1_db_id = metadata_common::make_node_id("db", &["orclpdb1"]);
+    let app_user_schema_id = metadata_common::make_node_id("schema", &["orclpdb1", "APP_USER"]);
+    let orders_table_id =
+        metadata_common::make_node_id("table", &["orclpdb1", "APP_USER", "ORDERS"]);
+
     let databases = vec![DatabaseInfo {
         name: "orclpdb1".to_string(),
         owner: Some("SYSTEM".to_string()),
@@ -38,10 +44,10 @@ pub fn build() -> MockCatalog {
     let mut children = HashMap::new();
     children.insert("root".to_string(), database_nodes(&databases));
     children.insert(
-        "db:orclpdb1".to_string(),
+        orclpdb1_db_id.clone(),
         vec![node(
-            "schema:orclpdb1:APP_USER",
-            "db:orclpdb1",
+            &app_user_schema_id,
+            &orclpdb1_db_id,
             MetadataNodeType::Schema,
             "APP_USER",
             "orclpdb1.APP_USER",
@@ -49,10 +55,10 @@ pub fn build() -> MockCatalog {
         )],
     );
     children.insert(
-        "schema:orclpdb1:APP_USER".to_string(),
+        app_user_schema_id.clone(),
         vec![node(
-            "table:orclpdb1:APP_USER:ORDERS",
-            "schema:orclpdb1:APP_USER",
+            &orders_table_id,
+            &app_user_schema_id,
             MetadataNodeType::Table,
             "ORDERS",
             "orclpdb1.APP_USER.ORDERS",
@@ -62,9 +68,9 @@ pub fn build() -> MockCatalog {
 
     let mut details = HashMap::new();
     details.insert(
-        "table:orclpdb1:APP_USER:ORDERS".to_string(),
+        orders_table_id.clone(),
         ObjectDetailResponse {
-            node_id: "table:orclpdb1:APP_USER:ORDERS".to_string(),
+            node_id: orders_table_id,
             node_type: MetadataNodeType::Table,
             name: "ORDERS".to_string(),
             columns: vec![

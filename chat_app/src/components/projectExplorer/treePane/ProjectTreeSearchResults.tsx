@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type { ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { splitTextByQuery } from '../utils';
@@ -21,6 +22,8 @@ export const ProjectTreeSearchResults: React.FC<ProjectTreeSearchResultsProps> =
   activeSearchHitId,
   onOpenSearchHit,
 }) => {
+  const { t } = useI18n();
+
   const renderHighlightedText = (text: string, query: string): React.ReactNode => (
     splitTextByQuery(text, query, {
       caseSensitive: searchCaseSensitive,
@@ -43,7 +46,7 @@ export const ProjectTreeSearchResults: React.FC<ProjectTreeSearchResultsProps> =
 
   const keyword = searchQuery.trim();
   if (searchResults.length === 0) {
-    return <div className="px-3 py-2 text-xs text-muted-foreground">没有找到匹配内容</div>;
+    return <div className="px-3 py-2 text-xs text-muted-foreground">{t('projectExplorer.search.noResults')}</div>;
   }
 
   return searchResults.map((hit) => {
@@ -67,7 +70,7 @@ export const ProjectTreeSearchResults: React.FC<ProjectTreeSearchResultsProps> =
           <span className="shrink-0 text-muted-foreground">L{hit.line}:C{hit.column}</span>
         </div>
         <div className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">
-          {hit.text ? renderHighlightedText(hit.text, keyword) : '(空行)'}
+          {hit.text ? renderHighlightedText(hit.text, keyword) : t('projectExplorer.search.emptyLine')}
         </div>
       </button>
     );

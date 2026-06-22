@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitRootQuery {
     pub root: String,
+    pub preferred_repo_root: Option<String>,
+    pub force_refresh: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitRepositoryCandidate {
+    pub root: String,
+    pub label: String,
+    pub relative_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,7 +84,7 @@ pub struct GitDiffQuery {
     pub staged: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitChangeCounts {
     pub staged: usize,
     pub unstaged: usize,
@@ -83,7 +92,7 @@ pub struct GitChangeCounts {
     pub conflicted: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitClientInfo {
     pub available: bool,
     pub source: String,
@@ -93,11 +102,14 @@ pub struct GitClientInfo {
     pub bundled_candidates: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitSummary {
     pub is_repo: bool,
     pub root: Option<String>,
     pub worktree_root: Option<String>,
+    pub query_root: Option<String>,
+    pub resolved_root: Option<String>,
+    pub selected_root: Option<String>,
     pub head: Option<String>,
     pub current_branch: Option<String>,
     pub detached: bool,
@@ -107,9 +119,10 @@ pub struct GitSummary {
     pub dirty: bool,
     pub operation_state: Option<String>,
     pub changes: GitChangeCounts,
+    pub available_repositories: Vec<GitRepositoryCandidate>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitBranchInfo {
     pub name: String,
     pub short_name: Option<String>,
@@ -123,14 +136,14 @@ pub struct GitBranchInfo {
     pub last_commit_subject: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitBranches {
     pub current: Option<String>,
     pub locals: Vec<GitBranchInfo>,
     pub remotes: Vec<GitBranchInfo>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitStatusFile {
     pub path: String,
     pub old_path: Option<String>,
@@ -140,26 +153,26 @@ pub struct GitStatusFile {
     pub conflicted: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitStatus {
     pub files: Vec<GitStatusFile>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitDiffFile {
     pub path: String,
     pub old_path: Option<String>,
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitCompareCommit {
     pub side: String,
     pub hash: String,
     pub subject: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitCompareResult {
     pub current: String,
     pub target: String,
@@ -167,7 +180,7 @@ pub struct GitCompareResult {
     pub commits: Vec<GitCompareCommit>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitFileDiff {
     pub path: String,
     pub target: Option<String>,
@@ -175,7 +188,7 @@ pub struct GitFileDiff {
     pub patch: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitActionResult {
     pub success: bool,
     pub summary: GitSummary,

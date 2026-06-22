@@ -1,5 +1,3 @@
-pub(crate) mod support;
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
@@ -7,6 +5,8 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::Serialize;
 use uuid::Uuid;
+
+use crate::utils::attachments::Attachment;
 
 const TURN_KEY_SEPARATOR: &str = "::";
 pub const DEFAULT_MAX_QUEUE_SIZE: usize = 20;
@@ -26,6 +26,8 @@ pub struct RuntimeGuidanceItem {
     pub session_id: String,
     pub turn_id: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
     pub status: RuntimeGuidanceStatus,
     pub created_at: String,
     pub applied_at: Option<String>,
@@ -107,13 +109,14 @@ impl RuntimeGuidanceManager {
         session_id: &str,
         turn_id: &str,
         content: &str,
+        attachments: Vec<Attachment>,
     ) -> Result<RuntimeGuidanceItem, EnqueueGuidanceError> {
         let session_id = session_id.trim();
         let turn_id = turn_id.trim();
         let content = content.trim();
         if session_id.is_empty()
             || turn_id.is_empty()
-            || content.is_empty()
+            || (content.is_empty() && attachments.is_empty())
             || !self.is_active_turn(session_id, turn_id)
         {
             return Err(EnqueueGuidanceError::TurnNotRunning);
@@ -164,6 +167,7 @@ impl RuntimeGuidanceManager {
             session_id: session_id.to_string(),
             turn_id: turn_id.to_string(),
             content: content.to_string(),
+            attachments,
             status: RuntimeGuidanceStatus::Queued,
             created_at: now,
             applied_at: None,

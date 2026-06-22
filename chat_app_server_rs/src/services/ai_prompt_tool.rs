@@ -3,6 +3,8 @@ use serde_json::{json, Value};
 use crate::services::llm_prompt_runner::run_text_prompt_with_model_config;
 
 pub async fn run_text_prompt(
+    model_config_id: Option<String>,
+    user_id: Option<String>,
     ai_model_config: Option<Value>,
     system_prompt: &str,
     user_prompt: &str,
@@ -10,9 +12,10 @@ pub async fn run_text_prompt(
     default_model: &str,
     purpose: &str,
 ) -> Result<String, String> {
-    let model_cfg = ai_model_config.unwrap_or_else(|| json!({}));
     run_text_prompt_with_model_config(
-        Some(model_cfg),
+        model_config_id,
+        user_id,
+        ai_model_config.or_else(|| Some(json!({}))),
         system_prompt,
         user_prompt,
         max_tokens,

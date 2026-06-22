@@ -4,15 +4,15 @@ import type {
   SessionChatState,
 } from '../../types';
 import {
-  createEmptySessionRuntimeGuidanceState,
-  resetRuntimeGuidancePendingCount,
-} from './runtimeGuidanceState';
-import { cloneStreamingMessageDraft } from './streamText';
+  resolveSessionProjectScopeId,
+  syncCurrentProjectFromSession,
+} from '../sessionsUtils';
 
 export const createDefaultSessionChatState = (): SessionChatState => ({
   isLoading: false,
   isStreaming: false,
   isStopping: false,
+  streamingPhase: null,
   streamingMessageId: null,
   activeTurnId: null,
   streamingPreviewText: '',
@@ -33,11 +33,107 @@ export const applySessionRuntimeMetadata = (
   const sessionIndex = state.sessions.findIndex((session) => session.id === sessionId);
   if (sessionIndex >= 0) {
     state.sessions[sessionIndex].metadata = runtimeMetadata;
+    const nextProjectId = resolveSessionProjectScopeId({
+      ...state.sessions[sessionIndex],
+      metadata: runtimeMetadata,
+    });
+    state.sessions[sessionIndex].projectId = nextProjectId === '0' ? '0' : nextProjectId || null;
+    state.sessions[sessionIndex].project_id = nextProjectId === '0' ? '0' : nextProjectId || null;
+    if (state.currentSession?.id === sessionId) {
+      syncCurrentProjectFromSession(state, state.sessions[sessionIndex]);
+    }
   }
 
   if (state.currentSession?.id === sessionId) {
     state.currentSession.metadata = runtimeMetadata;
+    const nextProjectId = resolveSessionProjectScopeId({
+      ...state.currentSession,
+      metadata: runtimeMetadata,
+    });
+    state.currentSession.projectId = nextProjectId === '0' ? '0' : nextProjectId || null;
+    state.currentSession.project_id = nextProjectId === '0' ? '0' : nextProjectId || null;
+    syncCurrentProjectFromSession(state, state.currentSession);
   }
+};
+
+export const setTaskRunnerAsyncUserMessageStatus = (
+  state: ChatStoreDraft,
+  userMessageId: string | null | undefined,
+  overallStatus: 'pending' | 'processing' | 'completed',
+) => {
+  const normalizedUserMessageId = typeof userMessageId === 'string'
+    ? userMessageId.trim()
+    : '';
+  if (!normalizedUserMessageId) {
+    return;
+  }
+
+  const userIndex = state.messages.findIndex((message) => (
+    message.id === normalizedUserMessageId && message.role === 'user'
+  ));
+  if (userIndex < 0) {
+    return;
+  }
+
+  const existingUser = state.messages[userIndex];
+  const existingMetadata = existingUser.metadata || {};
+  const existingTaskRunnerAsync = (
+    existingMetadata.task_runner_async
+    && typeof existingMetadata.task_runner_async === 'object'
+  ) ? existingMetadata.task_runner_async : {};
+
+  state.messages[userIndex] = {
+    ...existingUser,
+    metadata: {
+      ...existingMetadata,
+      task_runner_async: {
+        ...existingTaskRunnerAsync,
+        mode: 'contact_async',
+        overall_status: overallStatus,
+      },
+    },
+  };
+};
+
+export const replaceOptimisticUserMessageId = (
+  state: ChatStoreDraft,
+  tempUserMessageId: string,
+  persistedUserMessageId: string | null | undefined,
+) => {
+  const normalizedPersistedId = typeof persistedUserMessageId === 'string'
+    ? persistedUserMessageId.trim()
+    : '';
+  if (!normalizedPersistedId || normalizedPersistedId === tempUserMessageId) {
+    return tempUserMessageId;
+  }
+
+  const userIndex = state.messages.findIndex((message) => (
+    message.id === tempUserMessageId && message.role === 'user'
+  ));
+  if (userIndex < 0) {
+    return normalizedPersistedId;
+  }
+
+  const existingUser = state.messages[userIndex];
+  const existingMetadata = existingUser.metadata || {};
+  const existingTaskRunnerAsync = (
+    existingMetadata.task_runner_async
+    && typeof existingMetadata.task_runner_async === 'object'
+  ) ? existingMetadata.task_runner_async : {};
+
+  state.messages[userIndex] = {
+    ...existingUser,
+    id: normalizedPersistedId,
+    metadata: {
+      ...existingMetadata,
+      task_runner_async: {
+        ...existingTaskRunnerAsync,
+        source_user_message_id: normalizedPersistedId,
+      },
+    },
+  };
+
+  return normalizedPersistedId;
 };
 
 export const beginUserTurnInState = (
@@ -45,139 +141,30 @@ export const beginUserTurnInState = (
   {
     sessionId,
     userMessage,
-    turnProcessKey,
     conversationTurnId,
   }: {
     sessionId: string;
     userMessage: Message;
-    turnProcessKey: string;
     conversationTurnId: string;
   },
 ) => {
   state.messages.push(userMessage);
 
-  if (!state.sessionTurnProcessState) {
-    state.sessionTurnProcessState = {};
-  }
-  if (!state.sessionTurnProcessState[sessionId]) {
-    state.sessionTurnProcessState[sessionId] = {};
-  }
-  state.sessionTurnProcessState[sessionId][turnProcessKey] = {
-    expanded: false,
-    loaded: false,
-    loading: false,
-  };
-
   const prev = resolveSessionChatState(state, sessionId);
   state.sessionChatState[sessionId] = {
     ...prev,
     isLoading: true,
-    isStreaming: true,
+    isStreaming: false,
     isStopping: false,
+    streamingPhase: null,
+    streamingMessageId: null,
     activeTurnId: conversationTurnId,
     streamingPreviewText: '',
     streamingTransport: null,
   };
-  state.sessionRuntimeGuidanceState[sessionId] = createEmptySessionRuntimeGuidanceState();
 
   if (state.currentSessionId === sessionId) {
     state.isLoading = true;
-    state.isStreaming = true;
-  }
-};
-
-export const beginAssistantDraftInState = (
-  state: ChatStoreDraft,
-  {
-    sessionId,
-    userMessageId,
-    assistantMessage,
-    conversationTurnId,
-  }: {
-    sessionId: string;
-    userMessageId: string;
-    assistantMessage: Message;
-    conversationTurnId: string;
-  },
-) => {
-  state.messages.push(assistantMessage);
-
-  const linkedUserMessage = state.messages.find(
-    (message) => message.id === userMessageId && message.role === 'user',
-  );
-  if (linkedUserMessage?.metadata?.historyProcess) {
-    linkedUserMessage.metadata.historyProcess.finalAssistantMessageId = assistantMessage.id;
-  }
-
-  const prev = resolveSessionChatState(state, sessionId);
-  state.sessionChatState[sessionId] = {
-    ...prev,
-    isLoading: true,
-    isStreaming: true,
-    isStopping: false,
-    streamingMessageId: assistantMessage.id,
-    activeTurnId: conversationTurnId,
-    streamingPreviewText: '',
-  };
-
-  if (!state.sessionStreamingMessageDrafts) {
-    state.sessionStreamingMessageDrafts = {};
-  }
-  state.sessionStreamingMessageDrafts[sessionId] = cloneStreamingMessageDraft(assistantMessage);
-
-  if (state.currentSessionId === sessionId) {
-    state.streamingMessageId = assistantMessage.id;
-  }
-};
-
-export const finalizeStreamingSessionState = (
-  state: ChatStoreDraft,
-  {
-    sessionId,
-    assistantMessageId,
-    sawDone,
-  }: {
-    sessionId: string;
-    assistantMessageId: string;
-    sawDone: boolean;
-  },
-) => {
-  const currentDraft = state.sessionStreamingMessageDrafts?.[sessionId];
-
-  if (currentDraft) {
-    const finalizedDraft = cloneStreamingMessageDraft(currentDraft);
-    finalizedDraft.status = sawDone ? 'completed' : 'error';
-
-    const existingIndex = state.messages.findIndex((message) => message.id === assistantMessageId);
-    if (existingIndex !== -1) {
-      state.messages[existingIndex] = {
-        ...state.messages[existingIndex],
-        ...finalizedDraft,
-      };
-    } else if (state.currentSessionId === sessionId) {
-      state.messages.push(finalizedDraft);
-    }
-  }
-
-  if (state.sessionStreamingMessageDrafts) {
-    state.sessionStreamingMessageDrafts[sessionId] = null;
-  }
-
-  const prev = resolveSessionChatState(state, sessionId);
-  state.sessionChatState[sessionId] = {
-    ...prev,
-    isLoading: false,
-    isStreaming: false,
-    isStopping: false,
-    streamingMessageId: null,
-    activeTurnId: null,
-    streamingPreviewText: '',
-    streamingTransport: null,
-  };
-  resetRuntimeGuidancePendingCount(state, sessionId);
-
-  if (state.currentSessionId === sessionId) {
-    state.isLoading = false;
     state.isStreaming = false;
     state.streamingMessageId = null;
   }
@@ -202,21 +189,16 @@ export const failSendMessageState = (
   const existingAssistantIndex = tempAssistantId
     ? state.messages.findIndex((message) => message.id === tempAssistantId)
     : -1;
-  const currentDraft = state.sessionStreamingMessageDrafts?.[sessionId];
   const baseAssistant = existingAssistantIndex !== -1
     ? state.messages[existingAssistantIndex]
-    : (
-      currentDraft
-        ? cloneStreamingMessageDraft(currentDraft)
-        : {
-            ...tempAssistantMessage,
-            metadata: {
-              ...(tempAssistantMessage.metadata || {}),
-              contentSegments: [{ content: failureContent, type: 'text' as const }],
-              currentSegmentIndex: 0,
-            },
-          }
-    );
+    : {
+        ...tempAssistantMessage,
+        metadata: {
+          ...(tempAssistantMessage.metadata || {}),
+          contentSegments: [{ content: failureContent, type: 'text' as const }],
+          currentSegmentIndex: 0,
+        },
+      };
   const failureAssistantMessage: Message = {
     ...baseAssistant,
     role: 'assistant',
@@ -237,26 +219,18 @@ export const failSendMessageState = (
     state.messages.push(failureAssistantMessage);
   }
 
-  if (state.sessionStreamingMessageDrafts) {
-    state.sessionStreamingMessageDrafts[sessionId] = (
-      existingAssistantIndex !== -1 || state.currentSessionId === sessionId
-    )
-      ? null
-      : cloneStreamingMessageDraft(failureAssistantMessage);
-  }
-
   const prev = resolveSessionChatState(state, sessionId);
   state.sessionChatState[sessionId] = {
     ...prev,
     isLoading: false,
     isStreaming: false,
     isStopping: false,
+    streamingPhase: null,
     streamingMessageId: null,
     activeTurnId: null,
     streamingPreviewText: '',
     streamingTransport: null,
   };
-  resetRuntimeGuidancePendingCount(state, sessionId);
 
   if (state.currentSessionId === sessionId) {
     state.isLoading = false;

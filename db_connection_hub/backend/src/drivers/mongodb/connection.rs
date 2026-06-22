@@ -11,6 +11,11 @@ use crate::{
         datasource::{ConnectionTestResult, ConnectionTestStageResult, DataSource},
         meta::AuthMode,
     },
+    drivers::connection_common::{
+        require_network_host, require_network_port, validate_network_host_port,
+        validate_password_auth, validate_supported_auth_mode, validate_tls_client_cert_auth,
+        validate_token_auth,
+    },
     error::{AppError, AppResult},
 };
 
@@ -70,15 +75,8 @@ pub async fn test_connection(datasource: &DataSource) -> AppResult<ConnectionTes
 pub async fn connect_client(datasource: &DataSource) -> AppResult<Client> {
     validate_connection_payload(datasource)?;
 
-    let host = datasource
-        .network
-        .host
-        .clone()
-        .ok_or_else(|| AppError::BadRequest("network.host is required".to_string()))?;
-    let port = datasource
-        .network
-        .port
-        .ok_or_else(|| AppError::BadRequest("network.port is required".to_string()))?;
+    let host = require_network_host(datasource)?;
+    let port = require_network_port(datasource)?;
 
     let uri = format!("mongodb://{host}:{port}/");
     let mut options = ClientOptions::parse(uri.as_str())
@@ -157,86 +155,30 @@ fn configure_tls(options: &mut ClientOptions, datasource: &DataSource) {
 }
 
 fn validate_connection_payload(datasource: &DataSource) -> AppResult<()> {
-    if datasource
-        .network
-        .host
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return Err(AppError::BadRequest("network.host is required".to_string()));
-    }
-
-    if datasource.network.port.is_none() {
-        return Err(AppError::BadRequest("network.port is required".to_string()));
-    }
+    validate_network_host_port(datasource)?;
+    validate_supported_auth_mode(
+        datasource,
+        &[
+            AuthMode::NoAuth,
+            AuthMode::Password,
+            AuthMode::Token,
+            AuthMode::TlsClientCert,
+        ],
+        "mongodb currently supports no_auth/password/token/tls_client_cert",
+    )?;
 
     match datasource.auth.mode {
         AuthMode::NoAuth => {}
         AuthMode::Password => {
-            if datasource
-                .auth
-                .username
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("username is required".to_string()));
-            }
-
-            if datasource
-                .auth
-                .password
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("password is required".to_string()));
-            }
+            validate_password_auth(datasource)?;
         }
         AuthMode::Token => {
-            if datasource
-                .auth
-                .access_token
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("access_token is required".to_string()));
-            }
+            validate_token_auth(datasource)?;
         }
         AuthMode::TlsClientCert => {
-            if datasource
-                .auth
-                .client_cert
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("client_cert is required".to_string()));
-            }
-
-            if datasource
-                .auth
-                .client_key
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .is_empty()
-            {
-                return Err(AppError::BadRequest("client_key is required".to_string()));
-            }
+            validate_tls_client_cert_auth(datasource)?;
         }
-        _ => {
-            return Err(AppError::BadRequest(
-                "mongodb currently supports no_auth/password/token/tls_client_cert".to_string(),
-            ));
-        }
+        _ => {}
     }
 
     Ok(())

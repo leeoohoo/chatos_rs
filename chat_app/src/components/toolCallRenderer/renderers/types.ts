@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { UiLocale } from '../../../i18n/messages';
 
 export interface ToolResultRenderContext {
   toolName: string;
@@ -12,7 +13,7 @@ export interface ToolResultRenderContext {
 
 export interface ToolResultRenderer {
   id: string;
-  sourceLabel: string;
+  sourceLabel: (locale: UiLocale) => string;
   matches: (context: ToolResultRenderContext) => boolean;
   render: (context: ToolResultRenderContext) => ReactNode;
 }

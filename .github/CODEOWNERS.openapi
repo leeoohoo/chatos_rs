@@ -40,11 +40,3 @@ scripts/precommit_openapi_contracts.sh @chatos-rs/platform-maintainers
 .github/api-contract/fragments/chat_app_server_rs/60-system-config-ui.yaml @chatos-rs/main-system-config-ui
 .github/api-contract/fragments/chat_app_server_rs/70-entrypoints.yaml @chatos-rs/platform-maintainers
 .github/api-contract/fragments/chat_app_server_rs/_meta.yaml @chatos-rs/platform-maintainers
-
-# Memory backend fragments
-.github/api-contract/fragments/memory_server/10-core-sessions-messages.yaml @chatos-rs/memory-sessions
-.github/api-contract/fragments/memory_server/20-contacts-projects.yaml @chatos-rs/memory-contacts-projects
-.github/api-contract/fragments/memory_server/30-configs-jobs.yaml @chatos-rs/memory-configs-jobs
-.github/api-contract/fragments/memory_server/40-agents-auth-skills.yaml @chatos-rs/memory-agents-auth-skills
-.github/api-contract/fragments/memory_server/50-runtime-sync.yaml @chatos-rs/memory-sessions
-.github/api-contract/fragments/memory_server/_meta.yaml @chatos-rs/platform-maintainers

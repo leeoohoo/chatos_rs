@@ -33,7 +33,7 @@ pub(super) async fn get_mcp_resource_config(
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"error": "MCP配置不存在"})),
-            )
+            );
         }
     };
     if cfg.r#type != "stdio" {
@@ -82,7 +82,7 @@ pub(super) async fn post_mcp_resource_config(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "缺少可执行命令"})),
-            )
+            );
         }
     };
     let args = parse_args_json_array(&req.args);

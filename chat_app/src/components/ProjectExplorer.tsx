@@ -1,8 +1,11 @@
 import React from 'react';
 
+import { useI18n } from '../i18n/I18nProvider';
 import type { Project } from '../types';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
+import ProjectContactSettingsCard from './projectExplorer/ProjectContactSettingsCard';
+import ProjectRunSettingsPanel from './projectExplorer/ProjectRunSettingsPanel';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
 import GitBranchButton from './projectExplorer/git/GitBranchButton';
@@ -14,6 +17,7 @@ interface ProjectExplorerProps {
 }
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
+  const { t } = useI18n();
   const {
     client,
     containerRef,
@@ -26,12 +30,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     isResizing,
     treePaneProps,
     previewPaneProps,
+    projectSettingsProps,
     actionLoading,
-    loadingLogs,
-    logsError,
-    changeLogs,
-    selectedLogId,
-    setSelectedLogId,
     moveConflict,
     setMoveConflict,
     handleMoveConflictCancel,
@@ -41,19 +41,25 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     contextMenuStyle,
     isContextRootEntry,
     setContextMenu,
-    workspaceCanRunFile,
     workspaceHandleCreateDirectory,
     workspaceHandleCreateFile,
-    workspaceHandleRunFile,
     workspaceHandleDownloadSelected,
     workspaceHandleDeleteSelected,
+    workspaceHandleCopyFilePath,
+    workspaceHandleCopyRelativeFilePath,
+    workspaceHandleIgnoreFile,
+    workspaceHandleIgnoreFolder,
+    workspaceHandleIgnoreByExtension,
+    workspaceHandleOpenPathInDefaultProgram,
+    workspaceHandleRevealInFinder,
+    workspaceHandleOpenInCode,
     handleGitRepositoryChanged,
   } = useProjectExplorerViewModel({ project });
 
   if (!project) {
     return (
       <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
-        请选择一个项目查看文件
+        {t('projectExplorer.emptyProject')}
       </div>
     );
   }
@@ -64,12 +70,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
         activeTab={workspaceTab}
         onChange={setWorkspaceTab}
         rightActions={(
-          <GitBranchButton
-            client={client}
-            projectId={project.id}
-            projectRoot={project.rootPath}
-            onRepositoryChanged={handleGitRepositoryChanged}
-          />
+          workspaceTab === 'files' ? (
+            <GitBranchButton
+              client={client}
+              projectId={project.id}
+              projectRoot={project.rootPath}
+              onRepositoryChanged={handleGitRepositoryChanged}
+            />
+          ) : null
         )}
       />
 
@@ -79,6 +87,11 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             project={project}
             className="h-full"
           />
+        ) : workspaceTab === 'settings' ? (
+          <div className="h-full overflow-auto p-4">
+            <ProjectContactSettingsCard project={project} />
+            <ProjectRunSettingsPanel {...projectSettingsProps} />
+          </div>
         ) : (
           <ProjectExplorerFilesWorkspace
             treePaneProps={treePaneProps}
@@ -88,11 +101,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             resizeStartWidth={resizeStartWidth}
             setIsResizing={setIsResizing}
             previewPaneProps={previewPaneProps}
-            loadingLogs={loadingLogs}
-            logsError={logsError}
-            changeLogs={changeLogs}
-            selectedLogId={selectedLogId}
-            setSelectedLogId={setSelectedLogId}
             moveConflict={moveConflict}
             actionLoading={actionLoading}
             setMoveConflict={setMoveConflict}
@@ -103,11 +111,17 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             contextMenuStyle={contextMenuStyle}
             isContextRootEntry={isContextRootEntry}
             setContextMenu={setContextMenu}
-            canRunFile={workspaceCanRunFile}
             onCreateDirectory={workspaceHandleCreateDirectory}
             onCreateFile={workspaceHandleCreateFile}
-            onRunFile={workspaceHandleRunFile}
             onDownloadSelected={workspaceHandleDownloadSelected}
+            onCopyFilePath={workspaceHandleCopyFilePath}
+            onCopyRelativeFilePath={workspaceHandleCopyRelativeFilePath}
+            onIgnoreFile={workspaceHandleIgnoreFile}
+            onIgnoreFolder={workspaceHandleIgnoreFolder}
+            onIgnoreByExtension={workspaceHandleIgnoreByExtension}
+            onOpenPathInDefaultProgram={workspaceHandleOpenPathInDefaultProgram}
+            onRevealInFinder={workspaceHandleRevealInFinder}
+            onOpenInCode={workspaceHandleOpenInCode}
             onDeleteSelected={workspaceHandleDeleteSelected}
           />
         )}

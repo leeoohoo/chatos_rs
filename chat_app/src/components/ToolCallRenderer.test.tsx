@@ -4,6 +4,8 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { I18nProvider } from '../i18n/I18nProvider';
+import { useAuthStore } from '../lib/auth/authStore';
 import type { Message, ToolCall } from '../types';
 import ToolCallRenderer from './ToolCallRenderer';
 
@@ -34,13 +36,23 @@ const buildToolResultMessage = (overrides: Partial<Message> = {}): Message => ({
   ...overrides,
 });
 
+const renderWithEnglishI18n = (ui: React.ReactElement) => {
+  window.localStorage.setItem('chat_ui_locale', 'en-US');
+  useAuthStore.setState({
+    initialized: false,
+    user: null,
+  });
+  return render(<I18nProvider>{ui}</I18nProvider>);
+};
+
 describe('ToolCallRenderer summaries', () => {
   afterEach(() => {
+    window.localStorage.removeItem('chat_ui_locale');
     cleanup();
   });
 
   it('renders extract summary while hiding backend execution metadata', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           result: {
@@ -57,7 +69,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.queryByText('Web backend')).not.toBeInTheDocument();
 
@@ -71,7 +83,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('shortens code maintainer tool names and renders file details without tree tables', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'code_maintainer_read_read_file_range',
@@ -94,10 +106,10 @@ describe('ToolCallRenderer summaries', () => {
     );
 
     expect(screen.getByText('@read_file_range')).toBeInTheDocument();
-    expect(screen.getByTitle('code_maintainer_read_read_file_range')).toBeInTheDocument();
+    expect(screen.getByTitle('read_file_range')).toBeInTheDocument();
     expect(screen.queryByText('@code_maintainer_read_read_file_range')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('Input summary')).toBeInTheDocument();
     expect(screen.getAllByText('src/main.rs').length).toBeGreaterThan(0);
@@ -115,7 +127,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('hides redundant search summary and keeps only the match list for search tools', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'code_maintainer_read_search_text',
@@ -135,7 +147,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('@search_text')).toBeInTheDocument();
     expect(screen.getByText('Input summary')).toBeInTheDocument();
@@ -148,7 +160,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('normalizes builtin list_dir names and renders directory entries cards', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'code_maintainer_read_builtin__list_dir',
@@ -169,7 +181,7 @@ describe('ToolCallRenderer summaries', () => {
     expect(screen.getByText('@list_dir')).toBeInTheDocument();
     expect(screen.queryByText('@builtin__list_dir')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('Directory entries')).toBeInTheDocument();
     expect(screen.getByText('components')).toBeInTheDocument();
@@ -181,7 +193,7 @@ describe('ToolCallRenderer summaries', () => {
   it('normalizes builtin apply_patch names and avoids tree-table fallback', () => {
     const patchText = '*** Begin Patch\n*** Update File: src/a.ts\n@@\n-old\n+new\n*** End Patch';
 
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'code_maintainer_write_builtin__apply_patch',
@@ -206,7 +218,7 @@ describe('ToolCallRenderer summaries', () => {
     expect(screen.getByText('@apply_patch')).toBeInTheDocument();
     expect(screen.queryByText('@builtin__apply_patch')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.queryByText('Patch')).not.toBeInTheDocument();
     expect(screen.getByText('Patch payload')).toBeInTheDocument();
@@ -222,7 +234,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('prefers structured finalResult JSON strings for read_file_raw cards', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'code_maintainer_read_read_file_raw',
@@ -241,11 +253,11 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('@read_file_raw')).toBeInTheDocument();
-    expect(screen.getByText('内置面板')).toBeInTheDocument();
-    expect(screen.queryByText('通用面板')).not.toBeInTheDocument();
+    expect(screen.getByText('Built-in panel')).toBeInTheDocument();
+    expect(screen.queryByText('Structured panel')).not.toBeInTheDocument();
     const fileContentCard = screen
       .getByText('File content')
       .closest('.tool-detail-card') as HTMLElement;
@@ -267,7 +279,7 @@ describe('ToolCallRenderer summaries', () => {
       '  "content": "export const a = 1;\\nexport const b = 2;"',
     ].join('\n');
 
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'code_maintainer_read_read_file_raw',
@@ -280,9 +292,9 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    expect(screen.getByText('内置面板')).toBeInTheDocument();
+    expect(screen.getByText('Built-in panel')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const fileContentCard = screen
       .getByText('File content')
@@ -296,7 +308,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('normalizes builtin terminal tool names and renders command cards', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'builtin_terminal_controller_execute_command',
@@ -322,7 +334,7 @@ describe('ToolCallRenderer summaries', () => {
     expect(screen.getByText('@execute_command')).toBeInTheDocument();
     expect(screen.queryByText('@builtin_terminal_controller_execute_command')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('Command status')).toBeInTheDocument();
     expect(screen.getByText('Output')).toBeInTheDocument();
@@ -333,7 +345,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('routes remote read_file to remote cards instead of code maintainer cards', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'builtin_remote_connection_controller_read_file',
@@ -353,9 +365,9 @@ describe('ToolCallRenderer summaries', () => {
     );
 
     expect(screen.getByText('@read_file')).toBeInTheDocument();
-    expect(screen.getByText('远程连接')).toBeInTheDocument();
+    expect(screen.getByText('Remote')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('Remote file')).toBeInTheDocument();
     expect(screen.getByText('Remote file content')).toBeInTheDocument();
@@ -365,7 +377,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders task manager cards for task lists', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'builtin_task_manager_list_tasks',
@@ -398,18 +410,18 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    expect(screen.getByText('任务管理')).toBeInTheDocument();
+    expect(screen.getByText('Tasks')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('Task scope')).toBeInTheDocument();
-    expect(screen.getByText('Tasks')).toBeInTheDocument();
+    expect(screen.getAllByText('Tasks').length).toBeGreaterThan(0);
     expect(screen.getByText('Refine tool cards')).toBeInTheDocument();
     expect(screen.getByText('Remove noisy metadata · #frontend #ux')).toBeInTheDocument();
   });
 
   it('renders agent builder recommendation cards', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'builtin_agent_builder_recommend_agent_profile',
@@ -427,9 +439,9 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    expect(screen.getByText('智能体构建')).toBeInTheDocument();
+    expect(screen.getByText('Agent builder')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('Recommended profile')).toBeInTheDocument();
     expect(screen.getByText('Role definition')).toBeInTheDocument();
@@ -439,7 +451,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders memory reader cards for skill details', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'builtin_memory_skill_reader_get_skill_detail',
@@ -458,9 +470,9 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    expect(screen.getByText('记忆读取')).toBeInTheDocument();
+    expect(screen.getByText('Memory')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getByText('Skill')).toBeInTheDocument();
     expect(screen.getByText('Skill content')).toBeInTheDocument();
@@ -473,7 +485,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders notepad init card without raw storage paths', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'builtin_notepad_init',
@@ -490,9 +502,9 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    expect(screen.getByText('笔记工具')).toBeInTheDocument();
+    expect(screen.getByText('Notepad')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const readyCard = screen.getByText('Notepad ready').closest('.tool-detail-card') as HTMLElement;
     expect(readyCard).toBeInTheDocument();
@@ -504,45 +516,8 @@ describe('ToolCallRenderer summaries', () => {
     expect(screen.queryByText('/tmp/chatos/notepad/notes-index.json')).not.toBeInTheDocument();
   });
 
-  it('renders ui prompt cards with separated form values and chosen options', () => {
-    render(
-      <ToolCallRenderer
-        toolCall={buildToolCall({
-          name: 'builtin_ui_prompter_prompt_mixed_form',
-          arguments: {
-            title: 'Confirm deploy',
-          },
-          result: {
-            status: 'submitted',
-            values: {
-              reason: 'Need one more review',
-              urgent: true,
-            },
-            selection: ['deploy', 'notify'],
-          },
-        })}
-      />,
-    );
-
-    expect(screen.getByText('交互确认')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
-
-    expect(screen.getByText('Mixed form result')).toBeInTheDocument();
-    const formValuesCard = screen.getByText('Form values').closest('.tool-detail-card') as HTMLElement;
-    expect(formValuesCard).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('reason')).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('Need one more review')).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('urgent')).toBeInTheDocument();
-    expect(within(formValuesCard).getByText('yes')).toBeInTheDocument();
-    expect(screen.getByText('Selection')).toBeInTheDocument();
-    expect(screen.getByText('deploy')).toBeInTheDocument();
-    expect(screen.getByText('notify')).toBeInTheDocument();
-    expect(screen.queryByText('Process summary')).not.toBeInTheDocument();
-  });
-
   it('renders remote connectivity summary without exposing connection ids', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'builtin_remote_connection_controller_test_connection',
@@ -563,9 +538,9 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    expect(screen.getByText('远程连接')).toBeInTheDocument();
+    expect(screen.getByText('Remote')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const connectionResultCard = screen
       .getByText('Connection result')
@@ -578,7 +553,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders process summary card with extended state fields', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'process',
@@ -595,7 +570,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const processCard = screen
       .getAllByText('Process summary')[0]
@@ -613,7 +588,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders console summary card with message counters', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'browser_console',
@@ -637,7 +612,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const consoleCard = screen
       .getByText('Console summary')
@@ -652,7 +627,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders vision analysis without exposing transport metadata', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'browser_vision',
@@ -664,25 +639,24 @@ describe('ToolCallRenderer summaries', () => {
               prompt_source: 'contact_agent',
               provider: 'gpt',
               model: 'gpt-4o',
-              transport: 'chat_completions',
+              transport: 'responses',
               fallback_used: true,
-              transport_fallback_used: true,
             },
           },
         })}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.queryByText('Vision summary')).not.toBeInTheDocument();
     expect(screen.getByText('Vision analysis')).toBeInTheDocument();
     expect(screen.getByText('The page shows a pricing table.')).toBeInTheDocument();
-    expect(screen.queryByText('chat_completions')).not.toBeInTheDocument();
+    expect(screen.queryByText('responses')).not.toBeInTheDocument();
   });
 
   it('renders research summary card from nested research payload', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'web_research',
@@ -732,7 +706,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const findingsCard = screen
       .getByText('Research findings')
@@ -754,7 +728,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders inspect summary card for browser_inspect results', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'browser_inspect',
@@ -778,7 +752,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const inspectCard = screen
       .getByText('Current page')
@@ -792,7 +766,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders browser_inspect blank page state without surfacing about blank as an active page', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'browser_inspect',
@@ -815,13 +789,13 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const inspectCard = screen
       .getByText('Current page')
       .closest('.tool-summary-card') as HTMLElement;
     expect(inspectCard).toBeInTheDocument();
-    expect(within(inspectCard).getByText('未打开页面')).toBeInTheDocument();
+    expect(within(inspectCard).getByText('No open page')).toBeInTheDocument();
     expect(within(inspectCard).getByText('page: no active browser page was available; open a page before running browser_inspect')).toBeInTheDocument();
     expect(within(inspectCard).queryByText('about:blank')).not.toBeInTheDocument();
     expect(screen.getByText('Inspection warning')).toBeInTheDocument();
@@ -829,7 +803,7 @@ describe('ToolCallRenderer summaries', () => {
   });
 
   it('renders inspect and research summaries for browser_research results', () => {
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           name: 'browser_research',
@@ -936,7 +910,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     const findingsCard = screen
       .getByText('Research findings')
@@ -991,7 +965,7 @@ describe('ToolCallRenderer summaries', () => {
       })],
     ]);
 
-    render(
+    renderWithEnglishI18n(
       <ToolCallRenderer
         toolCall={buildToolCall({
           result: undefined,
@@ -1001,7 +975,7 @@ describe('ToolCallRenderer summaries', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
     expect(screen.getAllByText('Loaded page summary')).toHaveLength(1);
     expect(screen.queryByText('_summary_text')).not.toBeInTheDocument();

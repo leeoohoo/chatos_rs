@@ -15,10 +15,7 @@ import type {
   SystemContext,
 } from './config';
 import type { ChatError, UnknownRecord } from './common';
-import type {
-  GuideMessageHandler,
-  SendMessageHandler,
-} from './runtime';
+import type { SendMessageHandler } from './runtime';
 import type {
   ContactRecord,
   Project,
@@ -44,10 +41,15 @@ export interface MessageListProps {
   isLoading?: boolean;
   isStreaming?: boolean;
   isStopping?: boolean;
+  streamingPhase?: 'thinking' | 'reviewing' | null;
   streamingPreviewText?: string;
+  assistantContactName?: string | null;
+  anchorMessageId?: string | null;
+  anchorRequestKey?: number;
+  autoScrollToLatest?: boolean;
+  onAnchorClear?: () => void;
   hasMore?: boolean;
-  onLoadMore?: () => void;
-  onToggleTurnProcess?: (userMessageId: string) => void;
+  onLoadMore?: () => void | Promise<void>;
   onMessageEdit?: (messageId: string, content: string) => void;
   onMessageDelete?: (messageId: string) => void;
   customRenderer?: {
@@ -57,12 +59,9 @@ export interface MessageListProps {
 }
 
 export interface InputAreaProps {
+  conversationId?: string | null;
   onSend: SendMessageHandler;
-  onGuide?: GuideMessageHandler;
-  onStop?: () => void;
   disabled?: boolean;
-  isStreaming?: boolean;
-  isStopping?: boolean;
   placeholder?: string;
   maxLength?: number;
   allowAttachments?: boolean;
@@ -72,8 +71,17 @@ export interface InputAreaProps {
   onReasoningToggle?: (enabled: boolean) => void;
   showModelSelector?: boolean;
   selectedModelId?: string | null;
+  selectedModelName?: string | null;
+  selectedThinkingLevel?: string | null;
   availableModels?: AiModelConfig[];
   onModelChange?: (modelId: string | null) => void;
+  onModelNameChange?: (modelName: string | null) => void;
+  onThinkingLevelChange?: (level: string | null) => void;
+  onModelRuntimeChange?: (selection: {
+    selectedModelId?: string | null;
+    selectedModelName?: string | null;
+    selectedThinkingLevel?: string | null;
+  }) => void;
   availableProjects?: Project[];
   currentProject?: Project | null;
   selectedProjectId?: string | null;
@@ -83,14 +91,9 @@ export interface InputAreaProps {
   workspaceRoot?: string | null;
   onWorkspaceRootChange?: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
-  currentAgent?: AgentConfig | null;
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
-  onMcpEnabledChange?: (enabled: boolean) => void;
-  onEnabledMcpIdsChange?: (ids: string[]) => void;
 }
 
 export interface SessionListProps {

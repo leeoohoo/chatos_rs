@@ -1,0 +1,178 @@
+export type UserRole = 'super_admin' | 'user';
+export type PrincipalType = 'human_user' | 'agent_account';
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  principal_type: PrincipalType;
+}
+
+export interface LoginPayload {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: AuthUser;
+}
+
+export interface CurrentUserResponse {
+  user: AuthUser;
+}
+
+export interface UserSummaryRecord {
+  id: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string | null;
+  agent_count: number;
+}
+
+export interface CreateUserPayload {
+  username: string;
+  display_name?: string;
+  password: string;
+  role?: UserRole;
+  enabled?: boolean;
+}
+
+export interface UpdateUserPayload {
+  display_name?: string;
+  password?: string;
+  role?: UserRole;
+  enabled?: boolean;
+}
+
+export interface AgentAccountListItem {
+  id: string;
+  username: string;
+  display_name: string;
+  owner_user_id: string;
+  owner_username: string;
+  owner_display_name: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string | null;
+}
+
+export interface CreateAgentAccountPayload {
+  username: string;
+  display_name?: string;
+  password: string;
+  owner_user_id?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateAgentAccountPayload {
+  display_name?: string;
+  owner_user_id?: string;
+  enabled?: boolean;
+}
+
+export interface ResetAgentPasswordPayload {
+  password: string;
+}
+
+export interface UserModelConfigRecord {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  provider: string;
+  model: string;
+  model_name: string;
+  thinking_level?: string | null;
+  api_key?: string;
+  has_api_key: boolean;
+  base_url?: string | null;
+  enabled: boolean;
+  supports_images: boolean;
+  supports_reasoning: boolean;
+  supports_responses: boolean;
+  created_at: string;
+  updated_at: string;
+  sync_warnings?: string[];
+}
+
+export interface CreateUserModelConfigPayload {
+  id?: string;
+  owner_user_id?: string;
+  name: string;
+  provider?: string;
+  model?: string;
+  thinking_level?: string;
+  api_key?: string;
+  base_url?: string;
+  enabled?: boolean;
+  supports_images?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+}
+
+export interface UpdateUserModelConfigPayload {
+  name?: string;
+  provider?: string;
+  model?: string;
+  thinking_level?: string;
+  api_key?: string;
+  clear_api_key?: boolean;
+  base_url?: string;
+  enabled?: boolean;
+  supports_images?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+}
+
+export interface UserModelSettingsRecord {
+  user_id: string;
+  memory_summary_model_config_id?: string | null;
+  updated_at: string;
+  sync_warnings?: string[];
+}
+
+export interface UpdateUserModelSettingsPayload {
+  user_id?: string;
+  memory_summary_model_config_id?: string | null;
+}
+
+export interface TaskRunnerTokenExchangePayload {
+  task_runner_agent_account_id: string;
+  contact_id?: string;
+}
+
+export interface TokenExchangePrincipalSummary {
+  principal_type: PrincipalType;
+  agent_account_id: string;
+  owner_user_id: string;
+  owner_username: string;
+}
+
+export interface TaskRunnerTokenExchangeResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  principal: TokenExchangePrincipalSummary;
+}
+
+export interface HealthResponse {
+  status: string;
+  service: string;
+  now: string;
+}
+
+export interface SystemConfigResponse {
+  service: string;
+  issuer: string;
+  user_service_audience: string;
+  task_runner_audience: string;
+  database_url: string;
+  user_access_ttl_seconds: number;
+  task_runner_access_ttl_seconds: number;
+}

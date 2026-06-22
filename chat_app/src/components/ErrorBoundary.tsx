@@ -1,5 +1,7 @@
 import { Component, ReactNode, type ErrorInfo } from 'react';
 
+import { UI_MESSAGES } from '../i18n/messages';
+
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
@@ -8,16 +10,28 @@ interface Props {
 interface State {
   hasError: boolean;
   error?: Error;
+  locale: 'zh-CN' | 'en-US';
 }
 
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = {
+      hasError: false,
+      locale: typeof document !== 'undefined' && document.documentElement.lang === 'en-US'
+        ? 'en-US'
+        : 'zh-CN',
+    };
   }
 
   static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+    return {
+      hasError: true,
+      error,
+      locale: typeof document !== 'undefined' && document.documentElement.lang === 'en-US'
+        ? 'en-US'
+        : 'zh-CN',
+    };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -30,6 +44,8 @@ export class ErrorBoundary extends Component<Props, State> {
         return this.props.fallback;
       }
 
+      const t = (key: string) => UI_MESSAGES[this.state.locale][key] || UI_MESSAGES['zh-CN'][key] || key;
+
       return (
         <div className="flex items-center justify-center h-full p-8">
           <div className="text-center space-y-4">
@@ -39,15 +55,15 @@ export class ErrorBoundary extends Component<Props, State> {
               </svg>
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-foreground">Something went wrong</h3>
+              <h3 className="text-lg font-semibold text-foreground">{t('errorBoundary.title')}</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                {this.state.error?.message || 'An unexpected error occurred'}
+                {this.state.error?.message || t('errorBoundary.fallback')}
               </p>
               <button
                 onClick={() => this.setState({ hasError: false, error: undefined })}
                 className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
               >
-                Try again
+                {t('common.retry')}
               </button>
             </div>
           </div>

@@ -1,8 +1,9 @@
+use crate::models::memory_mapping_types::SyncMemoryProjectRequestDto;
 use crate::models::project::Project;
-use crate::services::memory_server_client;
+use crate::services::chatos_memory_mappings;
 
 async fn sync_memory_project_state(project: &Project, status: &str) -> Result<(), String> {
-    memory_server_client::sync_memory_project(&memory_server_client::SyncMemoryProjectRequestDto {
+    chatos_memory_mappings::sync_memory_project(&SyncMemoryProjectRequestDto {
         user_id: project.user_id.clone(),
         project_id: Some(project.id.clone()),
         name: Some(project.name.clone()),

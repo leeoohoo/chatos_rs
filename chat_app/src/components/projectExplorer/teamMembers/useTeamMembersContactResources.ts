@@ -1,15 +1,22 @@
 import { useCallback, useMemo } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { useContactSessionResolver } from '../../../features/contactSession/useContactSessionResolver';
 import {
-  findLatestMatchedSession,
+  findBestMatchedSession,
+  hasSessionMessages,
+  isSessionMatchedContactAndProject,
   normalizeProjectScopeId,
   resolveSessionTimestamp,
 } from '../../../features/contactSession/sessionResolver';
 import { useSessionSummaryPanel } from '../../../features/sessionSummary/useSessionSummaryPanel';
 import { normalizeProjectMemberContactsFromRecords } from '../../../lib/domain/projectMembers';
-import type { AgentConfig, Project, Session } from '../../../types';
-import type { ContactItem, ProjectContactRow } from './types';
+import type { Project, Session } from '../../../types';
+import type {
+  ContactItem,
+  EnsureProjectContactSessionOptions,
+  ProjectContactRow,
+} from './types';
 import { useProjectMembersManager } from './useProjectMembersManager';
 import { useTeamMemberConversation } from './useTeamMemberConversation';
 import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
@@ -19,24 +26,62 @@ interface UseTeamMembersContactResourcesOptions {
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
 }
 
+export const resolveProjectContactSession = ({
+  currentSession,
+  contact,
+  normalizedProjectId,
+  preferredSessionId,
+  preferredSessionHasMessages,
+  findProjectSessionForContact,
+}: {
+  currentSession: Session | null | undefined;
+  contact: ContactItem;
+  normalizedProjectId: string;
+  preferredSessionId?: string | null;
+  preferredSessionHasMessages?: boolean;
+  findProjectSessionForContact: (contact: ContactItem, preferredSessionId?: string | null) => Session | null;
+}): Session | null => {
+  const normalizedPreferredSessionId = typeof preferredSessionId === 'string'
+    ? preferredSessionId.trim()
+    : '';
+  if (
+    currentSession
+    && isSessionMatchedContactAndProject(currentSession, contact, normalizedProjectId)
+    && (
+      !normalizedPreferredSessionId
+      || currentSession.id === normalizedPreferredSessionId
+      || (preferredSessionHasMessages !== true && hasSessionMessages(currentSession))
+    )
+  ) {
+    return currentSession;
+  }
+  const resolved = findProjectSessionForContact(contact, normalizedPreferredSessionId);
+  if (
+    preferredSessionHasMessages === true
+    && normalizedPreferredSessionId
+    && resolved?.id !== normalizedPreferredSessionId
+    && !hasSessionMessages(resolved)
+  ) {
+    return null;
+  }
+  return resolved;
+};
+
 export const useTeamMembersContactResources = ({
   project,
   store,
 }: UseTeamMembersContactResourcesOptions) => {
+  const { t } = useI18n();
   const {
     apiClient,
     currentSession,
     sessions,
     contacts,
-    agents,
     loadContacts,
-    sessionChatState,
     sendMessage,
     loadMoreMessages,
-    toggleTurnProcess,
     createSession,
     selectSession,
-    aiModelConfigs,
     selectedModelId,
   } = store;
 
@@ -67,8 +112,11 @@ export const useTeamMembersContactResources = ({
     loadContacts,
   });
 
-  const findProjectSessionForContact = useCallback((contact: ContactItem): Session | null => {
-    return findLatestMatchedSession(sessions || [], contact, normalizedProjectId);
+  const findProjectSessionForContact = useCallback((
+    contact: ContactItem,
+    preferredSessionId?: string | null,
+  ): Session | null => {
+    return findBestMatchedSession(sessions || [], contact, normalizedProjectId, preferredSessionId);
   }, [normalizedProjectId, sessions]);
 
   const { ensureContactSession: ensureContactSessionFromResolver } = useContactSessionResolver({
@@ -80,22 +128,42 @@ export const useTeamMembersContactResources = ({
   });
 
   const projectContacts = useMemo<ProjectContactRow[]>(() => {
+    const normalizedContactById = new Map(
+      normalizedContacts.map((contact) => [contact.id, contact]),
+    );
     const rows = projectMembers.map((member) => {
+      const normalizedContact = normalizedContactById.get(member.contactId) || null;
       const contact: ContactItem = {
         id: member.contactId,
         agentId: member.agentId,
         name: member.name,
+        taskRunner: normalizedContact?.taskRunner,
       };
-      const session = findProjectSessionForContact(contact);
+      const session = resolveProjectContactSession({
+        currentSession,
+        contact,
+        normalizedProjectId,
+        preferredSessionId: member.latestSessionId,
+        preferredSessionHasMessages: Boolean(member.lastMessageAt),
+        findProjectSessionForContact,
+      });
       return {
         contact,
         session,
+        latestSessionId: member.latestSessionId,
+        lastMessageAt: member.lastMessageAt,
         updatedAt: session ? resolveSessionTimestamp(session) : member.updatedAt,
       };
     });
     rows.sort((a, b) => b.updatedAt - a.updatedAt);
     return rows;
-  }, [findProjectSessionForContact, projectMembers]);
+  }, [
+    currentSession,
+    findProjectSessionForContact,
+    normalizedContacts,
+    normalizedProjectId,
+    projectMembers,
+  ]);
 
   const projectContactsOptions = useMemo(() => normalizedContacts, [normalizedContacts]);
 
@@ -119,28 +187,28 @@ export const useTeamMembersContactResources = ({
     clearSummaries,
   } = useSessionSummaryPanel(apiClient);
 
-  const ensureContactSession = useCallback(async (contact: ContactItem): Promise<string | null> => {
-    const sessionId = await ensureContactSessionFromResolver(contact, {
+  const ensureContactSession = useCallback(async (
+    contact: ContactItem,
+    options?: EnsureProjectContactSessionOptions,
+  ): Promise<string | null> => {
+    const projectMember = projectMembers.find((member) => member.contactId === contact.id) || null;
+    return ensureContactSessionFromResolver(contact, {
       projectId: normalizedProjectId,
-      title: contact.name || '联系人',
+      title: contact.name || t('teamMembers.contactFallback'),
       selectedModelId: selectedModelId ?? null,
       projectRoot: project.rootPath || null,
-      mcpEnabled: true,
-      enabledMcpIds: [],
-      createSessionOptions: { keepActivePanel: true },
+      preferredSessionId: projectMember?.latestSessionId || null,
+      preferredSessionHasMessages: Boolean(projectMember?.lastMessageAt),
+      createIfMissing: options?.createIfMissing,
+      createSessionOptions: { keepActivePanel: true, activateSession: false },
     });
-
-    if (sessionId && currentSession?.id !== sessionId) {
-      await selectSession(sessionId, { keepActivePanel: true });
-    }
-    return sessionId;
   }, [
-    currentSession?.id,
     ensureContactSessionFromResolver,
     normalizedProjectId,
+    projectMembers,
     project.rootPath,
-    selectSession,
     selectedModelId,
+    t,
   ]);
 
   const conversation = useTeamMemberConversation({
@@ -149,9 +217,6 @@ export const useTeamMembersContactResources = ({
     currentSession,
     projectContacts,
     normalizedContacts,
-    selectedModelId,
-    aiModelConfigs,
-    sessionChatState,
     summaryPaneSessionId,
     setSummaryPaneSessionId,
     setSummaryError,
@@ -161,20 +226,10 @@ export const useTeamMembersContactResources = ({
     clearSummaries,
     cancelPendingSessionSummariesLoad,
     ensureContactSession,
+    selectSession,
     sendMessage,
-    toggleTurnProcess,
     loadMoreMessages,
   });
-
-  const selectedContactAgent = useMemo<AgentConfig | null>(() => {
-    const agentId = typeof conversation.selectedContact?.agentId === 'string'
-      ? conversation.selectedContact.agentId.trim()
-      : '';
-    if (!agentId) {
-      return null;
-    }
-    return (agents || []).find((agent: AgentConfig) => agent?.id === agentId) || null;
-  }, [agents, conversation.selectedContact?.agentId]);
 
   const handleOpenAddMember = useCallback(async () => {
     await openAddMemberFromManager();
@@ -207,10 +262,7 @@ export const useTeamMembersContactResources = ({
       handleOpenAddMember,
       handleConfirmAddMember,
     },
-    conversation: {
-      ...conversation,
-      selectedContactAgent,
-    },
+    conversation,
     summary: {
       summaryPaneSessionId,
       summaryItems,

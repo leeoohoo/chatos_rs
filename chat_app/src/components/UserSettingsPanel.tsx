@@ -1,36 +1,37 @@
 import React from 'react';
 import {
-  useChatApiClientFromContext,
   useChatRuntimeEnv,
-  useChatStoreFromContext,
 } from '../lib/store/ChatStoreContext';
-import { apiClient as globalApiClient } from '../lib/api/client';
+import { useApiClient } from '../lib/api/ApiClientContext';
+import { useI18n } from '../i18n/I18nProvider';
 import {
-  buildSummaryForm,
-  clampNumber,
-  DEFAULT_SUMMARY_FORM,
-  DEFAULT_SUMMARY_LIMITS,
-  getErrorMessage,
-  parseSummaryLimits,
-  rangeText,
-  type SummaryJobConfigForm,
-  type SummaryJobLimits,
-} from './settings/summaryJobConfig';
+  emitTerminalUiSettingChanged,
+  resolveTerminalUiEnabledFromResponse,
+  writeStoredTerminalUiEnabled,
+} from '../hooks/useTerminalUiSetting';
 
 interface Props { onClose: () => void }
 
 interface UserSettingsForm {
   MAX_ITERATIONS?: number | string;
+  TASK_FOLLOW_UP_MAX_ROUNDS?: number | string;
   LOG_LEVEL?: string;
   CHAT_MAX_TOKENS?: number | string | null;
+  INTERNAL_CONTEXT_LOCALE?: string;
+  UI_LOCALE?: string;
+  TERMINAL_UI_ENABLED?: boolean;
   [key: string]: string | number | boolean | null | undefined;
 }
 
 interface UserSettingsPayload {
   MAX_ITERATIONS: number;
+  TASK_FOLLOW_UP_MAX_ROUNDS: number;
   LOG_LEVEL: string;
   CHAT_MAX_TOKENS: number | null;
-  [key: string]: string | number | null;
+  INTERNAL_CONTEXT_LOCALE: string;
+  UI_LOCALE: string;
+  TERMINAL_UI_ENABLED: boolean;
+  [key: string]: string | number | boolean | null;
 }
 
 const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
@@ -54,32 +55,25 @@ const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
 };
 
 const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
-  const clientFromContext = useChatApiClientFromContext();
-  const client = clientFromContext || globalApiClient;
+  const client = useApiClient();
   const { userId } = useChatRuntimeEnv();
-  const { aiModelConfigs, loadAiModelConfigs } = useChatStoreFromContext();
+  const { locale, setLocale, t } = useI18n();
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [settings, setSettings] = React.useState<UserSettingsForm>({});
-  const [summaryForm, setSummaryForm] = React.useState<SummaryJobConfigForm>(DEFAULT_SUMMARY_FORM);
-  const [summaryLimits, setSummaryLimits] = React.useState<SummaryJobLimits>(DEFAULT_SUMMARY_LIMITS);
 
-  const modelOptions = React.useMemo(
-    () =>
-      (Array.isArray(aiModelConfigs) ? aiModelConfigs : []).filter(
-        (item) => item.enabled === true,
-      ),
-    [aiModelConfigs],
-  );
-
-  React.useEffect(() => {
-    if (modelOptions.length === 0) {
-      void loadAiModelConfigs();
+  const getErrorMessage = React.useCallback((err: unknown): string => {
+    if (err instanceof Error) {
+      return err.message;
     }
-  }, [loadAiModelConfigs, modelOptions.length]);
+    if (typeof err === 'string') {
+      return err;
+    }
+    return t('common.unknown');
+  }, [t]);
 
   React.useEffect(() => {
     let mounted = true;
@@ -87,30 +81,14 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
       setLoading(true);
       setError(null);
       try {
-        const [settingsResp, summaryResp] = await Promise.allSettled([
-          client.getUserSettings(userId),
-          client.getConversationSummaryJobConfig(userId),
-        ]);
+        const settingsResp = await client.getUserSettings(userId);
         if (!mounted) return;
-
-        const loadErrors: string[] = [];
-
-        if (settingsResp.status === 'fulfilled') {
-          setSettings(normalizeUserSettingsForm(settingsResp.value?.effective));
-        } else {
-          loadErrors.push(getErrorMessage(settingsResp.reason || '用户参数加载失败'));
-        }
-
-        if (summaryResp.status === 'fulfilled') {
-          const loadedLimits = parseSummaryLimits(summaryResp.value);
-          setSummaryLimits(loadedLimits);
-          setSummaryForm(buildSummaryForm(summaryResp.value, loadedLimits));
-        } else {
-          loadErrors.push(getErrorMessage(summaryResp.reason || '定时总结配置加载失败'));
-        }
-
-        if (loadErrors.length > 0) {
-          setError(loadErrors.join('；'));
+        const normalized = normalizeUserSettingsForm(settingsResp?.effective);
+        setSettings(normalized);
+        writeStoredTerminalUiEnabled(resolveTerminalUiEnabledFromResponse(settingsResp));
+      } catch (e: unknown) {
+        if (mounted) {
+          setError(getErrorMessage(e));
         }
       } finally {
         if (mounted) setLoading(false);
@@ -129,72 +107,36 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
     }
   });
 
-  const setSummaryField = <K extends keyof SummaryJobConfigForm>(key: K, value: SummaryJobConfigForm[K]) => {
-    setSummaryForm((prev) => ({ ...prev, [key]: value }));
-  };
-
   const save = async () => {
-    if (!userId) { setError('缺少 userId，无法保存'); return; }
+    if (!userId) { setError(t('settings.missingUserId')); return; }
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
+      const nextUiLocale = String(settings.UI_LOCALE || locale || 'zh-CN') === 'en-US' ? 'en-US' : 'zh-CN';
       const userSettingsPayload: UserSettingsPayload = {
         MAX_ITERATIONS: Number(settings.MAX_ITERATIONS || 0),
+        TASK_FOLLOW_UP_MAX_ROUNDS: Number(settings.TASK_FOLLOW_UP_MAX_ROUNDS || 0),
         LOG_LEVEL: String(settings.LOG_LEVEL || 'info'),
         CHAT_MAX_TOKENS: settings.CHAT_MAX_TOKENS === '' || settings.CHAT_MAX_TOKENS === null || settings.CHAT_MAX_TOKENS === undefined
           ? null
-          : Number(settings.CHAT_MAX_TOKENS)
+          : Number(settings.CHAT_MAX_TOKENS),
+        INTERNAL_CONTEXT_LOCALE: String(settings.INTERNAL_CONTEXT_LOCALE || 'zh-CN'),
+        UI_LOCALE: nextUiLocale,
+        TERMINAL_UI_ENABLED: settings.TERMINAL_UI_ENABLED !== false,
       };
 
-      const rawTokenLimit = Number(summaryForm.token_limit || 0);
-      const rawMessageCountLimit = Number(summaryForm.message_count_limit || 0);
-      const rawTargetSummaryTokens = Number(summaryForm.target_summary_tokens || 0);
-      const rawJobIntervalSeconds = Number(summaryForm.job_interval_seconds || 0);
+      const savedSettings = await client.updateUserSettings(userId, userSettingsPayload);
+      const nextSettings = normalizeUserSettingsForm(savedSettings?.effective || userSettingsPayload);
+      const nextTerminalUiEnabled = resolveTerminalUiEnabledFromResponse(savedSettings || {
+        effective: nextSettings,
+      });
 
-      const tokenLimit = clampNumber(rawTokenLimit, summaryLimits.token_limit);
-      const messageCountLimit = clampNumber(rawMessageCountLimit, summaryLimits.message_count_limit);
-      const targetSummaryTokens = clampNumber(rawTargetSummaryTokens, summaryLimits.target_summary_tokens);
-      const jobIntervalSeconds = clampNumber(rawJobIntervalSeconds, summaryLimits.job_interval_seconds);
-
-      const clampedFields: string[] = [];
-      if (tokenLimit !== rawTokenLimit) clampedFields.push(`长度阈值(${rangeText(summaryLimits.token_limit)})`);
-      if (messageCountLimit !== rawMessageCountLimit) clampedFields.push(`消息条数阈值(${rangeText(summaryLimits.message_count_limit)})`);
-      if (targetSummaryTokens !== rawTargetSummaryTokens) clampedFields.push(`目标摘要长度(${rangeText(summaryLimits.target_summary_tokens)})`);
-      if (jobIntervalSeconds !== rawJobIntervalSeconds) clampedFields.push(`任务间隔(${rangeText(summaryLimits.job_interval_seconds)})`);
-
-      const [savedSettings, savedSummary] = await Promise.all([
-        client.updateUserSettings(userId, userSettingsPayload),
-        client.updateConversationSummaryJobConfig({
-          user_id: userId,
-          enabled: summaryForm.enabled,
-          summary_model_config_id: summaryForm.summary_model_config_id || null,
-          token_limit: tokenLimit,
-          message_count_limit: messageCountLimit,
-          round_limit: messageCountLimit,
-          target_summary_tokens: targetSummaryTokens,
-          job_interval_seconds: jobIntervalSeconds,
-        }),
-      ]);
-
-      setSettings(normalizeUserSettingsForm(savedSettings?.effective || userSettingsPayload));
-
-      const savedLimits = parseSummaryLimits(savedSummary);
-      setSummaryLimits(savedLimits);
-      setSummaryForm(buildSummaryForm(savedSummary, savedLimits, {
-        enabled: summaryForm.enabled,
-        summary_model_config_id: summaryForm.summary_model_config_id,
-        token_limit: tokenLimit,
-        message_count_limit: messageCountLimit,
-        target_summary_tokens: targetSummaryTokens,
-        job_interval_seconds: jobIntervalSeconds,
-      }));
-
-      if (clampedFields.length > 0) {
-        setNotice(`保存成功，定时总结配置已按安全范围自动调整：${clampedFields.join('、')}`);
-      } else {
-        setNotice('保存成功');
-      }
+      setSettings(nextSettings);
+      writeStoredTerminalUiEnabled(nextTerminalUiEnabled);
+      emitTerminalUiSettingChanged(nextTerminalUiEnabled);
+      setLocale(nextUiLocale);
+      setNotice(t('settings.saved'));
     } catch (e: unknown) {
       setError(getErrorMessage(e));
     } finally {
@@ -207,22 +149,22 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
       <div className="absolute inset-0 bg-gradient-to-b from-background/60 to-background/80 backdrop-blur-sm" />
       <div className="relative bg-card text-card-foreground w-full max-w-3xl rounded-xl shadow-2xl border border-border/60">
         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border/60">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-accent/60 text-accent-foreground">
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 16v-2m8-6h2M4 12H2m15.364 5.364l1.414 1.414M5.636 6.636L4.222 5.222m12.728 0l1.414 1.414M5.636 17.364l-1.414 1.414" /></svg>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-accent/60 text-accent-foreground">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 16v-2m8-6h2M4 12H2m15.364 5.364l1.414 1.414M5.636 6.636L4.222 5.222m12.728 0l1.414 1.414M5.636 17.364l-1.414 1.414" /></svg>
+              </div>
+              <div>
+              <h3 className="font-semibold leading-tight">{t('settings.title')}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('settings.subtitle')}</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold leading-tight">用户参数设置</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">为当前用户定制会话与递归参数</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-accent rounded-lg transition-colors" aria-label="关闭">
+          <button onClick={onClose} className="p-2 hover:bg-accent rounded-lg transition-colors" aria-label={t('common.close')}>
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
         <div className="p-4 sm:p-6 space-y-4 max-h-[75vh] overflow-auto">
           {loading ? (
-            <div className="text-sm text-muted-foreground">加载中...</div>
+            <div className="text-sm text-muted-foreground">{t('common.loading')}</div>
           ) : (
             <>
               {error && (
@@ -233,103 +175,77 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
               )}
 
               <div className="rounded-xl border border-border/60 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">递归与日志</div>
+                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">{t('settings.section.runtime')}</div>
                 <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs text-muted-foreground">最大输出 Tokens（每次回复）</label>
+                    <label className="text-xs text-muted-foreground">{t('settings.chatMaxTokens')}</label>
                     <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('CHAT_MAX_TOKENS')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">后端只从此处读取。留空则不限制，模型按默认生成。</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.chatMaxTokensHelp')}</p>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground">最大递归轮数</label>
+                    <label className="text-xs text-muted-foreground">{t('settings.maxIterations')}</label>
                     <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('MAX_ITERATIONS')} />
-                    <p className="text-[11px] text-muted-foreground mt-1">一次请求内的工具调用迭代上限，用于防止无限循环。建议: 4-6。</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.maxIterationsHelp')}</p>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground">日志级别</label>
-                    <input type="text" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('LOG_LEVEL')} placeholder="info|warn|error|debug" />
-                    <p className="text-[11px] text-muted-foreground mt-1">仅作为本用户偏好保存，不修改服务器全局日志。</p>
+                    <label className="text-xs text-muted-foreground">{t('settings.taskFollowUpMaxRounds')}</label>
+                    <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('TASK_FOLLOW_UP_MAX_ROUNDS')} />
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.taskFollowUpMaxRoundsHelp')}</p>
                   </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-border/60 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">定时总结任务</div>
-                <div className="p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-medium">启用定时总结</div>
-                      <div className="text-[11px] text-muted-foreground mt-1">关闭后该用户不再生成新的定时总结</div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4"
-                      checked={summaryForm.enabled}
-                      onChange={(event) => setSummaryField('enabled', event.target.checked)}
-                    />
-                  </div>
-
                   <div>
-                    <label className="text-xs text-muted-foreground">总结模型</label>
+                    <label className="text-xs text-muted-foreground">{t('settings.logLevel')}</label>
+                    <input type="text" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('LOG_LEVEL')} placeholder={t('settings.logLevelPlaceholder')} />
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.logLevelHelp')}</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">{t('settings.uiLocale')}</label>
                     <select
                       className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      value={summaryForm.summary_model_config_id}
-                      onChange={(event) => setSummaryField('summary_model_config_id', event.target.value)}
+                      value={typeof settings.UI_LOCALE === 'string' ? settings.UI_LOCALE : locale}
+                      onChange={(e) => {
+                        const next = e.target.value === 'en-US' ? 'en-US' : 'zh-CN';
+                        setSettings((s) => ({ ...s, UI_LOCALE: next }));
+                        setLocale(next);
+                      }}
                     >
-                      <option value="">默认模型（环境变量）</option>
-                      {modelOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.name}（{option.model_name || 'unknown'}）
-                        </option>
-                      ))}
+                      <option value="zh-CN">{t('language.chinese')}</option>
+                      <option value="en-US">{t('language.english')}</option>
                     </select>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.uiLocaleHelp')}</p>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs text-muted-foreground">长度阈值（Token，{rangeText(summaryLimits.token_limit)}）</label>
+                  <div>
+                    <label className="text-xs text-muted-foreground">{t('settings.internalContextLocale')}</label>
+                    <select
+                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={typeof settings.INTERNAL_CONTEXT_LOCALE === 'string' ? settings.INTERNAL_CONTEXT_LOCALE : 'zh-CN'}
+                      onChange={(e) => {
+                        const next = e.target.value === 'en-US' ? 'en-US' : 'zh-CN';
+                        setSettings((s) => ({ ...s, INTERNAL_CONTEXT_LOCALE: next }));
+                      }}
+                    >
+                      <option value="zh-CN">{t('language.chinese')}</option>
+                      <option value="en-US">{t('language.english')}</option>
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.internalContextLocaleHelp')}</p>
+                  </div>
+                  <div className="sm:col-span-2 rounded-lg border border-border/60 bg-background px-3 py-3">
+                    <label className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-medium text-foreground">{t('settings.terminalUiEnabled')}</div>
+                        <p className="mt-1 text-[11px] text-muted-foreground">{t('settings.terminalUiEnabledHelp')}</p>
+                      </div>
                       <input
-                        type="number"
-                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                        value={summaryForm.token_limit}
-                        min={summaryLimits.token_limit.min}
-                        max={summaryLimits.token_limit.max}
-                        onChange={(event) => setSummaryField('token_limit', Number(event.target.value || 0))}
+                        type="checkbox"
+                        checked={settings.TERMINAL_UI_ENABLED !== false}
+                        onChange={(event) => {
+                          setSettings((current) => ({
+                            ...current,
+                            TERMINAL_UI_ENABLED: event.target.checked,
+                          }));
+                        }}
+                        className="mt-0.5 h-4 w-4 rounded border border-border text-primary focus:ring-2 focus:ring-primary/30"
                       />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground">消息条数阈值（{rangeText(summaryLimits.message_count_limit)}）</label>
-                      <input
-                        type="number"
-                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                        value={summaryForm.message_count_limit}
-                        min={summaryLimits.message_count_limit.min}
-                        max={summaryLimits.message_count_limit.max}
-                        onChange={(event) => setSummaryField('message_count_limit', Number(event.target.value || 0))}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground">目标摘要长度（Token，{rangeText(summaryLimits.target_summary_tokens)}）</label>
-                      <input
-                        type="number"
-                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                        value={summaryForm.target_summary_tokens}
-                        min={summaryLimits.target_summary_tokens.min}
-                        max={summaryLimits.target_summary_tokens.max}
-                        onChange={(event) => setSummaryField('target_summary_tokens', Number(event.target.value || 0))}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground">任务间隔（秒，{rangeText(summaryLimits.job_interval_seconds)}）</label>
-                      <input
-                        type="number"
-                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                        value={summaryForm.job_interval_seconds}
-                        min={summaryLimits.job_interval_seconds.min}
-                        max={summaryLimits.job_interval_seconds.max}
-                        onChange={(event) => setSummaryField('job_interval_seconds', Number(event.target.value || 0))}
-                      />
-                    </div>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -337,8 +253,8 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
           )}
         </div>
         <div className="p-4 sm:p-5 border-t border-border/60 flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80">取消</button>
-          <button onClick={save} disabled={saving} className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">{saving ? '保存中...' : '保存'}</button>
+          <button onClick={onClose} className="px-3 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80">{t('common.cancel')}</button>
+          <button onClick={save} disabled={saving} className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50">{saving ? t('common.saving') : t('common.save')}</button>
         </div>
       </div>
     </div>

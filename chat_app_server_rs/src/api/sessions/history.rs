@@ -1,5 +1,3 @@
-use crate::models::message::Message;
-
 pub(super) fn parse_bool_query_flag(value: Option<String>) -> bool {
     value
         .as_deref()
@@ -11,10 +9,9 @@ pub(super) fn parse_bool_query_flag(value: Option<String>) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) use super::history_display::{
-    build_turn_process_messages, compact_messages_for_display, find_user_index_by_turn_id,
+pub(super) use super::history_compact::compact_messages_for_display;
+pub(super) use super::history_process::{
+    build_compact_history_messages_from_turn_slices,
+    build_compact_history_messages_from_turn_slices_with_process, build_turn_display_messages,
+    turn_slice_final_assistant_is_task_runner_callback,
 };
-pub(super) use super::history_process::build_turn_display_messages;
-
-#[allow(dead_code)]
-fn _type_anchor(_: &[Message]) {}

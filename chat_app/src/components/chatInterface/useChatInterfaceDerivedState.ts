@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 
 import type {
-  AgentConfig,
   AiModelConfig,
   ContactRecord,
   Project,
@@ -11,18 +10,15 @@ import type {
 } from '../../types';
 import type { SessionChatState } from '../../lib/store/types';
 
-import { resolveCurrentAgent } from './currentAgent';
 import {
   buildSupportedFileTypes,
   resolveModelSupportFlags,
-} from './helpers';
+} from './viewHelpers';
 import { useSessionHeaderMeta } from './useSessionHeaderMeta';
 
 interface UseChatInterfaceDerivedStateParams {
   currentSession: Session | null;
   contacts: ContactRecord[];
-  agents: AgentConfig[];
-  selectedAgentId: string | null;
   selectedModelId: string | null;
   aiModelConfigs: AiModelConfig[];
   activePanel: string;
@@ -35,8 +31,6 @@ interface UseChatInterfaceDerivedStateParams {
 export const useChatInterfaceDerivedState = ({
   currentSession,
   contacts,
-  agents,
-  selectedAgentId,
   selectedModelId,
   aiModelConfigs,
   activePanel,
@@ -56,12 +50,6 @@ export const useChatInterfaceDerivedState = ({
   const currentChatState = useMemo(() => (
     currentSession ? sessionChatState[currentSession.id] : undefined
   ), [currentSession, sessionChatState]);
-  const currentAgent = useMemo(() => resolveCurrentAgent({
-    currentSession,
-    contacts,
-    agents,
-    selectedAgentId,
-  }), [agents, contacts, currentSession, selectedAgentId]);
   const {
     currentContactName,
     currentContactId,
@@ -78,15 +66,9 @@ export const useChatInterfaceDerivedState = ({
   return {
     supportedFileTypes,
     supportsReasoning,
-    currentChatState,
-    currentAgent,
     currentContactName,
     currentContactId,
     headerTitle,
-    chatIsLoading: currentChatState?.isLoading ?? false,
-    chatIsStreaming: currentChatState?.isStreaming ?? false,
-    chatIsStopping: currentChatState?.isStopping ?? false,
-    chatStreamingPreviewText: currentChatState?.streamingPreviewText || '',
     runtimeContextRefreshNonce: currentChatState?.runtimeContextRefreshNonce || 0,
   };
 };

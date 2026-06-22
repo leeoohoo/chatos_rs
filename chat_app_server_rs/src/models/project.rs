@@ -11,6 +11,8 @@ pub struct Project {
     pub root_path: String,
     pub description: Option<String>,
     pub user_id: Option<String>,
+    pub latest_session_id: Option<String>,
+    pub last_message_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -34,6 +36,8 @@ impl ProjectRow {
             root_path: self.root_path,
             description: self.description,
             user_id: self.user_id,
+            latest_session_id: None,
+            last_message_at: None,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -54,6 +58,8 @@ impl Project {
             root_path,
             description,
             user_id,
+            latest_session_id: None,
+            last_message_at: None,
             created_at: now.clone(),
             updated_at: now,
         }

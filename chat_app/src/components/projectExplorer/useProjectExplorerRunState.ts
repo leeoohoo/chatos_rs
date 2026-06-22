@@ -1,161 +1,136 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import type ApiClient from '../../lib/api/client';
-import { loadTerminalsSnapshot } from '../../lib/store/actions/terminalsCache';
-import { useChatRuntimeEnv } from '../../lib/store/ChatStoreContext';
-import type {
-  FsEntry,
-  Project,
-} from '../../types';
-import {
-  RUNNER_RESTART_COMMAND,
-  RUNNER_START_COMMAND,
-  RUNNER_STOP_COMMAND,
-} from '../../lib/domain/projectRunner';
+import type { Project } from '../../types';
 import { useProjectRunnerCatalogState } from './runState/useProjectRunnerCatalogState';
 import { useProjectRunnerCommands } from './runState/useProjectRunnerCommands';
+import { buildProjectRunResolutionSuggestions } from './runState/projectRunnerResolutionSuggestions';
+import { useProjectRunnerExitInspection } from './runState/useProjectRunnerExitInspection';
 import { useProjectRunnerTerminalPolling } from './runState/useProjectRunnerTerminalPolling';
-import { useProjectSingleFileRunner } from './runState/useProjectSingleFileRunner';
-export type { ProjectRunnerActiveTerminal, ProjectRunnerMember } from '../../lib/domain/projectRunner';
+export type { ProjectRunnerActiveTerminal } from '../../lib/domain/projectRunner';
 
 interface UseProjectExplorerRunStateParams {
   client: ApiClient;
   project: Project | null;
-  selectedEntry: FsEntry | null;
-  selectedPath: string | null;
-  getParentPath: (path: string | null | undefined) => string;
-  setActionError: (value: string | null) => void;
-  setActionLoading: (value: boolean) => void;
-  setActionMessage: (value: string | null) => void;
+  enabled: boolean;
+  terminalUiEnabled: boolean;
 }
 
 export const useProjectExplorerRunState = ({
   client,
   project,
-  selectedEntry,
-  selectedPath,
-  getParentPath,
-  setActionError,
-  setActionLoading,
-  setActionMessage,
+  enabled,
+  terminalUiEnabled,
 }: UseProjectExplorerRunStateParams) => {
-  const { userId } = useChatRuntimeEnv();
-  const runnerCatalog = useProjectRunnerCatalogState({ client, project });
-  const runnerTerminal = useProjectRunnerTerminalPolling({ client, project });
+  const { t } = useI18n();
+  const runnerCatalog = useProjectRunnerCatalogState({ client, project, enabled });
+  const runnerTerminal = useProjectRunnerTerminalPolling({
+    client,
+    project,
+    enabled: enabled && terminalUiEnabled,
+  });
   const runnerCommands = useProjectRunnerCommands({
     client,
     project,
-    runnerScriptExists: runnerCatalog.runnerScriptExists,
+    runTargets: runnerCatalog.runTargets,
+    selectedRunTargetId: runnerCatalog.selectedRunTargetId,
+    commandPreview: runnerCatalog.commandPreview,
+    activeRun: runnerTerminal.activeRun,
+    projectRunTerminalIds: runnerTerminal.projectRunInstances.map((item) => item.terminalId),
+    selectedTerminalId: runnerTerminal.selectedRunInstanceId,
+    selectRunInstance: runnerTerminal.selectRunInstance,
     setActiveRun: runnerTerminal.setActiveRun,
+    setLastExitedRun: runnerTerminal.setLastExitedRun,
     setActiveTerminalBusy: runnerTerminal.setActiveTerminalBusy,
-  });
-  const singleFileRunner = useProjectSingleFileRunner({
-    client,
-    project,
-    setActionError,
-    setActionLoading,
-    setActionMessage,
+    removeRunInstanceLocally: runnerTerminal.removeRunInstanceLocally,
+    refreshProjectActiveRun: runnerTerminal.refreshProjectActiveRun,
   });
 
-  const runCwd = useMemo(() => {
-    if (!project?.rootPath) {
-      return '';
-    }
-    if (selectedEntry?.isDir) {
-      return selectedEntry.path;
-    }
-    if (selectedEntry && !selectedEntry.isDir) {
-      return getParentPath(selectedEntry.path) || project.rootPath;
-    }
-    if (selectedPath) {
-      return getParentPath(selectedPath) || project.rootPath;
-    }
-    return project.rootPath;
-  }, [getParentPath, project?.rootPath, selectedEntry, selectedPath]);
+  useProjectRunnerExitInspection({
+    lastExitedRun: runnerTerminal.lastExitedRun,
+    lastExitCheckedRunKey: runnerCommands.lastExitCheckedRunKey,
+    manualControlAt: runnerCommands.manualControlAt,
+    onListTerminalLogs: client.listTerminalLogs.bind(client),
+    setLastExitCheckedRunKey: runnerCommands.setLastExitCheckedRunKey,
+    setRunnerError: runnerCommands.setRunnerError,
+    setRunnerDiagnosis: runnerCommands.setRunnerDiagnosis,
+    setRunnerMessage: runnerCommands.setRunnerMessage,
+  });
 
-  const handleDispatchTerminalCommand = useCallback(async (payload: { cwd: string; command: string }) => {
-    return client.dispatchTerminalCommand({
-      cwd: payload.cwd,
-      command: payload.command,
-      project_id: project?.id,
-      create_if_missing: true,
-    });
-  }, [client, project?.id]);
+  const selectedRunTarget = useMemo(
+    () => runnerCatalog.runTargets.find((item) => item.id === runnerCatalog.selectedRunTargetId)
+      || runnerCatalog.runTargets[0]
+      || null,
+    [runnerCatalog.runTargets, runnerCatalog.selectedRunTargetId],
+  );
 
-  const handleInterruptTerminal = useCallback(async (terminalId: string, payload?: { reason?: string }) => {
-    return client.interruptTerminal(terminalId, payload);
-  }, [client]);
-
-  const handleGetTerminal = useCallback(async (terminalId: string) => {
-    return client.getTerminal(terminalId);
-  }, [client]);
-
-  const handleListTerminalLogs = useCallback(async (
-    terminalId: string,
-    params?: { limit?: number; offset?: number; before?: string },
-  ) => {
-    return client.listTerminalLogs(terminalId, params);
-  }, [client]);
-
-  const handleListTerminals = useCallback(async () => {
-    return loadTerminalsSnapshot(client, userId);
-  }, [client, userId]);
-
-  useEffect(() => {
-    runnerCatalog.resetRunnerCatalogState();
-    runnerCommands.resetRunnerCommandState();
-    runnerTerminal.resetActiveRunState();
-    if (!project?.id) {
-      return;
-    }
-    void runnerCatalog.refreshRunnerState();
-  }, [
-    project?.id,
-    runnerCatalog.refreshRunnerState,
-    runnerCatalog.resetRunnerCatalogState,
-    runnerCommands.resetRunnerCommandState,
-    runnerTerminal.resetActiveRunState,
+  const runnerSuggestions = useMemo(() => buildProjectRunResolutionSuggestions({
+    diagnosis: runnerCommands.runnerDiagnosis || runnerCommands.runnerError,
+    selectedTarget: selectedRunTarget,
+    runTargets: runnerCatalog.runTargets,
+    selectedToolchainOptions: runnerCatalog.selectedToolchainOptions,
+    availableOptionsByKind: runnerCatalog.runEnvironment?.optionsByKind || {},
+    t,
+  }), [
+    runnerCatalog.runEnvironment?.optionsByKind,
+    runnerCatalog.runTargets,
+    runnerCatalog.selectedToolchainOptions,
+    runnerCommands.runnerDiagnosis,
+    runnerCommands.runnerError,
+    selectedRunTarget,
+    t,
   ]);
 
-  const handleAnalyzeRunTargets = useCallback(() => {
-    void runnerCatalog.refreshRunnerState();
-  }, [runnerCatalog.refreshRunnerState]);
-
   return {
-    runCwd,
     runStatus: runnerCatalog.runStatus,
     runTargets: runnerCatalog.runTargets,
     runCatalogLoading: runnerCatalog.runCatalogLoading,
     runCatalogError: runnerCatalog.runCatalogError,
+    runEnvironment: runnerCatalog.runEnvironment,
+    runEnvironmentLoading: runnerCatalog.runEnvironmentLoading,
+    runEnvironmentError: runnerCatalog.runEnvironmentError,
+    availableToolchainKinds: runnerCatalog.availableToolchainKinds,
+    selectedToolchainOptions: runnerCatalog.selectedToolchainOptions,
+    missingToolchainKinds: runnerCatalog.missingToolchainKinds,
+    customToolchainDrafts: runnerCatalog.customToolchainDrafts,
+    envVarsDraft: runnerCatalog.envVarsDraft,
+    commandPreview: runnerCatalog.commandPreview,
+    envPreview: runnerCatalog.envPreview,
+    environmentHints: runnerCatalog.environmentHints,
+    envVarsPlaceholder: runnerCatalog.envVarsPlaceholder,
+    terminalUiEnabled,
     selectedRunTargetId: runnerCatalog.selectedRunTargetId,
-    setSelectedRunTargetId: runnerCatalog.setSelectedRunTargetId,
-    handleDispatchTerminalCommand,
-    handleInterruptTerminal,
-    handleGetTerminal,
-    handleListTerminalLogs,
-    handleListTerminals,
-    handleAnalyzeRunTargets,
-    canRunFile: singleFileRunner.canRunFile,
-    handleRunFile: singleFileRunner.handleRunFile,
-    projectMembers: runnerCatalog.projectMembers,
-    projectMembersLoading: runnerCatalog.projectMembersLoading,
-    projectMembersError: runnerCatalog.projectMembersError,
-    runnerScriptExists: runnerCatalog.runnerScriptExists,
-    runnerScriptChecking: runnerCatalog.runnerScriptChecking,
-    runnerScriptPath: runnerCatalog.runnerScriptPath,
-    runnerStartCommand: RUNNER_START_COMMAND,
-    runnerStopCommand: RUNNER_STOP_COMMAND,
-    runnerRestartCommand: RUNNER_RESTART_COMMAND,
+    setSelectedRunTargetId: runnerCatalog.selectRunTarget,
+    updateSelectedToolchain: runnerCatalog.updateSelectedToolchain,
+    updateCustomToolchainDraft: runnerCatalog.updateCustomToolchainDraft,
+    saveCustomToolchain: runnerCatalog.saveCustomToolchain,
+    setEnvVarsDraft: runnerCatalog.setEnvVarsDraft,
+    saveEnvVarsDraft: runnerCatalog.saveEnvVarsDraft,
+    setTerminalUiEnabled: runnerCatalog.setTerminalUiEnabled,
     starting: runnerCommands.starting,
     stopping: runnerCommands.stopping,
     restarting: runnerCommands.restarting,
+    deleting: runnerCommands.deleting,
     runnerMessage: runnerCommands.runnerMessage,
     runnerError: runnerCommands.runnerError,
+    runnerDiagnosis: runnerCommands.runnerDiagnosis,
+    runnerSuggestions,
+    projectRunState: runnerTerminal.projectRunState,
+    projectRunInstances: runnerTerminal.projectRunInstances,
+    selectedRunInstanceId: runnerTerminal.selectedRunInstanceId,
+    projectRunTerminal: runnerTerminal.projectRunTerminal,
     activeRun: runnerTerminal.activeRun,
+    lastExitedRun: runnerTerminal.lastExitedRun,
     activeTerminalBusy: runnerTerminal.activeTerminalBusy,
+    selectRunInstance: runnerTerminal.selectRunInstance,
     handleRunnerStart: runnerCommands.handleRunnerStart,
     handleRunnerStop: runnerCommands.handleRunnerStop,
     handleRunnerRestart: runnerCommands.handleRunnerRestart,
-    refreshRunnerState: runnerCatalog.refreshRunnerState,
+    handleRunnerDelete: runnerCommands.handleRunnerDelete,
+    refreshRunnerState: async () => {
+      await runnerCatalog.refreshRunnerState('analyze');
+      await runnerTerminal.refreshProjectActiveRun();
+    },
   };
 };

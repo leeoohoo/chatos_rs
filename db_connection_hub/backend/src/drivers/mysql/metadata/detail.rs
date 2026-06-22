@@ -22,7 +22,17 @@ pub async fn object_detail(
 ) -> AppResult<ObjectDetailResponse> {
     if let Some((node_type, database, object_name)) = parse_detail_node(node_id) {
         ensure_database_in_scope(datasource, &database)?;
-        return load_relation_detail(datasource, node_id, node_type, &database, &object_name).await;
+        return match node_type {
+            MetadataNodeType::Table | MetadataNodeType::View => {
+                load_relation_detail(datasource, node_id, node_type, &database, &object_name).await
+            }
+            MetadataNodeType::Procedure | MetadataNodeType::Function => {
+                load_routine_detail(datasource, node_id, node_type, &database, &object_name).await
+            }
+            _ => Err(AppError::NotFound(format!(
+                "unsupported mysql detail node type: {node_id}"
+            ))),
+        };
     }
 
     if let Some((database, table, index_name)) = parse_index_node(node_id) {
@@ -115,6 +125,81 @@ async fn load_relation_detail(
         indexes,
         constraints,
         ddl: None,
+    })
+}
+
+async fn load_routine_detail(
+    datasource: &DataSource,
+    node_id: &str,
+    node_type: MetadataNodeType,
+    database: &str,
+    object_name: &str,
+) -> AppResult<ObjectDetailResponse> {
+    let pool = connect_pool(datasource, Some(database)).await?;
+    let routine_type = match node_type {
+        MetadataNodeType::Procedure => "PROCEDURE",
+        MetadataNodeType::Function => "FUNCTION",
+        _ => {
+            return Err(AppError::NotFound(format!(
+                "unsupported mysql routine node: {node_id}"
+            )))
+        }
+    };
+
+    let row = sqlx::query(
+        "select routine_definition, dtd_identifier
+         from information_schema.routines
+         where routine_schema = ? and routine_name = ? and routine_type = ?",
+    )
+    .bind(database)
+    .bind(object_name)
+    .bind(routine_type)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|err| AppError::BadRequest(format!("failed to query routine detail: {err}")))?;
+
+    let row = row.ok_or_else(|| {
+        AppError::NotFound(format!("mysql routine not found: {database}.{object_name}"))
+    })?;
+
+    let body = row
+        .try_get::<Option<String>, _>("routine_definition")
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let return_type = row
+        .try_get::<Option<String>, _>("dtd_identifier")
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let ddl = body.map(|body| match node_type {
+        MetadataNodeType::Procedure => {
+            format!(
+                "CREATE PROCEDURE `{}`.`{}`\n{}",
+                database, object_name, body
+            )
+        }
+        MetadataNodeType::Function => format!(
+            "CREATE FUNCTION `{}`.`{}` RETURNS {}\n{}",
+            database,
+            object_name,
+            return_type.as_deref().unwrap_or("UNKNOWN"),
+            body
+        ),
+        _ => body,
+    });
+
+    Ok(ObjectDetailResponse {
+        node_id: node_id.to_string(),
+        node_type,
+        name: object_name.to_string(),
+        columns: Vec::new(),
+        indexes: Vec::new(),
+        constraints: Vec::new(),
+        ddl,
     })
 }
 

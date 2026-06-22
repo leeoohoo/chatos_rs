@@ -3,6 +3,7 @@ import type {
   RemoteConnectionTestResponse,
   RemoteConnectionUpdatePayload,
 } from '../../../lib/api/client/types';
+import type { TranslateFn } from '../../../i18n/I18nProvider';
 import type { RemoteConnection } from '../../../types';
 
 export interface RemoteConnectionApiClient {
@@ -23,6 +24,7 @@ export interface RemoteConnectionTestResult extends RemoteConnectionTestResponse
 
 export interface UseRemoteConnectionFormOptions {
   apiClient: RemoteConnectionApiClient;
+  t?: TranslateFn;
   remoteConnections: RemoteConnection[];
   createRemoteConnection: (payload: RemoteConnectionDraftPayload) => Promise<RemoteConnection>;
   updateRemoteConnection: (

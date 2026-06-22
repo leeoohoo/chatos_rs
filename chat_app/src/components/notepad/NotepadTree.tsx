@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../i18n/I18nProvider';
 import { formatTime, type FolderNode, type NoteMeta } from './utils';
 
 interface NotepadTreeProps {
@@ -17,6 +18,7 @@ const renderNote = (
   note: NoteMeta,
   paddingLeft: string,
   selectedNoteId: string,
+  untitledLabel: string,
   onOpenNote: (noteId: string) => void,
   onNoteContextMenu: (event: React.MouseEvent, note: NoteMeta) => void,
 ) => (
@@ -31,9 +33,9 @@ const renderNote = (
         : 'hover:bg-accent border border-transparent'
     }`}
     style={{ paddingLeft }}
-    title={note.title || 'Untitled'}
+    title={note.title || untitledLabel}
   >
-    <div className="text-sm text-foreground truncate">📄 {note.title || 'Untitled'}</div>
+    <div className="text-sm text-foreground truncate">📄 {note.title || untitledLabel}</div>
     <div className="text-[10px] text-muted-foreground truncate">
       {note.updated_at ? formatTime(note.updated_at) : ''}
     </div>
@@ -43,6 +45,7 @@ const renderNote = (
 const renderFolderNode = (
   node: FolderNode,
   depth: number,
+  labels: { folderExpand: string; folderCollapse: string; folderEmpty: string; untitledNote: string },
   props: NotepadTreeProps,
 ): React.ReactNode => {
   const folderKey = node.path || '__root__';
@@ -70,7 +73,7 @@ const renderFolderNode = (
             }
           }}
           className="w-4 h-4 text-[10px] text-muted-foreground hover:text-foreground"
-          title={hasChildren ? (expanded ? '收起目录' : '展开目录') : '空目录'}
+          title={hasChildren ? (expanded ? labels.folderCollapse : labels.folderExpand) : labels.folderEmpty}
         >
           {hasChildren ? (expanded ? '▾' : '▸') : '·'}
         </button>
@@ -85,11 +88,12 @@ const renderFolderNode = (
       </div>
       {expanded && (
         <>
-          {node.folders.map((child) => renderFolderNode(child, depth + 1, props))}
+          {node.folders.map((child) => renderFolderNode(child, depth + 1, labels, props))}
           {node.notes.map((note) => renderNote(
             note,
             `${indent + 18}px`,
             props.selectedNoteId,
+            labels.untitledNote,
             props.onOpenNote,
             props.onNoteContextMenu,
           ))}
@@ -99,15 +103,26 @@ const renderFolderNode = (
   );
 };
 
-export const NotepadTree: React.FC<NotepadTreeProps> = (props) => (
-  <>
-    {props.folderTree.folders.map((folder) => renderFolderNode(folder, 0, props))}
-    {props.folderTree.notes.map((note) => renderNote(
-      note,
-      '26px',
-      props.selectedNoteId,
-      props.onOpenNote,
-      props.onNoteContextMenu,
-    ))}
-  </>
-);
+export const NotepadTree: React.FC<NotepadTreeProps> = (props) => {
+  const { t } = useI18n();
+  const labels = {
+    folderExpand: t('notepad.tree.folderExpand'),
+    folderCollapse: t('notepad.tree.folderCollapse'),
+    folderEmpty: t('notepad.tree.folderEmpty'),
+    untitledNote: t('notepad.tree.noteUntitled'),
+  };
+
+  return (
+    <>
+      {props.folderTree.folders.map((folder) => renderFolderNode(folder, 0, labels, props))}
+      {props.folderTree.notes.map((note) => renderNote(
+        note,
+        '26px',
+        props.selectedNoteId,
+        labels.untitledNote,
+        props.onOpenNote,
+        props.onNoteContextMenu,
+      ))}
+    </>
+  );
+};

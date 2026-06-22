@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
 import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import { ToolArgumentsDetails } from '../ToolArgumentsDetails';
 import { SectionIcon } from './ToolCallIcons';
@@ -54,16 +55,19 @@ export const ToolCallExpandedDetails: React.FC<ToolCallExpandedDetailsProps> = (
   hasError,
   errorText,
   executionTime,
-}) => (
-  <div className="details-container">
+}) => {
+  const { t } = useI18n();
+
+  return (
+    <div className="details-container">
     {hasArguments && parsedArguments !== null && (
       <section className="tool-panel-section">
         <div className="details-title">
           <span className="tool-section-icon">
             <SectionIcon kind="input" />
           </span>
-          <span className="tool-section-label">输入</span>
-          <span className="tool-section-subtitle">本次调用传入的参数</span>
+          <span className="tool-section-label">{t('toolPanel.input')}</span>
+          <span className="tool-section-subtitle">{t('toolPanel.inputHelp')}</span>
         </div>
         <ToolArgumentsDetails
           argumentsValue={parsedArguments}
@@ -92,8 +96,8 @@ export const ToolCallExpandedDetails: React.FC<ToolCallExpandedDetailsProps> = (
           <span className="tool-section-icon">
             <SectionIcon kind="stream" />
           </span>
-          <span className="tool-section-label">流式输出</span>
-          <span className="tool-section-subtitle">运行过程中的实时内容</span>
+          <span className="tool-section-label">{t('toolPanel.streaming')}</span>
+          <span className="tool-section-subtitle">{t('toolPanel.streamingHelp')}</span>
         </div>
         <LazyMarkdownRenderer content={streamLogText} isStreaming />
       </section>
@@ -105,8 +109,8 @@ export const ToolCallExpandedDetails: React.FC<ToolCallExpandedDetailsProps> = (
           <span className="tool-section-icon">
             <SectionIcon kind="error" />
           </span>
-          <span className="tool-section-label">错误</span>
-          <span className="tool-section-subtitle">需要重点处理的失败信息</span>
+          <span className="tool-section-label">{t('toolPanel.error')}</span>
+          <span className="tool-section-subtitle">{t('toolPanel.errorHelp')}</span>
         </div>
         <div className="tool-error-box">{errorText}</div>
       </section>
@@ -117,9 +121,10 @@ export const ToolCallExpandedDetails: React.FC<ToolCallExpandedDetailsProps> = (
         <span className="tool-section-icon">
           <SectionIcon kind="meta" />
         </span>
-        <span className="tool-footer-label">执行时间</span>
+        <span className="tool-footer-label">{t('toolPanel.executionTime')}</span>
         <span className="tool-footer-value">{executionTime}</span>
       </div>
     </div>
   </div>
-);
+  );
+};

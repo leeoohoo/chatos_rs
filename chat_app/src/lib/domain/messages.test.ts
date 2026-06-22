@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionMessageResponse } from '../api/client/types';
-import { getConversationTurnId, normalizeRawMessages, normalizeTurnId } from './messages';
+import {
+  getConversationTurnId,
+  isTaskRunnerAsyncMessage,
+  normalizeRawMessages,
+  normalizeTurnId,
+} from './messages';
 
 describe('domain/messages', () => {
   it('normalizes assistant tool calls and tool results from mixed payload shapes', () => {
@@ -92,5 +97,47 @@ describe('domain/messages', () => {
     expect(getConversationTurnId(message)).toBe('turn_123');
     expect(normalizeTurnId('  turn_123  ')).toBe('turn_123');
     expect(normalizeTurnId(null)).toBe('');
+  });
+
+  it('tolerates null metadata without breaking normalization', () => {
+    const rawMessages = [
+      {
+        id: 'assistant_3',
+        role: 'assistant',
+        content: 'plain content',
+        metadata: null,
+        created_at: '2026-04-23T12:00:00.000Z',
+      },
+    ] as unknown as SessionMessageResponse[];
+
+    const [message] = normalizeRawMessages(rawMessages, 'session_b');
+
+    expect(message.metadata).toMatchObject({
+      toolCalls: undefined,
+      contentSegments: [{ type: 'text', content: 'plain content' }],
+    });
+    expect(message.content).toBe('plain content');
+    expect(message.status).toBe('completed');
+  });
+
+  it('treats only task runner assistant outputs as task runner async messages', () => {
+    expect(isTaskRunnerAsyncMessage({
+      messageMode: 'task_runner_async_plan',
+      metadata: null,
+    })).toBe(true);
+
+    expect(isTaskRunnerAsyncMessage({
+      messageMode: 'task_runner_callback',
+      metadata: null,
+    })).toBe(true);
+
+    expect(isTaskRunnerAsyncMessage({
+      metadata: {
+        task_runner_async: {
+          mode: 'contact_async',
+          overall_status: 'processing',
+        },
+      },
+    })).toBe(false);
   });
 });

@@ -3,7 +3,9 @@ use mongodb::bson::{doc, Bson, Document};
 use crate::core::mongo_cursor::collect_and_map;
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::terminal_log::{TerminalLog, TerminalLogRow};
-use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use crate::repositories::db::{
+    doc_from_pairs, mongo_delete_many_doc, mongo_insert_doc, to_doc, with_db,
+};
 
 fn normalize_doc(doc: &Document) -> Option<TerminalLog> {
     Some(TerminalLog {
@@ -28,7 +30,7 @@ pub async fn create_terminal_log(log: &TerminalLog) -> Result<String, String> {
                 ("created_at", Bson::String(log_mongo.created_at.clone())),
             ]));
             Box::pin(async move {
-                db.collection::<Document>("terminal_logs").insert_one(doc, None).await.map_err(|e| e.to_string())?;
+                mongo_insert_doc(db, "terminal_logs", doc).await?;
                 Ok(log_mongo.id.clone())
             })
         },
@@ -191,10 +193,8 @@ pub async fn delete_terminal_logs(terminal_id: &str) -> Result<(), String> {
         |db| {
             let terminal_id = terminal_id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("terminal_logs")
-                    .delete_many(doc! { "terminal_id": &terminal_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                mongo_delete_many_doc(db, "terminal_logs", doc! { "terminal_id": &terminal_id })
+                    .await?;
                 Ok(())
             })
         },

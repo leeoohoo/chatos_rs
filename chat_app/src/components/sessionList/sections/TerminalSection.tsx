@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../../../i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { Terminal } from '../../../types';
 import { DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
@@ -32,6 +33,8 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
   closeActionMenus,
   formatTimeAgo,
 }) => {
+  const { t } = useI18n();
+
   return (
     <div className={cn('flex flex-col min-h-0', expanded ? 'flex-1' : 'shrink-0')}>
       <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
@@ -41,13 +44,13 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
           className="flex items-center gap-2 uppercase tracking-wide"
         >
           <span>{expanded ? '▾' : '▸'}</span>
-          <span>TERMINALS</span>
+          <span>{t('session.terminals')}</span>
         </button>
         <div className="flex items-center gap-1">
           <button
             onClick={onRefresh}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="刷新终端列表"
+            title={t('session.refreshTerminals')}
           >
             <svg className={cn('w-4 h-4', isRefreshing && 'animate-spin')} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0112.125-5.303M19.5 12a7.5 7.5 0 01-12.125 5.303M16.5 6.697V3m0 3.697h-3.697M7.5 17.303V21m0-3.697H3.803" />
@@ -57,7 +60,7 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
             type="button"
             onClick={onCreate}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="新增终端"
+            title={t('session.addTerminal')}
           >
             <PlusIcon className="w-4 h-4" />
           </button>
@@ -68,7 +71,7 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
         <div className="flex-1 min-h-0 overflow-y-auto">
           {terminals.length === 0 ? (
             <div className="px-3 py-3 text-xs text-muted-foreground">
-              还没有终端，点击右侧 + 新建。
+              {t('session.noTerminals')}
             </div>
           ) : (
             <div className="p-2 space-y-1">
@@ -85,34 +88,38 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
+                      {(() => {
+                        const isRunning = terminal.status === 'running';
+                        return (
+                          <>
                       <h3 className="text-sm font-medium text-foreground truncate min-w-0 flex-1">
                         {terminal.name}
                       </h3>
-                      <span className={cn(
-                        'inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border',
-                        terminal.status === 'running'
-                          ? 'border-emerald-500/40 text-emerald-600'
-                          : 'border-muted-foreground/40 text-muted-foreground',
-                      )}>
-                        {terminal.status === 'running' ? '运行中' : '已退出'}
-                      </span>
-                      {terminal.status === 'running' && (
+                      {isRunning && (
+                        <span className="inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-600">
+                          {t('session.running')}
+                        </span>
+                      )}
+                      {isRunning && (
                         <span className={cn(
                           'inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border',
                           terminal.busy
                             ? 'border-amber-500/40 text-amber-600'
                             : 'border-emerald-500/30 text-emerald-600/80',
                         )}>
-                          {terminal.busy ? '忙碌' : '空闲'}
+                          {terminal.busy ? t('session.busy') : t('session.idle')}
                         </span>
                       )}
+                          </>
+                        );
+                      })()}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground truncate" title={terminal.cwd}>
                       {terminal.cwd}
                     </div>
                     {terminal.lastActiveAt && (
                       <div className="mt-1 text-[10px] text-muted-foreground/70">
-                        最近活动：{formatTimeAgo(terminal.lastActiveAt)}
+                        {t('session.lastActive', { time: formatTimeAgo(terminal.lastActiveAt) })}
                       </div>
                     )}
                   </div>
@@ -134,7 +141,7 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
                           className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
                         >
                           <TrashIcon className="w-4 h-4 mr-2" />
-                          删除
+                          {t('session.deleteTerminal')}
                         </button>
                       </div>
                     </div>

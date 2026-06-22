@@ -41,9 +41,14 @@ export interface StreamingMessageMetadata extends Record<string, unknown> {
   historyProcess?: MessageHistoryProcessState;
   historyFinalForUserMessageId?: string;
   historyFinalForTurnId?: string;
-  historyProcessExpanded?: boolean;
   historyDraftUserMessage?: DraftUserMessageSnapshot;
   requestError?: string;
+  task_turn_review?: {
+    attempted?: boolean;
+    outcome?: string;
+    rounds?: number;
+    [key: string]: unknown;
+  };
 }
 
 export type StreamingMessage = Message;
@@ -64,10 +69,10 @@ export interface StreamChatLogPayload {
   turn_id: string;
   message: string;
   model_config: {
+    id: string;
     model: string;
     provider: string;
     base_url: string;
-    api_key: string;
     temperature: number;
     thinking_level?: string | null;
     supports_images: boolean;
@@ -80,10 +85,7 @@ export interface StreamChatLogPayload {
   remote_connection_id: string | null;
   project_id: string;
   project_root: string | null;
-  mcp_enabled: boolean;
-  enabled_mcp_ids: string[];
-  skills_enabled: boolean;
-  selected_skill_ids: string[];
+  workspace_root: string | null;
 }
 
 export interface StreamChatRuntimeOptions {
@@ -92,18 +94,27 @@ export interface StreamChatRuntimeOptions {
   remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  skillsEnabled: boolean;
-  selectedSkillIds: string[];
+  workspaceRoot: string | null;
 }
 
 export interface StreamEventPayload {
   type?: string;
   content?: unknown;
   data?: unknown;
+  task_turn_review?: {
+    attempted?: boolean;
+    outcome?: string;
+    rounds?: number;
+    [key: string]: unknown;
+  } | null;
   result?: {
     content?: unknown;
+    task_turn_review?: {
+      attempted?: boolean;
+      outcome?: string;
+      rounds?: number;
+      [key: string]: unknown;
+    } | null;
     persisted_user_message?: unknown;
     persisted_user_message_id?: string | null;
     persisted_assistant_message?: unknown;
@@ -115,6 +126,10 @@ export interface StreamEventPayload {
   code?: string;
   message?: string;
   [key: string]: unknown;
+}
+
+export interface TurnPhaseEventData {
+  phase?: unknown;
 }
 
 export interface RawToolFunctionPayload {

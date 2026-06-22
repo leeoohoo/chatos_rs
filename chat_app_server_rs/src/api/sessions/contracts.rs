@@ -50,7 +50,33 @@ pub(super) struct PageQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct CompactHistoryQuery {
+    pub(super) limit: Option<String>,
+    pub(super) before: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct AddMcpServerRequest {
     pub(super) mcp_server_name: Option<String>,
     pub(super) mcp_config_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateSessionRuntimeSettingsRequest {
+    #[serde(alias = "selectedModelId")]
+    pub(super) selected_model_id: Option<Option<String>>,
+    #[serde(alias = "selectedModelName")]
+    pub(super) selected_model_name: Option<Option<String>>,
+    #[serde(alias = "selectedThinkingLevel")]
+    pub(super) selected_thinking_level: Option<Option<String>>,
+    #[serde(alias = "remoteConnectionId")]
+    pub(super) remote_connection_id: Option<Option<String>>,
+    #[serde(alias = "workspaceRoot")]
+    pub(super) workspace_root: Option<Option<String>>,
+    #[serde(alias = "mcpEnabled")]
+    pub(super) mcp_enabled: Option<bool>,
+    #[serde(alias = "enabledMcpIds")]
+    pub(super) enabled_mcp_ids: Option<Vec<String>>,
+    #[serde(alias = "autoCreateTask")]
+    pub(super) auto_create_task: Option<bool>,
 }

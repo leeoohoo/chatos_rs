@@ -16,11 +16,7 @@ import { useInputAreaController } from './inputArea/useInputAreaController';
 
 export const InputArea: React.FC<InputAreaProps> = ({
   onSend,
-  onGuide,
-  onStop,
   disabled = false,
-  isStreaming = false,
-  isStopping = false,
   placeholder = 'Type your message...',
   maxLength = 4000,
   allowAttachments = false,
@@ -36,8 +32,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
   onReasoningToggle,
   showModelSelector = false,
   selectedModelId = null,
+  selectedModelName = null,
+  selectedThinkingLevel = null,
   availableModels = [],
   onModelChange,
+  onModelNameChange,
+  onThinkingLevelChange,
+  onModelRuntimeChange,
   availableProjects = [],
   selectedProjectId = null,
   onProjectChange,
@@ -46,17 +47,11 @@ export const InputArea: React.FC<InputAreaProps> = ({
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
-  currentAgent = null,
   availableRemoteConnections = [],
   onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
-  mcpEnabled = true,
-  enabledMcpIds = [],
-  onMcpEnabledChange,
-  onEnabledMcpIdsChange,
 }) => {
   const {
-    isGuidingMode,
     effectiveAllowAttachments,
     message,
     setPickerOpen,
@@ -72,7 +67,6 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleDragLeave,
     handleDrop,
     pickerRef,
-    mcpPickerRef,
     workspacePickerRef,
     projectFilePickerRef,
     pickerOpen,
@@ -87,44 +81,20 @@ export const InputArea: React.FC<InputAreaProps> = ({
     loadWorkspaceDirectories,
     handleToggleWorkspacePicker,
     handleSelectWorkspaceRoot,
-    hasDirectoryContext,
-    hasRemoteContext,
-    mcpPickerOpen,
-    availableMcpConfigs,
-    mcpConfigsLoading,
-    mcpConfigsError,
-    builtinMcpConfigs,
-    customMcpConfigs,
-    mcpToolsetPresets,
-    projectScopeKey,
-    hasProjectMcpDefault,
-    selectableMcpIds,
-    sanitizedEnabledMcpIds,
-    isAllMcpSelected,
-    selectedMcpCount,
-    isProjectRequiredMcpId,
-    isRemoteRequiredMcpId,
-    loadAvailableMcpConfigs,
-    handleToggleMcpPicker,
-    handleSelectAllMcp,
-    handleToggleMcpSelection,
-    handleApplyMcpToolsetPreset,
-    handleSaveProjectMcpDefault,
-    handleApplyProjectMcpDefault,
     enabledModels,
-    currentAgentForSkills,
-    skillsEnabled,
-    setSkillsEnabled,
-    skillsLoading,
-    availableSkillOptions,
-    selectedSkillIds,
-    handleToggleSelectedSkill,
-    handleClearSelectedSkills,
+    selectedModelName: resolvedSelectedModelName,
+    selectedThinkingLevel: resolvedSelectedThinkingLevel,
+    handleModelChange,
+    handleModelNameChange,
+    handleThinkingLevelChange,
+    handleModelRuntimeChange,
     hasAiOptions,
     projectForFilePicker,
     showProjectFilePicker,
     workspaceRootDisplayName,
     currentAiLabel,
+    effectiveModelName,
+    effectiveThinkingLevel,
     projectFilePickerOpen,
     projectFileParent,
     projectFileFilter,
@@ -146,15 +116,18 @@ export const InputArea: React.FC<InputAreaProps> = ({
     canSend,
   } = useInputAreaController({
     onSend,
-    onGuide,
     disabled,
-    isStreaming,
-    isStopping,
     maxLength,
     allowAttachments,
     supportedFileTypes,
     showModelSelector,
     selectedModelId,
+    selectedModelName,
+    selectedThinkingLevel,
+    onModelChange,
+    onModelNameChange,
+    onThinkingLevelChange,
+    onModelRuntimeChange,
     availableModels,
     availableProjects,
     selectedProjectId,
@@ -163,11 +136,6 @@ export const InputArea: React.FC<InputAreaProps> = ({
     workspaceRoot,
     onWorkspaceRootChange,
     currentRemoteConnectionId,
-    currentAgent,
-    mcpEnabled,
-    enabledMcpIds,
-    onMcpEnabledChange,
-    onEnabledMcpIdsChange,
   });
 
   return (
@@ -185,24 +153,23 @@ export const InputArea: React.FC<InputAreaProps> = ({
       <div className="relative">
         <InputAreaComposer
           disabled={disabled}
-          isStreaming={isStreaming}
-          isStopping={isStopping}
-          isGuidingMode={isGuidingMode}
           effectiveAllowAttachments={effectiveAllowAttachments}
           showModelSelector={showModelSelector}
           selectedModelId={selectedModelId}
-          onModelChange={onModelChange}
+          selectedModelName={resolvedSelectedModelName}
+          selectedThinkingLevel={resolvedSelectedThinkingLevel}
+          onModelChange={handleModelChange}
+          onModelNameChange={handleModelNameChange}
+          onThinkingLevelChange={handleThinkingLevelChange}
+          onModelRuntimeChange={handleModelRuntimeChange}
           availableProjects={availableProjects}
           selectedProjectId={selectedProjectId}
           onProjectChange={onProjectChange}
           showProjectSelector={showProjectSelector}
           showWorkspaceRootPicker={showWorkspaceRootPicker}
           currentRemoteConnectionId={currentRemoteConnectionId}
-          currentAgent={currentAgentForSkills}
           availableRemoteConnections={availableRemoteConnections}
           onRemoteConnectionChange={onRemoteConnectionChange}
-          mcpEnabled={mcpEnabled}
-          onMcpEnabledChange={onMcpEnabledChange}
           reasoningSupported={reasoningSupported}
           reasoningEnabled={reasoningEnabled}
           onReasoningToggle={onReasoningToggle}
@@ -211,7 +178,6 @@ export const InputArea: React.FC<InputAreaProps> = ({
           supportedFileTypes={supportedFileTypes}
           isDragging={isDragging}
           pickerRef={pickerRef}
-          mcpPickerRef={mcpPickerRef}
           workspacePickerRef={workspacePickerRef}
           projectFilePickerRef={projectFilePickerRef}
           fileInputRef={fileInputRef}
@@ -221,6 +187,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
           pickerOpen={pickerOpen}
           hasAiOptions={hasAiOptions}
           currentAiLabel={currentAiLabel}
+          effectiveModelName={effectiveModelName}
+          effectiveThinkingLevel={effectiveThinkingLevel}
           enabledModels={enabledModels}
           projectForFilePicker={projectForFilePicker}
           showProjectFilePicker={showProjectFilePicker}
@@ -249,41 +217,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
           handleToggleWorkspacePicker={handleToggleWorkspacePicker}
           loadWorkspaceDirectories={loadWorkspaceDirectories}
           handleSelectWorkspaceRoot={handleSelectWorkspaceRoot}
-          mcpPickerOpen={mcpPickerOpen}
-          handleToggleMcpPicker={handleToggleMcpPicker}
-          isAllMcpSelected={isAllMcpSelected}
-          selectableMcpIds={selectableMcpIds}
-          selectedMcpCount={selectedMcpCount}
-          mcpConfigsLoading={mcpConfigsLoading}
-          mcpConfigsError={mcpConfigsError}
-          availableMcpConfigs={availableMcpConfigs}
-          builtinMcpConfigs={builtinMcpConfigs}
-          customMcpConfigs={customMcpConfigs}
-          mcpToolsetPresets={mcpToolsetPresets}
-          projectScopeKey={projectScopeKey}
-          hasProjectMcpDefault={hasProjectMcpDefault}
-          hasDirectoryContext={hasDirectoryContext}
-          hasRemoteContext={hasRemoteContext}
-          isProjectRequiredMcpId={isProjectRequiredMcpId}
-          isRemoteRequiredMcpId={isRemoteRequiredMcpId}
-          sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-          loadAvailableMcpConfigs={loadAvailableMcpConfigs}
-          handleSelectAllMcp={handleSelectAllMcp}
-          handleToggleMcpSelection={handleToggleMcpSelection}
-          handleApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
-          handleSaveProjectMcpDefault={handleSaveProjectMcpDefault}
-	      handleApplyProjectMcpDefault={handleApplyProjectMcpDefault}
-          skillsEnabled={skillsEnabled}
-          onSkillsEnabledChange={setSkillsEnabled}
-          skillsLoading={skillsLoading}
-          availableSkillOptions={availableSkillOptions}
-          selectedSkillIds={selectedSkillIds}
-          onToggleSelectedSkill={handleToggleSelectedSkill}
-          onClearSelectedSkills={handleClearSelectedSkills}
-	      handleInputChange={handleInputChange}
+          handleInputChange={handleInputChange}
           handleKeyDown={handleKeyDown}
           handlePaste={handlePaste}
-          onStop={onStop}
           handleSend={handleSend}
           canSend={canSend}
           handleDragOver={handleDragOver}

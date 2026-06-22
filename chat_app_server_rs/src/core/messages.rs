@@ -1,14 +1,10 @@
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use crate::models::message::Message;
-use crate::services::memory_server_client;
-use crate::services::ai_common::{
-    extract_response_id_from_metadata, extract_response_status_from_metadata,
-    is_non_terminal_response_status,
-};
-use crate::services::session_title::maybe_rename_session_title;
 use crate::core::tool_call::extract_message_tool_calls;
+use crate::models::message::Message;
+use crate::services::chatos_sessions;
+use crate::services::session_title::maybe_rename_session_title;
 
 #[derive(Debug, Clone, Default)]
 pub struct NewMessageFields {
@@ -81,13 +77,6 @@ pub fn build_message(session_id: String, fields: NewMessageFields, default_role:
     message
 }
 
-pub fn build_assistant_role_message(content: Value) -> Value {
-    json!({
-        "role": "assistant",
-        "content": content
-    })
-}
-
 pub fn ensure_message_metadata_object(
     message: &mut Message,
 ) -> &mut serde_json::Map<String, Value> {
@@ -101,16 +90,48 @@ pub fn ensure_message_metadata_object(
     }
 }
 
-pub fn build_assistant_message_with_parts(
-    content: Value,
-    reasoning: Option<&str>,
-    preserve_empty_reasoning: bool,
-    tool_calls: Option<Value>,
-) -> Value {
-    let mut message = build_assistant_role_message(content);
-    attach_reasoning_content(&mut message, reasoning, preserve_empty_reasoning);
-    attach_message_tool_calls(&mut message, tool_calls);
-    message
+pub async fn set_task_runner_async_overall_status_for_session(
+    session_id: &str,
+    message_id: &str,
+    overall_status: &str,
+) -> Result<Option<Message>, String> {
+    let normalized_session_id = session_id.trim();
+    let normalized_message_id = message_id.trim();
+    if normalized_session_id.is_empty() || normalized_message_id.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(session) = chatos_sessions::get_session_by_id(normalized_session_id).await? else {
+        return Ok(None);
+    };
+    let Some(mut message) =
+        chatos_sessions::get_message_by_id_in_session(&session, normalized_message_id).await?
+    else {
+        return Ok(None);
+    };
+    apply_task_runner_async_overall_status(&mut message, overall_status);
+    let saved = chatos_sessions::upsert_message_in_session(&session, &message).await?;
+    Ok(Some(saved))
+}
+
+fn apply_task_runner_async_overall_status(message: &mut Message, overall_status: &str) {
+    let metadata = ensure_message_metadata_object(message);
+    let task_runner_async = metadata
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !task_runner_async.is_object() {
+        *task_runner_async = Value::Object(serde_json::Map::new());
+    }
+    if let Value::Object(task_runner_async_map) = task_runner_async {
+        task_runner_async_map.insert(
+            "mode".to_string(),
+            Value::String("contact_async".to_string()),
+        );
+        task_runner_async_map.insert(
+            "overall_status".to_string(),
+            Value::String(overall_status.to_string()),
+        );
+    }
 }
 
 pub fn text_has_content(value: &str) -> bool {
@@ -121,16 +142,13 @@ pub fn optional_text_has_content(value: Option<&str>) -> bool {
     value.map(text_has_content).unwrap_or(false)
 }
 
+#[cfg(test)]
 pub fn owned_non_empty_text(value: &str) -> Option<String> {
     text_has_content(value).then(|| value.to_string())
 }
 
 pub fn message_has_text_content(message: &Message) -> bool {
     text_has_content(&message.content)
-}
-
-pub fn message_has_reasoning_content(message: &Message) -> bool {
-    optional_text_has_content(message.reasoning.as_deref())
 }
 
 pub fn is_session_summary_message(message: &Message) -> bool {
@@ -142,38 +160,13 @@ pub fn is_session_summary_message(message: &Message) -> bool {
         == Some("session_summary")
 }
 
-pub fn assistant_message_has_reusable_payload(message: &Message) -> bool {
-    message.role == "assistant"
-        && (message_has_text_content(message) || message_has_reasoning_content(message))
-}
-
-pub fn assistant_message_response_id_candidate<'a>(message: &'a Message) -> Option<&'a str> {
-    if message.role != "assistant" {
-        return None;
-    }
-
-    let tool_calls =
-        extract_message_tool_calls(message.tool_calls.as_ref(), message.metadata.as_ref());
-    if !tool_calls.is_empty() {
-        return None;
-    }
-
-    let response_status = message
-        .metadata
-        .as_ref()
-        .and_then(extract_response_status_from_metadata);
-    if is_non_terminal_response_status(response_status) {
-        return None;
-    }
-
-    if !assistant_message_has_reusable_payload(message) {
-        return None;
-    }
-
+pub fn message_is_hidden(message: &Message) -> bool {
     message
         .metadata
         .as_ref()
-        .and_then(extract_response_id_from_metadata)
+        .and_then(|metadata| metadata.get("hidden"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub fn extract_message_tool_calls_for_display(message: &Message) -> Vec<Value> {
@@ -181,32 +174,7 @@ pub fn extract_message_tool_calls_for_display(message: &Message) -> Vec<Value> {
 }
 
 pub fn select_preferred_text<'a>(content: &'a str, reasoning: Option<&'a str>) -> Option<&'a str> {
-    if text_has_content(content) {
-        return Some(content);
-    }
-
-    reasoning.filter(|value| text_has_content(value))
-}
-
-pub fn attach_message_tool_calls(message: &mut Value, tool_calls: Option<Value>) {
-    if let Some(tool_calls) = tool_calls.filter(|value| !value.is_null()) {
-        message["tool_calls"] = tool_calls;
-    }
-}
-
-pub fn attach_reasoning_content(
-    message: &mut Value,
-    reasoning: Option<&str>,
-    include_when_empty: bool,
-) {
-    if include_when_empty {
-        message["reasoning_content"] = Value::String(reasoning.unwrap_or_default().to_string());
-        return;
-    }
-
-    if let Some(value) = reasoning.filter(|value| !value.trim().is_empty()) {
-        message["reasoning_content"] = Value::String(value.to_string());
-    }
+    chatos_ai_runtime::select_preferred_response_text(content, reasoning)
 }
 
 pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message, String> {
@@ -214,7 +182,7 @@ pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message
     let role = message.role.clone();
     let content = message.content.clone();
 
-    let saved = memory_server_client::upsert_message(&message).await?;
+    let saved = chatos_sessions::upsert_message(&message).await?;
     if role == "user" {
         let _ = maybe_rename_session_title(&session_id, &content, 30).await;
     }
@@ -314,12 +282,9 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        assistant_message_has_reusable_payload, assistant_message_response_id_candidate,
-        attach_message_tool_calls, attach_reasoning_content, build_assistant_message_with_parts,
-        build_assistant_role_message, ensure_message_metadata_object,
-        extract_message_tool_calls_for_display, extract_non_empty_text_value, flatten_text_value,
-        is_session_summary_message, join_text_lines_or_json, message_has_reasoning_content,
-        message_has_text_content, message_metadata_string_alias, message_turn_id,
+        ensure_message_metadata_object, extract_message_tool_calls_for_display,
+        extract_non_empty_text_value, flatten_text_value, is_session_summary_message,
+        join_text_lines_or_json, message_metadata_string_alias, message_turn_id,
         object_string_alias, optional_text_has_content, owned_non_empty_text,
         select_preferred_text, text_has_content, text_value_or_json,
     };
@@ -381,83 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_assistant_message_and_attaches_optional_fields() {
-        let mut message = build_assistant_role_message(Value::Null);
-        attach_reasoning_content(&mut message, Some("think"), false);
-        attach_message_tool_calls(
-            &mut message,
-            Some(json!([{
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "demo", "arguments": "{}"}
-            }])),
-        );
-
-        assert_eq!(
-            message.get("role").and_then(|value| value.as_str()),
-            Some("assistant")
-        );
-        assert_eq!(message.get("content"), Some(&Value::Null));
-        assert_eq!(
-            message
-                .get("reasoning_content")
-                .and_then(|value| value.as_str()),
-            Some("think")
-        );
-        assert_eq!(
-            message
-                .get("tool_calls")
-                .and_then(|value| value.as_array())
-                .map(|items| items.len()),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn attach_reasoning_content_can_preserve_empty_reasoning() {
-        let mut message = build_assistant_role_message(Value::Null);
-        attach_reasoning_content(&mut message, None, true);
-        assert_eq!(
-            message
-                .get("reasoning_content")
-                .and_then(|value| value.as_str()),
-            Some("")
-        );
-    }
-
-    #[test]
-    fn builds_assistant_message_with_shared_optional_parts() {
-        let message = build_assistant_message_with_parts(
-            Value::String("hello".to_string()),
-            Some("think"),
-            true,
-            Some(json!([{
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "demo", "arguments": "{}"}
-            }])),
-        );
-
-        assert_eq!(
-            message.get("content").and_then(|value| value.as_str()),
-            Some("hello")
-        );
-        assert_eq!(
-            message
-                .get("reasoning_content")
-                .and_then(|value| value.as_str()),
-            Some("think")
-        );
-        assert_eq!(
-            message
-                .get("tool_calls")
-                .and_then(|value| value.as_array())
-                .map(|items| items.len()),
-            Some(1)
-        );
-    }
-
-    #[test]
     fn detects_non_empty_text_content() {
         assert!(text_has_content(" hello "));
         assert!(!text_has_content("   "));
@@ -485,34 +373,6 @@ mod tests {
 
         assert!(is_session_summary_message(&summary));
         assert!(!is_session_summary_message(&normal));
-    }
-
-    #[test]
-    fn detects_reusable_assistant_payload_without_changing_role_rules() {
-        let mut assistant_reasoning = Message::new(
-            "session_1".to_string(),
-            "assistant".to_string(),
-            "   ".to_string(),
-        );
-        assistant_reasoning.reasoning = Some(" think ".to_string());
-
-        let assistant_empty = Message::new(
-            "session_1".to_string(),
-            "assistant".to_string(),
-            "".to_string(),
-        );
-
-        let system_message = Message::new(
-            "session_1".to_string(),
-            "system".to_string(),
-            "reply".to_string(),
-        );
-
-        assert!(message_has_reasoning_content(&assistant_reasoning));
-        assert!(assistant_message_has_reusable_payload(&assistant_reasoning));
-        assert!(!message_has_text_content(&assistant_empty));
-        assert!(!assistant_message_has_reusable_payload(&assistant_empty));
-        assert!(!assistant_message_has_reusable_payload(&system_message));
     }
 
     #[test]
@@ -570,59 +430,6 @@ mod tests {
             Some("resp_1")
         );
         assert_eq!(message_turn_id(&message), Some("turn_1"));
-    }
-
-    #[test]
-    fn response_id_candidate_accepts_terminal_assistant_with_reusable_payload() {
-        let mut message = Message::new(
-            "session_1".to_string(),
-            "assistant".to_string(),
-            "final answer".to_string(),
-        );
-        message.metadata = Some(json!({
-            "response_id": "resp_ok",
-            "response_status": "completed",
-        }));
-
-        assert_eq!(assistant_message_response_id_candidate(&message), Some("resp_ok"));
-    }
-
-    #[test]
-    fn response_id_candidate_rejects_tool_calls_non_terminal_and_empty_payloads() {
-        let mut tool_call_message = Message::new(
-            "session_1".to_string(),
-            "assistant".to_string(),
-            "tool call".to_string(),
-        );
-        tool_call_message.metadata = Some(json!({
-            "response_id": "resp_tool",
-            "response_status": "completed",
-            "toolCalls": [{"id":"call_1"}]
-        }));
-
-        let mut non_terminal = Message::new(
-            "session_1".to_string(),
-            "assistant".to_string(),
-            "pending".to_string(),
-        );
-        non_terminal.metadata = Some(json!({
-            "response_id": "resp_pending",
-            "response_status": "in_progress",
-        }));
-
-        let mut empty_payload = Message::new(
-            "session_1".to_string(),
-            "assistant".to_string(),
-            "".to_string(),
-        );
-        empty_payload.metadata = Some(json!({
-            "response_id": "resp_empty",
-            "response_status": "completed",
-        }));
-
-        assert_eq!(assistant_message_response_id_candidate(&tool_call_message), None);
-        assert_eq!(assistant_message_response_id_candidate(&non_terminal), None);
-        assert_eq!(assistant_message_response_id_candidate(&empty_payload), None);
     }
 
     #[test]

@@ -1,13 +1,12 @@
 import React from 'react';
 
-import type { ChangeLogItem, FsEntry } from '../../types';
+import type { FsEntry } from '../../types';
 import { cn } from '../../lib/utils';
 import {
   EntryContextMenu,
   MoveConflictModal,
   type MoveConflictState,
 } from './Overlays';
-import { ChangeLogPanel } from './ChangeLogPanels';
 import { ProjectPreviewPane } from './PreviewPane';
 import { ProjectTreePane } from './TreePane';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
@@ -20,11 +19,6 @@ interface ProjectExplorerFilesWorkspaceProps {
   resizeStartWidth: React.MutableRefObject<number>;
   setIsResizing: React.Dispatch<React.SetStateAction<boolean>>;
   previewPaneProps: React.ComponentProps<typeof ProjectPreviewPane>;
-  loadingLogs: boolean;
-  logsError: string | null;
-  changeLogs: ChangeLogItem[];
-  selectedLogId: string | null;
-  setSelectedLogId: React.Dispatch<React.SetStateAction<string | null>>;
   moveConflict: MoveConflictState | null;
   actionLoading: boolean;
   setMoveConflict: React.Dispatch<React.SetStateAction<MoveConflictState | null>>;
@@ -35,11 +29,17 @@ interface ProjectExplorerFilesWorkspaceProps {
   contextMenuStyle?: React.CSSProperties;
   isContextRootEntry: boolean;
   setContextMenu: React.Dispatch<React.SetStateAction<ExplorerContextMenuState | null>>;
-  canRunFile: (entry: FsEntry) => boolean;
   onCreateDirectory: (path: string) => Promise<void> | void;
   onCreateFile: (path: string) => Promise<void> | void;
-  onRunFile: (entry: FsEntry) => Promise<void> | void;
   onDownloadSelected: (entry: FsEntry) => Promise<void> | void;
+  onCopyFilePath: (entry: FsEntry) => Promise<boolean> | boolean;
+  onCopyRelativeFilePath: (entry: FsEntry) => Promise<boolean> | boolean;
+  onIgnoreFile: (entry: FsEntry) => Promise<boolean> | boolean;
+  onIgnoreFolder: (entry: FsEntry) => Promise<boolean> | boolean;
+  onIgnoreByExtension: (entry: FsEntry) => Promise<boolean> | boolean;
+  onOpenPathInDefaultProgram: (entry: FsEntry) => Promise<boolean> | boolean;
+  onRevealInFinder: (entry: FsEntry) => Promise<boolean> | boolean;
+  onOpenInCode: (entry: FsEntry) => Promise<boolean> | boolean;
   onDeleteSelected: (entry: FsEntry) => Promise<void> | void;
 }
 
@@ -51,11 +51,6 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
   resizeStartWidth,
   setIsResizing,
   previewPaneProps,
-  loadingLogs,
-  logsError,
-  changeLogs,
-  selectedLogId,
-  setSelectedLogId,
   moveConflict,
   actionLoading,
   setMoveConflict,
@@ -66,13 +61,24 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
   contextMenuStyle,
   isContextRootEntry,
   setContextMenu,
-  canRunFile,
   onCreateDirectory,
   onCreateFile,
-  onRunFile,
   onDownloadSelected,
+  onCopyFilePath,
+  onCopyRelativeFilePath,
+  onIgnoreFile,
+  onIgnoreFolder,
+  onIgnoreByExtension,
+  onOpenPathInDefaultProgram,
+  onRevealInFinder,
+  onOpenInCode,
   onDeleteSelected,
 }) => {
+  const runMenuAction = (action: () => Promise<unknown> | unknown) => {
+    setContextMenu(null);
+    void action();
+  };
+
   return (
     <div className="flex h-full overflow-hidden">
       <ProjectTreePane {...treePaneProps} />
@@ -86,23 +92,6 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
       />
       <div className="flex-1 flex overflow-hidden">
         <ProjectPreviewPane {...previewPaneProps} />
-        {(loadingLogs || logsError || changeLogs.length > 0) && (
-          <div className="w-72 border-l border-border bg-card/60 flex flex-col overflow-hidden">
-            <div className="px-4 py-2 text-xs font-medium text-foreground border-b border-border">变更记录</div>
-            <div className="flex-1 min-h-0 overflow-auto">
-              <ChangeLogPanel
-                selectedPath={treePaneProps.selectedPath}
-                loadingLogs={loadingLogs}
-                logsError={logsError}
-                changeLogs={changeLogs}
-                selectedLogId={selectedLogId}
-                onToggleLog={(logId) => {
-                  setSelectedLogId((prev) => (prev === logId ? null : logId));
-                }}
-              />
-            </div>
-          </div>
-        )}
       </div>
       <MoveConflictModal
         moveConflict={moveConflict}
@@ -122,26 +111,41 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
         contextMenu={contextMenu}
         contextMenuStyle={contextMenuStyle}
         isContextRootEntry={isContextRootEntry}
-        canRunFile={canRunFile}
         onCreateDirectory={(path) => {
-          setContextMenu(null);
-          void onCreateDirectory(path);
+          runMenuAction(() => onCreateDirectory(path));
         }}
         onCreateFile={(path) => {
-          setContextMenu(null);
-          void onCreateFile(path);
-        }}
-        onRunFile={(entry) => {
-          setContextMenu(null);
-          void onRunFile(entry);
+          runMenuAction(() => onCreateFile(path));
         }}
         onDownload={(entry) => {
-          setContextMenu(null);
-          void onDownloadSelected(entry);
+          runMenuAction(() => onDownloadSelected(entry));
+        }}
+        onCopyFilePath={(entry) => {
+          runMenuAction(() => onCopyFilePath(entry));
+        }}
+        onCopyRelativeFilePath={(entry) => {
+          runMenuAction(() => onCopyRelativeFilePath(entry));
+        }}
+        onIgnoreFile={(entry) => {
+          runMenuAction(() => onIgnoreFile(entry));
+        }}
+        onIgnoreFolder={(entry) => {
+          runMenuAction(() => onIgnoreFolder(entry));
+        }}
+        onIgnoreByExtension={(entry) => {
+          runMenuAction(() => onIgnoreByExtension(entry));
+        }}
+        onOpenPathInDefaultProgram={(entry) => {
+          runMenuAction(() => onOpenPathInDefaultProgram(entry));
+        }}
+        onRevealInFinder={(entry) => {
+          runMenuAction(() => onRevealInFinder(entry));
+        }}
+        onOpenInCode={(entry) => {
+          runMenuAction(() => onOpenInCode(entry));
         }}
         onDelete={(entry) => {
-          setContextMenu(null);
-          void onDeleteSelected(entry);
+          runMenuAction(() => onDeleteSelected(entry));
         }}
       />
     </div>

@@ -3,6 +3,7 @@ import { Suspense, lazy, type ComponentProps } from 'react';
 import ChatConversationPane from './ChatConversationPane';
 import { SessionList } from '../SessionList';
 import type { Project } from '../../types';
+import { useI18n } from '../../i18n/I18nProvider';
 
 const ProjectExplorer = lazy(() => import('../ProjectExplorer'));
 const TerminalView = lazy(() => import('../TerminalView'));
@@ -24,11 +25,15 @@ interface ChatInterfaceMainContentProps {
   conversationPaneProps: ComponentProps<typeof ChatConversationPane>;
 }
 
-const LazyPanelFallback = () => (
-  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-    面板加载中...
-  </div>
-);
+const LazyPanelFallback = () => {
+  const { t } = useI18n();
+
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      {t('chat.panelLoading')}
+    </div>
+  );
+};
 
 export default function ChatInterfaceMainContent({
   activePanel,
@@ -68,7 +73,13 @@ export default function ChatInterfaceMainContent({
           ) : activePanel === 'remote_sftp' ? (
             <RemoteSftpPanel className="flex-1" />
           ) : (
-            <ChatConversationPane {...conversationPaneProps} />
+            <ChatConversationPane
+              {...conversationPaneProps}
+              runtimeContextOpen={runtimeContextOpen}
+              runtimeContextSessionId={runtimeContextSessionId}
+              onToggleSessionSummary={onToggleSessionSummary}
+              onOpenSessionRuntimeContext={onOpenSessionRuntimeContext}
+            />
           )}
         </Suspense>
       </div>

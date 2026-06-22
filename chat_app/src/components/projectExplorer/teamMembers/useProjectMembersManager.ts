@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import { normalizeProjectScopeId } from '../../../features/contactSession/sessionResolver';
 import type { ProjectContactLinkResponse } from '../../../lib/api/client/types';
 import type { ContactRecord } from '../../../lib/store/types';
@@ -15,8 +16,33 @@ import {
   upsertProjectRunnerContactRow,
 } from '../../../lib/domain/projectRunner';
 import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealtime';
+import { useRecentMutationGuard } from '../../../hooks/useRecentMutationGuard';
 import { useDialogService } from '../../ui/DialogProvider';
 import type { ContactItem, ProjectContactLink } from './types';
+
+interface ProjectMemberMutationPayload {
+  reason?: string | null;
+  contactId?: string | null;
+}
+
+const PROJECT_CONTACT_ADDED_REASON = 'project_contact_added';
+const PROJECT_CONTACT_REMOVED_REASON = 'project_contact_removed';
+
+const buildProjectMemberMutationKey = ({
+  reason,
+  contactId,
+}: ProjectMemberMutationPayload): string => {
+  const normalizedReason = String(reason || '').trim();
+  const normalizedContactId = String(contactId || '').trim();
+  if (!normalizedReason || !normalizedContactId) {
+    return '';
+  }
+  return `${normalizedReason}:${normalizedContactId}`;
+};
+
+const isProjectMemberMutationReason = (reason: string): boolean => (
+  reason === PROJECT_CONTACT_ADDED_REASON || reason === PROJECT_CONTACT_REMOVED_REASON
+);
 
 interface ProjectMembersApiClient {
   listProjectContacts: (
@@ -62,6 +88,7 @@ export const useProjectMembersManager = ({
   onMemberRemoved,
 }: UseProjectMembersManagerOptions): UseProjectMembersManagerResult => {
   const { confirm } = useDialogService();
+  const { t } = useI18n();
   const [projectMembers, setProjectMembers] = useState<ProjectContactLink[]>([]);
   const [projectMembersLoading, setProjectMembersLoading] = useState(false);
   const [projectMembersError, setProjectMembersError] = useState<string | null>(null);
@@ -69,13 +96,18 @@ export const useProjectMembersManager = ({
   const [memberPickerSelectedId, setMemberPickerSelectedId] = useState<string | null>(null);
   const [memberPickerError, setMemberPickerError] = useState<string | null>(null);
   const [removingContactId, setRemovingContactId] = useState<string | null>(null);
-  const realtimeMutationGuardRef = useRef<Map<string, number>>(new Map());
 
   const normalizedProjectId = normalizeProjectScopeId(projectId);
   const projectContactIdSet = useMemo(
     () => new Set(projectMembers.map((item) => item.contactId)),
     [projectMembers],
   );
+  const {
+    markRecentMutation: markRealtimeMutationHandled,
+    consumeRecentMutation: consumeRecentRealtimeMutation,
+  } = useRecentMutationGuard<ProjectMemberMutationPayload>({
+    buildKey: buildProjectMemberMutationKey,
+  });
 
   const syncProjectMembersFromRows = useCallback((rows: ProjectContactLinkResponse[] | null | undefined) => {
     if (!rows) {
@@ -85,52 +117,38 @@ export const useProjectMembersManager = ({
     setProjectMembersError(null);
   }, []);
 
-  const markRealtimeMutationHandled = useCallback((reason: string, contactId?: string | null) => {
-    const normalizedReason = String(reason || '').trim();
-    const normalizedContactId = String(contactId || '').trim();
-    if (!normalizedReason || !normalizedContactId) {
-      return;
-    }
-    realtimeMutationGuardRef.current.set(`${normalizedReason}:${normalizedContactId}`, Date.now());
-  }, []);
-
-  const consumeRecentRealtimeMutation = useCallback((reason: string, contactId?: string | null): boolean => {
-    const normalizedReason = String(reason || '').trim();
-    const normalizedContactId = String(contactId || '').trim();
-    if (!normalizedReason || !normalizedContactId) {
-      return false;
-    }
-    const key = `${normalizedReason}:${normalizedContactId}`;
-    const seenAt = realtimeMutationGuardRef.current.get(key);
-    if (!seenAt) {
-      return false;
-    }
-    if (Date.now() - seenAt > 4000) {
-      realtimeMutationGuardRef.current.delete(key);
-      return false;
-    }
-    realtimeMutationGuardRef.current.delete(key);
-    return true;
-  }, []);
-
-  const reloadProjectMembers = useCallback(async () => {
+  const loadProjectMembers = useCallback(async (
+    shouldApply: () => boolean = () => true,
+  ) => {
     if (!projectId) {
-      setProjectMembers([]);
-      setProjectMembersLoading(false);
+      if (shouldApply()) {
+        setProjectMembers([]);
+        setProjectMembersLoading(false);
+      }
       return;
     }
-    setProjectMembersLoading(true);
-    setProjectMembersError(null);
+    if (shouldApply()) {
+      setProjectMembersLoading(true);
+      setProjectMembersError(null);
+    }
     try {
       const rows = await loadProjectRunnerContactRows(apiClient, projectId);
+      if (!shouldApply()) {
+        return;
+      }
       syncProjectMembersFromRows(rows);
     } catch (error) {
-      setProjectMembersError(error instanceof Error ? error.message : '加载项目成员失败');
+      if (!shouldApply()) {
+        return;
+      }
+      setProjectMembersError(error instanceof Error ? error.message : t('teamMembers.error.loadMembersFailed'));
       setProjectMembers([]);
     } finally {
-      setProjectMembersLoading(false);
+      if (shouldApply()) {
+        setProjectMembersLoading(false);
+      }
     }
-  }, [apiClient, projectId, syncProjectMembersFromRows]);
+  }, [apiClient, projectId, syncProjectMembersFromRows, t]);
 
   useProjectRunRealtime({
     projectId: normalizedProjectId || null,
@@ -138,51 +156,26 @@ export const useProjectMembersManager = ({
     onMembersUpdated: async (payload) => {
       const reason = String(payload.reason || '').trim();
       const contactId = String(payload.contact_id || '').trim();
-      if (reason !== 'project_contact_added' && reason !== 'project_contact_removed') {
+      if (!isProjectMemberMutationReason(reason)) {
         return;
       }
-      if (consumeRecentRealtimeMutation(reason, contactId)) {
+      if (consumeRecentRealtimeMutation({ reason, contactId })) {
         return;
       }
       if (normalizedProjectId) {
         markProjectRunnerContactRowsStale(apiClient, normalizedProjectId);
       }
-      await reloadProjectMembers();
+      await loadProjectMembers();
     },
   });
 
   useEffect(() => {
-    let cancelled = false;
-    const loadProjectMembersOnMount = async () => {
-      if (!projectId) {
-        setProjectMembers([]);
-        setProjectMembersLoading(false);
-        return;
-      }
-      setProjectMembersLoading(true);
-      setProjectMembersError(null);
-      try {
-        const rows = await loadProjectRunnerContactRows(apiClient, projectId);
-        if (cancelled) {
-          return;
-        }
-        setProjectMembers(normalizeProjectContactLinks(rows));
-      } catch (error) {
-        if (!cancelled) {
-          setProjectMembersError(error instanceof Error ? error.message : '加载项目成员失败');
-          setProjectMembers([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setProjectMembersLoading(false);
-        }
-      }
-    };
-    void loadProjectMembersOnMount();
+    let active = true;
+    void loadProjectMembers(() => active);
     return () => {
-      cancelled = true;
+      active = false;
     };
-  }, [apiClient, projectId]);
+  }, [loadProjectMembers]);
 
   const openAddMember = useCallback(async () => {
     setMemberPickerError(null);
@@ -194,26 +187,29 @@ export const useProjectMembersManager = ({
         latestContacts = normalizedLoaded;
       }
     } catch (error) {
-      setMemberPickerError(error instanceof Error ? error.message : '加载联系人失败');
+      setMemberPickerError(error instanceof Error ? error.message : t('teamMembers.error.loadContactsFailed'));
     }
     const firstAvailable = latestContacts.find((item) => !projectContactIdSet.has(item.id));
     setMemberPickerSelectedId(firstAvailable?.id || null);
     setMemberPickerOpen(true);
-  }, [contacts, loadContacts, projectContactIdSet]);
+  }, [contacts, loadContacts, projectContactIdSet, t]);
 
   const confirmAddMember = useCallback(async (): Promise<string | null> => {
     const contactId = memberPickerSelectedId?.trim() || '';
     if (!contactId) {
-      setMemberPickerError('请先选择联系人');
+      setMemberPickerError(t('teamMembers.error.selectContactFirst'));
       return null;
     }
     if (!projectId) {
-      setMemberPickerError('当前项目不存在');
+      setMemberPickerError(t('teamMembers.error.projectMissing'));
       return null;
     }
     try {
       const nextRow = await apiClient.addProjectContact(projectId, { contact_id: contactId });
-      markRealtimeMutationHandled('project_contact_added', contactId);
+      markRealtimeMutationHandled({
+        reason: PROJECT_CONTACT_ADDED_REASON,
+        contactId,
+      });
       syncProjectMembersFromRows(
         upsertProjectRunnerContactRow(apiClient, projectId, nextRow)
         || getProjectRunnerContactRowsSnapshot(apiClient, projectId)
@@ -224,7 +220,7 @@ export const useProjectMembersManager = ({
       setMemberPickerError(null);
       return contactId;
     } catch (error) {
-      setMemberPickerError(error instanceof Error ? error.message : '添加项目成员失败');
+      setMemberPickerError(error instanceof Error ? error.message : t('teamMembers.error.addFailed'));
       return null;
     }
   }, [
@@ -233,6 +229,7 @@ export const useProjectMembersManager = ({
     memberPickerSelectedId,
     projectId,
     syncProjectMembersFromRows,
+    t,
   ]);
 
   const removeMember = useCallback(async (contact: ContactItem): Promise<boolean> => {
@@ -240,10 +237,10 @@ export const useProjectMembersManager = ({
       return false;
     }
     const confirmed = await confirm({
-      title: '移除项目成员',
-      message: `确定将 ${contact.name} 从当前项目团队中移除吗？`,
-      confirmText: '移除',
-      cancelText: '取消',
+      title: t('teamMembers.removeTitle'),
+      message: t('teamMembers.removeMessage', { name: contact.name }),
+      confirmText: t('teamMembers.remove'),
+      cancelText: t('common.cancel'),
       type: 'danger',
     });
     if (!confirmed) {
@@ -253,7 +250,10 @@ export const useProjectMembersManager = ({
     setRemovingContactId(contact.id);
     try {
       await apiClient.removeProjectContact(projectId, contact.id);
-      markRealtimeMutationHandled('project_contact_removed', contact.id);
+      markRealtimeMutationHandled({
+        reason: PROJECT_CONTACT_REMOVED_REASON,
+        contactId: contact.id,
+      });
       syncProjectMembersFromRows(
         removeProjectRunnerContactRow(apiClient, projectId, contact.id)
         || getProjectRunnerContactRowsSnapshot(apiClient, projectId)
@@ -264,7 +264,7 @@ export const useProjectMembersManager = ({
       }
       return true;
     } catch (error) {
-      setMemberPickerError(error instanceof Error ? error.message : '移除项目成员失败');
+      setMemberPickerError(error instanceof Error ? error.message : t('teamMembers.error.removeFailed'));
       return false;
     } finally {
       setRemovingContactId((prev) => (prev === contact.id ? null : prev));
@@ -276,6 +276,7 @@ export const useProjectMembersManager = ({
     onMemberRemoved,
     projectId,
     syncProjectMembersFromRows,
+    t,
   ]);
 
   const closeMemberPicker = useCallback(() => {

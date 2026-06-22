@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 
 import type { MermaidExportNotice, MermaidPreviewStatus } from './mermaid';
+import { useI18n } from '../../i18n/I18nProvider';
 
 interface MermaidPreviewModalProps {
   isOpen: boolean;
@@ -26,6 +27,8 @@ export const MermaidPreviewModal: React.FC<MermaidPreviewModalProps> = ({
   onCopyImage,
   onDownloadImage,
 }) => {
+  const { t } = useI18n();
+
   if (!isOpen || typeof document === 'undefined') {
     return null;
   }
@@ -39,28 +42,28 @@ export const MermaidPreviewModal: React.FC<MermaidPreviewModalProps> = ({
         }
       }}
     >
-      <div className="mermaid-preview-dialog" role="dialog" aria-modal="true" aria-label="Mermaid 图表预览">
+      <div className="mermaid-preview-dialog" role="dialog" aria-modal="true" aria-label={t('markdown.mermaidPreview.title')}>
         <div className="mermaid-preview-header">
-          <span className="mermaid-preview-title">Mermaid 图表预览</span>
+          <span className="mermaid-preview-title">{t('markdown.mermaidPreview.title')}</span>
           <div className="code-actions">
             <button
               className="code-action-btn mermaid-image-copy-btn"
               onClick={onCopyImage}
-              title="复制图表为图片到剪贴板"
+              title={t('markdown.mermaidPreview.copyImageTitle')}
               disabled={status !== 'rendered'}
             >
-              复制图片
+              {t('markdown.mermaidPreview.copyImage')}
             </button>
             <button
               className="code-action-btn mermaid-image-download-btn"
               onClick={onDownloadImage}
-              title="下载图表为图片"
+              title={t('markdown.mermaidPreview.downloadImageTitle')}
               disabled={status !== 'rendered'}
             >
-              下载图片
+              {t('markdown.mermaidPreview.downloadImage')}
             </button>
-            <button className="code-action-btn mermaid-close-btn" onClick={onClose} title="关闭图表弹窗">
-              关闭
+            <button className="code-action-btn mermaid-close-btn" onClick={onClose} title={t('markdown.mermaidPreview.closeTitle')}>
+              {t('common.close')}
             </button>
           </div>
         </div>
@@ -71,7 +74,7 @@ export const MermaidPreviewModal: React.FC<MermaidPreviewModalProps> = ({
             </div>
           )}
           {status === 'loading' && (
-            <div className="mermaid-preview-loading">● 正在渲染图表...</div>
+            <div className="mermaid-preview-loading">● {t('markdown.mermaidPreview.loading')}</div>
           )}
           <div
             ref={previewContainerRef}

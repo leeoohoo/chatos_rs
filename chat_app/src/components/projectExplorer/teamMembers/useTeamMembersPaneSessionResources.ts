@@ -26,7 +26,6 @@ export const useTeamMembersPaneSessionResources = ({
     conversation: contactResources.conversation,
     summary: contactResources.summary,
     composer: runtimeResources.composer,
-    workbar: runtimeResources.workbar,
     runtimeContext: runtimeResources.runtimeContext,
   };
 };

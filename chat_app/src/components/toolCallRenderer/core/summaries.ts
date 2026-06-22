@@ -246,7 +246,7 @@ export const buildInspectSummary = (
 
   const pageLabel = title && url
     ? `${title} [${url}]`
-    : (title || url || (pageStateAvailable === false ? '未打开页面' : ''));
+    : (title || url || '');
 
   if (
     !inspectionMode
@@ -265,7 +265,7 @@ export const buildInspectSummary = (
 
   return {
     inspectionMode: inspectionMode || 'unknown',
-    pageLabel: pageLabel || 'n/a',
+    pageLabel,
     elementCount,
     snapshotStatus: snapshotStatus || 'unknown',
     consoleStatus: consoleStatus || 'unknown',

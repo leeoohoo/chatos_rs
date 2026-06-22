@@ -1,5 +1,7 @@
 import React from 'react';
 
+import { useI18n } from '../../i18n/I18nProvider';
+
 interface ContactOption {
   id: string;
   name: string;
@@ -29,6 +31,8 @@ export const ProjectContactPickerModal: React.FC<ProjectContactPickerModalProps>
   onSelectedContactChange,
   onConfirm,
 }) => {
+  const { t } = useI18n();
+
   if (!isOpen) {
     return null;
   }
@@ -38,7 +42,7 @@ export const ProjectContactPickerModal: React.FC<ProjectContactPickerModalProps>
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
       <div className="relative bg-card border border-border rounded-lg shadow-xl w-[520px] p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-foreground">添加联系人到项目</h3>
+          <h3 className="text-lg font-semibold text-foreground">{t('contactPicker.title')}</h3>
           <button
             onClick={onClose}
             className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
@@ -50,12 +54,12 @@ export const ProjectContactPickerModal: React.FC<ProjectContactPickerModalProps>
         </div>
 
         <div className="text-sm text-muted-foreground mb-3">
-          目标项目: <span className="text-foreground font-medium">{projectName || '未命名项目'}</span>
+          {t('contactPicker.targetProject', { name: projectName || t('contactPicker.unnamedProject') })}
         </div>
 
         {contacts.length === 0 ? (
           <div className="text-sm text-muted-foreground">
-            暂无可用联系人，请先在 CONTACTS 中添加联系人。
+            {t('contactPicker.empty')}
           </div>
         ) : (
           <div className="max-h-72 overflow-y-auto border border-border rounded">
@@ -83,7 +87,7 @@ export const ProjectContactPickerModal: React.FC<ProjectContactPickerModalProps>
                     <div className="text-sm font-medium text-foreground truncate">{contact.name}</div>
                     {disabled ? (
                       <span className="text-[11px] px-1.5 py-0.5 rounded border border-border text-muted-foreground">
-                        已添加
+                        {t('contactPicker.added')}
                       </span>
                     ) : null}
                   </div>
@@ -103,14 +107,14 @@ export const ProjectContactPickerModal: React.FC<ProjectContactPickerModalProps>
             onClick={onClose}
             className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
             disabled={!selectedContactId || contacts.length === 0 || disabledContactIds.includes(selectedContactId)}
             className="px-4 py-2 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            添加到项目
+            {t('contactPicker.submit')}
           </button>
         </div>
       </div>

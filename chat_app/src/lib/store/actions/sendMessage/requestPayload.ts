@@ -37,10 +37,7 @@ export const buildChatRequestLogPayload = ({
   remoteConnectionId,
   projectId,
   projectRoot,
-  mcpEnabled,
-  enabledMcpIds,
-  skillsEnabled,
-  selectedSkillIds,
+  workspaceRoot,
 }: {
   sessionId: string;
   turnId: string;
@@ -54,19 +51,16 @@ export const buildChatRequestLogPayload = ({
   remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  skillsEnabled: boolean;
-  selectedSkillIds: string[];
+  workspaceRoot: string | null;
 }): StreamChatLogPayload => ({
   conversation_id: sessionId,
   turn_id: turnId,
   message: content,
   model_config: {
+    id: selectedModel.id,
     model: selectedModel.model_name,
     provider: selectedModel.provider,
     base_url: selectedModel.base_url,
-    api_key: selectedModel.api_key || '',
     temperature: chatConfig.temperature,
     thinking_level: selectedModel.thinking_level,
     supports_images: selectedModel.supports_images === true,
@@ -79,10 +73,7 @@ export const buildChatRequestLogPayload = ({
   remote_connection_id: remoteConnectionId,
   project_id: projectId,
   project_root: projectRoot,
-  mcp_enabled: mcpEnabled,
-  enabled_mcp_ids: enabledMcpIds,
-  skills_enabled: skillsEnabled,
-  selected_skill_ids: selectedSkillIds,
+  workspace_root: workspaceRoot,
 });
 
 export const buildStreamChatRuntimeOptions = ({
@@ -91,28 +82,19 @@ export const buildStreamChatRuntimeOptions = ({
   remoteConnectionId,
   projectId,
   projectRoot,
-  mcpEnabled,
-  enabledMcpIds,
-  skillsEnabled,
-  selectedSkillIds,
+  workspaceRoot,
 }: {
   turnId: string;
   contactAgentId: string | null;
   remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  skillsEnabled: boolean;
-  selectedSkillIds: string[];
+  workspaceRoot: string | null;
 }): StreamChatRuntimeOptions => ({
   turnId,
   contactAgentId,
   remoteConnectionId,
   projectId,
   projectRoot,
-  mcpEnabled,
-  enabledMcpIds,
-  skillsEnabled,
-  selectedSkillIds,
+  workspaceRoot,
 });

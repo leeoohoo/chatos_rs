@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
+use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
-use crate::services::memory_server_client::{
+use crate::models::memory_runtime_types::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotBuiltinMcpPromptDto,
-    TurnRuntimeSnapshotRuntimeDto, TurnRuntimeSnapshotSelectedCommandDto,
-    TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
-    TurnRuntimeSnapshotUnavailableToolDto,
+    TurnRuntimeSnapshotContextItemDto, TurnRuntimeSnapshotRuntimeDto,
+    TurnRuntimeSnapshotSelectedCommandDto, TurnRuntimeSnapshotSystemMessageDto,
+    TurnRuntimeSnapshotToolDto, TurnRuntimeSnapshotUnavailableToolDto,
 };
 
 pub struct BuildTurnRuntimeSnapshotInput<'a> {
@@ -32,6 +33,9 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub selected_commands: &'a [TurnRuntimeSnapshotSelectedCommandDto],
     pub unavailable_builtin_tools: &'a [Value],
     pub builtin_mcp_prompt_debug: Option<&'a BuiltinMcpPromptBuildResult>,
+    pub actual_context_mode: Option<&'a str>,
+    pub actual_context_items: &'a [TurnRuntimeSnapshotContextItemDto],
+    pub last_model_request_payload: Option<&'a Value>,
 }
 
 pub fn build_turn_runtime_snapshot_payload(
@@ -109,6 +113,9 @@ pub fn build_turn_runtime_snapshot_payload(
                 input.unavailable_builtin_tools,
             ),
             builtin_mcp_prompt: normalize_builtin_mcp_prompt(input.builtin_mcp_prompt_debug),
+            actual_context_mode: normalize_optional_text(input.actual_context_mode),
+            actual_context_items: normalize_context_items(input.actual_context_items),
+            last_model_request_payload: input.last_model_request_payload.cloned(),
         }),
     }
 }
@@ -135,6 +142,7 @@ fn normalize_status(status: &str) -> String {
         "running" => "running".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
+        "cancelled" | "canceled" => "cancelled".to_string(),
         _ => "unknown".to_string(),
     }
 }
@@ -159,6 +167,26 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn normalize_context_items(
+    items: &[TurnRuntimeSnapshotContextItemDto],
+) -> Vec<TurnRuntimeSnapshotContextItemDto> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let content = item.content.trim();
+            if content.is_empty() {
+                return None;
+            }
+            Some(TurnRuntimeSnapshotContextItemDto {
+                role: normalize_optional_text(item.role.as_deref()),
+                item_type: normalize_optional_text(item.item_type.as_deref()),
+                source: normalize_optional_text(item.source.as_deref()),
+                content: content.to_string(),
+            })
+        })
+        .collect()
 }
 
 fn normalize_selected_commands(
@@ -249,10 +277,15 @@ fn normalize_builtin_mcp_prompt(
 
     Some(TurnRuntimeSnapshotBuiltinMcpPromptDto {
         prompt_source_path: normalize_optional_text(Some(
-            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(),
+            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(
+                InternalContextLocale::ZhCn,
+            ),
         )),
         all_section_ids: normalize_string_list(
-            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_section_ids().as_slice(),
+            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_section_ids(
+                InternalContextLocale::ZhCn,
+            )
+            .as_slice(),
         ),
         selected_section_ids: normalize_string_list(prompt.selected_section_ids.as_slice()),
         omitted_section_ids: normalize_string_list(prompt.omitted_section_ids.as_slice()),
@@ -276,6 +309,7 @@ mod tests {
 
     use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
     use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
+    use crate::core::internal_context_locale::InternalContextLocale;
 
     #[test]
     fn snapshot_payload_includes_builtin_mcp_system_prompt() {
@@ -300,6 +334,9 @@ mod tests {
             selected_commands: &[],
             unavailable_builtin_tools: &[],
             builtin_mcp_prompt_debug: None,
+            actual_context_mode: None,
+            actual_context_items: &[],
+            last_model_request_payload: None,
         });
 
         let system_messages = payload.system_messages.expect("system messages");
@@ -339,6 +376,9 @@ mod tests {
                 "reason": "agent-browser unavailable"
             })],
             builtin_mcp_prompt_debug: None,
+            actual_context_mode: None,
+            actual_context_items: &[],
+            last_model_request_payload: None,
         });
 
         let runtime = payload.runtime.expect("runtime");
@@ -388,13 +428,20 @@ mod tests {
                 omitted_builtin_server_names: vec!["browser_tools".to_string()],
                 runtime_limitations: Some("当前运行时限制：\n- 当前不要依赖以下内置 MCP 工具：`browser_tools_browser_inspect`。".to_string()),
             }),
+            actual_context_mode: None,
+            actual_context_items: &[],
+            last_model_request_payload: None,
         });
 
         let runtime = payload.runtime.expect("runtime");
         let builtin = runtime.builtin_mcp_prompt.expect("builtin prompt debug");
         assert_eq!(
             builtin.prompt_source_path.as_deref(),
-            Some("BUILTIN_MCP_PROMPT.md")
+            Some(
+                crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(
+                    InternalContextLocale::ZhCn
+                )
+            )
         );
         assert!(builtin.all_section_ids.iter().any(|item| item == "global"));
         assert_eq!(
@@ -404,5 +451,36 @@ mod tests {
         assert_eq!(builtin.omitted_section_ids, vec!["builtin_browser_tools"]);
         assert_eq!(builtin.active_builtin_server_names, vec!["task_manager"]);
         assert_eq!(builtin.omitted_builtin_server_names, vec!["browser_tools"]);
+    }
+
+    #[test]
+    fn snapshot_payload_normalizes_cancelled_status() {
+        let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: None,
+            status: "canceled",
+            base_system_prompt: None,
+            contact_system_prompt: None,
+            task_board_prompt: None,
+            builtin_mcp_system_prompt: None,
+            memory_summary_prompt: None,
+            tools: &HashMap::new(),
+            model: None,
+            provider: None,
+            contact_agent_id: None,
+            remote_connection_id: None,
+            project_id: None,
+            project_root: None,
+            workspace_root: None,
+            mcp_enabled: false,
+            enabled_mcp_ids: &[],
+            selected_commands: &[],
+            unavailable_builtin_tools: &[],
+            builtin_mcp_prompt_debug: None,
+            actual_context_mode: None,
+            actual_context_items: &[],
+            last_model_request_payload: None,
+        });
+
+        assert_eq!(payload.status.as_deref(), Some("cancelled"));
     }
 }

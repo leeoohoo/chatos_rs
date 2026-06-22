@@ -1,8 +1,6 @@
 import { useMemo, type ComponentProps } from 'react';
 
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
-import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
-import { formatSummaryCreatedAt } from './helpers';
 import type {
   ChatInterfaceOverlayActions,
   ChatInterfaceOverlayState,
@@ -17,22 +15,6 @@ export const useOverlayDrawerProps = ({
   overlay,
   actions,
 }: UseOverlayDrawerPropsParams) => {
-  const uiPromptHistoryProps = useMemo<ComponentProps<typeof UiPromptHistoryDrawer>>(() => ({
-    open: overlay.uiPromptHistoryOpen,
-    items: overlay.uiPromptHistoryItems,
-    loading: overlay.uiPromptHistoryLoading,
-    error: overlay.uiPromptHistoryError,
-    refreshDisabled: !overlay.currentSession || overlay.uiPromptHistoryLoading,
-    onRefresh: () => {
-      if (!overlay.currentSessionId) {
-        return;
-      }
-      void actions.loadUiPromptHistory(overlay.currentSessionId, true);
-    },
-    onClose: () => actions.setUiPromptHistoryOpen(false),
-    formatCreatedAt: formatSummaryCreatedAt,
-  }), [actions, overlay]);
-
   const runtimeContextProps = useMemo<ComponentProps<typeof TurnRuntimeContextDrawer>>(() => ({
     open: overlay.runtimeContextOpen,
     sessionId: overlay.runtimeContextSessionId,
@@ -44,7 +26,6 @@ export const useOverlayDrawerProps = ({
   }), [actions, overlay]);
 
   return {
-    uiPromptHistoryProps,
     runtimeContextProps,
   };
 };

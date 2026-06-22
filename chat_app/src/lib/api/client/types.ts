@@ -4,6 +4,7 @@ export * from './types/common';
 export * from './types/config';
 export * from './types/filesystem';
 export * from './types/git';
+export * from './types/messageTaskRunner';
 export * from './types/notepad';
 export * from './types/project';
 export * from './types/remoteConnection';

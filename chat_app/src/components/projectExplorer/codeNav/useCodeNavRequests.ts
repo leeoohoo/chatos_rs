@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { useI18n } from '../../../i18n/I18nProvider';
 import type {
   CodeNavLocation,
   CodeNavLocationsResult,
@@ -9,6 +10,7 @@ import {
   normalizeCodeNavLocationsResult,
 } from '../../../lib/domain/codeNav';
 import type {
+  CodeNavHistoryEntry,
   NavRequestKind,
   ProjectExplorerCodeNavApiClient,
 } from './codeNavTypes';
@@ -20,7 +22,15 @@ interface UseCodeNavRequestsOptions {
   selectedToken: string | null;
   selectedTokenLine: number | null;
   selectedTokenColumn: number | null;
-  openLocation: (location: CodeNavLocation) => Promise<void>;
+  openLocation: (
+    location: CodeNavLocation,
+    options?: {
+      preserveHistory?: boolean;
+      targetLine?: number | null;
+    },
+  ) => Promise<void>;
+  buildHistoryEntry: () => CodeNavHistoryEntry | null;
+  pushHistoryEntry: (entry: CodeNavHistoryEntry) => void;
 }
 
 export const useCodeNavRequests = ({
@@ -31,7 +41,10 @@ export const useCodeNavRequests = ({
   selectedTokenLine,
   selectedTokenColumn,
   openLocation,
+  buildHistoryEntry,
+  pushHistoryEntry,
 }: UseCodeNavRequestsOptions) => {
+  const { t } = useI18n();
   const [navResult, setNavResult] = useState<CodeNavLocationsResult | null>(null);
   const [navRequestKind, setNavRequestKind] = useState<NavRequestKind | null>(null);
   const [navLoading, setNavLoading] = useState(false);
@@ -47,7 +60,7 @@ export const useCodeNavRequests = ({
 
   const runNavRequest = useCallback(async (mode: NavRequestKind) => {
     if (!projectRootPath || !selectedFilePath || !selectedToken || !selectedTokenLine || !selectedTokenColumn) {
-      setNavError('请先在代码中选中一个 token');
+      setNavError(t('projectExplorer.codeNav.selectTokenFirst'));
       return;
     }
 
@@ -72,11 +85,11 @@ export const useCodeNavRequests = ({
       const normalized = normalizeCodeNavLocationsResult(response);
       setNavResult(normalized);
       if (normalized.locations.length === 0) {
-        setNavError(mode === 'definition' ? '没有找到可跳转定义' : '没有找到引用结果');
+        setNavError(mode === 'definition' ? t('projectExplorer.codeNav.noDefinition') : t('projectExplorer.codeNav.noReferences'));
       }
     } catch (error) {
       setNavResult(null);
-      setNavError(error instanceof Error ? error.message : '代码导航失败');
+      setNavError(error instanceof Error ? error.message : t('projectExplorer.codeNav.failed'));
     } finally {
       setNavLoading(false);
     }
@@ -87,6 +100,7 @@ export const useCodeNavRequests = ({
     selectedToken,
     selectedTokenColumn,
     selectedTokenLine,
+    t,
   ]);
 
   const requestDefinition = useCallback(async () => {
@@ -98,9 +112,13 @@ export const useCodeNavRequests = ({
   }, [runNavRequest]);
 
   const handleOpenNavLocation = useCallback(async (location: CodeNavLocation) => {
-    await openLocation(location);
+    const historyEntry = buildHistoryEntry();
+    if (historyEntry) {
+      pushHistoryEntry(historyEntry);
+    }
+    await openLocation(location, { preserveHistory: true });
     setActiveNavLocationId(buildCodeNavLocationId(location));
-  }, [openLocation]);
+  }, [buildHistoryEntry, openLocation, pushHistoryEntry]);
 
   return {
     navResult,

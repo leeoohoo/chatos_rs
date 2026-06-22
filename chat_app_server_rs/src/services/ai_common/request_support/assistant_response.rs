@@ -3,9 +3,7 @@ use std::future::Future;
 use serde_json::Value;
 use tracing::{error, info};
 
-use crate::core::messages::{
-    object_string_alias, optional_text_has_content, select_preferred_text, text_has_content,
-};
+use crate::core::messages::{optional_text_has_content, select_preferred_text, text_has_content};
 use crate::core::tool_call::tool_calls_value_has_items;
 
 use super::request_transport::truncate_log;
@@ -16,12 +14,15 @@ pub(crate) struct AssistantResponsePersistenceRequest {
     pub persist_messages: bool,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
+    pub metadata: Option<Value>,
     pub content: String,
     pub reasoning: Option<String>,
     pub tool_calls: Option<Value>,
     pub response_id: Option<String>,
     pub response_status: Option<String>,
 }
+
+pub(crate) const TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE: &str = "task_runner_async_plan";
 
 pub(crate) fn build_ai_client_success_payload(
     content: String,
@@ -37,6 +38,23 @@ pub(crate) fn build_ai_client_success_payload(
         "finish_reason": finish_reason,
         "iteration": iteration
     })
+}
+
+pub(crate) fn attach_ai_client_success_extra(payload: Value, extra: Value) -> Value {
+    let mut base = match payload {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+    if let Value::Object(extra_map) = extra {
+        for (key, value) in extra_map {
+            base.insert(key, value);
+        }
+    }
+    Value::Object(base)
 }
 
 pub(crate) fn completion_failed_error(
@@ -80,11 +98,48 @@ pub(crate) fn completion_failed_error(
     Some(format!("ai response failed: {}", segments.join("; ")))
 }
 
+pub(crate) fn terminal_empty_response_error(
+    finish_reason: Option<&str>,
+    content: &str,
+    reasoning: Option<&str>,
+    tool_calls: Option<&Value>,
+    provider_error: Option<&Value>,
+) -> Option<String> {
+    if is_non_terminal_response_status(finish_reason) {
+        return None;
+    }
+
+    if text_has_content(content)
+        || optional_text_has_content(reasoning)
+        || tool_calls_value_has_items(tool_calls)
+    {
+        return None;
+    }
+
+    let reason = finish_reason
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let mut segments = vec![format!("finish_reason={}", reason)];
+
+    if let Some(error_preview) = provider_error
+        .and_then(build_provider_error_preview)
+        .filter(|value| !value.trim().is_empty())
+    {
+        segments.push(format!("provider_error={}", error_preview));
+    }
+
+    Some(format!(
+        "ai response invalid: terminal empty response; {}",
+        segments.join("; ")
+    ))
+}
+
 pub(crate) fn should_persist_assistant_message(
     content: &str,
     reasoning: Option<&str>,
     tool_calls: Option<&Value>,
-    response_status: Option<&str>,
+    _response_status: Option<&str>,
 ) -> bool {
     let has_content = text_has_content(content);
     let has_reasoning = optional_text_has_content(reasoning);
@@ -92,7 +147,60 @@ pub(crate) fn should_persist_assistant_message(
     if has_content || has_reasoning || has_tool_calls {
         return true;
     }
-    !is_non_terminal_response_status(response_status)
+    false
+}
+
+pub(crate) fn is_task_runner_async_plan_message_mode(message_mode: Option<&str>) -> bool {
+    matches!(
+        message_mode
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE)
+    )
+}
+
+pub(crate) fn normalize_task_runner_async_plan_metadata(metadata: Option<Value>) -> Option<Value> {
+    normalize_task_runner_async_metadata(metadata, "plan_summary")
+}
+
+pub(crate) fn normalize_task_runner_async_tool_call_metadata(
+    metadata: Option<Value>,
+) -> Option<Value> {
+    normalize_task_runner_async_metadata(metadata, "tool_call")
+}
+
+fn normalize_task_runner_async_metadata(
+    metadata: Option<Value>,
+    message_kind: &str,
+) -> Option<Value> {
+    let mut root = match metadata {
+        Some(Value::Object(map)) => map,
+        Some(_) | None => serde_json::Map::new(),
+    };
+
+    let task_runner_async = root
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Value::Object(task_runner_async_map) = task_runner_async else {
+        root.insert(
+            "task_runner_async".to_string(),
+            serde_json::json!({
+                "mode": "contact_async",
+                "message_kind": message_kind
+            }),
+        );
+        return Some(Value::Object(root));
+    };
+
+    task_runner_async_map.insert(
+        "mode".to_string(),
+        Value::String("contact_async".to_string()),
+    );
+    task_runner_async_map.insert(
+        "message_kind".to_string(),
+        Value::String(message_kind.to_string()),
+    );
+    Some(Value::Object(root))
 }
 
 pub(crate) fn build_assistant_message_metadata(
@@ -100,6 +208,7 @@ pub(crate) fn build_assistant_message_metadata(
     response_id: Option<&str>,
     turn_id: Option<&str>,
     response_status: Option<&str>,
+    extra_metadata: Option<&Value>,
 ) -> Option<Value> {
     let mut map = serde_json::Map::new();
 
@@ -123,6 +232,11 @@ pub(crate) fn build_assistant_message_metadata(
     }
     if let Some(tool_calls) = tool_calls {
         map.insert("toolCalls".to_string(), tool_calls.clone());
+    }
+    if let Some(Value::Object(extra)) = extra_metadata {
+        for (key, value) in extra {
+            map.insert(key.clone(), value.clone());
+        }
     }
 
     if map.is_empty() {
@@ -163,29 +277,15 @@ pub(crate) async fn persist_assistant_response_with_policy<F, Fut>(
             "{} skip assistant message persistence due to {}: session_id={}, turn_id={}, response_id={}, finish_reason={}",
             log_prefix,
             skip_log_label,
-            request.session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            request
+                .session_id
+                .clone()
+                .unwrap_or_else(|| "n/a".to_string()),
             request.turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
             request.response_id.as_deref().unwrap_or("none"),
             request.response_status.as_deref().unwrap_or("none")
         );
     }
-}
-
-pub(crate) fn extract_response_status_from_metadata(metadata: &Value) -> Option<&str> {
-    object_string_alias(
-        metadata,
-        &[
-            "response_status",
-            "responseStatus",
-            "finish_reason",
-            "finishReason",
-            "status",
-        ],
-    )
-}
-
-pub(crate) fn extract_response_id_from_metadata(metadata: &Value) -> Option<&str> {
-    object_string_alias(metadata, &["response_id", "responseId"])
 }
 
 pub(crate) fn is_non_terminal_response_status(status: Option<&str>) -> bool {

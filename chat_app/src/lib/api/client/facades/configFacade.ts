@@ -2,13 +2,17 @@ import * as configsApi from '../configs';
 import * as conversationApi from '../conversation';
 import * as memoryApi from '../memory';
 import type {
+  AiCreateAgentResponse,
+  AiCreateAgentPayload,
   AiModelConfigCreatePayload,
   AiModelConfigResponse,
   AiModelConfigUpdatePayload,
+  AiProviderModelsResponse,
   ActiveSystemContextResponse,
   ApplicationCreatePayload,
   ApplicationResponse,
   ApplicationUpdatePayload,
+  CreateAgentPayload,
   ConversationAssistantResponse,
   ConversationDetailsResponse,
   ConversationMessageEnvelope,
@@ -21,7 +25,12 @@ import type {
   McpConfigUpdatePayload,
   MemoryAgentsQueryOptions,
   MemoryAgentResponse,
+  MemoryAgentSessionResponse,
   MemoryAgentRuntimeContextResponse,
+  MemoryAgentSessionsQueryOptions,
+  MemorySkillsQueryOptions,
+  MemorySkillPluginResponse,
+  MemorySkillResponse,
   SystemContextCreatePayload,
   SystemContextDraftEvaluatePayload,
   SystemContextDraftEvaluateResponse,
@@ -31,18 +40,20 @@ import type {
   SystemContextDraftOptimizeResponse,
   SystemContextResponse,
   SystemContextUpdatePayload,
+  UpdateAgentPayload,
 } from '../types';
 import type ApiClient from '../../client';
 
 export interface ConfigFacade {
-  getMcpConfigs(userId?: string): Promise<McpConfigResponse[]>;
+  getMcpConfigs(userId?: string, options?: { forceRefresh?: boolean }): Promise<McpConfigResponse[]>;
   createMcpConfig(data: McpConfigCreatePayload): Promise<McpConfigResponse>;
   updateMcpConfig(id: string, data: McpConfigUpdatePayload): Promise<McpConfigResponse>;
   deleteMcpConfig(id: string): Promise<{ success?: boolean }>;
-  getAiModelConfigs(userId?: string): Promise<AiModelConfigResponse[]>;
+  getAiModelConfigs(): Promise<AiModelConfigResponse[]>;
   createAiModelConfig(data: AiModelConfigCreatePayload): Promise<AiModelConfigResponse>;
   updateAiModelConfig(id: string, data: AiModelConfigUpdatePayload): Promise<AiModelConfigResponse>;
   deleteAiModelConfig(id: string): Promise<{ success?: boolean }>;
+  getAiProviderModels(id: string, options?: { refresh?: boolean }): Promise<AiProviderModelsResponse>;
   getSystemContexts(userId: string): Promise<SystemContextResponse[]>;
   getActiveSystemContext(userId: string): Promise<ActiveSystemContextResponse>;
   createSystemContext(data: SystemContextCreatePayload): Promise<SystemContextResponse>;
@@ -57,6 +68,21 @@ export interface ConfigFacade {
   createApplication(data: ApplicationCreatePayload): Promise<ApplicationResponse>;
   updateApplication(id: string, data: ApplicationUpdatePayload): Promise<ApplicationResponse>;
   deleteApplication(id: string): Promise<{ success?: boolean }>;
+  getAgents(userId?: string, options?: MemoryAgentsQueryOptions): Promise<MemoryAgentResponse[]>;
+  getAgentSessions(
+    agentId: string,
+    userId?: string,
+    options?: MemoryAgentSessionsQueryOptions,
+  ): Promise<MemoryAgentSessionResponse[]>;
+  getAgentRuntimeContext(agentId: string): Promise<MemoryAgentRuntimeContextResponse>;
+  createAgent(data: CreateAgentPayload): Promise<MemoryAgentResponse>;
+  updateAgent(agentId: string, data: UpdateAgentPayload): Promise<MemoryAgentResponse>;
+  deleteAgent(agentId: string): Promise<{ success?: boolean }>;
+  aiCreateAgent(data: AiCreateAgentPayload): Promise<AiCreateAgentResponse>;
+  listSkillPlugins(userId?: string, options?: { limit?: number; offset?: number }): Promise<MemorySkillPluginResponse[]>;
+  listSkills(userId?: string, options?: MemorySkillsQueryOptions): Promise<MemorySkillResponse[]>;
+  getSkill(skillId: string): Promise<MemorySkillResponse>;
+  getSkillPlugin(source: string): Promise<MemorySkillPluginResponse>;
   getMemoryAgents(userId?: string, options?: MemoryAgentsQueryOptions): Promise<MemoryAgentResponse[]>;
   getMemoryAgentRuntimeContext(agentId: string): Promise<MemoryAgentRuntimeContextResponse>;
   getConversationDetails(conversationId: string): Promise<ConversationDetailsResponse>;
@@ -80,8 +106,8 @@ export interface ConfigFacade {
 }
 
 export const configFacade: ConfigFacade & ThisType<ApiClient> = {
-  async getMcpConfigs(userId) {
-    return configsApi.getMcpConfigs(this.getRequestFn(), userId);
+  async getMcpConfigs(userId, options) {
+    return configsApi.getMcpConfigs(this.getRequestFn(), userId, options);
   },
   async createMcpConfig(data) {
     return configsApi.createMcpConfig(this.getRequestFn(), data);
@@ -92,8 +118,8 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
   async deleteMcpConfig(id) {
     return configsApi.deleteMcpConfig(this.getRequestFn(), id);
   },
-  async getAiModelConfigs(userId) {
-    return configsApi.getAiModelConfigs(this.getRequestFn(), userId);
+  async getAiModelConfigs() {
+    return configsApi.getAiModelConfigs(this.getRequestFn());
   },
   async createAiModelConfig(data) {
     return configsApi.createAiModelConfig(this.getRequestFn(), data);
@@ -103,6 +129,9 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
   },
   async deleteAiModelConfig(id) {
     return configsApi.deleteAiModelConfig(this.getRequestFn(), id);
+  },
+  async getAiProviderModels(id, options) {
+    return configsApi.getAiProviderModels(this.getRequestFn(), id, options);
   },
   async getSystemContexts(userId) {
     return configsApi.getSystemContexts(this.getRequestFn(), userId);
@@ -146,11 +175,44 @@ export const configFacade: ConfigFacade & ThisType<ApiClient> = {
   async deleteApplication(id) {
     return configsApi.deleteApplication(this.getRequestFn(), id);
   },
+  async getAgents(userId, options) {
+    return memoryApi.getAgents(this.getRequestFn(), userId, options);
+  },
+  async getAgentSessions(agentId, userId, options) {
+    return memoryApi.getAgentSessions(this.getRequestFn(), agentId, userId, options);
+  },
+  async getAgentRuntimeContext(agentId) {
+    return memoryApi.getAgentRuntimeContext(this.getRequestFn(), agentId);
+  },
+  async createAgent(data) {
+    return memoryApi.createAgent(this.getRequestFn(), data);
+  },
+  async updateAgent(agentId, data) {
+    return memoryApi.updateAgent(this.getRequestFn(), agentId, data);
+  },
+  async deleteAgent(agentId) {
+    return memoryApi.deleteAgent(this.getRequestFn(), agentId);
+  },
+  async aiCreateAgent(data) {
+    return memoryApi.aiCreateAgent(this.getRequestFn(), data);
+  },
+  async listSkillPlugins(userId, options) {
+    return memoryApi.listSkillPlugins(this.getRequestFn(), userId, options);
+  },
+  async listSkills(userId, options) {
+    return memoryApi.listSkills(this.getRequestFn(), userId, options);
+  },
+  async getSkill(skillId) {
+    return memoryApi.getSkill(this.getRequestFn(), skillId);
+  },
+  async getSkillPlugin(source) {
+    return memoryApi.getSkillPlugin(this.getRequestFn(), source);
+  },
   async getMemoryAgents(userId, options) {
-    return memoryApi.getMemoryAgents(this.getRequestFn(), userId, options);
+    return this.getAgents(userId, options);
   },
   async getMemoryAgentRuntimeContext(agentId) {
-    return memoryApi.getMemoryAgentRuntimeContext(this.getRequestFn(), agentId);
+    return this.getAgentRuntimeContext(agentId);
   },
   async getConversationDetails(conversationId) {
     return conversationApi.getConversationDetails(this.getRequestFn(), conversationId);

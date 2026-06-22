@@ -3,8 +3,9 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use super::types::ChatStreamRequest;
+use crate::services::shared_ai_runtime::resolve_shared_model_runtime_config_for_request;
 
-pub(crate) fn validate_chat_stream_request(
+pub(crate) async fn validate_chat_stream_request(
     req: &ChatStreamRequest,
     require_responses: bool,
 ) -> Result<(), (StatusCode, Json<Value>)> {
@@ -24,17 +25,29 @@ pub(crate) fn validate_chat_stream_request(
             ),
         ));
     }
-    if require_responses
-        && req
-            .ai_model_config
-            .as_ref()
-            .and_then(|cfg| cfg.get("supports_responses").and_then(|v| v.as_bool()))
-            != Some(true)
-    {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "当前模型未启用 Responses API"})),
-        ));
+    if require_responses {
+        let model_runtime = resolve_shared_model_runtime_config_for_request(
+            req.model_config_id.as_deref(),
+            req.ai_model_config.as_ref(),
+            req.conversation_id.as_deref(),
+            req.user_id.as_deref(),
+            "gpt-4o",
+            req.reasoning_enabled,
+            true,
+        )
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "解析模型配置失败", "detail": err})),
+            )
+        })?;
+        if !model_runtime.supports_responses {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "当前模型未启用 Responses API"})),
+            ));
+        }
     }
     Ok(())
 }

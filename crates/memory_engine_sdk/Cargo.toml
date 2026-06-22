@@ -1,0 +1,10 @@
+[package]
+name = "memory_engine_sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+urlencoding = "2"

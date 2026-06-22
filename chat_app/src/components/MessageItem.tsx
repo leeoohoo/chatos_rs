@@ -2,8 +2,8 @@ import React, { useEffect, useState, memo } from 'react';
 import { AttachmentRenderer } from './AttachmentRenderer';
 import { cn } from '../lib/utils';
 import type { ToolCall } from '../types';
+import { AssistantMessageBubble } from './messageItem/AssistantMessageBubble';
 import { MessageContentRenderer } from './messageItem/MessageContentRenderer';
-import { HistoryProcessSummary } from './messageItem/HistoryProcessSummary';
 import { MessageActions } from './messageItem/MessageActions';
 import { MessageAvatar } from './messageItem/MessageAvatar';
 import { MessageEditForm } from './messageItem/MessageEditForm';
@@ -11,22 +11,38 @@ import { MessageHeader } from './messageItem/MessageHeader';
 import { SessionSummaryCard } from './messageItem/SessionSummaryCard';
 import type { MessageItemProps } from './messageItem/messageItemTypes';
 import { useMessageItemModel } from './messageItem/useMessageItemModel';
-export type { DerivedProcessStats } from './messageItem/types';
 export type { MessageItemProps } from './messageItem/messageItemTypes';
+
+const readDisplayName = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const resolveTaskRunnerAssistantDisplayName = (
+  message: MessageItemProps['message'],
+  fallbackContactName: string | null | undefined,
+): string | null => {
+  const taskRunnerAsync = message.metadata?.task_runner_async;
+  return readDisplayName(taskRunnerAsync?.contact_display_name)
+    || readDisplayName(taskRunnerAsync?.agent_name_snapshot)
+    || readDisplayName(taskRunnerAsync?.contact_name)
+    || readDisplayName(fallbackContactName);
+};
 
 const MessageItemComponent: React.FC<MessageItemProps> = ({
   message,
   isLast = false,
   isStreaming = false,
+  assistantContactName = null,
+  highlighted = false,
   onEdit,
   onDelete,
-  onToggleTurnProcess,
-  renderContext = 'chat',
-  derivedProcessStatsByUserId,
   toolResultById,
   assistantToolCallsById,
   customRenderer,
-  linkedUserExpandedForAssistant,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -49,12 +65,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     isAssistant,
     isSystem,
     isTool,
-    hasHistoryProcess,
-    historyProcessExpanded,
-    historyProcessLoading,
-    historyToolCount,
-    historyThinkingCount,
-    historyUnavailableToolCount,
+    isTaskRunnerAsyncAssistant,
     collapseAssistantProcessByDefault,
     attachments,
     keepLastN,
@@ -62,13 +73,16 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     renderContentSegments,
     toolCallsById,
     shouldHideEmptyStreamingAssistant,
+    shouldHideEmptyNonTaskRunnerAssistant,
   } = useMessageItemModel({
     message,
     isStreaming,
-    renderContext,
-    derivedProcessStatsByUserId,
-    linkedUserExpandedForAssistant,
   });
+  const showAssistantChrome = isAssistant && isTaskRunnerAsyncAssistant;
+  const useCompactAssistantLayout = isAssistant && !showAssistantChrome;
+  const assistantDisplayName = showAssistantChrome
+    ? resolveTaskRunnerAssistantDisplayName(message, assistantContactName)
+    : null;
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -76,6 +90,14 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   }
 
   if (shouldHideEmptyStreamingAssistant) {
+    return null;
+  }
+
+  if (
+    shouldHideEmptyNonTaskRunnerAssistant
+    && attachments.length === 0
+    && message.metadata?.type !== 'session_summary'
+  ) {
     return null;
   }
 
@@ -109,46 +131,39 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       className={cn(
         'group relative rounded-lg transition-colors',
         // 基础布局样式 - 所有消息都使用统一的左对齐布局
-        !isAssistant && 'flex gap-3 px-4 py-4',
+        (!isAssistant || showAssistantChrome) && 'flex gap-3 px-4 py-4',
         // assistant消息使用简化布局（无头像无头部）
-        isAssistant && 'px-4 py-2',
+        useCompactAssistantLayout && 'px-4 py-2',
         // 角色特定样式 - 移除左右对齐差异，统一左对齐
         isUser && 'bg-user-message',
         isSystem && 'bg-muted border-l-4 border-primary',
         isTool && 'bg-blue-50 dark:bg-blue-950/20 border-l-4 border-blue-500',
+        highlighted && 'ring-2 ring-primary/40 bg-primary/10',
         'hover:bg-opacity-80'
       )}
+      data-message-id={message.id}
     >
       {/* 头像 - assistant消息不显示头像 */}
-      {!isAssistant && (
+      {(!isAssistant || showAssistantChrome) && (
         <MessageAvatar
           isUser={isUser}
+          isAssistant={isAssistant}
           isSystem={isSystem}
           isTool={isTool}
+          assistantDisplayName={assistantDisplayName}
         />
       )}
 
       {/* 消息内容 */}
       <div className="flex-1 min-w-0">
         {/* 消息头部 - assistant消息不显示头部 */}
-        {!isAssistant && (
+        {(!isAssistant || showAssistantChrome) && (
           <MessageHeader
             message={message}
             isUser={isUser}
+            isAssistant={isAssistant}
             isTool={isTool}
-          />
-        )}
-
-        {/* 特殊渲染：会话摘要提示 */}
-        {isUser && hasHistoryProcess && (
-          <HistoryProcessSummary
-            userMessageId={message.id}
-            historyProcessLoading={historyProcessLoading}
-            historyProcessExpanded={historyProcessExpanded}
-            historyToolCount={historyToolCount}
-            historyThinkingCount={historyThinkingCount}
-            historyUnavailableToolCount={historyUnavailableToolCount}
-            onToggleTurnProcess={onToggleTurnProcess}
+            assistantDisplayName={assistantDisplayName}
           />
         )}
 
@@ -182,20 +197,41 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             onCancel={handleCancelEdit}
           />
         ) : (
-          <div className="space-y-3">
-            <MessageContentRenderer
-              message={message}
-              isLast={isLast}
-              isStreaming={isStreaming}
-              renderContentSegments={renderContentSegments}
-              toolCalls={toolCalls as ToolCall[]}
-              toolCallsById={toolCallsById}
-              assistantToolCallsById={assistantToolCallsById}
-              toolResultById={toolResultById}
-              collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
-              onApplyCode={handleApplyCode}
-            />
-          </div>
+          isAssistant ? (
+            shouldHideEmptyNonTaskRunnerAssistant ? null : (
+              <AssistantMessageBubble messageId={message.id}>
+                <div className="space-y-3">
+                  <MessageContentRenderer
+                    message={message}
+                    isLast={isLast}
+                    isStreaming={isStreaming}
+                    renderContentSegments={renderContentSegments}
+                    toolCalls={toolCalls as ToolCall[]}
+                    toolCallsById={toolCallsById}
+                    assistantToolCallsById={assistantToolCallsById}
+                    toolResultById={toolResultById}
+                    collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
+                    onApplyCode={handleApplyCode}
+                  />
+                </div>
+              </AssistantMessageBubble>
+            )
+          ) : (
+            <div className="space-y-3">
+              <MessageContentRenderer
+                message={message}
+                isLast={isLast}
+                isStreaming={isStreaming}
+                renderContentSegments={renderContentSegments}
+                toolCalls={toolCalls as ToolCall[]}
+                toolCallsById={toolCallsById}
+                assistantToolCallsById={assistantToolCallsById}
+                toolResultById={toolResultById}
+                collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
+                onApplyCode={handleApplyCode}
+              />
+            </div>
+          )
         )}
 
         {/* Token使用信息 */}
@@ -227,11 +263,10 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.message === nextProps.message &&
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
-    (prevProps.renderContext ?? 'chat') === (nextProps.renderContext ?? 'chat') &&
-    (prevProps.processSignal ?? "") === (nextProps.processSignal ?? "") &&
+    (prevProps.assistantContactName ?? null) === (nextProps.assistantContactName ?? null) &&
+    (prevProps.highlighted ?? false) === (nextProps.highlighted ?? false) &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
-    (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "") &&
-    (prevProps.linkedUserExpandedForAssistant ?? null) === (nextProps.linkedUserExpandedForAssistant ?? null)
+    (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
   );
 });
 

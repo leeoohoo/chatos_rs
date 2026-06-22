@@ -21,20 +21,10 @@ import {
   type TextMatchSegment,
 } from '../../lib/domain/projectExplorerText';
 import {
-  CHANGE_KIND_COLOR_CLASS,
-  CHANGE_KIND_LABEL,
-  CHANGE_KIND_PRIORITY,
-  CHANGE_KIND_ROW_CLASS,
-  CHANGE_KIND_TEXT_CLASS,
-} from '../../lib/domain/projectExplorerPresentation';
-import { getHighlightLanguage as getDomainHighlightLanguage } from '../../lib/domain/projectExplorerPreview';
-export type { ChangeKind } from '../../lib/domain/projectExplorer';
+  getHighlightLanguage as getDomainHighlightLanguage,
+  isMarkdownFile as isDomainMarkdownFile,
+} from '../../lib/domain/projectExplorerPreview';
 export {
-  EMPTY_CHANGE_SUMMARY,
-  isProjectChangeSummaryEqual,
-  normalizeChangeKind,
-  normalizeChangeLog,
-  normalizeProjectChangeSummary,
   normalizeProjectRunCatalog,
   normalizeProjectRunTarget,
 } from '../../lib/domain/projectExplorer';
@@ -68,16 +58,12 @@ export const splitTextByQuery = (
   },
 ): TextMatchSegment[] => splitDomainTextByQuery(text, query, options);
 
-export {
-  CHANGE_KIND_COLOR_CLASS,
-  CHANGE_KIND_LABEL,
-  CHANGE_KIND_PRIORITY,
-  CHANGE_KIND_ROW_CLASS,
-  CHANGE_KIND_TEXT_CLASS,
-};
-
 export const getHighlightLanguage = (filename: string): string | null => (
   getDomainHighlightLanguage(filename)
+);
+
+export const isMarkdownFile = (filename: string, contentType?: string | null): boolean => (
+  isDomainMarkdownFile(filename, contentType)
 );
 
 export const escapeHtml = (value: string) => escapeDomainHtml(value);

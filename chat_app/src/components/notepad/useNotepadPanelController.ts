@@ -1,15 +1,16 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type React from 'react';
 
-import { apiClient as globalApiClient } from '../../lib/api/client';
+import { useI18n } from '../../i18n/I18nProvider';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import { useNotepadRealtime } from '../../lib/realtime/useNotepadRealtime';
-import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
 import type { ContextMenuState } from './NotepadContextMenu';
 import type { NotepadViewMode } from './NotepadEditor';
 import { useNotepadPanelEffects } from './useNotepadPanelEffects';
 import {
   buildFolderTree,
   normalizeFolderPath,
+  renameFolderAndDescendants,
   type NoteMeta,
 } from './utils';
 import { useDialogService } from '../ui/DialogProvider';
@@ -71,8 +72,8 @@ interface UseNotepadPanelControllerResult {
 export const useNotepadPanelController = ({
   isOpen,
 }: UseNotepadPanelControllerParams): UseNotepadPanelControllerResult => {
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const { t } = useI18n();
+  const apiClient = useApiClient();
   const { confirm, prompt } = useDialogService();
 
   const [selectedFolder, setSelectedFolder] = useState('');
@@ -144,15 +145,16 @@ export const useNotepadPanelController = ({
         loadNotes(options),
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载记事本失败');
+      setError(err instanceof Error ? err.message : t('notepad.error.load'));
     } finally {
       setLoading(false);
     }
-  }, [ensureInit, loadFolders, loadNotes, markFoldersStale, markNotesStale]);
+  }, [ensureInit, loadFolders, loadNotes, markFoldersStale, markNotesStale, t]);
 
   const openNote = useNotepadOpenNote({
     ensureFolderExpanded,
     loadNoteDetail,
+    t,
     setContent,
     setDirty,
     setError,
@@ -170,6 +172,7 @@ export const useNotepadPanelController = ({
     getCachedNoteDetail,
     loadNoteDetail,
     selectedNoteId,
+    t,
     title,
     content,
     setError,
@@ -186,6 +189,7 @@ export const useNotepadPanelController = ({
     apiClient,
     confirm,
     content,
+    t,
     ensureFolderExpanded,
     loadNotes,
     markNotesStale,
@@ -216,24 +220,6 @@ export const useNotepadPanelController = ({
   const handleTreeOpenNote = useCallback((noteId: string) => {
     void openNote(noteId);
   }, [openNote]);
-
-  const renameFolderPath = useCallback((folderPath: string, fromPath: string, toPath: string) => {
-    const normalizedFolder = normalizeFolderPath(folderPath);
-    const normalizedFrom = normalizeFolderPath(fromPath);
-    const normalizedTo = normalizeFolderPath(toPath);
-    if (!normalizedFrom || !normalizedTo) {
-      return normalizedFolder;
-    }
-    if (normalizedFolder === normalizedFrom) {
-      return normalizedTo;
-    }
-    const prefix = `${normalizedFrom}/`;
-    if (normalizedFolder.startsWith(prefix)) {
-      const suffix = normalizedFolder.slice(prefix.length);
-      return suffix ? `${normalizedTo}/${suffix}` : normalizedTo;
-    }
-    return normalizedFolder;
-  }, []);
 
   useNotepadRealtime({
     enabled: true,
@@ -275,7 +261,11 @@ export const useNotepadPanelController = ({
           normalizedSelectedFolder
           && (normalizedSelectedFolder === payloadFrom || normalizedSelectedFolder.startsWith(`${payloadFrom}/`))
         ) {
-          const nextSelectedFolder = renameFolderPath(normalizedSelectedFolder, payloadFrom, payloadTo);
+          const nextSelectedFolder = renameFolderAndDescendants(
+            normalizedSelectedFolder,
+            payloadFrom,
+            payloadTo,
+          );
           setSelectedFolder(nextSelectedFolder);
           ensureFolderExpanded(nextSelectedFolder);
         }
@@ -347,6 +337,7 @@ export const useNotepadPanelController = ({
     handleContextDeleteSelectedNote,
   } = useNotepadContextMenuController({
     selectedNoteMeta,
+    t,
     setSelectedFolder,
     ensureFolderExpanded,
     createFolder: handleCreateFolderInternal,

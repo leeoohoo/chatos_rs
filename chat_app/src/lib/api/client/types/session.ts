@@ -12,6 +12,32 @@ export interface SessionUpdatePayload {
   metadata?: Record<string, unknown> | string | null;
 }
 
+export interface SessionRuntimeSettingsResponse {
+  session_id: string;
+  user_id: string;
+  selected_model_id?: string | null;
+  selected_model_name?: string | null;
+  selected_thinking_level?: string | null;
+  remote_connection_id?: string | null;
+  workspace_root?: string | null;
+  mcp_enabled: boolean;
+  enabled_mcp_ids: string[];
+  auto_create_task: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SessionRuntimeSettingsPayload {
+  selected_model_id?: string | null;
+  selected_model_name?: string | null;
+  selected_thinking_level?: string | null;
+  remote_connection_id?: string | null;
+  workspace_root?: string | null;
+  mcp_enabled?: boolean;
+  enabled_mcp_ids?: string[];
+  auto_create_task?: boolean;
+}
+
 export interface SessionResponse {
   id: string;
   title: string;
@@ -42,12 +68,26 @@ export interface ContactResponse {
   user_id: string;
   agent_id: string;
   agent_name_snapshot?: string | null;
+  task_runner_enabled?: boolean | null;
+  task_runner_base_url?: string | null;
+  task_runner_agent_account_id?: string | null;
+  task_runner_username?: string | null;
+  task_runner_has_password?: boolean | null;
   status?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
 export type ContactCreateResponse = ContactResponse | { contact: ContactResponse };
+
+export interface ContactTaskRunnerUpdatePayload {
+  enabled: boolean;
+  base_url?: string | null;
+  task_runner_agent_account_id?: string | null;
+  username?: string | null;
+  password?: string | null;
+  clear_password?: boolean;
+}
 
 export interface ContactProjectMemoryResponse {
   id: string;
@@ -92,6 +132,8 @@ export interface SessionMessageResponse {
   conversation_id?: string;
   role: string;
   content: string;
+  message_mode?: string | null;
+  message_source?: string | null;
   rawContent?: string;
   summary?: string;
   tokensUsed?: number;
@@ -106,6 +148,41 @@ export interface SessionMessageResponse {
   created_at?: string;
   updatedAt?: string | Date;
   updated_at?: string;
+}
+
+export interface CompactHistoryResponse {
+  items: SessionMessageResponse[];
+  has_more?: boolean;
+  next_before?: string | null;
+}
+
+export interface UserMessageTurnResponse {
+  turn_id: string;
+  user_message: SessionMessageResponse;
+  final_assistant_message?: SessionMessageResponse | null;
+  has_process?: boolean;
+  tool_call_count?: number;
+  thinking_count?: number;
+  process_message_count?: number;
+}
+
+export interface UserMessageTurnsResponse {
+  items: UserMessageTurnResponse[];
+  has_more?: boolean;
+  next_before?: string | null;
+}
+
+export interface ConversationTaskRunnerActiveMessageTasksItem {
+  source_user_message_id?: string | null;
+  source_turn_id?: string | null;
+  running_count?: number;
+  active_count?: number;
+}
+
+export interface ConversationTaskRunnerActiveMessageTasksResponse {
+  active_source_user_message_ids?: string[];
+  running_source_user_message_ids?: string[];
+  items?: ConversationTaskRunnerActiveMessageTasksItem[];
 }
 
 export interface ConversationMessageEnvelope {
@@ -139,23 +216,6 @@ export interface ConversationMessagePayload {
   tool_call_id?: string | null;
   reasoning?: unknown;
   metadata?: Record<string, unknown> | null;
-}
-
-export interface SessionSummaryJobConfigPayload {
-  user_id?: string;
-  enabled?: boolean;
-  summary_model_config_id?: string | null;
-  token_limit?: number;
-  message_count_limit?: number;
-  round_limit?: number;
-  target_summary_tokens?: number;
-  job_interval_seconds?: number;
-}
-
-export interface SessionSummaryJobConfigResponse extends SessionSummaryJobConfigPayload {
-  id?: string;
-  created_at?: string;
-  updated_at?: string;
 }
 
 export interface SessionSummaryResponse {

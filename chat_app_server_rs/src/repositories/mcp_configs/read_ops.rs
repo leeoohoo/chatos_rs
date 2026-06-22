@@ -6,7 +6,7 @@ use crate::core::sql_query::{
     append_optional_user_id_filter, build_select_all_with_optional_user_id,
 };
 use crate::models::mcp_config::{McpConfig, McpConfigRow};
-use crate::repositories::db::with_db;
+use crate::repositories::db::{mongo_find_one_doc, with_db};
 
 use super::normalize_doc;
 
@@ -126,11 +126,7 @@ pub async fn get_mcp_config_by_id(id: &str) -> Result<Option<McpConfig>, String>
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db
-                    .collection::<Document>("mcp_configs")
-                    .find_one(doc! { "id": id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let doc = mongo_find_one_doc(db, "mcp_configs", doc! { "id": id }).await?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
