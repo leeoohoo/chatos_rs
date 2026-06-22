@@ -87,6 +87,21 @@ wait_tcp_ready() {
   done
 }
 
+dev_mongo_print_existing_listener() {
+  local host="$1"
+  local port="$2"
+
+  echo "[INFO] dev Mongo already reachable on ${host}:${port}; reusing existing instance"
+  if command -v lsof >/dev/null 2>&1; then
+    local listeners
+    listeners="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$listeners" ]]; then
+      echo "[INFO] existing listener on port ${port}:"
+      printf '%s\n' "$listeners"
+    fi
+  fi
+}
+
 resolve_dev_mongo_docker_cmd() {
   if command -v docker >/dev/null 2>&1; then
     command -v docker
@@ -161,6 +176,7 @@ ensure_dev_mongo_service() {
   bind_host="$(dev_mongo_bind_host "$requested_host")"
 
   if wait_tcp_ready "$client_host" "$port" 1; then
+    dev_mongo_print_existing_listener "$client_host" "$port"
     return 0
   fi
 

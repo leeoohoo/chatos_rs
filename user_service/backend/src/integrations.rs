@@ -35,10 +35,7 @@ pub async fn sync_model_config_upsert(
     warnings
 }
 
-pub async fn sync_model_config_delete(
-    state: &AppState,
-    model_config_id: &str,
-) -> Vec<String> {
+pub async fn sync_model_config_delete(state: &AppState, model_config_id: &str) -> Vec<String> {
     let mut warnings = Vec::new();
 
     if let Err(err) = delete_memory_engine_model_profile(state, model_config_id).await {
@@ -66,7 +63,8 @@ pub async fn sync_model_settings(
     state: &AppState,
     settings: &UserModelSettingsRecord,
 ) -> Vec<String> {
-    let Some(memory_engine_base_url) = normalized_url(state.config.memory_engine_base_url.as_deref())
+    let Some(memory_engine_base_url) =
+        normalized_url(state.config.memory_engine_base_url.as_deref())
     else {
         return Vec::new();
     };
@@ -167,7 +165,8 @@ async fn sync_memory_engine_model_profile(
     config: &UserModelConfigRecord,
 ) -> Result<(), String> {
     ensure_concrete_model(config)?;
-    let Some(memory_engine_base_url) = normalized_url(state.config.memory_engine_base_url.as_deref())
+    let Some(memory_engine_base_url) =
+        normalized_url(state.config.memory_engine_base_url.as_deref())
     else {
         return Ok(());
     };
@@ -239,7 +238,8 @@ async fn delete_memory_engine_model_profile(
     state: &AppState,
     model_config_id: &str,
 ) -> Result<(), String> {
-    let Some(memory_engine_base_url) = normalized_url(state.config.memory_engine_base_url.as_deref())
+    let Some(memory_engine_base_url) =
+        normalized_url(state.config.memory_engine_base_url.as_deref())
     else {
         return Ok(());
     };
@@ -394,7 +394,10 @@ where
             extract_error_message(body.as_str())
         ));
     }
-    response.json::<TResp>().await.map_err(|err| err.to_string())
+    response
+        .json::<TResp>()
+        .await
+        .map_err(|err| err.to_string())
 }
 
 fn task_runner_request(
@@ -433,7 +436,10 @@ where
             extract_error_message(body.as_str())
         ));
     }
-    response.json::<TResp>().await.map_err(|err| err.to_string())
+    response
+        .json::<TResp>()
+        .await
+        .map_err(|err| err.to_string())
 }
 
 fn task_runner_provider(provider: &str) -> &'static str {

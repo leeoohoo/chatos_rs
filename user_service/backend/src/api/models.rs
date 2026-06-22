@@ -35,12 +35,16 @@ pub async fn list_model_configs(
     let items = if principal.is_super_admin() && owner_user_id.is_none() {
         state.store.list_user_model_configs(None).await
     } else {
-        state.store.list_user_model_configs(owner_user_id.as_deref()).await
+        state
+            .store
+            .list_user_model_configs(owner_user_id.as_deref())
+            .await
     }
     .map_err(internal_error)?;
 
     Ok(Json(
-        items.into_iter()
+        items
+            .into_iter()
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
     ))
@@ -92,7 +96,11 @@ pub async fn create_model_config(
         .await
         .map_err(internal_error)?;
     let sync_warnings = sync_model_config_upsert(&state, &saved).await;
-    Ok(Json(model_config_public_value(saved, false, Some(sync_warnings))))
+    Ok(Json(model_config_public_value(
+        saved,
+        false,
+        Some(sync_warnings),
+    )))
 }
 
 pub async fn get_model_config(
@@ -111,7 +119,11 @@ pub async fn get_model_config(
     };
     ensure_model_access(&principal, &record)?;
     let include_secret = query.include_secret.unwrap_or(false);
-    Ok(Json(model_config_public_value(record, include_secret, None)))
+    Ok(Json(model_config_public_value(
+        record,
+        include_secret,
+        None,
+    )))
 }
 
 pub async fn update_model_config(
@@ -163,8 +175,10 @@ pub async fn update_model_config(
         record.supports_responses = supports_responses;
     }
     if input.thinking_level.is_some() {
-        record.thinking_level =
-            normalize_thinking_level_input(record.provider.as_str(), input.thinking_level.as_deref())?;
+        record.thinking_level = normalize_thinking_level_input(
+            record.provider.as_str(),
+            input.thinking_level.as_deref(),
+        )?;
     }
     record.updated_at = now_rfc3339();
 
@@ -174,7 +188,11 @@ pub async fn update_model_config(
         .await
         .map_err(internal_error)?;
     let sync_warnings = sync_model_config_upsert(&state, &saved).await;
-    Ok(Json(model_config_public_value(saved, false, Some(sync_warnings))))
+    Ok(Json(model_config_public_value(
+        saved,
+        false,
+        Some(sync_warnings),
+    )))
 }
 
 pub async fn delete_model_config(
@@ -265,7 +283,9 @@ pub async fn put_model_settings(
 
     let settings = UserModelSettingsRecord {
         user_id,
-        memory_summary_model_config_id: normalize_optional_string(input.memory_summary_model_config_id),
+        memory_summary_model_config_id: normalize_optional_string(
+            input.memory_summary_model_config_id,
+        ),
         updated_at: now_rfc3339(),
     };
     let saved = state
@@ -274,7 +294,10 @@ pub async fn put_model_settings(
         .await
         .map_err(internal_error)?;
     let sync_warnings = sync_model_settings(&state, &saved).await;
-    Ok(Json(model_settings_public_value(saved, Some(sync_warnings))))
+    Ok(Json(model_settings_public_value(
+        saved,
+        Some(sync_warnings),
+    )))
 }
 
 fn resolve_target_user_id(
@@ -301,7 +324,9 @@ fn ensure_model_access(
     principal: &CurrentPrincipal,
     record: &UserModelConfigRecord,
 ) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
-    if principal.is_super_admin() || principal.user_id.as_deref() == Some(record.owner_user_id.as_str()) {
+    if principal.is_super_admin()
+        || principal.user_id.as_deref() == Some(record.owner_user_id.as_str())
+    {
         Ok(())
     } else {
         Err(forbidden("cannot access another user's model config"))

@@ -1,12 +1,12 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
     pub database_url: String,
+    pub mongodb_database: String,
     pub jwt_secret: String,
     pub jwt_issuer: String,
     pub user_service_audience: String,
@@ -25,6 +25,19 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
+        let explicit_mongodb_database = read_env("USER_SERVICE_MONGODB_DATABASE");
+        let default_mongodb_database = explicit_mongodb_database
+            .clone()
+            .unwrap_or_else(|| "user_service".to_string());
+        let database_url = read_env("USER_SERVICE_DATABASE_URL").unwrap_or_else(|| {
+            format!(
+                "mongodb://admin:admin@127.0.0.1:27018/{default_mongodb_database}?authSource=admin"
+            )
+        });
+        let mongodb_database = explicit_mongodb_database
+            .or_else(|| mongodb_database_from_url(database_url.as_str()))
+            .unwrap_or(default_mongodb_database);
+
         Ok(Self {
             host: read_env("USER_SERVICE_HOST")
                 .unwrap_or_else(|| "127.0.0.1".to_string())
@@ -34,9 +47,8 @@ impl AppConfig {
                 .unwrap_or_else(|| "39190".to_string())
                 .parse()
                 .map_err(|err| format!("invalid USER_SERVICE_PORT: {err}"))?,
-            database_url: read_env("USER_SERVICE_DATABASE_URL").unwrap_or_else(|| {
-                "sqlite://user_service/backend/data/user_service.db".to_string()
-            }),
+            database_url,
+            mongodb_database,
             jwt_secret: read_env("USER_SERVICE_JWT_SECRET")
                 .unwrap_or_else(|| "change_me_user_service_secret".to_string()),
             jwt_issuer: read_env("USER_SERVICE_JWT_ISSUER")
@@ -70,16 +82,14 @@ impl AppConfig {
             downstream_request_timeout_ms: read_env("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS")
                 .unwrap_or_else(|| "5000".to_string())
                 .parse()
-                .map_err(|err| format!("invalid USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS: {err}"))?,
+                .map_err(|err| {
+                    format!("invalid USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS: {err}")
+                })?,
         })
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
-    }
-
-    pub fn database_path(&self) -> Option<PathBuf> {
-        sqlite_path_from_url(self.database_url.as_str()).map(PathBuf::from)
     }
 }
 
@@ -96,9 +106,24 @@ fn read_env(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn sqlite_path_from_url(url: &str) -> Option<&str> {
-    url.strip_prefix("sqlite://")
-        .or_else(|| url.strip_prefix("sqlite:"))
+fn mongodb_database_from_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("mongodb://") && !trimmed.starts_with("mongodb+srv://") {
+        return None;
+    }
+    let without_query = trimmed
+        .split_once('?')
+        .map(|(base, _)| base)
+        .unwrap_or(trimmed);
+    let scheme_end = without_query.find("://")?;
+    let remainder = &without_query[(scheme_end + 3)..];
+    let (_, path) = remainder.split_once('/')?;
+    let database = path.trim_matches('/');
+    if database.is_empty() {
+        None
+    } else {
+        Some(database.to_string())
+    }
 }
 
 fn user_service_dotenv_files() -> Vec<String> {

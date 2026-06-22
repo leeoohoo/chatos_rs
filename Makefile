@@ -9,6 +9,7 @@ SHELL := /bin/bash
 .PHONY: restart-user-service status-user-service stop-user-service
 .PHONY: restart-task-runner status-task-runner stop-task-runner
 .PHONY: restart-memory-engine status-memory-engine stop-memory-engine
+.PHONY: restart-db-hub status-db-hub stop-db-hub
 .PHONY: restart-all status-all stop-all
 .PHONY: build-chat-app-server build-chat-app build-db-hub build-user-service
 .PHONY: test-chat-app-server test-chat-app test-db-hub test-user-service
@@ -30,7 +31,10 @@ help:
 	@echo "  make restart-memory-engine # restart memory_engine backend + frontend"
 	@echo "  make status-memory-engine  # show memory_engine status"
 	@echo "  make stop-memory-engine    # stop memory_engine backend + frontend"
-	@echo "  make restart-all          # restart memory_engine + user_service + chatos + task_runner"
+	@echo "  make restart-db-hub       # restart db_connection_hub backend + frontend"
+	@echo "  make status-db-hub        # show db_connection_hub status"
+	@echo "  make stop-db-hub          # stop db_connection_hub backend + frontend"
+	@echo "  make restart-all          # restart memory_engine + user_service + db_connection_hub + chatos + task_runner"
 	@echo "  make status-all           # show full stack status"
 	@echo "  make stop-all             # stop full stack"
 	@echo "  make build               # build key subprojects"
@@ -66,13 +70,13 @@ stop:
 	@./restart_services.sh stop
 
 restart-user-service:
-	@./user_service/restart_services.sh restart
+	@bash user_service/restart_services.sh restart
 
 status-user-service:
-	@./user_service/restart_services.sh status
+	@bash user_service/restart_services.sh status
 
 stop-user-service:
-	@./user_service/restart_services.sh stop
+	@bash user_service/restart_services.sh stop
 
 restart-task-runner:
 	@./restart_task_runner_service.sh restart
@@ -84,13 +88,22 @@ stop-task-runner:
 	@./restart_task_runner_service.sh stop
 
 restart-memory-engine:
-	@./memory_engine/restart_services.sh restart
+	@bash memory_engine/restart_services.sh restart
 
 status-memory-engine:
-	@./memory_engine/restart_services.sh status
+	@bash memory_engine/restart_services.sh status
 
 stop-memory-engine:
-	@./memory_engine/restart_services.sh stop
+	@bash memory_engine/restart_services.sh stop
+
+restart-db-hub:
+	@./db_connection_hub/restart_services.sh restart
+
+status-db-hub:
+	@./db_connection_hub/restart_services.sh status
+
+stop-db-hub:
+	@./db_connection_hub/restart_services.sh stop
 
 restart-all:
 	@./restart_all_services.sh restart

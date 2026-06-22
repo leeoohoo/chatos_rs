@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 
 pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
 pub const USER_ROLE_USER: &str = "user";
 pub const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";
 pub const PRINCIPAL_TYPE_AGENT_ACCOUNT: &str = "agent_account";
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserRecord {
     pub id: String,
     pub username: String,
@@ -19,7 +18,7 @@ pub struct UserRecord {
     pub last_login_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSummaryRecord {
     pub id: String,
     pub username: String,
@@ -32,7 +31,7 @@ pub struct UserSummaryRecord {
     pub agent_count: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentAccountRecord {
     pub id: String,
     pub username: String,
@@ -45,7 +44,7 @@ pub struct AgentAccountRecord {
     pub last_login_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentAccountListItem {
     pub id: String,
     pub username: String,
@@ -59,7 +58,7 @@ pub struct AgentAccountListItem {
     pub last_login_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserModelConfigRecord {
     pub id: String,
     pub owner_user_id: String,
@@ -69,7 +68,6 @@ pub struct UserModelConfigRecord {
     pub thinking_level: Option<String>,
     pub api_key: Option<String>,
     #[serde(default)]
-    #[sqlx(default)]
     pub has_api_key: bool,
     pub base_url: Option<String>,
     pub enabled: bool,
@@ -80,7 +78,7 @@ pub struct UserModelConfigRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserModelSettingsRecord {
     pub user_id: String,
     pub memory_summary_model_config_id: Option<String>,
