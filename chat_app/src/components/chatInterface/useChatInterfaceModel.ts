@@ -226,6 +226,8 @@ export const useChatInterfaceModel = ({
     setShowMemoryModelSettings: controller.setShowMemoryModelSettings,
     showTaskModelSettings: controller.showTaskModelSettings,
     setShowTaskModelSettings: controller.setShowTaskModelSettings,
+    showTaskRunnerExternalMcpManager: controller.showTaskRunnerExternalMcpManager,
+    setShowTaskRunnerExternalMcpManager: controller.setShowTaskRunnerExternalMcpManager,
     memoryModelAttention,
     taskModelAttention,
     showAgentManager: controller.showAgentManager,

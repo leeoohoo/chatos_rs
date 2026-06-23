@@ -4,6 +4,53 @@ export interface MemoryAgentSkillResponse {
   content: string;
 }
 
+export type TaskRunnerExternalMcpTransport = 'stdio' | 'http';
+
+export interface TaskRunnerExternalMcpConfig {
+  id: string;
+  name: string;
+  transport: TaskRunnerExternalMcpTransport | string;
+  command?: string | null;
+  args: string[];
+  url?: string | null;
+  headers: Record<string, string>;
+  env: Record<string, string>;
+  cwd?: string | null;
+  enabled: boolean;
+  creator_user_id?: string | null;
+  creator_username?: string | null;
+  creator_display_name?: string | null;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTaskRunnerExternalMcpConfigPayload {
+  name: string;
+  transport: TaskRunnerExternalMcpTransport | string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  cwd?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateTaskRunnerExternalMcpConfigPayload {
+  name?: string;
+  transport?: TaskRunnerExternalMcpTransport | string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  cwd?: string;
+  enabled?: boolean;
+}
+
 export interface MemorySkillResponse {
   id: string;
   user_id: string;

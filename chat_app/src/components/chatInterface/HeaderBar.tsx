@@ -12,6 +12,7 @@ interface HeaderBarProps {
   onOpenAiModelManager: () => void;
   onOpenMemoryModelSettings: () => void;
   onOpenTaskModelSettings: () => void;
+  onOpenTaskRunnerExternalMcpManager: () => void;
   memoryModelAttention?: boolean;
   taskModelAttention?: boolean;
   onOpenAgentManager: () => void;
@@ -30,6 +31,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenAiModelManager,
   onOpenMemoryModelSettings,
   onOpenTaskModelSettings,
+  onOpenTaskRunnerExternalMcpManager,
   memoryModelAttention = false,
   taskModelAttention = false,
   onOpenAgentManager,
@@ -178,6 +180,15 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 {taskModelAttention ? (
                   <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
                 ) : null}
+              </button>
+              <button
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onOpenTaskRunnerExternalMcpManager();
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-accent"
+              >
+                {t('header.taskRunnerExternalMcpManager')}
               </button>
               <button
                 onClick={() => {

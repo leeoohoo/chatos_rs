@@ -50,10 +50,15 @@ impl InMemoryStore {
                     || !matches!(task.schedule.mode, TaskScheduleMode::Manual)
             })
             .filter(|task| {
-                filters
-                    .parent_task_id
-                    .as_deref()
-                    .is_none_or(|value| task.parent_task_id.as_deref() == Some(value))
+                if let Some(parent_task_id) = filters.parent_task_id.as_deref() {
+                    return task.parent_task_id.as_deref() == Some(parent_task_id);
+                }
+                filters.include_subtasks != Some(false)
+                    || task
+                        .parent_task_id
+                        .as_deref()
+                        .map(str::trim)
+                        .is_none_or(str::is_empty)
             })
             .filter(|task| {
                 filters
@@ -154,5 +159,86 @@ impl InMemoryStore {
         tags.sort();
         tags.dedup();
         tags
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{TaskMcpConfig, TaskScheduleConfig, TaskToolState};
+    use std::collections::BTreeSet;
+    use tokio::sync::broadcast;
+
+    fn test_store() -> InMemoryStore {
+        let (run_event_sender, _) = broadcast::channel(8);
+        InMemoryStore::new(run_event_sender)
+    }
+
+    fn task_record(id: &str, parent_task_id: Option<&str>) -> TaskRecord {
+        TaskRecord {
+            id: id.to_string(),
+            title: id.to_string(),
+            description: None,
+            objective: format!("do {id}"),
+            input_payload: None,
+            status: TaskStatus::Ready,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: format!("task-{id}"),
+            tenant_id: "tenant".to_string(),
+            subject_id: "subject".to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: None,
+            owner_username: None,
+            owner_display_name: None,
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: TaskScheduleConfig::default(),
+            parent_task_id: parent_task_id.map(ToOwned::to_owned),
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: TaskToolState::default(),
+            mcp_config: TaskMcpConfig::default(),
+            created_at: now_rfc3339(),
+            updated_at: now_rfc3339(),
+            deleted_at: None,
+        }
+    }
+
+    fn task_ids(tasks: Vec<TaskRecord>) -> BTreeSet<String> {
+        tasks.into_iter().map(|task| task.id).collect()
+    }
+
+    #[test]
+    fn include_subtasks_false_returns_only_top_level_tasks() {
+        let store = test_store();
+        store.save_task(task_record("root", None));
+        store.save_task(task_record("child", Some("root")));
+
+        let root_only = store.list_tasks_filtered(&TaskListFilters {
+            include_subtasks: Some(false),
+            ..TaskListFilters::default()
+        });
+        assert_eq!(task_ids(root_only), BTreeSet::from(["root".to_string()]));
+
+        let child_tasks = store.list_tasks_filtered(&TaskListFilters {
+            parent_task_id: Some("root".to_string()),
+            include_subtasks: Some(false),
+            ..TaskListFilters::default()
+        });
+        assert_eq!(task_ids(child_tasks), BTreeSet::from(["child".to_string()]));
+
+        let all_tasks = store.list_tasks_filtered(&TaskListFilters::default());
+        assert_eq!(
+            task_ids(all_tasks),
+            BTreeSet::from(["child".to_string(), "root".to_string()])
+        );
     }
 }

@@ -45,6 +45,11 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             empty_object_schema(),
         ),
         tool_definition(
+            "list_external_mcp_configs",
+            "List enabled external MCP configs visible to the current authenticated user. Use the returned id values as external_mcp_config_ids when a new task needs those external tools.",
+            empty_object_schema(),
+        ),
+        tool_definition(
             "create_tasks_with_prerequisites",
             "Create multiple Task Runner tasks in one call and connect prerequisite edges using temporary client_ref values plus existing prerequisite_task_ids. Use this when new prerequisite tasks do not have real task ids yet.",
             create_tasks_with_prerequisites_schema(),

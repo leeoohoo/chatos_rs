@@ -11,14 +11,11 @@ use super::normalized_optional;
 pub(super) fn selected_builtin_kinds(
     mcp_config: &TaskMcpConfig,
 ) -> Vec<chatos_mcp_runtime::BuiltinMcpKind> {
-    let mut kinds = mcp_config
+    let kinds = mcp_config
         .enabled_builtin_kinds
         .iter()
         .filter_map(|value| builtin_kind_by_any(value))
         .collect::<Vec<_>>();
-    if kinds.is_empty() && mcp_config.enabled {
-        kinds = chatos_mcp_runtime::configurable_builtin_kinds();
-    }
     complete_builtin_kind_dependencies(kinds)
 }
 
@@ -110,4 +107,28 @@ pub(super) fn ensure_workspace_dir_available(
         .unwrap_or(path)
         .to_string_lossy()
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::TaskMcpConfig;
+
+    use super::selected_builtin_kinds;
+
+    #[test]
+    fn empty_builtin_selection_stays_empty() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: Vec::new(),
+            ..TaskMcpConfig::default()
+        };
+
+        assert!(selected_builtin_kinds(&config).is_empty());
+    }
+
+    #[test]
+    fn default_config_still_selects_builtin_kinds() {
+        let config = TaskMcpConfig::default();
+
+        assert!(!selected_builtin_kinds(&config).is_empty());
+    }
 }

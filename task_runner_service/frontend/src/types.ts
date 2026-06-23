@@ -769,6 +769,7 @@ export interface TaskListFilters {
   model_config_id?: string;
   scheduled_only?: boolean;
   parent_task_id?: string;
+  include_subtasks?: boolean;
   source_run_id?: string;
   limit?: number;
   offset?: number;

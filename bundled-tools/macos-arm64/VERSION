@@ -1,0 +1,7 @@
+ripgrep 15.1.0 (rev af60c2de9d)
+
+features:+pcre2
+simd(compile):+NEON
+simd(runtime):+NEON
+
+PCRE2 10.45 is available (JIT is available)

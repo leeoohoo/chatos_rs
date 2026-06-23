@@ -223,6 +223,8 @@ export const api = {
         scheduled_only:
           filters?.scheduled_only === undefined ? undefined : String(filters.scheduled_only),
         parent_task_id: filters?.parent_task_id,
+        include_subtasks:
+          filters?.include_subtasks === undefined ? undefined : String(filters.include_subtasks),
         source_run_id: filters?.source_run_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
@@ -238,6 +240,8 @@ export const api = {
         scheduled_only:
           filters?.scheduled_only === undefined ? undefined : String(filters.scheduled_only),
         parent_task_id: filters?.parent_task_id,
+        include_subtasks:
+          filters?.include_subtasks === undefined ? undefined : String(filters.include_subtasks),
         source_run_id: filters?.source_run_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),

@@ -24,6 +24,7 @@ RUN apt-get update \
 
 COPY --from=builder /workspace/chat_app_server_rs/target/release/chat_app_server_rs /app/chat_app_server_rs
 COPY chat_app_server_rs/config /app/config
+COPY bundled-tools /app/bundled-tools
 
 RUN mkdir -p /app/data /app/logs
 

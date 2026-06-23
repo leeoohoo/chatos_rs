@@ -8,7 +8,10 @@ use crate::models::{
 use super::chatos_async_planner::{
     planner_root_create_request, planner_update_task_request, require_chatos_async_source_context,
 };
-use super::support::{task_creator_filter, task_for_external_mcp, tasks_for_external_mcp};
+use super::support::{
+    external_mcp_configs_for_user, task_creator_filter, task_for_external_mcp,
+    tasks_for_external_mcp,
+};
 use super::{
     decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
     CreateTaskArgs, CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile,
@@ -83,7 +86,22 @@ impl TaskRunnerMcpService {
             }
             "list_mcp_builtin_catalog" => {
                 let _ = decode_args::<Value>(args).ok();
-                Ok(text_result(json!(self.mcp_catalog_service.list_catalog())))
+                let mut catalog = self.mcp_catalog_service.list_catalog();
+                if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
+                    catalog.retain(|item| item.kind != "TaskManager");
+                }
+                Ok(text_result(json!(catalog)))
+            }
+            "list_external_mcp_configs" => {
+                let _ = decode_args::<Value>(args).ok();
+                let configs = self
+                    .external_mcp_config_service
+                    .list_external_mcp_configs()
+                    .await?;
+                Ok(text_result(json!(external_mcp_configs_for_user(
+                    configs,
+                    current_user
+                ))))
             }
             "create_tasks_with_prerequisites" => {
                 let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;

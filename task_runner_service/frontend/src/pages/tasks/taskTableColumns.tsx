@@ -4,6 +4,7 @@ import dayjs from 'dayjs';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
+  ExternalMcpConfigRecord,
   TaskMcpConfig,
   TaskRecord,
   TaskScheduleConfig,
@@ -27,12 +28,14 @@ type BuildTaskTableColumnsParams = {
   t: TranslateFn;
   navigate: (to: string) => void;
   modelNameMap: Map<string, string>;
+  externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
   pendingPromptCountByTaskId: Map<string, number>;
   scheduleModeLabels: Record<TaskScheduleMode, string>;
   taskRowRemoteActivityByTaskId: Map<string, TaskRowRemoteActivity>;
   onOpenDetail: (task: TaskRecord) => void;
   onOpenEdit: (task: TaskRecord) => void;
   onOpenMemory: (task: TaskRecord) => void;
+  onOpenSubtasks: (task: TaskRecord) => void;
   onOpenRun: (task: TaskRecord) => void;
   onConfirmDelete: (task: TaskRecord) => void;
 };
@@ -41,12 +44,14 @@ export function buildTaskTableColumns({
   t,
   navigate,
   modelNameMap,
+  externalMcpConfigMap,
   pendingPromptCountByTaskId,
   scheduleModeLabels,
   taskRowRemoteActivityByTaskId,
   onOpenDetail,
   onOpenEdit,
   onOpenMemory,
+  onOpenSubtasks,
   onOpenRun,
   onConfirmDelete,
 }: BuildTaskTableColumnsParams): ColumnsType<TaskRecord> {
@@ -163,15 +168,36 @@ export function buildTaskTableColumns({
       title: t('tasks.column.mcp'),
       dataIndex: 'mcp_config',
       width: 220,
-      render: (mcpConfig: TaskMcpConfig) => (
-        <Space size={[4, 4]} wrap>
-          <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
-            {mcpConfig.enabled ? t('common.enabled') : t('common.disabled')}
-          </Tag>
-          <Tag>{mcpConfig.init_mode}</Tag>
-          <Tag>{t('tasks.mcpTools', { count: mcpConfig.enabled_builtin_kinds.length })}</Tag>
-        </Space>
-      ),
+      render: (mcpConfig: TaskMcpConfig) => {
+        const builtinCount = mcpConfig.enabled_builtin_kinds.length;
+        const externalConfigIds = mcpConfig.external_mcp_config_ids || [];
+        const visibleExternalConfigs = externalConfigIds.slice(0, 2);
+        const hiddenExternalCount = Math.max(
+          externalConfigIds.length - visibleExternalConfigs.length,
+          0,
+        );
+        return (
+          <Space size={[4, 4]} wrap>
+            <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
+              {mcpConfig.enabled ? t('common.enabled') : t('common.disabled')}
+            </Tag>
+            <Tag>{mcpConfig.init_mode}</Tag>
+            <Tag>{t('tasks.mcpBuiltinCount', { count: builtinCount })}</Tag>
+            <Tag color={externalConfigIds.length ? 'blue' : undefined}>
+              {t('tasks.mcpExternalCount', { count: externalConfigIds.length })}
+            </Tag>
+            {visibleExternalConfigs.map((configId) => {
+              const config = externalMcpConfigMap.get(configId);
+              return (
+                <Tag key={configId} color={config?.enabled === false ? 'default' : 'cyan'}>
+                  {config?.name || configId}
+                </Tag>
+              );
+            })}
+            {hiddenExternalCount > 0 ? <Tag>+{hiddenExternalCount}</Tag> : null}
+          </Space>
+        );
+      },
     },
     {
       title: t('tasks.column.schedule'),
@@ -227,7 +253,7 @@ export function buildTaskTableColumns({
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 430,
+      width: 500,
       render: (_, record) => (
         <Space wrap>
           <Button size="small" onClick={() => onOpenDetail(record)}>
@@ -250,6 +276,9 @@ export function buildTaskTableColumns({
           </Button>
           <Button size="small" onClick={() => onOpenMemory(record)}>
             Memory
+          </Button>
+          <Button size="small" onClick={() => onOpenSubtasks(record)}>
+            {t('tasks.action.subtasks')}
           </Button>
           <Button
             size="small"

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::{CreateTaskRequest, TaskMcpConfig};
+use crate::models::CreateTaskRequest;
 
 use super::chatos_async_planner::{
     planner_prerequisite_create_request, planner_root_create_request,
@@ -11,6 +11,7 @@ use super::chatos_async_planner::{
 };
 use super::support::{ensure_client_ref_graph_acyclic, normalize_mcp_builtin_kind_names};
 use super::{
+    normalize_external_mcp_config_ids, task_mcp_config_for_explicit_tool_selection,
     CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService,
 };
 
@@ -96,9 +97,17 @@ impl TaskRunnerMcpService {
             let mut mcp_config = None;
             if let Some(enabled_builtin_kinds) = item.enabled_builtin_kinds {
                 let normalized = normalize_mcp_builtin_kind_names(enabled_builtin_kinds)?;
-                let config = mcp_config.get_or_insert_with(TaskMcpConfig::default);
+                let config =
+                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
                 config.enabled = true;
                 config.enabled_builtin_kinds = normalized;
+            }
+            if let Some(external_mcp_config_ids) = item.external_mcp_config_ids {
+                let config =
+                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
+                config.enabled = true;
+                config.external_mcp_config_ids =
+                    normalize_external_mcp_config_ids(external_mcp_config_ids);
             }
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
             let mut request = CreateTaskRequest {

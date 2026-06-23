@@ -17,6 +17,14 @@ fn task_id(task: &Value) -> Option<String> {
     normalize_text(task.get("id")?.as_str())
 }
 
+fn task_is_top_level(task: &Value) -> bool {
+    normalize_text(task.get("parent_task_id").and_then(Value::as_str)).is_none()
+}
+
+fn graph_node_is_top_level(node: &Value) -> bool {
+    node.get("task").is_none_or(task_is_top_level)
+}
+
 fn task_prerequisite_ids(task: &Value) -> Vec<String> {
     task.get("prerequisite_task_ids")
         .and_then(Value::as_array)
@@ -130,9 +138,11 @@ fn normalize_graph_task_shape(mut task: Value, task_id: &str, child_task: Option
 fn supplement_missing_graph_prerequisite_nodes(
     nodes: &mut Vec<Value>,
     supplemental_tasks: &[Value],
+    excluded_task_ids: &HashSet<String>,
 ) {
     let supplemental_task_by_id = supplemental_tasks
         .iter()
+        .filter(|task| task_is_top_level(task))
         .filter_map(|task| task_id(task).map(|id| (id, task.clone())))
         .collect::<HashMap<_, _>>();
     let mut known_node_ids = nodes
@@ -149,11 +159,17 @@ fn supplement_missing_graph_prerequisite_nodes(
         };
         for summary in task_prerequisite_summaries(&child_task) {
             if let Some(summary_id) = task_id(&summary) {
+                if excluded_task_ids.contains(summary_id.as_str()) {
+                    continue;
+                }
                 summary_by_id.entry(summary_id).or_insert(summary);
             }
         }
 
         for prerequisite_task_id in task_prerequisite_ids(&child_task) {
+            if excluded_task_ids.contains(prerequisite_task_id.as_str()) {
+                continue;
+            }
             if known_node_ids.contains(prerequisite_task_id.as_str()) {
                 continue;
             }
@@ -219,14 +235,32 @@ pub(super) fn normalize_message_task_graph_payload_edges_with_tasks(
     let Some(raw_nodes) = payload.get("nodes").and_then(Value::as_array) else {
         return payload;
     };
-    let mut nodes = raw_nodes.clone();
-    supplement_missing_graph_prerequisite_nodes(&mut nodes, supplemental_tasks);
+    let mut excluded_task_ids = raw_nodes
+        .iter()
+        .filter(|node| !graph_node_is_top_level(node))
+        .filter_map(graph_task_id)
+        .collect::<HashSet<_>>();
+    excluded_task_ids.extend(
+        supplemental_tasks
+            .iter()
+            .filter(|task| !task_is_top_level(task))
+            .filter_map(task_id),
+    );
+    let mut nodes = raw_nodes
+        .iter()
+        .filter(|node| graph_node_is_top_level(node))
+        .cloned()
+        .collect::<Vec<_>>();
+    supplement_missing_graph_prerequisite_nodes(&mut nodes, supplemental_tasks, &excluded_task_ids);
     let node_sources = nodes
         .iter()
         .filter_map(|node| {
             graph_task_id(node).map(|id| GraphNodeEdgeSource {
                 id,
-                prerequisite_task_ids: graph_task_prerequisite_ids(node),
+                prerequisite_task_ids: graph_task_prerequisite_ids(node)
+                    .into_iter()
+                    .filter(|task_id| !excluded_task_ids.contains(task_id.as_str()))
+                    .collect(),
             })
         })
         .collect::<Vec<_>>();
@@ -307,6 +341,18 @@ pub(super) fn normalize_message_task_graph_payload_edges_with_tasks(
         }
     }
     if let Some(payload_object) = payload.as_object_mut() {
+        let normalized_root_task_ids = payload_object
+            .get("root_task_ids")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| normalize_text(item.as_str()))
+                    .filter(|task_id| known_node_ids.contains(task_id.as_str()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        payload_object.insert("root_task_ids".to_string(), json!(normalized_root_task_ids));
         payload_object.insert("nodes".to_string(), Value::Array(nodes));
         payload_object.insert("edges".to_string(), Value::Array(normalized_edges));
     }
@@ -574,5 +620,57 @@ mod tests {
         assert_eq!(node_depth(&normalized, "current"), Some(0));
         assert_eq!(node_depth(&normalized, "prereq-a"), Some(1));
         assert_eq!(node_depth(&normalized, "prereq-b"), Some(1));
+    }
+
+    #[test]
+    fn normalize_graph_filters_subtask_nodes() {
+        let payload = json!({
+            "root_task_ids": ["root", "child"],
+            "nodes": [
+                {
+                    "depth": 0,
+                    "is_root": true,
+                    "is_current_message": true,
+                    "task": {
+                        "id": "root",
+                        "title": "主任务",
+                        "prerequisite_task_ids": ["child"]
+                    }
+                },
+                {
+                    "depth": 0,
+                    "is_root": true,
+                    "is_current_message": true,
+                    "task": {
+                        "id": "child",
+                        "title": "子任务",
+                        "parent_task_id": "root",
+                        "prerequisite_task_ids": []
+                    }
+                }
+            ],
+            "edges": [
+                {
+                    "id": "child->root",
+                    "source": "child",
+                    "target": "root",
+                    "kind": "prerequisite"
+                }
+            ]
+        });
+
+        let normalized = normalize_message_task_graph_payload_edges(payload);
+
+        assert!(has_node(&normalized, "root"));
+        assert!(!has_node(&normalized, "child"));
+        assert_eq!(
+            normalized
+                .get("root_task_ids")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![json!("root")]
+        );
+        assert!(normalized_edges(&normalized).is_empty());
     }
 }

@@ -44,39 +44,88 @@ impl TaskService {
         &self,
         id: &str,
         current_user: Option<&CurrentUser>,
+        task_owner_user_id: Option<&str>,
     ) -> Result<(), String> {
         match self.store.get_external_mcp_config(id).await? {
-            Some(config) if config.enabled => ensure_owned_service_resource_access(
-                resource_owner_or_creator(
+            Some(config) if config.enabled => {
+                let config_owner_user_id = resource_owner_or_creator(
                     config.owner_user_id.as_deref(),
                     config.creator_user_id.as_deref(),
-                ),
-                current_user,
-            ),
+                );
+                ensure_owned_service_resource_access(config_owner_user_id, current_user)?;
+                ensure_external_mcp_owner_matches_task(id, config_owner_user_id, task_owner_user_id)
+            }
             Some(_) => Err(format!("external MCP config is disabled: {id}")),
             None => Err(format!("external MCP config not found: {id}")),
         }
+    }
+
+    pub(super) async fn validate_task_external_mcp_configs(
+        &self,
+        config: &TaskMcpConfig,
+        current_user: Option<&CurrentUser>,
+        task_owner_user_id: Option<&str>,
+    ) -> Result<(), String> {
+        for external_mcp_config_id in &config.external_mcp_config_ids {
+            self.ensure_external_mcp_config_exists(
+                external_mcp_config_id,
+                current_user,
+                task_owner_user_id,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     pub(super) async fn validate_task_mcp_config(
         &self,
         config: &TaskMcpConfig,
         current_user: Option<&CurrentUser>,
+        task_owner_user_id: Option<&str>,
     ) -> Result<(), String> {
         if let Some(remote_server_id) = config.default_remote_server_id.as_deref() {
             self.ensure_remote_server_exists(remote_server_id, current_user)
                 .await?;
         }
-        for external_mcp_config_id in &config.external_mcp_config_ids {
-            self.ensure_external_mcp_config_exists(external_mcp_config_id, current_user)
-                .await?;
-        }
+        self.validate_task_external_mcp_configs(config, current_user, task_owner_user_id)
+            .await?;
         if config.workspace_dir.is_some() {
             let _ = ensure_workspace_dir_available(
                 self.config.default_workspace_dir.as_str(),
                 config.workspace_dir.as_deref(),
             )?;
         }
+        Ok(())
+    }
+}
+
+fn ensure_external_mcp_owner_matches_task(
+    external_mcp_config_id: &str,
+    config_owner_user_id: Option<&str>,
+    task_owner_user_id: Option<&str>,
+) -> Result<(), String> {
+    let config_owner_user_id = config_owner_user_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let task_owner_user_id = task_owner_user_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if let (Some(config_owner_user_id), Some(task_owner_user_id)) =
+        (config_owner_user_id, task_owner_user_id)
+    {
+        if config_owner_user_id == task_owner_user_id {
+            Ok(())
+        } else {
+            Err(format!(
+                "external MCP config owner does not match task owner: {external_mcp_config_id}"
+            ))
+        }
+    } else if config_owner_user_id.is_none() && task_owner_user_id.is_some() {
+        Err(format!(
+            "external MCP config is missing owner information: {external_mcp_config_id}"
+        ))
+    } else {
         Ok(())
     }
 }
@@ -117,4 +166,23 @@ fn resource_owner_or_creator<'a>(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_external_mcp_owner_matches_task;
+
+    #[test]
+    fn external_mcp_owner_must_match_task_owner() {
+        assert!(
+            ensure_external_mcp_owner_matches_task("mcp-1", Some("user-1"), Some("user-1")).is_ok()
+        );
+
+        assert!(
+            ensure_external_mcp_owner_matches_task("mcp-1", Some("user-2"), Some("user-1"))
+                .is_err()
+        );
+
+        assert!(ensure_external_mcp_owner_matches_task("mcp-1", None, Some("user-1")).is_err());
+    }
 }

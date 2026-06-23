@@ -29,6 +29,7 @@ pub struct Config {
     pub user_service_base_url: Option<String>,
     pub user_service_request_timeout_ms: i64,
     pub task_runner_base_url: String,
+    pub task_runner_request_timeout_ms: i64,
     pub memory_engine_base_url: String,
     pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout_ms: i64,
@@ -142,6 +143,12 @@ impl Config {
         let task_runner_base_url = read_optional_env("CHATOS_TASK_RUNNER_BASE_URL")
             .or_else(|| read_optional_env("TASK_RUNNER_BASE_URL"))
             .unwrap_or_else(default_task_runner_base_url);
+        let task_runner_request_timeout_ms =
+            read_optional_env("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS")
+                .or_else(|| read_optional_env("TASK_RUNNER_REQUEST_TIMEOUT_MS"))
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(30_000)
+                .max(300);
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
             .unwrap_or_else(|_| default_memory_engine_base_url());
         let memory_engine_operator_token = read_optional_env("MEMORY_ENGINE_OPERATOR_TOKEN");
@@ -190,6 +197,7 @@ impl Config {
             user_service_base_url,
             user_service_request_timeout_ms,
             task_runner_base_url,
+            task_runner_request_timeout_ms,
             memory_engine_base_url,
             memory_engine_operator_token,
             memory_engine_request_timeout_ms,
@@ -282,6 +290,10 @@ impl Config {
         );
         println!("  - Memory Engine 配置:");
         println!("    • TASK_RUNNER_BASE_URL: {}", self.task_runner_base_url);
+        println!(
+            "    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}",
+            self.task_runner_request_timeout_ms
+        );
         println!(
             "    • MEMORY_ENGINE_BASE_URL: {}",
             self.memory_engine_base_url

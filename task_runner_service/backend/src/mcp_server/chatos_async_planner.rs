@@ -2,7 +2,8 @@ use serde_json::Value;
 
 use crate::models::{
     mcp_builtin_kind_guide, mcp_builtin_kind_values, now_rfc3339, CreateTaskRequest,
-    ModelConfigRecord, TaskScheduleConfig, TaskScheduleMode, TaskStatus, UpdateTaskRequest,
+    ModelConfigRecord, TaskMcpConfig, TaskScheduleConfig, TaskScheduleMode, TaskStatus,
+    UpdateTaskRequest,
 };
 use chatos_mcp_runtime::builtin_kind_by_any;
 

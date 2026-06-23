@@ -21,7 +21,8 @@ pub(crate) fn create_task_schema() -> Value {
                 "items": builtin_mcp_kind_item_schema(),
                 "uniqueItems": true,
                 "description": enabled_builtin_kinds_description
-            }
+            },
+            "external_mcp_config_ids": external_mcp_config_ids_schema()
         },
         "required": ["title", "objective"],
         "additionalProperties": false
@@ -85,6 +86,7 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                             "uniqueItems": true,
                             "description": builtin_mcp_kind_schema_description()
                         },
+                        "external_mcp_config_ids": external_mcp_config_ids_schema(),
                         "prerequisite_refs": {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
@@ -128,9 +130,19 @@ pub(crate) fn task_mcp_config_schema() -> Value {
                 "items": builtin_mcp_kind_item_schema(),
                 "uniqueItems": true,
                 "description": builtin_mcp_kind_schema_description()
-            }
+            },
+            "external_mcp_config_ids": external_mcp_config_ids_schema()
         },
         "additionalProperties": false
+    })
+}
+
+pub(crate) fn external_mcp_config_ids_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "uniqueItems": true,
+        "description": "需要在任务执行时加载的外部 MCP 配置 ID 列表。只能填写 list_external_mcp_configs 返回的 id；如果用户点名某个外部 MCP、外部平台或外部系统，必须先调用 list_external_mcp_configs 匹配名称并填写这里，不能用 enabled_builtin_kinds 的 builtin 能力代替；如果任务不需要外部 MCP，不要传。"
     })
 }
 

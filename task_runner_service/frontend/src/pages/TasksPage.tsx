@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Form,
@@ -29,8 +30,10 @@ import { TaskBatchActionsBar } from './tasks/TaskBatchActionsBar';
 import { TaskListToolbar } from './tasks/TaskListToolbar';
 import { TaskListTable } from './tasks/TaskListTable';
 import { TaskMcpPromptPreviewModal } from './tasks/TaskMcpPromptPreviewModal';
+import { TaskSubtasksDrawer } from './tasks/TaskSubtasksDrawer';
 import { useTaskMutations } from './tasks/useTaskMutations';
 import { useTasksPageData } from './tasks/useTasksPageData';
+import { api } from '../api/client';
 import type {
   CreateTaskPayload,
   StartTaskRunPayload,
@@ -51,6 +54,7 @@ export function TasksPage() {
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [detailTaskPreview, setDetailTaskPreview] = useState<TaskRecord | null>(null);
   const [memoryTask, setMemoryTask] = useState<TaskRecord | null>(null);
+  const [subtasksParentTask, setSubtasksParentTask] = useState<TaskRecord | null>(null);
   const [draftMcpPreviewOpen, setDraftMcpPreviewOpen] = useState(false);
   const [mcpPreviewTask, setMcpPreviewTask] = useState<TaskRecord | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -127,6 +131,16 @@ export function TasksPage() {
     editingTaskId: editingTask?.id,
   });
 
+  const taskSubtasksQuery = useQuery({
+    queryKey: ['task-subtasks', subtasksParentTask?.id],
+    queryFn: () =>
+      api.listTasks({
+        parent_task_id: subtasksParentTask!.id,
+        limit: 100,
+      }),
+    enabled: Boolean(subtasksParentTask),
+  });
+
   useEffect(() => {
     if (!tasksQuery.data) {
       return;
@@ -183,12 +197,14 @@ export function TasksPage() {
     t,
     navigate,
     modelNameMap,
+    externalMcpConfigMap,
     pendingPromptCountByTaskId,
     scheduleModeLabels,
     taskRowRemoteActivityByTaskId,
     onOpenDetail: openDetailDrawer,
     onOpenEdit: openEditDrawer,
     onOpenMemory: openMemoryDrawer,
+    onOpenSubtasks: openSubtasksDrawer,
     onOpenRun: openRunModal,
     onConfirmDelete: confirmDelete,
   });
@@ -220,6 +236,10 @@ export function TasksPage() {
     setMemoryTask(null);
   }
 
+  function closeSubtasksDrawer() {
+    setSubtasksParentTask(null);
+  }
+
   function closeTaskMcpPreviewModal() {
     setMcpPreviewTask(null);
   }
@@ -243,7 +263,7 @@ export function TasksPage() {
       mcpInitMode: 'builtin_only',
       builtinPromptMode: 'effective',
       builtinPromptLocale: locale,
-      enabledBuiltinKinds: (mcpCatalogQuery.data || []).map((entry) => entry.kind),
+      enabledBuiltinKinds: [],
       workspaceDir: '',
       defaultRemoteServerId: undefined,
       externalMcpConfigIds: [],
@@ -312,6 +332,10 @@ export function TasksPage() {
     setMemoryRoleFilter('all');
     setMemorySummaryFilter('all');
     setMemoryLimit(50);
+  }
+
+  function openSubtasksDrawer(task: TaskRecord) {
+    setSubtasksParentTask(task);
   }
 
   function openTaskMcpPreviewModal(task: TaskRecord) {
@@ -634,6 +658,18 @@ export function TasksPage() {
           ]);
         }}
         onSummarize={(taskId) => summarizeTaskMemoryMutation.mutate(taskId)}
+      />
+
+      <TaskSubtasksDrawer
+        t={t}
+        open={Boolean(subtasksParentTask)}
+        parentTask={subtasksParentTask}
+        tasks={taskSubtasksQuery.data}
+        loading={taskSubtasksQuery.isLoading}
+        taskStatusLabel={taskStatusLabel}
+        onClose={closeSubtasksDrawer}
+        onOpenDetail={openDetailDrawer}
+        onOpenRunHistory={jumpToRunHistory}
       />
 
       <TaskRunModal

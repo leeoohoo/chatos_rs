@@ -56,6 +56,7 @@ pub(in crate::api) async fn list_task_summaries(
                     status: query.status,
                     keyword: query.keyword,
                     limit: query.limit,
+                    include_subtasks: Some(false),
                     ..TaskListFilters::default()
                 },
                 &current_user,

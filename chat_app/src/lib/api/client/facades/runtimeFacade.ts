@@ -20,6 +20,7 @@ import type {
   NotepadUpdatePayload,
   RegisterPayload,
   AgentToolsResponse,
+  CreateTaskRunnerExternalMcpConfigPayload,
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
@@ -27,9 +28,11 @@ import type {
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
   StreamChatOptions,
+  TaskRunnerExternalMcpConfig,
   TaskManagerTaskResponse,
   TaskRunnerAgentAccountResponse,
   TaskManagerUpdatePayload,
+  UpdateTaskRunnerExternalMcpConfigPayload,
   UserSettingsResponse,
 } from '../types';
 import type ApiClient from '../../client';
@@ -93,6 +96,15 @@ export interface RuntimeFacade {
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
   listTaskRunnerAgentAccounts(): Promise<TaskRunnerAgentAccountResponse[]>;
+  listTaskRunnerExternalMcpConfigs(): Promise<TaskRunnerExternalMcpConfig[]>;
+  createTaskRunnerExternalMcpConfig(
+    payload: CreateTaskRunnerExternalMcpConfigPayload,
+  ): Promise<TaskRunnerExternalMcpConfig>;
+  updateTaskRunnerExternalMcpConfig(
+    id: string,
+    payload: UpdateTaskRunnerExternalMcpConfigPayload,
+  ): Promise<TaskRunnerExternalMcpConfig>;
+  deleteTaskRunnerExternalMcpConfig(id: string): Promise<Record<string, never>>;
   getUserSettings(userId?: string): Promise<UserSettingsResponse>;
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<UserSettingsResponse>;
 }
@@ -201,6 +213,32 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async listTaskRunnerAgentAccounts() {
     return accountApi.listTaskRunnerAgentAccounts(this.getRequestFn());
+  },
+  async listTaskRunnerExternalMcpConfigs() {
+    return this.getRequestFn()<TaskRunnerExternalMcpConfig[]>('/task-runner/external-mcp-configs');
+  },
+  async createTaskRunnerExternalMcpConfig(payload) {
+    return this.getRequestFn()<TaskRunnerExternalMcpConfig>('/task-runner/external-mcp-configs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  async updateTaskRunnerExternalMcpConfig(id, payload) {
+    return this.getRequestFn()<TaskRunnerExternalMcpConfig>(
+      `/task-runner/external-mcp-configs/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  async deleteTaskRunnerExternalMcpConfig(id) {
+    return this.getRequestFn()<Record<string, never>>(
+      `/task-runner/external-mcp-configs/${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+      },
+    );
   },
   async getUserSettings(userId) {
     return accountApi.getUserSettings(this.getRequestFn(), userId);

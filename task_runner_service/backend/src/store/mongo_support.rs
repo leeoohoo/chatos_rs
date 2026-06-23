@@ -73,6 +73,14 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     }
     if let Some(parent_task_id) = filters.parent_task_id.as_deref() {
         filter.insert("parent_task_id", parent_task_id);
+    } else if filters.include_subtasks == Some(false) {
+        and_clauses.push(doc! {
+            "$or": [
+                { "parent_task_id": { "$exists": false } },
+                { "parent_task_id": null },
+                { "parent_task_id": "" }
+            ]
+        });
     }
     if let Some(source_run_id) = filters.source_run_id.as_deref() {
         filter.insert("source_run_id", source_run_id);

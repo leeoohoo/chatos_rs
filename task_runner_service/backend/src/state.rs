@@ -56,6 +56,7 @@ impl AppState {
         let task_runner_mcp_service = TaskRunnerMcpService::new(
             task_service.clone(),
             model_config_service.clone(),
+            external_mcp_config_service.clone(),
             run_service.clone(),
             ui_prompt_service.clone(),
             mcp_catalog_service.clone(),

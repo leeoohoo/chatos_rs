@@ -7,8 +7,6 @@ pub(super) fn task_belongs_to_context(task: &TaskRecord, root_task_id: &str) -> 
 pub(super) fn task_to_manager_value(task: &TaskRecord) -> Value {
     json!({
         "id": task.id.clone(),
-        "parent_task_id": task.parent_task_id.clone(),
-        "source_run_id": task.source_run_id.clone(),
         "title": task.title.clone(),
         "details": task
             .description
@@ -17,6 +15,7 @@ pub(super) fn task_to_manager_value(task: &TaskRecord) -> Value {
         "priority": task_priority_to_manager_label(task.priority),
         "status": task_manager_status_from_task_status(task.status),
         "tags": task.tags.clone(),
+        "prerequisite_task_ids": task.prerequisite_task_ids.clone(),
         "due_at": task.task_tool_state.due_at.clone(),
         "outcome_summary": task.result_summary.clone(),
         "outcome_items": tool_state_outcomes_into_shared(&task.task_tool_state.outcome_items),

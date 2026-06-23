@@ -37,6 +37,12 @@ impl TaskService {
             if self.store.has_active_run_for_task(id).await? {
                 return Err("任务仍有运行中的执行记录，请先取消或等待完成".to_string());
             }
+            if status != task.status {
+                ensure_subtask_can_be_marked_unfinished(&self.store, &task, status).await?;
+            }
+            if status == TaskStatus::Succeeded {
+                ensure_task_has_no_unfinished_subtasks(&self.store, &task).await?;
+            }
             task.status = status;
         }
         if let Some(priority) = patch.priority {
@@ -60,7 +66,8 @@ impl TaskService {
         }
         if let Some(mcp_config) = patch.mcp_config {
             task.mcp_config = sanitize_task_mcp_config(mcp_config);
-            self.validate_task_mcp_config(&task.mcp_config, current_user)
+            let task_owner_user_id = task_owner_or_creator(&task);
+            self.validate_task_mcp_config(&task.mcp_config, current_user, task_owner_user_id)
                 .await?;
         }
         let prerequisite_task_ids = patch
@@ -136,9 +143,174 @@ impl TaskService {
             task.mcp_config.external_mcp_config_ids = external_mcp_config_ids;
         }
         task.mcp_config = sanitize_task_mcp_config(task.mcp_config);
-        self.validate_task_mcp_config(&task.mcp_config, current_user)
+        let task_owner_user_id = task_owner_or_creator(&task);
+        self.validate_task_mcp_config(&task.mcp_config, current_user, task_owner_user_id)
             .await?;
         task.updated_at = now_rfc3339();
         Ok(Some(self.store.save_task(task).await?))
+    }
+}
+
+fn task_owner_or_creator(task: &TaskRecord) -> Option<&str> {
+    task.owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            task.creator_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, StoreMode};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            store_mode: StoreMode::Memory,
+            database_url: "memory://task-update-test".to_string(),
+            memory_engine_base_url: None,
+            memory_engine_source_id: "task".to_string(),
+            memory_engine_operator_token: None,
+            default_tenant_id: "tenant".to_string(),
+            default_subject_id: "subject".to_string(),
+            default_workspace_dir: ".".to_string(),
+            memory_timeout: Duration::from_millis(1000),
+            execution_timeout: Duration::from_millis(1000),
+            scheduler_poll_interval: Duration::from_millis(1000),
+            auto_memory_summary: false,
+            default_task_execution_max_iterations: 1,
+            default_tool_result_model_max_chars: 1000,
+            default_tool_results_model_total_max_chars: 2000,
+            chatos_callback_url: None,
+            chatos_callback_secret: None,
+            callback_timeout: Duration::from_millis(1000),
+            admin_username: "admin".to_string(),
+            admin_password: "admin".to_string(),
+            admin_display_name: "Admin".to_string(),
+            user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_request_timeout: Duration::from_millis(5000),
+        }
+    }
+
+    async fn test_service() -> TaskService {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        TaskService::new(config, store)
+    }
+
+    async fn create_task(service: &TaskService, title: &str, status: TaskStatus) -> TaskRecord {
+        service
+            .create_task(
+                CreateTaskRequest {
+                    title: title.to_string(),
+                    description: None,
+                    objective: format!("do {title}"),
+                    input_payload: None,
+                    status: Some(status),
+                    priority: None,
+                    tags: None,
+                    default_model_config_id: None,
+                    tenant_id: None,
+                    subject_id: None,
+                    schedule: None,
+                    mcp_config: None,
+                    prerequisite_task_ids: None,
+                },
+                None,
+                None,
+            )
+            .await
+            .expect("create task")
+    }
+
+    async fn create_subtask(
+        service: &TaskService,
+        parent: &TaskRecord,
+        title: &str,
+        status: TaskStatus,
+    ) -> TaskRecord {
+        let mut child = create_task(service, title, status).await;
+        child.parent_task_id = Some(parent.id.clone());
+        service.store.save_task(child).await.expect("save child")
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_succeeded_parent_when_subtask_unfinished() {
+        let service = test_service().await;
+        let parent = create_task(&service, "parent", TaskStatus::Ready).await;
+        create_subtask(&service, &parent, "child", TaskStatus::Ready).await;
+
+        let err = service
+            .update_task(
+                parent.id.as_str(),
+                UpdateTaskRequest {
+                    status: Some(TaskStatus::Succeeded),
+                    ..UpdateTaskRequest::default()
+                },
+                None,
+            )
+            .await
+            .expect_err("parent should not succeed with unfinished child");
+
+        assert!(err.contains("还有未完成子任务"));
+        let parent_after = service
+            .get_task(parent.id.as_str())
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent_after.status, TaskStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn reopening_subtask_after_parent_success_is_rejected() {
+        let service = test_service().await;
+        let parent = create_task(&service, "parent", TaskStatus::Ready).await;
+        let child = create_subtask(&service, &parent, "child", TaskStatus::Succeeded).await;
+        service
+            .update_task(
+                parent.id.as_str(),
+                UpdateTaskRequest {
+                    status: Some(TaskStatus::Succeeded),
+                    ..UpdateTaskRequest::default()
+                },
+                None,
+            )
+            .await
+            .expect("parent can succeed when child succeeded");
+
+        let err = service
+            .update_task(
+                child.id.as_str(),
+                UpdateTaskRequest {
+                    status: Some(TaskStatus::Blocked),
+                    ..UpdateTaskRequest::default()
+                },
+                None,
+            )
+            .await
+            .expect_err("child cannot be reopened after parent succeeded");
+        assert!(err.contains("已经成功"));
+
+        let parent_after = service
+            .get_task(parent.id.as_str())
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent_after.status, TaskStatus::Succeeded);
+        let child_after = service
+            .get_task(child.id.as_str())
+            .await
+            .expect("get child")
+            .expect("child");
+        assert_eq!(child_after.status, TaskStatus::Succeeded);
     }
 }

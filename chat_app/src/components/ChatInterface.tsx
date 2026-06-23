@@ -35,6 +35,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setShowMemoryModelSettings,
     showTaskModelSettings,
     setShowTaskModelSettings,
+    showTaskRunnerExternalMcpManager,
+    setShowTaskRunnerExternalMcpManager,
     memoryModelAttention,
     taskModelAttention,
     showAgentManager,
@@ -85,6 +87,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onOpenAiModelManager={() => setShowAiModelManager(true)}
         onOpenMemoryModelSettings={() => setShowMemoryModelSettings(true)}
         onOpenTaskModelSettings={() => setShowTaskModelSettings(true)}
+        onOpenTaskRunnerExternalMcpManager={() => setShowTaskRunnerExternalMcpManager(true)}
         memoryModelAttention={memoryModelAttention}
         taskModelAttention={taskModelAttention}
         onOpenAgentManager={() => setShowAgentManager(true)}
@@ -121,6 +124,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setShowMemoryModelSettings={setShowMemoryModelSettings}
         showTaskModelSettings={showTaskModelSettings}
         setShowTaskModelSettings={setShowTaskModelSettings}
+        showTaskRunnerExternalMcpManager={showTaskRunnerExternalMcpManager}
+        setShowTaskRunnerExternalMcpManager={setShowTaskRunnerExternalMcpManager}
         showAgentManager={showAgentManager}
         setShowAgentManager={setShowAgentManager}
         showUserSettings={showUserSettings}

@@ -13,6 +13,15 @@ impl TaskService {
             self.ensure_model_config_access(model_config_id, creator)
                 .await?;
         }
+        let task_owner_user_id =
+            creator.and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned));
+        let task_owner_username =
+            creator.and_then(|user| user.effective_owner_username().map(ToOwned::to_owned));
+        let task_owner_display_name = creator.and_then(|user| {
+            user.effective_owner_display_name()
+                .map(ToOwned::to_owned)
+                .or_else(|| user.effective_owner_username().map(ToOwned::to_owned))
+        });
         if matches!(input.status, Some(TaskStatus::Queued | TaskStatus::Running)) {
             return Err(
                 "任务排队/运行状态由系统维护，请通过执行任务进入 queued 或 running".to_string(),
@@ -53,7 +62,15 @@ impl TaskService {
             mcp_config.default_remote_server_id = Some(remote_server.id.clone());
         }
         if passthrough_remote_server.is_none() {
-            self.validate_task_mcp_config(&mcp_config, creator).await?;
+            self.validate_task_mcp_config(&mcp_config, creator, task_owner_user_id.as_deref())
+                .await?;
+        } else {
+            self.validate_task_external_mcp_configs(
+                &mcp_config,
+                creator,
+                task_owner_user_id.as_deref(),
+            )
+            .await?;
         }
         let tenant_id = resolve_task_tenant_id(
             input.tenant_id,
@@ -79,15 +96,9 @@ impl TaskService {
             creator_user_id: creator.map(|user| user.id.clone()),
             creator_username: creator.map(|user| user.username.clone()),
             creator_display_name: creator.map(|user| user.display_name.clone()),
-            owner_user_id: creator
-                .and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned)),
-            owner_username: creator
-                .and_then(|user| user.effective_owner_username().map(ToOwned::to_owned)),
-            owner_display_name: creator.and_then(|user| {
-                user.effective_owner_display_name()
-                    .map(ToOwned::to_owned)
-                    .or_else(|| user.effective_owner_username().map(ToOwned::to_owned))
-            }),
+            owner_user_id: task_owner_user_id,
+            owner_username: task_owner_username,
+            owner_display_name: task_owner_display_name,
             result_summary: None,
             process_log: None,
             last_run_id: None,
@@ -104,6 +115,13 @@ impl TaskService {
             updated_at: now,
             deleted_at: None,
         };
+        info!(
+            task_id = task.id.as_str(),
+            task_title = task.title.as_str(),
+            builtin_mcp_kinds = %task.mcp_config.enabled_builtin_kinds.join(","),
+            external_mcp_config_ids = %task.mcp_config.external_mcp_config_ids.join(","),
+            "task runner created task with MCP selection"
+        );
         self.ensure_task_thread(&task).await?;
         if let Some(remote_server) = passthrough_remote_server {
             self.store.save_remote_server(remote_server).await?;

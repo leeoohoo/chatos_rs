@@ -53,6 +53,8 @@ impl SqliteStore {
         }
         if filters.parent_task_id.is_some() {
             clauses.push("parent_task_id = ?".to_string());
+        } else if filters.include_subtasks == Some(false) {
+            clauses.push("(parent_task_id IS NULL OR TRIM(parent_task_id) = '')".to_string());
         }
         if filters.source_run_id.is_some() {
             clauses.push("source_run_id = ?".to_string());

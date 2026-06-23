@@ -153,15 +153,6 @@ If the work will modify code, docs, config, scripts, prompts, pages, or other fi
 - an implementation task focused on making the change
 - a review task focused on independently checking whether the change is actually correct
 
-Hard constraint:
-
-- Whenever a task enables `CodeMaintainerWrite`, it must also enable `CodeMaintainerRead`. Do not create code tasks that have write tools but no read tools.
-
-Usually:
-
-- implementation leans toward `CodeMaintainerRead` + `CodeMaintainerWrite`, and often also `TerminalController` or `BrowserTools`
-- review leans toward `CodeMaintainerRead`, and often also `TerminalController` or `BrowserTools`
-
 The review task should not merely repeat the implementation task. It should explicitly own validation, audit, regression checking, and omission detection.
 
 It is usually helpful for the review objective to explicitly include:
@@ -172,9 +163,13 @@ It is usually helpful for the review objective to explicitly include:
 
 ## Choosing Builtin MCP Capabilities
 
-Use `enabled_builtin_kinds` to define what a task may use during execution.
+Use `enabled_builtin_kinds` to define the builtin capabilities the task needs during execution.
 
-Principle: enable what is genuinely needed, but do not starve the task of required capabilities.
+Task Runner automatically attaches the builtin `TaskManager` task MCP, so Chatos does not need to select `TaskManager`. All other builtin capabilities should still be chosen according to the task objective.
+
+Hard constraint:
+
+- Whenever a task enables `CodeMaintainerWrite`, it must also enable `CodeMaintainerRead`. Do not create code tasks that have write tools but no read tools.
 
 Common capability guide:
 
@@ -184,7 +179,6 @@ Common capability guide:
 - `BrowserTools`: open pages, inspect UI, capture screenshots
 - `WebTools`: search public information and read webpages
 - `RemoteConnectionController`: connect to remote servers
-- `TaskManager`: split and track subtasks during execution
 - `Notepad`: record observations and intermediate findings
 - `UiPrompter`: ask for user input during execution
 
@@ -195,6 +189,21 @@ Recommended combinations:
 - frontend change: `CodeMaintainerRead` + `CodeMaintainerWrite` + `TerminalController` + `BrowserTools`
 - frontend review: `CodeMaintainerRead` + `TerminalController` + `BrowserTools`
 - remote troubleshooting: `RemoteConnectionController` + `TerminalController`
+
+## Choosing External MCP Configs
+
+User-configured external MCP servers are not builtin capabilities, and `enabled_builtin_kinds` must not be used as a substitute for them.
+
+When the user explicitly names an external system, external platform, external MCP config, or says to use a specific MCP/platform:
+
+1. Call `list_external_mcp_configs` first to inspect the current user's available external MCP configs.
+2. Match the user's named system against the returned `name`.
+3. When creating the task, put the returned real `id` into `external_mcp_config_ids`.
+4. External MCP configs and builtin MCP capabilities can be freely combined in the same task. If the task also needs local code, terminal, browser, remote connection, or other builtin capabilities, select those builtin capabilities too.
+
+For example, if the user says "use Zhixiao to look up order APIs" and `list_external_mcp_configs` returns a matching config named "Zhixiao" or equivalent, the task must include that config's `external_mcp_config_ids`; do not replace it with `CodeMaintainerRead` to inspect the local project or local MCP config files.
+
+If the named external MCP does not appear in `list_external_mcp_configs`, do not pretend another tool source satisfies that external-system request. Explain that no usable config is currently available, or create a clearly scoped configuration-diagnosis task.
 
 ## Prerequisite Rules
 

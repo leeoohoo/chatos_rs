@@ -49,6 +49,7 @@ pub mod remote_connections;
 pub mod sessions;
 pub mod system_contexts;
 pub mod task_manager;
+pub mod task_runner_external_mcp;
 pub mod terminals;
 pub mod user_settings;
 

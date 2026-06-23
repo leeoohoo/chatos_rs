@@ -1,10 +1,13 @@
 use super::*;
 
 pub(in crate::mcp_server) fn planner_update_task_request(
-    patch: UpdateTaskRequest,
+    mut patch: UpdateTaskRequest,
 ) -> Result<UpdateTaskRequest, String> {
     if patch.status.is_some() {
         return Err("联系人异步模式不能通过 update_task 修改任务执行状态".to_string());
+    }
+    if let Some(config) = patch.mcp_config.as_mut() {
+        ensure_builtin_task_manager_config(config);
     }
     Ok(patch)
 }
@@ -13,6 +16,7 @@ pub(in crate::mcp_server) fn planner_root_create_request(
     mut input: CreateTaskRequest,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
+    ensure_builtin_task_manager_mcp(&mut input);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -46,6 +50,7 @@ pub(in crate::mcp_server) fn planner_prerequisite_create_request(
     mut input: CreateTaskRequest,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
+    ensure_builtin_task_manager_mcp(&mut input);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -56,16 +61,38 @@ pub(in crate::mcp_server) fn planner_prerequisite_create_request(
 pub(in crate::mcp_server) fn ensure_planner_required_fields(
     input: &CreateTaskRequest,
 ) -> Result<(), String> {
-    let has_enabled_builtin_kinds = input.mcp_config.as_ref().is_some_and(|config| {
+    let _ = input;
+    Ok(())
+}
+
+const BUILTIN_TASK_MANAGER_KIND: &str = "TaskManager";
+
+fn ensure_builtin_task_manager_mcp(input: &mut CreateTaskRequest) {
+    let defaults = TaskMcpConfig::default();
+    let config = input.mcp_config.get_or_insert_with(|| TaskMcpConfig {
+        enabled_builtin_kinds: Vec::new(),
+        ..TaskMcpConfig::default()
+    });
+    config.enabled = true;
+    config.init_mode = defaults.init_mode;
+    config.builtin_prompt_mode = defaults.builtin_prompt_mode;
+    config.builtin_prompt_locale = defaults.builtin_prompt_locale;
+    ensure_builtin_task_manager_config(config);
+}
+
+fn ensure_builtin_task_manager_config(config: &mut TaskMcpConfig) {
+    let defaults = TaskMcpConfig::default();
+    config.enabled = true;
+    config.init_mode = defaults.init_mode;
+    if !config
+        .enabled_builtin_kinds
+        .iter()
+        .any(|value| value.trim() == BUILTIN_TASK_MANAGER_KIND)
+    {
         config
             .enabled_builtin_kinds
-            .iter()
-            .any(|value| !value.trim().is_empty())
-    });
-    if !has_enabled_builtin_kinds {
-        return Err("联系人异步任务必须至少选择一个 enabled_builtin_kinds".to_string());
+            .push(BUILTIN_TASK_MANAGER_KIND.to_string());
     }
-    Ok(())
 }
 
 fn planner_schedule_contact_async_now(

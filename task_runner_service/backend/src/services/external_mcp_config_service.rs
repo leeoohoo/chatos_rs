@@ -1,5 +1,9 @@
 use std::collections::BTreeMap;
 
+use chatos_mcp_runtime::{list_tools_http, list_tools_stdio, parse_tool_definition};
+use serde_json::Value;
+use tracing::info;
+
 use super::*;
 
 impl ExternalMcpConfigService {
@@ -69,6 +73,7 @@ impl ExternalMcpConfigService {
             updated_at: now,
         };
         validate_external_mcp_config(&record)?;
+        test_external_mcp_config(&record).await?;
         self.store.save_external_mcp_config(record).await
     }
 
@@ -117,6 +122,9 @@ impl ExternalMcpConfigService {
         }
 
         validate_external_mcp_config(&record)?;
+        if record.enabled {
+            test_external_mcp_config(&record).await?;
+        }
         record.updated_at = now_rfc3339();
         Ok(Some(self.store.save_external_mcp_config(record).await?))
     }
@@ -194,4 +202,58 @@ fn validate_external_mcp_config(record: &ExternalMcpConfigRecord) -> Result<(), 
         _ => return Err("transport 仅支持 stdio / http".to_string()),
     }
     Ok(())
+}
+
+async fn test_external_mcp_config(record: &ExternalMcpConfigRecord) -> Result<(), String> {
+    let tools = match record.transport.as_str() {
+        "http" => {
+            let server = record
+                .to_http_server()
+                .ok_or_else(|| "外部 MCP 配置无效: http 类型需要可用 url".to_string())?;
+            list_tools_http(server.url.as_str(), server.headers.as_ref())
+                .await
+                .map_err(|err| {
+                    format!(
+                        "外部 MCP 连通性测试失败: {} ({}) tools/list 调用失败: {err}",
+                        record.name, record.transport
+                    )
+                })?
+        }
+        "stdio" => {
+            let server = record
+                .to_stdio_server()
+                .ok_or_else(|| "外部 MCP 配置无效: stdio 类型需要可用 command".to_string())?;
+            list_tools_stdio(&server).await.map_err(|err| {
+                format!(
+                    "外部 MCP 连通性测试失败: {} ({}) tools/list 调用失败: {err}",
+                    record.name, record.transport
+                )
+            })?
+        }
+        _ => return Err("transport 仅支持 stdio / http".to_string()),
+    };
+    let tool_names = valid_mcp_tool_names(&tools);
+    if tool_names.is_empty() {
+        return Err(format!(
+            "外部 MCP 连通性测试失败: {} ({}) tools/list 未返回可识别工具",
+            record.name, record.transport
+        ));
+    }
+    info!(
+        external_mcp_config_id = record.id.as_str(),
+        external_mcp_config_name = record.name.as_str(),
+        external_mcp_transport = record.transport.as_str(),
+        external_mcp_tool_count = tool_names.len(),
+        external_mcp_tools = %tool_names.join(","),
+        "external MCP config connectivity test passed"
+    );
+    Ok(())
+}
+
+fn valid_mcp_tool_names(tools: &[Value]) -> Vec<String> {
+    tools
+        .iter()
+        .filter_map(parse_tool_definition)
+        .map(|definition| definition.name)
+        .collect()
 }

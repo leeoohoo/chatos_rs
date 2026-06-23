@@ -422,11 +422,19 @@ impl McpExecutor {
                         }
                     }
                 }
-                Err(err) => self.unavailable_tools.push(unavailable_server(
-                    server.name.as_str(),
-                    "http",
-                    err.as_str(),
-                )),
+                Err(err) => {
+                    warn!(
+                        server_name = server.name.as_str(),
+                        server_url = server.url.as_str(),
+                        error = err.as_str(),
+                        "failed to register HTTP MCP tools"
+                    );
+                    self.unavailable_tools.push(unavailable_server(
+                        server.name.as_str(),
+                        "http",
+                        err.as_str(),
+                    ));
+                }
             }
         }
     }
@@ -459,11 +467,19 @@ impl McpExecutor {
                         }
                     }
                 }
-                Err(err) => self.unavailable_tools.push(unavailable_server(
-                    server.name.as_str(),
-                    "stdio",
-                    err.as_str(),
-                )),
+                Err(err) => {
+                    warn!(
+                        server_name = server.name.as_str(),
+                        command = server.command.as_str(),
+                        error = err.as_str(),
+                        "failed to register stdio MCP tools"
+                    );
+                    self.unavailable_tools.push(unavailable_server(
+                        server.name.as_str(),
+                        "stdio",
+                        err.as_str(),
+                    ));
+                }
             }
         }
     }

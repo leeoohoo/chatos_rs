@@ -149,6 +149,7 @@ export function useTasksPageData({
     queryFn: () =>
       api.listTasks({
         source_run_id: detailLastRunId!,
+        include_subtasks: true,
         limit: 50,
       }),
     enabled: Boolean(detailLastRunId),

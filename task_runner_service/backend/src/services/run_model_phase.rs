@@ -6,13 +6,13 @@ use std::sync::{
 use chatos_ai_runtime::{
     AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
     RuntimeRecordOptions, SaveRecordInput, TaskMemoryRuntimeConfig, TaskRunExecution,
-    TaskRunReport, TaskRunSpec, TaskRuntimeConfig, ToolResultModelBudgetLimits,
+    TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits,
 };
 use chatos_mcp_runtime::{
-    builtin_servers_from_kinds, BuiltinMcpServerOptions, McpExecutorBuilder, McpHttpServer,
-    McpStdioServer,
+    builtin_servers_from_kinds, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
+    McpExecutorBuilder, McpHttpServer, McpStdioServer,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::models::{
@@ -32,7 +32,10 @@ use super::task_process_log::{
     TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
 };
 use super::workspace_mcp::selected_builtin_kinds;
-use super::{build_builtin_registry, summarized_report_content, RunService, TaskService};
+use super::{
+    build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
+    unfinished_subtasks_for_task, RunService, TaskService,
+};
 
 mod callbacks;
 mod completion;

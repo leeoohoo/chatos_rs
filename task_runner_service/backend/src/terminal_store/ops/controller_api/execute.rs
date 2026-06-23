@@ -12,15 +12,16 @@ impl TaskRunnerTerminalControllerStore {
         let target_path = resolve_target_path(project_root.as_path(), path.as_str())?;
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
-        let child = Command::new(shell)
+        let mut process = Command::new(shell);
+        process
             .arg("-lc")
             .arg(command.as_str())
             .current_dir(&target_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|err| err.to_string())?;
+            .stderr(std::process::Stdio::piped());
+        apply_bundled_tools_path(&mut process);
+        let child = process.spawn().map_err(|err| err.to_string())?;
 
         let session =
             register_session(context.clone(), target_path.clone(), command.clone(), child).await?;

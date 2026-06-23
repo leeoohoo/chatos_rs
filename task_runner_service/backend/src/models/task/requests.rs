@@ -103,6 +103,7 @@ pub struct TaskListFilters {
     pub creator_user_id: Option<String>,
     pub scheduled_only: Option<bool>,
     pub parent_task_id: Option<String>,
+    pub include_subtasks: Option<bool>,
     pub source_run_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_ids: Vec<String>,

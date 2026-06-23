@@ -4,7 +4,7 @@ use super::support::{
     filter_model_configs_for_user, model_configs_for_user, normalize_mcp_builtin_kind_names,
     task_mcp_config_schema,
 };
-use super::{McpRequestContext, McpToolProfile};
+use super::{CreateTaskArgs, McpRequestContext, McpToolProfile};
 use crate::auth::CurrentUser;
 use crate::models::{
     CreateTaskRequest, ModelConfigRecord, TaskMcpConfig, TaskScheduleMode, TaskStatus,
@@ -26,6 +26,7 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(!properties.contains_key("mcp_config"));
     assert!(!properties.contains_key("default_model_config_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
+    assert!(properties.contains_key("external_mcp_config_ids"));
 
     let kind_enum = properties
         .get("enabled_builtin_kinds")
@@ -52,6 +53,7 @@ fn task_mcp_config_schema_hides_host_passthrough_fields() {
     assert!(!properties.contains_key("workspace_dir"));
     assert!(!properties.contains_key("default_remote_server_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
+    assert!(properties.contains_key("external_mcp_config_ids"));
 }
 
 #[test]
@@ -72,6 +74,38 @@ fn external_mcp_tools_hide_internal_process_recorder() {
     assert!(!agent_tool_allowed("record_task_process"));
     assert!(!agent_tool_allowed("list_model_configs"));
     assert!(!agent_tool_allowed("get_model_config"));
+}
+
+#[test]
+fn create_task_args_preserve_external_mcp_ids_without_implicit_builtin_selection() {
+    let request = CreateTaskArgs {
+        title: "task".to_string(),
+        description: None,
+        objective: "use external tools".to_string(),
+        input_payload: None,
+        priority: None,
+        tags: None,
+        default_model_config_id: None,
+        schedule: None,
+        enabled_builtin_kinds: None,
+        external_mcp_config_ids: Some(vec![
+            " external-mcp-1 ".to_string(),
+            String::new(),
+            "external-mcp-1".to_string(),
+        ]),
+        prerequisite_task_ids: None,
+        mcp_config: None,
+    }
+    .into_request()
+    .expect("create task request");
+
+    let mcp_config = request.mcp_config.expect("mcp config");
+    assert!(mcp_config.enabled);
+    assert!(mcp_config.enabled_builtin_kinds.is_empty());
+    assert_eq!(
+        mcp_config.external_mcp_config_ids,
+        vec!["external-mcp-1".to_string()]
+    );
 }
 
 #[test]
@@ -138,6 +172,9 @@ fn async_planner_profile_exposes_only_planning_tools() {
         "list_mcp_builtin_catalog"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
+        "list_external_mcp_configs"
+    ));
+    assert!(chatos_async_planner::planner_agent_tool_allowed(
         "update_task"
     ));
     assert!(chatos_async_planner::planner_agent_tool_allowed(
@@ -183,11 +220,34 @@ fn async_planner_update_task_cannot_change_status() {
         ..UpdateTaskRequest::default()
     };
     assert!(chatos_async_planner::planner_update_task_request(patch).is_ok());
+
+    let patch = UpdateTaskRequest {
+        mcp_config: Some(TaskMcpConfig {
+            enabled: false,
+            enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
+            external_mcp_config_ids: vec!["external-mcp-1".to_string()],
+            ..TaskMcpConfig::default()
+        }),
+        ..UpdateTaskRequest::default()
+    };
+    let patch = chatos_async_planner::planner_update_task_request(patch).expect("planner patch");
+    let config = patch.mcp_config.expect("mcp config");
+    assert!(config.enabled);
+    assert!(config
+        .enabled_builtin_kinds
+        .contains(&"CodeMaintainerRead".to_string()));
+    assert!(config
+        .enabled_builtin_kinds
+        .contains(&"TaskManager".to_string()));
+    assert_eq!(
+        config.external_mcp_config_ids,
+        vec!["external-mcp-1".to_string()]
+    );
 }
 
 #[test]
-fn async_planner_tasks_require_builtin_kinds_but_not_model_id() {
-    let missing_model_id = CreateTaskRequest {
+fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
+    let builtin_without_model_id = CreateTaskRequest {
         title: "task".to_string(),
         description: None,
         objective: "objective".to_string(),
@@ -205,27 +265,171 @@ fn async_planner_tasks_require_builtin_kinds_but_not_model_id() {
         }),
         prerequisite_task_ids: None,
     };
-    assert!(chatos_async_planner::ensure_planner_required_fields(&missing_model_id).is_ok());
+    assert!(
+        chatos_async_planner::ensure_planner_required_fields(&builtin_without_model_id).is_ok()
+    );
+    let planned_builtin =
+        chatos_async_planner::planner_root_create_request(builtin_without_model_id.clone())
+            .expect("planner request");
+    let planned_builtin_kinds = planned_builtin
+        .mcp_config
+        .expect("mcp config")
+        .enabled_builtin_kinds;
+    assert!(planned_builtin_kinds.contains(&"CodeMaintainerRead".to_string()));
+    assert!(planned_builtin_kinds.contains(&"TaskManager".to_string()));
 
-    let missing_builtin_kinds = CreateTaskRequest {
-        default_model_config_id: Some("model-1".to_string()),
+    let external_without_model_id = CreateTaskRequest {
         mcp_config: Some(TaskMcpConfig {
             enabled_builtin_kinds: Vec::new(),
+            external_mcp_config_ids: vec!["external-mcp-1".to_string()],
             ..TaskMcpConfig::default()
         }),
-        ..missing_model_id.clone()
+        ..builtin_without_model_id.clone()
     };
-    assert!(chatos_async_planner::ensure_planner_required_fields(&missing_builtin_kinds).is_err());
+    assert!(
+        chatos_async_planner::ensure_planner_required_fields(&external_without_model_id).is_ok()
+    );
+    let planned_external =
+        chatos_async_planner::planner_root_create_request(external_without_model_id)
+            .expect("planner request");
+    let planned_external_mcp = planned_external.mcp_config.expect("mcp config");
+    assert_eq!(
+        planned_external_mcp.external_mcp_config_ids,
+        vec!["external-mcp-1".to_string()]
+    );
+    assert_eq!(
+        planned_external_mcp.enabled_builtin_kinds,
+        vec!["TaskManager".to_string()]
+    );
 
-    let valid = CreateTaskRequest {
+    let no_explicit_tool_source = CreateTaskRequest {
+        default_model_config_id: Some("model-1".to_string()),
+        mcp_config: None,
+        ..builtin_without_model_id.clone()
+    };
+    assert!(chatos_async_planner::ensure_planner_required_fields(&no_explicit_tool_source).is_ok());
+    let planned_default =
+        chatos_async_planner::planner_root_create_request(no_explicit_tool_source)
+            .expect("planner request");
+    assert_eq!(
+        planned_default
+            .mcp_config
+            .expect("mcp config")
+            .enabled_builtin_kinds,
+        vec!["TaskManager".to_string()]
+    );
+
+    let combined = CreateTaskRequest {
         default_model_config_id: Some("model-1".to_string()),
         mcp_config: Some(TaskMcpConfig {
             enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
+            external_mcp_config_ids: vec!["external-mcp-2".to_string()],
             ..TaskMcpConfig::default()
         }),
-        ..missing_model_id
+        ..builtin_without_model_id
     };
-    assert!(chatos_async_planner::ensure_planner_required_fields(&valid).is_ok());
+    assert!(chatos_async_planner::ensure_planner_required_fields(&combined).is_ok());
+    let planned_combined =
+        chatos_async_planner::planner_root_create_request(combined).expect("planner request");
+    let planned_combined_mcp = planned_combined.mcp_config.expect("mcp config");
+    assert!(planned_combined_mcp
+        .enabled_builtin_kinds
+        .contains(&"CodeMaintainerWrite".to_string()));
+    assert!(planned_combined_mcp
+        .enabled_builtin_kinds
+        .contains(&"TaskManager".to_string()));
+    assert_eq!(
+        planned_combined_mcp.external_mcp_config_ids,
+        vec!["external-mcp-2".to_string()]
+    );
+}
+
+#[test]
+fn async_planner_schema_hides_task_manager_from_builtin_selection() {
+    let mut tools = vec![json!({
+        "name": "create_task",
+        "inputSchema": create_task_schema(),
+    })];
+
+    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools, &[]);
+
+    let input_schema = tools[0].get("inputSchema").expect("input schema");
+    assert!(input_schema.get("anyOf").is_none());
+    let kind_enum = input_schema
+        .pointer("/properties/enabled_builtin_kinds/items/enum")
+        .and_then(|value| value.as_array())
+        .expect("enabled_builtin_kinds enum");
+    assert!(kind_enum
+        .iter()
+        .any(|value| value.as_str() == Some("CodeMaintainerRead")));
+    assert!(!kind_enum
+        .iter()
+        .any(|value| value.as_str() == Some("TaskManager")));
+}
+
+#[test]
+fn async_planner_batch_schema_hides_task_manager_from_builtin_selection() {
+    let mut tools = vec![json!({
+        "name": "create_tasks_with_prerequisites",
+        "inputSchema": super::support::create_tasks_with_prerequisites_schema(),
+    })];
+
+    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools, &[]);
+
+    let input_schema = tools[0].get("inputSchema").expect("input schema");
+    assert!(input_schema
+        .pointer("/properties/tasks/items/anyOf")
+        .is_none());
+    let kind_enum = input_schema
+        .pointer("/properties/tasks/items/properties/enabled_builtin_kinds/items/enum")
+        .and_then(|value| value.as_array())
+        .expect("enabled_builtin_kinds enum");
+    assert!(kind_enum
+        .iter()
+        .any(|value| value.as_str() == Some("TerminalController")));
+    assert!(!kind_enum
+        .iter()
+        .any(|value| value.as_str() == Some("TaskManager")));
+}
+
+#[test]
+fn async_planner_update_schema_hides_task_manager_from_builtin_selection() {
+    let mut tools = vec![json!({
+        "name": "update_task",
+        "inputSchema": json!({
+            "type": "object",
+            "properties": {
+                "patch": super::support::update_task_schema()
+            }
+        }),
+    })];
+
+    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools, &[]);
+
+    let input_schema = tools[0].get("inputSchema").expect("input schema");
+    let properties = input_schema
+        .pointer("/properties/patch/properties")
+        .and_then(|value| value.as_object())
+        .expect("patch properties");
+    assert!(!properties.contains_key("status"));
+    let mcp_properties = input_schema
+        .pointer("/properties/patch/properties/mcp_config/properties")
+        .and_then(|value| value.as_object())
+        .expect("mcp properties");
+    assert!(!mcp_properties.contains_key("enabled"));
+    assert!(!mcp_properties.contains_key("init_mode"));
+    let kind_enum = input_schema
+        .pointer(
+            "/properties/patch/properties/mcp_config/properties/enabled_builtin_kinds/items/enum",
+        )
+        .and_then(|value| value.as_array())
+        .expect("enabled_builtin_kinds enum");
+    assert!(kind_enum
+        .iter()
+        .any(|value| value.as_str() == Some("BrowserTools")));
+    assert!(!kind_enum
+        .iter()
+        .any(|value| value.as_str() == Some("TaskManager")));
 }
 
 #[test]

@@ -2,6 +2,7 @@ pub mod agent_builder;
 pub mod browser_command_support;
 pub mod browser_runtime;
 pub mod browser_tools;
+pub mod bundled_tools;
 pub mod code_maintainer;
 pub mod memory_readers;
 pub mod notepad;
@@ -28,6 +29,10 @@ pub use agent_builder::{
 pub use browser_tools::{
     BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapter,
     BrowserVisionAdapterRef, BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
+};
+pub use bundled_tools::{
+    bundled_tool_path, discover_bundled_tool_dirs, path_with_bundled_tools,
+    CHATOS_BUNDLED_TOOLS_DIR_ENV, CHATOS_BUNDLED_TOOLS_PATH_ENV,
 };
 pub use code_maintainer::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,

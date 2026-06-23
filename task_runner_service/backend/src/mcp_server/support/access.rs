@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::{ModelConfigRecord, TaskRecord};
+use crate::models::{ExternalMcpConfigRecord, ModelConfigRecord, TaskRecord};
 
 use super::super::chatos_async_planner::planner_agent_tool_allowed;
 use super::super::McpToolProfile;
@@ -14,6 +14,7 @@ pub(crate) fn agent_tool_allowed(name: &str) -> bool {
             | "get_task_stats"
             | "create_task"
             | "list_mcp_builtin_catalog"
+            | "list_external_mcp_configs"
             | "create_tasks_with_prerequisites"
             | "update_task"
             | "set_task_prerequisites"
@@ -38,6 +39,51 @@ pub(crate) fn agent_tool_allowed(name: &str) -> bool {
             | "submit_prompt"
             | "cancel_prompt"
     )
+}
+
+pub(crate) fn external_mcp_configs_for_user(
+    configs: Vec<ExternalMcpConfigRecord>,
+    current_user: &CurrentUser,
+) -> Vec<Value> {
+    configs
+        .into_iter()
+        .filter(|config| config.enabled)
+        .filter(|config| external_mcp_config_visible_to_user(config, current_user))
+        .map(external_mcp_config_for_external_mcp)
+        .collect()
+}
+
+fn external_mcp_config_visible_to_user(
+    config: &ExternalMcpConfigRecord,
+    current_user: &CurrentUser,
+) -> bool {
+    let owner = config
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| config.creator_user_id.as_deref());
+    current_user.can_access_owned_resource(owner)
+}
+
+fn external_mcp_config_for_external_mcp(config: ExternalMcpConfigRecord) -> Value {
+    let endpoint = if config.transport == "http" {
+        config.url.clone().unwrap_or_default()
+    } else {
+        std::iter::once(config.command.clone().unwrap_or_default())
+            .chain(config.args.clone())
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    json!({
+        "id": config.id,
+        "name": config.name,
+        "transport": config.transport,
+        "enabled": config.enabled,
+        "endpoint": endpoint,
+    })
 }
 
 pub(crate) fn agent_tool_allowed_for_profile(name: &str, tool_profile: McpToolProfile) -> bool {

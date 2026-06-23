@@ -9,6 +9,7 @@ const ApplicationsPanel = lazy(() => import('../ApplicationsPanel'));
 const MemoryModelSettingsPanel = lazy(() => import('../MemoryModelSettingsPanel'));
 const NotepadPanel = lazy(() => import('../NotepadPanel'));
 const TaskModelSettingsPanel = lazy(() => import('../TaskModelSettingsPanel'));
+const TaskRunnerExternalMcpManager = lazy(() => import('../TaskRunnerExternalMcpManager'));
 const UserSettingsPanel = lazy(() => import('../UserSettingsPanel'));
 
 interface ChatInterfaceOverlaysProps {
@@ -21,6 +22,8 @@ interface ChatInterfaceOverlaysProps {
   setShowMemoryModelSettings: (value: boolean) => void;
   showTaskModelSettings: boolean;
   setShowTaskModelSettings: (value: boolean) => void;
+  showTaskRunnerExternalMcpManager: boolean;
+  setShowTaskRunnerExternalMcpManager: (value: boolean) => void;
   showAgentManager: boolean;
   setShowAgentManager: (value: boolean) => void;
   showUserSettings: boolean;
@@ -57,6 +60,8 @@ export default function ChatInterfaceOverlays({
   setShowMemoryModelSettings,
   showTaskModelSettings,
   setShowTaskModelSettings,
+  showTaskRunnerExternalMcpManager,
+  setShowTaskRunnerExternalMcpManager,
   showAgentManager,
   setShowAgentManager,
   showUserSettings,
@@ -87,6 +92,10 @@ export default function ChatInterfaceOverlays({
 
       <LazyOverlay open={showTaskModelSettings}>
         <TaskModelSettingsPanel onClose={() => setShowTaskModelSettings(false)} />
+      </LazyOverlay>
+
+      <LazyOverlay open={showTaskRunnerExternalMcpManager}>
+        <TaskRunnerExternalMcpManager onClose={() => setShowTaskRunnerExternalMcpManager(false)} />
       </LazyOverlay>
 
       <LazyOverlay open={showAgentManager}>

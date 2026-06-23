@@ -42,6 +42,10 @@ pub struct TaskDraft {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
+    pub prerequisite_task_id: Option<String>,
+    #[serde(default)]
+    pub prerequisite_task_ids: Vec<String>,
+    #[serde(default)]
     pub due_at: Option<String>,
     #[serde(default)]
     pub outcome_summary: String,
@@ -172,6 +176,7 @@ pub struct TaskManagerOptions {
     pub server_name: String,
     pub review_timeout_ms: u64,
     pub auto_create_task: bool,
+    pub expose_context_ids: bool,
     pub store: TaskManagerStoreRef,
 }
 
@@ -179,6 +184,7 @@ pub struct TaskManagerOptions {
 pub struct TaskManagerService {
     registry: ToolRegistry<ToolHandler>,
     auto_create_task: bool,
+    expose_context_ids: bool,
     store: TaskManagerStoreRef,
 }
 
@@ -188,8 +194,27 @@ struct ToolContext {
     conversation_id: String,
     conversation_turn_id: String,
     auto_create_task: bool,
+    expose_context_ids: bool,
     on_stream_chunk: Option<TaskStreamChunkCallback>,
     store: TaskManagerStoreRef,
+}
+
+impl ToolContext {
+    fn with_context_ids(&self, mut payload: Value, turn_value: Option<Value>) -> Value {
+        if !self.expose_context_ids {
+            return payload;
+        }
+        if let Value::Object(map) = &mut payload {
+            map.insert(
+                "conversation_id".to_string(),
+                Value::String(self.conversation_id.clone()),
+            );
+            if let Some(turn_value) = turn_value {
+                map.insert("conversation_turn_id".to_string(), turn_value);
+            }
+        }
+        payload
+    }
 }
 
 impl TaskManagerService {
@@ -197,6 +222,7 @@ impl TaskManagerService {
         let mut service = Self {
             registry: ToolRegistry::new(),
             auto_create_task: opts.auto_create_task,
+            expose_context_ids: opts.expose_context_ids,
             store: opts.store,
         };
         let add_timeout = opts.review_timeout_ms.max(10_000);
@@ -237,6 +263,7 @@ impl TaskManagerService {
             conversation_id: conversation.to_string(),
             conversation_turn_id: turn.to_string(),
             auto_create_task: self.auto_create_task,
+            expose_context_ids: self.expose_context_ids,
             on_stream_chunk,
             store: self.store.clone(),
         };
@@ -310,16 +337,18 @@ impl TaskManagerService {
                     include_done,
                     limit,
                 ))?;
-                Ok(text_result(json!({
-                    "conversation_id": ctx.conversation_id,
-                    "conversation_turn_id": if current_turn_only {
-                        Value::String(ctx.conversation_turn_id.clone())
-                    } else {
-                        Value::Null
-                    },
-                    "count": tasks.len(),
-                    "tasks": tasks,
-                })))
+                let turn_value = if current_turn_only {
+                    Value::String(ctx.conversation_turn_id.clone())
+                } else {
+                    Value::Null
+                };
+                Ok(text_result(ctx.with_context_ids(
+                    json!({
+                        "count": tasks.len(),
+                        "tasks": tasks,
+                    }),
+                    Some(turn_value),
+                )))
             }),
         );
     }
@@ -352,11 +381,13 @@ impl TaskManagerService {
                     patch,
                 ))?;
                 emit_task_board_refresh(ctx);
-                Ok(text_result(json!({
-                    "updated": true,
-                    "task": task,
-                    "conversation_id": ctx.conversation_id,
-                })))
+                Ok(text_result(ctx.with_context_ids(
+                    json!({
+                        "updated": true,
+                        "task": task,
+                    }),
+                    None,
+                )))
             }),
         );
     }
@@ -397,11 +428,13 @@ impl TaskManagerService {
                     patch,
                 ))?;
                 emit_task_board_refresh(ctx);
-                Ok(text_result(json!({
-                    "completed": true,
-                    "task": task,
-                    "conversation_id": ctx.conversation_id,
-                })))
+                Ok(text_result(ctx.with_context_ids(
+                    json!({
+                        "completed": true,
+                        "task": task,
+                    }),
+                    None,
+                )))
             }),
         );
     }
@@ -425,16 +458,18 @@ impl TaskManagerService {
                         .inner()
                         .delete_task_by_id(ctx.conversation_id.as_str(), task_id.as_str()),
                 )?;
-                Ok(text_result(json!({
-                    "deleted": deleted,
-                    "task_id": task_id,
-                    "reason": if deleted {
-                        Value::Null
-                    } else {
-                        Value::String(TASK_NOT_FOUND_ERR.to_string())
-                    },
-                    "conversation_id": ctx.conversation_id,
-                })))
+                Ok(text_result(ctx.with_context_ids(
+                    json!({
+                        "deleted": deleted,
+                        "task_id": task_id,
+                        "reason": if deleted {
+                            Value::Null
+                        } else {
+                            Value::String(TASK_NOT_FOUND_ERR.to_string())
+                        },
+                    }),
+                    None,
+                )))
             }),
         );
     }
@@ -456,15 +491,16 @@ fn handle_add_task(
             draft_tasks,
         ))?;
         emit_task_board_refresh(ctx);
-        return Ok(text_result(json!({
-            "confirmed": true,
-            "cancelled": false,
-            "auto_created": true,
-            "created_count": tasks.len(),
-            "tasks": tasks,
-            "conversation_id": ctx.conversation_id,
-            "conversation_turn_id": ctx.conversation_turn_id,
-        })));
+        return Ok(text_result(ctx.with_context_ids(
+            json!({
+                "confirmed": true,
+                "cancelled": false,
+                "auto_created": true,
+                "created_count": tasks.len(),
+                "tasks": tasks,
+            }),
+            Some(Value::String(ctx.conversation_turn_id.clone())),
+        )));
     }
     let result = block_on_result(ctx.store.inner().review_and_create_tasks(
         ctx.conversation_id.as_str(),

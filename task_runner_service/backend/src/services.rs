@@ -6,6 +6,7 @@ use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
@@ -170,6 +171,89 @@ pub fn system_config(
             .default_tool_results_model_total_max_chars,
         tool_results_model_total_max_chars: tool_result_model_budget_limits.total_max_chars,
     }
+}
+
+async fn unfinished_subtasks_for_task(
+    store: &AppStore,
+    task: &TaskRecord,
+) -> Result<Vec<TaskRecord>, String> {
+    let mut subtasks = store
+        .list_tasks_filtered(&TaskListFilters {
+            parent_task_id: Some(task.id.clone()),
+            ..TaskListFilters::default()
+        })
+        .await?
+        .into_iter()
+        .filter(|subtask| subtask.status != TaskStatus::Succeeded)
+        .collect::<Vec<_>>();
+    subtasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(subtasks)
+}
+
+fn unfinished_subtasks_error(task: &TaskRecord, subtasks: &[TaskRecord]) -> String {
+    let examples = subtasks
+        .iter()
+        .take(5)
+        .map(|subtask| {
+            format!(
+                "{}({})",
+                subtask.title.trim(),
+                subtask.status.status_string()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("、");
+    let suffix = if subtasks.len() > 5 {
+        format!(" 等 {} 个", subtasks.len())
+    } else {
+        format!(" {} 个", subtasks.len())
+    };
+    format!(
+        "父任务「{}」还有未完成子任务{suffix}：{examples}。请先完成所有子任务，再将父任务标记为成功。",
+        task.title.trim()
+    )
+}
+
+async fn ensure_task_has_no_unfinished_subtasks(
+    store: &AppStore,
+    task: &TaskRecord,
+) -> Result<(), String> {
+    let unfinished = unfinished_subtasks_for_task(store, task).await?;
+    if unfinished.is_empty() {
+        Ok(())
+    } else {
+        Err(unfinished_subtasks_error(task, &unfinished))
+    }
+}
+
+async fn ensure_subtask_can_be_marked_unfinished(
+    store: &AppStore,
+    subtask: &TaskRecord,
+    status: TaskStatus,
+) -> Result<(), String> {
+    if status == TaskStatus::Succeeded {
+        return Ok(());
+    }
+    let Some(parent_task_id) = subtask
+        .parent_task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(parent) = store.get_task(parent_task_id).await? else {
+        return Ok(());
+    };
+    if parent.status != TaskStatus::Succeeded {
+        return Ok(());
+    }
+    Err(format!(
+        "父任务「{}」已经成功，不能再将子任务「{}」改为 {}。",
+        parent.title.trim(),
+        subtask.title.trim(),
+        status.status_string()
+    ))
 }
 
 pub fn task_runner_internal_prompt_preview(

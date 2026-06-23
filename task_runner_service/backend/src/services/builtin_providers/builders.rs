@@ -38,7 +38,11 @@ fn build_task_manager_provider(
         server_name: server.name.clone(),
         review_timeout_ms: REVIEW_TIMEOUT_MS_DEFAULT,
         auto_create_task: true,
-        store: TaskManagerStoreRef::new(Arc::new(TaskRunnerTaskManagerStore::new(task_service))),
+        expose_context_ids: false,
+        store: TaskManagerStoreRef::new(Arc::new(TaskRunnerTaskManagerStore::new(
+            task_service,
+            server.project_id.clone(),
+        ))),
     })?;
     Ok(TaskRunnerBuiltinProvider::new(
         server.name.clone(),

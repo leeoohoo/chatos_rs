@@ -1,6 +1,10 @@
+use crate::bundled_tools::bundled_tool_path;
+
 use super::utils::{ensure_path_inside_root, is_binary_buffer, sha256_bytes};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 #[derive(Clone, Debug)]
 pub struct FsOps {
@@ -303,6 +307,12 @@ fn search_text_in_dir(
     }
 
     let limit = max_results.clamp(1, 500);
+    if let Ok(results) =
+        search_text_in_dir_with_rg(root, workspace_root, query, limit, max_file_bytes)
+    {
+        return Ok(results);
+    }
+
     let mut entries = Vec::new();
     for entry in walkdir::WalkDir::new(root)
         .follow_links(false)
@@ -330,6 +340,112 @@ fn search_text_in_dir(
         entries.append(&mut found);
     }
     Ok(entries)
+}
+
+fn search_text_in_dir_with_rg(
+    root: &Path,
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+    max_file_bytes: u64,
+) -> Result<Vec<SearchResult>, String> {
+    let rg_path = bundled_tool_path("rg").unwrap_or_else(|| PathBuf::from("rg"));
+    let search_path =
+        pathdiff::diff_paths(root, workspace_root).unwrap_or_else(|| root.to_path_buf());
+    let search_path = if search_path.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        search_path
+    };
+
+    let mut command = Command::new(rg_path);
+    command
+        .current_dir(workspace_root)
+        .arg("--json")
+        .arg("--fixed-strings")
+        .arg("--hidden")
+        .arg("--glob")
+        .arg("!.git/**")
+        .arg("--no-messages");
+    if max_file_bytes > 0 {
+        command
+            .arg("--max-filesize")
+            .arg(max_file_bytes.to_string());
+    }
+    command
+        .arg("--")
+        .arg(query)
+        .arg(search_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    let mut child = command.spawn().map_err(|err| err.to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture rg stdout".to_string())?;
+    let reader = BufReader::new(stdout);
+    let mut entries = Vec::new();
+    let mut stopped_at_limit = false;
+
+    for line in reader.lines() {
+        let line = line.map_err(|err| err.to_string())?;
+        if let Some(entry) = parse_rg_match_line(line.as_str(), workspace_root) {
+            entries.push(entry);
+            if entries.len() >= limit {
+                stopped_at_limit = true;
+                let _ = child.kill();
+                break;
+            }
+        }
+    }
+
+    let status = child.wait().map_err(|err| err.to_string())?;
+    if stopped_at_limit || status.success() || status.code() == Some(1) {
+        return Ok(entries);
+    }
+
+    Err(format!("rg exited with status {status}"))
+}
+
+fn parse_rg_match_line(line: &str, workspace_root: &Path) -> Option<SearchResult> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(|value| value.as_str()) != Some("match") {
+        return None;
+    }
+
+    let data = value.get("data")?;
+    let raw_path = data
+        .get("path")
+        .and_then(|value| value.get("text"))
+        .and_then(|value| value.as_str())?;
+    let path = normalize_rg_result_path(raw_path, workspace_root);
+    let line = data
+        .get("line_number")
+        .and_then(|value| value.as_u64())
+        .map(|value| value as usize)?;
+    let text = data
+        .get("lines")
+        .and_then(|value| value.get("text"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+
+    Some(SearchResult { path, line, text })
+}
+
+fn normalize_rg_result_path(raw_path: &str, workspace_root: &Path) -> String {
+    let path = PathBuf::from(raw_path);
+    if path.is_absolute() {
+        pathdiff::diff_paths(path.as_path(), workspace_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        raw_path.replace('\\', "/")
+    }
 }
 
 #[cfg(test)]

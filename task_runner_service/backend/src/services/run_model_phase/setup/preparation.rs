@@ -9,6 +9,7 @@ pub(super) async fn prepare_model_execution(
     effective_workspace_dir: &str,
     prerequisite_context: &[PrerequisiteTaskContext],
 ) -> Result<PreparedModelExecution, String> {
+    let loaded_external_mcp = load_external_mcp_servers(service, task).await?;
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -25,6 +26,10 @@ pub(super) async fn prepare_model_execution(
         prompt,
         metadata.clone(),
         task_process_logging_enabled,
+        external_mcp_prefixed_input_items(
+            loaded_external_mcp.summaries.as_slice(),
+            task.mcp_config.locale(),
+        ),
     );
 
     let memory_scope = build_memory_scope(service, task);
@@ -49,11 +54,23 @@ pub(super) async fn prepare_model_execution(
         task_service.clone(),
     )
     .await;
-    let (http_servers, stdio_servers) = load_external_mcp_servers(service, task).await?;
+    if !loaded_external_mcp.summaries.is_empty() {
+        info!(
+            task_id = task.id.as_str(),
+            run_id = run.id.as_str(),
+            external_mcp_servers = %loaded_external_mcp
+                .summaries
+                .iter()
+                .map(|summary| format!("{}:{}:{}", summary.id, summary.name, summary.transport))
+                .collect::<Vec<_>>()
+                .join(","),
+            "task runner loaded external MCP servers"
+        );
+    }
 
     let mcp_builder = McpExecutorBuilder::new()
-        .with_http_servers(http_servers)
-        .with_stdio_servers(stdio_servers)
+        .with_http_servers(loaded_external_mcp.http_servers)
+        .with_stdio_servers(loaded_external_mcp.stdio_servers)
         .with_builtin_servers(builtin_servers)
         .with_builtin_registry(builtin_registry);
 
@@ -65,16 +82,35 @@ pub(super) async fn prepare_model_execution(
     })
 }
 
+#[derive(Debug, Clone)]
+struct LoadedExternalMcpServers {
+    http_servers: Vec<McpHttpServer>,
+    stdio_servers: Vec<McpStdioServer>,
+    summaries: Vec<ExternalMcpRuntimeSummary>,
+}
+
+#[derive(Debug, Clone)]
+struct ExternalMcpRuntimeSummary {
+    id: String,
+    name: String,
+    transport: String,
+}
+
 async fn load_external_mcp_servers(
     service: &RunService,
     task: &TaskRecord,
-) -> Result<(Vec<McpHttpServer>, Vec<McpStdioServer>), String> {
+) -> Result<LoadedExternalMcpServers, String> {
     if !task.mcp_config.enabled || task.mcp_config.external_mcp_config_ids.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok(LoadedExternalMcpServers {
+            http_servers: Vec::new(),
+            stdio_servers: Vec::new(),
+            summaries: Vec::new(),
+        });
     }
 
     let mut http_servers = Vec::new();
     let mut stdio_servers = Vec::new();
+    let mut summaries = Vec::new();
     for config_id in &task.mcp_config.external_mcp_config_ids {
         let config = service
             .store
@@ -91,8 +127,55 @@ async fn load_external_mcp_servers(
         } else {
             return Err(format!("外部 MCP 配置无效: {config_id}"));
         }
+        summaries.push(ExternalMcpRuntimeSummary {
+            id: config.id,
+            name: config.name,
+            transport: config.transport,
+        });
     }
-    Ok((http_servers, stdio_servers))
+    Ok(LoadedExternalMcpServers {
+        http_servers,
+        stdio_servers,
+        summaries,
+    })
+}
+
+fn external_mcp_prefixed_input_items(
+    summaries: &[ExternalMcpRuntimeSummary],
+    locale: BuiltinMcpPromptLocale,
+) -> Vec<Value> {
+    if summaries.is_empty() {
+        return Vec::new();
+    }
+
+    let list = summaries
+        .iter()
+        .map(|summary| {
+            format!(
+                "- {} (id: {}, transport: {})",
+                summary.name, summary.id, summary.transport
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = if locale.is_english() {
+        format!(
+            "[External MCP]\nTask Runner has loaded these user-configured external MCP servers for this task:\n{list}\n\nIf the task objective asks you to use these external systems, directly call the corresponding tools currently exposed to you. External MCP tool names usually use the config name as their prefix. Do not inspect local Gemini/Codex/Claude MCP config files to decide whether these MCP servers exist; they are injected by Task Runner for this run. Use builtin tools only when the task also needs local code, terminal, browser, or other builtin capabilities."
+        )
+    } else {
+        format!(
+            "[外部 MCP]\nTask Runner 已为当前任务加载这些用户配置的外部 MCP：\n{list}\n\n如果任务目标要求使用这些外部系统，请直接调用当前暴露给你的对应工具。外部 MCP 工具名通常会以配置名称作为前缀。不要检查本机 Gemini/Codex/Claude 的 MCP 配置文件来判断这些 MCP 是否存在；它们已经由 Task Runner 在本次运行中注入。只有当任务同时需要本地代码、终端、浏览器或其他 builtin 能力时，才使用 builtin 工具。"
+        )
+    };
+
+    vec![json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": text
+        }]
+    })]
 }
 
 fn build_execution_metadata(
@@ -116,6 +199,7 @@ fn build_run_spec(
     prompt: String,
     metadata: serde_json::Value,
     task_process_logging_enabled: bool,
+    external_mcp_prefixed_input_items: Vec<Value>,
 ) -> TaskRunSpec {
     let mut effective_model_config = model_config.clone();
     effective_model_config.request_cwd = Some(effective_workspace_dir.to_string());
@@ -146,10 +230,14 @@ fn build_run_spec(
             .with_message_source("task_runner")
             .with_metadata(metadata),
     ));
+    let mut prefixed_input_items = external_mcp_prefixed_input_items;
     if task_process_logging_enabled {
-        run_spec = run_spec.with_prefixed_input_items(task_process_log_prefixed_input_items(
+        prefixed_input_items.extend(task_process_log_prefixed_input_items(
             task.mcp_config.locale(),
         ));
+    }
+    if !prefixed_input_items.is_empty() {
+        run_spec = run_spec.with_prefixed_input_items(prefixed_input_items);
     }
     run_spec
 }
@@ -229,6 +317,19 @@ async fn build_mcp_builder_parts(
     }
 
     let selected_builtin_kinds = selected_builtin_kinds(&task.mcp_config);
+    let selected_builtin_kind_names = selected_builtin_kinds
+        .iter()
+        .map(|kind| kind.kind_name().to_string())
+        .collect::<Vec<_>>();
+    info!(
+        task_id = task.id.as_str(),
+        run_id = run.id.as_str(),
+        builtin_mcp_count = selected_builtin_kind_names.len(),
+        builtin_mcp_kinds = %selected_builtin_kind_names.join(","),
+        external_mcp_config_count = task.mcp_config.external_mcp_config_ids.len(),
+        external_mcp_config_ids = %task.mcp_config.external_mcp_config_ids.join(","),
+        "task runner resolved MCP selection"
+    );
     let mut builtin_servers =
         builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
     if task_process_logging_enabled {
