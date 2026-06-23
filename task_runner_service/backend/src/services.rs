@@ -184,6 +184,7 @@ pub fn task_runner_internal_prompt_preview(
         vec![
             "The prerequisite-task section is injected only when the task declares prerequisite tasks.".to_string(),
             "Task description and input-data sections appear only when the current task has those values.".to_string(),
+            "The main task prompt asks the runner to understand the real flow, reuse existing code or platform capabilities, and leave the smallest useful verification evidence.".to_string(),
             "The process-log system message is injected only when MCP stays enabled for the task run.".to_string(),
             "Builtin MCP system prompt content is shown separately and follows the same prompt-language setting.".to_string(),
         ]
@@ -191,6 +192,7 @@ pub fn task_runner_internal_prompt_preview(
         vec![
             "前置任务结果段只会在任务配置了前置任务时注入。".to_string(),
             "任务说明和输入数据两段只有当前任务存在对应值时才会出现。".to_string(),
+            "任务主 prompt 会要求执行方先理解真实链路、优先复用已有代码或平台能力，并留下最小但有用的验证证据。".to_string(),
             "过程日志系统提示只会在该次任务运行保持启用 MCP 时注入。".to_string(),
             "Builtin MCP system prompt 会单独展示，并跟随同一个 prompt 语言设置。".to_string(),
         ]

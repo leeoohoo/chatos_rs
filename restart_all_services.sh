@@ -24,13 +24,11 @@ MEMORY_ENGINE_SCRIPT="$ROOT_DIR/memory_engine/restart_services.sh"
 USER_SERVICE_SCRIPT="$ROOT_DIR/user_service/restart_services.sh"
 CHATOS_SCRIPT="$ROOT_DIR/restart_services.sh"
 TASK_RUNNER_SCRIPT="$ROOT_DIR/restart_task_runner_service.sh"
-DB_CONNECTION_HUB_SCRIPT="$ROOT_DIR/db_connection_hub/restart_services.sh"
 
 START_MEMORY_ENGINE="${START_MEMORY_ENGINE:-1}"
 START_USER_SERVICE="${START_USER_SERVICE:-1}"
 START_CHATOS="${START_CHATOS:-1}"
 START_TASK_RUNNER="${START_TASK_RUNNER:-1}"
-START_DB_CONNECTION_HUB="${START_DB_CONNECTION_HUB:-1}"
 
 sync_memory_engine_operator_token() {
   if [[ -n "${MEMORY_ENGINE_OPERATOR_TOKEN:-}" ]]; then
@@ -84,10 +82,6 @@ do_status() {
     run_service "user_service" "$USER_SERVICE_SCRIPT" status
     echo
   fi
-  if run_enabled "$START_DB_CONNECTION_HUB"; then
-    run_service "db_connection_hub" "$DB_CONNECTION_HUB_SCRIPT" status
-    echo
-  fi
   if run_enabled "$START_CHATOS"; then
     run_chatos status
     echo
@@ -106,9 +100,6 @@ do_stop() {
   if run_enabled "$START_CHATOS"; then
     run_chatos stop || failed=1
   fi
-  if run_enabled "$START_DB_CONNECTION_HUB"; then
-    run_service "db_connection_hub" "$DB_CONNECTION_HUB_SCRIPT" stop || failed=1
-  fi
   if run_enabled "$START_USER_SERVICE"; then
     run_service "user_service" "$USER_SERVICE_SCRIPT" stop || failed=1
   fi
@@ -122,7 +113,6 @@ do_stop() {
 do_restart() {
   local started_memory=0
   local started_user=0
-  local started_db_hub=0
   local started_chatos=0
   local started_task=0
 
@@ -135,10 +125,6 @@ do_restart() {
   if run_enabled "$START_USER_SERVICE"; then
     run_service "user_service" "$USER_SERVICE_SCRIPT" restart || return 1
     started_user=1
-  fi
-  if run_enabled "$START_DB_CONNECTION_HUB"; then
-    run_service "db_connection_hub" "$DB_CONNECTION_HUB_SCRIPT" restart || return 1
-    started_db_hub=1
   fi
   if run_enabled "$START_CHATOS"; then
     run_chatos restart || return 1
@@ -157,10 +143,6 @@ do_restart() {
   if (( started_user == 1 )); then
     echo "  user_service backend: http://localhost:${USER_SERVICE_PORT:-39190}"
     echo "  user_service frontend: http://localhost:${USER_SERVICE_FRONTEND_PORT:-39191}"
-  fi
-  if (( started_db_hub == 1 )); then
-    echo "  db_connection_hub backend: http://localhost:${DB_HUB_BACKEND_PORT:-${DB_HUB_PORT:-8099}}"
-    echo "  db_connection_hub frontend: http://localhost:${DB_HUB_FRONTEND_PORT:-5174}"
   fi
   if (( started_chatos == 1 )); then
     echo "  chatos backend: http://localhost:${MAIN_BACKEND_PORT:-${BACKEND_PORT:-3997}}"

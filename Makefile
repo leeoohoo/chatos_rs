@@ -34,7 +34,7 @@ help:
 	@echo "  make restart-db-hub       # restart db_connection_hub backend + frontend"
 	@echo "  make status-db-hub        # show db_connection_hub status"
 	@echo "  make stop-db-hub          # stop db_connection_hub backend + frontend"
-	@echo "  make restart-all          # restart memory_engine + user_service + db_connection_hub + chatos + task_runner"
+	@echo "  make restart-all          # restart memory_engine + user_service + chatos + task_runner"
 	@echo "  make status-all           # show full stack status"
 	@echo "  make stop-all             # stop full stack"
 	@echo "  make build               # build key subprojects"
