@@ -81,6 +81,7 @@ struct BrowserVisionCandidate {
     temperature: f64,
     api_key: String,
     base_url: String,
+    request_body_limit_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +163,7 @@ fn browser_vision_candidate_from_model_cfg(
         temperature: runtime.temperature,
         api_key: runtime.api_key,
         base_url: runtime.base_url,
+        request_body_limit_bytes: None,
     })
 }
 
@@ -197,6 +199,7 @@ fn browser_vision_candidate_from_caller_runtime(
         temperature: runtime.temperature.unwrap_or(0.7),
         api_key,
         base_url,
+        request_body_limit_bytes: runtime.request_body_limit_bytes,
     })
 }
 
@@ -221,6 +224,7 @@ fn default_browser_vision_candidate(
         temperature: 0.7,
         api_key: cfg.openai_api_key.clone(),
         base_url: cfg.openai_base_url.clone(),
+        request_body_limit_bytes: None,
     })
 }
 
@@ -709,7 +713,8 @@ async fn run_browser_vision_with_responses(
     .with_instructions(candidate.instructions.clone())
     .with_temperature(Some(candidate.temperature))
     .with_max_output_tokens(Some(DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS))
-    .with_thinking_level(candidate.thinking_level.clone());
+    .with_thinking_level(candidate.thinking_level.clone())
+    .with_request_body_limit_bytes(candidate.request_body_limit_bytes);
     let response = shared_ai_runtime::run_compatible_prompt_with(
         &handler,
         &runtime,

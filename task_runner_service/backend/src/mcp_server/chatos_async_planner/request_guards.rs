@@ -7,7 +7,7 @@ pub(in crate::mcp_server) fn planner_update_task_request(
         return Err("联系人异步模式不能通过 update_task 修改任务执行状态".to_string());
     }
     if let Some(config) = patch.mcp_config.as_mut() {
-        ensure_builtin_task_manager_config(config);
+        ensure_system_injected_builtin_config(config);
     }
     Ok(patch)
 }
@@ -16,7 +16,7 @@ pub(in crate::mcp_server) fn planner_root_create_request(
     mut input: CreateTaskRequest,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
-    ensure_builtin_task_manager_mcp(&mut input);
+    ensure_system_injected_builtin_mcp(&mut input);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -50,7 +50,7 @@ pub(in crate::mcp_server) fn planner_prerequisite_create_request(
     mut input: CreateTaskRequest,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
-    ensure_builtin_task_manager_mcp(&mut input);
+    ensure_system_injected_builtin_mcp(&mut input);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -65,9 +65,7 @@ pub(in crate::mcp_server) fn ensure_planner_required_fields(
     Ok(())
 }
 
-const BUILTIN_TASK_MANAGER_KIND: &str = "TaskManager";
-
-fn ensure_builtin_task_manager_mcp(input: &mut CreateTaskRequest) {
+fn ensure_system_injected_builtin_mcp(input: &mut CreateTaskRequest) {
     let defaults = TaskMcpConfig::default();
     let config = input.mcp_config.get_or_insert_with(|| TaskMcpConfig {
         enabled_builtin_kinds: Vec::new(),
@@ -77,21 +75,21 @@ fn ensure_builtin_task_manager_mcp(input: &mut CreateTaskRequest) {
     config.init_mode = defaults.init_mode;
     config.builtin_prompt_mode = defaults.builtin_prompt_mode;
     config.builtin_prompt_locale = defaults.builtin_prompt_locale;
-    ensure_builtin_task_manager_config(config);
+    ensure_system_injected_builtin_config(config);
 }
 
-fn ensure_builtin_task_manager_config(config: &mut TaskMcpConfig) {
+fn ensure_system_injected_builtin_config(config: &mut TaskMcpConfig) {
     let defaults = TaskMcpConfig::default();
     config.enabled = true;
     config.init_mode = defaults.init_mode;
-    if !config
-        .enabled_builtin_kinds
-        .iter()
-        .any(|value| value.trim() == BUILTIN_TASK_MANAGER_KIND)
-    {
-        config
+    for kind in SYSTEM_INJECTED_BUILTIN_KINDS {
+        if !config
             .enabled_builtin_kinds
-            .push(BUILTIN_TASK_MANAGER_KIND.to_string());
+            .iter()
+            .any(|value| value.trim().eq_ignore_ascii_case(kind))
+        {
+            config.enabled_builtin_kinds.push((*kind).to_string());
+        }
     }
 }
 

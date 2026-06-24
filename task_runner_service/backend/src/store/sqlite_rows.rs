@@ -1,14 +1,14 @@
 use sqlx::{sqlite::SqliteRow, Row};
 
 use crate::models::{
-    task_project_status_from_str, ExternalMcpConfigRecord, ModelConfigRecord, RemoteServerRecord,
-    RunSummaryRecord, RuntimeSettingsRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskSummaryRecord, UiPromptRecord, UserRecord,
+    task_project_status_from_str, AskUserPromptRecord, ExternalMcpConfigRecord, ModelConfigRecord,
+    RemoteServerRecord, RunSummaryRecord, RuntimeSettingsRecord, TaskProjectRecord, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord, UserRecord,
 };
 
 use super::codec::{
-    decode_json, decode_json_option, decode_json_optional_typed, int_to_bool,
-    task_run_status_from_str, task_status_from_str, ui_prompt_status_from_str, user_role_from_str,
+    ask_user_prompt_status_from_str, decode_json, decode_json_option, decode_json_optional_typed,
+    int_to_bool, task_run_status_from_str, task_status_from_str, user_role_from_str,
 };
 
 pub(super) fn task_from_row(row: &SqliteRow) -> Result<TaskRecord, String> {
@@ -242,8 +242,8 @@ pub(super) fn task_run_event_from_row(row: &SqliteRow) -> Result<TaskRunEventRec
     })
 }
 
-pub(super) fn ui_prompt_from_row(row: &SqliteRow) -> Result<UiPromptRecord, String> {
-    Ok(UiPromptRecord {
+pub(super) fn ask_user_prompt_from_row(row: &SqliteRow) -> Result<AskUserPromptRecord, String> {
+    Ok(AskUserPromptRecord {
         id: row.get("id"),
         task_id: row.get("task_id"),
         run_id: row.get("run_id"),
@@ -257,7 +257,7 @@ pub(super) fn ui_prompt_from_row(row: &SqliteRow) -> Result<UiPromptRecord, Stri
         timeout_ms: row.get::<i64, _>("timeout_ms") as u64,
         payload: decode_json(row.get("payload_json"))?,
         response: decode_json_optional_typed(row.get("response_json"))?,
-        status: ui_prompt_status_from_str(row.get::<String, _>("status").as_str()),
+        status: ask_user_prompt_status_from_str(row.get::<String, _>("status").as_str()),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         expires_at: row.get("expires_at"),

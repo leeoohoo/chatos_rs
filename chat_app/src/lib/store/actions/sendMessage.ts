@@ -9,6 +9,8 @@ import { debugLog } from '@/lib/utils';
 import {
   assertPayloadWithinTransportBudget,
   prepareAttachmentsForStreaming,
+  requestPayloadMaxBytesForAttachmentTotalLimit,
+  resolveAttachmentTotalMaxBytes,
 } from './sendMessage/attachments';
 import { createInternalId } from './sendMessage/internalId';
 import { createDraftUserMessage } from './sendMessage/messageFactory';
@@ -32,6 +34,7 @@ import {
   mergeSessionRuntimeIntoMetadata,
   readSessionRuntimeFromMetadata,
 } from '../helpers/sessionRuntime';
+import { PUBLIC_PROJECT_ID } from '../../domain/contactSessions';
 import type {
   ChatStoreGet,
   ChatStoreSet,
@@ -40,6 +43,26 @@ import { type StreamingMessage } from './sendMessage/types';
 import { rollbackFailedSendMessage } from './sendMessage/streamExecution';
 
 const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
+
+const hasConcreteProjectContext = (projectId: string | null | undefined): boolean => {
+  const normalized = typeof projectId === 'string' ? projectId.trim() : '';
+  return normalized.length > 0 && normalized !== '0' && normalized !== PUBLIC_PROJECT_ID;
+};
+
+const loadAttachmentTotalMaxBytes = async (
+  client: ApiClient,
+  userId: string,
+): Promise<number> => {
+  try {
+    const response = await client.getUserSettings(userId || undefined);
+    return resolveAttachmentTotalMaxBytes(
+      response?.effective?.ATTACHMENT_TOTAL_MAX_BYTES
+        ?? response?.settings?.ATTACHMENT_TOTAL_MAX_BYTES,
+    );
+  } catch {
+    return resolveAttachmentTotalMaxBytes(undefined);
+  }
+};
 
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
@@ -58,7 +81,7 @@ export function createSendMessageHandler({
     attachments: File[] = [],
     runtimeOptions: SendMessageRuntimeOptions = {},
   ) {
-    let tempAssistantId: string | null = null;
+    const tempAssistantId: string | null = null;
     const {
       currentSessionId,
       currentSession,
@@ -115,6 +138,8 @@ export function createSendMessageHandler({
       effectiveWorkspaceRoot,
       effectiveExecutionRoot,
     } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsWithContactFallback);
+    const planMode = hasConcreteProjectContext(effectiveProjectId)
+      && (runtimeOptions.planMode === true || chatConfig.planModeEnabled === true);
     const selectedModel = resolveSelectedModelOrThrow(
       effectiveSelectedModelId,
       aiModelConfigs,
@@ -145,7 +170,7 @@ export function createSendMessageHandler({
 
     const conversationTurnId = createInternalId('turn');
     const streamedTextRef = { value: '' };
-    let tempAssistantMessage: StreamingMessage = {
+    const tempAssistantMessage: StreamingMessage = {
       id: '',
       sessionId: currentSessionId,
       role: 'assistant' as const,
@@ -159,9 +184,12 @@ export function createSendMessageHandler({
         supportsImages,
         reasoningEnabled,
       } = resolveModelCapabilities(selectedModelForRequest, chatConfig);
+      const userId = getUserIdParam();
+      const attachmentTotalMaxBytes = await loadAttachmentTotalMaxBytes(client, userId);
       const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
         attachments,
         supportsImages,
+        { maxTotalBytes: attachmentTotalMaxBytes },
       );
 
       // 创建用户消息（仅前端展示，不立即保存数据库）
@@ -202,6 +230,7 @@ export function createSendMessageHandler({
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
+        planMode,
       });
 
       debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
@@ -213,8 +242,8 @@ export function createSendMessageHandler({
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
+        planMode,
       });
-      const userId = getUserIdParam();
       assertPayloadWithinTransportBudget({
         conversation_id: currentSessionId,
         content,
@@ -232,13 +261,14 @@ export function createSendMessageHandler({
         project_id: streamRuntimeOptions.projectId || undefined,
         project_root: streamRuntimeOptions.projectRoot || undefined,
         workspace_root: streamRuntimeOptions.workspaceRoot || undefined,
+        plan_mode: streamRuntimeOptions.planMode,
         model_config_id: selectedModelForRequest.id,
         ai_model_config: {
           temperature: 0.7,
           model_name: selectedModelForRequest.model_name,
           thinking_level: selectedModelForRequest.thinking_level || null,
         },
-      });
+      }, requestPayloadMaxBytesForAttachmentTotalLimit(attachmentTotalMaxBytes));
       let preferRealtimeStream = getRealtimeConnectionStateSnapshot() === 'connected';
       if (!preferRealtimeStream) {
         preferRealtimeStream = await waitForRealtimeConnectedSnapshot(REALTIME_STREAM_CONNECT_GRACE_MS);

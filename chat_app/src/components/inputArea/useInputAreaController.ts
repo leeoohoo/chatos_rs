@@ -27,6 +27,8 @@ type UseInputAreaControllerParams = Pick<
   | 'onThinkingLevelChange'
   | 'onModelRuntimeChange'
   | 'availableModels'
+  | 'planModeAvailable'
+  | 'planModeEnabled'
   | 'availableProjects'
   | 'selectedProjectId'
   | 'showProjectFileButton'
@@ -59,6 +61,8 @@ export function useInputAreaController({
   onThinkingLevelChange,
   onModelRuntimeChange,
   availableModels = [],
+  planModeAvailable = false,
+  planModeEnabled = false,
   availableProjects = [],
   selectedProjectId = null,
   showProjectFileButton = true,
@@ -307,8 +311,11 @@ export function useInputAreaController({
     maxLength,
     normalizedWorkspaceRoot,
     onSend,
+    planModeAvailable,
+    planModeEnabled,
     requireModelSelection,
     selectedModelId,
+    selectedProjectId,
     selectedRuntimeProject,
     effectiveModelName,
     effectiveThinkingLevel,

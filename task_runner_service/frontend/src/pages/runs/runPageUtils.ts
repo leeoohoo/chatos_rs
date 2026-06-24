@@ -1,4 +1,4 @@
-import type { TaskRunStatus, UiPromptStatus } from '../../types';
+import type { TaskRunStatus, AskUserPromptStatus } from '../../types';
 
 export type RunStatusFilter = TaskRunStatus | 'all';
 
@@ -11,7 +11,7 @@ export const runColorMap: Record<TaskRunStatus, string> = {
   blocked: 'warning',
 };
 
-export const promptColorMap: Record<UiPromptStatus, string> = {
+export const promptColorMap: Record<AskUserPromptStatus, string> = {
   pending: 'processing',
   submitted: 'success',
   cancelled: 'default',

@@ -1,8 +1,8 @@
-import type { UiPromptStatus } from '../../types';
+import type { AskUserPromptStatus } from '../../types';
 
-export type PromptStatusFilter = UiPromptStatus | 'all';
+export type PromptStatusFilter = AskUserPromptStatus | 'all';
 
-export const promptColorMap: Record<UiPromptStatus, string> = {
+export const promptColorMap: Record<AskUserPromptStatus, string> = {
   pending: 'processing',
   submitted: 'success',
   cancelled: 'default',

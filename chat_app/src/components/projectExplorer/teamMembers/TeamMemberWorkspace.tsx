@@ -27,6 +27,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   aiModelConfigs,
   supportsReasoning,
   reasoningEnabled,
+  planModeEnabled,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
@@ -41,6 +42,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onThinkingLevelChange,
   onModelRuntimeChange,
   onReasoningToggle,
+  onPlanModeToggle,
 }) => {
   const { supportsImages } = useMemo(
     () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
@@ -89,6 +91,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         aiModelConfigs={aiModelConfigs}
         supportsReasoning={supportsReasoning}
         reasoningEnabled={reasoningEnabled}
+        planModeEnabled={planModeEnabled}
         availableRemoteConnections={availableRemoteConnections}
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
@@ -98,6 +101,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         onThinkingLevelChange={onThinkingLevelChange}
         onModelRuntimeChange={onModelRuntimeChange}
         onReasoningToggle={onReasoningToggle}
+        onPlanModeToggle={onPlanModeToggle}
         supportedFileTypes={supportedFileTypes}
       />
     </div>

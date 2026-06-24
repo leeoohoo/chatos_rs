@@ -1,3 +1,4 @@
+use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::AuthService;
 use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
@@ -6,7 +7,6 @@ use crate::services::{
     RunService, TaskProjectService, TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
-use crate::ui_prompt_service::UiPromptService;
 use memory_engine_sdk::UpsertSourceRequest;
 use serde_json::json;
 use tracing::{info, warn};
@@ -20,7 +20,7 @@ pub struct AppState {
     pub external_mcp_config_service: ExternalMcpConfigService,
     pub task_project_service: TaskProjectService,
     pub run_service: RunService,
-    pub ui_prompt_service: UiPromptService,
+    pub ask_user_prompt_service: AskUserPromptService,
     pub mcp_catalog_service: McpCatalogService,
     pub tooling_state_service: ToolingStateService,
     pub task_runner_mcp_service: TaskRunnerMcpService,
@@ -35,12 +35,18 @@ impl AppState {
         auth_service.ensure_default_admin(&config).await?;
         let task_service = TaskService::new(config.clone(), store.clone());
         let model_config_service = ModelConfigService::new(store.clone());
-        let task_project_service = TaskProjectService::new(store.clone());
+        let task_project_service =
+            TaskProjectService::new_with_config(store.clone(), config.clone());
         task_project_service.ensure_public_project().await?;
         let remote_server_service = RemoteServerService::new(store.clone());
         let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
-        let ui_prompt_service = UiPromptService::new(store.clone());
-        let run_service = RunService::new(config.clone(), store.clone(), ui_prompt_service.clone());
+        let ask_user_prompt_service =
+            AskUserPromptService::new_with_config(store.clone(), config.clone());
+        let run_service = RunService::new(
+            config.clone(),
+            store.clone(),
+            ask_user_prompt_service.clone(),
+        );
         match run_service.recover_incomplete_runs().await {
             Ok(count) if count > 0 => {
                 info!("recovered {} incomplete task runs during startup", count);
@@ -54,14 +60,14 @@ impl AppState {
             }
         }
         let mcp_catalog_service =
-            McpCatalogService::new(task_service.clone(), ui_prompt_service.clone());
+            McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());
         let tooling_state_service = ToolingStateService::new(config.clone());
         let task_runner_mcp_service = TaskRunnerMcpService::new(
             task_service.clone(),
             model_config_service.clone(),
             external_mcp_config_service.clone(),
             run_service.clone(),
-            ui_prompt_service.clone(),
+            ask_user_prompt_service.clone(),
             mcp_catalog_service.clone(),
         );
         Ok(Self {
@@ -72,7 +78,7 @@ impl AppState {
             external_mcp_config_service,
             task_project_service,
             run_service,
-            ui_prompt_service,
+            ask_user_prompt_service,
             mcp_catalog_service,
             tooling_state_service,
             task_runner_mcp_service,

@@ -85,73 +85,29 @@ pub async fn fetch_task_runner_skill(base_url: &str, lang: &str) -> Result<Strin
     Ok(content.to_string())
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct TaskRunnerProjectRecord {
-    pub id: String,
-    pub owner_user_id: Option<String>,
-    pub name: String,
-    pub root_path: Option<String>,
-    pub git_url: Option<String>,
-    pub description: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateTaskRunnerProjectRequest {
-    pub name: String,
-    pub root_path: Option<String>,
-    pub git_url: Option<String>,
-    pub description: Option<String>,
+#[derive(Debug, Default, Serialize)]
+pub struct SubmitTaskRunnerPromptRequest {
+    pub values: Option<Value>,
+    pub selection: Option<Value>,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
-pub struct UpdateTaskRunnerProjectRequest {
-    pub name: Option<String>,
-    pub root_path: Option<String>,
-    pub git_url: Option<String>,
-    pub description: Option<String>,
+pub struct CancelTaskRunnerPromptRequest {
+    pub reason: Option<String>,
 }
 
-pub async fn list_task_runner_projects(
+pub async fn submit_task_runner_prompt(
     base_url: &str,
     access_token: &str,
-    status: Option<&str>,
-) -> Result<Vec<TaskRunnerProjectRecord>, String> {
-    let endpoint = format!("{}/api/projects", base_url.trim().trim_end_matches('/'));
-    let mut request = reqwest::Client::new()
-        .get(endpoint)
-        .bearer_auth(access_token.trim());
-    if let Some(status) = status.map(str::trim).filter(|value| !value.is_empty()) {
-        request = request.query(&[("status", status)]);
-    }
-    send_json(request).await
-}
-
-pub async fn get_task_runner_project(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-) -> Result<Option<TaskRunnerProjectRecord>, String> {
+    prompt_id: &str,
+    request: &SubmitTaskRunnerPromptRequest,
+) -> Result<Value, String> {
     let endpoint = format!(
-        "{}/api/projects/{}",
+        "{}/api/prompts/{}/submit",
         base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
+        urlencoding::encode(prompt_id.trim())
     );
-    send_optional_json(
-        reqwest::Client::new()
-            .get(endpoint)
-            .bearer_auth(access_token.trim()),
-    )
-    .await
-}
-
-pub async fn create_task_runner_project(
-    base_url: &str,
-    access_token: &str,
-    request: &CreateTaskRunnerProjectRequest,
-) -> Result<TaskRunnerProjectRecord, String> {
-    let endpoint = format!("{}/api/projects", base_url.trim().trim_end_matches('/'));
     send_json(
         reqwest::Client::new()
             .post(endpoint)
@@ -161,76 +117,22 @@ pub async fn create_task_runner_project(
     .await
 }
 
-pub async fn update_task_runner_project(
+pub async fn cancel_task_runner_prompt(
     base_url: &str,
     access_token: &str,
-    project_id: &str,
-    request: &UpdateTaskRunnerProjectRequest,
-) -> Result<Option<TaskRunnerProjectRecord>, String> {
+    prompt_id: &str,
+    request: &CancelTaskRunnerPromptRequest,
+) -> Result<Value, String> {
     let endpoint = format!(
-        "{}/api/projects/{}",
+        "{}/api/prompts/{}/cancel",
         base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
+        urlencoding::encode(prompt_id.trim())
     );
-    send_optional_json(
+    send_json(
         reqwest::Client::new()
-            .patch(endpoint)
+            .post(endpoint)
             .bearer_auth(access_token.trim())
             .json(request),
-    )
-    .await
-}
-
-pub async fn archive_task_runner_project(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-) -> Result<Option<TaskRunnerProjectRecord>, String> {
-    let endpoint = format!(
-        "{}/api/projects/{}",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    send_optional_json(
-        reqwest::Client::new()
-            .delete(endpoint)
-            .bearer_auth(access_token.trim()),
-    )
-    .await
-}
-
-pub async fn sync_list_task_runner_projects(
-    base_url: &str,
-    sync_secret: &str,
-    status: Option<&str>,
-) -> Result<Vec<TaskRunnerProjectRecord>, String> {
-    let endpoint = format!(
-        "{}/api/chatos-sync/projects",
-        base_url.trim().trim_end_matches('/')
-    );
-    let mut request = reqwest::Client::new()
-        .get(endpoint)
-        .header("X-Chatos-Callback-Secret", sync_secret.trim());
-    if let Some(status) = status.map(str::trim).filter(|value| !value.is_empty()) {
-        request = request.query(&[("status", status)]);
-    }
-    send_json(request).await
-}
-
-pub async fn sync_get_task_runner_project(
-    base_url: &str,
-    sync_secret: &str,
-    project_id: &str,
-) -> Result<Option<TaskRunnerProjectRecord>, String> {
-    let endpoint = format!(
-        "{}/api/chatos-sync/projects/{}",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    send_optional_json(
-        reqwest::Client::new()
-            .get(endpoint)
-            .header("X-Chatos-Callback-Secret", sync_secret.trim()),
     )
     .await
 }
@@ -242,32 +144,9 @@ async fn send_json<T: for<'de> Deserialize<'de>>(
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Task Runner project request failed: {status} {body}"
-        ));
+        return Err(format!("Task Runner request failed: {status} {body}"));
     }
     response.json::<T>().await.map_err(|err| err.to_string())
-}
-
-async fn send_optional_json<T: for<'de> Deserialize<'de>>(
-    request: reqwest::RequestBuilder,
-) -> Result<Option<T>, String> {
-    let response = request.send().await.map_err(|err| err.to_string())?;
-    let status = response.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Task Runner project request failed: {status} {body}"
-        ));
-    }
-    response
-        .json::<T>()
-        .await
-        .map(Some)
-        .map_err(|err| err.to_string())
 }
 
 async fn get_internal_json(

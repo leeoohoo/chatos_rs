@@ -31,7 +31,7 @@ use super::task_process_log::{
     task_process_logging_enabled, TaskProcessLogBuiltinProvider,
     TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
 };
-use super::workspace_mcp::selected_builtin_kinds;
+use super::workspace_mcp::runtime_selected_builtin_kinds;
 use super::{
     build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
     unfinished_subtasks_for_task, RunService, TaskService,

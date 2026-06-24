@@ -9,6 +9,7 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tracing::info;
 use uuid::Uuid;
 
+use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
@@ -25,7 +26,6 @@ use crate::models::{
     UpdateTaskMcpRequest, UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
 use crate::store::AppStore;
-use crate::ui_prompt_service::UiPromptService;
 
 mod batch_ops;
 mod builtin_providers;
@@ -39,6 +39,7 @@ mod model_catalog;
 mod model_config_service;
 mod prerequisite_context;
 mod process_log_text;
+mod project_management_api_client;
 mod project_service;
 mod remote_server_service;
 mod remote_servers;
@@ -76,7 +77,6 @@ pub use self::chatos_message_tasks::{
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
 use self::process_log_text::apply_task_process_log_update;
-use self::project_service::ensure_project_active_for_user;
 use self::remote_servers::build_remote_server_record;
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
@@ -120,6 +120,7 @@ pub struct ExternalMcpConfigService {
 
 #[derive(Clone)]
 pub struct TaskProjectService {
+    config: Option<AppConfig>,
     store: AppStore,
 }
 
@@ -127,14 +128,14 @@ pub struct TaskProjectService {
 pub struct RunService {
     config: AppConfig,
     store: AppStore,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
     start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
 }
 
 #[derive(Clone)]
 pub struct McpCatalogService {
     task_service: TaskService,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
 }
 
 #[derive(Clone)]
@@ -278,6 +279,7 @@ pub fn task_runner_internal_prompt_preview(
             "The prerequisite-task section is injected only when the task declares prerequisite tasks.".to_string(),
             "Task description and input-data sections appear only when the current task has those values.".to_string(),
             "The main task prompt asks the runner to understand the real flow, reuse existing code or platform capabilities, and leave the smallest useful verification evidence.".to_string(),
+            "The global execution prompt is appended to the current task prompt during execution and is shown separately here for clarity.".to_string(),
             "The process-log system message is injected only when MCP stays enabled for the task run.".to_string(),
             "Builtin MCP system prompt content is shown separately and follows the same prompt-language setting.".to_string(),
         ]
@@ -286,6 +288,7 @@ pub fn task_runner_internal_prompt_preview(
             "前置任务结果段只会在任务配置了前置任务时注入。".to_string(),
             "任务说明和输入数据两段只有当前任务存在对应值时才会出现。".to_string(),
             "任务主 prompt 会要求执行方先理解真实链路、优先复用已有代码或平台能力，并留下最小但有用的验证证据。".to_string(),
+            "全局执行 prompt 会在运行时追加到当前任务 prompt 后面，这里单独展示以便核对。".to_string(),
             "过程日志系统提示只会在该次任务运行保持启用 MCP 时注入。".to_string(),
             "Builtin MCP system prompt 会单独展示，并跟随同一个 prompt 语言设置。".to_string(),
         ]
@@ -293,6 +296,7 @@ pub fn task_runner_internal_prompt_preview(
     TaskRunnerInternalPromptPreviewResponse {
         locale: locale_key.to_string(),
         task_prompt_template: prerequisite_context::build_task_prompt_template(locale),
+        global_execution_prompt: prerequisite_context::build_global_execution_prompt(locale),
         process_log_system_prompt: task_process_log::task_process_log_preview_text(locale),
         notes,
     }

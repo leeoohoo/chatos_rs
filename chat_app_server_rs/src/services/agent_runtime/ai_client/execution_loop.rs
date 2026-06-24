@@ -282,6 +282,7 @@ impl AiClient {
                         message_source.clone(),
                         request_metadata,
                         callbacks.on_before_send_model_request.clone(),
+                        self.request_body_limit_bytes,
                         purpose,
                     )
                     .await;
@@ -589,7 +590,8 @@ impl AiClient {
             .with_thinking_level(thinking_level.clone())
             .with_temperature(Some(temperature))
             .with_instructions(system_prompt.clone())
-            .with_max_output_tokens(max_tokens);
+            .with_max_output_tokens(max_tokens)
+            .with_request_body_limit_bytes(self.request_body_limit_bytes);
             let mcp_tool_execute = self.mcp_tool_execute.clone();
             let message_manager = self.message_manager.clone();
             let persist_session_id = session_id.clone();

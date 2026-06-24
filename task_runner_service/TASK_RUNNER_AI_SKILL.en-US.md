@@ -165,7 +165,7 @@ It is usually helpful for the review objective to explicitly include:
 
 Use `enabled_builtin_kinds` to define the builtin capabilities the task needs during execution.
 
-Task Runner automatically attaches the builtin `TaskManager` task MCP, so Chatos does not need to select `TaskManager`. All other builtin capabilities should still be chosen according to the task objective.
+Task Runner automatically attaches `TaskManager` and `AskUser`, so Chatos does not need to select either one; when execution needs user input, use the available AskUser tools directly. All other builtin capabilities should still be chosen according to the task objective.
 
 Hard constraint:
 
@@ -180,7 +180,6 @@ Common capability guide:
 - `WebTools`: search public information and read webpages
 - `RemoteConnectionController`: connect to remote servers
 - `Notepad`: record observations and intermediate findings
-- `UiPrompter`: ask for user input during execution
 
 Recommended combinations:
 

@@ -15,6 +15,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'aiModelConfigs'
   | 'supportsReasoning'
   | 'reasoningEnabled'
+  | 'planModeEnabled'
   | 'availableRemoteConnections'
   | 'currentRemoteConnectionId'
   | 'onRemoteConnectionChange'
@@ -24,6 +25,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'onThinkingLevelChange'
   | 'onModelRuntimeChange'
   | 'onReasoningToggle'
+  | 'onPlanModeToggle'
 > & {
   supportedFileTypes: React.ComponentProps<typeof ChatComposerPanel>['supportedFileTypes'];
 };
@@ -39,6 +41,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   aiModelConfigs,
   supportsReasoning,
   reasoningEnabled,
+  planModeEnabled,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
@@ -48,6 +51,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   onThinkingLevelChange,
   onModelRuntimeChange,
   onReasoningToggle,
+  onPlanModeToggle,
   supportedFileTypes,
 }) => {
   if (!selectedContact) {
@@ -62,6 +66,9 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       reasoningSupported={supportsReasoning}
       reasoningEnabled={reasoningEnabled}
       onReasoningToggle={onReasoningToggle}
+      planModeAvailable={true}
+      planModeEnabled={planModeEnabled}
+      onPlanModeToggle={onPlanModeToggle}
       selectedModelId={selectedModelId}
       selectedModelName={selectedModelName}
       selectedThinkingLevel={selectedThinkingLevel}

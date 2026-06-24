@@ -35,9 +35,9 @@ pub const AGENT_BUILDER_MCP_ID: &str = "builtin_agent_builder";
 pub const AGENT_BUILDER_SERVER_NAME: &str = "agent_builder";
 pub const AGENT_BUILDER_COMMAND: &str = "builtin:agent_builder";
 
-pub const UI_PROMPTER_MCP_ID: &str = "builtin_ui_prompter";
-pub const UI_PROMPTER_SERVER_NAME: &str = "ui_prompter";
-pub const UI_PROMPTER_COMMAND: &str = "builtin:ui_prompter";
+pub const ASK_USER_MCP_ID: &str = "builtin_ask_user";
+pub const ASK_USER_SERVER_NAME: &str = "ask_user";
+pub const ASK_USER_COMMAND: &str = "builtin:ask_user";
 
 pub const REMOTE_CONNECTION_CONTROLLER_MCP_ID: &str = "builtin_remote_connection_controller";
 pub const REMOTE_CONNECTION_CONTROLLER_SERVER_NAME: &str = "remote_connection_controller";
@@ -136,7 +136,7 @@ pub enum BuiltinMcpKind {
     TaskManager,
     Notepad,
     AgentBuilder,
-    UiPrompter,
+    AskUser,
     RemoteConnectionController,
     WebTools,
     BrowserTools,
@@ -154,7 +154,7 @@ impl BuiltinMcpKind {
             Self::TaskManager => "TaskManager",
             Self::Notepad => "Notepad",
             Self::AgentBuilder => "AgentBuilder",
-            Self::UiPrompter => "UiPrompter",
+            Self::AskUser => "AskUser",
             Self::RemoteConnectionController => "RemoteConnectionController",
             Self::WebTools => "WebTools",
             Self::BrowserTools => "BrowserTools",
@@ -172,7 +172,7 @@ impl BuiltinMcpKind {
             Self::TaskManager => TASK_MANAGER_SERVER_NAME,
             Self::Notepad => NOTEPAD_SERVER_NAME,
             Self::AgentBuilder => AGENT_BUILDER_SERVER_NAME,
-            Self::UiPrompter => UI_PROMPTER_SERVER_NAME,
+            Self::AskUser => ASK_USER_SERVER_NAME,
             Self::RemoteConnectionController => REMOTE_CONNECTION_CONTROLLER_SERVER_NAME,
             Self::WebTools => WEB_TOOLS_SERVER_NAME,
             Self::BrowserTools => BROWSER_TOOLS_SERVER_NAME,
@@ -190,7 +190,7 @@ impl BuiltinMcpKind {
             Self::TaskManager => Some(TASK_MANAGER_MCP_ID),
             Self::Notepad => Some(NOTEPAD_MCP_ID),
             Self::AgentBuilder => Some(AGENT_BUILDER_MCP_ID),
-            Self::UiPrompter => Some(UI_PROMPTER_MCP_ID),
+            Self::AskUser => Some(ASK_USER_MCP_ID),
             Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_MCP_ID),
             Self::WebTools => Some(WEB_TOOLS_MCP_ID),
             Self::BrowserTools => Some(BROWSER_TOOLS_MCP_ID),
@@ -206,7 +206,7 @@ impl BuiltinMcpKind {
             Self::TaskManager => Some(TASK_MANAGER_COMMAND),
             Self::Notepad => Some(NOTEPAD_COMMAND),
             Self::AgentBuilder => Some(AGENT_BUILDER_COMMAND),
-            Self::UiPrompter => Some(UI_PROMPTER_COMMAND),
+            Self::AskUser => Some(ASK_USER_COMMAND),
             Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_COMMAND),
             Self::WebTools => Some(WEB_TOOLS_COMMAND),
             Self::BrowserTools => Some(BROWSER_TOOLS_COMMAND),
@@ -265,7 +265,7 @@ pub fn builtin_kind_by_kind_name(value: &str) -> Option<BuiltinMcpKind> {
         "TaskManager" => Some(BuiltinMcpKind::TaskManager),
         "Notepad" => Some(BuiltinMcpKind::Notepad),
         "AgentBuilder" => Some(BuiltinMcpKind::AgentBuilder),
-        "UiPrompter" => Some(BuiltinMcpKind::UiPrompter),
+        "AskUser" => Some(BuiltinMcpKind::AskUser),
         "RemoteConnectionController" => Some(BuiltinMcpKind::RemoteConnectionController),
         "WebTools" => Some(BuiltinMcpKind::WebTools),
         "BrowserTools" => Some(BuiltinMcpKind::BrowserTools),
@@ -284,7 +284,7 @@ pub fn builtin_kind_by_server_name(value: &str) -> Option<BuiltinMcpKind> {
         TASK_MANAGER_SERVER_NAME => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_SERVER_NAME => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_SERVER_NAME => Some(BuiltinMcpKind::AgentBuilder),
-        UI_PROMPTER_SERVER_NAME => Some(BuiltinMcpKind::UiPrompter),
+        ASK_USER_SERVER_NAME => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_SERVER_NAME => {
             Some(BuiltinMcpKind::RemoteConnectionController)
         }
@@ -307,7 +307,7 @@ pub fn builtin_kind_by_config_id(value: &str) -> Option<BuiltinMcpKind> {
         TASK_MANAGER_MCP_ID => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
-        UI_PROMPTER_MCP_ID => Some(BuiltinMcpKind::UiPrompter),
+        ASK_USER_MCP_ID => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::RemoteConnectionController),
         WEB_TOOLS_MCP_ID => Some(BuiltinMcpKind::WebTools),
         BROWSER_TOOLS_MCP_ID => Some(BuiltinMcpKind::BrowserTools),
@@ -325,7 +325,7 @@ pub fn builtin_kind_by_command(value: &str) -> Option<BuiltinMcpKind> {
         TASK_MANAGER_COMMAND => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
-        UI_PROMPTER_COMMAND => Some(BuiltinMcpKind::UiPrompter),
+        ASK_USER_COMMAND => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_COMMAND => Some(BuiltinMcpKind::RemoteConnectionController),
         WEB_TOOLS_COMMAND => Some(BuiltinMcpKind::WebTools),
         BROWSER_TOOLS_COMMAND => Some(BuiltinMcpKind::BrowserTools),
@@ -341,7 +341,7 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
         BuiltinMcpKind::TaskManager,
         BuiltinMcpKind::Notepad,
         BuiltinMcpKind::AgentBuilder,
-        BuiltinMcpKind::UiPrompter,
+        BuiltinMcpKind::AskUser,
         BuiltinMcpKind::RemoteConnectionController,
         BuiltinMcpKind::WebTools,
         BuiltinMcpKind::BrowserTools,

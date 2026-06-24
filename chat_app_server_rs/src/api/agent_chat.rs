@@ -29,6 +29,9 @@ use crate::modules::conversation_runtime::guidance;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::access_token_scope;
 use crate::services::ai_common::normalize_turn_id;
+use crate::services::ask_user_prompt_manager::{
+    upsert_external_ask_user_prompt_record, AskUserPromptRecord, AskUserPromptStatus,
+};
 use crate::services::chatos_sessions;
 use crate::services::realtime::{publish_chat_stream_event, publish_sessions_updated};
 use crate::utils::abort_registry;
@@ -60,6 +63,8 @@ struct TaskRunnerCallbackRequest {
     run_id: Option<String>,
     status: String,
     task_title: String,
+    project_id: Option<String>,
+    task_status: Option<String>,
     result_summary: Option<String>,
     error_message: Option<String>,
     report_content: Option<String>,
@@ -69,7 +74,30 @@ struct TaskRunnerCallbackRequest {
     parent_task_id: Option<String>,
     source_run_id: Option<String>,
     schedule_mode: Option<String>,
+    prompt: Option<TaskRunnerCallbackPrompt>,
     callback_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TaskRunnerCallbackPrompt {
+    prompt_id: String,
+    kind: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default = "default_true")]
+    allow_cancel: bool,
+    #[serde(default)]
+    timeout_ms: u64,
+    #[serde(default)]
+    payload: Value,
+    #[serde(default)]
+    response: Option<Value>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    expires_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -246,6 +274,15 @@ async fn task_runner_callback(
         );
     }
 
+    if is_task_runner_ask_user_prompt_event(payload.event.as_str()) {
+        return handle_task_runner_ask_user_prompt_callback(
+            &session,
+            user_message_id.as_str(),
+            payload,
+        )
+        .await;
+    }
+
     let user_message_changed =
         apply_task_runner_callback_to_user_message(&mut user_message, &payload);
     let saved_user_message = if user_message_changed {
@@ -388,6 +425,103 @@ async fn task_runner_callback(
     )
 }
 
+async fn handle_task_runner_ask_user_prompt_callback(
+    session: &Session,
+    user_message_id: &str,
+    payload: TaskRunnerCallbackRequest,
+) -> (StatusCode, Json<Value>) {
+    let Some(prompt) = payload.prompt.clone() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "accepted": false, "error": "missing ask user prompt payload" })),
+        );
+    };
+    let prompt_id = prompt.prompt_id.trim();
+    if prompt_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "accepted": false, "error": "missing prompt_id" })),
+        );
+    }
+    let turn_id = normalize_callback_value(payload.source_turn_id.as_deref())
+        .unwrap_or_else(|| user_message_id.to_string());
+    let status = ask_user_prompt_status_from_task_runner_event(payload.event.as_str(), &prompt);
+    let now = normalize_callback_value(payload.callback_at.as_deref())
+        .unwrap_or_else(crate::core::time::now_rfc3339);
+    let response = prompt.response.clone();
+    let prompt_kind = normalize_callback_value(Some(prompt.kind.as_str()))
+        .unwrap_or_else(|| "task_runner_ask_user_prompt".to_string());
+    let prompt_title = prompt.title.clone();
+    let prompt_message = prompt.message.clone();
+    let prompt_payload = prompt.payload.clone();
+    let expires_at = prompt.expires_at.clone();
+    let record = AskUserPromptRecord {
+        id: prompt_id.to_string(),
+        conversation_id: session.id.clone(),
+        conversation_turn_id: turn_id,
+        tool_call_id: None,
+        kind: prompt_kind.clone(),
+        status,
+        prompt: json!({
+            "prompt_id": prompt_id,
+            "conversation_id": session.id,
+            "conversation_turn_id": payload.source_turn_id,
+            "kind": prompt_kind,
+            "title": prompt_title,
+            "message": prompt_message,
+            "allow_cancel": prompt.allow_cancel,
+            "timeout_ms": prompt.timeout_ms,
+            "payload": prompt_payload,
+            "source": "task_runner",
+            "external_task_id": payload.task_id,
+            "external_run_id": payload.run_id,
+            "external_project_id": payload.project_id,
+            "task_status": payload.task_status,
+        }),
+        response,
+        expires_at,
+        source: "task_runner".to_string(),
+        external_prompt_id: Some(prompt_id.to_string()),
+        external_task_id: Some(payload.task_id.clone()),
+        external_run_id: payload.run_id.clone(),
+        external_project_id: payload.project_id.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let saved = match upsert_external_ask_user_prompt_record(record).await {
+        Ok(record) => record,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "accepted": false, "error": err })),
+            );
+        }
+    };
+
+    info!(
+        session_id = session.id.as_str(),
+        user_message_id,
+        task_id = payload.task_id.as_str(),
+        run_id = payload.run_id.as_deref().unwrap_or_default(),
+        prompt_id = saved.id.as_str(),
+        event = payload.event.as_str(),
+        "accepted task runner ask user prompt callback"
+    );
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "accepted": true,
+            "session_id": session.id,
+            "user_message_id": user_message_id,
+            "event": payload.event,
+            "prompt_id": saved.id,
+            "status": saved.status.as_str(),
+        })),
+    )
+}
+
 fn verify_task_runner_callback_secret(headers: &HeaderMap) -> Result<(), String> {
     let expected = Config::try_get()
         .ok()
@@ -413,6 +547,31 @@ fn normalize_callback_value(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn is_task_runner_ask_user_prompt_event(event: &str) -> bool {
+    matches!(
+        event,
+        "ask_user_prompt.required" | "ask_user_prompt.resolved"
+    )
+}
+
+fn ask_user_prompt_status_from_task_runner_event(
+    event: &str,
+    prompt: &TaskRunnerCallbackPrompt,
+) -> AskUserPromptStatus {
+    if event == "ask_user_prompt.required" {
+        return AskUserPromptStatus::Pending;
+    }
+    prompt
+        .status
+        .as_deref()
+        .and_then(AskUserPromptStatus::from_str)
+        .unwrap_or(AskUserPromptStatus::Ok)
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn apply_task_runner_callback_to_user_message(
@@ -842,6 +1001,8 @@ mod tests {
             run_id: Some("run-1".to_string()),
             status: "succeeded".to_string(),
             task_title: "Demo task".to_string(),
+            project_id: Some("project-1".to_string()),
+            task_status: Some("succeeded".to_string()),
             result_summary: Some("done".to_string()),
             error_message: None,
             report_content: None,
@@ -851,6 +1012,7 @@ mod tests {
             parent_task_id: None,
             source_run_id: None,
             schedule_mode: Some("once".to_string()),
+            prompt: None,
             callback_at: Some("2026-06-10T10:00:00Z".to_string()),
         }
     }

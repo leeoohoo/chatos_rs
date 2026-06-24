@@ -316,7 +316,7 @@ async fn build_mcp_builder_parts(
         server_options = server_options.with_remote_connection_id(remote_server_id);
     }
 
-    let selected_builtin_kinds = selected_builtin_kinds(&task.mcp_config);
+    let selected_builtin_kinds = runtime_selected_builtin_kinds(task);
     let selected_builtin_kind_names = selected_builtin_kinds
         .iter()
         .map(|kind| kind.kind_name().to_string())
@@ -339,7 +339,7 @@ async fn build_mcp_builder_parts(
     let (builtin_registry, builtin_init_errors) = build_builtin_registry(
         &builtin_servers,
         task_service.clone(),
-        service.ui_prompt_service.clone(),
+        service.ask_user_prompt_service.clone(),
     );
     let mut builtin_registry = builtin_registry;
     if task_process_logging_enabled {

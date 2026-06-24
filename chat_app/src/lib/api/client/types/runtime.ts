@@ -231,6 +231,7 @@ export interface StreamChatOptions {
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
+  planMode?: boolean;
 }
 
 export interface StreamChatCommandResponse {

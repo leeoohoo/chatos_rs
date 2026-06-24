@@ -33,9 +33,13 @@ pub(crate) fn format_error_response(status: reqwest::StatusCode, raw: &str) -> S
     format!("status {}: {}", status, truncate_log(raw, 2000))
 }
 
-pub(crate) fn validate_request_payload_size(payload: &Value, env_key: &str) -> Result<(), String> {
+pub(crate) fn validate_request_payload_size(
+    payload: &Value,
+    env_key: &str,
+    explicit_max_bytes: Option<usize>,
+) -> Result<(), String> {
     let bytes = serde_json::to_vec(payload).map_err(|err| err.to_string())?;
-    let max_bytes = request_payload_max_bytes(env_key);
+    let max_bytes = request_payload_max_bytes(env_key, explicit_max_bytes);
     if bytes.len() > max_bytes {
         return Err(format!(
             "request body too large (precheck): payload_bytes={}, limit_bytes={}",
@@ -46,12 +50,20 @@ pub(crate) fn validate_request_payload_size(payload: &Value, env_key: &str) -> R
     Ok(())
 }
 
-fn request_payload_max_bytes(env_key: &str) -> usize {
+fn request_payload_max_bytes(env_key: &str, explicit_max_bytes: Option<usize>) -> usize {
+    if let Some(value) = explicit_max_bytes.filter(|value| *value > 0) {
+        return value;
+    }
+
     std::env::var(env_key)
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(1_500_000)
+        .unwrap_or(
+            crate::core::ai_settings::request_body_limit_bytes_for_attachment_total(
+                crate::core::ai_settings::DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES,
+            ),
+        )
 }
 
 #[cfg(test)]

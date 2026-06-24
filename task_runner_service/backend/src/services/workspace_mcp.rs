@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies};
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
 use crate::config::AppConfig;
 use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord};
@@ -8,15 +8,39 @@ use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord};
 use super::normalize_strings;
 use super::normalized_optional;
 
-pub(super) fn selected_builtin_kinds(
-    mcp_config: &TaskMcpConfig,
-) -> Vec<chatos_mcp_runtime::BuiltinMcpKind> {
+pub(super) fn selected_builtin_kinds(mcp_config: &TaskMcpConfig) -> Vec<BuiltinMcpKind> {
     let kinds = mcp_config
         .enabled_builtin_kinds
         .iter()
         .filter_map(|value| builtin_kind_by_any(value))
         .collect::<Vec<_>>();
     complete_builtin_kind_dependencies(kinds)
+}
+
+pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
+    let mut kinds = selected_builtin_kinds(&task.mcp_config);
+    if is_chatos_async_task(task) {
+        ensure_system_injected_builtin_kinds(&mut kinds);
+    }
+    complete_builtin_kind_dependencies(kinds)
+}
+
+fn ensure_system_injected_builtin_kinds(kinds: &mut Vec<BuiltinMcpKind>) {
+    for kind in [BuiltinMcpKind::TaskManager, BuiltinMcpKind::AskUser] {
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+}
+
+fn is_chatos_async_task(task: &TaskRecord) -> bool {
+    task.schedule.mode == crate::models::TaskScheduleMode::ContactAsync
+        || (has_non_empty_text(task.source_session_id.as_deref())
+            && has_non_empty_text(task.source_user_message_id.as_deref()))
+}
+
+fn has_non_empty_text(value: Option<&str>) -> bool {
+    value.map(str::trim).is_some_and(|value| !value.is_empty())
 }
 
 pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {

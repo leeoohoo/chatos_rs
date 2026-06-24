@@ -9,7 +9,7 @@ use crate::types::{McpBuiltinServer, ToolInfo};
 
 const SECTION_GLOBAL: &str = "global";
 const SECTION_TASK_MANAGER: &str = "builtin_task_manager";
-const SECTION_UI_PROMPTER: &str = "builtin_ui_prompter";
+const SECTION_ASK_USER: &str = "builtin_ask_user";
 const SECTION_CODE_MAINTAINER_READ: &str = "builtin_code_maintainer_read";
 const SECTION_CODE_MAINTAINER_WRITE: &str = "builtin_code_maintainer_write";
 const SECTION_TERMINAL_CONTROLLER: &str = "builtin_terminal_controller";
@@ -23,7 +23,7 @@ const SECTION_RUNTIME_LIMITATIONS: &str = "runtime_limitations";
 const SECTION_ORDER: &[&str] = &[
     SECTION_GLOBAL,
     SECTION_TASK_MANAGER,
-    SECTION_UI_PROMPTER,
+    SECTION_ASK_USER,
     SECTION_CODE_MAINTAINER_READ,
     SECTION_CODE_MAINTAINER_WRITE,
     SECTION_TERMINAL_CONTROLLER,
@@ -175,7 +175,7 @@ fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
         BuiltinMcpKind::TerminalController => Some(SECTION_TERMINAL_CONTROLLER),
         BuiltinMcpKind::TaskManager => Some(SECTION_TASK_MANAGER),
         BuiltinMcpKind::Notepad => Some(SECTION_NOTEPAD),
-        BuiltinMcpKind::UiPrompter => Some(SECTION_UI_PROMPTER),
+        BuiltinMcpKind::AskUser => Some(SECTION_ASK_USER),
         BuiltinMcpKind::RemoteConnectionController => Some(SECTION_REMOTE_CONNECTION_CONTROLLER),
         BuiltinMcpKind::WebTools => Some(SECTION_WEB_TOOLS),
         BuiltinMcpKind::BrowserTools => Some(SECTION_BROWSER_TOOLS),
@@ -651,15 +651,17 @@ mod tests {
         let prompt = compose_builtin_mcp_system_prompt(
             &[
                 build_builtin_server(BuiltinMcpKind::TaskManager),
-                build_builtin_server(BuiltinMcpKind::UiPrompter),
+                build_builtin_server(BuiltinMcpKind::AskUser),
             ],
             BuiltinMcpPromptLocale::ZhCn,
         )
         .expect("prompt");
 
         assert!(prompt.contains("你是 Chatos 中一个“内置 MCP 优先”的助手。"));
+        assert!(prompt.contains("澄清优先原则"));
+        assert!(prompt.contains("目标、范围、成功标准"));
         assert!(prompt.contains("`task_manager_add_task`"));
-        assert!(prompt.contains("`ui_prompter_prompt_choices`"));
+        assert!(prompt.contains("`ask_user_prompt_choices`"));
         assert!(!prompt.contains("`code_maintainer_read_read_file`"));
     }
 

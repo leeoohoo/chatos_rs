@@ -16,7 +16,7 @@ use crate::models::terminal::Terminal;
 use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 use super::types::{
-    ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
+    AskUserPromptRealtimePayload, ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
     ConversationSummariesUpdatedRealtimePayload, NotepadUpdatedRealtimePayload,
     ProjectChangeSummaryRealtimePayload, ProjectMembersUpdatedRealtimePayload,
     ProjectRunCatalogRealtimePayload, ProjectRunInstanceRealtimePayload,
@@ -24,7 +24,6 @@ use super::types::{
     RealtimeEventPayload, RemoteConnectionsUpdatedRealtimePayload,
     RemoteSftpTransferRealtimePayload, ReviewRepairRealtimePayload, SessionsUpdatedRealtimePayload,
     TaskBoardRealtimePayload, TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
-    UiPromptRealtimePayload,
 };
 
 const REALTIME_CHANNEL_CAPACITY: usize = 512;
@@ -518,7 +517,7 @@ pub fn publish_task_board_updated(
     });
 }
 
-pub fn publish_ui_prompt_updated(
+pub fn publish_ask_user_prompt_updated(
     user_id: &str,
     conversation_id: &str,
     conversation_turn_id: Option<&str>,
@@ -535,11 +534,11 @@ pub fn publish_ui_prompt_updated(
 ) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
-        event: "conversation.ui_prompt.updated",
+        event: "conversation.ask_user_prompt.updated",
         user_id: user_id.to_string(),
         conversation_id: Some(conversation_id.to_string()),
         project_id: None,
-        payload: RealtimeEventPayload::UiPrompt(UiPromptRealtimePayload {
+        payload: RealtimeEventPayload::AskUserPrompt(AskUserPromptRealtimePayload {
             conversation_id: conversation_id.to_string(),
             conversation_turn_id: conversation_turn_id.map(|value| value.to_string()),
             prompt_id: prompt_id.to_string(),

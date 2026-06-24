@@ -12,7 +12,7 @@ import type {
   TaskScheduleConfig,
   TaskScheduleMode,
   TaskStatus,
-  UiPromptStatus,
+  AskUserPromptStatus,
 } from '../../types';
 import {
   isRemoteToolName,
@@ -131,7 +131,7 @@ export const scheduleModeDescriptionKeys: Record<TaskScheduleMode, string> = {
   contact_async: 'tasks.schedule.contactAsyncDescription',
 };
 
-export const promptStatusColorMap: Record<UiPromptStatus, string> = {
+export const promptStatusColorMap: Record<AskUserPromptStatus, string> = {
   pending: 'processing',
   submitted: 'success',
   cancelled: 'default',

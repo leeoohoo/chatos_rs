@@ -21,7 +21,7 @@ impl MongoStore {
                 .collection::<ExternalMcpConfigRecord>("external_mcp_configs"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
-            ui_prompts: database.collection::<UiPromptRecord>("ui_prompts"),
+            ask_user_prompts: database.collection::<AskUserPromptRecord>("ask_user_prompts"),
             users: database.collection::<UserRecord>("users"),
             task_prerequisites: database.collection::<TaskPrerequisiteRecord>("task_prerequisites"),
             cancel_requested_runs: Arc::new(RwLock::new(HashSet::new())),
@@ -161,29 +161,33 @@ impl MongoStore {
         )
         .await?;
 
-        self.ensure_index(&self.ui_prompts, doc! { "id": 1 }, true)
+        self.ensure_index(&self.ask_user_prompts, doc! { "id": 1 }, true)
             .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "task_id": 1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "task_id": 1 }, false)
             .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "run_id": 1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "run_id": 1 }, false)
             .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "status": 1 }, false)
-            .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "status": 1, "task_id": 1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "status": 1 }, false)
             .await?;
         self.ensure_index(
-            &self.ui_prompts,
+            &self.ask_user_prompts,
+            doc! { "status": 1, "task_id": 1 },
+            false,
+        )
+        .await?;
+        self.ensure_index(
+            &self.ask_user_prompts,
             doc! { "task_id": 1, "updated_at": -1 },
             false,
         )
         .await?;
         self.ensure_index(
-            &self.ui_prompts,
+            &self.ask_user_prompts,
             doc! { "run_id": 1, "updated_at": -1 },
             false,
         )
         .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "updated_at": -1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "updated_at": -1 }, false)
             .await?;
 
         self.ensure_index(&self.users, doc! { "id": 1 }, true)

@@ -4,7 +4,7 @@ pub(super) fn prompt_tool_definitions() -> Vec<Value> {
     vec![
         tool_definition(
             "list_prompts",
-            "List ui_prompter prompts emitted during Task Runner execution.",
+            "List ask_user prompts emitted during Task Runner execution.",
             json!({
                 "type": "object",
                 "properties": {
@@ -17,7 +17,7 @@ pub(super) fn prompt_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "get_prompt",
-            "Get one Task Runner ui prompt by id.",
+            "Get one Task Runner ask user prompt by id.",
             required_object_schema(
                 json!({
                     "prompt_id": { "type": "string", "minLength": 1 }
@@ -27,7 +27,7 @@ pub(super) fn prompt_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "submit_prompt",
-            "Submit values or selections for a pending Task Runner ui prompt.",
+            "Submit values or selections for a pending Task Runner ask user prompt.",
             required_object_schema(
                 json!({
                     "prompt_id": { "type": "string", "minLength": 1 },
@@ -40,7 +40,7 @@ pub(super) fn prompt_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "cancel_prompt",
-            "Cancel a pending Task Runner ui prompt if the prompt allows cancellation.",
+            "Cancel a pending Task Runner ask user prompt if the prompt allows cancellation.",
             required_object_schema(
                 json!({
                     "prompt_id": { "type": "string", "minLength": 1 },

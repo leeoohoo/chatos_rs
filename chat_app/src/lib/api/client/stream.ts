@@ -67,6 +67,7 @@ export const sendChatCommand = async (
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
       workspace_root: options?.workspaceRoot || undefined,
+      plan_mode: options?.planMode === true,
       model_config_id: modelConfig.id,
       ai_model_config: {
         temperature: modelConfig.temperature || 0.7,

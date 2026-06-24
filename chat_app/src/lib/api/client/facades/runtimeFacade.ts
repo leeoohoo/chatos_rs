@@ -3,6 +3,7 @@ import * as notepadApi from '../notepad';
 import * as streamApi from '../stream';
 import * as summaryApi from '../summary';
 import * as tasksApi from '../tasks';
+import * as askUserPromptsApi from '../askUserPrompts';
 import { buildQuery } from '../shared';
 import type {
   AuthResponse,
@@ -32,6 +33,9 @@ import type {
   TaskManagerTaskResponse,
   TaskRunnerAgentAccountResponse,
   TaskManagerUpdatePayload,
+  AskUserPromptListResponse,
+  AskUserPromptMutationPayload,
+  AskUserPromptMutationResponse,
   UpdateTaskRunnerExternalMcpConfigPayload,
   UserSettingsResponse,
 } from '../types';
@@ -72,6 +76,18 @@ export interface RuntimeFacade {
     payload?: Partial<TaskManagerUpdatePayload>,
   ): Promise<TaskManagerTaskResponse>;
   deleteTaskManagerTask(conversationId: string, taskId: string): Promise<{ success?: boolean }>;
+  listAskUserPrompts(
+    conversationId: string,
+    options?: { includePending?: boolean; limit?: number },
+  ): Promise<AskUserPromptListResponse>;
+  submitAskUserPrompt(
+    promptId: string,
+    payload: AskUserPromptMutationPayload,
+  ): Promise<AskUserPromptMutationResponse>;
+  cancelAskUserPrompt(
+    promptId: string,
+    payload: Pick<AskUserPromptMutationPayload, 'conversation_id' | 'conversationId' | 'reason'>,
+  ): Promise<AskUserPromptMutationResponse>;
   notepadInit(): Promise<NotepadInitResponse>;
   listNotepadFolders(): Promise<NotepadFoldersResponse>;
   createNotepadFolder(payload: { folder: string }): Promise<NotepadFolderMutationResponse>;
@@ -150,6 +166,15 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async deleteTaskManagerTask(conversationId, taskId) {
     return tasksApi.deleteTaskManagerTask(this.getRequestFn(), conversationId, taskId);
+  },
+  async listAskUserPrompts(conversationId, options) {
+    return askUserPromptsApi.listAskUserPrompts(this.getRequestFn(), conversationId, options);
+  },
+  async submitAskUserPrompt(promptId, payload) {
+    return askUserPromptsApi.submitAskUserPrompt(this.getRequestFn(), promptId, payload);
+  },
+  async cancelAskUserPrompt(promptId, payload) {
+    return askUserPromptsApi.cancelAskUserPrompt(this.getRequestFn(), promptId, payload);
   },
   async notepadInit() {
     return notepadApi.notepadInit(this.getRequestFn());

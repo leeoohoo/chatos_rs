@@ -87,6 +87,19 @@ impl AppConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(5000)
                 .max(300);
+        let project_service_base_url = normalized_env("TASK_RUNNER_PROJECT_SERVICE_BASE_URL")
+            .or_else(|| normalized_env("PROJECT_SERVICE_BASE_URL"))
+            .or_else(|| normalized_env("CHATOS_PROJECT_SERVICE_BASE_URL"));
+        let project_service_sync_secret = normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET")
+            .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
+            .or_else(|| normalized_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET"));
+        let project_service_request_timeout_ms =
+            std::env::var("TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS")
+                .ok()
+                .or_else(|| std::env::var("PROJECT_SERVICE_REQUEST_TIMEOUT_MS").ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(5000)
+                .max(300);
         let admin_display_name = normalized_env("TASK_RUNNER_ADMIN_DISPLAY_NAME")
             .or_else(|| normalized_env("USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME"))
             .or_else(|| normalized_env("CHATOS_ADMIN_DISPLAY_NAME"))
@@ -130,6 +143,11 @@ impl AppConfig {
             admin_display_name,
             user_service_base_url,
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
+            project_service_base_url,
+            project_service_sync_secret,
+            project_service_request_timeout: Duration::from_millis(
+                project_service_request_timeout_ms,
+            ),
         })
     }
 }

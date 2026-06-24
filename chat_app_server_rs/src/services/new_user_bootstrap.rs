@@ -28,6 +28,7 @@ pub struct NewUserBootstrapInput {
 pub struct NewUserBootstrapReport {
     pub created_default_agent: bool,
     pub provisioned_task_runner_agent_account: bool,
+    pub project_management_agent_account_ready: bool,
     pub created_default_contact: bool,
     pub created_starter_session: bool,
 }
@@ -57,7 +58,7 @@ async fn bootstrap_new_user_defaults_inner(
     let mut report = NewUserBootstrapReport::default();
 
     let mut agent = ensure_default_agent(&context, &mut report).await?;
-    if normalize_non_empty(agent.task_runner_agent_account_id.clone()).is_none() {
+    if !has_shared_user_service_agent_account(&agent) {
         let Some(updated) =
             chatos_agents::ensure_task_runner_agent_account(agent.id.as_str()).await?
         else {
@@ -69,6 +70,7 @@ async fn bootstrap_new_user_defaults_inner(
         report.provisioned_task_runner_agent_account = true;
         agent = updated;
     }
+    report.project_management_agent_account_ready = has_shared_user_service_agent_account(&agent);
 
     let contact = ensure_default_contact(&context, &agent, &mut report).await?;
     if should_create_starter_session(context.user_id.as_str()).await? {
@@ -113,9 +115,12 @@ async fn ensure_default_agent(
     .await?;
 
     report.created_default_agent = true;
-    report.provisioned_task_runner_agent_account =
-        normalize_non_empty(created.task_runner_agent_account_id.clone()).is_some();
+    report.provisioned_task_runner_agent_account = has_shared_user_service_agent_account(&created);
     Ok(created)
+}
+
+fn has_shared_user_service_agent_account(agent: &ChatosAgentDto) -> bool {
+    normalize_non_empty(agent.task_runner_agent_account_id.clone()).is_some()
 }
 
 async fn ensure_default_contact(
@@ -201,8 +206,8 @@ fn build_starter_session_metadata(agent: &ChatosAgentDto, contact: &MemoryContac
 mod tests {
     use super::{
         build_starter_session_metadata, default_agent_description, find_default_agent,
-        BootstrapContext, ChatosAgentDto, MemoryContactDto, DEFAULT_AGENT_DESCRIPTION,
-        DEFAULT_AGENT_NAME,
+        has_shared_user_service_agent_account, BootstrapContext, ChatosAgentDto, MemoryContactDto,
+        DEFAULT_AGENT_DESCRIPTION, DEFAULT_AGENT_NAME,
     };
     use serde_json::json;
 
@@ -290,5 +295,14 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn project_management_reuses_the_default_agent_user_service_account() {
+        let mut agent = sample_agent(DEFAULT_AGENT_NAME);
+        assert!(!has_shared_user_service_agent_account(&agent));
+
+        agent.task_runner_agent_account_id = Some("agent_account_1".to_string());
+        assert!(has_shared_user_service_agent_account(&agent));
     }
 }

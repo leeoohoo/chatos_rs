@@ -67,15 +67,18 @@ pub(super) fn build_task_prompt(
 pub(super) fn build_task_prompt_template(locale: BuiltinMcpPromptLocale) -> String {
     let text = task_prompt_text(locale);
     format!(
-        "{}\n\n{}:\n\n{}:\n{{{{task.title}}}}\n\n{}:\n{{{{task.objective}}}}\n\n{}:\n{{{{task.description}}}}\n\n{}:\n{{{{task.input_payload_json}}}}\n\n{}",
+        "{}\n\n{}:\n\n{}:\n{{{{task.title}}}}\n\n{}:\n{{{{task.objective}}}}\n\n{}:\n{{{{task.description}}}}\n\n{}:\n{{{{task.input_payload_json}}}}",
         format_prerequisite_context_template(locale),
         text.current_task_heading,
         text.task_title_label,
         text.task_objective_label,
         text.task_description_label,
-        text.input_data_label,
-        text.completion_instruction
+        text.input_data_label
     )
+}
+
+pub(super) fn build_global_execution_prompt(locale: BuiltinMcpPromptLocale) -> String {
+    task_prompt_text(locale).completion_instruction.to_string()
 }
 
 fn format_prerequisite_context_for_prompt(

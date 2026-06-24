@@ -31,6 +31,9 @@ export function InputAreaComposerControls({
   reasoningSupported,
   reasoningEnabled,
   onReasoningToggle,
+  planModeAvailable,
+  planModeEnabled,
+  onPlanModeToggle,
   pickerRef,
   workspacePickerRef,
   projectFilePickerRef,
@@ -168,6 +171,24 @@ export function InputAreaComposerControls({
         isStreaming={false}
         isStopping={false}
       />
+
+      {planModeAvailable && (
+        <button
+          type="button"
+          onClick={() => onPlanModeToggle?.(!planModeEnabled)}
+          disabled={disabled}
+          className={cn(
+            'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
+            planModeEnabled
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+              : 'bg-muted text-muted-foreground hover:text-foreground',
+            disabled && 'opacity-50 cursor-not-allowed',
+          )}
+          title={planModeEnabled ? t('composer.planMode.onTitle') : t('composer.planMode.offTitle')}
+        >
+          {t('composer.planMode.label', { state: planModeEnabled ? onText : offText })}
+        </button>
+      )}
 
       {reasoningSupported && (
         <button

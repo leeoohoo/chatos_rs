@@ -99,6 +99,7 @@ fn build_common_bootstrap_input(
         project_root: req.project_root.clone(),
         workspace_root: req.workspace_root.clone(),
         remote_connection_id: req.remote_connection_id.clone(),
+        plan_mode: req.plan_mode,
         turn_id: req.turn_id.clone(),
         user_message_id: req.user_message_id.clone(),
         attachments: req.attachments.clone(),

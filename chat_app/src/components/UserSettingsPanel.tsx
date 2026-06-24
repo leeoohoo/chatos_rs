@@ -9,14 +9,21 @@ import {
   resolveTerminalUiEnabledFromResponse,
   writeStoredTerminalUiEnabled,
 } from '../hooks/useTerminalUiSetting';
+import {
+  DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES,
+  resolveAttachmentTotalMaxBytes,
+} from '../lib/store/actions/sendMessage/attachments';
 
 interface Props { onClose: () => void }
+
+const BYTES_PER_MB = 1024 * 1024;
 
 interface UserSettingsForm {
   MAX_ITERATIONS?: number | string;
   TASK_FOLLOW_UP_MAX_ROUNDS?: number | string;
   LOG_LEVEL?: string;
   CHAT_MAX_TOKENS?: number | string | null;
+  ATTACHMENT_TOTAL_MAX_BYTES?: number | string | null;
   INTERNAL_CONTEXT_LOCALE?: string;
   UI_LOCALE?: string;
   TERMINAL_UI_ENABLED?: boolean;
@@ -28,6 +35,7 @@ interface UserSettingsPayload {
   TASK_FOLLOW_UP_MAX_ROUNDS: number;
   LOG_LEVEL: string;
   CHAT_MAX_TOKENS: number | null;
+  ATTACHMENT_TOTAL_MAX_BYTES: number;
   INTERNAL_CONTEXT_LOCALE: string;
   UI_LOCALE: string;
   TERMINAL_UI_ENABLED: boolean;
@@ -52,6 +60,26 @@ const normalizeUserSettingsForm = (value: unknown): UserSettingsForm => {
     }
   });
   return result;
+};
+
+const bytesToMegabytesInputValue = (value: unknown): string => {
+  if (value === '' || value === null || value === undefined) {
+    return '';
+  }
+  const bytes = resolveAttachmentTotalMaxBytes(value);
+  return String(Number((bytes / BYTES_PER_MB).toFixed(2)));
+};
+
+const megabytesToBytesSetting = (value: string): number | '' => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const megabytes = Number(trimmed);
+  if (!Number.isFinite(megabytes) || megabytes <= 0) {
+    return DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES;
+  }
+  return Math.max(1, Math.round(megabytes * BYTES_PER_MB));
 };
 
 const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
@@ -121,6 +149,9 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
         CHAT_MAX_TOKENS: settings.CHAT_MAX_TOKENS === '' || settings.CHAT_MAX_TOKENS === null || settings.CHAT_MAX_TOKENS === undefined
           ? null
           : Number(settings.CHAT_MAX_TOKENS),
+        ATTACHMENT_TOTAL_MAX_BYTES: resolveAttachmentTotalMaxBytes(
+          settings.ATTACHMENT_TOTAL_MAX_BYTES,
+        ),
         INTERNAL_CONTEXT_LOCALE: String(settings.INTERNAL_CONTEXT_LOCALE || 'zh-CN'),
         UI_LOCALE: nextUiLocale,
         TERMINAL_UI_ENABLED: settings.TERMINAL_UI_ENABLED !== false,
@@ -181,6 +212,21 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                     <label className="text-xs text-muted-foreground">{t('settings.chatMaxTokens')}</label>
                     <input type="number" className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" {...bind('CHAT_MAX_TOKENS')} />
                     <p className="text-[11px] text-muted-foreground mt-1">{t('settings.chatMaxTokensHelp')}</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">{t('settings.attachmentTotalMaxMb')}</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={bytesToMegabytesInputValue(settings.ATTACHMENT_TOTAL_MAX_BYTES)}
+                      onChange={(event) => {
+                        const next = megabytesToBytesSetting(event.target.value);
+                        setSettings((s) => ({ ...s, ATTACHMENT_TOTAL_MAX_BYTES: next }));
+                      }}
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">{t('settings.attachmentTotalMaxMbHelp')}</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground">{t('settings.maxIterations')}</label>

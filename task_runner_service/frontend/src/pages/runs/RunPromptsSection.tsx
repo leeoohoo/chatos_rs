@@ -11,19 +11,19 @@ import dayjs from 'dayjs';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  UiPromptRecord,
-  UiPromptStatus,
+  AskUserPromptRecord,
+  AskUserPromptStatus,
 } from '../../types';
 import { promptColorMap } from './runPageUtils';
 
 type RunPromptsSectionProps = {
   t: TranslateFn;
-  prompts: UiPromptRecord[];
+  prompts: AskUserPromptRecord[];
   loading: boolean;
   page: number;
   pageSize: number;
   total: number;
-  promptStatusLabel: (status: UiPromptStatus) => string;
+  promptStatusLabel: (status: AskUserPromptStatus) => string;
   onOpenPrompt: (promptId: string) => void;
   onPageChange: (page: number, pageSize: number) => void;
 };

@@ -3,9 +3,9 @@ use mongodb::{
     options::FindOptions,
 };
 
-use crate::models::{RunListFilters, TaskListFilters, UiPromptStatus, PUBLIC_PROJECT_ID};
+use crate::models::{AskUserPromptStatus, RunListFilters, TaskListFilters, PUBLIC_PROJECT_ID};
 
-use super::codec::{task_run_status_to_str, task_status_to_str, ui_prompt_status_to_str};
+use super::codec::{ask_user_prompt_status_to_str, task_run_status_to_str, task_status_to_str};
 
 pub(super) fn is_mongo_active_run_index_conflict(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
@@ -170,7 +170,7 @@ pub(super) fn build_mongo_run_filter(filters: &RunListFilters) -> Document {
 pub(super) fn build_mongo_prompt_filter(
     task_id: Option<&str>,
     run_id: Option<&str>,
-    status: Option<UiPromptStatus>,
+    status: Option<AskUserPromptStatus>,
 ) -> Document {
     let mut filter = Document::new();
     if let Some(task_id) = task_id {
@@ -180,7 +180,7 @@ pub(super) fn build_mongo_prompt_filter(
         filter.insert("run_id", run_id);
     }
     if let Some(status) = status {
-        filter.insert("status", ui_prompt_status_to_str(status));
+        filter.insert("status", ask_user_prompt_status_to_str(status));
     }
     filter
 }

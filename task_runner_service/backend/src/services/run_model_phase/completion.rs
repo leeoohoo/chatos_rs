@@ -121,10 +121,10 @@ impl RunService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ask_user_prompt_service::AskUserPromptService;
     use crate::config::{AppConfig, StoreMode};
     use crate::models::CreateTaskRequest;
     use crate::store::AppStore;
-    use crate::ui_prompt_service::UiPromptService;
     use chatos_ai_runtime::AiTurnStatus;
     use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr};
@@ -157,6 +157,9 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
+            project_service_base_url: None,
+            project_service_sync_secret: None,
+            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 
@@ -164,7 +167,7 @@ mod tests {
         let config = test_config();
         let store = AppStore::new(&config).await.expect("store");
         let task_service = TaskService::new(config.clone(), store.clone());
-        let run_service = RunService::new(config, store.clone(), UiPromptService::new(store));
+        let run_service = RunService::new(config, store.clone(), AskUserPromptService::new(store));
         (task_service, run_service)
     }
 

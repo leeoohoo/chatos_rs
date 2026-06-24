@@ -3,23 +3,23 @@ use crate::builtin::terminal_controller::ChatosTerminalControllerStore;
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::McpBuiltinServer;
 use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
+use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
 use crate::services::shared_builtin_browser_tools::ChatosBrowserVisionAdapter;
 use crate::services::shared_builtin_code_maintainer::ChatosCodeMaintainerHooks;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
 use crate::services::shared_builtin_notepad::ChatosNotepadStore;
 use crate::services::shared_builtin_task_manager::ChatosTaskManagerStore;
-use crate::services::shared_builtin_ui_prompter::ChatosUiPrompterStore;
 use chatos_builtin_tools::{
-    AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, BrowserToolCallContext,
-    BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapterRef, CodeMaintainerHooksRef,
-    CodeMaintainerOptions, CodeMaintainerService, MemoryCommandReaderOptions,
-    MemoryCommandReaderService, MemoryPluginReaderOptions, MemoryPluginReaderService,
-    MemoryReaderStoreRef, MemorySkillReaderOptions, MemorySkillReaderService,
-    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
-    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef, TaskManagerOptions,
-    TaskManagerService, TaskManagerStoreRef, TerminalControllerOptions, TerminalControllerService,
-    TerminalControllerStoreRef, UiPrompterOptions, UiPrompterService, UiPrompterStoreRef,
-    WebToolsOptions, WebToolsService,
+    AgentBuilderOptions, AgentBuilderService, AgentBuilderStoreRef, AskUserOptions, AskUserService,
+    AskUserStoreRef, BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService,
+    BrowserVisionAdapterRef, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
+    MemoryCommandReaderOptions, MemoryCommandReaderService, MemoryPluginReaderOptions,
+    MemoryPluginReaderService, MemoryReaderStoreRef, MemorySkillReaderOptions,
+    MemorySkillReaderService, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
+    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
+    RemoteConnectionControllerStoreRef, TaskManagerOptions, TaskManagerService,
+    TaskManagerStoreRef, TerminalControllerOptions, TerminalControllerService,
+    TerminalControllerStoreRef, WebToolsOptions, WebToolsService,
 };
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ pub enum BuiltinToolService {
     TaskManager(TaskManagerService),
     Notepad(NotepadBuiltinService),
     AgentBuilder(AgentBuilderService),
-    UiPrompter(UiPrompterService),
+    AskUser(AskUserService),
     RemoteConnectionController(RemoteConnectionControllerService),
     WebTools(WebToolsService),
     BrowserTools(BrowserToolsService),
@@ -49,7 +49,7 @@ impl BuiltinToolService {
             Self::TaskManager(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
             Self::AgentBuilder(service) => service.list_tools(),
-            Self::UiPrompter(service) => service.list_tools(),
+            Self::AskUser(service) => service.list_tools(),
             Self::RemoteConnectionController(service) => service.list_tools(),
             Self::WebTools(service) => service.list_tools(),
             Self::BrowserTools(service) => service.list_tools(),
@@ -86,7 +86,7 @@ impl BuiltinToolService {
                 conversation_turn_id,
                 on_stream_chunk,
             ),
-            Self::UiPrompter(service) => service.call_tool(
+            Self::AskUser(service) => service.call_tool(
                 name,
                 args,
                 conversation_id,
@@ -205,13 +205,14 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             })?;
             Ok(BuiltinToolService::AgentBuilder(service))
         }
-        BuiltinMcpKind::UiPrompter => {
-            let service = UiPrompterService::new(UiPrompterOptions {
+        BuiltinMcpKind::AskUser => {
+            let service = AskUserService::new(AskUserOptions {
                 server_name: server.name.clone(),
-                prompt_timeout_ms: crate::services::ui_prompt_manager::UI_PROMPT_TIMEOUT_MS_DEFAULT,
-                store: UiPrompterStoreRef::new(Arc::new(ChatosUiPrompterStore)),
+                prompt_timeout_ms:
+                    crate::services::ask_user_prompt_manager::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+                store: AskUserStoreRef::new(Arc::new(ChatosAskUserStore)),
             })?;
-            Ok(BuiltinToolService::UiPrompter(service))
+            Ok(BuiltinToolService::AskUser(service))
         }
         BuiltinMcpKind::RemoteConnectionController => {
             let service =

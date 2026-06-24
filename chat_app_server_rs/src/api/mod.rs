@@ -30,6 +30,7 @@ static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 pub mod agent_chat;
 pub mod agents;
 pub mod applications;
+pub mod ask_user_prompts;
 pub mod auth;
 pub(crate) mod chat_stream_common;
 pub mod code_nav;

@@ -81,6 +81,7 @@ export interface StreamChatLogPayload {
   system_context: string;
   attachments: ApiAttachmentPayload[];
   reasoning_enabled: boolean;
+  plan_mode: boolean;
   contact_agent_id: string | null;
   remote_connection_id: string | null;
   project_id: string;
@@ -95,6 +96,7 @@ export interface StreamChatRuntimeOptions {
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
+  planMode: boolean;
 }
 
 export interface StreamEventPayload {

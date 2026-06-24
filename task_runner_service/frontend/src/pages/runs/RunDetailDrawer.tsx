@@ -10,8 +10,8 @@ import type {
   TaskRunEventRecord,
   TaskRunRecord,
   TaskSummaryRecord,
-  UiPromptRecord,
-  UiPromptStatus,
+  AskUserPromptRecord,
+  AskUserPromptStatus,
 } from '../../types';
 import { JsonBlock } from './payloadView';
 import type {
@@ -37,7 +37,7 @@ type RunStreamStats = {
 };
 
 type RunPromptsPage = {
-  items: UiPromptRecord[];
+  items: AskUserPromptRecord[];
   total: number;
 };
 
@@ -104,7 +104,7 @@ export function RunDetailDrawer({
   onOpenPrompt,
   onPromptPageChange,
 }: RunDetailDrawerProps) {
-  const promptStatusLabel = (status: UiPromptStatus) => t(`prompts.status.${status}`);
+  const promptStatusLabel = (status: AskUserPromptStatus) => t(`prompts.status.${status}`);
 
   return (
     <Drawer

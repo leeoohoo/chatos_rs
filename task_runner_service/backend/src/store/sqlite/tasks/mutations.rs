@@ -94,7 +94,7 @@ impl SqliteStore {
             .await
             .map_err(|err| err.to_string())?;
         sqlx::query(
-            "DELETE FROM ui_prompts WHERE task_id = ? OR run_id IN (SELECT id FROM task_runs WHERE task_id = ?)",
+            "DELETE FROM ask_user_prompts WHERE task_id = ? OR run_id IN (SELECT id FROM task_runs WHERE task_id = ?)",
         )
         .bind(id)
         .bind(id)

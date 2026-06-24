@@ -80,7 +80,7 @@ fn includes_global_and_selected_sections_only() {
     let prompt = compose_builtin_mcp_system_prompt(
         &[
             build_builtin_server(BuiltinMcpKind::TaskManager),
-            build_builtin_server(BuiltinMcpKind::UiPrompter),
+            build_builtin_server(BuiltinMcpKind::AskUser),
         ],
         InternalContextLocale::ZhCn,
     )
@@ -88,7 +88,7 @@ fn includes_global_and_selected_sections_only() {
 
     assert!(prompt.contains("你是 Chatos 中一个“内置 MCP 优先”的助手。"));
     assert!(prompt.contains("`task_manager_add_task`"));
-    assert!(prompt.contains("`ui_prompter_prompt_choices`"));
+    assert!(prompt.contains("`ask_user_prompt_choices`"));
     assert!(!prompt.contains("`code_maintainer_read_read_file`"));
 }
 

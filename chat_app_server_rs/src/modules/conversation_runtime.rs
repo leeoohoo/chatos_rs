@@ -50,6 +50,7 @@ pub fn routes() -> Router {
         .merge(api::realtime::router())
         .merge(api::sessions::router())
         .merge(api::task_manager::router())
+        .merge(api::ask_user_prompts::router())
 }
 
 pub fn public_routes() -> Router {

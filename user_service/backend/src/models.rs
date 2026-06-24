@@ -276,6 +276,7 @@ pub struct UpdateUserModelSettingsRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRunnerTokenExchangeRequest {
+    #[serde(alias = "agent_account_id")]
     pub task_runner_agent_account_id: String,
     pub contact_id: Option<String>,
 }

@@ -15,6 +15,9 @@ interface ChatComposerPanelProps {
   reasoningSupported: boolean;
   reasoningEnabled: boolean;
   onReasoningToggle: (enabled: boolean) => void;
+  planModeAvailable?: boolean;
+  planModeEnabled: boolean;
+  onPlanModeToggle: (enabled: boolean) => void;
   selectedModelId: string | null;
   selectedModelName?: string | null;
   selectedThinkingLevel?: string | null;
@@ -48,6 +51,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   reasoningSupported,
   reasoningEnabled,
   onReasoningToggle,
+  planModeAvailable = false,
+  planModeEnabled,
+  onPlanModeToggle,
   selectedModelId,
   selectedModelName = null,
   selectedThinkingLevel = null,
@@ -82,6 +88,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       reasoningSupported={reasoningSupported}
       reasoningEnabled={reasoningEnabled}
       onReasoningToggle={onReasoningToggle}
+      planModeAvailable={planModeAvailable}
+      planModeEnabled={planModeAvailable && planModeEnabled}
+      onPlanModeToggle={onPlanModeToggle}
       showModelSelector={true}
       selectedModelId={selectedModelId}
       selectedModelName={selectedModelName}

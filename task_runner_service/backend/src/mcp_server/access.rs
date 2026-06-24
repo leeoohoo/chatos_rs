@@ -1,7 +1,7 @@
 use crate::auth::CurrentUser;
 use crate::models::{
-    normalize_project_id, CreateTaskRequest, TaskListFilters, TaskRecord, TaskRunRecord,
-    TaskScheduleMode, TaskStatsResponse, TaskStatus, UiPromptRecord,
+    normalize_project_id, AskUserPromptRecord, CreateTaskRequest, TaskListFilters, TaskRecord,
+    TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus,
 };
 
 use super::chatos_async_planner::require_chatos_async_source_context;
@@ -74,7 +74,7 @@ impl TaskRunnerMcpService {
 
     pub(super) async fn require_prompt_for_user_in_context(
         &self,
-        prompt: &UiPromptRecord,
+        prompt: &AskUserPromptRecord,
         current_user: &CurrentUser,
         request_context: &McpRequestContext,
     ) -> Result<(), String> {
@@ -119,10 +119,10 @@ impl TaskRunnerMcpService {
 
     pub(super) async fn filter_prompts_for_user_in_context(
         &self,
-        prompts: Vec<UiPromptRecord>,
+        prompts: Vec<AskUserPromptRecord>,
         current_user: &CurrentUser,
         request_context: &McpRequestContext,
-    ) -> Result<Vec<UiPromptRecord>, String> {
+    ) -> Result<Vec<AskUserPromptRecord>, String> {
         if current_user.is_admin() && request_context.project_scope_id().is_none() {
             return Ok(prompts);
         }
@@ -212,7 +212,7 @@ impl TaskRunnerMcpService {
 
     pub(super) async fn require_prompt_for_user(
         &self,
-        prompt: &UiPromptRecord,
+        prompt: &AskUserPromptRecord,
         current_user: &CurrentUser,
     ) -> Result<(), String> {
         if current_user.is_admin() {

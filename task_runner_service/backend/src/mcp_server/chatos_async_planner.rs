@@ -16,6 +16,14 @@ mod access;
 mod request_guards;
 mod schema;
 
+const SYSTEM_INJECTED_BUILTIN_KINDS: &[&str] = &["TaskManager", "AskUser"];
+
+pub(in crate::mcp_server) fn is_system_injected_builtin_kind(value: &str) -> bool {
+    SYSTEM_INJECTED_BUILTIN_KINDS
+        .iter()
+        .any(|kind| kind.eq_ignore_ascii_case(value.trim()))
+}
+
 pub(in crate::mcp_server) use self::access::planner_agent_tool_allowed;
 #[cfg(test)]
 pub(in crate::mcp_server) use self::request_guards::ensure_planner_required_fields;

@@ -9,7 +9,7 @@ import {
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
-import type { UiPromptStatus } from '../types';
+import type { AskUserPromptStatus } from '../types';
 import { PromptDetailDrawer } from './prompts/PromptDetailDrawer';
 import {
   buildInitialValues,
@@ -37,7 +37,7 @@ export function PromptsPage() {
   const taskFilterId = searchParams.get('task_id') || undefined;
   const runFilterId = searchParams.get('run_id') || undefined;
   const statusFilter = (searchParams.get('status') as PromptStatusFilter | null) || 'all';
-  const promptStatusLabel = (status: UiPromptStatus) => t(`prompts.status.${status}`);
+  const promptStatusLabel = (status: AskUserPromptStatus) => t(`prompts.status.${status}`);
   const {
     promptStatusOptions,
     promptsQuery,

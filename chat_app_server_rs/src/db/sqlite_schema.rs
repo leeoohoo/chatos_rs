@@ -169,7 +169,7 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES sessions(id) ON DELETE CASCADE
         )"#,
-        r#"CREATE TABLE IF NOT EXISTS ui_prompt_requests (
+        r#"CREATE TABLE IF NOT EXISTS ask_user_prompt_requests (
             id TEXT PRIMARY KEY,
             conversation_id TEXT NOT NULL,
             conversation_turn_id TEXT NOT NULL,
@@ -179,6 +179,11 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             prompt_json TEXT NOT NULL,
             response_json TEXT,
             expires_at TEXT,
+            source TEXT NOT NULL DEFAULT 'chatos',
+            external_prompt_id TEXT,
+            external_task_id TEXT,
+            external_run_id TEXT,
+            external_project_id TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -500,9 +505,44 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
     )
     .await
     .ok();
-    rename_column_if_needed(pool, "ui_prompt_requests", "session_id", "conversation_id")
+    rename_column_if_needed(
+        pool,
+        "ask_user_prompt_requests",
+        "session_id",
+        "conversation_id",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "ask_user_prompt_requests",
+        "source",
+        "TEXT NOT NULL DEFAULT 'chatos'",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "ask_user_prompt_requests",
+        "external_prompt_id",
+        "TEXT",
+    )
+    .await
+    .ok();
+    ensure_column(pool, "ask_user_prompt_requests", "external_task_id", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "ask_user_prompt_requests", "external_run_id", "TEXT")
+        .await
+        .ok();
+    ensure_column(
+        pool,
+        "ask_user_prompt_requests",
+        "external_project_id",
+        "TEXT",
+    )
+    .await
+    .ok();
     sqlx::query("DROP INDEX IF EXISTS idx_mcp_change_logs_session_id")
         .execute(pool)
         .await
@@ -530,8 +570,9 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_conversation_turn ON task_manager_tasks(conversation_id, conversation_turn_id)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_conversation_created_at ON task_manager_tasks(conversation_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_turn_created_at ON task_manager_tasks(conversation_turn_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_ui_prompt_requests_conversation_status_updated_at ON ui_prompt_requests(conversation_id, status, updated_at)",
-        "CREATE INDEX IF NOT EXISTS idx_ui_prompt_requests_turn_created_at ON ui_prompt_requests(conversation_turn_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ask_user_prompt_requests_conversation_status_updated_at ON ask_user_prompt_requests(conversation_id, status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ask_user_prompt_requests_turn_created_at ON ask_user_prompt_requests(conversation_turn_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ask_user_prompt_requests_source_external ON ask_user_prompt_requests(source, external_prompt_id)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_configs_user_id ON mcp_configs(user_id)",

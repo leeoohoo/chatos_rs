@@ -80,6 +80,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/token/exchange/task-runner",
             post(token_exchange::exchange_task_runner_token),
         )
+        .route(
+            "/api/token/exchange/agent",
+            post(token_exchange::exchange_task_runner_token),
+        )
         .route("/api/system/config", get(system::get_system_config))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 

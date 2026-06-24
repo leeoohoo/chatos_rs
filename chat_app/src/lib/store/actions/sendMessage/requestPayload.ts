@@ -38,6 +38,7 @@ export const buildChatRequestLogPayload = ({
   projectId,
   projectRoot,
   workspaceRoot,
+  planMode,
 }: {
   sessionId: string;
   turnId: string;
@@ -52,6 +53,7 @@ export const buildChatRequestLogPayload = ({
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
+  planMode: boolean;
 }): StreamChatLogPayload => ({
   conversation_id: sessionId,
   turn_id: turnId,
@@ -69,6 +71,7 @@ export const buildChatRequestLogPayload = ({
   system_context: systemContext,
   attachments: attachments || [],
   reasoning_enabled: reasoningEnabled,
+  plan_mode: planMode,
   contact_agent_id: contactAgentId,
   remote_connection_id: remoteConnectionId,
   project_id: projectId,
@@ -83,6 +86,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectId,
   projectRoot,
   workspaceRoot,
+  planMode,
 }: {
   turnId: string;
   contactAgentId: string | null;
@@ -90,6 +94,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
+  planMode: boolean;
 }): StreamChatRuntimeOptions => ({
   turnId,
   contactAgentId,
@@ -97,4 +102,5 @@ export const buildStreamChatRuntimeOptions = ({
   projectId,
   projectRoot,
   workspaceRoot,
+  planMode,
 });

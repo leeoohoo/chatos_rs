@@ -22,10 +22,12 @@ use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
     access_token_scope, chatos_agents, chatos_memory_engine, chatos_memory_mappings,
-    chatos_sessions, task_runner_api_client,
+    chatos_sessions, project_management_api_client, task_runner_api_client,
+    user_service_api_client,
 };
 
 const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
+const PROJECT_MANAGEMENT_MCP_SERVER_NAME: &str = "project_management_service";
 
 #[derive(Debug, Clone)]
 pub struct ConversationRuntimeRequest {
@@ -35,6 +37,7 @@ pub struct ConversationRuntimeRequest {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
+    pub plan_mode: bool,
     pub conversation_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
 }
@@ -47,6 +50,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
     pub task_runner_skill_prompt: Option<String>,
+    pub project_management_skill_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub resolved_project_id: Option<String>,
     pub resolved_project_root: Option<String>,
@@ -165,36 +169,70 @@ pub async fn resolve_runtime_context(
     let workspace_root = normalize_id(req.workspace_root.clone())
         .or_else(|| runtime_metadata.workspace_root.clone());
 
-    let mut task_runner_skill_prompt = None;
-    let task_runner_runtime = build_contact_task_runner_runtime(
-        effective_user_id.as_deref(),
-        runtime_metadata.contact_id.as_deref(),
-        contact_agent_id.as_deref(),
-        Some(session_id),
-        resolved_project_id.as_deref().or(Some(PUBLIC_PROJECT_ID)),
-        workspace_root
-            .as_deref()
-            .or(resolved_project_root.as_deref()),
-        default_remote_connection_id.as_deref(),
-        req.conversation_turn_id.as_deref(),
-        req.source_user_message_id.as_deref(),
-        internal_context_locale,
-    )
-    .await;
-
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
-    let runtime_error = if task_runner_runtime.is_none() {
-        Some("当前联系人未配置 Task Runner，无法创建任务。".to_string())
-    } else {
-        None
-    };
+    let mut task_runner_skill_prompt = None;
+    let mut project_management_skill_prompt = None;
+    let mut runtime_error = None;
 
-    if let Some(runtime) = task_runner_runtime {
-        task_runner_skill_prompt = runtime.skill_prompt;
-        http_servers.push(runtime.server);
+    if req.plan_mode {
+        let plan_project_id = resolved_project_id
+            .as_deref()
+            .filter(|project_id| is_concrete_project_id(project_id));
+        if let Some(plan_project_id) = plan_project_id {
+            match build_contact_project_management_runtime(
+                contact_runtime_context.as_ref(),
+                Some(session_id),
+                Some(plan_project_id),
+                req.conversation_turn_id.as_deref(),
+                req.source_user_message_id.as_deref(),
+                internal_context_locale,
+            )
+            .await
+            {
+                Some(runtime) => {
+                    project_management_skill_prompt = runtime.skill_prompt;
+                    http_servers.push(runtime.server);
+                }
+                None => {
+                    runtime_error = Some(
+                        "当前联系人未配置项目管理 Agent 账号，无法进入 Plan 模式。".to_string(),
+                    );
+                }
+            }
+        } else {
+            runtime_error = Some("Plan 模式需要先选择一个有效项目。".to_string());
+        }
+    } else {
+        match build_contact_task_runner_runtime(
+            effective_user_id.as_deref(),
+            runtime_metadata.contact_id.as_deref(),
+            contact_agent_id.as_deref(),
+            Some(session_id),
+            resolved_project_id.as_deref().or(Some(PUBLIC_PROJECT_ID)),
+            workspace_root
+                .as_deref()
+                .or(resolved_project_root.as_deref()),
+            default_remote_connection_id.as_deref(),
+            req.conversation_turn_id.as_deref(),
+            req.source_user_message_id.as_deref(),
+            internal_context_locale,
+        )
+        .await
+        {
+            Some(runtime) => {
+                task_runner_skill_prompt = runtime.skill_prompt;
+                http_servers.push(runtime.server);
+            }
+            None => {
+                runtime_error = Some("当前联系人未配置 Task Runner，无法创建任务。".to_string());
+            }
+        }
     }
 
-    let enabled_mcp_ids_for_snapshot = vec![TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string()];
+    let enabled_mcp_ids_for_snapshot = http_servers
+        .iter()
+        .map(|server| server.name.clone())
+        .collect::<Vec<_>>();
     let builtin_mcp_system_prompt =
         compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
     let use_tools =
@@ -215,6 +253,7 @@ pub async fn resolve_runtime_context(
         contact_system_prompt,
         builtin_mcp_system_prompt,
         task_runner_skill_prompt,
+        project_management_skill_prompt,
         selected_commands_for_snapshot,
         resolved_project_id,
         resolved_project_root,
@@ -231,6 +270,12 @@ pub async fn resolve_runtime_context(
 
 #[derive(Debug)]
 struct ContactTaskRunnerRuntime {
+    server: McpHttpServer,
+    skill_prompt: Option<String>,
+}
+
+#[derive(Debug)]
+struct ContactProjectManagementRuntime {
     server: McpHttpServer,
     skill_prompt: Option<String>,
 }
@@ -354,6 +399,105 @@ async fn build_contact_task_runner_runtime(
     })
 }
 
+async fn build_contact_project_management_runtime(
+    contact_runtime_context: Option<
+        &crate::models::chatos_agent_types::ChatosAgentRuntimeContextDto,
+    >,
+    source_session_id: Option<&str>,
+    project_id: Option<&str>,
+    conversation_turn_id: Option<&str>,
+    source_user_message_id: Option<&str>,
+    locale: InternalContextLocale,
+) -> Option<ContactProjectManagementRuntime> {
+    let agent_account_id = contact_runtime_context.and_then(|context| {
+        normalize_optional_text(context.task_runner_agent_account_id.as_deref())
+    })?;
+    let Some(config) = Config::try_get().ok() else {
+        warn!("project management MCP skipped: config unavailable");
+        return None;
+    };
+    let Some(user_service_base_url) = config.user_service_base_url.clone() else {
+        warn!("project management MCP skipped: user_service_base_url missing");
+        return None;
+    };
+    let Some(user_access_token) = access_token_scope::get_current_access_token() else {
+        warn!("project management MCP skipped: current user access token missing");
+        return None;
+    };
+    let agent_token = match user_service_api_client::exchange_agent_token(
+        user_service_base_url.as_str(),
+        user_access_token.as_str(),
+        &user_service_api_client::ExchangeUserServiceAgentTokenRequest {
+            agent_account_id: agent_account_id.clone(),
+            contact_id: None,
+        },
+        config.user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(payload) => {
+            if !payload.token_type.eq_ignore_ascii_case("Bearer") {
+                warn!(
+                    "project management MCP agent token response uses unexpected token_type={}",
+                    payload.token_type
+                );
+            }
+            if payload.expires_in <= 0 {
+                warn!(
+                    "project management MCP agent token response has non-positive expires_in={}",
+                    payload.expires_in
+                );
+            }
+            payload.access_token
+        }
+        Err(err) => {
+            warn!(
+                "project management MCP skipped: exchange agent token failed: agent_account_id={} detail={}",
+                agent_account_id, err
+            );
+            return None;
+        }
+    };
+
+    let mut headers = HashMap::new();
+    headers.insert("Authorization".to_string(), format!("Bearer {agent_token}"));
+    headers.insert(
+        "X-Chatos-User-Authorization".to_string(),
+        format!("Bearer {user_access_token}"),
+    );
+    let Some(project_id) =
+        normalize_optional_text(project_id).filter(|project_id| is_concrete_project_id(project_id))
+    else {
+        warn!("project management MCP skipped: concrete project_id missing");
+        return None;
+    };
+    headers.insert("X-Chatos-Project-Id".to_string(), project_id);
+    if let Some(session_id) = normalize_optional_text(source_session_id) {
+        headers.insert("X-Chatos-Session-Id".to_string(), session_id);
+    }
+    if let Some(turn_id) = normalize_optional_text(conversation_turn_id) {
+        headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
+    }
+    if let Some(user_message_id) = normalize_optional_text(source_user_message_id) {
+        headers.insert("X-Chatos-User-Message-Id".to_string(), user_message_id);
+    }
+
+    let project_service_base_url = config.project_service_base_url.as_str();
+    let skill_prompt =
+        fetch_contact_project_management_skill_prompt(project_service_base_url, locale).await;
+    Some(ContactProjectManagementRuntime {
+        server: McpHttpServer {
+            name: PROJECT_MANAGEMENT_MCP_SERVER_NAME.to_string(),
+            url: format!(
+                "{}/mcp",
+                project_service_base_url.trim().trim_end_matches('/')
+            ),
+            headers: Some(headers),
+        },
+        skill_prompt,
+    })
+}
+
 async fn fetch_contact_task_runner_skill_prompt(
     base_url: &str,
     locale: InternalContextLocale,
@@ -364,6 +508,27 @@ async fn fetch_contact_task_runner_skill_prompt(
         Ok(content) => Some(format_task_runner_skill_prompt(content.as_str(), locale)),
         Err(err) => {
             warn!("fetch task runner skill failed: detail={}", err);
+            None
+        }
+    }
+}
+
+async fn fetch_contact_project_management_skill_prompt(
+    base_url: &str,
+    locale: InternalContextLocale,
+) -> Option<String> {
+    match project_management_api_client::fetch_project_management_skill(
+        base_url,
+        task_runner_skill_lang(locale),
+    )
+    .await
+    {
+        Ok(content) => Some(format_project_management_skill_prompt(
+            content.as_str(),
+            locale,
+        )),
+        Err(err) => {
+            warn!("fetch project management skill failed: detail={}", err);
             None
         }
     }
@@ -387,6 +552,21 @@ fn format_task_runner_skill_prompt(content: &str, locale: InternalContextLocale)
     } else {
         format!(
             "[Task Runner Skill]\n下面的指南由 Task Runner 服务提供，用于当前会话可用的 Task Runner MCP 工具。使用这些工具时请遵循它。\n\n{}",
+            content
+        )
+    }
+}
+
+fn format_project_management_skill_prompt(content: &str, locale: InternalContextLocale) -> String {
+    let content = content.trim();
+    if locale.is_english() {
+        format!(
+            "[Project Management Skill]\nThe following guide is provided by the Project Management service for the Project Management MCP tools available in this conversation. Authentication, including the agent token and mandatory real user token, is injected by the program; never ask the model or user to pass tokens as tool arguments.\n\n{}",
+            content
+        )
+    } else {
+        format!(
+            "[Project Management Skill]\n下面的指南由项目管理服务提供，用于当前会话可用的 Project Management MCP 工具。认证由程序自动注入，并且包含 agent token 和必需的真实用户 token；不要让模型或用户把 token 作为工具参数传入。\n\n{}",
             content
         )
     }
@@ -474,4 +654,9 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn is_concrete_project_id(project_id: &str) -> bool {
+    let normalized = project_id.trim();
+    !normalized.is_empty() && normalized != "0" && normalized != PUBLIC_PROJECT_ID
 }

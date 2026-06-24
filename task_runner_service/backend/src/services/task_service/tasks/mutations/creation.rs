@@ -39,10 +39,8 @@ impl TaskService {
         }
         let project_id = normalize_project_id(source_context.project_id.clone());
         if project_id != PUBLIC_PROJECT_ID {
-            let Some(project) = self.store.get_task_project(&project_id).await? else {
-                return Err(format!("项目不存在: {project_id}"));
-            };
-            ensure_project_active_for_user(&project, creator)?;
+            self.ensure_project_available_for_task(&project_id, creator)
+                .await?;
         }
         self.validate_task_prerequisites_for_project(
             &id,
@@ -186,6 +184,9 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
+            project_service_base_url: None,
+            project_service_sync_secret: None,
+            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 

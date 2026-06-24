@@ -441,6 +441,32 @@ export function SettingsPage() {
           />
 
           <PromptContentCard
+            title={t('settings.internalGlobalPrompt')}
+            description={t('settings.internalGlobalPromptHelp')}
+            content={internalPromptsQuery.data?.global_execution_prompt}
+            emptyText={t('settings.noPreview')}
+          />
+
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              {t('settings.internalBuiltinPrompt')}
+            </Typography.Title>
+            <Typography.Text type="secondary">
+              {t('settings.internalBuiltinPromptHelp')}
+            </Typography.Text>
+            {builtinPromptPreviewQuery.error ? (
+              <Alert
+                type="error"
+                showIcon
+                message={errorMessage(builtinPromptPreviewQuery.error)}
+              />
+            ) : null}
+            {builtinPromptPreviewQuery.data ? (
+              <McpPromptPreviewCard preview={builtinPromptPreviewQuery.data} />
+            ) : null}
+          </Space>
+
+          <PromptContentCard
             title={t('settings.internalProcessPrompt')}
             description={t('settings.internalProcessPromptHelp')}
             content={internalPromptsQuery.data?.process_log_system_prompt}
@@ -467,25 +493,6 @@ export function SettingsPage() {
                 ))}
               </ul>
             </div>
-          </Space>
-
-          <Space direction="vertical" size="small" style={{ width: '100%' }}>
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              {t('settings.internalBuiltinPrompt')}
-            </Typography.Title>
-            <Typography.Text type="secondary">
-              {t('settings.internalBuiltinPromptHelp')}
-            </Typography.Text>
-            {builtinPromptPreviewQuery.error ? (
-              <Alert
-                type="error"
-                showIcon
-                message={errorMessage(builtinPromptPreviewQuery.error)}
-              />
-            ) : null}
-            {builtinPromptPreviewQuery.data ? (
-              <McpPromptPreviewCard preview={builtinPromptPreviewQuery.data} />
-            ) : null}
           </Space>
         </Space>
       ),

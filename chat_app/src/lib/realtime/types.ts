@@ -370,6 +370,22 @@ export interface RealtimeTaskBoardPayloadWrapper {
   timeout_ms?: number | null;
 }
 
+export interface RealtimeAskUserPromptPayloadWrapper {
+  kind: 'ask_user_prompt';
+  conversation_id: string;
+  conversation_turn_id?: string | null;
+  prompt_id: string;
+  action: string;
+  status?: string | null;
+  tool_call_id?: string | null;
+  prompt_kind?: string | null;
+  title?: string | null;
+  message?: string | null;
+  allow_cancel?: boolean | null;
+  timeout_ms?: number | null;
+  payload?: Record<string, unknown> | null;
+}
+
 export interface RealtimeChatStreamPayloadWrapper {
   kind: 'chat_stream';
   conversation_id: string;
@@ -451,6 +467,7 @@ export interface RealtimeEventEnvelope {
     | RealtimeSessionsUpdatedPayloadWrapper
     | RealtimeProjectScopedPayload
     | RealtimeTaskBoardPayloadWrapper
+    | RealtimeAskUserPromptPayloadWrapper
     | RealtimeChatStreamPayloadWrapper
     | RealtimeRemoteSftpTransferPayloadWrapper;
   ts: string;

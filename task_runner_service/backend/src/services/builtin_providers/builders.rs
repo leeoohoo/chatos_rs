@@ -4,7 +4,7 @@ use super::*;
 pub(in crate::services) fn build_task_runner_builtin_provider(
     server: &McpBuiltinServer,
     task_service: TaskService,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
 ) -> Result<Option<TaskRunnerBuiltinProvider>, String> {
     let Some(kind) = builtin_kind_by_any(server.kind.as_str()) else {
         return Ok(None);
@@ -22,8 +22,8 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
         chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
             build_remote_connection_controller_provider(server, task_service)?
         }
-        chatos_mcp_runtime::BuiltinMcpKind::UiPrompter => {
-            build_ui_prompter_provider(server, ui_prompt_service)?
+        chatos_mcp_runtime::BuiltinMcpKind::AskUser => {
+            build_ask_user_provider(server, ask_user_prompt_service)?
         }
         _ => return Ok(build_shared_provider(server)?),
     };
@@ -119,18 +119,18 @@ fn build_remote_connection_controller_provider(
     ))
 }
 
-fn build_ui_prompter_provider(
+fn build_ask_user_provider(
     server: &McpBuiltinServer,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
 ) -> Result<TaskRunnerBuiltinProvider, String> {
-    let service = UiPrompterService::new(UiPrompterOptions {
+    let service = AskUserService::new(AskUserOptions {
         server_name: server.name.clone(),
-        prompt_timeout_ms: UI_PROMPT_TIMEOUT_MS_DEFAULT,
-        store: UiPrompterStoreRef::new(Arc::new(ui_prompt_service)),
+        prompt_timeout_ms: ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+        store: AskUserStoreRef::new(Arc::new(ask_user_prompt_service)),
     })?;
     Ok(TaskRunnerBuiltinProvider::new(
         server.name.clone(),
-        TaskRunnerBuiltinToolService::UiPrompter(service),
+        TaskRunnerBuiltinToolService::AskUser(service),
     ))
 }
 

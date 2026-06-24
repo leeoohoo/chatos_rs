@@ -1,8 +1,25 @@
 use super::*;
 
 impl TaskProjectService {
+    #[cfg(test)]
     pub(crate) fn new(store: AppStore) -> Self {
-        Self { store }
+        Self {
+            config: None,
+            store,
+        }
+    }
+
+    pub(crate) fn new_with_config(store: AppStore, config: AppConfig) -> Self {
+        Self {
+            config: Some(config),
+            store,
+        }
+    }
+
+    fn project_service_config(&self) -> Option<&AppConfig> {
+        self.config
+            .as_ref()
+            .filter(|config| super::project_management_api_client::project_service_enabled(config))
     }
 
     pub async fn ensure_public_project(&self) -> Result<TaskProjectRecord, String> {
@@ -30,6 +47,9 @@ impl TaskProjectService {
     }
 
     pub async fn list_projects(&self) -> Result<Vec<TaskProjectRecord>, String> {
+        if let Some(config) = self.project_service_config() {
+            return super::project_management_api_client::sync_list_projects(config, None).await;
+        }
         let mut projects = self.store.list_task_projects().await?;
         if !projects
             .iter()
@@ -45,6 +65,13 @@ impl TaskProjectService {
         &self,
         user: &CurrentUser,
     ) -> Result<Vec<TaskProjectRecord>, String> {
+        if let Some(config) = self.project_service_config() {
+            let mut projects =
+                super::project_management_api_client::list_projects_for_user(config, None).await?;
+            projects.retain(|project| project.id != PUBLIC_PROJECT_ID);
+            projects.insert(0, self.public_project_for_user(user).await?);
+            return Ok(projects);
+        }
         let mut projects = self
             .list_projects()
             .await?
@@ -60,6 +87,10 @@ impl TaskProjectService {
         if id == PUBLIC_PROJECT_ID {
             return self.ensure_public_project().await.map(Some);
         }
+        if let Some(config) = self.project_service_config() {
+            return super::project_management_api_client::sync_get_project(config, id.as_str())
+                .await;
+        }
         self.store.get_task_project(id.as_str()).await
     }
 
@@ -71,6 +102,10 @@ impl TaskProjectService {
         let id = normalize_project_lookup_id(id);
         if id == PUBLIC_PROJECT_ID {
             return self.public_project_for_user(user).await.map(Some);
+        }
+        if let Some(config) = self.project_service_config() {
+            return super::project_management_api_client::get_project_for_user(config, id.as_str())
+                .await;
         }
         self.store.get_task_project(id.as_str()).await
     }
@@ -94,6 +129,10 @@ impl TaskProjectService {
         input: CreateTaskProjectRequest,
         creator: &CurrentUser,
     ) -> Result<TaskProjectRecord, String> {
+        if let Some(config) = self.project_service_config() {
+            let _ = creator;
+            return super::project_management_api_client::create_project(config, &input).await;
+        }
         validate_required("name", &input.name)?;
         let owner_user_id = creator
             .effective_owner_user_id()
@@ -124,6 +163,9 @@ impl TaskProjectService {
         &self,
         input: ChatosProjectImportRequest,
     ) -> Result<TaskProjectRecord, String> {
+        if let Some(config) = self.project_service_config() {
+            return super::project_management_api_client::import_project(config, &input).await;
+        }
         let id = input.id.trim();
         validate_required("id", id)?;
         if id == PUBLIC_PROJECT_ID {
@@ -163,6 +205,14 @@ impl TaskProjectService {
         if id == PUBLIC_PROJECT_ID {
             return Err("public project cannot be updated".to_string());
         }
+        if let Some(config) = self.project_service_config() {
+            return super::project_management_api_client::update_project(
+                config,
+                id.as_str(),
+                &patch,
+            )
+            .await;
+        }
         let Some(mut project) = self.store.get_task_project(id.as_str()).await? else {
             return Ok(None);
         };
@@ -188,6 +238,10 @@ impl TaskProjectService {
         if id == PUBLIC_PROJECT_ID {
             return Err("public project cannot be archived".to_string());
         }
+        if let Some(config) = self.project_service_config() {
+            return super::project_management_api_client::archive_project(config, id.as_str())
+                .await;
+        }
         let Some(mut project) = self.store.get_task_project(id.as_str()).await? else {
             return Ok(None);
         };
@@ -196,6 +250,36 @@ impl TaskProjectService {
         project.archived_at = Some(now.clone());
         project.updated_at = now;
         Ok(Some(self.store.save_task_project(project).await?))
+    }
+}
+
+impl TaskService {
+    pub(super) async fn ensure_project_available_for_task(
+        &self,
+        project_id: &str,
+        current_user: Option<&CurrentUser>,
+    ) -> Result<(), String> {
+        if self
+            .config
+            .project_service_base_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+        {
+            let project = super::project_management_api_client::get_project_from_project_service(
+                &self.config,
+                project_id,
+            )
+            .await?
+            .ok_or_else(|| format!("项目不存在: {project_id}"))?;
+            ensure_project_active_for_user(&project, current_user)?;
+            return Ok(());
+        }
+
+        let Some(project) = self.store.get_task_project(project_id).await? else {
+            return Err(format!("项目不存在: {project_id}"));
+        };
+        ensure_project_active_for_user(&project, current_user)
     }
 }
 
@@ -321,6 +405,9 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
+            project_service_base_url: None,
+            project_service_sync_secret: None,
+            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 

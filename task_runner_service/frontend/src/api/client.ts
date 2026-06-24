@@ -3,7 +3,7 @@ import type {
   BatchTaskOperationResponse,
   BatchTaskRunPayload,
   BatchTaskStatusUpdatePayload,
-  CancelUiPromptPayload,
+  CancelAskUserPromptPayload,
   CreateExternalMcpConfigPayload,
   CreateModelConfigPayload,
   CreateTaskPayload,
@@ -29,7 +29,7 @@ import type {
   RemoteServerRecord,
   RemoteServerTestResponse,
   StartTaskRunPayload,
-  SubmitUiPromptPayload,
+  SubmitAskUserPromptPayload,
   RunSummaryRecord,
   RunListFilters,
   TaskStatsResponse,
@@ -57,9 +57,9 @@ import type {
   ToolingTerminalProcessListResponse,
   ToolingTerminalProcessLogsResponse,
   ToolingTerminalWriteResponse,
-  UiPromptRecord,
-  UiPromptStatus,
-  UiPromptTaskCountRecord,
+  AskUserPromptRecord,
+  AskUserPromptStatus,
+  AskUserPromptTaskCountRecord,
   UpdateModelConfigPayload,
   UpdateExternalMcpConfigPayload,
   UpdateRemoteServerPayload,
@@ -457,7 +457,7 @@ export const api = {
     runId: string,
     filters?: Omit<PromptListFilters, 'taskId' | 'runId'>,
   ) =>
-    request<UiPromptRecord[]>(
+    request<AskUserPromptRecord[]>(
       withQuery(`/api/runs/${runId}/prompts`, {
         status: filters?.status,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
@@ -516,7 +516,7 @@ export const api = {
       method: 'POST',
     }),
   listPrompts: (filters?: PromptListFilters) =>
-    request<UiPromptRecord[]>(
+    request<AskUserPromptRecord[]>(
       withQuery('/api/prompts', {
         task_id: filters?.taskId,
         run_id: filters?.runId,
@@ -526,7 +526,7 @@ export const api = {
       }),
     ),
   listPromptsPage: (filters?: PromptListFilters) =>
-    request<PaginatedResponse<UiPromptRecord>>(
+    request<PaginatedResponse<AskUserPromptRecord>>(
       withQuery('/api/prompts/page', {
         task_id: filters?.taskId,
         run_id: filters?.runId,
@@ -535,20 +535,20 @@ export const api = {
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
     ),
-  listPromptTaskCounts: (filters?: { status?: UiPromptStatus }) =>
-    request<UiPromptTaskCountRecord[]>(
+  listPromptTaskCounts: (filters?: { status?: AskUserPromptStatus }) =>
+    request<AskUserPromptTaskCountRecord[]>(
       withQuery('/api/prompts/task-counts', {
         status: filters?.status,
       }),
     ),
-  getPrompt: (id: string) => request<UiPromptRecord>(`/api/prompts/${id}`),
-  submitPrompt: (id: string, payload: SubmitUiPromptPayload) =>
-    request<UiPromptRecord>(`/api/prompts/${id}/submit`, {
+  getPrompt: (id: string) => request<AskUserPromptRecord>(`/api/prompts/${id}`),
+  submitPrompt: (id: string, payload: SubmitAskUserPromptPayload) =>
+    request<AskUserPromptRecord>(`/api/prompts/${id}/submit`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  cancelPrompt: (id: string, payload: CancelUiPromptPayload = {}) =>
-    request<UiPromptRecord>(`/api/prompts/${id}/cancel`, {
+  cancelPrompt: (id: string, payload: CancelAskUserPromptPayload = {}) =>
+    request<AskUserPromptRecord>(`/api/prompts/${id}/cancel`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

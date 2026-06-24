@@ -5,22 +5,22 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use chatos_builtin_tools::{
-    build_shared_builtin_tool_service, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
-    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
-    RemoteConnectionControllerStoreRef, SharedBuiltinToolService, TaskManagerOptions,
-    TaskManagerService, TaskManagerStoreRef, TaskStreamChunkCallback, TerminalControllerOptions,
-    TerminalControllerService, TerminalControllerStoreRef, UiPrompterOptions, UiPrompterService,
-    UiPrompterStoreRef, REVIEW_TIMEOUT_MS_DEFAULT, UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    build_shared_builtin_tool_service, AskUserOptions, AskUserService, AskUserStoreRef,
+    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
+    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef,
+    SharedBuiltinToolService, TaskManagerOptions, TaskManagerService, TaskManagerStoreRef,
+    TaskStreamChunkCallback, TerminalControllerOptions, TerminalControllerService,
+    TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT, REVIEW_TIMEOUT_MS_DEFAULT,
 };
 use chatos_mcp_runtime::{
     builtin_kind_by_any, BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer,
     ToolCallContext, ToolStreamChunkCallback,
 };
 
+use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::remote_server_runtime::TaskRunnerRemoteConnectionStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
-use crate::ui_prompt_service::UiPromptService;
 
 use super::task_manager_bridge::TaskRunnerTaskManagerStore;
 use super::TaskService;
@@ -83,6 +83,9 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
+            project_service_base_url: None,
+            project_service_sync_secret: None,
+            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 
@@ -96,7 +99,7 @@ mod tests {
         let config = test_config(default_workspace.clone());
         let store = AppStore::new(&config).await.expect("create store");
         let task_service = TaskService::new(config, store.clone());
-        let ui_prompt_service = UiPromptService::new(store);
+        let ask_user_prompt_service = AskUserPromptService::new(store);
         let server = McpBuiltinServer {
             name: "terminal_controller".to_string(),
             kind: "TerminalController".to_string(),
@@ -112,9 +115,10 @@ mod tests {
             search_limit: 10,
         };
 
-        let provider = build_task_runner_builtin_provider(&server, task_service, ui_prompt_service)
-            .expect("build provider")
-            .expect("terminal provider");
+        let provider =
+            build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
+                .expect("build provider")
+                .expect("terminal provider");
         let tools = provider.list_tools();
         let execute = tools
             .iter()

@@ -19,7 +19,7 @@ import type {
   TaskRecord,
   TaskRunRecord,
   TaskStatus,
-  UiPromptRecord,
+  AskUserPromptRecord,
 } from '../../types';
 import {
   describeTaskSchedule,
@@ -48,7 +48,7 @@ type TaskDetailDrawerProps = {
   remoteOperationsLoading: boolean;
   recentRuns?: TaskRunRecord[];
   recentRunsLoading: boolean;
-  prompts?: PaginatedResponse<UiPromptRecord>;
+  prompts?: PaginatedResponse<AskUserPromptRecord>;
   promptsLoading: boolean;
   followUps?: TaskRecord[];
   followUpsLoading: boolean;
@@ -589,7 +589,7 @@ function RelatedPromptsSection({
 }: {
   t: TranslateFn;
   task: TaskRecord;
-  prompts?: PaginatedResponse<UiPromptRecord>;
+  prompts?: PaginatedResponse<AskUserPromptRecord>;
   loading: boolean;
   onOpenPrompts: (taskId: string, promptId?: string) => void;
 }) {

@@ -6,6 +6,7 @@ use chatos_mcp_runtime::{
 use serde_json::Value;
 
 use crate::agent_builder::AgentBuilderService;
+use crate::ask_user::AskUserService;
 use crate::browser_tools::{BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService};
 use crate::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
 use crate::memory_readers::{
@@ -15,7 +16,6 @@ use crate::notepad::NotepadBuiltinService;
 use crate::remote_connection_controller::RemoteConnectionControllerService;
 use crate::task_manager::TaskManagerService;
 use crate::terminal_controller::TerminalControllerService;
-use crate::ui_prompter::UiPrompterService;
 use crate::web_tools::{WebToolsOptions, WebToolsService};
 
 #[derive(Clone)]
@@ -30,7 +30,7 @@ pub enum SharedBuiltinToolService {
     RemoteConnectionController(RemoteConnectionControllerService),
     TaskManager(TaskManagerService),
     TerminalController(TerminalControllerService),
-    UiPrompter(UiPrompterService),
+    AskUser(AskUserService),
     WebTools(WebToolsService),
 }
 
@@ -47,7 +47,7 @@ impl SharedBuiltinToolService {
             Self::RemoteConnectionController(service) => service.list_tools(),
             Self::TaskManager(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
-            Self::UiPrompter(service) => service.list_tools(),
+            Self::AskUser(service) => service.list_tools(),
             Self::WebTools(service) => service.list_tools(),
         }
     }
@@ -90,7 +90,7 @@ impl SharedBuiltinToolService {
             Self::TerminalController(service) => {
                 service.call_tool(name, args, context.conversation_id.as_deref())
             }
-            Self::UiPrompter(service) => service.call_tool(
+            Self::AskUser(service) => service.call_tool(
                 name,
                 args,
                 context.conversation_id.as_deref(),
@@ -113,7 +113,7 @@ impl SharedBuiltinToolService {
             Self::RemoteConnectionController(service) => service.unavailable_tools(),
             Self::TaskManager(_) => Vec::new(),
             Self::TerminalController(_) => Vec::new(),
-            Self::UiPrompter(_) => Vec::new(),
+            Self::AskUser(_) => Vec::new(),
             Self::WebTools(service) => service.unavailable_tools(),
         }
     }

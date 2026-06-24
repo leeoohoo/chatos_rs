@@ -17,7 +17,10 @@ interface UseInputAreaMessageDraftOptions {
   maxLength: number;
   normalizedWorkspaceRoot: string | null;
   onSend: InputAreaProps['onSend'];
+  planModeAvailable: boolean;
+  planModeEnabled: boolean;
   requireModelSelection: () => boolean;
+  selectedProjectId: string | null;
   selectedRuntimeProject: Project | null;
   selectedModelId: string | null;
   effectiveModelName: string | null;
@@ -33,7 +36,10 @@ export const useInputAreaMessageDraft = ({
   maxLength,
   normalizedWorkspaceRoot,
   onSend,
+  planModeAvailable,
+  planModeEnabled,
   requireModelSelection,
+  selectedProjectId,
   selectedRuntimeProject,
   selectedModelId,
   effectiveModelName,
@@ -82,7 +88,7 @@ export const useInputAreaMessageDraft = ({
       return;
     }
 
-    const runtimeProjectId = selectedRuntimeProject?.id?.trim() || '0';
+    const runtimeProjectId = selectedRuntimeProject?.id?.trim() || selectedProjectId?.trim() || '0';
     const runtimeProjectRoot = runtimeProjectId === '0'
       ? null
       : (selectedRuntimeProject?.rootPath || null);
@@ -96,6 +102,7 @@ export const useInputAreaMessageDraft = ({
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
       workspaceRoot: runtimeWorkspaceRoot,
+      planMode: planModeAvailable && planModeEnabled,
     });
     resetComposer();
   }, [
@@ -106,8 +113,11 @@ export const useInputAreaMessageDraft = ({
     message,
     normalizedWorkspaceRoot,
     onSend,
+    planModeAvailable,
+    planModeEnabled,
     requireModelSelection,
     resetComposer,
+    selectedProjectId,
     selectedRuntimeProject,
     selectedModelId,
     effectiveModelName,

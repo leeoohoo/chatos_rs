@@ -5,6 +5,7 @@ use super::support::{
     task_mcp_config_schema,
 };
 use super::{CreateTaskArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService};
+use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
@@ -17,7 +18,6 @@ use crate::services::{
     TaskProjectService, TaskService,
 };
 use crate::store::AppStore;
-use crate::ui_prompt_service::UiPromptService;
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
@@ -590,10 +590,10 @@ async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectSe
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
     let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
-    let ui_prompt_service = UiPromptService::new(store.clone());
-    let run_service = RunService::new(config, store.clone(), ui_prompt_service.clone());
+    let ask_user_prompt_service = AskUserPromptService::new(store.clone());
+    let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone());
     let mcp_catalog_service =
-        McpCatalogService::new(task_service.clone(), ui_prompt_service.clone());
+        McpCatalogService::new(task_service.clone(), ask_user_prompt_service.clone());
     let task_project_service = TaskProjectService::new(store);
     (
         TaskRunnerMcpService::new(
@@ -601,7 +601,7 @@ async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectSe
             model_config_service,
             external_mcp_config_service,
             run_service,
-            ui_prompt_service,
+            ask_user_prompt_service,
             mcp_catalog_service,
         ),
         task_service,
@@ -636,6 +636,9 @@ fn test_config() -> AppConfig {
         admin_display_name: "Admin".to_string(),
         user_service_base_url: "http://127.0.0.1:39190".to_string(),
         user_service_request_timeout: Duration::from_millis(5000),
+        project_service_base_url: None,
+        project_service_sync_secret: None,
+        project_service_request_timeout: Duration::from_millis(5000),
     }
 }
 

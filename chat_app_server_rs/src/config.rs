@@ -28,6 +28,8 @@ pub struct Config {
     pub auth_access_token_ttl_seconds: i64,
     pub user_service_base_url: Option<String>,
     pub user_service_request_timeout_ms: i64,
+    pub project_service_base_url: String,
+    pub project_service_sync_secret: Option<String>,
     pub task_runner_base_url: String,
     pub task_runner_request_timeout_ms: i64,
     pub memory_engine_base_url: String,
@@ -140,6 +142,11 @@ impl Config {
             .or_else(|| Some(default_user_service_base_url()));
         let user_service_request_timeout_ms =
             read_int("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let project_service_base_url = read_optional_env("CHATOS_PROJECT_SERVICE_BASE_URL")
+            .or_else(|| read_optional_env("PROJECT_SERVICE_BASE_URL"))
+            .unwrap_or_else(default_project_service_base_url);
+        let project_service_sync_secret = read_optional_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET")
+            .or_else(|| read_optional_env("PROJECT_SERVICE_SYNC_SECRET"));
         let task_runner_base_url = read_optional_env("CHATOS_TASK_RUNNER_BASE_URL")
             .or_else(|| read_optional_env("TASK_RUNNER_BASE_URL"))
             .unwrap_or_else(default_task_runner_base_url);
@@ -196,6 +203,8 @@ impl Config {
             auth_access_token_ttl_seconds,
             user_service_base_url,
             user_service_request_timeout_ms,
+            project_service_base_url,
+            project_service_sync_secret,
             task_runner_base_url,
             task_runner_request_timeout_ms,
             memory_engine_base_url,
@@ -289,6 +298,10 @@ impl Config {
             }
         );
         println!("  - Memory Engine 配置:");
+        println!(
+            "    • PROJECT_SERVICE_BASE_URL: {}",
+            self.project_service_base_url
+        );
         println!("    • TASK_RUNNER_BASE_URL: {}", self.task_runner_base_url);
         println!(
             "    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}",
@@ -363,6 +376,12 @@ fn default_task_runner_base_url() -> String {
     build_task_runner_base_url(host.as_str(), port)
 }
 
+fn default_project_service_base_url() -> String {
+    let host = client_accessible_host(read_optional_env("PROJECT_SERVICE_HOST"));
+    let port = read_optional_u16_env("PROJECT_SERVICE_PORT").unwrap_or(39210);
+    build_project_service_base_url(host.as_str(), port)
+}
+
 fn build_memory_engine_base_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}/api/memory-engine/v1")
 }
@@ -372,6 +391,10 @@ fn build_user_service_base_url(host: &str, port: u16) -> String {
 }
 
 fn build_task_runner_base_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}")
+}
+
+fn build_project_service_base_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}")
 }
 

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::{CancelUiPromptRequest, SubmitUiPromptRequest};
+use crate::models::{CancelAskUserPromptRequest, SubmitAskUserPromptRequest};
 
 use super::{
     decode_args, text_result, CancelPromptArgs, ListPromptsArgs, McpRequestContext, PromptIdArgs,
@@ -28,7 +28,7 @@ impl TaskRunnerMcpService {
                         .await?;
                 }
                 let prompts = self
-                    .ui_prompt_service
+                    .ask_user_prompt_service
                     .list_prompts(args.task_id.as_deref(), args.run_id.as_deref(), args.status)
                     .await?;
                 let prompts = self
@@ -39,7 +39,7 @@ impl TaskRunnerMcpService {
             "get_prompt" => {
                 let args: PromptIdArgs = decode_args(args)?;
                 let prompt = self
-                    .ui_prompt_service
+                    .ask_user_prompt_service
                     .get_prompt(args.prompt_id.as_str())
                     .await?
                     .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
@@ -50,17 +50,17 @@ impl TaskRunnerMcpService {
             "submit_prompt" => {
                 let args: SubmitPromptArgs = decode_args(args)?;
                 let prompt = self
-                    .ui_prompt_service
+                    .ask_user_prompt_service
                     .get_prompt(args.prompt_id.as_str())
                     .await?
                     .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
                 self.require_prompt_for_user_in_context(&prompt, current_user, request_context)
                     .await?;
                 let prompt = self
-                    .ui_prompt_service
+                    .ask_user_prompt_service
                     .submit_prompt(
                         args.prompt_id.as_str(),
-                        SubmitUiPromptRequest {
+                        SubmitAskUserPromptRequest {
                             values: args.values,
                             selection: args.selection,
                             reason: args.reason,
@@ -73,17 +73,17 @@ impl TaskRunnerMcpService {
             "cancel_prompt" => {
                 let args: CancelPromptArgs = decode_args(args)?;
                 let prompt = self
-                    .ui_prompt_service
+                    .ask_user_prompt_service
                     .get_prompt(args.prompt_id.as_str())
                     .await?
                     .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
                 self.require_prompt_for_user_in_context(&prompt, current_user, request_context)
                     .await?;
                 let prompt = self
-                    .ui_prompt_service
+                    .ask_user_prompt_service
                     .cancel_prompt(
                         args.prompt_id.as_str(),
-                        CancelUiPromptRequest {
+                        CancelAskUserPromptRequest {
                             reason: args.reason,
                         },
                     )

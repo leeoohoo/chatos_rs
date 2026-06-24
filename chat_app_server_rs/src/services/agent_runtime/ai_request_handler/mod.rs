@@ -149,6 +149,7 @@ impl AiRequestHandler {
         message_source: Option<String>,
         metadata: Option<Value>,
         on_before_send_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+        request_body_limit_bytes: Option<usize>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
         let transport = AiTransport::from_supports_responses(supports_responses);
@@ -180,7 +181,11 @@ impl AiRequestHandler {
             ),
         };
 
-        if let Err(err) = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV) {
+        if let Err(err) = validate_request_payload_size(
+            &payload,
+            REQUEST_BODY_LIMIT_ENV,
+            request_body_limit_bytes,
+        ) {
             error!(
                 "{} request payload rejected before send: purpose={}, detail={}",
                 AGENT_RUNTIME_LOG_PREFIX, purpose, err

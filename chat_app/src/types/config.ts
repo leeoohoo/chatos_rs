@@ -17,6 +17,7 @@ export interface ChatConfig {
   systemPrompt: string;
   enableMcp: boolean;
   reasoningEnabled: boolean;
+  planModeEnabled: boolean;
 }
 
 export interface McpConfig {

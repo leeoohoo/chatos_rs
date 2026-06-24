@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::services::{access_token_scope, task_runner_api_client};
+use crate::services::{access_token_scope, project_management_api_client};
 
 pub const PUBLIC_PROJECT_ID: &str = "-1";
 
@@ -50,10 +50,10 @@ impl ProjectService {
     pub async fn create(data: Project) -> Result<String, String> {
         let cfg = Config::try_get()?;
         let access_token = current_access_token_required()?;
-        let project = task_runner_api_client::create_task_runner_project(
-            cfg.task_runner_base_url.as_str(),
+        let project = project_management_api_client::create_project_service_project(
+            cfg.project_service_base_url.as_str(),
             access_token.as_str(),
-            &task_runner_api_client::CreateTaskRunnerProjectRequest {
+            &project_management_api_client::CreateProjectServiceProjectRequest {
                 name: data.name,
                 root_path: normalize_optional_text(Some(data.root_path)),
                 git_url: normalize_optional_text(data.git_url),
@@ -68,41 +68,41 @@ impl ProjectService {
         let id = normalize_project_id(id);
         let cfg = Config::try_get()?;
         let record = if let Some(access_token) = access_token_scope::get_current_access_token() {
-            task_runner_api_client::get_task_runner_project(
-                cfg.task_runner_base_url.as_str(),
+            project_management_api_client::get_project_service_project(
+                cfg.project_service_base_url.as_str(),
                 access_token.as_str(),
                 id.as_str(),
             )
             .await?
         } else {
             let Some(secret) = sync_secret(cfg)? else {
-                return Err("task runner sync secret is not configured".to_string());
+                return Err("project service sync secret is not configured".to_string());
             };
-            task_runner_api_client::sync_get_task_runner_project(
-                cfg.task_runner_base_url.as_str(),
+            project_management_api_client::sync_get_project_service_project(
+                cfg.project_service_base_url.as_str(),
                 secret.as_str(),
                 id.as_str(),
             )
             .await?
         };
-        Ok(record.map(project_from_task_runner))
+        Ok(record.map(project_from_project_service))
     }
 
     pub async fn list(user_id: Option<String>) -> Result<Vec<Project>, String> {
         let cfg = Config::try_get()?;
         let records = if let Some(access_token) = access_token_scope::get_current_access_token() {
-            task_runner_api_client::list_task_runner_projects(
-                cfg.task_runner_base_url.as_str(),
+            project_management_api_client::list_project_service_projects(
+                cfg.project_service_base_url.as_str(),
                 access_token.as_str(),
                 Some("active"),
             )
             .await?
         } else {
             let Some(secret) = sync_secret(cfg)? else {
-                return Err("task runner sync secret is not configured".to_string());
+                return Err("project service sync secret is not configured".to_string());
             };
-            task_runner_api_client::sync_list_task_runner_projects(
-                cfg.task_runner_base_url.as_str(),
+            project_management_api_client::sync_list_project_service_projects(
+                cfg.project_service_base_url.as_str(),
                 secret.as_str(),
                 Some("active"),
             )
@@ -117,7 +117,7 @@ impl ProjectService {
                     .as_deref()
                     .is_none_or(|value| record.owner_user_id.as_deref() == Some(value))
             })
-            .map(project_from_task_runner)
+            .map(project_from_project_service)
             .collect())
     }
 
@@ -131,11 +131,11 @@ impl ProjectService {
         let cfg = Config::try_get()?;
         let access_token = current_access_token_required()?;
         let id = normalize_project_id(id);
-        task_runner_api_client::update_task_runner_project(
-            cfg.task_runner_base_url.as_str(),
+        project_management_api_client::update_project_service_project(
+            cfg.project_service_base_url.as_str(),
             access_token.as_str(),
             id.as_str(),
-            &task_runner_api_client::UpdateTaskRunnerProjectRequest {
+            &project_management_api_client::UpdateProjectServiceProjectRequest {
                 name: normalize_optional_text(name),
                 root_path: normalize_optional_text(root_path),
                 git_url: normalize_optional_text(git_url),
@@ -150,8 +150,8 @@ impl ProjectService {
         let cfg = Config::try_get()?;
         let access_token = current_access_token_required()?;
         let id = normalize_project_id(id);
-        task_runner_api_client::archive_task_runner_project(
-            cfg.task_runner_base_url.as_str(),
+        project_management_api_client::archive_project_service_project(
+            cfg.project_service_base_url.as_str(),
             access_token.as_str(),
             id.as_str(),
         )
@@ -160,7 +160,9 @@ impl ProjectService {
     }
 }
 
-fn project_from_task_runner(record: task_runner_api_client::TaskRunnerProjectRecord) -> Project {
+fn project_from_project_service(
+    record: project_management_api_client::ProjectServiceProjectRecord,
+) -> Project {
     Project {
         id: record.id,
         name: record.name,
@@ -182,8 +184,9 @@ fn current_access_token_required() -> Result<String, String> {
 
 fn sync_secret(cfg: &Config) -> Result<Option<String>, String> {
     Ok(cfg
-        .task_runner_callback_secret
+        .project_service_sync_secret
         .as_deref()
+        .or(cfg.task_runner_callback_secret.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned))

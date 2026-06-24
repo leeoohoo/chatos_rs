@@ -4,21 +4,21 @@ use super::*;
 pub(super) struct PromptListQuery {
     task_id: Option<String>,
     run_id: Option<String>,
-    status: Option<UiPromptStatus>,
+    status: Option<AskUserPromptStatus>,
     limit: Option<usize>,
     offset: Option<usize>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct PromptTaskCountQuery {
-    status: Option<UiPromptStatus>,
+    status: Option<AskUserPromptStatus>,
 }
 
 pub(super) async fn list_prompts(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<PromptListQuery>,
-) -> Result<Json<Vec<UiPromptRecord>>, ApiError> {
+) -> Result<Json<Vec<AskUserPromptRecord>>, ApiError> {
     let page = list_prompts_page_for_user(&state, &current_user, query.into_filters()).await?;
     Ok(Json(page.items))
 }
@@ -27,7 +27,7 @@ pub(super) async fn list_prompts_page(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<PromptListQuery>,
-) -> Result<Json<PaginatedResponse<UiPromptRecord>>, ApiError> {
+) -> Result<Json<PaginatedResponse<AskUserPromptRecord>>, ApiError> {
     let page = list_prompts_page_for_user(&state, &current_user, query.into_filters()).await?;
     Ok(Json(page))
 }
@@ -36,9 +36,9 @@ pub(super) async fn list_prompt_task_counts(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<PromptTaskCountQuery>,
-) -> Result<Json<Vec<UiPromptTaskCountRecord>>, ApiError> {
+) -> Result<Json<Vec<AskUserPromptTaskCountRecord>>, ApiError> {
     let counts = state
-        .ui_prompt_service
+        .ask_user_prompt_service
         .list_prompt_task_counts(query.status)
         .await
         .map_err(ApiError::bad_request)?;
@@ -60,9 +60,9 @@ pub(super) async fn get_prompt(
     Path(id): Path<String>,
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
-) -> Result<Json<UiPromptRecord>, ApiError> {
+) -> Result<Json<AskUserPromptRecord>, ApiError> {
     let prompt = state
-        .ui_prompt_service
+        .ask_user_prompt_service
         .get_prompt(&id)
         .await
         .map_err(ApiError::bad_request)?
@@ -75,17 +75,17 @@ pub(super) async fn submit_prompt(
     Path(id): Path<String>,
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
-    Json(input): Json<SubmitUiPromptRequest>,
-) -> Result<Json<UiPromptRecord>, ApiError> {
+    Json(input): Json<SubmitAskUserPromptRequest>,
+) -> Result<Json<AskUserPromptRecord>, ApiError> {
     let existing = state
-        .ui_prompt_service
+        .ask_user_prompt_service
         .get_prompt(&id)
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("提示不存在: {id}")))?;
     ensure_prompt_access(&state, &existing, &current_user).await?;
     let prompt = state
-        .ui_prompt_service
+        .ask_user_prompt_service
         .submit_prompt(&id, input)
         .await
         .map_err(ApiError::bad_request)?
@@ -97,17 +97,17 @@ pub(super) async fn cancel_prompt(
     Path(id): Path<String>,
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
-    Json(input): Json<CancelUiPromptRequest>,
-) -> Result<Json<UiPromptRecord>, ApiError> {
+    Json(input): Json<CancelAskUserPromptRequest>,
+) -> Result<Json<AskUserPromptRecord>, ApiError> {
     let existing = state
-        .ui_prompt_service
+        .ask_user_prompt_service
         .get_prompt(&id)
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("提示不存在: {id}")))?;
     ensure_prompt_access(&state, &existing, &current_user).await?;
     let prompt = state
-        .ui_prompt_service
+        .ask_user_prompt_service
         .cancel_prompt(&id, input)
         .await
         .map_err(ApiError::bad_request)?
@@ -120,7 +120,7 @@ pub(super) async fn list_run_prompts(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<PromptListQuery>,
-) -> Result<Json<Vec<UiPromptRecord>>, ApiError> {
+) -> Result<Json<Vec<AskUserPromptRecord>>, ApiError> {
     let run = state
         .run_service
         .get_run(&id)
@@ -159,10 +159,10 @@ async fn list_prompts_page_for_user(
     state: &AppState,
     current_user: &CurrentUser,
     filters: PromptListFilters,
-) -> Result<PaginatedResponse<UiPromptRecord>, ApiError> {
+) -> Result<PaginatedResponse<AskUserPromptRecord>, ApiError> {
     if current_user.is_admin() {
         return state
-            .ui_prompt_service
+            .ask_user_prompt_service
             .list_prompts_page(filters)
             .await
             .map_err(ApiError::bad_request);
@@ -184,7 +184,7 @@ async fn list_prompts_page_for_user(
     }
     if scoped_to_accessed_run {
         return state
-            .ui_prompt_service
+            .ask_user_prompt_service
             .list_prompts_page(filters)
             .await
             .map_err(ApiError::bad_request);
@@ -196,7 +196,7 @@ async fn list_prompts_page_for_user(
     unpaged.offset = None;
     unpaged.limit = Some(500);
     let page = state
-        .ui_prompt_service
+        .ask_user_prompt_service
         .list_prompts_page(unpaged)
         .await
         .map_err(ApiError::bad_request)?;
@@ -219,7 +219,7 @@ async fn list_prompts_page_for_user(
 
 async fn ensure_prompt_access(
     state: &AppState,
-    prompt: &UiPromptRecord,
+    prompt: &AskUserPromptRecord,
     current_user: &CurrentUser,
 ) -> Result<(), ApiError> {
     if current_user.is_admin() {
@@ -244,9 +244,9 @@ async fn ensure_prompt_access(
 }
 
 fn filter_prompts(
-    prompts: Vec<UiPromptRecord>,
+    prompts: Vec<AskUserPromptRecord>,
     allowed_task_ids: Option<&HashSet<String>>,
-) -> Vec<UiPromptRecord> {
+) -> Vec<AskUserPromptRecord> {
     match allowed_task_ids {
         Some(task_ids) => prompts
             .into_iter()

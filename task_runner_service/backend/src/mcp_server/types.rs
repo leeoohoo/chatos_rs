@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::models::{
-    CancelTaskRequest, CreateRemoteServerRequest, CreateTaskRequest, TaskMcpConfig, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskStatus,
-    UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest, UpdateTaskRequest,
+    AskUserPromptRecord, AskUserPromptStatus, CancelTaskRequest, CreateRemoteServerRequest,
+    CreateTaskRequest, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskScheduleConfig, TaskStatus, UpdateModelConfigRequest, UpdateTaskRequest,
 };
 
 use super::support::normalize_mcp_builtin_kind_names;
@@ -38,6 +38,6 @@ pub(super) fn _assert_types(
     _task: TaskRecord,
     _run: TaskRunRecord,
     _event: TaskRunEventRecord,
-    _prompt: UiPromptRecord,
+    _prompt: AskUserPromptRecord,
 ) {
 }

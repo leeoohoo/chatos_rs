@@ -135,6 +135,8 @@ pub struct ChatosAgentRuntimeContextDto {
     pub category: Option<String>,
     pub role_definition: String,
     #[serde(default)]
+    pub task_runner_agent_account_id: Option<String>,
+    #[serde(default)]
     pub plugin_sources: Vec<String>,
     #[serde(default)]
     pub runtime_plugins: Vec<ChatosAgentRuntimePluginSummaryDto>,

@@ -21,12 +21,12 @@ use tracing::warn;
 
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
-    now_rfc3339, ExternalMcpConfigRecord, ModelConfigRecord, ModelConfigUsageRecord,
-    PaginatedResponse, PromptListFilters, RemoteServerRecord, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse,
-    TaskStatus, TaskSummaryRecord, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
-    UserRecord,
+    now_rfc3339, AskUserPromptRecord, AskUserPromptStatus, AskUserPromptTaskCountRecord,
+    ExternalMcpConfigRecord, ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse,
+    PromptListFilters, RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
+    TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse, TaskStatus,
+    TaskSummaryRecord, UserRecord,
 };
 
 mod app_models;
@@ -44,8 +44,8 @@ mod sqlite_support;
 mod task_support;
 
 use self::codec::{
-    bool_to_int, decode_json, encode_json, encode_json_option, encode_json_optional,
-    task_run_status_to_str, task_status_to_str, ui_prompt_status_to_str, user_role_to_str,
+    ask_user_prompt_status_to_str, bool_to_int, decode_json, encode_json, encode_json_option,
+    encode_json_optional, task_run_status_to_str, task_status_to_str, user_role_to_str,
 };
 use self::mongo_support::{
     bson_string_field, bson_usize_field, build_limit_stage, build_mongo_prompt_filter,
@@ -53,9 +53,9 @@ use self::mongo_support::{
     is_mongo_active_run_conflict, is_mongo_active_run_index_conflict, mongo_find_options,
 };
 use self::sqlite_rows::{
-    external_mcp_config_from_row, model_config_from_row, remote_server_from_row,
-    run_summary_from_row, runtime_settings_from_row, task_from_row, task_project_from_row,
-    task_run_event_from_row, task_run_from_row, task_summary_from_row, ui_prompt_from_row,
+    ask_user_prompt_from_row, external_mcp_config_from_row, model_config_from_row,
+    remote_server_from_row, run_summary_from_row, runtime_settings_from_row, task_from_row,
+    task_project_from_row, task_run_event_from_row, task_run_from_row, task_summary_from_row,
     user_from_row,
 };
 use self::sqlite_support::ensure_sqlite_parent_dir;
@@ -77,7 +77,7 @@ struct StoreData {
     external_mcp_configs: BTreeMap<String, ExternalMcpConfigRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
-    ui_prompts: BTreeMap<String, UiPromptRecord>,
+    ask_user_prompts: BTreeMap<String, AskUserPromptRecord>,
     users: BTreeMap<String, UserRecord>,
     task_prerequisites: BTreeMap<String, BTreeSet<String>>,
     cancel_requested_runs: HashSet<String>,
@@ -106,7 +106,7 @@ pub(crate) struct MongoStore {
     external_mcp_configs: Collection<ExternalMcpConfigRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
-    ui_prompts: Collection<UiPromptRecord>,
+    ask_user_prompts: Collection<AskUserPromptRecord>,
     users: Collection<UserRecord>,
     task_prerequisites: Collection<TaskPrerequisiteRecord>,
     cancel_requested_runs: Arc<RwLock<HashSet<String>>>,

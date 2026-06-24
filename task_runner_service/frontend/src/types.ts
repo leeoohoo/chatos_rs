@@ -17,7 +17,7 @@ export type TaskRunStatus =
   | 'cancelled'
   | 'blocked';
 
-export type UiPromptStatus =
+export type AskUserPromptStatus =
   | 'pending'
   | 'submitted'
   | 'cancelled'
@@ -479,19 +479,19 @@ export interface ModelConfigUsageRecord {
   run_count: number;
 }
 
-export interface UiPromptTaskCountRecord {
+export interface AskUserPromptTaskCountRecord {
   task_id: string;
   count: number;
 }
 
-export interface UiPromptResponseSubmission {
+export interface AskUserPromptResponseSubmission {
   status: string;
   values?: unknown;
   selection?: unknown;
   reason?: string | null;
 }
 
-export interface UiPromptRecord {
+export interface AskUserPromptRecord {
   id: string;
   task_id?: string | null;
   run_id?: string | null;
@@ -504,8 +504,8 @@ export interface UiPromptRecord {
   allow_cancel: boolean;
   timeout_ms: number;
   payload: unknown;
-  response?: UiPromptResponseSubmission | null;
-  status: UiPromptStatus;
+  response?: AskUserPromptResponseSubmission | null;
+  status: AskUserPromptStatus;
   created_at: string;
   updated_at: string;
   expires_at?: string | null;
@@ -558,6 +558,7 @@ export interface TaskRunnerSkillResponse {
 export interface TaskRunnerInternalPromptPreviewResponse {
   locale: string;
   task_prompt_template: string;
+  global_execution_prompt: string;
   process_log_system_prompt: string;
   notes: string[];
 }
@@ -948,7 +949,7 @@ export interface RunListFilters {
 export interface PromptListFilters {
   taskId?: string;
   runId?: string;
-  status?: UiPromptStatus;
+  status?: AskUserPromptStatus;
   limit?: number;
   offset?: number;
 }
@@ -970,12 +971,12 @@ export interface TaskMemoryRecordsPayload {
   order?: 'asc' | 'desc';
 }
 
-export interface SubmitUiPromptPayload {
+export interface SubmitAskUserPromptPayload {
   values?: unknown;
   selection?: unknown;
   reason?: string;
 }
 
-export interface CancelUiPromptPayload {
+export interface CancelAskUserPromptPayload {
   reason?: string;
 }

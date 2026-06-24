@@ -3,11 +3,11 @@ use super::*;
 impl McpCatalogService {
     pub fn new(
         task_service: TaskService,
-        ui_prompt_service: crate::ui_prompt_service::UiPromptService,
+        ask_user_prompt_service: crate::ask_user_prompt_service::AskUserPromptService,
     ) -> Self {
         Self {
             task_service,
-            ui_prompt_service,
+            ask_user_prompt_service,
         }
     }
 
@@ -38,7 +38,7 @@ impl McpCatalogService {
                 match build_task_runner_builtin_provider(
                     &server,
                     self.task_service.clone(),
-                    self.ui_prompt_service.clone(),
+                    self.ask_user_prompt_service.clone(),
                 ) {
                     Ok(Some(provider)) => {
                         let available_tool_names = provider

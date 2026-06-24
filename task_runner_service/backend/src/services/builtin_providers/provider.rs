@@ -6,7 +6,7 @@ pub(super) enum TaskRunnerBuiltinToolService {
     Notepad(NotepadBuiltinService),
     TaskManager(TaskManagerService),
     TerminalController(TerminalControllerService),
-    UiPrompter(UiPrompterService),
+    AskUser(AskUserService),
 }
 
 impl TaskRunnerBuiltinToolService {
@@ -16,7 +16,7 @@ impl TaskRunnerBuiltinToolService {
             Self::Notepad(service) => service.list_tools(),
             Self::TaskManager(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
-            Self::UiPrompter(service) => service.list_tools(),
+            Self::AskUser(service) => service.list_tools(),
         }
     }
 
@@ -45,14 +45,14 @@ impl TaskRunnerBuiltinToolService {
             Self::TerminalController(service) => {
                 service.call_tool(name, args, context.conversation_id.as_deref())
             }
-            Self::UiPrompter(service) => service.call_tool(
+            Self::AskUser(service) => service.call_tool(
                 name,
                 args,
                 context.conversation_id.as_deref(),
                 context.conversation_turn_id.as_deref(),
                 on_stream_chunk.map(|callback| {
                     Arc::new(move |chunk| callback(chunk))
-                        as chatos_builtin_tools::UiPromptStreamChunkCallback
+                        as chatos_builtin_tools::AskUserStreamChunkCallback
                 }),
             ),
         }
@@ -64,7 +64,7 @@ impl TaskRunnerBuiltinToolService {
             Self::Notepad(_) => Vec::new(),
             Self::TaskManager(_) => Vec::new(),
             Self::TerminalController(_) => Vec::new(),
-            Self::UiPrompter(_) => Vec::new(),
+            Self::AskUser(_) => Vec::new(),
         }
     }
 }

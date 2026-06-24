@@ -38,6 +38,8 @@ export const useConversationPaneProps = ({
   supportsReasoning: conversation.supportsReasoning,
   reasoningEnabled: conversation.reasoningEnabled,
   onReasoningToggle: actions.updateReasoningEnabled,
+  planModeEnabled: conversation.planModeEnabled,
+  onPlanModeToggle: actions.updatePlanModeEnabled,
   selectedModelId: conversation.selectedModelId,
   selectedModelName: conversation.selectedModelName,
   selectedThinkingLevel: conversation.selectedThinkingLevel,

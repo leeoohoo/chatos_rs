@@ -64,7 +64,7 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             use_cases: &["创建 agent 配置", "维护 agent 能力", "调整 agent 构建材料"],
             capabilities: &["读取 agent 配置", "生成配置草案", "更新 agent 相关文件"],
         },
-        BuiltinMcpKind::UiPrompter => McpBuiltinKindGuide {
+        BuiltinMcpKind::AskUser => McpBuiltinKindGuide {
             description: "人工确认工具，适合任务执行时需要向用户请求选择、输入或确认的场景。",
             use_cases: &["请求用户确认", "让用户选择方案", "补充缺失参数"],
             capabilities: &["发起 UI 提问", "等待用户提交", "读取用户选择"],

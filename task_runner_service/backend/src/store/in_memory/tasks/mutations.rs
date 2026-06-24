@@ -85,7 +85,7 @@ impl InMemoryStore {
             data.run_events.remove(run_id.as_str());
             data.cancel_requested_runs.remove(run_id.as_str());
         }
-        data.ui_prompts.retain(|_, prompt| {
+        data.ask_user_prompts.retain(|_, prompt| {
             prompt.task_id.as_deref() != Some(id)
                 && prompt
                     .run_id

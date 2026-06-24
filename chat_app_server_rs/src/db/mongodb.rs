@@ -61,7 +61,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "mcp_configs",
         "mcp_change_logs",
         "task_manager_tasks",
-        "ui_prompt_requests",
+        "ask_user_prompt_requests",
         "mcp_config_profiles",
         "system_contexts",
         "applications",
@@ -456,7 +456,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
     let _ = db
-        .collection::<mongodb::bson::Document>("ui_prompt_requests")
+        .collection::<mongodb::bson::Document>("ask_user_prompt_requests")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "conversation_id": 1, "status": 1, "updated_at": -1 })
@@ -465,10 +465,19 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
     let _ = db
-        .collection::<mongodb::bson::Document>("ui_prompt_requests")
+        .collection::<mongodb::bson::Document>("ask_user_prompt_requests")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "conversation_turn_id": 1, "created_at": -1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("ask_user_prompt_requests")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "source": 1, "external_prompt_id": 1 })
                 .build(),
             None,
         )

@@ -30,7 +30,7 @@ impl MongoStore {
             .await
             .map_err(|err| err.to_string())?;
 
-        self.ui_prompts
+        self.ask_user_prompts
             .delete_many(
                 doc! {
                     "$or": [

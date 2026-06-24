@@ -1,4 +1,16 @@
 services:
+  mongo:
+    image: mongo:${LOCAL_MONGO_VERSION:-7.0}
+    container_name: chatos-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-admin}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "${DEV_MONGO_PORT:-27018}:27017"
+
   user-service-backend:
     build:
       context: .
@@ -6,10 +18,12 @@ services:
     image: chatos/user-service-backend:latest
     container_name: chatos-user-service-backend
     restart: unless-stopped
+    depends_on:
+      - mongo
     environment:
       USER_SERVICE_HOST: 0.0.0.0
       USER_SERVICE_PORT: 39190
-      USER_SERVICE_DATABASE_URL: ${USER_SERVICE_DATABASE_URL:-sqlite:///app/data/user_service.db}
+      USER_SERVICE_DATABASE_URL: ${USER_SERVICE_DATABASE_URL:-mongodb://admin:admin@mongo:27017/user_service?authSource=admin}
       USER_SERVICE_JWT_SECRET: ${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
       USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
       USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
@@ -36,6 +50,42 @@ services:
     ports:
       - "${USER_SERVICE_FRONTEND_PORT:-39191}:80"
 
+  project-management-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.project_management_backend
+    image: chatos/project-management-backend:latest
+    container_name: chatos-project-management-backend
+    restart: unless-stopped
+    depends_on:
+      - mongo
+      - user-service-backend
+    environment:
+      PROJECT_SERVICE_HOST: 0.0.0.0
+      PROJECT_SERVICE_PORT: 39210
+      PROJECT_SERVICE_DATABASE_URL: ${PROJECT_SERVICE_DATABASE_URL:-mongodb://admin:admin@mongo:27017/project_management_service?authSource=admin}
+      PROJECT_SERVICE_USER_SERVICE_BASE_URL: ${PROJECT_SERVICE_DOCKER_USER_SERVICE_BASE_URL:-http://user-service-backend:39190}
+      PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS: ${PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS:-5000}
+      PROJECT_SERVICE_TASK_RUNNER_BASE_URL: ${PROJECT_SERVICE_DOCKER_TASK_RUNNER_BASE_URL:-}
+      PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS: ${PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS:-10000}
+      PROJECT_SERVICE_SYNC_SECRET: ${PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
+    volumes:
+      - project_management_data:/app/data
+    ports:
+      - "${PROJECT_SERVICE_PORT:-39210}:39210"
+
+  project-management-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.project_management_frontend
+    image: chatos/project-management-frontend:latest
+    container_name: chatos-project-management-frontend
+    restart: unless-stopped
+    depends_on:
+      - project-management-backend
+    ports:
+      - "${PROJECT_SERVICE_FRONTEND_PORT:-39211}:80"
+
   backend:
     build:
       context: .
@@ -48,6 +98,7 @@ services:
     restart: unless-stopped
     depends_on:
       - user-service-backend
+      - project-management-backend
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       HOST: ${HOST:-0.0.0.0}
@@ -60,6 +111,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       CHATOS_USER_SERVICE_BASE_URL: ${CHATOS_DOCKER_USER_SERVICE_BASE_URL:-http://user-service-backend:39190}
       CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS: ${CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS:-5000}
+      CHATOS_PROJECT_SERVICE_BASE_URL: ${CHATOS_DOCKER_PROJECT_SERVICE_BASE_URL:-http://project-management-backend:39210}
+      CHATOS_PROJECT_SERVICE_SYNC_SECRET: ${PROJECT_SERVICE_SYNC_SECRET:-change_me_project_sync_secret}
       CHATOS_USER_SERVICE_JWT_SECRET: ${CHATOS_USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
       CHATOS_USER_SERVICE_JWT_ISSUER: ${CHATOS_USER_SERVICE_JWT_ISSUER:-user_service}
       CHATOS_USER_SERVICE_USER_AUDIENCE: ${CHATOS_USER_SERVICE_USER_AUDIENCE:-user_service}
@@ -88,6 +141,8 @@ services:
       - "8080:80"
 
 volumes:
+  mongo_data:
   chatos_backend_data:
   chatos_backend_logs:
   user_service_data:
+  project_management_data:

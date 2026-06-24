@@ -41,6 +41,9 @@ export interface InputAreaComposerProps {
   reasoningSupported: boolean;
   reasoningEnabled: boolean;
   onReasoningToggle?: (enabled: boolean) => void;
+  planModeAvailable: boolean;
+  planModeEnabled: boolean;
+  onPlanModeToggle?: (enabled: boolean) => void;
   placeholder: string;
   maxLength: number;
   supportedFileTypes: string[];

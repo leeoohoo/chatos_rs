@@ -1,4 +1,4 @@
-import type { UiPromptRecord } from '../../types';
+import type { AskUserPromptRecord } from '../../types';
 
 export interface PromptField {
   key: string;
@@ -25,7 +25,7 @@ export interface PromptChoice {
   max_selections?: number;
 }
 
-export function buildInitialValues(prompt: UiPromptRecord): Record<string, unknown> {
+export function buildInitialValues(prompt: AskUserPromptRecord): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   extractFields(prompt).forEach((field) => {
     values[field.key] = field.default ?? '';
@@ -47,7 +47,7 @@ export function buildInitialValues(prompt: UiPromptRecord): Record<string, unkno
   return values;
 }
 
-export function extractFields(prompt: UiPromptRecord): PromptField[] {
+export function extractFields(prompt: AskUserPromptRecord): PromptField[] {
   const payload = asRecord(prompt.payload);
   const rawFields = Array.isArray(payload?.fields) ? payload.fields : [];
   return rawFields
@@ -65,7 +65,7 @@ export function extractFields(prompt: UiPromptRecord): PromptField[] {
     }));
 }
 
-export function extractChoice(prompt: UiPromptRecord): PromptChoice | null {
+export function extractChoice(prompt: AskUserPromptRecord): PromptChoice | null {
   const payload = asRecord(prompt.payload);
   const choice = asRecord(payload?.choice);
   if (!choice || !Array.isArray(choice.options) || choice.options.length === 0) {

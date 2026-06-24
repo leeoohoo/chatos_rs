@@ -130,6 +130,7 @@ impl ModelRuntimeConfig {
         .with_temperature(self.temperature)
         .with_instructions(self.instructions.clone())
         .with_max_output_tokens(self.max_output_tokens)
+        .with_request_body_limit_bytes(self.request_body_limit_bytes)
     }
 }
 

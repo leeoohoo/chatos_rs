@@ -46,6 +46,9 @@ pub struct AppConfig {
     pub admin_display_name: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
+    pub project_service_base_url: Option<String>,
+    pub project_service_sync_secret: Option<String>,
+    pub project_service_request_timeout: Duration,
 }
 
 impl AppConfig {
