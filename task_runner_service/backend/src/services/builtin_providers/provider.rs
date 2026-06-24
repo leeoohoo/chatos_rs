@@ -87,6 +87,34 @@ impl TaskRunnerBuiltinProvider {
     }
 }
 
+#[derive(Clone)]
+pub(in crate::services) struct DisabledBuiltinProvider {
+    server_name: String,
+    unavailable_tools: Vec<(String, String)>,
+    error_message: String,
+}
+
+impl DisabledBuiltinProvider {
+    pub(in crate::services) fn code_maintainer_write_for_chatos_plan() -> Self {
+        let reason = "Tool is disabled in Chatos Plan task profile".to_string();
+        Self {
+            server_name: chatos_mcp_runtime::CODE_MAINTAINER_WRITE_SERVER_NAME.to_string(),
+            unavailable_tools: [
+                "write_file",
+                "edit_file",
+                "append_file",
+                "delete_path",
+                "apply_patch",
+                "patch",
+            ]
+            .into_iter()
+            .map(|name| (name.to_string(), reason.clone()))
+            .collect(),
+            error_message: reason,
+        }
+    }
+}
+
 #[async_trait]
 impl BuiltinToolProvider for TaskRunnerBuiltinProvider {
     fn server_name(&self) -> &str {
@@ -110,5 +138,30 @@ impl BuiltinToolProvider for TaskRunnerBuiltinProvider {
 
     fn unavailable_tools(&self) -> Vec<(String, String)> {
         self.service.unavailable_tools()
+    }
+}
+
+#[async_trait]
+impl BuiltinToolProvider for DisabledBuiltinProvider {
+    fn server_name(&self) -> &str {
+        self.server_name.as_str()
+    }
+
+    fn list_tools(&self) -> Vec<Value> {
+        Vec::new()
+    }
+
+    async fn call_tool(
+        &self,
+        _name: &str,
+        _args: Value,
+        _context: ToolCallContext,
+        _on_stream_chunk: Option<ToolStreamChunkCallback>,
+    ) -> Result<Value, String> {
+        Err(self.error_message.clone())
+    }
+
+    fn unavailable_tools(&self) -> Vec<(String, String)> {
+        self.unavailable_tools.clone()
     }
 }

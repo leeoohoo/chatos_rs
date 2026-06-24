@@ -28,7 +28,7 @@ type RuntimeSettingsFormValues = {
   tool_results_model_total_max_chars?: number;
 };
 
-type SettingsTabKey = 'overview' | 'external-skill' | 'internal-prompts';
+type SettingsTabKey = 'overview' | 'external-skill' | 'plan-skill' | 'internal-prompts';
 
 export function SettingsPage() {
   const { locale, t } = useI18n();
@@ -60,6 +60,11 @@ export function SettingsPage() {
     queryKey: ['task-runner-skill', skillLocale],
     queryFn: () => api.getTaskRunnerSkill(skillLocale),
     enabled: activeTab === 'external-skill',
+  });
+  const planSkillQuery = useQuery({
+    queryKey: ['task-runner-plan-skill', skillLocale],
+    queryFn: () => api.getTaskRunnerSkill(skillLocale, 'chatos_plan'),
+    enabled: activeTab === 'plan-skill',
   });
   const internalPromptsQuery = useQuery({
     queryKey: ['task-runner-internal-prompts', internalPromptLocale],
@@ -100,6 +105,9 @@ export function SettingsPage() {
         ? 'blue'
         : 'gold';
   const skillEndpoint = buildApiUrl(`/api/skills/task-runner?lang=${encodeURIComponent(skillLocale)}`);
+  const planSkillEndpoint = buildApiUrl(
+    `/api/skills/task-runner?lang=${encodeURIComponent(skillLocale)}&profile=chatos_plan`,
+  );
 
   useEffect(() => {
     if (!config) {
@@ -379,6 +387,63 @@ export function SettingsPage() {
           <PromptContentCard
             title={t('settings.externalSkillContent')}
             content={skillQuery.data?.content}
+            emptyText={t('settings.noPreview')}
+          />
+        </Space>
+      ),
+    },
+    {
+      key: 'plan-skill',
+      label: t('settings.tabs.planSkill'),
+      children: (
+        <Space direction="vertical" size="large" style={{ width: '100%' }}>
+          <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
+            <Space direction="vertical" size={0}>
+              <Typography.Title level={5} style={{ margin: 0 }}>
+                {t('settings.planSkillTitle')}
+              </Typography.Title>
+              <Typography.Text type="secondary">
+                {t('settings.planSkillSubtitle')}
+              </Typography.Text>
+            </Space>
+            <Space wrap>
+              <Segmented
+                value={skillLocale}
+                onChange={(value) => setSkillLocale(value as 'zh-CN' | 'en-US')}
+                options={[
+                  { label: t('mcp.promptLanguage.zhCN'), value: 'zh-CN' },
+                  { label: t('mcp.promptLanguage.enUS'), value: 'en-US' },
+                ]}
+              />
+              <Button onClick={() => planSkillQuery.refetch()} loading={planSkillQuery.isFetching}>
+                {t('common.refresh')}
+              </Button>
+            </Space>
+          </Space>
+
+          <Alert message={t('settings.externalSkillLocaleNote')} type="info" showIcon />
+
+          <Descriptions bordered column={1} size="small">
+            <Descriptions.Item label={t('settings.externalSkillEndpoint')}>
+              <Typography.Text code copyable>
+                {planSkillEndpoint}
+              </Typography.Text>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('settings.externalSkillName')}>
+              {planSkillQuery.data?.name || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('settings.externalSkillLocale')}>
+              {planSkillQuery.data?.locale || skillLocale}
+            </Descriptions.Item>
+          </Descriptions>
+
+          {planSkillQuery.error ? (
+            <Alert type="error" showIcon message={errorMessage(planSkillQuery.error)} />
+          ) : null}
+
+          <PromptContentCard
+            title={t('settings.planSkillContent')}
+            content={planSkillQuery.data?.content}
             emptyText={t('settings.noPreview')}
           />
         </Space>

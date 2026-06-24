@@ -157,6 +157,8 @@ fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
         remote_server_config: header_text(headers, "x-task-runner-remote-server-config")
             .or_else(|| header_text(headers, "x-task-runner-remote-server-json")),
         tool_profile: header_text(headers, "x-task-runner-tool-profile"),
+        task_profile: header_text(headers, "x-task-runner-task-profile"),
+        chatos_plan_mode: header_bool(headers, "x-chatos-plan-mode"),
     }
 }
 
@@ -167,4 +169,12 @@ fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn header_bool(headers: &HeaderMap, key: &'static str) -> bool {
+    headers
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
 }

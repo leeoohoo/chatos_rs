@@ -34,12 +34,14 @@ use super::task_process_log::{
 use super::workspace_mcp::runtime_selected_builtin_kinds;
 use super::{
     build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
-    unfinished_subtasks_for_task, RunService, TaskService,
+    unfinished_subtasks_for_task, DisabledBuiltinProvider, RunService, TaskService,
 };
 
 mod callbacks;
 mod completion;
 mod setup;
+
+const PROJECT_MANAGEMENT_MCP_SERVER_NAME: &str = "project_management_service";
 
 pub(in crate::services) struct PreparedModelExecution {
     run_spec: TaskRunSpec,

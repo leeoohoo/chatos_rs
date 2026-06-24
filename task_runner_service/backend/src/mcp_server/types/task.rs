@@ -76,6 +76,7 @@ impl CreateTaskArgs {
             tags: self.tags,
             default_model_config_id: self.default_model_config_id,
             project_id: None,
+            task_profile: None,
             tenant_id: None,
             subject_id: None,
             schedule: self.schedule,

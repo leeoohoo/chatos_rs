@@ -243,6 +243,28 @@ impl McpExecutor {
                     continue;
                 }
             };
+            if !self.tool_metadata.contains_key(name.as_str()) {
+                if let Some(reason) =
+                    unavailable_tool_reason(self.unavailable_tools.as_slice(), name.as_str())
+                {
+                    push_tool_result(
+                        &mut results,
+                        ToolResult {
+                            tool_call_id: call_id,
+                            name,
+                            success: false,
+                            is_error: true,
+                            is_stream: false,
+                            conversation_turn_id: context.conversation_turn_id.clone(),
+                            content: format!("宸ュ叿鎵ц澶辫触: {reason}"),
+                            result: None,
+                        },
+                        &context,
+                        on_tool_result.as_ref(),
+                    );
+                    continue;
+                }
+            }
 
             let stream_callback = build_stream_callback(
                 on_tool_result.as_ref(),
@@ -334,6 +356,23 @@ impl McpExecutor {
                     continue;
                 }
             };
+            if !self.tool_metadata.contains_key(name.as_str()) {
+                if let Some(reason) =
+                    unavailable_tool_reason(self.unavailable_tools.as_slice(), name.as_str())
+                {
+                    ordered[index] = Some(ToolResult {
+                        tool_call_id: call_id,
+                        name,
+                        success: false,
+                        is_error: true,
+                        is_stream: false,
+                        conversation_turn_id: context.conversation_turn_id.clone(),
+                        content: format!("宸ュ叿鎵ц澶辫触: {reason}"),
+                        result: None,
+                    });
+                    continue;
+                }
+            }
             let executor = self.clone();
             let context = context.clone();
             joins.spawn(async move {
@@ -618,6 +657,29 @@ fn prefixed_tool_name(server_name: &str, tool_name: &str) -> String {
     format!("{}_{}", server_name, tool_name)
 }
 
+fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) -> Option<String> {
+    unavailable_tools.iter().find_map(|item| {
+        let server_name = item
+            .get("server_name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        let tool_name = item
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        (full_tool_name == prefixed_tool_name(server_name, tool_name)).then(|| {
+            item.get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("tool is unavailable")
+                .to_string()
+        })
+    })
+}
+
 fn unavailable_server(server_name: &str, server_type: &str, reason: &str) -> Value {
     json!({
         "server_name": server_name,
@@ -846,11 +908,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    use async_trait::async_trait;
     use serde_json::json;
+    use serde_json::Value;
 
     use crate::{
-        BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolRegistry,
-        McpExecutor, ToolCallContext, ToolResult, ToolResultCallback,
+        BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
+        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, ToolCallContext, ToolResult,
+        ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -940,5 +1005,77 @@ mod tests {
         assert!(executor
             .compose_effective_builtin_mcp_system_prompt(BuiltinMcpPromptLocale::ZhCn)
             .is_none());
+    }
+
+    struct DisabledToolProvider;
+
+    #[async_trait]
+    impl BuiltinToolProvider for DisabledToolProvider {
+        fn server_name(&self) -> &str {
+            "disabled_server"
+        }
+
+        fn list_tools(&self) -> Vec<Value> {
+            Vec::new()
+        }
+
+        async fn call_tool(
+            &self,
+            _name: &str,
+            _args: Value,
+            _context: ToolCallContext,
+            _on_stream_chunk: Option<ToolStreamChunkCallback>,
+        ) -> Result<Value, String> {
+            Err("should not call disabled provider".to_string())
+        }
+
+        fn unavailable_tools(&self) -> Vec<(String, String)> {
+            vec![(
+                "write_file".to_string(),
+                "Tool is disabled in Chatos Plan task profile".to_string(),
+            )]
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_builtin_tool_uses_declared_reason() {
+        let mut executor = McpExecutor::builder()
+            .with_builtin_server(McpBuiltinServer {
+                name: "disabled_server".to_string(),
+                kind: "CodeMaintainerWrite".to_string(),
+                workspace_dir: ".".to_string(),
+                user_id: None,
+                project_id: None,
+                remote_connection_id: None,
+                contact_agent_id: None,
+                auto_create_task: false,
+                allow_writes: false,
+                max_file_bytes: 0,
+                max_write_bytes: 0,
+                search_limit: 0,
+            })
+            .with_builtin_provider(DisabledToolProvider)
+            .build();
+        executor.init_builtin_only().expect("builtin init");
+
+        let results = executor
+            .execute_tools_stream(
+                &[json!({
+                    "id": "call_1",
+                    "function": {
+                        "name": "disabled_server_write_file",
+                        "arguments": "{\"path\":\"a.txt\",\"content\":\"x\"}"
+                    }
+                })],
+                ToolCallContext::default(),
+                None,
+            )
+            .await;
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert!(results[0]
+            .content
+            .contains("Tool is disabled in Chatos Plan task profile"));
     }
 }

@@ -12,6 +12,8 @@ pub struct CreateTaskRequest {
     pub default_model_config_id: Option<String>,
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub task_profile: Option<String>,
     pub tenant_id: Option<String>,
     pub subject_id: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
@@ -112,6 +114,7 @@ pub struct TaskListFilters {
     pub source_session_id: Option<String>,
     pub source_user_message_ids: Vec<String>,
     pub source_turn_ids: Vec<String>,
+    pub task_profile: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }

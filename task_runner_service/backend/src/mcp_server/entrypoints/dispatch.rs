@@ -8,6 +8,19 @@ impl TaskRunnerMcpService {
         request_context: McpRequestContext,
     ) -> JsonRpcResponse {
         let id = request.id.unwrap_or(Value::Null);
+        if request_context.is_chatos_plan_task_profile()
+            && !request_context.has_concrete_project_scope()
+        {
+            return JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32000,
+                    message: "Chatos Plan mode requires concrete project_id".to_string(),
+                }),
+            };
+        }
         match request.method.as_str() {
             "tools/list" => JsonRpcResponse {
                 jsonrpc: "2.0",

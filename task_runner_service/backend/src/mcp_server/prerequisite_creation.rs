@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::models::CreateTaskRequest;
+use crate::models::TASK_PROFILE_CHATOS_PLAN;
 
 use super::chatos_async_planner::{
     planner_prerequisite_create_request, planner_root_create_request,
@@ -124,6 +125,7 @@ impl TaskRunnerMcpService {
                 tags: item.tags,
                 default_model_config_id: item.default_model_config_id,
                 project_id: None,
+                task_profile: None,
                 tenant_id: None,
                 subject_id: None,
                 schedule: item.schedule,
@@ -138,6 +140,9 @@ impl TaskRunnerMcpService {
                 } else {
                     planner_root_create_request(request)?
                 };
+            }
+            if request_context.is_chatos_plan_task_profile() {
+                request.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
             }
             let task = self
                 .task_service

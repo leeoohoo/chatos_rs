@@ -26,6 +26,7 @@ pub(super) fn task_from_row(row: &SqliteRow) -> Result<TaskRecord, String> {
         tenant_id: row.get("tenant_id"),
         subject_id: row.get("subject_id"),
         project_id: row.get("project_id"),
+        task_profile: row.get("task_profile"),
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),

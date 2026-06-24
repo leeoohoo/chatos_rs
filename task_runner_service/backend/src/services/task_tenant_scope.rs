@@ -58,7 +58,7 @@ pub(super) async fn save_task_if_tenant_aligned(
 #[cfg(test)]
 mod tests {
     use crate::auth::CurrentUser;
-    use crate::models::{TaskRecord, UserRole, PUBLIC_PROJECT_ID};
+    use crate::models::{TaskRecord, UserRole, PUBLIC_PROJECT_ID, TASK_PROFILE_DEFAULT};
 
     use super::{align_task_tenant_to_owner, resolve_task_tenant_id};
 
@@ -101,6 +101,7 @@ mod tests {
             tenant_id: tenant_id.to_string(),
             subject_id: "subject".to_string(),
             project_id: PUBLIC_PROJECT_ID.to_string(),
+            task_profile: TASK_PROFILE_DEFAULT.to_string(),
             creator_user_id: None,
             creator_username: None,
             creator_display_name: None,

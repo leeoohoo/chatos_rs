@@ -1,10 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
-struct ProjectManagementSkillResponse {
-    content: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectServiceProjectRecord {
     pub id: String,
@@ -117,21 +112,6 @@ pub async fn archive_project_service_project(
             .bearer_auth(access_token.trim()),
     )
     .await
-}
-
-pub async fn fetch_project_management_skill(base_url: &str, lang: &str) -> Result<String, String> {
-    let normalized_lang = match lang.trim() {
-        "en" | "en-US" | "english" => "en-US",
-        _ => "zh-CN",
-    };
-    let endpoint = format!(
-        "{}/api/skills/project-management?lang={}",
-        base_url.trim().trim_end_matches('/'),
-        normalized_lang
-    );
-    let payload: ProjectManagementSkillResponse =
-        send_json(reqwest::Client::new().get(endpoint)).await?;
-    Ok(payload.content)
 }
 
 pub async fn sync_list_project_service_projects(

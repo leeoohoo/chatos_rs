@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
 use crate::config::AppConfig;
-use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord};
+use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord, TASK_PROFILE_CHATOS_PLAN};
 
 use super::normalize_strings;
 use super::normalized_optional;
@@ -18,11 +18,30 @@ pub(super) fn selected_builtin_kinds(mcp_config: &TaskMcpConfig) -> Vec<BuiltinM
 }
 
 pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
+    if is_chatos_plan_task(task) {
+        return plan_task_runtime_builtin_kinds();
+    }
     let mut kinds = selected_builtin_kinds(&task.mcp_config);
     if is_chatos_async_task(task) {
         ensure_system_injected_builtin_kinds(&mut kinds);
     }
     complete_builtin_kind_dependencies(kinds)
+}
+
+fn plan_task_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
+    vec![
+        BuiltinMcpKind::CodeMaintainerRead,
+        BuiltinMcpKind::TerminalController,
+        BuiltinMcpKind::TaskManager,
+        BuiltinMcpKind::Notepad,
+        BuiltinMcpKind::AskUser,
+        BuiltinMcpKind::RemoteConnectionController,
+        BuiltinMcpKind::WebTools,
+        BuiltinMcpKind::BrowserTools,
+        BuiltinMcpKind::MemorySkillReader,
+        BuiltinMcpKind::MemoryCommandReader,
+        BuiltinMcpKind::MemoryPluginReader,
+    ]
 }
 
 fn ensure_system_injected_builtin_kinds(kinds: &mut Vec<BuiltinMcpKind>) {
@@ -37,6 +56,12 @@ fn is_chatos_async_task(task: &TaskRecord) -> bool {
     task.schedule.mode == crate::models::TaskScheduleMode::ContactAsync
         || (has_non_empty_text(task.source_session_id.as_deref())
             && has_non_empty_text(task.source_user_message_id.as_deref()))
+}
+
+fn is_chatos_plan_task(task: &TaskRecord) -> bool {
+    task.task_profile
+        .trim()
+        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
 }
 
 fn has_non_empty_text(value: Option<&str>) -> bool {
@@ -135,9 +160,13 @@ pub(super) fn ensure_workspace_dir_available(
 
 #[cfg(test)]
 mod tests {
-    use crate::models::TaskMcpConfig;
+    use crate::models::{
+        now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus,
+        TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    };
 
-    use super::selected_builtin_kinds;
+    use super::{runtime_selected_builtin_kinds, selected_builtin_kinds};
+    use chatos_mcp_runtime::BuiltinMcpKind;
 
     #[test]
     fn empty_builtin_selection_stays_empty() {
@@ -154,5 +183,81 @@ mod tests {
         let config = TaskMcpConfig::default();
 
         assert!(!selected_builtin_kinds(&config).is_empty());
+    }
+
+    #[test]
+    fn plan_task_builtin_selection_uses_fixed_allowlist() {
+        let task = sample_task(
+            TASK_PROFILE_CHATOS_PLAN,
+            vec![
+                "CodeMaintainerWrite".to_string(),
+                "AgentBuilder".to_string(),
+            ],
+        );
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+        assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(!selected.contains(&BuiltinMcpKind::AgentBuilder));
+    }
+
+    #[test]
+    fn default_task_builtin_selection_keeps_requested_kinds() {
+        let task = sample_task(
+            TASK_PROFILE_DEFAULT,
+            vec!["CodeMaintainerWrite".to_string()],
+        );
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    }
+
+    fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRecord {
+        let now = now_rfc3339();
+        TaskRecord {
+            id: "task-1".to_string(),
+            title: "task".to_string(),
+            description: None,
+            objective: "objective".to_string(),
+            input_payload: None,
+            status: TaskStatus::Ready,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: "memory-1".to_string(),
+            tenant_id: "tenant".to_string(),
+            subject_id: "subject".to_string(),
+            project_id: "project-1".to_string(),
+            task_profile: task_profile.to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("owner-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: TaskScheduleConfig::default(),
+            parent_task_id: None,
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: Default::default(),
+            mcp_config: TaskMcpConfig {
+                enabled_builtin_kinds,
+                ..TaskMcpConfig::default()
+            },
+            created_at: now.clone(),
+            updated_at: now,
+            deleted_at: None,
+        }
     }
 }

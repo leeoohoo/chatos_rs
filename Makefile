@@ -6,6 +6,7 @@ SHELL := /bin/bash
 .PHONY: restart-task-runner-wsl status-task-runner-wsl stop-task-runner-wsl
 .PHONY: restart-memory-engine-wsl status-memory-engine-wsl stop-memory-engine-wsl
 .PHONY: restart-all-wsl status-all-wsl stop-all-wsl
+.PHONY: restart-all-win status-all-win stop-all-win
 .PHONY: restart-user-service status-user-service stop-user-service
 .PHONY: restart-task-runner status-task-runner stop-task-runner
 .PHONY: restart-memory-engine status-memory-engine stop-memory-engine
@@ -57,6 +58,9 @@ help:
 	@echo "  make restart-all-wsl      # restart the full stack inside WSL"
 	@echo "  make status-all-wsl       # show full stack status inside WSL"
 	@echo "  make stop-all-wsl         # stop full stack inside WSL"
+	@echo "  make restart-all-win      # restart the validated Windows local stack"
+	@echo "  make status-all-win       # show Windows local stack status"
+	@echo "  make stop-all-win         # stop the Windows local stack"
 
 dev: restart
 
@@ -207,6 +211,15 @@ status-all-wsl:
 
 stop-all-wsl:
 	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action stop -Target all
+
+restart-all-win:
+	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action restart
+
+status-all-win:
+	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action status
+
+stop-all-win:
+	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action stop
 
 test-chat-app-server:
 	@cd chat_app_server_rs && cargo test -q

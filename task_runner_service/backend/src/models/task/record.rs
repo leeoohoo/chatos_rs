@@ -16,6 +16,8 @@ pub struct TaskRecord {
     pub subject_id: String,
     #[serde(default = "default_task_project_id")]
     pub project_id: String,
+    #[serde(default = "default_task_profile")]
+    pub task_profile: String,
     #[serde(default)]
     pub creator_user_id: Option<String>,
     #[serde(default)]

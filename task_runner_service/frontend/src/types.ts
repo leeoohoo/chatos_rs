@@ -134,6 +134,7 @@ export interface TaskRecord {
   tenant_id: string;
   subject_id: string;
   project_id: string;
+  task_profile: string;
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;

@@ -56,6 +56,10 @@ pub use self::router::build_router;
 const RUN_EVENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
 const TASK_RUNNER_SKILL_ZH_CN: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.zh-CN.md");
 const TASK_RUNNER_SKILL_EN_US: &str = include_str!("../../../TASK_RUNNER_AI_SKILL.en-US.md");
+const TASK_RUNNER_PLAN_SKILL_ZH_CN: &str =
+    include_str!("../../../TASK_RUNNER_PLAN_TASK_SKILL.zh-CN.md");
+const TASK_RUNNER_PLAN_SKILL_EN_US: &str =
+    include_str!("../../../TASK_RUNNER_PLAN_TASK_SKILL.en-US.md");
 
 fn parse_csv_ids(value: &str) -> Vec<String> {
     value

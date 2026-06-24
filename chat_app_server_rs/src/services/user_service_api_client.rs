@@ -52,19 +52,6 @@ pub struct CreateUserServiceAgentAccountRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ExchangeUserServiceAgentTokenRequest {
-    pub agent_account_id: String,
-    pub contact_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UserServiceAgentTokenResponse {
-    pub access_token: String,
-    pub token_type: String,
-    pub expires_in: i64,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserServiceModelConfigRecord {
     pub id: String,
@@ -300,23 +287,6 @@ pub async fn create_agent_account(
         Method::POST,
         base_url,
         "/api/agent-accounts",
-        Some(access_token),
-        Some(payload),
-        timeout_ms,
-    )
-    .await
-}
-
-pub async fn exchange_agent_token(
-    base_url: &str,
-    access_token: &str,
-    payload: &ExchangeUserServiceAgentTokenRequest,
-    timeout_ms: i64,
-) -> Result<UserServiceAgentTokenResponse, String> {
-    request_json(
-        Method::POST,
-        base_url,
-        "/api/token/exchange/agent",
         Some(access_token),
         Some(payload),
         timeout_ms,

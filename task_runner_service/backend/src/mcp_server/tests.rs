@@ -9,9 +9,9 @@ use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
-    CreateTaskProjectRequest, CreateTaskRequest, ModelConfigRecord, TaskMcpConfig,
-    TaskScheduleMode, TaskSourceContext, TaskStatus, UpdateTaskRequest, UserRole,
-    PUBLIC_PROJECT_ID,
+    ChatosSyncedModelConfigRequest, CreateTaskProjectRequest, CreateTaskRequest, ModelConfigRecord,
+    TaskMcpConfig, TaskScheduleMode, TaskSourceContext, TaskStatus, UpdateTaskRequest, UserRole,
+    PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
 use crate::services::{
     ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService,
@@ -267,6 +267,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
         tags: None,
         default_model_config_id: None,
         project_id: None,
+        task_profile: None,
         tenant_id: None,
         subject_id: None,
         schedule: None,
@@ -310,7 +311,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
     );
     assert_eq!(
         planned_external_mcp.enabled_builtin_kinds,
-        vec!["TaskManager".to_string()]
+        vec!["TaskManager".to_string(), "AskUser".to_string()]
     );
 
     let no_explicit_tool_source = CreateTaskRequest {
@@ -327,7 +328,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
             .mcp_config
             .expect("mcp config")
             .enabled_builtin_kinds,
-        vec!["TaskManager".to_string()]
+        vec!["TaskManager".to_string(), "AskUser".to_string()]
     );
 
     let combined = CreateTaskRequest {
@@ -495,6 +496,50 @@ fn mcp_request_context_normalizes_legacy_public_project_scope() {
     );
 }
 
+#[test]
+fn mcp_request_context_detects_chatos_plan_task_profile() {
+    let context = McpRequestContext {
+        task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+        ..McpRequestContext::default()
+    };
+    assert!(context.is_chatos_plan_task_profile());
+    assert_eq!(context.requested_task_profile(), TASK_PROFILE_CHATOS_PLAN);
+
+    let context = McpRequestContext {
+        chatos_plan_mode: true,
+        ..McpRequestContext::default()
+    };
+    assert!(context.is_chatos_plan_task_profile());
+    assert_eq!(context.requested_task_profile(), TASK_PROFILE_CHATOS_PLAN);
+}
+
+#[tokio::test]
+async fn chatos_plan_profile_requires_concrete_project_scope() {
+    let (mcp_service, _, _) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+
+    let response = mcp_service
+        .handle_jsonrpc(
+            super::JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                id: Some(json!("req-1")),
+                method: "tools/list".to_string(),
+                params: json!({}),
+            },
+            current_user,
+            McpRequestContext {
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await;
+
+    assert_eq!(
+        response.error.as_ref().map(|error| error.message.as_str()),
+        Some("Chatos Plan mode requires concrete project_id")
+    );
+}
+
 #[tokio::test]
 async fn list_tasks_uses_passthrough_project_context_filter() {
     let (mcp_service, task_service, project_service) = test_mcp_service().await;
@@ -562,6 +607,534 @@ async fn list_tasks_uses_passthrough_project_context_filter() {
     assert_eq!(public_task_ids, vec![public_task.id]);
 }
 
+#[tokio::test]
+async fn list_tasks_in_chatos_plan_profile_only_returns_plan_tasks() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+    let default_task = task_service
+        .create_task(
+            CreateTaskRequest {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
+                ..test_create_task_request("default task")
+            },
+            Some(&current_user),
+            None,
+        )
+        .await
+        .expect("create default task");
+    let plan_task = task_service
+        .create_task(
+            CreateTaskRequest {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..test_create_task_request("plan task")
+            },
+            Some(&current_user),
+            None,
+        )
+        .await
+        .expect("create plan task");
+
+    let result = mcp_service
+        .call_tool(
+            "list_tasks",
+            json!({}),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("list plan tasks");
+    let task_ids = structured_task_ids(&result);
+
+    assert_eq!(task_ids, vec![plan_task.id]);
+    assert_ne!(task_ids, vec![default_task.id]);
+}
+
+#[tokio::test]
+async fn get_task_in_chatos_plan_profile_rejects_default_task_id() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+    let default_task = task_service
+        .create_task(
+            CreateTaskRequest {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
+                ..test_create_task_request("default task")
+            },
+            Some(&current_user),
+            None,
+        )
+        .await
+        .expect("create default task");
+
+    let err = mcp_service
+        .call_tool(
+            "get_task",
+            json!({
+                "task_id": default_task.id,
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect_err("plan profile should reject default task");
+
+    assert_eq!(err, "当前 agent 无权访问该任务");
+}
+
+#[tokio::test]
+async fn get_task_dependency_graph_in_chatos_plan_profile_rejects_default_task_id() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+    let default_task = task_service
+        .create_task(
+            CreateTaskRequest {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
+                ..test_create_task_request("default task")
+            },
+            Some(&current_user),
+            None,
+        )
+        .await
+        .expect("create default task");
+
+    let err = mcp_service
+        .call_tool(
+            "get_task_dependency_graph",
+            json!({
+                "task_id": default_task.id,
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect_err("plan profile should reject default task graph");
+
+    assert_eq!(err, "当前 agent 无权访问该任务");
+}
+
+#[tokio::test]
+async fn set_task_prerequisites_in_chatos_plan_profile_rejects_default_task_id() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+    let default_task = task_service
+        .create_task(
+            CreateTaskRequest {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
+                ..test_create_task_request("default task")
+            },
+            Some(&current_user),
+            None,
+        )
+        .await
+        .expect("create default task");
+
+    let err = mcp_service
+        .call_tool(
+            "set_task_prerequisites",
+            json!({
+                "task_id": default_task.id,
+                "prerequisite_task_ids": [],
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect_err("plan profile should reject default task prerequisite updates");
+
+    assert_eq!(err, "当前 agent 无权访问该任务");
+}
+
+#[tokio::test]
+async fn cancel_task_in_chatos_plan_profile_rejects_default_task_id() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+    let default_task = task_service
+        .create_task(
+            CreateTaskRequest {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
+                ..test_create_task_request("default task")
+            },
+            Some(&current_user),
+            None,
+        )
+        .await
+        .expect("create default task");
+
+    let err = mcp_service
+        .call_tool(
+            "cancel_task",
+            json!({
+                "task_id": default_task.id,
+                "reason": "no longer needed",
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect_err("plan profile should reject default task cancellation");
+
+    assert_eq!(err, "当前 agent 无权访问该任务");
+}
+
+#[tokio::test]
+async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let _model = mcp_service
+        .model_config_service
+        .upsert_chatos_model_config(ChatosSyncedModelConfigRequest {
+            id: "model-1".to_string(),
+            owner_user_id: Some("owner-a".to_string()),
+            name: "Task Model".to_string(),
+            provider: "openai".to_string(),
+            base_url: "https://api.example.test/v1".to_string(),
+            api_key: "test-key".to_string(),
+            model: "gpt-test".to_string(),
+            usage_scenario: Some("task planning".to_string()),
+            thinking_level: None,
+            enabled: Some(true),
+            supports_responses: Some(true),
+        })
+        .await
+        .expect("create model config");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+
+    let result = mcp_service
+        .call_tool(
+            "create_task",
+            json!({
+                "title": "plan task",
+                "objective": "define implementation plan",
+                "default_model_config_id": "model-1",
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                source_session_id: Some("session-1".to_string()),
+                source_user_message_id: Some("message-1".to_string()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("create plan task");
+
+    let task_id = result
+        .get("_structured_result")
+        .and_then(|value| value.get("id"))
+        .and_then(|value| value.as_str())
+        .expect("task id");
+    let task = task_service
+        .get_task(task_id)
+        .await
+        .expect("get task")
+        .expect("task");
+
+    assert_eq!(task.task_profile, TASK_PROFILE_CHATOS_PLAN);
+    assert_eq!(task.status, TaskStatus::Ready);
+    assert_eq!(task.schedule.mode, TaskScheduleMode::ContactAsync);
+    assert!(task.mcp_config.enabled);
+}
+
+#[tokio::test]
+async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_task_profile() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let _model = mcp_service
+        .model_config_service
+        .upsert_chatos_model_config(ChatosSyncedModelConfigRequest {
+            id: "model-1".to_string(),
+            owner_user_id: Some("owner-a".to_string()),
+            name: "Task Model".to_string(),
+            provider: "openai".to_string(),
+            base_url: "https://api.example.test/v1".to_string(),
+            api_key: "test-key".to_string(),
+            model: "gpt-test".to_string(),
+            usage_scenario: Some("task planning".to_string()),
+            thinking_level: None,
+            enabled: Some(true),
+            supports_responses: Some(true),
+        })
+        .await
+        .expect("create model config");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+
+    let result = mcp_service
+        .call_tool(
+            "create_tasks_with_prerequisites",
+            json!({
+                "tasks": [
+                    {
+                        "client_ref": "root",
+                        "title": "root task",
+                        "objective": "define implementation plan",
+                        "default_model_config_id": "model-1"
+                    },
+                    {
+                        "client_ref": "child",
+                        "title": "child task",
+                        "objective": "detail follow-up",
+                        "default_model_config_id": "model-1",
+                        "prerequisite_refs": ["root"]
+                    }
+                ]
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                source_session_id: Some("session-1".to_string()),
+                source_user_message_id: Some("message-1".to_string()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("create plan task graph");
+
+    let task_ids = result
+        .get("_structured_result")
+        .and_then(|value| value.get("created_tasks"))
+        .and_then(|value| value.as_array())
+        .expect("created tasks")
+        .iter()
+        .map(|task| {
+            task.get("task_id")
+                .and_then(|value| value.as_str())
+                .expect("task id")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(task_ids.len(), 2);
+
+    for task_id in task_ids {
+        let task = task_service
+            .get_task(task_id.as_str())
+            .await
+            .expect("get task")
+            .expect("task");
+        assert_eq!(task.task_profile, TASK_PROFILE_CHATOS_PLAN);
+        assert_eq!(task.project_id, project.id);
+    }
+}
+
+#[tokio::test]
+async fn chatos_async_reuse_is_scoped_by_task_profile() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let _model = mcp_service
+        .model_config_service
+        .upsert_chatos_model_config(ChatosSyncedModelConfigRequest {
+            id: "model-1".to_string(),
+            owner_user_id: Some("owner-a".to_string()),
+            name: "Task Model".to_string(),
+            provider: "openai".to_string(),
+            base_url: "https://api.example.test/v1".to_string(),
+            api_key: "test-key".to_string(),
+            model: "gpt-test".to_string(),
+            usage_scenario: Some("task planning".to_string()),
+            thinking_level: None,
+            enabled: Some(true),
+            supports_responses: Some(true),
+        })
+        .await
+        .expect("create model config");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+    let source_context = TaskSourceContext {
+        project_id: Some(project.id.clone()),
+        source_session_id: Some("session-1".to_string()),
+        source_user_message_id: Some("message-1".to_string()),
+        ..TaskSourceContext::default()
+    };
+    let default_task = task_service
+        .create_task(
+            CreateTaskRequest {
+                project_id: Some(project.id.clone()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
+                default_model_config_id: Some("model-1".to_string()),
+                ..test_create_task_request("default task")
+            },
+            Some(&current_user),
+            Some(source_context),
+        )
+        .await
+        .expect("create default task");
+
+    let plan_result = mcp_service
+        .call_tool(
+            "create_task",
+            json!({
+                "title": "plan task",
+                "objective": "define implementation plan",
+                "default_model_config_id": "model-1",
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                source_session_id: Some("session-1".to_string()),
+                source_user_message_id: Some("message-1".to_string()),
+                tool_profile: Some("chatos_async_planner".to_string()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("create plan task");
+
+    let created_plan_task_id = plan_result
+        .get("_structured_result")
+        .and_then(|value| value.get("id"))
+        .and_then(|value| value.as_str())
+        .expect("plan task id")
+        .to_string();
+    assert_ne!(created_plan_task_id, default_task.id);
+
+    let reused_plan_result = mcp_service
+        .call_tool(
+            "create_task",
+            json!({
+                "title": "plan task",
+                "objective": "define implementation plan",
+                "default_model_config_id": "model-1",
+            }),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                source_session_id: Some("session-1".to_string()),
+                source_user_message_id: Some("message-1".to_string()),
+                tool_profile: Some("chatos_async_planner".to_string()),
+                task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("reuse plan task");
+    let reused_plan_task_id = reused_plan_result
+        .get("_structured_result")
+        .and_then(|value| value.get("id"))
+        .and_then(|value| value.as_str())
+        .expect("reused plan task id");
+
+    assert_eq!(reused_plan_task_id, created_plan_task_id);
+}
+
 fn valid_planner_create_request() -> CreateTaskRequest {
     CreateTaskRequest {
         title: "task".to_string(),
@@ -573,6 +1146,7 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         tags: None,
         default_model_config_id: Some("model-1".to_string()),
         project_id: None,
+        task_profile: None,
         tenant_id: None,
         subject_id: None,
         schedule: None,
@@ -653,6 +1227,7 @@ fn test_create_task_request(title: &str) -> CreateTaskRequest {
         tags: None,
         default_model_config_id: None,
         project_id: None,
+        task_profile: None,
         tenant_id: None,
         subject_id: None,
         schedule: None,

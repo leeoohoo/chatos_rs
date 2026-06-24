@@ -73,10 +73,6 @@ pub async fn prepare_mcp_execution(
         &mut prefixed_input_items,
         runtime_context.task_runner_skill_prompt.as_deref(),
     );
-    push_optional_system_prompt(
-        &mut prefixed_input_items,
-        runtime_context.project_management_skill_prompt.as_deref(),
-    );
     if let Some(workspace_prompt) = build_workspace_global_prompt(runtime_context) {
         prefixed_input_items.push(system_input_item(workspace_prompt.as_str()));
     }

@@ -45,6 +45,12 @@ impl InMemoryStore {
                 })
             })
             .filter(|task| {
+                filters
+                    .task_profile
+                    .as_deref()
+                    .is_none_or(|value| task.task_profile == value)
+            })
+            .filter(|task| {
                 filters.creator_user_id.as_deref().is_none_or(|value| {
                     task.owner_user_id
                         .as_deref()
@@ -174,7 +180,7 @@ impl InMemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{TaskMcpConfig, TaskScheduleConfig, TaskToolState};
+    use crate::models::{TaskMcpConfig, TaskScheduleConfig, TaskToolState, TASK_PROFILE_DEFAULT};
     use std::collections::BTreeSet;
     use tokio::sync::broadcast;
 
@@ -198,6 +204,7 @@ mod tests {
             tenant_id: "tenant".to_string(),
             subject_id: "subject".to_string(),
             project_id: PUBLIC_PROJECT_ID.to_string(),
+            task_profile: TASK_PROFILE_DEFAULT.to_string(),
             creator_user_id: None,
             creator_username: None,
             creator_display_name: None,

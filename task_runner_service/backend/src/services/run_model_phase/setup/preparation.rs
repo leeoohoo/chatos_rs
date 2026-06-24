@@ -1,4 +1,6 @@
 use super::*;
+use crate::config::AppConfig;
+use crate::models::{normalize_project_id, PUBLIC_PROJECT_ID};
 
 pub(super) async fn prepare_model_execution(
     service: &RunService,
@@ -10,6 +12,7 @@ pub(super) async fn prepare_model_execution(
     prerequisite_context: &[PrerequisiteTaskContext],
 ) -> Result<PreparedModelExecution, String> {
     let loaded_external_mcp = load_external_mcp_servers(service, task).await?;
+    let system_http_servers = load_system_http_mcp_servers(service, task)?;
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -69,6 +72,7 @@ pub(super) async fn prepare_model_execution(
     }
 
     let mcp_builder = McpExecutorBuilder::new()
+        .with_http_servers(system_http_servers)
         .with_http_servers(loaded_external_mcp.http_servers)
         .with_stdio_servers(loaded_external_mcp.stdio_servers)
         .with_builtin_servers(builtin_servers)
@@ -138,6 +142,91 @@ async fn load_external_mcp_servers(
         stdio_servers,
         summaries,
     })
+}
+
+fn load_system_http_mcp_servers(
+    service: &RunService,
+    task: &TaskRecord,
+) -> Result<Vec<McpHttpServer>, String> {
+    let mut servers = Vec::new();
+    if let Some(server) = build_chatos_plan_project_management_server(&service.config, task)? {
+        servers.push(server);
+    }
+    Ok(servers)
+}
+
+fn build_chatos_plan_project_management_server(
+    config: &AppConfig,
+    task: &TaskRecord,
+) -> Result<Option<McpHttpServer>, String> {
+    if !is_chatos_plan_task(task) {
+        return Ok(None);
+    }
+    let base_url = config
+        .project_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "project service base url is not configured".to_string())?;
+    let sync_secret = config
+        .project_service_sync_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "project service sync secret is not configured".to_string())?;
+    let project_id = normalize_project_id(Some(task.project_id.clone()));
+    if project_id == PUBLIC_PROJECT_ID {
+        return Err("Chatos Plan mode requires concrete project_id".to_string());
+    }
+    let owner_user_id = task
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "plan task missing owner_user_id".to_string())?;
+    let mut headers = std::collections::HashMap::new();
+    headers.insert(
+        "X-Project-Service-Sync-Secret".to_string(),
+        sync_secret.to_string(),
+    );
+    headers.insert(
+        "X-Task-Runner-Owner-User-Id".to_string(),
+        owner_user_id.to_string(),
+    );
+    if let Some(username) = task
+        .owner_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.insert(
+            "X-Task-Runner-Owner-Username".to_string(),
+            username.to_string(),
+        );
+    }
+    if let Some(display_name) = task
+        .owner_display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.insert(
+            "X-Task-Runner-Owner-Display-Name".to_string(),
+            display_name.to_string(),
+        );
+    }
+    headers.insert("X-Chatos-Project-Id".to_string(), project_id);
+    headers.insert(
+        "X-Task-Runner-Task-Profile".to_string(),
+        crate::models::TASK_PROFILE_CHATOS_PLAN.to_string(),
+    );
+    Ok(Some(
+        McpHttpServer::new(
+            PROJECT_MANAGEMENT_MCP_SERVER_NAME,
+            format!("{}/mcp", base_url.trim_end_matches('/')),
+        )
+        .with_headers(headers),
+    ))
 }
 
 fn external_mcp_prefixed_input_items(
@@ -332,6 +421,12 @@ async fn build_mcp_builder_parts(
     );
     let mut builtin_servers =
         builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
+    if is_chatos_plan_task(task) {
+        builtin_servers.push(
+            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
+                .server_with_options(&server_options),
+        );
+    }
     if task_process_logging_enabled {
         builtin_servers.push(task_process_log_builtin_server());
     }
@@ -342,6 +437,9 @@ async fn build_mcp_builder_parts(
         service.ask_user_prompt_service.clone(),
     );
     let mut builtin_registry = builtin_registry;
+    if is_chatos_plan_task(task) {
+        builtin_registry.register(DisabledBuiltinProvider::code_maintainer_write_for_chatos_plan());
+    }
     if task_process_logging_enabled {
         builtin_registry.register(TaskProcessLogBuiltinProvider::new(
             TASK_PROCESS_LOG_INTERNAL_SERVER_NAME,
@@ -353,6 +451,12 @@ async fn build_mcp_builder_parts(
 
     persist_builtin_init_errors(service, run, builtin_init_errors).await;
     (builtin_servers, builtin_registry)
+}
+
+fn is_chatos_plan_task(task: &TaskRecord) -> bool {
+    task.task_profile
+        .trim()
+        .eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN)
 }
 
 async fn persist_builtin_init_errors(
@@ -377,5 +481,147 @@ async fn persist_builtin_init_errors(
             );
         }
         warn!("task runner builtin provider warning: {err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    use crate::config::StoreMode;
+    use crate::models::{now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus};
+
+    use super::*;
+
+    #[test]
+    fn chatos_plan_project_management_server_includes_required_headers() {
+        let config = test_config();
+        let task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
+
+        let server = build_chatos_plan_project_management_server(&config, &task)
+            .expect("build server")
+            .expect("plan server");
+
+        assert_eq!(server.name, PROJECT_MANAGEMENT_MCP_SERVER_NAME);
+        assert_eq!(server.url, "http://127.0.0.1:39210/mcp");
+        let headers = server.headers.expect("headers");
+        assert_eq!(
+            headers
+                .get("X-Project-Service-Sync-Secret")
+                .map(String::as_str),
+            Some("sync-secret")
+        );
+        assert_eq!(
+            headers
+                .get("X-Task-Runner-Owner-User-Id")
+                .map(String::as_str),
+            Some("owner-1")
+        );
+        assert_eq!(
+            headers.get("X-Chatos-Project-Id").map(String::as_str),
+            Some("project-1")
+        );
+        assert_eq!(
+            headers
+                .get("X-Task-Runner-Task-Profile")
+                .map(String::as_str),
+            Some(crate::models::TASK_PROFILE_CHATOS_PLAN)
+        );
+    }
+
+    #[test]
+    fn chatos_plan_project_management_server_requires_concrete_project() {
+        let config = test_config();
+        let task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, PUBLIC_PROJECT_ID);
+
+        let err = build_chatos_plan_project_management_server(&config, &task)
+            .expect_err("public project should fail");
+
+        assert_eq!(err, "Chatos Plan mode requires concrete project_id");
+    }
+
+    #[test]
+    fn default_task_does_not_inject_project_management_server() {
+        let config = test_config();
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+
+        assert!(build_chatos_plan_project_management_server(&config, &task)
+            .expect("default task build")
+            .is_none());
+    }
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            store_mode: StoreMode::Memory,
+            database_url: "memory://plan-runtime-preparation-test".to_string(),
+            memory_engine_base_url: None,
+            memory_engine_source_id: "task".to_string(),
+            memory_engine_operator_token: None,
+            default_tenant_id: "tenant".to_string(),
+            default_subject_id: "subject".to_string(),
+            default_workspace_dir: ".".to_string(),
+            memory_timeout: Duration::from_millis(30_000),
+            execution_timeout: Duration::from_millis(30_000),
+            scheduler_poll_interval: Duration::from_millis(1_000),
+            auto_memory_summary: false,
+            default_task_execution_max_iterations: 1,
+            default_tool_result_model_max_chars: 1_000,
+            default_tool_results_model_total_max_chars: 1_000,
+            chatos_callback_url: None,
+            chatos_callback_secret: None,
+            callback_timeout: Duration::from_millis(1_000),
+            admin_username: "admin".to_string(),
+            admin_password: "admin".to_string(),
+            admin_display_name: "Admin".to_string(),
+            user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_request_timeout: Duration::from_millis(5_000),
+            project_service_base_url: Some("http://127.0.0.1:39210".to_string()),
+            project_service_sync_secret: Some("sync-secret".to_string()),
+            project_service_request_timeout: Duration::from_millis(5_000),
+        }
+    }
+
+    fn sample_task(task_profile: &str, project_id: &str) -> TaskRecord {
+        let now = now_rfc3339();
+        TaskRecord {
+            id: "task-1".to_string(),
+            title: "task".to_string(),
+            description: None,
+            objective: "objective".to_string(),
+            input_payload: None,
+            status: TaskStatus::Ready,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: "memory-1".to_string(),
+            tenant_id: "tenant".to_string(),
+            subject_id: "subject".to_string(),
+            project_id: project_id.to_string(),
+            task_profile: task_profile.to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("owner-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: TaskScheduleConfig::default(),
+            parent_task_id: None,
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: Default::default(),
+            mcp_config: TaskMcpConfig::default(),
+            created_at: now.clone(),
+            updated_at: now,
+            deleted_at: None,
+        }
     }
 }

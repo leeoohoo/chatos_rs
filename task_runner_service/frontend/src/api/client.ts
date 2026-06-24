@@ -172,10 +172,11 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 export const api = {
   health: () => request<HealthResponse>('/api/health'),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
-  getTaskRunnerSkill: (lang: string) =>
+  getTaskRunnerSkill: (lang: string, profile?: string) =>
     request<TaskRunnerSkillResponse>(
       withQuery('/api/skills/task-runner', {
         lang,
+        profile,
       }),
     ),
   getTaskRunnerInternalPrompts: (lang: string) =>

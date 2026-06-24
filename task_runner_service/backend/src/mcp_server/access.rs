@@ -1,7 +1,7 @@
 use crate::auth::CurrentUser;
 use crate::models::{
     normalize_project_id, AskUserPromptRecord, CreateTaskRequest, TaskListFilters, TaskRecord,
-    TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus,
+    TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus, TASK_PROFILE_CHATOS_PLAN,
 };
 
 use super::chatos_async_planner::require_chatos_async_source_context;
@@ -25,6 +25,9 @@ impl TaskRunnerMcpService {
             .task_service
             .list_tasks_filtered(TaskListFilters {
                 project_id,
+                task_profile: request_context
+                    .is_chatos_plan_task_profile()
+                    .then(|| TASK_PROFILE_CHATOS_PLAN.to_string()),
                 creator_user_id: if current_user.is_admin() {
                     None
                 } else {
@@ -44,6 +47,7 @@ impl TaskRunnerMcpService {
     ) -> Result<TaskRecord, String> {
         let task = self.require_task_for_user(task_id, current_user).await?;
         ensure_task_project_scope(&task, request_context)?;
+        ensure_task_profile_scope(&task, request_context)?;
         Ok(task)
     }
 
@@ -163,7 +167,13 @@ impl TaskRunnerMcpService {
             require_chatos_async_source_context(request_context)?;
         let owner_user_id = effective_owner_user_id(current_user)?;
         self.task_service
-            .list_tasks_for_chatos_message(source_session_id, source_user_message_id)
+            .list_tasks_filtered(TaskListFilters {
+                source_session_id: Some(source_session_id.to_string()),
+                source_user_message_ids: vec![source_user_message_id.to_string()],
+                include_subtasks: Some(false),
+                task_profile: Some(request_context.requested_task_profile().to_string()),
+                ..TaskListFilters::default()
+            })
             .await
             .map(|tasks| {
                 tasks
@@ -287,6 +297,23 @@ fn ensure_task_project_scope(
         Ok(())
     } else {
         Err("任务不属于当前项目上下文".to_string())
+    }
+}
+
+fn ensure_task_profile_scope(
+    task: &TaskRecord,
+    request_context: &McpRequestContext,
+) -> Result<(), String> {
+    if !request_context.is_chatos_plan_task_profile() {
+        return Ok(());
+    }
+    if task
+        .task_profile
+        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
+    {
+        Ok(())
+    } else {
+        Err("当前 agent 无权访问该任务".to_string())
     }
 }
 

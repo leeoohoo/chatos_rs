@@ -53,6 +53,9 @@ impl SqliteStore {
                 clauses.push("project_id = ?".to_string());
             }
         }
+        if filters.task_profile.is_some() {
+            clauses.push("task_profile = ?".to_string());
+        }
         if filters.creator_user_id.is_some() {
             clauses.push(
                 "(owner_user_id = ? OR ((owner_user_id IS NULL OR owner_user_id = '') AND creator_user_id = ?))"
@@ -134,6 +137,9 @@ impl SqliteStore {
         }
         if let Some(project_id) = filters.project_id.as_deref() {
             query = query.bind(project_id);
+        }
+        if let Some(task_profile) = filters.task_profile.as_deref() {
+            query = query.bind(task_profile);
         }
         if let Some(creator_user_id) = filters.creator_user_id.as_deref() {
             query = query.bind(creator_user_id).bind(creator_user_id);

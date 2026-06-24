@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::normalize_task_profile;
 
 impl TaskService {
     pub async fn create_task(
@@ -42,6 +43,7 @@ impl TaskService {
             self.ensure_project_available_for_task(&project_id, creator)
                 .await?;
         }
+        let task_profile = normalize_task_profile(input.task_profile.as_deref())?;
         self.validate_task_prerequisites_for_project(
             &id,
             &prerequisite_task_ids,
@@ -107,6 +109,7 @@ impl TaskService {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| self.config.default_subject_id.clone()),
             project_id,
+            task_profile,
             creator_user_id: creator.map(|user| user.id.clone()),
             creator_username: creator.map(|user| user.username.clone()),
             creator_display_name: creator.map(|user| user.display_name.clone()),
@@ -246,6 +249,7 @@ mod tests {
             tags: None,
             default_model_config_id: None,
             project_id: None,
+            task_profile: None,
             tenant_id: None,
             subject_id: None,
             schedule: None,

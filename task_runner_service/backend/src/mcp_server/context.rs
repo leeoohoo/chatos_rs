@@ -1,4 +1,7 @@
-use crate::models::{normalize_project_id, TaskSourceContext};
+use crate::models::{
+    normalize_project_id, TaskSourceContext, PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN,
+    TASK_PROFILE_DEFAULT,
+};
 
 use super::{decode_remote_server_config_header, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
 
@@ -17,6 +20,8 @@ pub struct McpRequestContext {
     pub workspace_dir: Option<String>,
     pub remote_server_config: Option<String>,
     pub tool_profile: Option<String>,
+    pub task_profile: Option<String>,
+    pub chatos_plan_mode: bool,
 }
 
 impl McpRequestContext {
@@ -53,6 +58,12 @@ impl McpRequestContext {
             .map(|value| normalize_project_id(Some(value.clone())))
     }
 
+    pub(super) fn has_concrete_project_scope(&self) -> bool {
+        self.project_scope_id()
+            .as_deref()
+            .is_some_and(|value| value != PUBLIC_PROJECT_ID)
+    }
+
     pub(super) fn tool_profile(&self) -> McpToolProfile {
         if self.tool_profile.as_deref().is_some_and(|value| {
             value
@@ -69,6 +80,22 @@ impl McpRequestContext {
     fn has_chatos_async_message_context(&self) -> bool {
         has_non_empty_text(self.source_session_id.as_deref())
             && has_non_empty_text(self.source_user_message_id.as_deref())
+    }
+
+    pub(super) fn is_chatos_plan_task_profile(&self) -> bool {
+        self.task_profile
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| value.eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN))
+            || self.chatos_plan_mode
+    }
+
+    pub(super) fn requested_task_profile(&self) -> &'static str {
+        if self.is_chatos_plan_task_profile() {
+            TASK_PROFILE_CHATOS_PLAN
+        } else {
+            TASK_PROFILE_DEFAULT
+        }
     }
 }
 

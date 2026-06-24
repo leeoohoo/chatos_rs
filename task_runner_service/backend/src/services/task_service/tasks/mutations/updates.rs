@@ -223,6 +223,7 @@ mod tests {
                     tags: None,
                     default_model_config_id: None,
                     project_id: None,
+                    task_profile: None,
                     tenant_id: None,
                     subject_id: None,
                     schedule: None,

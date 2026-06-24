@@ -53,6 +53,14 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.tasks, doc! { "source_user_message_id": 1 }, false)
             .await?;
+        self.ensure_index(&self.tasks, doc! { "task_profile": 1 }, false)
+            .await?;
+        self.ensure_index(
+            &self.tasks,
+            doc! { "source_session_id": 1, "source_user_message_id": 1, "task_profile": 1 },
+            false,
+        )
+        .await?;
         self.ensure_index(&self.tasks, doc! { "creator_user_id": 1 }, false)
             .await?;
         self.ensure_index(&self.tasks, doc! { "owner_user_id": 1 }, false)

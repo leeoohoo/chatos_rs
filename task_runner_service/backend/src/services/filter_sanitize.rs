@@ -1,4 +1,7 @@
-use crate::models::{normalize_project_id, PromptListFilters, RunListFilters, TaskListFilters};
+use crate::models::{
+    normalize_project_id, normalize_task_profile, PromptListFilters, RunListFilters,
+    TaskListFilters,
+};
 
 use super::normalized_optional;
 
@@ -12,6 +15,12 @@ pub(super) fn sanitize_task_list_filters(mut filters: TaskListFilters) -> TaskLi
     filters.parent_task_id = normalized_optional(filters.parent_task_id);
     filters.source_run_id = normalized_optional(filters.source_run_id);
     filters.source_session_id = normalized_optional(filters.source_session_id);
+    filters.task_profile = filters
+        .task_profile
+        .and_then(|value| normalized_optional(Some(value)))
+        .map(|value| normalize_task_profile(Some(value.as_str())))
+        .transpose()
+        .unwrap_or(None);
     filters.source_user_message_ids = filters
         .source_user_message_ids
         .into_iter()

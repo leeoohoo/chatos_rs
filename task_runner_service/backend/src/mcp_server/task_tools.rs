@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::models::{
     BatchTaskDeleteRequest, BatchTaskStatusUpdateRequest, CreateTaskRequest, TaskListFilters,
+    TASK_PROFILE_CHATOS_PLAN,
 };
 
 use super::chatos_async_planner::{
@@ -38,6 +39,9 @@ impl TaskRunnerMcpService {
                         tag: args.tag,
                         model_config_id: args.model_config_id,
                         project_id: request_context.project_scope_id(),
+                        task_profile: request_context
+                            .is_chatos_plan_task_profile()
+                            .then(|| TASK_PROFILE_CHATOS_PLAN.to_string()),
                         creator_user_id: task_creator_filter(current_user)?,
                         scheduled_only: args.scheduled_only,
                         parent_task_id: args.parent_task_id,
@@ -71,6 +75,14 @@ impl TaskRunnerMcpService {
                 let mut input: CreateTaskRequest =
                     decode_args::<CreateTaskArgs>(args)?.into_request()?;
                 let source_context = request_context.task_source_context()?;
+                if let Some(prerequisite_task_ids) = input.prerequisite_task_ids.as_ref() {
+                    self.require_tasks_for_user_in_context(
+                        prerequisite_task_ids.as_slice(),
+                        current_user,
+                        request_context,
+                    )
+                    .await?;
+                }
                 if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
                     let _ = require_chatos_async_source_context(request_context)?;
                     if let Some(existing) = self
@@ -85,6 +97,9 @@ impl TaskRunnerMcpService {
                 } else {
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
+                }
+                if request_context.is_chatos_plan_task_profile() {
+                    input.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
                 }
                 let task = self
                     .task_service

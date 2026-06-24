@@ -190,9 +190,7 @@ impl RunService {
         let external_tool_names = executor
             .tool_metadata()
             .iter()
-            .filter_map(|(name, info)| {
-                matches!(info.server_type.as_str(), "http" | "stdio").then(|| name.clone())
-            })
+            .filter_map(|(name, info)| is_user_configured_external_tool(info).then(|| name.clone()))
             .collect::<Vec<_>>();
         let unavailable_tools = executor.unavailable_tools();
         let payload = json!({
@@ -240,9 +238,7 @@ fn append_external_mcp_runtime_notice(
     let external_tool_names = executor
         .tool_metadata()
         .iter()
-        .filter_map(|(name, info)| {
-            matches!(info.server_type.as_str(), "http" | "stdio").then(|| name.clone())
-        })
+        .filter_map(|(name, info)| is_user_configured_external_tool(info).then(|| name.clone()))
         .collect::<Vec<_>>();
     if !external_tool_names.is_empty() {
         return;
@@ -286,6 +282,11 @@ fn append_external_mcp_runtime_notice(
             "text": text
         }]
     }));
+}
+
+fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool {
+    matches!(info.server_type.as_str(), "http" | "stdio")
+        && info.server_name != PROJECT_MANAGEMENT_MCP_SERVER_NAME
 }
 
 #[cfg(test)]

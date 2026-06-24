@@ -63,6 +63,9 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
             filter.insert("project_id", project_id);
         }
     }
+    if let Some(task_profile) = filters.task_profile.as_deref() {
+        filter.insert("task_profile", task_profile);
+    }
     if let Some(owner_user_id) = filters.creator_user_id.as_deref() {
         filter.insert(
             "$or",
