@@ -3,7 +3,7 @@ use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::services::{
     ExternalMcpConfigService, McpCatalogService, ModelConfigService, RemoteServerService,
-    RunService, TaskService, ToolingStateService,
+    RunService, TaskProjectService, TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;
@@ -18,6 +18,7 @@ pub struct AppState {
     pub model_config_service: ModelConfigService,
     pub remote_server_service: RemoteServerService,
     pub external_mcp_config_service: ExternalMcpConfigService,
+    pub task_project_service: TaskProjectService,
     pub run_service: RunService,
     pub ui_prompt_service: UiPromptService,
     pub mcp_catalog_service: McpCatalogService,
@@ -34,6 +35,8 @@ impl AppState {
         auth_service.ensure_default_admin(&config).await?;
         let task_service = TaskService::new(config.clone(), store.clone());
         let model_config_service = ModelConfigService::new(store.clone());
+        let task_project_service = TaskProjectService::new(store.clone());
+        task_project_service.ensure_public_project().await?;
         let remote_server_service = RemoteServerService::new(store.clone());
         let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
         let ui_prompt_service = UiPromptService::new(store.clone());
@@ -67,6 +70,7 @@ impl AppState {
             model_config_service,
             remote_server_service,
             external_mcp_config_service,
+            task_project_service,
             run_service,
             ui_prompt_service,
             mcp_catalog_service,

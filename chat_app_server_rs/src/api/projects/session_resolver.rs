@@ -1,4 +1,5 @@
 use crate::core::chat_runtime::{contact_id_from_metadata, project_id_from_metadata};
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 use crate::services::chatos_sessions;
 
@@ -95,8 +96,17 @@ fn session_matches_project_contact(session: &Session, project_id: &str, contact_
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| project_id_from_metadata(metadata))
-        .unwrap_or_else(|| "0".to_string());
+        .map(normalize_project_id)
+        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
 
-    session_project_id == project_id
+    session_project_id == normalize_project_id(project_id.to_string())
         && contact_id_from_metadata(metadata).as_deref() == Some(contact_id)
+}
+
+fn normalize_project_id(value: String) -> String {
+    if value.trim() == "0" {
+        PUBLIC_PROJECT_ID.to_string()
+    } else {
+        value
+    }
 }

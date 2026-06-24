@@ -18,7 +18,7 @@ export const workspaceInitialState: WorkspaceSliceState = {
 
 export interface WorkspaceSliceActions {
   loadProjects: (options?: { force?: boolean }) => Promise<Project[]>;
-  createProject: (name: string, rootPath: string, description?: string) => Promise<Project>;
+  createProject: (name: string, rootPath: string, description?: string, gitUrl?: string) => Promise<Project>;
   updateProject: (projectId: string, updates: Partial<Project>) => Promise<Project | null>;
   deleteProject: (projectId: string) => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;

@@ -1,5 +1,6 @@
 use crate::core::mcp_args::{parse_args_json_array_or_whitespace, parse_env};
 use crate::models::mcp_config::McpConfig;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::repositories::mcp_configs;
 use crate::services::builtin_mcp::{
     builtin_kind_by_command, builtin_kind_by_id, get_builtin_mcp_config, is_builtin_mcp_id,
@@ -170,7 +171,14 @@ pub async fn load_mcp_configs_for_user(
     }
     let normalized_project_id = project_id
         .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            if v == "0" {
+                PUBLIC_PROJECT_ID.to_string()
+            } else {
+                v
+            }
+        });
     Ok(build_servers_from_configs(
         configs,
         workspace_dir,

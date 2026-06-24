@@ -9,8 +9,8 @@ use super::chatos_async_planner::{
     planner_root_create_request, planner_update_task_request, require_chatos_async_source_context,
 };
 use super::support::{
-    external_mcp_configs_for_user, task_creator_filter, task_for_external_mcp,
-    tasks_for_external_mcp,
+    external_mcp_configs_for_user, remove_internal_task_fields, task_creator_filter,
+    task_for_external_mcp, tasks_for_external_mcp,
 };
 use super::{
     decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
@@ -36,6 +36,7 @@ impl TaskRunnerMcpService {
                         keyword: args.keyword,
                         tag: args.tag,
                         model_config_id: args.model_config_id,
+                        project_id: request_context.project_scope_id(),
                         creator_user_id: task_creator_filter(current_user)?,
                         scheduled_only: args.scheduled_only,
                         parent_task_id: args.parent_task_id,
@@ -50,13 +51,19 @@ impl TaskRunnerMcpService {
             "get_task" => {
                 let args: TaskIdArgs = decode_args(args)?;
                 let task = self
-                    .require_task_for_user(args.task_id.as_str(), current_user)
+                    .require_task_for_user_in_context(
+                        args.task_id.as_str(),
+                        current_user,
+                        request_context,
+                    )
                     .await?;
                 Ok(text_result(task_for_external_mcp(task)))
             }
             "get_task_stats" => {
                 let _ = decode_args::<Value>(args).ok();
-                let stats = self.task_stats_for_user(current_user).await?;
+                let stats = self
+                    .task_stats_for_user(current_user, request_context)
+                    .await?;
                 Ok(text_result(json!(stats)))
             }
             "create_task" => {
@@ -115,8 +122,12 @@ impl TaskRunnerMcpService {
                 if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
                     args.patch = planner_update_task_request(args.patch)?;
                 }
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let task = self
                     .task_service
                     .update_task(args.task_id.as_str(), args.patch, Some(current_user))
@@ -126,8 +137,12 @@ impl TaskRunnerMcpService {
             }
             "set_task_prerequisites" => {
                 let args: SetTaskPrerequisitesArgs = decode_args(args)?;
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let task = self
                     .task_service
                     .set_task_prerequisites(
@@ -142,8 +157,12 @@ impl TaskRunnerMcpService {
             "cancel_task" => {
                 let args: CancelTaskArgs = decode_args(args)?;
                 let task_id = args.task_id.clone();
-                self.require_task_for_user(task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let result = self
                     .task_service
                     .cancel_task(task_id.as_str(), args.into_request(), Some(current_user))
@@ -162,19 +181,29 @@ impl TaskRunnerMcpService {
             }
             "get_task_dependency_graph" => {
                 let args: TaskIdArgs = decode_args(args)?;
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let graph = self
                     .task_service
                     .get_task_dependency_graph(args.task_id.as_str())
                     .await?
                     .ok_or_else(|| format!("任务不存在: {}", args.task_id))?;
-                Ok(text_result(json!(graph)))
+                let mut value = json!(graph);
+                remove_internal_task_fields(&mut value);
+                Ok(text_result(value))
             }
             "delete_task" => {
                 let args: TaskIdArgs = decode_args(args)?;
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let deleted = self.task_service.delete_task(args.task_id.as_str()).await?;
                 if !deleted {
                     return Err(format!("任务不存在: {}", args.task_id));
@@ -186,8 +215,12 @@ impl TaskRunnerMcpService {
             }
             "batch_update_task_status" => {
                 let args: BatchTaskStatusUpdateArgs = decode_args(args)?;
-                self.require_tasks_for_user(args.task_ids.as_slice(), current_user)
-                    .await?;
+                self.require_tasks_for_user_in_context(
+                    args.task_ids.as_slice(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let result = self
                     .task_service
                     .batch_update_status(BatchTaskStatusUpdateRequest {
@@ -199,8 +232,12 @@ impl TaskRunnerMcpService {
             }
             "batch_delete_tasks" => {
                 let args: BatchTaskDeleteArgs = decode_args(args)?;
-                self.require_tasks_for_user(args.task_ids.as_slice(), current_user)
-                    .await?;
+                self.require_tasks_for_user_in_context(
+                    args.task_ids.as_slice(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let result = self
                     .task_service
                     .batch_delete_tasks(BatchTaskDeleteRequest {

@@ -14,6 +14,8 @@ pub struct TaskRecord {
     pub memory_thread_id: String,
     pub tenant_id: String,
     pub subject_id: String,
+    #[serde(default = "default_task_project_id")]
+    pub project_id: String,
     #[serde(default)]
     pub creator_user_id: Option<String>,
     #[serde(default)]
@@ -52,6 +54,10 @@ pub struct TaskRecord {
     pub deleted_at: Option<String>,
 }
 
+fn default_task_project_id() -> String {
+    crate::models::PUBLIC_PROJECT_ID.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskPrerequisiteRecord {
     pub task_id: String,
@@ -74,6 +80,8 @@ pub struct TaskSummaryRecord {
     pub title: String,
     pub status: TaskStatus,
     pub default_model_config_id: Option<String>,
+    #[serde(default = "default_task_project_id")]
+    pub project_id: String,
     pub creator_user_id: Option<String>,
     pub creator_username: Option<String>,
     pub creator_display_name: Option<String>,
@@ -91,6 +99,7 @@ impl From<&TaskRecord> for TaskSummaryRecord {
             title: value.title.clone(),
             status: value.status,
             default_model_config_id: value.default_model_config_id.clone(),
+            project_id: value.project_id.clone(),
             creator_user_id: value.creator_user_id.clone(),
             creator_username: value.creator_username.clone(),
             creator_display_name: value.creator_display_name.clone(),

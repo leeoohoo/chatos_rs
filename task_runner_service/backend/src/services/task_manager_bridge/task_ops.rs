@@ -32,8 +32,13 @@ impl TaskService {
         let id = Uuid::new_v4().to_string();
         let now = now_rfc3339();
         let prerequisite_task_ids = tool_prerequisite_task_ids(&draft);
-        self.validate_tool_prerequisite_task_ids(root_task_id, &id, &prerequisite_task_ids)
-            .await?;
+        self.validate_tool_prerequisite_task_ids(
+            root_task_id,
+            &id,
+            &prerequisite_task_ids,
+            parent.project_id.as_str(),
+        )
+        .await?;
         let title = draft.title.trim().to_string();
         let description = normalized_optional(Some(draft.details));
         let objective = description.clone().unwrap_or_else(|| title.clone());
@@ -70,6 +75,7 @@ impl TaskService {
             memory_thread_id: format!("task-subtask-{id}"),
             tenant_id: parent.tenant_id.clone(),
             subject_id: parent.subject_id.clone(),
+            project_id: parent.project_id.clone(),
             creator_user_id: parent.creator_user_id.clone(),
             creator_username: parent.creator_username.clone(),
             creator_display_name: parent.creator_display_name.clone(),
@@ -238,9 +244,15 @@ impl TaskService {
         root_task_id: &str,
         task_id: &str,
         prerequisite_task_ids: &[String],
+        expected_project_id: &str,
     ) -> Result<(), String> {
-        self.validate_task_prerequisites(task_id, prerequisite_task_ids, None)
-            .await?;
+        self.validate_task_prerequisites_for_project(
+            task_id,
+            prerequisite_task_ids,
+            None,
+            Some(expected_project_id),
+        )
+        .await?;
         for prerequisite_task_id in prerequisite_task_ids {
             if prerequisite_task_id == root_task_id {
                 return Err("前置任务不能是当前正在执行的父任务".to_string());
@@ -334,6 +346,7 @@ mod tests {
                     priority: None,
                     tags: None,
                     default_model_config_id: None,
+                    project_id: None,
                     tenant_id: None,
                     subject_id: None,
                     schedule: None,

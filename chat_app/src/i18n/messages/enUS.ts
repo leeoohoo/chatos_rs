@@ -102,7 +102,7 @@ export const enUS: MessageDictionary = {
   'memory.projectName': 'Project: {name}',
   'memory.projectNone': 'Project: not selected',
   'memory.entries': 'Memory entries',
-  'memory.projectIdNone': 'project_id: 0 (no project selected)',
+  'memory.projectIdNone': 'project_id: -1 (public)',
   'memory.empty': 'No memory is available yet.',
   'memory.emptySummary': '(empty summary)',
   'memory.sessionSummarySource': 'Conversation summary L{level}',

@@ -11,6 +11,7 @@ import {
   TeamOutlined,
   ToolOutlined,
   PlayCircleOutlined,
+  ProjectOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 
@@ -35,6 +36,11 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
       key: '/tasks',
       label: t('nav.tasks'),
       icon: <AppstoreOutlined />,
+    },
+    {
+      key: '/projects',
+      label: t('nav.projects'),
+      icon: <ProjectOutlined />,
     },
     {
       key: '/models',

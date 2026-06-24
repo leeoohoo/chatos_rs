@@ -6,6 +6,7 @@ import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   ExternalMcpConfigRecord,
   RemoteServerRecord,
+  TaskProjectRecord,
   TaskRecord,
   TaskRunEventRecord,
   TaskScheduleMode,
@@ -31,6 +32,7 @@ type UseTasksPageDataParams = {
   keywordFilter: string;
   tagFilter?: string;
   routeModelConfigId?: string;
+  routeProjectId?: string;
   scheduledOnly: boolean;
   taskPage: number;
   taskPageSize: number;
@@ -45,12 +47,18 @@ type UseTasksPageDataParams = {
   editingTaskId?: string;
 };
 
+function normalizeProjectId(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed && trimmed !== '0' ? trimmed : '-1';
+}
+
 export function useTasksPageData({
   t,
   statusFilter,
   keywordFilter,
   tagFilter,
   routeModelConfigId,
+  routeProjectId,
   scheduledOnly,
   taskPage,
   taskPageSize,
@@ -91,6 +99,7 @@ export function useTasksPageData({
       keywordFilter,
       tagFilter,
       routeModelConfigId,
+      routeProjectId,
       scheduledOnly,
       taskPage,
       taskPageSize,
@@ -101,6 +110,7 @@ export function useTasksPageData({
         keyword: keywordFilter.trim() || undefined,
         tag: tagFilter,
         model_config_id: routeModelConfigId,
+        project_id: routeProjectId,
         scheduled_only: scheduledOnly || undefined,
         limit: taskPageSize,
         offset: (taskPage - 1) * taskPageSize,
@@ -167,6 +177,10 @@ export function useTasksPageData({
   const modelsQuery = useQuery({
     queryKey: ['model-configs'],
     queryFn: api.listModelConfigs,
+  });
+  const projectsQuery = useQuery({
+    queryKey: ['task-projects', 'active'],
+    queryFn: () => api.listProjects('active'),
   });
   const mcpCatalogQuery = useQuery({
     queryKey: ['mcp-catalog'],
@@ -264,6 +278,23 @@ export function useTasksPageData({
     return map;
   }, [modelsQuery.data, t]);
 
+  const projectNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (projectsQuery.data || []).forEach((project) => {
+      map.set(project.id, project.name);
+    });
+    return map;
+  }, [projectsQuery.data]);
+
+  const projectOptions = useMemo(
+    () =>
+      (projectsQuery.data || []).map((project: TaskProjectRecord) => ({
+        label: project.id === '-1' ? t('projects.public') : project.name,
+        value: project.id,
+      })),
+    [projectsQuery.data, t],
+  );
+
   const taskSummaryMap = useMemo(() => {
     const map = new Map<string, string>();
     (taskIndexQuery.data?.tasks || []).forEach((task) => {
@@ -272,15 +303,23 @@ export function useTasksPageData({
     return map;
   }, [taskIndexQuery.data?.tasks]);
 
+  const prerequisiteProjectId = useMemo(() => {
+    const editingTask = (taskIndexQuery.data?.tasks || []).find(
+      (task) => task.id === editingTaskId,
+    );
+    return normalizeProjectId(editingTask?.project_id || routeProjectId);
+  }, [editingTaskId, routeProjectId, taskIndexQuery.data?.tasks]);
+
   const prerequisiteTaskOptions = useMemo(
     () =>
       (taskIndexQuery.data?.tasks || [])
         .filter((task) => task.id !== editingTaskId)
+        .filter((task) => normalizeProjectId(task.project_id) === prerequisiteProjectId)
         .map((task) => ({
           label: `${task.title} (${task.status})`,
           value: task.id,
         })),
-    [editingTaskId, taskIndexQuery.data?.tasks],
+    [editingTaskId, prerequisiteProjectId, taskIndexQuery.data?.tasks],
   );
 
   const tagOptions = useMemo(
@@ -381,6 +420,7 @@ export function useTasksPageData({
     taskRunDerivedQuery,
     taskPromptsQuery,
     modelsQuery,
+    projectsQuery,
     mcpCatalogQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
@@ -393,6 +433,8 @@ export function useTasksPageData({
     modelOptions,
     modelNameMap,
     modelLabelMap,
+    projectNameMap,
+    projectOptions,
     taskSummaryMap,
     prerequisiteTaskOptions,
     tagOptions,

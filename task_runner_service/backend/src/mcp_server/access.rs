@@ -1,7 +1,7 @@
 use crate::auth::CurrentUser;
 use crate::models::{
-    CreateTaskRequest, TaskListFilters, TaskRecord, TaskRunRecord, TaskScheduleMode,
-    TaskStatsResponse, TaskStatus, UiPromptRecord,
+    normalize_project_id, CreateTaskRequest, TaskListFilters, TaskRecord, TaskRunRecord,
+    TaskScheduleMode, TaskStatsResponse, TaskStatus, UiPromptRecord,
 };
 
 use super::chatos_async_planner::require_chatos_async_source_context;
@@ -15,64 +15,128 @@ impl TaskRunnerMcpService {
     pub(super) async fn task_stats_for_user(
         &self,
         current_user: &CurrentUser,
+        request_context: &McpRequestContext,
     ) -> Result<TaskStatsResponse, String> {
-        if current_user.is_admin() {
+        let project_id = request_context.project_scope_id();
+        if current_user.is_admin() && project_id.is_none() {
             return self.task_service.task_stats().await;
         }
         let tasks = self
             .task_service
             .list_tasks_filtered(TaskListFilters {
-                creator_user_id: Some(effective_owner_user_id(current_user)?.to_string()),
+                project_id,
+                creator_user_id: if current_user.is_admin() {
+                    None
+                } else {
+                    Some(effective_owner_user_id(current_user)?.to_string())
+                },
                 ..TaskListFilters::default()
             })
             .await?;
-        let mut stats = TaskStatsResponse {
-            total: 0,
-            scheduled: 0,
-            follow_up: 0,
-            draft: 0,
-            ready: 0,
-            queued: 0,
-            running: 0,
-            succeeded: 0,
-            failed: 0,
-            blocked: 0,
-            cancelled: 0,
-            archived: 0,
-        };
-        for task in tasks {
-            stats.total += 1;
-            if !matches!(task.schedule.mode, TaskScheduleMode::Manual) {
-                stats.scheduled += 1;
-            }
-            if task.parent_task_id.is_some() {
-                stats.follow_up += 1;
-            }
-            match task.status {
-                TaskStatus::Draft => stats.draft += 1,
-                TaskStatus::Ready => stats.ready += 1,
-                TaskStatus::Queued => stats.queued += 1,
-                TaskStatus::Running => stats.running += 1,
-                TaskStatus::Succeeded => stats.succeeded += 1,
-                TaskStatus::Failed => stats.failed += 1,
-                TaskStatus::Blocked => stats.blocked += 1,
-                TaskStatus::Cancelled => stats.cancelled += 1,
-                TaskStatus::Archived => stats.archived += 1,
-            }
-        }
-        Ok(stats)
+        Ok(task_stats_from_tasks(tasks))
     }
 
-    pub(super) async fn require_tasks_for_user(
+    pub(super) async fn require_task_for_user_in_context(
+        &self,
+        task_id: &str,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<TaskRecord, String> {
+        let task = self.require_task_for_user(task_id, current_user).await?;
+        ensure_task_project_scope(&task, request_context)?;
+        Ok(task)
+    }
+
+    pub(super) async fn require_tasks_for_user_in_context(
         &self,
         task_ids: &[String],
         current_user: &CurrentUser,
+        request_context: &McpRequestContext,
     ) -> Result<(), String> {
         for task_id in task_ids {
-            self.require_task_for_user(task_id.as_str(), current_user)
+            self.require_task_for_user_in_context(task_id.as_str(), current_user, request_context)
                 .await?;
         }
         Ok(())
+    }
+
+    pub(super) async fn require_run_for_user_in_context(
+        &self,
+        run_id: &str,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<TaskRunRecord, String> {
+        let run = self.require_run_for_user(run_id, current_user).await?;
+        self.require_task_for_user_in_context(run.task_id.as_str(), current_user, request_context)
+            .await?;
+        Ok(run)
+    }
+
+    pub(super) async fn require_prompt_for_user_in_context(
+        &self,
+        prompt: &UiPromptRecord,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<(), String> {
+        if let Some(task_id) = prompt.task_id.as_deref() {
+            self.require_task_for_user_in_context(task_id, current_user, request_context)
+                .await?;
+            return Ok(());
+        }
+        if let Some(run_id) = prompt.run_id.as_deref() {
+            self.require_run_for_user_in_context(run_id, current_user, request_context)
+                .await?;
+            return Ok(());
+        }
+        self.require_prompt_for_user(prompt, current_user).await
+    }
+
+    pub(super) async fn filter_runs_for_user_in_context(
+        &self,
+        runs: Vec<TaskRunRecord>,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        if current_user.is_admin() && request_context.project_scope_id().is_none() {
+            return Ok(runs);
+        }
+        let mut out = Vec::new();
+        for run in runs {
+            if self
+                .require_task_for_user_in_context(
+                    run.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await
+                .is_ok()
+            {
+                out.push(run);
+            }
+        }
+        Ok(out)
+    }
+
+    pub(super) async fn filter_prompts_for_user_in_context(
+        &self,
+        prompts: Vec<UiPromptRecord>,
+        current_user: &CurrentUser,
+        request_context: &McpRequestContext,
+    ) -> Result<Vec<UiPromptRecord>, String> {
+        if current_user.is_admin() && request_context.project_scope_id().is_none() {
+            return Ok(prompts);
+        }
+        let mut out = Vec::new();
+        for prompt in prompts {
+            if self
+                .require_prompt_for_user_in_context(&prompt, current_user, request_context)
+                .await
+                .is_ok()
+            {
+                out.push(prompt);
+            }
+        }
+        Ok(out)
     }
 
     pub(super) async fn first_existing_chatos_async_task(
@@ -112,6 +176,7 @@ impl TaskRunnerMcpService {
                             .or_else(|| task.creator_user_id.as_deref())
                             == Some(owner_user_id)
                     })
+                    .filter(|task| ensure_task_project_scope(task, request_context).is_ok())
                     .collect()
             })
     }
@@ -208,46 +273,57 @@ impl TaskRunnerMcpService {
         input.default_model_config_id = Some(model_config_id);
         Ok(())
     }
+}
 
-    pub(super) async fn filter_runs_for_user(
-        &self,
-        runs: Vec<TaskRunRecord>,
-        current_user: &CurrentUser,
-    ) -> Result<Vec<TaskRunRecord>, String> {
-        if current_user.is_admin() {
-            return Ok(runs);
-        }
-        let mut out = Vec::new();
-        for run in runs {
-            if self
-                .require_task_for_user(run.task_id.as_str(), current_user)
-                .await
-                .is_ok()
-            {
-                out.push(run);
-            }
-        }
-        Ok(out)
+fn ensure_task_project_scope(
+    task: &TaskRecord,
+    request_context: &McpRequestContext,
+) -> Result<(), String> {
+    let Some(expected_project_id) = request_context.project_scope_id() else {
+        return Ok(());
+    };
+    let actual_project_id = normalize_project_id(Some(task.project_id.clone()));
+    if actual_project_id == expected_project_id {
+        Ok(())
+    } else {
+        Err("任务不属于当前项目上下文".to_string())
     }
+}
 
-    pub(super) async fn filter_prompts_for_user(
-        &self,
-        prompts: Vec<UiPromptRecord>,
-        current_user: &CurrentUser,
-    ) -> Result<Vec<UiPromptRecord>, String> {
-        if current_user.is_admin() {
-            return Ok(prompts);
+fn task_stats_from_tasks(tasks: Vec<TaskRecord>) -> TaskStatsResponse {
+    let mut stats = TaskStatsResponse {
+        total: 0,
+        scheduled: 0,
+        follow_up: 0,
+        draft: 0,
+        ready: 0,
+        queued: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        blocked: 0,
+        cancelled: 0,
+        archived: 0,
+    };
+    for task in tasks {
+        stats.total += 1;
+        if !matches!(task.schedule.mode, TaskScheduleMode::Manual) {
+            stats.scheduled += 1;
         }
-        let mut out = Vec::new();
-        for prompt in prompts {
-            if self
-                .require_prompt_for_user(&prompt, current_user)
-                .await
-                .is_ok()
-            {
-                out.push(prompt);
-            }
+        if task.parent_task_id.is_some() {
+            stats.follow_up += 1;
         }
-        Ok(out)
+        match task.status {
+            TaskStatus::Draft => stats.draft += 1,
+            TaskStatus::Ready => stats.ready += 1,
+            TaskStatus::Queued => stats.queued += 1,
+            TaskStatus::Running => stats.running += 1,
+            TaskStatus::Succeeded => stats.succeeded += 1,
+            TaskStatus::Failed => stats.failed += 1,
+            TaskStatus::Blocked => stats.blocked += 1,
+            TaskStatus::Cancelled => stats.cancelled += 1,
+            TaskStatus::Archived => stats.archived += 1,
+        }
     }
+    stats
 }

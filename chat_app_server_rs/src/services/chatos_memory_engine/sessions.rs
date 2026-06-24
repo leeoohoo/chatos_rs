@@ -167,11 +167,7 @@ pub async fn create_chatos_session(
         return Ok(existing);
     }
 
-    let normalized_project_id = if effective_project_id == "0" {
-        None
-    } else {
-        Some(effective_project_id)
-    };
+    let normalized_project_id = Some(effective_project_id);
     let session = Session::new(title, None, metadata, Some(user_id), normalized_project_id);
     sync_chatos_session(&session).await?;
     Ok(session)

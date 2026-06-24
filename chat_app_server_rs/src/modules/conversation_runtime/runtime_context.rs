@@ -17,6 +17,7 @@ use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
@@ -170,6 +171,7 @@ pub async fn resolve_runtime_context(
         runtime_metadata.contact_id.as_deref(),
         contact_agent_id.as_deref(),
         Some(session_id),
+        resolved_project_id.as_deref().or(Some(PUBLIC_PROJECT_ID)),
         workspace_root
             .as_deref()
             .or(resolved_project_root.as_deref()),
@@ -238,6 +240,7 @@ async fn build_contact_task_runner_runtime(
     contact_id: Option<&str>,
     contact_agent_id: Option<&str>,
     source_session_id: Option<&str>,
+    project_id: Option<&str>,
     workspace_dir: Option<&str>,
     remote_connection_id: Option<&str>,
     conversation_turn_id: Option<&str>,
@@ -316,6 +319,9 @@ async fn build_contact_task_runner_runtime(
         "X-Task-Runner-Tool-Profile".to_string(),
         "chatos_async_planner".to_string(),
     );
+    let project_id =
+        normalize_optional_text(project_id).unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
+    headers.insert("X-Chatos-Project-Id".to_string(), project_id);
     if let Some(session_id) = normalize_optional_text(source_session_id) {
         headers.insert("X-Chatos-Session-Id".to_string(), session_id);
     }

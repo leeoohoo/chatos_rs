@@ -139,13 +139,25 @@ pub(crate) fn tasks_for_external_mcp(tasks: Vec<TaskRecord>) -> Value {
 
 pub(crate) fn task_for_external_mcp(task: TaskRecord) -> Value {
     let mut value = json!(task);
-    remove_process_log_field(&mut value);
+    remove_internal_task_fields(&mut value);
     value
 }
 
-pub(crate) fn remove_process_log_field(value: &mut Value) {
-    if let Some(object) = value.as_object_mut() {
-        object.remove("process_log");
+pub(crate) fn remove_internal_task_fields(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                remove_internal_task_fields(item);
+            }
+        }
+        Value::Object(object) => {
+            object.remove("process_log");
+            object.remove("project_id");
+            for item in object.values_mut() {
+                remove_internal_task_fields(item);
+            }
+        }
+        _ => {}
     }
 }
 

@@ -28,6 +28,9 @@ const TasksPage = lazy(async () => ({
 const ModelsPage = lazy(async () => ({
   default: (await import('./pages/ModelsPage')).ModelsPage,
 }));
+const ProjectsPage = lazy(async () => ({
+  default: (await import('./pages/ProjectsPage')).ProjectsPage,
+}));
 const ServersPage = lazy(async () => ({
   default: (await import('./pages/ServersPage')).ServersPage,
 }));
@@ -193,6 +196,7 @@ function AuthGate() {
         >
           <Route path="/" element={<Navigate to="/tasks" replace />} />
           <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/servers" element={<ServersPage />} />
           <Route path="/runs" element={<RunsPage />} />

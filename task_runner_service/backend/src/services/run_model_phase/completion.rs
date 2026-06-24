@@ -180,6 +180,7 @@ mod tests {
                     priority: None,
                     tags: None,
                     default_model_config_id: None,
+                    project_id: None,
                     tenant_id: None,
                     subject_id: None,
                     schedule: None,

@@ -1,9 +1,9 @@
 use sqlx::{sqlite::SqliteRow, Row};
 
 use crate::models::{
-    ExternalMcpConfigRecord, ModelConfigRecord, RemoteServerRecord, RunSummaryRecord,
-    RuntimeSettingsRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord,
-    UiPromptRecord, UserRecord,
+    task_project_status_from_str, ExternalMcpConfigRecord, ModelConfigRecord, RemoteServerRecord,
+    RunSummaryRecord, RuntimeSettingsRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskSummaryRecord, UiPromptRecord, UserRecord,
 };
 
 use super::codec::{
@@ -25,6 +25,7 @@ pub(super) fn task_from_row(row: &SqliteRow) -> Result<TaskRecord, String> {
         memory_thread_id: row.get("memory_thread_id"),
         tenant_id: row.get("tenant_id"),
         subject_id: row.get("subject_id"),
+        project_id: row.get("project_id"),
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
@@ -55,6 +56,7 @@ pub(super) fn task_summary_from_row(row: &SqliteRow) -> Result<TaskSummaryRecord
         title: row.get("title"),
         status: task_status_from_str(row.get::<String, _>("status").as_str()),
         default_model_config_id: row.get("default_model_config_id"),
+        project_id: row.get("project_id"),
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
@@ -63,6 +65,23 @@ pub(super) fn task_summary_from_row(row: &SqliteRow) -> Result<TaskSummaryRecord
         owner_display_name: row.get("owner_display_name"),
         last_run_id: row.get("last_run_id"),
         updated_at: row.get("updated_at"),
+    })
+}
+
+pub(super) fn task_project_from_row(row: &SqliteRow) -> Result<TaskProjectRecord, String> {
+    Ok(TaskProjectRecord {
+        id: row.get("id"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
+        name: row.get("name"),
+        root_path: row.get("root_path"),
+        git_url: row.get("git_url"),
+        description: row.get("description"),
+        status: task_project_status_from_str(row.get::<String, _>("status").as_str()),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+        archived_at: row.get("archived_at"),
     })
 }
 

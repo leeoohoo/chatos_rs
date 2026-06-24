@@ -12,15 +12,17 @@ use uuid::Uuid;
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
-    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
-    CreateExternalMcpConfigRequest, CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse,
-    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse,
-    TaskListFilters, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    normalize_project_id, now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem,
+    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
+    CancelTaskRequest, CancelTaskResponse, ChatosProjectImportRequest,
+    CreateExternalMcpConfigRequest, CreateTaskProjectRequest, CreateTaskRequest,
+    ExternalMcpConfigRecord, HealthResponse, PaginatedResponse, RecordTaskProcessRequest,
+    RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, StartTaskRunRequest,
+    SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskProjectRecord,
+    TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskRunnerInternalPromptPreviewResponse, TaskSourceContext, TaskStatsResponse, TaskStatus,
     TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest,
-    UpdateTaskMcpRequest, UpdateTaskRequest,
+    UpdateTaskMcpRequest, UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
 use crate::store::AppStore;
 use crate::ui_prompt_service::UiPromptService;
@@ -37,6 +39,7 @@ mod model_catalog;
 mod model_config_service;
 mod prerequisite_context;
 mod process_log_text;
+mod project_service;
 mod remote_server_service;
 mod remote_servers;
 mod run_control;
@@ -73,6 +76,7 @@ pub use self::chatos_message_tasks::{
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
 use self::process_log_text::apply_task_process_log_update;
+use self::project_service::ensure_project_active_for_user;
 use self::remote_servers::build_remote_server_record;
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
@@ -111,6 +115,11 @@ pub struct RemoteServerService {
 
 #[derive(Clone)]
 pub struct ExternalMcpConfigService {
+    store: AppStore,
+}
+
+#[derive(Clone)]
+pub struct TaskProjectService {
     store: AppStore,
 }
 

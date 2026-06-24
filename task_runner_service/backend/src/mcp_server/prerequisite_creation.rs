@@ -71,8 +71,12 @@ impl TaskRunnerMcpService {
                 }
             }
             for prerequisite_task_id in &task.prerequisite_task_ids {
-                self.require_task_for_user(prerequisite_task_id, current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    prerequisite_task_id,
+                    current_user,
+                    request_context,
+                )
+                .await?;
             }
         }
         ensure_client_ref_graph_acyclic(&args.tasks)?;
@@ -119,6 +123,7 @@ impl TaskRunnerMcpService {
                 priority: item.priority,
                 tags: item.tags,
                 default_model_config_id: item.default_model_config_id,
+                project_id: None,
                 tenant_id: None,
                 subject_id: None,
                 schedule: item.schedule,

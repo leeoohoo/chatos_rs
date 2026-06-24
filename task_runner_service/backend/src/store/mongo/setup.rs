@@ -13,6 +13,7 @@ impl MongoStore {
             .ok_or_else(|| "mongodb connection string must include a database name".to_string())?;
         let store = Self {
             tasks: database.collection::<TaskRecord>("tasks"),
+            task_projects: database.collection::<TaskProjectRecord>("task_projects"),
             model_configs: database.collection::<ModelConfigRecord>("model_configs"),
             runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
             remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
@@ -56,6 +57,14 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.tasks, doc! { "owner_user_id": 1 }, false)
             .await?;
+        self.ensure_index(&self.tasks, doc! { "project_id": 1 }, false)
+            .await?;
+        self.ensure_index(
+            &self.tasks,
+            doc! { "owner_user_id": 1, "project_id": 1 },
+            false,
+        )
+        .await?;
         self.ensure_index(&self.tasks, doc! { "schedule.next_run_at": 1 }, false)
             .await?;
         self.ensure_index(
@@ -78,6 +87,13 @@ impl MongoStore {
         self.ensure_index(&self.model_configs, doc! { "updated_at": -1 }, false)
             .await?;
         self.ensure_index(&self.runtime_settings, doc! { "id": 1 }, true)
+            .await?;
+
+        self.ensure_index(&self.task_projects, doc! { "id": 1 }, true)
+            .await?;
+        self.ensure_index(&self.task_projects, doc! { "owner_user_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.task_projects, doc! { "status": 1 }, false)
             .await?;
 
         self.ensure_index(&self.remote_servers, doc! { "id": 1 }, true)

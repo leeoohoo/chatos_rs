@@ -52,9 +52,13 @@ impl TaskRunnerMcpService {
             | "summarize_task_memory"
             | "cancel_run"
             | "retry_run"
-            | "list_run_events" => self.call_run_tool(name, args, current_user).await,
+            | "list_run_events" => {
+                self.call_run_tool(name, args, current_user, request_context)
+                    .await
+            }
             "list_prompts" | "get_prompt" | "submit_prompt" | "cancel_prompt" => {
-                self.call_prompt_tool(name, args, current_user).await
+                self.call_prompt_tool(name, args, current_user, request_context)
+                    .await
             }
             other => Err(format!("tool not found: {other}")),
         }

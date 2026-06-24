@@ -17,6 +17,7 @@ export const normalizeProject = (raw: ProjectResponse | unknown): Project => {
     id: (readValue(record, 'id') ?? '') as Project['id'],
     name: (readValue(record, 'name') ?? '') as Project['name'],
     rootPath: (readValue(record, 'root_path') ?? readValue(record, 'rootPath') ?? '') as Project['rootPath'],
+    gitUrl: (readValue(record, 'git_url') ?? readValue(record, 'gitUrl') ?? null) as Project['gitUrl'],
     description: (readValue(record, 'description') ?? null) as Project['description'],
     userId: (readValue(record, 'user_id') ?? readValue(record, 'userId') ?? null) as Project['userId'],
     latestSessionId: (readValue(record, 'latest_session_id') ?? readValue(record, 'latestSessionId') ?? null) as Project['latestSessionId'],

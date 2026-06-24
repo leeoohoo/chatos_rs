@@ -44,10 +44,10 @@ mod tests {
 
     #[test]
     fn builds_query_with_optional_user_filter_and_order() {
-        let query = build_select_all_with_optional_user_id("projects", true, true);
+        let query = build_select_all_with_optional_user_id("applications", true, true);
         assert_eq!(
             query,
-            "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC"
+            "SELECT * FROM applications WHERE user_id = ? ORDER BY created_at DESC"
         );
     }
 
@@ -63,21 +63,21 @@ mod tests {
 
     #[test]
     fn append_limit_offset_supports_limit_without_offset() {
-        let mut query = "SELECT * FROM projects ORDER BY created_at DESC".to_string();
+        let mut query = "SELECT * FROM applications ORDER BY created_at DESC".to_string();
         append_limit_offset_clause(&mut query, Some(10), 0);
         assert_eq!(
             query,
-            "SELECT * FROM projects ORDER BY created_at DESC LIMIT ?"
+            "SELECT * FROM applications ORDER BY created_at DESC LIMIT ?"
         );
     }
 
     #[test]
     fn append_limit_offset_supports_limit_with_offset() {
-        let mut query = "SELECT * FROM projects ORDER BY created_at DESC".to_string();
+        let mut query = "SELECT * FROM applications ORDER BY created_at DESC".to_string();
         append_limit_offset_clause(&mut query, Some(10), 5);
         assert_eq!(
             query,
-            "SELECT * FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            "SELECT * FROM applications ORDER BY created_at DESC LIMIT ? OFFSET ?"
         );
     }
 }

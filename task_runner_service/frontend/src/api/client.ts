@@ -43,6 +43,7 @@ import type {
   TaskMemorySummaryResponse,
   TaskSummaryRecord,
   TaskListFilters,
+  TaskProjectRecord,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
@@ -220,6 +221,7 @@ export const api = {
         keyword: filters?.keyword,
         tag: filters?.tag,
         model_config_id: filters?.model_config_id,
+        project_id: filters?.project_id,
         scheduled_only:
           filters?.scheduled_only === undefined ? undefined : String(filters.scheduled_only),
         parent_task_id: filters?.parent_task_id,
@@ -237,6 +239,7 @@ export const api = {
         keyword: filters?.keyword,
         tag: filters?.tag,
         model_config_id: filters?.model_config_id,
+        project_id: filters?.project_id,
         scheduled_only:
           filters?.scheduled_only === undefined ? undefined : String(filters.scheduled_only),
         parent_task_id: filters?.parent_task_id,
@@ -253,6 +256,7 @@ export const api = {
     ids?: string[];
     keyword?: string;
     status?: TaskListFilters['status'];
+    project_id?: string;
     limit?: number;
   }) =>
     request<TaskSummaryRecord[]>(
@@ -260,9 +264,19 @@ export const api = {
         ids: filters?.ids?.length ? filters.ids.join(',') : undefined,
         keyword: filters?.keyword,
         status: filters?.status,
+        project_id: filters?.project_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
       }),
     ),
+  listProjects: (status?: TaskProjectRecord['status']) =>
+    request<TaskProjectRecord[]>(
+      withQuery('/api/projects', {
+        status,
+      }),
+    ),
+  getProject: (id: string) => request<TaskProjectRecord>(`/api/projects/${id}`),
+  listProjectTasks: (id: string) =>
+    request<TaskRecord[]>(`/api/projects/${encodeURIComponent(id)}/tasks`),
   getTask: (id: string) => request<TaskRecord>(`/api/tasks/${id}`),
   createTask: (payload: CreateTaskPayload) =>
     request<TaskRecord>('/api/tasks', {

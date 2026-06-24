@@ -1321,6 +1321,8 @@ mod tests {
             supports_images: Some(true),
             supports_reasoning: Some(true),
             supports_responses: Some(true),
+            task_usage_scenario: None,
+            task_thinking_level: None,
         }
     }
 

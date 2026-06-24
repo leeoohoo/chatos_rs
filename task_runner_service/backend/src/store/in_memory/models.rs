@@ -47,6 +47,27 @@ impl InMemoryStore {
         deleted
     }
 
+    pub(in crate::store) fn list_task_projects(&self) -> Vec<TaskProjectRecord> {
+        let data = self.inner.read();
+        let mut items = data.task_projects.values().cloned().collect::<Vec<_>>();
+        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        items
+    }
+
+    pub(in crate::store) fn get_task_project(&self, id: &str) -> Option<TaskProjectRecord> {
+        self.inner.read().task_projects.get(id).cloned()
+    }
+
+    pub(in crate::store) fn save_task_project(
+        &self,
+        project: TaskProjectRecord,
+    ) -> TaskProjectRecord {
+        let mut data = self.inner.write();
+        data.task_projects
+            .insert(project.id.clone(), project.clone());
+        project
+    }
+
     pub(in crate::store) fn list_remote_servers(&self) -> Vec<RemoteServerRecord> {
         let data = self.inner.read();
         let mut items = data.remote_servers.values().cloned().collect::<Vec<_>>();

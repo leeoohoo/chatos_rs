@@ -78,6 +78,7 @@ pub(super) async fn create_project(
     let CreateProjectRequest {
         name,
         root_path,
+        git_url,
         description,
         user_id,
     } = req;
@@ -106,18 +107,24 @@ pub(super) async fn create_project(
         }
     };
 
-    let project = Project::new(name, root_path, description, Some(user_id));
-    if let Err(err) = ProjectService::create(project.clone()).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": err})),
-        );
-    }
-    let saved = ProjectService::get_by_id(&project.id)
+    let project = Project::new(name, root_path, git_url, description, Some(user_id));
+    let saved_id = match ProjectService::create(project.clone()).await {
+        Ok(id) => id,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": err})),
+            );
+        }
+    };
+    let saved = ProjectService::get_by_id(&saved_id)
         .await
         .ok()
         .flatten()
-        .unwrap_or(project);
+        .unwrap_or_else(|| Project {
+            id: saved_id,
+            ..project
+        });
     if let Err(err) = sync_active_project(&saved).await {
         let _ = ProjectService::delete(saved.id.as_str()).await;
         return (
@@ -168,6 +175,7 @@ pub(super) async fn update_project(
     let UpdateProjectRequest {
         name,
         root_path,
+        git_url,
         description,
     } = req;
 
@@ -182,7 +190,7 @@ pub(super) async fn update_project(
         }
     };
 
-    if let Err(err) = ProjectService::update(&id, name, root_path, description).await {
+    if let Err(err) = ProjectService::update(&id, name, root_path, git_url, description).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),

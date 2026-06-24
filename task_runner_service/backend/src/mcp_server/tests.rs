@@ -4,13 +4,23 @@ use super::support::{
     filter_model_configs_for_user, model_configs_for_user, normalize_mcp_builtin_kind_names,
     task_mcp_config_schema,
 };
-use super::{CreateTaskArgs, McpRequestContext, McpToolProfile};
+use super::{CreateTaskArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 use crate::auth::CurrentUser;
+use crate::config::{AppConfig, StoreMode};
 use crate::models::{
-    CreateTaskRequest, ModelConfigRecord, TaskMcpConfig, TaskScheduleMode, TaskStatus,
-    UpdateTaskRequest, UserRole,
+    CreateTaskProjectRequest, CreateTaskRequest, ModelConfigRecord, TaskMcpConfig,
+    TaskScheduleMode, TaskSourceContext, TaskStatus, UpdateTaskRequest, UserRole,
+    PUBLIC_PROJECT_ID,
 };
+use crate::services::{
+    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService,
+    TaskProjectService, TaskService,
+};
+use crate::store::AppStore;
+use crate::ui_prompt_service::UiPromptService;
 use serde_json::json;
+use std::net::{IpAddr, Ipv4Addr};
+use std::time::Duration;
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -256,6 +266,7 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
         priority: None,
         tags: None,
         default_model_config_id: None,
+        project_id: None,
         tenant_id: None,
         subject_id: None,
         schedule: None,
@@ -471,6 +482,86 @@ fn mcp_request_context_infers_async_planner_from_chatos_message_context() {
     assert_eq!(missing_user_message.tool_profile(), McpToolProfile::Default);
 }
 
+#[test]
+fn mcp_request_context_normalizes_legacy_public_project_scope() {
+    let context = McpRequestContext {
+        project_id: Some("0".to_string()),
+        ..McpRequestContext::default()
+    };
+
+    assert_eq!(
+        context.project_scope_id().as_deref(),
+        Some(PUBLIC_PROJECT_ID)
+    );
+}
+
+#[tokio::test]
+async fn list_tasks_uses_passthrough_project_context_filter() {
+    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let current_user = agent_user("owner-a");
+    let project = project_service
+        .create_project(
+            CreateTaskProjectRequest {
+                name: "Project A".to_string(),
+                root_path: None,
+                git_url: None,
+                description: None,
+            },
+            &current_user,
+        )
+        .await
+        .expect("create project");
+    let project_task = task_service
+        .create_task(
+            test_create_task_request("project task"),
+            Some(&current_user),
+            Some(TaskSourceContext {
+                project_id: Some(project.id.clone()),
+                ..TaskSourceContext::default()
+            }),
+        )
+        .await
+        .expect("create project task");
+    let public_task = task_service
+        .create_task(
+            test_create_task_request("public task"),
+            Some(&current_user),
+            None,
+        )
+        .await
+        .expect("create public task");
+
+    let project_result = mcp_service
+        .call_tool(
+            "list_tasks",
+            json!({}),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(project.id.clone()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("list project tasks");
+    let project_task_ids = structured_task_ids(&project_result);
+    assert_eq!(project_task_ids, vec![project_task.id.clone()]);
+
+    let public_result = mcp_service
+        .call_tool(
+            "list_tasks",
+            json!({}),
+            &current_user,
+            &McpRequestContext {
+                project_id: Some(PUBLIC_PROJECT_ID.to_string()),
+                ..McpRequestContext::default()
+            },
+        )
+        .await
+        .expect("list public tasks");
+    let public_task_ids = structured_task_ids(&public_result);
+    assert_eq!(public_task_ids, vec![public_task.id]);
+}
+
 fn valid_planner_create_request() -> CreateTaskRequest {
     CreateTaskRequest {
         title: "task".to_string(),
@@ -481,6 +572,7 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         priority: None,
         tags: None,
         default_model_config_id: Some("model-1".to_string()),
+        project_id: None,
         tenant_id: None,
         subject_id: None,
         schedule: None,
@@ -492,12 +584,113 @@ fn valid_planner_create_request() -> CreateTaskRequest {
     }
 }
 
+async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
+    let config = test_config();
+    let store = AppStore::new(&config).await.expect("store");
+    let task_service = TaskService::new(config.clone(), store.clone());
+    let model_config_service = ModelConfigService::new(store.clone());
+    let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
+    let ui_prompt_service = UiPromptService::new(store.clone());
+    let run_service = RunService::new(config, store.clone(), ui_prompt_service.clone());
+    let mcp_catalog_service =
+        McpCatalogService::new(task_service.clone(), ui_prompt_service.clone());
+    let task_project_service = TaskProjectService::new(store);
+    (
+        TaskRunnerMcpService::new(
+            task_service.clone(),
+            model_config_service,
+            external_mcp_config_service,
+            run_service,
+            ui_prompt_service,
+            mcp_catalog_service,
+        ),
+        task_service,
+        task_project_service,
+    )
+}
+
+fn test_config() -> AppConfig {
+    AppConfig {
+        host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port: 0,
+        store_mode: StoreMode::Memory,
+        database_url: "memory://mcp-project-scope-test".to_string(),
+        memory_engine_base_url: None,
+        memory_engine_source_id: "task".to_string(),
+        memory_engine_operator_token: None,
+        default_tenant_id: "tenant".to_string(),
+        default_subject_id: "subject".to_string(),
+        default_workspace_dir: ".".to_string(),
+        memory_timeout: Duration::from_millis(1000),
+        execution_timeout: Duration::from_millis(1000),
+        scheduler_poll_interval: Duration::from_millis(1000),
+        auto_memory_summary: false,
+        default_task_execution_max_iterations: 1,
+        default_tool_result_model_max_chars: 1000,
+        default_tool_results_model_total_max_chars: 2000,
+        chatos_callback_url: None,
+        chatos_callback_secret: None,
+        callback_timeout: Duration::from_millis(1000),
+        admin_username: "admin".to_string(),
+        admin_password: "admin".to_string(),
+        admin_display_name: "Admin".to_string(),
+        user_service_base_url: "http://127.0.0.1:39190".to_string(),
+        user_service_request_timeout: Duration::from_millis(5000),
+    }
+}
+
+fn test_create_task_request(title: &str) -> CreateTaskRequest {
+    CreateTaskRequest {
+        title: title.to_string(),
+        description: None,
+        objective: format!("do {title}"),
+        input_payload: None,
+        status: None,
+        priority: None,
+        tags: None,
+        default_model_config_id: None,
+        project_id: None,
+        tenant_id: None,
+        subject_id: None,
+        schedule: None,
+        mcp_config: None,
+        prerequisite_task_ids: None,
+    }
+}
+
+fn structured_task_ids(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("_structured_result")
+        .and_then(|value| value.as_array())
+        .expect("structured task array")
+        .iter()
+        .map(|task| {
+            task.get("id")
+                .and_then(|value| value.as_str())
+                .expect("task id")
+                .to_string()
+        })
+        .collect()
+}
+
 fn admin_user(owner_user_id: &str) -> CurrentUser {
     CurrentUser {
         id: owner_user_id.to_string(),
         username: format!("{owner_user_id}-name"),
         display_name: format!("{owner_user_id} name"),
         role: UserRole::Admin,
+        owner_user_id: Some(owner_user_id.to_string()),
+        owner_username: Some(format!("{owner_user_id}-name")),
+        owner_display_name: Some(format!("{owner_user_id} name")),
+    }
+}
+
+fn agent_user(owner_user_id: &str) -> CurrentUser {
+    CurrentUser {
+        id: format!("agent-{owner_user_id}"),
+        username: format!("agent-{owner_user_id}"),
+        display_name: format!("Agent {owner_user_id}"),
+        role: UserRole::Agent,
         owner_user_id: Some(owner_user_id.to_string()),
         owner_username: Some(format!("{owner_user_id}-name")),
         owner_display_name: Some(format!("{owner_user_id} name")),

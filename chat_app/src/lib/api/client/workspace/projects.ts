@@ -18,7 +18,7 @@ export const listProjects = (request: ApiRequestFn, userId?: string): Promise<Pr
 
 export const createProject = (
   request: ApiRequestFn,
-  data: { name: string; root_path: string; description?: string; user_id?: string },
+  data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string },
 ): Promise<ProjectResponse> => {
   return request<ProjectResponse>('/projects', {
     method: 'POST',
@@ -29,7 +29,7 @@ export const createProject = (
 export const updateProject = (
   request: ApiRequestFn,
   id: string,
-  data: { name?: string; root_path?: string; description?: string },
+  data: { name?: string; root_path?: string; git_url?: string; description?: string },
 ): Promise<ProjectResponse> => {
   return request<ProjectResponse>(`/projects/${id}`, {
     method: 'PUT',

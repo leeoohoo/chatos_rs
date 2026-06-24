@@ -36,6 +36,7 @@ describe('loadProjects', () => {
             id: 'project_kept',
             name: 'Kept Project',
             root_path: '/tmp/kept-project',
+            git_url: 'git@github.com:org/kept.git',
             created_at: '2026-01-01T00:00:00.000Z',
             updated_at: '2026-01-01T00:00:00.000Z',
           },
@@ -50,5 +51,59 @@ describe('loadProjects', () => {
     expect(state.currentProject).toBeNull();
     expect(state.activePanel).toBe('chat');
     expect(state.projects.map((project) => project.id)).toEqual(['project_kept']);
+    expect(state.projects[0]?.gitUrl).toBe('git@github.com:org/kept.git');
+  });
+});
+
+describe('updateProject', () => {
+  it('sends an explicit empty git url so the backend can clear it', async () => {
+    const state = {
+      projects: [{
+        id: 'project_1',
+        name: 'Project 1',
+        rootPath: '/tmp/project-1',
+        gitUrl: 'git@github.com:org/project-1.git',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      }],
+      currentProjectId: 'project_1',
+      currentProject: {
+        id: 'project_1',
+        name: 'Project 1',
+        rootPath: '/tmp/project-1',
+        gitUrl: 'git@github.com:org/project-1.git',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+      error: null,
+    } as unknown as ChatStoreShape;
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+    const updateProject = vi.fn().mockResolvedValue({
+      id: 'project_1',
+      name: 'Project 1',
+      root_path: '/tmp/project-1',
+      git_url: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-02T00:00:00.000Z',
+    });
+
+    const actions = createProjectActions({
+      set,
+      get,
+      client: {
+        updateProject,
+      } as never,
+      getUserIdParam: () => 'user_1',
+    });
+
+    const project = await actions.updateProject('project_1', { gitUrl: '' });
+
+    expect(updateProject).toHaveBeenCalledWith('project_1', { git_url: '' });
+    expect(project?.gitUrl).toBeNull();
+    expect(state.currentProject?.gitUrl).toBeNull();
   });
 });

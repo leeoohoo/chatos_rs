@@ -145,6 +145,8 @@ fn ensure_same_owner_scope(agent_user: &CurrentUser, user: &CurrentUser) -> Resu
 
 fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
     McpRequestContext {
+        project_id: header_text(headers, "x-chatos-project-id")
+            .or_else(|| header_text(headers, "x-task-runner-project-id")),
         source_session_id: header_text(headers, "x-chatos-session-id")
             .or_else(|| header_text(headers, "x-chatos-conversation-id")),
         source_turn_id: header_text(headers, "x-chatos-turn-id"),

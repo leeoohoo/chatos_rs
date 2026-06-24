@@ -28,6 +28,7 @@ type BuildTaskTableColumnsParams = {
   t: TranslateFn;
   navigate: (to: string) => void;
   modelNameMap: Map<string, string>;
+  projectNameMap: Map<string, string>;
   externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
   pendingPromptCountByTaskId: Map<string, number>;
   scheduleModeLabels: Record<TaskScheduleMode, string>;
@@ -44,6 +45,7 @@ export function buildTaskTableColumns({
   t,
   navigate,
   modelNameMap,
+  projectNameMap,
   externalMcpConfigMap,
   pendingPromptCountByTaskId,
   scheduleModeLabels,
@@ -143,6 +145,27 @@ export function buildTaskTableColumns({
       dataIndex: 'owner_display_name',
       width: 170,
       render: (_, record) => taskOwnerLabel(record),
+    },
+    {
+      title: t('tasks.column.project'),
+      dataIndex: 'project_id',
+      width: 180,
+      render: (value?: string | null) => {
+        const projectId = (value || '-1').trim() || '-1';
+        const label = projectId === '-1'
+          ? t('projects.public')
+          : projectNameMap.get(projectId) || projectId;
+        return (
+          <Button
+            type="link"
+            size="small"
+            style={{ paddingInline: 0 }}
+            onClick={() => navigate(`/tasks?project_id=${encodeURIComponent(projectId)}`)}
+          >
+            {label}
+          </Button>
+        );
+      },
     },
     {
       title: t('tasks.column.model'),

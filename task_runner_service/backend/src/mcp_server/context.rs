@@ -1,4 +1,4 @@
-use crate::models::TaskSourceContext;
+use crate::models::{normalize_project_id, TaskSourceContext};
 
 use super::{decode_remote_server_config_header, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
 
@@ -10,6 +10,7 @@ pub(super) enum McpToolProfile {
 
 #[derive(Debug, Clone, Default)]
 pub struct McpRequestContext {
+    pub project_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
@@ -21,6 +22,7 @@ pub struct McpRequestContext {
 impl McpRequestContext {
     pub(super) fn task_source_context(&self) -> Result<Option<TaskSourceContext>, String> {
         if self.source_session_id.is_none()
+            && self.project_id.is_none()
             && self.source_turn_id.is_none()
             && self.source_user_message_id.is_none()
             && self.workspace_dir.is_none()
@@ -34,6 +36,7 @@ impl McpRequestContext {
             .map(decode_remote_server_config_header)
             .transpose()?;
         Ok(Some(TaskSourceContext {
+            project_id: self.project_id.clone(),
             parent_task_id: None,
             source_run_id: None,
             source_session_id: self.source_session_id.clone(),
@@ -42,6 +45,12 @@ impl McpRequestContext {
             workspace_dir: self.workspace_dir.clone(),
             remote_server_config,
         }))
+    }
+
+    pub(super) fn project_scope_id(&self) -> Option<String> {
+        self.project_id
+            .as_ref()
+            .map(|value| normalize_project_id(Some(value.clone())))
     }
 
     pub(super) fn tool_profile(&self) -> McpToolProfile {

@@ -13,10 +13,11 @@ use serde_json::Value;
 use crate::auth::CurrentUser;
 use crate::mcp_server::{JsonRpcRequest, JsonRpcResponse, McpRequestContext};
 use crate::models::{
-    AgentTokenRequest, AgentTokenResponse, BatchTaskDeleteRequest, BatchTaskOperationItem,
-    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
-    CancelTaskRequest, CancelTaskResponse, CancelUiPromptRequest, CreateExternalMcpConfigRequest,
-    CreateModelConfigRequest, CreateRemoteServerRequest, CreateTaskRequest, CreateUserRequest,
+    normalize_project_id, AgentTokenRequest, AgentTokenResponse, BatchTaskDeleteRequest,
+    BatchTaskOperationItem, BatchTaskOperationResponse, BatchTaskRunRequest,
+    BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse, CancelUiPromptRequest,
+    ChatosProjectImportRequest, CreateExternalMcpConfigRequest, CreateModelConfigRequest,
+    CreateRemoteServerRequest, CreateTaskProjectRequest, CreateTaskRequest, CreateUserRequest,
     CurrentUserResponse, ExternalMcpConfigRecord, HealthResponse, LoginRequest, LoginResponse,
     McpCatalogEntry, McpPromptPreviewRequest, McpPromptPreviewResponse, McpServerInfo,
     ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
@@ -25,12 +26,13 @@ use crate::models::{
     SetTaskPrerequisitesRequest, StartTaskRunRequest, SubmitUiPromptRequest, SystemConfigResponse,
     TaskDependencyGraph, TaskIndexResponse, TaskListFilters, TaskMemoryContextOptions,
     TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
-    TaskMemorySummaryResponse, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, TestModelConfigRequest, TestRemoteServerRequest, UiPromptRecord,
-    UiPromptStatus, UiPromptTaskCountRecord, UpdateExternalMcpConfigRequest,
-    UpdateModelConfigRequest, UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest,
-    UpdateTaskMcpRequest, UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord,
+    TaskMemorySummaryResponse, TaskProjectRecord, TaskProjectStatus, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
+    TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
+    TestRemoteServerRequest, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
+    UpdateExternalMcpConfigRequest, UpdateModelConfigRequest, UpdateRemoteServerRequest,
+    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskProjectRequest,
+    UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord, PUBLIC_PROJECT_ID,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
@@ -40,6 +42,7 @@ mod core;
 mod external_mcp_configs;
 mod mcp;
 mod models;
+mod projects;
 mod prompts;
 mod remote_servers;
 mod router;

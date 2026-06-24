@@ -17,6 +17,7 @@ pub(super) struct ProjectQuery {
 pub(super) struct CreateProjectRequest {
     pub(super) name: Option<String>,
     pub(super) root_path: Option<String>,
+    pub(super) git_url: Option<String>,
     pub(super) description: Option<String>,
     pub(super) user_id: Option<String>,
 }
@@ -25,6 +26,7 @@ pub(super) struct CreateProjectRequest {
 pub(super) struct UpdateProjectRequest {
     pub(super) name: Option<String>,
     pub(super) root_path: Option<String>,
+    pub(super) git_url: Option<String>,
     pub(super) description: Option<String>,
 }
 

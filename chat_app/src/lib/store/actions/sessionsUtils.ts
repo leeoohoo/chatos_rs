@@ -5,6 +5,7 @@ import {
   matchSessionContactProjectScope as matchSessionContactProjectScopeDomain,
   normalizeContactSessions as normalizeContactSessionsDomain,
   normalizeMemoryContact,
+  PUBLIC_PROJECT_ID,
   normalizeProjectScopeId as normalizeProjectScopeIdDomain,
   resolveSessionContactIdentity as resolveSessionContactIdentityDomain,
   resolveSessionProjectScopeId as resolveSessionProjectScopeIdDomain,
@@ -542,7 +543,7 @@ export const syncCurrentProjectFromSession = (
   session: Session | null | undefined,
 ) => {
   const projectId = resolveSessionProjectScopeId(session);
-  if (!projectId || projectId === '0') {
+  if (!projectId || projectId === PUBLIC_PROJECT_ID) {
     state.currentProjectId = null;
     state.currentProject = null;
     return;

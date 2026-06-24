@@ -214,15 +214,6 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
-        r#"CREATE TABLE IF NOT EXISTS projects (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            root_path TEXT NOT NULL,
-            description TEXT,
-            user_id TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )"#,
         r#"CREATE TABLE IF NOT EXISTS terminals (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -547,7 +538,6 @@ pub(super) async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String
         "CREATE INDEX IF NOT EXISTS idx_mcp_configs_enabled ON mcp_configs(enabled)",
         "CREATE INDEX IF NOT EXISTS idx_system_contexts_user_id ON system_contexts(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_kind ON terminals(kind)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_project_id ON terminals(project_id)",

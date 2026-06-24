@@ -14,8 +14,8 @@ import type ApiClient from '../../../client';
 
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
-  createProject(data: { name: string; root_path: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
-  updateProject(id: string, data: { name?: string; root_path?: string; description?: string }): Promise<ProjectResponse>;
+  createProject(data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
+  updateProject(id: string, data: { name?: string; root_path?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
   analyzeProjectRun(projectId: string): Promise<ProjectRunCatalogResponse>;

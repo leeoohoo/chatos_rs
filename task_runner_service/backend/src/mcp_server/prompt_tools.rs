@@ -4,8 +4,8 @@ use crate::auth::CurrentUser;
 use crate::models::{CancelUiPromptRequest, SubmitUiPromptRequest};
 
 use super::{
-    decode_args, text_result, CancelPromptArgs, ListPromptsArgs, PromptIdArgs, SubmitPromptArgs,
-    TaskRunnerMcpService,
+    decode_args, text_result, CancelPromptArgs, ListPromptsArgs, McpRequestContext, PromptIdArgs,
+    SubmitPromptArgs, TaskRunnerMcpService,
 };
 
 impl TaskRunnerMcpService {
@@ -14,21 +14,26 @@ impl TaskRunnerMcpService {
         name: &str,
         args: Value,
         current_user: &CurrentUser,
+        request_context: &McpRequestContext,
     ) -> Result<Value, String> {
         match name {
             "list_prompts" => {
                 let args: ListPromptsArgs = decode_args(args)?;
                 if let Some(task_id) = args.task_id.as_deref() {
-                    self.require_task_for_user(task_id, current_user).await?;
+                    self.require_task_for_user_in_context(task_id, current_user, request_context)
+                        .await?;
                 }
                 if let Some(run_id) = args.run_id.as_deref() {
-                    self.require_run_for_user(run_id, current_user).await?;
+                    self.require_run_for_user_in_context(run_id, current_user, request_context)
+                        .await?;
                 }
                 let prompts = self
                     .ui_prompt_service
                     .list_prompts(args.task_id.as_deref(), args.run_id.as_deref(), args.status)
                     .await?;
-                let prompts = self.filter_prompts_for_user(prompts, current_user).await?;
+                let prompts = self
+                    .filter_prompts_for_user_in_context(prompts, current_user, request_context)
+                    .await?;
                 Ok(text_result(json!(prompts)))
             }
             "get_prompt" => {
@@ -38,7 +43,8 @@ impl TaskRunnerMcpService {
                     .get_prompt(args.prompt_id.as_str())
                     .await?
                     .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
-                self.require_prompt_for_user(&prompt, current_user).await?;
+                self.require_prompt_for_user_in_context(&prompt, current_user, request_context)
+                    .await?;
                 Ok(text_result(json!(prompt)))
             }
             "submit_prompt" => {
@@ -48,7 +54,8 @@ impl TaskRunnerMcpService {
                     .get_prompt(args.prompt_id.as_str())
                     .await?
                     .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
-                self.require_prompt_for_user(&prompt, current_user).await?;
+                self.require_prompt_for_user_in_context(&prompt, current_user, request_context)
+                    .await?;
                 let prompt = self
                     .ui_prompt_service
                     .submit_prompt(
@@ -70,7 +77,8 @@ impl TaskRunnerMcpService {
                     .get_prompt(args.prompt_id.as_str())
                     .await?
                     .ok_or_else(|| format!("提示不存在: {}", args.prompt_id))?;
-                self.require_prompt_for_user(&prompt, current_user).await?;
+                self.require_prompt_for_user_in_context(&prompt, current_user, request_context)
+                    .await?;
                 let prompt = self
                     .ui_prompt_service
                     .cancel_prompt(

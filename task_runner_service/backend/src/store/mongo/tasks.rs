@@ -13,6 +13,7 @@ impl MongoStore {
                 "title": 1,
                 "status": 1,
                 "default_model_config_id": 1,
+                "project_id": 1,
                 "creator_user_id": 1,
                 "creator_username": 1,
                 "creator_display_name": 1,

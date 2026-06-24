@@ -2,6 +2,7 @@ export interface Project {
   id: string;
   name: string;
   rootPath: string;
+  gitUrl?: string | null;
   description?: string | null;
   userId?: string | null;
   latestSessionId?: string | null;

@@ -8,6 +8,7 @@ use crate::models::memory_runtime_types::{
     TurnRuntimeSnapshotLookupResponseDto,
 };
 use crate::models::message::Message;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::chatos_memory_engine;
@@ -237,7 +238,14 @@ async fn sync_project_agent_link_after_user_message(session: &Session, message: 
     };
     let project_id = normalize_optional_text(session.project_id.as_deref())
         .or_else(|| project_id_from_metadata(metadata))
-        .unwrap_or_else(|| "0".to_string());
+        .map(|value| {
+            if value == "0" {
+                PUBLIC_PROJECT_ID.to_string()
+            } else {
+                value
+            }
+        })
+        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
 
     if let Err(err) = chatos_memory_mappings::touch_current_project_contact_session(
         user_id.as_str(),

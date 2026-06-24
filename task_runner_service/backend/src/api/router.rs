@@ -22,6 +22,10 @@ use super::models::{
     list_model_config_usage, list_model_configs, preview_model_catalog, test_model_config,
     update_model_config,
 };
+use super::projects::{
+    create_project, delete_project, get_project, import_chatos_project, list_project_tasks,
+    list_projects, sync_get_project, sync_list_projects, update_project,
+};
 use super::prompts::{
     cancel_prompt, get_prompt, list_prompt_task_counts, list_prompts, list_prompts_page,
     list_run_prompts, submit_prompt,
@@ -59,6 +63,14 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/:id", patch(update_user).delete(delete_user))
+        .route("/api/projects", get(list_projects).post(create_project))
+        .route(
+            "/api/projects/:id",
+            get(get_project)
+                .patch(update_project)
+                .delete(delete_project),
+        )
+        .route("/api/projects/:id/tasks", get(list_project_tasks))
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/summaries", get(list_task_summaries))
         .route("/api/tasks/page", get(list_tasks_page))
@@ -196,6 +208,11 @@ pub fn build_router(state: AppState) -> Router {
             post(chatos_sync_upsert_model_config),
         )
         .route(
+            "/api/chatos-sync/projects",
+            get(sync_list_projects).post(import_chatos_project),
+        )
+        .route("/api/chatos-sync/projects/:id", get(sync_get_project))
+        .route(
             "/api/chatos-sync/model-configs/:id",
             delete(chatos_sync_delete_model_config),
         )
@@ -217,7 +234,10 @@ pub fn build_router(state: AppState) -> Router {
         )
 }
 
-fn require_chatos_sync_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(super) fn require_chatos_sync_secret(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
     let Some(expected) = state
         .config
         .chatos_callback_secret

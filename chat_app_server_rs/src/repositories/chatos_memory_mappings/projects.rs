@@ -6,7 +6,7 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::models::memory_mapping::{ChatosMemoryProject, ChatosMemoryProjectRow};
 use crate::repositories::db::with_db;
 
-use super::support::normalize_optional_text;
+use super::support::{normalize_optional_text, normalize_project_id};
 
 #[derive(Debug, Clone)]
 pub struct UpsertMemoryProjectInput {
@@ -23,10 +23,11 @@ pub async fn get_project_by_user_and_project_id(
     user_id: &str,
     project_id: &str,
 ) -> Result<Option<ChatosMemoryProject>, String> {
+    let project_id = normalize_project_id(project_id);
     with_db(
         |db| {
             let user_id = user_id.to_string();
-            let project_id = project_id.to_string();
+            let project_id = project_id.clone();
             Box::pin(async move {
                 db.collection::<ChatosMemoryProject>("chatos_memory_projects")
                     .find_one(
@@ -60,8 +61,7 @@ pub async fn upsert_memory_project(
     input: UpsertMemoryProjectInput,
 ) -> Result<Option<ChatosMemoryProject>, String> {
     let now = crate::core::time::now_rfc3339();
-    let project_id =
-        normalize_optional_text(Some(input.project_id.as_str())).unwrap_or_else(|| "0".to_string());
+    let project_id = normalize_project_id(input.project_id.as_str());
     let status =
         normalize_optional_text(input.status.as_deref()).unwrap_or_else(|| "active".to_string());
     let archived_at = if status == "archived" || status == "deleted" {
@@ -200,6 +200,7 @@ pub async fn list_projects_by_ids(
     let ids = project_ids
         .iter()
         .filter_map(|value| normalize_optional_text(Some(value.as_str())))
+        .map(|value| normalize_project_id(value.as_str()))
         .collect::<Vec<_>>();
     if ids.is_empty() {
         return Ok(Vec::new());

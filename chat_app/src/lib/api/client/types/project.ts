@@ -3,6 +3,8 @@ export interface ProjectResponse {
   name: string;
   root_path?: string;
   rootPath?: string;
+  git_url?: string | null;
+  gitUrl?: string | null;
   description?: string | null;
   user_id?: string | null;
   userId?: string | null;

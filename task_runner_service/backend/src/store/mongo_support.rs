@@ -3,7 +3,7 @@ use mongodb::{
     options::FindOptions,
 };
 
-use crate::models::{RunListFilters, TaskListFilters, UiPromptStatus};
+use crate::models::{RunListFilters, TaskListFilters, UiPromptStatus, PUBLIC_PROJECT_ID};
 
 use super::codec::{task_run_status_to_str, task_status_to_str, ui_prompt_status_to_str};
 
@@ -47,6 +47,21 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     }
     if let Some(model_config_id) = filters.model_config_id.as_deref() {
         filter.insert("default_model_config_id", model_config_id);
+    }
+    if let Some(project_id) = filters.project_id.as_deref() {
+        if project_id == PUBLIC_PROJECT_ID {
+            and_clauses.push(doc! {
+                "$or": [
+                    { "project_id": PUBLIC_PROJECT_ID },
+                    { "project_id": "0" },
+                    { "project_id": "" },
+                    { "project_id": null },
+                    { "project_id": { "$exists": false } }
+                ]
+            });
+        } else {
+            filter.insert("project_id", project_id);
+        }
     }
     if let Some(owner_user_id) = filters.creator_user_id.as_deref() {
         filter.insert(

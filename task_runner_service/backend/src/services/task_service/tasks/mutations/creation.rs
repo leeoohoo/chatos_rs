@@ -32,10 +32,25 @@ impl TaskService {
         );
 
         let id = Uuid::new_v4().to_string();
-        self.validate_task_prerequisites(&id, &prerequisite_task_ids, creator)
-            .await?;
         let now = now_rfc3339();
-        let source_context = source_context.unwrap_or_default();
+        let mut source_context = source_context.unwrap_or_default();
+        if source_context.project_id.is_none() {
+            source_context.project_id = input.project_id.clone();
+        }
+        let project_id = normalize_project_id(source_context.project_id.clone());
+        if project_id != PUBLIC_PROJECT_ID {
+            let Some(project) = self.store.get_task_project(&project_id).await? else {
+                return Err(format!("项目不存在: {project_id}"));
+            };
+            ensure_project_active_for_user(&project, creator)?;
+        }
+        self.validate_task_prerequisites_for_project(
+            &id,
+            &prerequisite_task_ids,
+            creator,
+            Some(project_id.as_str()),
+        )
+        .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let mut mcp_config = sanitize_task_mcp_config(input.mcp_config.unwrap_or_default());
         if let Some(workspace_dir) = normalized_optional(source_context.workspace_dir.clone()) {
@@ -93,6 +108,7 @@ impl TaskService {
                 .subject_id
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| self.config.default_subject_id.clone()),
+            project_id,
             creator_user_id: creator.map(|user| user.id.clone()),
             creator_username: creator.map(|user| user.username.clone()),
             creator_display_name: creator.map(|user| user.display_name.clone()),
@@ -132,5 +148,291 @@ impl TaskService {
             .await?;
         let hydrated = self.hydrate_task_prerequisites(saved).await?;
         Ok(hydrated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, StoreMode};
+    use crate::models::UserRole;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            store_mode: StoreMode::Memory,
+            database_url: "memory://task-create-project-test".to_string(),
+            memory_engine_base_url: None,
+            memory_engine_source_id: "task".to_string(),
+            memory_engine_operator_token: None,
+            default_tenant_id: "tenant".to_string(),
+            default_subject_id: "subject".to_string(),
+            default_workspace_dir: ".".to_string(),
+            memory_timeout: Duration::from_millis(1000),
+            execution_timeout: Duration::from_millis(1000),
+            scheduler_poll_interval: Duration::from_millis(1000),
+            auto_memory_summary: false,
+            default_task_execution_max_iterations: 1,
+            default_tool_result_model_max_chars: 1000,
+            default_tool_results_model_total_max_chars: 2000,
+            chatos_callback_url: None,
+            chatos_callback_secret: None,
+            callback_timeout: Duration::from_millis(1000),
+            admin_username: "admin".to_string(),
+            admin_password: "admin".to_string(),
+            admin_display_name: "Admin".to_string(),
+            user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_request_timeout: Duration::from_millis(5000),
+        }
+    }
+
+    async fn test_service() -> TaskService {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        TaskService::new(config, store)
+    }
+
+    fn agent_user(owner_user_id: &str) -> CurrentUser {
+        CurrentUser {
+            id: format!("agent-{owner_user_id}"),
+            username: format!("agent-{owner_user_id}"),
+            display_name: format!("Agent {owner_user_id}"),
+            role: UserRole::Agent,
+            owner_user_id: Some(owner_user_id.to_string()),
+            owner_username: Some(format!("user-{owner_user_id}")),
+            owner_display_name: Some(format!("User {owner_user_id}")),
+        }
+    }
+
+    async fn save_project(
+        service: &TaskService,
+        id: &str,
+        owner_user_id: &str,
+        status: TaskProjectStatus,
+    ) -> TaskProjectRecord {
+        let now = now_rfc3339();
+        service
+            .store
+            .save_task_project(TaskProjectRecord {
+                id: id.to_string(),
+                owner_user_id: Some(owner_user_id.to_string()),
+                owner_username: Some(format!("user-{owner_user_id}")),
+                owner_display_name: Some(format!("User {owner_user_id}")),
+                name: format!("Project {id}"),
+                root_path: Some(format!("/workspace/{id}")),
+                git_url: Some(format!("https://example.com/{id}.git")),
+                description: None,
+                status,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                archived_at: (status == TaskProjectStatus::Archived).then_some(now),
+            })
+            .await
+            .expect("save project")
+    }
+
+    fn create_task_request(title: &str) -> CreateTaskRequest {
+        CreateTaskRequest {
+            title: title.to_string(),
+            description: None,
+            objective: format!("do {title}"),
+            input_payload: None,
+            status: None,
+            priority: None,
+            tags: None,
+            default_model_config_id: None,
+            project_id: None,
+            tenant_id: None,
+            subject_id: None,
+            schedule: None,
+            mcp_config: None,
+            prerequisite_task_ids: None,
+        }
+    }
+
+    async fn create_task_with_project(
+        service: &TaskService,
+        project_id: Option<&str>,
+        creator: Option<&CurrentUser>,
+    ) -> Result<TaskRecord, String> {
+        service
+            .create_task(
+                create_task_request("project task"),
+                creator,
+                Some(TaskSourceContext {
+                    project_id: project_id.map(ToOwned::to_owned),
+                    ..TaskSourceContext::default()
+                }),
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn create_task_persists_source_project_id() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+        let project =
+            save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
+
+        let task = create_task_with_project(&service, Some(" project-a "), Some(&creator))
+            .await
+            .expect("create task");
+
+        assert_eq!(task.project_id, project.id);
+        let stored = service
+            .get_task(task.id.as_str())
+            .await
+            .expect("get task")
+            .expect("task");
+        assert_eq!(stored.project_id, project.id);
+    }
+
+    #[tokio::test]
+    async fn create_task_defaults_legacy_zero_and_empty_project_to_public() {
+        let service = test_service().await;
+
+        let task_without_context = service
+            .create_task(create_task_request("public task"), None, None)
+            .await
+            .expect("create task without context");
+        assert_eq!(task_without_context.project_id, PUBLIC_PROJECT_ID);
+
+        let task_with_zero = create_task_with_project(&service, Some("0"), None)
+            .await
+            .expect("create task with legacy zero");
+        assert_eq!(task_with_zero.project_id, PUBLIC_PROJECT_ID);
+
+        let task_with_empty = create_task_with_project(&service, Some("   "), None)
+            .await
+            .expect("create task with empty project");
+        assert_eq!(task_with_empty.project_id, PUBLIC_PROJECT_ID);
+    }
+
+    #[tokio::test]
+    async fn create_task_rejects_missing_project() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+
+        let err = create_task_with_project(&service, Some("missing-project"), Some(&creator))
+            .await
+            .expect_err("missing project should be rejected");
+
+        assert!(err.contains("项目不存在"));
+    }
+
+    #[tokio::test]
+    async fn create_task_rejects_archived_project() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+        save_project(
+            &service,
+            "archived-project",
+            "owner-a",
+            TaskProjectStatus::Archived,
+        )
+        .await;
+
+        let err = create_task_with_project(&service, Some("archived-project"), Some(&creator))
+            .await
+            .expect_err("archived project should be rejected");
+
+        assert!(err.contains("项目已归档"));
+    }
+
+    #[tokio::test]
+    async fn create_task_rejects_project_owned_by_another_user() {
+        let service = test_service().await;
+        let creator = agent_user("owner-b");
+        save_project(
+            &service,
+            "project-owned-by-a",
+            "owner-a",
+            TaskProjectStatus::Active,
+        )
+        .await;
+
+        let err = create_task_with_project(&service, Some("project-owned-by-a"), Some(&creator))
+            .await
+            .expect_err("other owner's project should be rejected");
+
+        assert!(err.contains("无权访问"));
+    }
+
+    #[tokio::test]
+    async fn create_task_allows_prerequisites_from_same_project() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+        save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
+        let prerequisite = create_task_with_project(&service, Some("project-a"), Some(&creator))
+            .await
+            .expect("create prerequisite");
+        let mut request = create_task_request("dependent task");
+        request.prerequisite_task_ids = Some(vec![prerequisite.id.clone()]);
+
+        let task = service
+            .create_task(
+                request,
+                Some(&creator),
+                Some(TaskSourceContext {
+                    project_id: Some("project-a".to_string()),
+                    ..TaskSourceContext::default()
+                }),
+            )
+            .await
+            .expect("create dependent task");
+
+        assert_eq!(task.project_id, "project-a");
+        assert_eq!(task.prerequisite_task_ids, vec![prerequisite.id]);
+    }
+
+    #[tokio::test]
+    async fn create_task_rejects_prerequisites_from_another_project() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+        save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
+        save_project(&service, "project-b", "owner-a", TaskProjectStatus::Active).await;
+        let prerequisite = create_task_with_project(&service, Some("project-a"), Some(&creator))
+            .await
+            .expect("create prerequisite");
+        let mut request = create_task_request("dependent task");
+        request.prerequisite_task_ids = Some(vec![prerequisite.id]);
+
+        let err = service
+            .create_task(
+                request,
+                Some(&creator),
+                Some(TaskSourceContext {
+                    project_id: Some("project-b".to_string()),
+                    ..TaskSourceContext::default()
+                }),
+            )
+            .await
+            .expect_err("cross-project prerequisite should fail");
+
+        assert!(err.contains("前置任务必须属于同一项目"));
+    }
+
+    #[tokio::test]
+    async fn set_task_prerequisites_rejects_prerequisites_from_another_project() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+        save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
+        save_project(&service, "project-b", "owner-a", TaskProjectStatus::Active).await;
+        let prerequisite = create_task_with_project(&service, Some("project-a"), Some(&creator))
+            .await
+            .expect("create prerequisite");
+        let dependent = create_task_with_project(&service, Some("project-b"), Some(&creator))
+            .await
+            .expect("create dependent");
+
+        let err = service
+            .set_task_prerequisites(dependent.id.as_str(), vec![prerequisite.id], Some(&creator))
+            .await
+            .expect_err("cross-project prerequisite should fail");
+
+        assert!(err.contains("前置任务必须属于同一项目"));
     }
 }

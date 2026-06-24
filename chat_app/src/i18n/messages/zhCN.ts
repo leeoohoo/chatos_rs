@@ -102,7 +102,7 @@ export const zhCN: MessageDictionary = {
   'memory.projectName': '项目：{name}',
   'memory.projectNone': '项目：未选择',
   'memory.entries': '记忆条目',
-  'memory.projectIdNone': 'project_id: 0（未选择项目）',
+  'memory.projectIdNone': 'project_id: -1（公共空间）',
   'memory.empty': '当前暂无可用记忆。',
   'memory.emptySummary': '(空总结)',
   'memory.sessionSummarySource': '会话总结 L{level}',

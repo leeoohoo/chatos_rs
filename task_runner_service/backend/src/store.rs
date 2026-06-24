@@ -23,9 +23,10 @@ use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     now_rfc3339, ExternalMcpConfigRecord, ModelConfigRecord, ModelConfigUsageRecord,
     PaginatedResponse, PromptListFilters, RemoteServerRecord, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord, UserRecord,
+    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse,
+    TaskStatus, TaskSummaryRecord, UiPromptRecord, UiPromptStatus, UiPromptTaskCountRecord,
+    UserRecord,
 };
 
 mod app_models;
@@ -53,8 +54,9 @@ use self::mongo_support::{
 };
 use self::sqlite_rows::{
     external_mcp_config_from_row, model_config_from_row, remote_server_from_row,
-    run_summary_from_row, runtime_settings_from_row, task_from_row, task_run_event_from_row,
-    task_run_from_row, task_summary_from_row, ui_prompt_from_row, user_from_row,
+    run_summary_from_row, runtime_settings_from_row, task_from_row, task_project_from_row,
+    task_run_event_from_row, task_run_from_row, task_summary_from_row, ui_prompt_from_row,
+    user_from_row,
 };
 use self::sqlite_support::ensure_sqlite_parent_dir;
 use self::task_support::{
@@ -68,6 +70,7 @@ const TASK_RUNS_TASK_CREATED_INDEX_NAME: &str = "idx_task_runs_task_created_at";
 #[derive(Default)]
 struct StoreData {
     tasks: BTreeMap<String, TaskRecord>,
+    task_projects: BTreeMap<String, TaskProjectRecord>,
     model_configs: BTreeMap<String, ModelConfigRecord>,
     runtime_settings: Option<RuntimeSettingsRecord>,
     remote_servers: BTreeMap<String, RemoteServerRecord>,
@@ -96,6 +99,7 @@ pub(crate) struct SqliteStore {
 #[derive(Clone)]
 pub(crate) struct MongoStore {
     tasks: Collection<TaskRecord>,
+    task_projects: Collection<TaskProjectRecord>,
     model_configs: Collection<ModelConfigRecord>,
     runtime_settings: Collection<RuntimeSettingsRecord>,
     remote_servers: Collection<RemoteServerRecord>,

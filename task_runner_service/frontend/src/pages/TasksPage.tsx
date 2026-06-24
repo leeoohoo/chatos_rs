@@ -73,6 +73,7 @@ export function TasksPage() {
   const [batchRunForm] = Form.useForm<RunTaskFormValues>();
   const routeTaskId = searchParams.get('task_id');
   const routeModelConfigId = searchParams.get('model_config_id') || undefined;
+  const routeProjectId = searchParams.get('project_id') || undefined;
 
   const {
     tasksQuery,
@@ -97,6 +98,8 @@ export function TasksPage() {
     modelOptions,
     modelNameMap,
     modelLabelMap,
+    projectNameMap,
+    projectOptions,
     taskSummaryMap,
     prerequisiteTaskOptions,
     tagOptions,
@@ -117,6 +120,7 @@ export function TasksPage() {
     keywordFilter,
     tagFilter,
     routeModelConfigId,
+    routeProjectId,
     scheduledOnly,
     taskPage,
     taskPageSize,
@@ -151,7 +155,7 @@ export function TasksPage() {
 
   useEffect(() => {
     setTaskPage(1);
-  }, [statusFilter, keywordFilter, tagFilter, routeModelConfigId, scheduledOnly]);
+  }, [statusFilter, keywordFilter, tagFilter, routeModelConfigId, routeProjectId, scheduledOnly]);
 
   useEffect(() => {
     if (routeTaskId) {
@@ -197,6 +201,7 @@ export function TasksPage() {
     t,
     navigate,
     modelNameMap,
+    projectNameMap,
     externalMcpConfigMap,
     pendingPromptCountByTaskId,
     scheduleModeLabels,
@@ -412,6 +417,7 @@ export function TasksPage() {
       priority: values.priority,
       status: values.status,
       default_model_config_id: values.default_model_config_id,
+      project_id: editingTask ? undefined : routeProjectId,
       prerequisite_task_ids: values.prerequisite_task_ids || [],
       tags: values.tagsText
         ?.split(',')
@@ -475,10 +481,12 @@ export function TasksPage() {
           keywordFilter={keywordFilter}
           tagFilter={tagFilter}
           modelConfigId={routeModelConfigId}
+          projectId={routeProjectId}
           statusFilter={statusFilter}
           scheduledOnly={scheduledOnly}
           tagOptions={tagOptions}
           modelOptions={modelOptions}
+          projectOptions={projectOptions}
           statusFilterOptions={statusFilterOptions}
           onKeywordFilterChange={setKeywordFilter}
           onTagFilterChange={setTagFilter}
@@ -488,6 +496,15 @@ export function TasksPage() {
               next.set('model_config_id', value);
             } else {
               next.delete('model_config_id');
+            }
+            setSearchParams(next);
+          }}
+          onProjectFilterChange={(value) => {
+            const next = new URLSearchParams(searchParams);
+            if (value) {
+              next.set('project_id', value);
+            } else {
+              next.delete('project_id');
             }
             setSearchParams(next);
           }}

@@ -133,6 +133,7 @@ export interface TaskRecord {
   memory_thread_id: string;
   tenant_id: string;
   subject_id: string;
+  project_id: string;
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;
@@ -454,6 +455,7 @@ export interface TaskSummaryRecord {
   owner_user_id?: string | null;
   owner_username?: string | null;
   owner_display_name?: string | null;
+  project_id: string;
   last_run_id?: string | null;
   updated_at: string;
 }
@@ -749,6 +751,7 @@ export interface CreateTaskPayload {
   priority?: number;
   tags?: string[];
   default_model_config_id?: string;
+  project_id?: string;
   schedule?: TaskScheduleConfig;
   mcp_config?: TaskMcpConfig;
   prerequisite_task_ids?: string[];
@@ -767,12 +770,30 @@ export interface TaskListFilters {
   keyword?: string;
   tag?: string;
   model_config_id?: string;
+  project_id?: string;
   scheduled_only?: boolean;
   parent_task_id?: string;
   include_subtasks?: boolean;
   source_run_id?: string;
   limit?: number;
   offset?: number;
+}
+
+export type TaskProjectStatus = 'active' | 'archived';
+
+export interface TaskProjectRecord {
+  id: string;
+  owner_user_id?: string | null;
+  owner_username?: string | null;
+  owner_display_name?: string | null;
+  name: string;
+  root_path?: string | null;
+  git_url?: string | null;
+  description?: string | null;
+  status: TaskProjectStatus;
+  created_at: string;
+  updated_at: string;
+  archived_at?: string | null;
 }
 
 export interface TaskStatsResponse {

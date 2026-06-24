@@ -52,7 +52,7 @@ impl SqliteStore {
             "SELECT id, title, status, default_model_config_id, creator_user_id,
                     creator_username, creator_display_name,
                     owner_user_id, owner_username, owner_display_name,
-                    last_run_id, updated_at
+                    project_id, last_run_id, updated_at
              FROM tasks
              ORDER BY datetime(updated_at) DESC, id DESC",
         )

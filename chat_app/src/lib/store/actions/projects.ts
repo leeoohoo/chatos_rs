@@ -257,11 +257,12 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       }
     },
 
-    createProject: async (name: string, rootPath: string, description?: string) => {
+    createProject: async (name: string, rootPath: string, description?: string, gitUrl?: string) => {
       const uid = getUserIdParam();
       const payload = {
         name,
         root_path: rootPath,
+        git_url: gitUrl?.trim() || undefined,
         description: description?.trim() || undefined,
         user_id: uid,
       };
@@ -280,9 +281,10 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
 
     updateProject: async (projectId: string, updates: Partial<Project>) => {
       try {
-        const payload: { name?: string; root_path?: string; description?: string } = {};
+        const payload: { name?: string; root_path?: string; git_url?: string; description?: string } = {};
         if (updates.name !== undefined) payload.name = updates.name;
         if (updates.rootPath !== undefined) payload.root_path = updates.rootPath;
+        if (updates.gitUrl !== undefined) payload.git_url = updates.gitUrl ?? '';
         if (updates.description !== undefined) payload.description = updates.description || undefined;
         const updated = await client.updateProject(projectId, payload);
         const project = normalizeProject(updated);

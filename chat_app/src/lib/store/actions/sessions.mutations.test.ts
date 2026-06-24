@@ -256,17 +256,17 @@ describe('applyRealtimeSessionSnapshot', () => {
       id: 'session_1',
       title: 'session_1',
       user_id: 'user_1',
-      project_id: '0',
+      project_id: '-1',
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
       metadata: {
         chat_runtime: {
-          project_id: '0',
+          project_id: '-1',
         },
       },
     });
 
-    expect(state.currentSession?.projectId).toBe('0');
+    expect(state.currentSession?.projectId).toBe('-1');
     expect(state.currentProjectId).toBeNull();
     expect(state.currentProject).toBeNull();
   });
