@@ -31,9 +31,11 @@ impl McpCatalogService {
         request: McpPromptPreviewRequest,
     ) -> Result<McpPromptPreviewResponse, String> {
         let enabled = request.enabled.unwrap_or(true);
-        let init_mode = request
-            .init_mode
-            .unwrap_or(chatos_ai_runtime::TaskMcpInitMode::BuiltinOnly);
+        let init_mode = if enabled {
+            chatos_ai_runtime::TaskMcpInitMode::Full
+        } else {
+            chatos_ai_runtime::TaskMcpInitMode::Disabled
+        };
         let builtin_prompt_mode = request
             .builtin_prompt_mode
             .unwrap_or(TaskBuiltinMcpPromptMode::Effective);
@@ -58,12 +60,11 @@ impl McpCatalogService {
             default_remote_server_id: normalized_optional(request.default_remote_server_id),
             external_mcp_config_ids: Vec::new(),
         };
-        let selected_builtin_kinds =
-            if enabled && !matches!(init_mode, chatos_ai_runtime::TaskMcpInitMode::Disabled) {
-                selected_builtin_kinds(&mcp_config)
-            } else {
-                Vec::new()
-            };
+        let selected_builtin_kinds = if enabled {
+            selected_builtin_kinds(&mcp_config)
+        } else {
+            Vec::new()
+        };
 
         let mut server_options = BuiltinMcpServerOptions::new(resolve_workspace_dir_with_base(
             self.task_service.config.default_workspace_dir.as_str(),
@@ -182,7 +183,7 @@ mod tests {
         let preview = service
             .preview_prompt(McpPromptPreviewRequest {
                 enabled: Some(true),
-                init_mode: Some(chatos_ai_runtime::TaskMcpInitMode::BuiltinOnly),
+                init_mode: Some(chatos_ai_runtime::TaskMcpInitMode::Full),
                 builtin_prompt_mode: Some(TaskBuiltinMcpPromptMode::Effective),
                 builtin_prompt_locale: Some(BuiltinMcpPromptLocale::DEFAULT_KEY.to_string()),
                 enabled_builtin_kinds: None,

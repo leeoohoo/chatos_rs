@@ -175,3 +175,141 @@ export interface ProjectContactLockResponse {
   error?: string;
   detail?: string;
 }
+
+export type ProjectRequirementStatus =
+  | 'draft'
+  | 'reviewing'
+  | 'approved'
+  | 'in_progress'
+  | 'done'
+  | 'cancelled'
+  | 'archived';
+
+export type ProjectRequirementType = 'requirement' | 'change' | 'bug_fix';
+
+export type ProjectWorkItemStatus =
+  | 'todo'
+  | 'ready'
+  | 'in_progress'
+  | 'blocked'
+  | 'done'
+  | 'cancelled'
+  | 'archived';
+
+export interface ProjectRequirementResponse {
+  id: string;
+  project_id?: string;
+  projectId?: string;
+  parent_requirement_id?: string | null;
+  parentRequirementId?: string | null;
+  requirement_type?: ProjectRequirementType;
+  requirementType?: ProjectRequirementType;
+  title: string;
+  summary?: string | null;
+  detail?: string | null;
+  business_value?: string | null;
+  businessValue?: string | null;
+  acceptance_criteria?: string | null;
+  acceptanceCriteria?: string | null;
+  source?: string | null;
+  priority?: number;
+  status?: ProjectRequirementStatus;
+  creator_user_id?: string | null;
+  creatorUserId?: string | null;
+  creator_username?: string | null;
+  creatorUsername?: string | null;
+  creator_display_name?: string | null;
+  creatorDisplayName?: string | null;
+  owner_user_id?: string | null;
+  ownerUserId?: string | null;
+  owner_username?: string | null;
+  ownerUsername?: string | null;
+  owner_display_name?: string | null;
+  ownerDisplayName?: string | null;
+  assignee_user_id?: string | null;
+  assigneeUserId?: string | null;
+  created_at?: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+  archived_at?: string | null;
+  archivedAt?: string | null;
+}
+
+export interface ProjectWorkItemResponse {
+  id: string;
+  project_id?: string;
+  projectId?: string;
+  requirement_id?: string;
+  requirementId?: string;
+  title: string;
+  description?: string | null;
+  status?: ProjectWorkItemStatus;
+  priority?: number;
+  assignee_user_id?: string | null;
+  assigneeUserId?: string | null;
+  estimate_points?: number | null;
+  estimatePoints?: number | null;
+  due_at?: string | null;
+  dueAt?: string | null;
+  sort_order?: number;
+  sortOrder?: number;
+  tags?: string[];
+  creator_user_id?: string | null;
+  creatorUserId?: string | null;
+  creator_username?: string | null;
+  creatorUsername?: string | null;
+  creator_display_name?: string | null;
+  creatorDisplayName?: string | null;
+  owner_user_id?: string | null;
+  ownerUserId?: string | null;
+  owner_username?: string | null;
+  ownerUsername?: string | null;
+  owner_display_name?: string | null;
+  ownerDisplayName?: string | null;
+  created_at?: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+  archived_at?: string | null;
+  archivedAt?: string | null;
+}
+
+export interface ProjectDependencyGraphNodeResponse {
+  id: string;
+  node_type?: string;
+  nodeType?: string;
+  label?: string;
+  status?: string;
+  parent_id?: string | null;
+  parentId?: string | null;
+  raw_id?: string;
+  rawId?: string;
+}
+
+export interface ProjectDependencyGraphEdgeResponse {
+  from: string;
+  to: string;
+  edge_type?: string;
+  edgeType?: string;
+}
+
+export interface ProjectDependencyGraphResponse {
+  root_id?: string | null;
+  rootId?: string | null;
+  nodes?: ProjectDependencyGraphNodeResponse[];
+  edges?: ProjectDependencyGraphEdgeResponse[];
+  blocked_by?: ProjectDependencyGraphNodeResponse[];
+  blockedBy?: ProjectDependencyGraphNodeResponse[];
+  ready?: boolean;
+}
+
+export interface ProjectPlanResponse {
+  project_id?: string;
+  projectId?: string;
+  requirements?: ProjectRequirementResponse[];
+  work_items?: ProjectWorkItemResponse[];
+  workItems?: ProjectWorkItemResponse[];
+  dependency_graph?: ProjectDependencyGraphResponse;
+  dependencyGraph?: ProjectDependencyGraphResponse;
+}

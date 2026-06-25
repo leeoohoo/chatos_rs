@@ -491,6 +491,7 @@ export const enUS: MessageDictionary = {
   'projectExplorer.emptyProject': 'Choose a project to view files',
   'projectExplorer.tab.files': 'Project files',
   'projectExplorer.tab.team': 'User messages',
+  'projectExplorer.tab.plan': 'Plan',
   'projectExplorer.tab.settings': 'Project settings',
   'projectContact.title': 'Project contact',
   'projectContact.description': 'Each project binds one contact. Chat, project context, and background runs use this contact by default.',

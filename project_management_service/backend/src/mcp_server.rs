@@ -69,6 +69,7 @@ struct InitProjectArgs {
 #[derive(Debug, Deserialize)]
 struct CreateRequirementArgs {
     parent_requirement_id: Option<String>,
+    requirement_type: Option<RequirementType>,
     title: String,
     summary: Option<String>,
     detail: Option<String>,
@@ -199,6 +200,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 vec![
                     string_field("title", "Requirement title."),
                     optional_string_field("parent_requirement_id", "Optional parent requirement id."),
+                    enum_field("requirement_type", "Optional requirement type.", requirement_type_values()),
                     optional_string_field("summary", "Short requirement summary."),
                     optional_string_field("detail", "Detailed requirement description."),
                     optional_string_field("business_value", "Business value or why this matters."),
@@ -479,6 +481,7 @@ async fn call_tool(
                     project_id,
                     CreateRequirementRequest {
                         parent_requirement_id: args.parent_requirement_id,
+                        requirement_type: args.requirement_type,
                         title: args.title,
                         summary: args.summary,
                         detail: args.detail,
@@ -1013,6 +1016,10 @@ fn requirement_status_values() -> Vec<&'static str> {
     ]
 }
 
+fn requirement_type_values() -> Vec<&'static str> {
+    vec!["requirement", "change", "bug_fix"]
+}
+
 fn project_task_status_values() -> Vec<&'static str> {
     vec![
         "todo",
@@ -1145,6 +1152,7 @@ mod tests {
             id: id.to_string(),
             project_id: "project-1".to_string(),
             parent_requirement_id: None,
+            requirement_type: RequirementType::Requirement,
             title: id.to_string(),
             summary: None,
             detail: None,

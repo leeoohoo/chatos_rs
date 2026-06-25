@@ -14,8 +14,11 @@ import type {
 import {
   isSchedulerOnlyTask,
   statusColorMap,
+  systemInjectedMcpServerNames,
   taskCreatorLabel,
   taskOwnerLabel,
+  taskProfileColorMap,
+  taskProfileLabel,
   type TaskRemoteOperationStats,
   type TaskRemoteOperationView,
 } from './taskPageUtils';
@@ -73,6 +76,9 @@ export function buildTaskTableColumns({
               <Typography.Text type="secondary">{record.objective}</Typography.Text>
             </Space>
             <Space size={[4, 4]} wrap>
+              <Tag color={taskProfileColorMap[record.task_profile] || 'default'}>
+                {taskProfileLabel(record.task_profile, t)}
+              </Tag>
               {record.parent_task_id ? (
                 <Tag color="purple">{t('tasks.followUp')}</Tag>
               ) : (
@@ -191,9 +197,10 @@ export function buildTaskTableColumns({
       title: t('tasks.column.mcp'),
       dataIndex: 'mcp_config',
       width: 220,
-      render: (mcpConfig: TaskMcpConfig) => {
+      render: (mcpConfig: TaskMcpConfig, record) => {
         const builtinCount = mcpConfig.enabled_builtin_kinds.length;
         const externalConfigIds = mcpConfig.external_mcp_config_ids || [];
+        const systemMcpServers = systemInjectedMcpServerNames(record);
         const visibleExternalConfigs = externalConfigIds.slice(0, 2);
         const hiddenExternalCount = Math.max(
           externalConfigIds.length - visibleExternalConfigs.length,
@@ -204,11 +211,15 @@ export function buildTaskTableColumns({
             <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
               {mcpConfig.enabled ? t('common.enabled') : t('common.disabled')}
             </Tag>
-            <Tag>{mcpConfig.init_mode}</Tag>
             <Tag>{t('tasks.mcpBuiltinCount', { count: builtinCount })}</Tag>
             <Tag color={externalConfigIds.length ? 'blue' : undefined}>
               {t('tasks.mcpExternalCount', { count: externalConfigIds.length })}
             </Tag>
+            {systemMcpServers.map((serverName) => (
+              <Tag key={serverName} color="geekblue">
+                {t('tasks.mcpSystemServer', { name: serverName })}
+              </Tag>
+            ))}
             {visibleExternalConfigs.map((configId) => {
               const config = externalMcpConfigMap.get(configId);
               return (

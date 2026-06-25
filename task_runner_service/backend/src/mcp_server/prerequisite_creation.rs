@@ -136,9 +136,9 @@ impl TaskRunnerMcpService {
                 .await?;
             if tool_profile == McpToolProfile::ChatosAsyncPlanner {
                 request = if is_prerequisite_node {
-                    planner_prerequisite_create_request(request)?
+                    planner_prerequisite_create_request(request, request_context)?
                 } else {
-                    planner_root_create_request(request)?
+                    planner_root_create_request(request, request_context)?
                 };
             }
             if request_context.is_chatos_plan_task_profile() {

@@ -7,6 +7,7 @@ mod contact_handlers;
 mod contracts;
 mod crud_handlers;
 mod memory_sync;
+mod plan_handlers;
 mod run_handlers;
 mod session_resolver;
 
@@ -16,6 +17,7 @@ use self::contact_handlers::{
 use self::crud_handlers::{
     create_project, delete_project, get_project, list_projects, update_project,
 };
+use self::plan_handlers::get_project_plan;
 use self::run_handlers::{
     analyze_project_run, execute_project_run, get_project_run_catalog, get_project_run_environment,
     get_project_run_state, set_project_run_default, update_project_run_environment,
@@ -28,6 +30,7 @@ pub fn router() -> Router {
             "/api/projects/:id",
             get(get_project).put(update_project).delete(delete_project),
         )
+        .route("/api/projects/:id/plan", get(get_project_plan))
         .route(
             "/api/projects/:id/contacts",
             get(list_project_contacts).post(add_project_contact),

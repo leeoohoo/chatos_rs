@@ -4,6 +4,7 @@ import type {
   PagingOptions,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectPlanResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
@@ -18,6 +19,7 @@ export interface WorkspaceProjectFacade {
   updateProject(id: string, data: { name?: string; root_path?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
+  getProjectPlan(projectId: string, options?: { includeArchived?: boolean }): Promise<ProjectPlanResponse>;
   analyzeProjectRun(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunCatalog(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunState(projectId: string): Promise<ProjectRunStateResponse>;
@@ -63,6 +65,9 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async getProject(id) {
     return workspaceApi.getProject(this.getRequestFn(), id);
+  },
+  async getProjectPlan(projectId, options) {
+    return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);
   },
   async analyzeProjectRun(projectId) {
     return workspaceApi.analyzeProjectRun(this.getRequestFn(), projectId);

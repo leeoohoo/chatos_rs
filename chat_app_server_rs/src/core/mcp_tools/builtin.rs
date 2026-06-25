@@ -184,6 +184,10 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             })?;
             Ok(BuiltinToolService::TaskManager(service))
         }
+        BuiltinMcpKind::ProjectManagement => Err(
+            "ProjectManagement builtin provider is only available in task_runner_service"
+                .to_string(),
+        ),
         BuiltinMcpKind::Notepad => {
             let user_id = server
                 .user_id

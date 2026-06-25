@@ -10,6 +10,8 @@ import type {
   LoginPayload,
   LoginResponse,
   ProjectProfileRecord,
+  ProjectManagementSkillLocale,
+  ProjectManagementSkillResponse,
   ProjectRecord,
   ProjectStatus,
   ProjectWorkItemRecord,
@@ -49,11 +51,17 @@ function buildApiUrl(path: string): string {
   return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
 }
 
-function withQuery(path: string, params: Record<string, string | undefined>): string {
+type QueryValue = string | number | boolean | null | undefined;
+
+function withQuery(path: string, params: Record<string, QueryValue>): string {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value && value.trim()) {
-      search.set(key, value);
+    if (value === undefined || value === null) {
+      return;
+    }
+    const text = String(value).trim();
+    if (text) {
+      search.set(key, text);
     }
   });
   const query = search.toString();
@@ -106,6 +114,12 @@ export const api = {
     }),
   currentUser: () => request<AuthUser>('/api/auth/me'),
   listAgentAccounts: () => request<AgentAccountListItem[]>('/api/agent-accounts'),
+  getProjectManagementSkill: (locale: ProjectManagementSkillLocale) =>
+    request<ProjectManagementSkillResponse>(
+      withQuery('/api/skills/project-management', {
+        lang: locale,
+      }),
+    ),
   listProjects: (status?: ProjectStatus) =>
     request<ProjectRecord[]>(
       withQuery('/api/projects', {
@@ -136,12 +150,13 @@ export const api = {
     }),
   listRequirements: (
     projectId: string,
-    filters?: { status?: RequirementStatus; keyword?: string },
+    filters?: { status?: RequirementStatus; keyword?: string; include_archived?: boolean },
   ) =>
     request<RequirementRecord[]>(
       withQuery(`/api/projects/${projectId}/requirements`, {
         status: filters?.status,
         keyword: filters?.keyword,
+        include_archived: filters?.include_archived,
       }),
     ),
   createRequirement: (projectId: string, payload: CreateRequirementPayload) =>
@@ -177,12 +192,13 @@ export const api = {
     }),
   listProjectWorkItems: (
     projectId: string,
-    filters?: { status?: ProjectWorkItemStatus; keyword?: string },
+    filters?: { status?: ProjectWorkItemStatus; keyword?: string; include_archived?: boolean },
   ) =>
     request<ProjectWorkItemRecord[]>(
       withQuery(`/api/projects/${projectId}/work-items`, {
         status: filters?.status,
         keyword: filters?.keyword,
+        include_archived: filters?.include_archived,
       }),
     ),
   createWorkItem: (requirementId: string, payload: CreateWorkItemPayload) =>
@@ -206,8 +222,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ prerequisite_work_item_ids: ids }),
     }),
-  getProjectDependencyGraph: (projectId: string) =>
-    request<DependencyGraphResponse>(`/api/projects/${projectId}/dependency-graph`),
+  getProjectDependencyGraph: (projectId: string, filters?: { include_archived?: boolean }) =>
+    request<DependencyGraphResponse>(
+      withQuery(`/api/projects/${projectId}/dependency-graph`, {
+        include_archived: filters?.include_archived,
+      }),
+    ),
   listTaskRunnerLinks: (workItemId: string) =>
     request<ProjectWorkItemTaskRunnerLinkRecord[]>(
       `/api/work-items/${workItemId}/task-runner-links`,

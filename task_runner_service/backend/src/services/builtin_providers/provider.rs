@@ -7,6 +7,7 @@ pub(super) enum TaskRunnerBuiltinToolService {
     TaskManager(TaskManagerService),
     TerminalController(TerminalControllerService),
     AskUser(AskUserService),
+    ProjectManagement(ProjectManagementBuiltinService),
 }
 
 impl TaskRunnerBuiltinToolService {
@@ -17,10 +18,11 @@ impl TaskRunnerBuiltinToolService {
             Self::TaskManager(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
             Self::AskUser(service) => service.list_tools(),
+            Self::ProjectManagement(service) => service.list_tools(),
         }
     }
 
-    fn call_tool(
+    async fn call_tool(
         &self,
         name: &str,
         args: Value,
@@ -55,6 +57,7 @@ impl TaskRunnerBuiltinToolService {
                         as chatos_builtin_tools::AskUserStreamChunkCallback
                 }),
             ),
+            Self::ProjectManagement(service) => service.call_tool(name, args).await,
         }
     }
 
@@ -65,6 +68,7 @@ impl TaskRunnerBuiltinToolService {
             Self::TaskManager(_) => Vec::new(),
             Self::TerminalController(_) => Vec::new(),
             Self::AskUser(_) => Vec::new(),
+            Self::ProjectManagement(service) => service.unavailable_tools(),
         }
     }
 }
@@ -134,6 +138,7 @@ impl BuiltinToolProvider for TaskRunnerBuiltinProvider {
     ) -> Result<Value, String> {
         self.service
             .call_tool(name, args, &context, on_stream_chunk)
+            .await
     }
 
     fn unavailable_tools(&self) -> Vec<(String, String)> {

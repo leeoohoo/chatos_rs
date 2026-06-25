@@ -2,6 +2,7 @@ use crate::models::{
     normalize_project_id, TaskSourceContext, PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN,
     TASK_PROFILE_DEFAULT,
 };
+use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 
 use super::{decode_remote_server_config_header, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
 
@@ -21,6 +22,7 @@ pub struct McpRequestContext {
     pub remote_server_config: Option<String>,
     pub tool_profile: Option<String>,
     pub task_profile: Option<String>,
+    pub builtin_prompt_locale: Option<String>,
     pub chatos_plan_mode: bool,
 }
 
@@ -96,6 +98,21 @@ impl McpRequestContext {
         } else {
             TASK_PROFILE_DEFAULT
         }
+    }
+
+    pub(super) fn requested_builtin_prompt_locale(&self) -> String {
+        let key = match self
+            .builtin_prompt_locale
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "en" | "en-us" | "english" => BuiltinMcpPromptLocale::ENGLISH_KEY,
+            _ => BuiltinMcpPromptLocale::DEFAULT_KEY,
+        };
+        key.to_string()
     }
 }
 

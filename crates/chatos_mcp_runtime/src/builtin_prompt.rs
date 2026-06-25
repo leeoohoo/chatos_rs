@@ -9,6 +9,7 @@ use crate::types::{McpBuiltinServer, ToolInfo};
 
 const SECTION_GLOBAL: &str = "global";
 const SECTION_TASK_MANAGER: &str = "builtin_task_manager";
+const SECTION_PROJECT_MANAGEMENT: &str = "builtin_project_management";
 const SECTION_ASK_USER: &str = "builtin_ask_user";
 const SECTION_CODE_MAINTAINER_READ: &str = "builtin_code_maintainer_read";
 const SECTION_CODE_MAINTAINER_WRITE: &str = "builtin_code_maintainer_write";
@@ -23,6 +24,7 @@ const SECTION_RUNTIME_LIMITATIONS: &str = "runtime_limitations";
 const SECTION_ORDER: &[&str] = &[
     SECTION_GLOBAL,
     SECTION_TASK_MANAGER,
+    SECTION_PROJECT_MANAGEMENT,
     SECTION_ASK_USER,
     SECTION_CODE_MAINTAINER_READ,
     SECTION_CODE_MAINTAINER_WRITE,
@@ -174,6 +176,7 @@ fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
         BuiltinMcpKind::CodeMaintainerWrite => Some(SECTION_CODE_MAINTAINER_WRITE),
         BuiltinMcpKind::TerminalController => Some(SECTION_TERMINAL_CONTROLLER),
         BuiltinMcpKind::TaskManager => Some(SECTION_TASK_MANAGER),
+        BuiltinMcpKind::ProjectManagement => Some(SECTION_PROJECT_MANAGEMENT),
         BuiltinMcpKind::Notepad => Some(SECTION_NOTEPAD),
         BuiltinMcpKind::AskUser => Some(SECTION_ASK_USER),
         BuiltinMcpKind::RemoteConnectionController => Some(SECTION_REMOTE_CONNECTION_CONTROLLER),
@@ -619,6 +622,9 @@ mod tests {
         );
         let section_ids = builtin_mcp_prompt_section_ids(BuiltinMcpPromptLocale::ZhCn);
         assert!(section_ids.iter().any(|item| item == "global"));
+        assert!(section_ids
+            .iter()
+            .any(|item| item == "builtin_project_management"));
         assert!(section_ids.iter().any(|item| item == "runtime_limitations"));
     }
 
@@ -685,6 +691,18 @@ mod tests {
             .expect("web section");
         assert!(browser_idx < web_idx);
         assert!(prompt.contains("只要问题和当前浏览器页有关"));
+    }
+
+    #[test]
+    fn includes_project_management_section_when_selected() {
+        let prompt = compose_builtin_mcp_system_prompt(
+            &[build_builtin_server(BuiltinMcpKind::ProjectManagement)],
+            BuiltinMcpPromptLocale::ZhCn,
+        )
+        .expect("prompt");
+
+        assert!(prompt.contains("`project_management_service_create_requirement`"));
+        assert!(prompt.contains("需求、变更或 bug 修复"));
     }
 
     #[test]

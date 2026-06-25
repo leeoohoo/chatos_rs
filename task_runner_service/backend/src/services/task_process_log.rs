@@ -16,10 +16,6 @@ const TASK_PROCESS_LOG_INTERNAL_TOOL_NAME: &str = "record_process";
 
 pub(super) fn task_process_logging_enabled(mcp_config: &TaskMcpConfig) -> bool {
     mcp_config.enabled
-        && !matches!(
-            mcp_config.init_mode,
-            chatos_ai_runtime::TaskMcpInitMode::Disabled
-        )
 }
 
 pub(super) fn task_process_log_builtin_server() -> McpBuiltinServer {

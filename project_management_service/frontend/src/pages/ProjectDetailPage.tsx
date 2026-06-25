@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import {
   DeleteOutlined,
   EditOutlined,
@@ -26,6 +26,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -37,6 +38,7 @@ import dayjs from 'dayjs';
 import { Link, useParams } from 'react-router-dom';
 
 import { api } from '../api/client';
+import { MarkdownPreview, MarkdownPreviewSection } from '../components/MarkdownPreview';
 import type {
   CreateRequirementPayload,
   CreateWorkItemPayload,
@@ -44,9 +46,9 @@ import type {
   DependencyGraphNode,
   ProjectProfileRecord,
   ProjectWorkItemRecord,
-  RequirementDocumentRecord,
   RequirementRecord,
   RequirementStatus,
+  RequirementType,
   UpsertProjectProfilePayload,
 } from '../types';
 
@@ -63,6 +65,12 @@ const requirementStatusDisplayOptions = [
 const requirementStatusOptions = requirementStatusDisplayOptions.filter(
   (option) => option.value !== 'archived',
 );
+
+const requirementTypeOptions = [
+  { value: 'requirement', label: '需求' },
+  { value: 'change', label: '变更' },
+  { value: 'bug_fix', label: 'Bug 修复' },
+] satisfies Array<{ value: RequirementType; label: string }>;
 
 const workItemStatusDisplayOptions = [
   { value: 'todo', label: '待处理' },
@@ -83,11 +91,6 @@ type WorkItemFormValues = CreateWorkItemPayload & {
   tags_text?: string;
 };
 
-interface DocFormValues {
-  title?: string;
-  content: string;
-}
-
 interface GraphRelationRow {
   key: string;
   edge: DependencyGraphEdge;
@@ -95,14 +98,46 @@ interface GraphRelationRow {
   to?: DependencyGraphNode;
 }
 
-type MarkdownPreviewBlock =
-  | { type: 'heading'; level: 1 | 2 | 3 | 4; text: string }
-  | { type: 'paragraph'; text: string }
-  | { type: 'ul' | 'ol'; items: string[] }
-  | { type: 'blockquote'; text: string }
-  | { type: 'code'; language?: string; text: string };
+type RequirementTableRecord = RequirementRecord & {
+  children?: RequirementTableRecord[];
+};
 
 type ProfileMarkdownFieldName = 'background' | 'introduction';
+
+const emptyRequirements: RequirementRecord[] = [];
+const emptyWorkItems: ProjectWorkItemRecord[] = [];
+
+function isSelectableRequirement(item: RequirementRecord): boolean {
+  return item.status !== 'archived' && item.status !== 'cancelled';
+}
+
+function isSelectableWorkItem(item: ProjectWorkItemRecord): boolean {
+  return item.status !== 'archived' && item.status !== 'cancelled';
+}
+
+function buildRequirementTree(items: RequirementRecord[]): RequirementTableRecord[] {
+  const nodeMap = new Map<string, RequirementTableRecord>(
+    items.map((item) => [item.id, { ...item }]),
+  );
+  const roots: RequirementTableRecord[] = [];
+
+  items.forEach((item) => {
+    const node = nodeMap.get(item.id);
+    const parentId = item.parent_requirement_id?.trim();
+    const parent = parentId ? nodeMap.get(parentId) : undefined;
+    if (!node) {
+      return;
+    }
+    if (parent && parent.id !== item.id) {
+      parent.children ??= [];
+      parent.children.push(node);
+      return;
+    }
+    roots.push(node);
+  });
+
+  return roots;
+}
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -111,7 +146,6 @@ export function ProjectDetailPage() {
   const [profileForm] = Form.useForm<UpsertProjectProfilePayload>();
   const [requirementForm] = Form.useForm<CreateRequirementPayload>();
   const [workItemForm] = Form.useForm<WorkItemFormValues>();
-  const [docForm] = Form.useForm<DocFormValues>();
   const [requirementModalOpen, setRequirementModalOpen] = useState(false);
   const [workItemModalOpen, setWorkItemModalOpen] = useState(false);
   const [requirementDetailTarget, setRequirementDetailTarget] = useState<RequirementRecord | null>(null);
@@ -122,8 +156,7 @@ export function ProjectDetailPage() {
   const [workItemDepIds, setWorkItemDepIds] = useState<string[]>([]);
   const [docTarget, setDocTarget] = useState<RequirementRecord | null>(null);
   const [editingProfileField, setEditingProfileField] = useState<ProfileMarkdownFieldName | null>(null);
-  const profileBackground = Form.useWatch('background', profileForm);
-  const profileIntroduction = Form.useWatch('introduction', profileForm);
+  const [showArchived, setShowArchived] = useState(false);
 
   const projectQuery = useQuery({
     queryKey: ['project', projectId],
@@ -136,18 +169,18 @@ export function ProjectDetailPage() {
     enabled: Boolean(projectId),
   });
   const requirementsQuery = useQuery({
-    queryKey: ['requirements', projectId],
-    queryFn: () => api.listRequirements(projectId!),
+    queryKey: ['requirements', projectId, showArchived],
+    queryFn: () => api.listRequirements(projectId!, { include_archived: showArchived }),
     enabled: Boolean(projectId),
   });
   const workItemsQuery = useQuery({
-    queryKey: ['work-items', projectId],
-    queryFn: () => api.listProjectWorkItems(projectId!),
+    queryKey: ['work-items', projectId, showArchived],
+    queryFn: () => api.listProjectWorkItems(projectId!, { include_archived: showArchived }),
     enabled: Boolean(projectId),
   });
   const graphQuery = useQuery({
-    queryKey: ['project-graph', projectId],
-    queryFn: () => api.getProjectDependencyGraph(projectId!),
+    queryKey: ['project-graph', projectId, showArchived],
+    queryFn: () => api.getProjectDependencyGraph(projectId!, { include_archived: showArchived }),
     enabled: Boolean(projectId),
   });
   const requirementDepsQuery = useQuery({
@@ -166,6 +199,30 @@ export function ProjectDetailPage() {
     enabled: Boolean(docTarget),
   });
 
+  const requirements = requirementsQuery.data ?? emptyRequirements;
+  const workItems = workItemsQuery.data ?? emptyWorkItems;
+  const selectableRequirements = useMemo(
+    () => requirements.filter(isSelectableRequirement),
+    [requirements],
+  );
+  const selectableWorkItems = useMemo(() => workItems.filter(isSelectableWorkItem), [workItems]);
+  const selectableRequirementIds = useMemo(
+    () => new Set(selectableRequirements.map((item) => item.id)),
+    [selectableRequirements],
+  );
+  const selectableWorkItemIds = useMemo(
+    () => new Set(selectableWorkItems.map((item) => item.id)),
+    [selectableWorkItems],
+  );
+  const requirementTree = useMemo(() => buildRequirementTree(requirements), [requirements]);
+  const profileBackground = profileQuery.data?.background || undefined;
+  const profileIntroduction = profileQuery.data?.introduction || undefined;
+
+  const cancelProfileFieldEdit = (field: ProfileMarkdownFieldName) => {
+    profileForm.setFieldValue(field, profileQuery.data?.[field] || undefined);
+    setEditingProfileField(null);
+  };
+
   useEffect(() => {
     if (profileQuery.data) {
       profileForm.setFieldsValue({
@@ -178,25 +235,22 @@ export function ProjectDetailPage() {
   useEffect(() => {
     if (requirementDepsQuery.data) {
       setRequirementDepIds(
-        requirementDepsQuery.data.map((item) => item.prerequisite_requirement_id),
+        requirementDepsQuery.data
+          .map((item) => item.prerequisite_requirement_id)
+          .filter((id) => selectableRequirementIds.has(id)),
       );
     }
-  }, [requirementDepsQuery.data]);
+  }, [requirementDepsQuery.data, selectableRequirementIds]);
 
   useEffect(() => {
     if (workItemDepsQuery.data) {
-      setWorkItemDepIds(workItemDepsQuery.data.map((item) => item.prerequisite_work_item_id));
+      setWorkItemDepIds(
+        workItemDepsQuery.data
+          .map((item) => item.prerequisite_work_item_id)
+          .filter((id) => selectableWorkItemIds.has(id)),
+      );
     }
-  }, [workItemDepsQuery.data]);
-
-  useEffect(() => {
-    if (docQuery.data) {
-      docForm.setFieldsValue({
-        title: docQuery.data.title || '实现技术总体文档',
-        content: docQuery.data.content || '',
-      });
-    }
-  }, [docForm, docQuery.data]);
+  }, [workItemDepsQuery.data, selectableWorkItemIds]);
 
   const invalidateProjectData = () => {
     queryClient.invalidateQueries({ queryKey: ['requirements', projectId] });
@@ -240,21 +294,6 @@ export function ProjectDetailPage() {
       messageApi.success('需求前置关系已保存');
       setRequirementDepTarget(null);
       invalidateProjectData();
-    },
-    onError: (error) => messageApi.error((error as Error).message),
-  });
-
-  const saveDocMutation = useMutation({
-    mutationFn: (payload: DocFormValues) =>
-      api.upsertRequirementTechnicalOverview(docTarget!.id, {
-        title: payload.title,
-        format: 'markdown',
-        content: payload.content || '',
-      }),
-    onSuccess: (doc: RequirementDocumentRecord) => {
-      messageApi.success('技术总体文档已保存');
-      queryClient.setQueryData(['technical-overview', doc.requirement_id], doc);
-      setDocTarget(null);
     },
     onError: (error) => messageApi.error((error as Error).message),
   });
@@ -306,8 +345,6 @@ export function ProjectDetailPage() {
     onError: (error) => messageApi.error((error as Error).message),
   });
 
-  const requirements = requirementsQuery.data || [];
-  const workItems = workItemsQuery.data || [];
   const project = projectQuery.data;
   const graphNodeMap = useMemo(() => {
     const nodes = graphQuery.data?.nodes || [];
@@ -326,7 +363,7 @@ export function ProjectDetailPage() {
   const blockingRelations = graphRelations.filter((item) => item.edge.edge_type === 'blocks');
   const containsRelations = graphRelations.filter((item) => item.edge.edge_type === 'contains');
 
-  const requirementColumns = useMemo<ColumnsType<RequirementRecord>>(
+  const requirementColumns = useMemo<ColumnsType<RequirementTableRecord>>(
     () => [
       {
         title: '需求',
@@ -343,6 +380,12 @@ export function ProjectDetailPage() {
         dataIndex: 'status',
         width: 120,
         render: (status: RequirementRecord['status']) => requirementStatusTag(status),
+      },
+      {
+        title: '类型',
+        dataIndex: 'requirement_type',
+        width: 120,
+        render: (type: RequirementRecord['requirement_type']) => requirementTypeTag(type),
       },
       {
         title: '优先级',
@@ -463,6 +506,10 @@ export function ProjectDetailPage() {
           </Typography.Text>
         </div>
         <Space>
+          <Space size={8}>
+            <Typography.Text type="secondary">显示已归档</Typography.Text>
+            <Switch size="small" checked={showArchived} onChange={setShowArchived} />
+          </Space>
           <Button
             icon={<ReloadOutlined />}
             onClick={() => {
@@ -537,20 +584,20 @@ export function ProjectDetailPage() {
                 <ProfileMarkdownField
                   title="项目背景"
                   name="background"
-                  value={typeof profileBackground === 'string' ? profileBackground : undefined}
+                  value={profileBackground}
                   editing={editingProfileField === 'background'}
                   saving={profileMutation.isPending}
                   onEdit={() => setEditingProfileField('background')}
-                  onCancel={() => setEditingProfileField(null)}
+                  onCancel={() => cancelProfileFieldEdit('background')}
                 />
                 <ProfileMarkdownField
                   title="项目介绍"
                   name="introduction"
-                  value={typeof profileIntroduction === 'string' ? profileIntroduction : undefined}
+                  value={profileIntroduction}
                   editing={editingProfileField === 'introduction'}
                   saving={profileMutation.isPending}
                   onEdit={() => setEditingProfileField('introduction')}
-                  onCancel={() => setEditingProfileField(null)}
+                  onCancel={() => cancelProfileFieldEdit('introduction')}
                 />
               </Form>
             ),
@@ -565,13 +612,16 @@ export function ProjectDetailPage() {
                     新建需求
                   </Button>
                 </div>
-                <Table<RequirementRecord>
+                <Table<RequirementTableRecord>
                   rowKey="id"
                   loading={requirementsQuery.isLoading}
                   columns={requirementColumns}
-                  dataSource={requirements}
+                  dataSource={requirementTree}
+                  expandable={{
+                    indentSize: 24,
+                  }}
                   pagination={{ pageSize: 8, showSizeChanger: true }}
-                  scroll={{ x: 1100 }}
+                  scroll={{ x: 1220 }}
                 />
               </Space>
             ),
@@ -585,7 +635,7 @@ export function ProjectDetailPage() {
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
-                    disabled={requirements.length === 0}
+                    disabled={selectableRequirements.length === 0}
                     onClick={() => setWorkItemModalOpen(true)}
                   >
                     新建项目任务
@@ -714,11 +764,14 @@ export function ProjectDetailPage() {
         <Form<CreateRequirementPayload>
           form={requirementForm}
           layout="vertical"
-          initialValues={{ status: 'draft', priority: 0 }}
+          initialValues={{ requirement_type: 'requirement', status: 'draft', priority: 0 }}
           onFinish={(values) => createRequirementMutation.mutate(values)}
         >
           <Form.Item name="title" label="标题" rules={[{ required: true }]}>
             <Input />
+          </Form.Item>
+          <Form.Item name="requirement_type" label="类型">
+            <Select options={requirementTypeOptions} />
           </Form.Item>
           <Form.Item name="summary" label="摘要">
             <Input.TextArea rows={3} />
@@ -753,7 +806,7 @@ export function ProjectDetailPage() {
           loading={requirementDepsQuery.isLoading}
           value={requirementDepIds}
           onChange={setRequirementDepIds}
-          options={requirements
+          options={selectableRequirements
             .filter((item) => item.id !== requirementDepTarget?.id)
             .map((item) => ({ value: item.id, label: item.title }))}
         />
@@ -763,19 +816,21 @@ export function ProjectDetailPage() {
         title="实现技术总体文档"
         open={Boolean(docTarget)}
         onCancel={() => setDocTarget(null)}
-        onOk={() => docForm.submit()}
-        width={900}
-        confirmLoading={saveDocMutation.isPending}
+        width="min(1280px, calc(100vw - 48px))"
+        style={{ top: 28 }}
+        styles={{ body: technicalOverviewModalBodyStyle }}
+        footer={<Button onClick={() => setDocTarget(null)}>关闭</Button>}
         destroyOnClose
       >
-        <Form<DocFormValues> form={docForm} layout="vertical" onFinish={(values) => saveDocMutation.mutate(values)}>
-          <Form.Item name="title" label="标题">
-            <Input />
-          </Form.Item>
-          <Form.Item name="content" label="内容">
-            <Input.TextArea rows={18} />
-          </Form.Item>
-        </Form>
+        <section style={technicalOverviewPreviewPaneStyle}>
+          <div style={technicalOverviewPreviewHeaderStyle}>
+            <Typography.Text strong>{docQuery.data?.title || '实现技术总体文档'}</Typography.Text>
+            <Tag color="blue">Markdown</Tag>
+          </div>
+          <div style={technicalOverviewPreviewBodyStyle}>
+            <MarkdownPreview value={docQuery.isLoading ? '加载中...' : docQuery.data?.content} />
+          </div>
+        </section>
       </Modal>
 
       <Modal
@@ -810,7 +865,7 @@ export function ProjectDetailPage() {
               },
             ]}
           >
-            <Select options={requirements.map((item) => ({ value: item.id, label: item.title }))} />
+            <Select options={selectableRequirements.map((item) => ({ value: item.id, label: item.title }))} />
           </Form.Item>
           <Form.Item name="title" label="标题" rules={[{ required: true }]}>
             <Input />
@@ -854,7 +909,7 @@ export function ProjectDetailPage() {
           loading={workItemDepsQuery.isLoading}
           value={workItemDepIds}
           onChange={setWorkItemDepIds}
-          options={workItems
+          options={selectableWorkItems
             .filter((item) => item.id !== workItemDepTarget?.id)
             .map((item) => ({ value: item.id, label: item.title }))}
         />
@@ -961,6 +1016,7 @@ function RequirementDetailPreview({ requirement }: { requirement: RequirementRec
       <section style={detailPreviewHeaderStyle}>
         <Space direction="vertical" size={8} style={{ width: '100%' }}>
           <Space size={8} wrap>
+            {requirementTypeTag(requirement.requirement_type)}
             {requirementStatusTag(requirement.status)}
             <Tag>优先级 {requirement.priority}</Tag>
             {requirement.source ? <Tag>{requirement.source}</Tag> : null}
@@ -1094,6 +1150,13 @@ function requirementStatusTag(status: RequirementRecord['status']) {
   return <Tag color={color}>{item?.label || status}</Tag>;
 }
 
+function requirementTypeTag(type?: RequirementRecord['requirement_type']) {
+  const normalized = type || 'requirement';
+  const item = requirementTypeOptions.find((option) => option.value === normalized);
+  const color = normalized === 'bug_fix' ? 'red' : normalized === 'change' ? 'orange' : 'geekblue';
+  return <Tag color={color}>{item?.label || normalized}</Tag>;
+}
+
 function workItemStatusTag(status: ProjectWorkItemRecord['status']) {
   const item = workItemStatusDisplayOptions.find((option) => option.value === status);
   const color =
@@ -1105,255 +1168,6 @@ function workItemStatusTag(status: ProjectWorkItemRecord['status']) {
           ? 'default'
           : 'processing';
   return <Tag color={color}>{item?.label || status}</Tag>;
-}
-
-function MarkdownPreviewSection({ title, value }: { title: string; value?: string | null }) {
-  return (
-    <section style={markdownSectionStyle}>
-      <div style={markdownSectionHeaderStyle}>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          {title}
-        </Typography.Title>
-        <Tag color="blue">Markdown</Tag>
-      </div>
-      <MarkdownPreview value={value} />
-    </section>
-  );
-}
-
-function MarkdownPreview({ value }: { value?: string | null }) {
-  const text = value?.trim();
-  if (!text) {
-    return (
-      <div style={markdownEmptyStyle}>
-        <Typography.Text type="secondary">暂无内容</Typography.Text>
-      </div>
-    );
-  }
-
-  const blocks = parseMarkdownBlocks(text);
-  return (
-    <div style={markdownPreviewStyle}>
-      {blocks.map((block, index) => renderMarkdownBlock(block, index))}
-    </div>
-  );
-}
-
-function parseMarkdownBlocks(text: string): MarkdownPreviewBlock[] {
-  const blocks: MarkdownPreviewBlock[] = [];
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  let paragraphLines: string[] = [];
-  let listType: 'ul' | 'ol' | null = null;
-  let listItems: string[] = [];
-  let quoteLines: string[] = [];
-  let inCode = false;
-  let codeLanguage = '';
-  let codeLines: string[] = [];
-
-  const flushParagraph = () => {
-    if (paragraphLines.length > 0) {
-      blocks.push({ type: 'paragraph', text: paragraphLines.join('\n').trim() });
-      paragraphLines = [];
-    }
-  };
-  const flushList = () => {
-    if (listType && listItems.length > 0) {
-      blocks.push({ type: listType, items: listItems });
-      listType = null;
-      listItems = [];
-    }
-  };
-  const flushQuote = () => {
-    if (quoteLines.length > 0) {
-      blocks.push({ type: 'blockquote', text: quoteLines.join('\n').trim() });
-      quoteLines = [];
-    }
-  };
-  const flushTextBlocks = () => {
-    flushParagraph();
-    flushList();
-    flushQuote();
-  };
-
-  for (const line of lines) {
-    const fenceMatch = line.match(/^\s*```(.*)$/);
-    if (fenceMatch) {
-      if (inCode) {
-        blocks.push({ type: 'code', language: codeLanguage || undefined, text: codeLines.join('\n') });
-        inCode = false;
-        codeLanguage = '';
-        codeLines = [];
-      } else {
-        flushTextBlocks();
-        inCode = true;
-        codeLanguage = fenceMatch[1].trim();
-      }
-      continue;
-    }
-
-    if (inCode) {
-      codeLines.push(line);
-      continue;
-    }
-
-    if (!line.trim()) {
-      flushTextBlocks();
-      continue;
-    }
-
-    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
-    if (headingMatch) {
-      flushTextBlocks();
-      blocks.push({
-        type: 'heading',
-        level: headingMatch[1].length as 1 | 2 | 3 | 4,
-        text: headingMatch[2].trim(),
-      });
-      continue;
-    }
-
-    const unorderedMatch = line.match(/^\s*[-*+]\s+(.+)$/);
-    if (unorderedMatch) {
-      flushParagraph();
-      flushQuote();
-      if (listType !== 'ul') {
-        flushList();
-        listType = 'ul';
-      }
-      listItems.push(unorderedMatch[1].trim());
-      continue;
-    }
-
-    const orderedMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
-    if (orderedMatch) {
-      flushParagraph();
-      flushQuote();
-      if (listType !== 'ol') {
-        flushList();
-        listType = 'ol';
-      }
-      listItems.push(orderedMatch[1].trim());
-      continue;
-    }
-
-    const quoteMatch = line.match(/^\s*>\s?(.*)$/);
-    if (quoteMatch) {
-      flushParagraph();
-      flushList();
-      quoteLines.push(quoteMatch[1]);
-      continue;
-    }
-
-    flushList();
-    flushQuote();
-    paragraphLines.push(line);
-  }
-
-  if (inCode) {
-    blocks.push({ type: 'code', language: codeLanguage || undefined, text: codeLines.join('\n') });
-  }
-  flushTextBlocks();
-  return blocks;
-}
-
-function renderMarkdownBlock(block: MarkdownPreviewBlock, index: number) {
-  if (block.type === 'heading') {
-    const level = Math.min(block.level + 2, 5) as 3 | 4 | 5;
-    return (
-      <Typography.Title key={index} level={level} style={markdownHeadingStyle}>
-        {renderInlineMarkdown(block.text)}
-      </Typography.Title>
-    );
-  }
-
-  if (block.type === 'paragraph') {
-    return (
-      <Typography.Paragraph key={index} style={markdownParagraphStyle}>
-        {renderInlineMarkdown(block.text)}
-      </Typography.Paragraph>
-    );
-  }
-
-  if (block.type === 'ul') {
-    return (
-      <ul key={index} style={markdownListStyle}>
-        {block.items.map((item, itemIndex) => (
-          <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
-        ))}
-      </ul>
-    );
-  }
-
-  if (block.type === 'ol') {
-    return (
-      <ol key={index} style={markdownListStyle}>
-        {block.items.map((item, itemIndex) => (
-          <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
-        ))}
-      </ol>
-    );
-  }
-
-  if (block.type === 'blockquote') {
-    return (
-      <blockquote key={index} style={markdownBlockquoteStyle}>
-        {block.text.split('\n').map((line, lineIndex) => (
-          <Fragment key={lineIndex}>
-            {lineIndex > 0 ? <br /> : null}
-            {renderInlineMarkdown(line)}
-          </Fragment>
-        ))}
-      </blockquote>
-    );
-  }
-
-  if (block.type === 'code') {
-    return (
-      <pre key={index} style={markdownCodeBlockStyle}>
-        {block.language ? <div style={markdownCodeLanguageStyle}>{block.language}</div> : null}
-        <code>{block.text}</code>
-      </pre>
-    );
-  }
-
-  return null;
-}
-
-function renderInlineMarkdown(text: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-    const token = match[0];
-    const key = `${match.index}-${token.length}`;
-    const linkMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-    if (token.startsWith('`')) {
-      nodes.push(
-        <Typography.Text key={key} code>
-          {token.slice(1, -1)}
-        </Typography.Text>,
-      );
-    } else if (token.startsWith('**')) {
-      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
-    } else if (linkMatch) {
-      nodes.push(
-        <Typography.Link key={key} href={linkMatch[2]} target="_blank" rel="noreferrer">
-          {linkMatch[1]}
-        </Typography.Link>,
-      );
-    }
-    lastIndex = pattern.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-  return nodes;
 }
 
 function formatDateTime(value?: string | null) {
@@ -1440,73 +1254,31 @@ const markdownSectionsStyle: CSSProperties = {
   padding: '16px 32px 32px',
 };
 
-const markdownSectionStyle: CSSProperties = {
-  background: '#fff',
-  border: '1px solid #eceff3',
+const technicalOverviewModalBodyStyle: CSSProperties = {
+  maxHeight: 'calc(100vh - 180px)',
+  overflowY: 'auto',
+  paddingTop: 20,
+};
+
+const technicalOverviewPreviewPaneStyle: CSSProperties = {
+  minHeight: 620,
+  border: '1px solid #e5e7eb',
   borderRadius: 8,
+  background: '#fff',
   overflow: 'hidden',
 };
 
-const markdownSectionHeaderStyle: CSSProperties = {
+const technicalOverviewPreviewHeaderStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 12,
-  padding: '14px 18px',
+  padding: '11px 16px',
   borderBottom: '1px solid #eef0f3',
+  background: '#fafafa',
 };
 
-const markdownPreviewStyle: CSSProperties = {
-  padding: '18px 22px',
-  color: '#1f2328',
-  fontSize: 14,
-  lineHeight: 1.75,
-  overflowX: 'auto',
-};
-
-const markdownEmptyStyle: CSSProperties = {
-  padding: '24px 22px',
-};
-
-const markdownHeadingStyle: CSSProperties = {
-  marginTop: 18,
-  marginBottom: 8,
-  lineHeight: 1.35,
-  letterSpacing: 0,
-};
-
-const markdownParagraphStyle: CSSProperties = {
-  marginBottom: 12,
-  whiteSpace: 'pre-wrap',
-};
-
-const markdownListStyle: CSSProperties = {
-  marginTop: 0,
-  marginBottom: 12,
-  paddingLeft: 24,
-};
-
-const markdownBlockquoteStyle: CSSProperties = {
-  margin: '0 0 12px',
-  padding: '10px 14px',
-  borderLeft: '4px solid #d6e4ff',
-  background: '#f5f8ff',
-  color: '#475467',
-};
-
-const markdownCodeBlockStyle: CSSProperties = {
-  margin: '0 0 12px',
-  padding: '14px 16px',
-  borderRadius: 6,
-  background: '#111827',
-  color: '#f9fafb',
-  overflowX: 'auto',
-  fontSize: 13,
-  lineHeight: 1.65,
-};
-
-const markdownCodeLanguageStyle: CSSProperties = {
-  marginBottom: 8,
-  color: '#9ca3af',
-  fontSize: 12,
+const technicalOverviewPreviewBodyStyle: CSSProperties = {
+  maxHeight: 560,
+  overflowY: 'auto',
 };

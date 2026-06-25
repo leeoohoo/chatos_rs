@@ -46,7 +46,8 @@ impl RunService {
                     );
                 }
             };
-            self.persist_mcp_runtime_snapshot(task, run, &runtime).await;
+            self.persist_mcp_runtime_snapshot(task, run, &runtime_config, &runtime)
+                .await;
             append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
             let mut completion_gate_attempts = 0usize;
             loop {
@@ -170,6 +171,7 @@ impl RunService {
         &self,
         task: &TaskRecord,
         run: &TaskRunRecord,
+        runtime_config: &TaskRuntimeConfig,
         runtime: &TaskRuntime,
     ) {
         if !task.mcp_config.enabled {
@@ -196,7 +198,7 @@ impl RunService {
         let payload = json!({
             "task_id": task.id,
             "run_id": run.id,
-            "mcp_init_mode": task.mcp_config.init_mode,
+            "mcp_enabled": runtime_config.mcp_init_mode != chatos_ai_runtime::TaskMcpInitMode::Disabled,
             "external_mcp_config_ids": task.mcp_config.external_mcp_config_ids,
             "available_tool_count": tool_names.len(),
             "available_tools": tool_names,

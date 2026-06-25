@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS requirements (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   parent_requirement_id TEXT,
+  requirement_type TEXT NOT NULL DEFAULT 'requirement',
   title TEXT NOT NULL,
   summary TEXT,
   detail TEXT,

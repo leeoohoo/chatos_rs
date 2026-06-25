@@ -1,7 +1,4 @@
 use super::*;
-use crate::config::AppConfig;
-use crate::models::{normalize_project_id, PUBLIC_PROJECT_ID};
-
 pub(super) async fn prepare_model_execution(
     service: &RunService,
     task: &TaskRecord,
@@ -19,6 +16,13 @@ pub(super) async fn prepare_model_execution(
         prerequisite_context,
         task.mcp_config.locale(),
     );
+    let mut prefixed_input_items =
+        project_management_skill_prefixed_input_items(service, task, task.mcp_config.locale())
+            .await;
+    prefixed_input_items.extend(external_mcp_prefixed_input_items(
+        loaded_external_mcp.summaries.as_slice(),
+        task.mcp_config.locale(),
+    ));
     let metadata = build_execution_metadata(task, run, model_config);
     let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
     let mut run_spec = build_run_spec(
@@ -29,10 +33,7 @@ pub(super) async fn prepare_model_execution(
         prompt,
         metadata.clone(),
         task_process_logging_enabled,
-        external_mcp_prefixed_input_items(
-            loaded_external_mcp.summaries.as_slice(),
-            task.mcp_config.locale(),
-        ),
+        prefixed_input_items,
     );
 
     let memory_scope = build_memory_scope(service, task);
@@ -148,85 +149,8 @@ fn load_system_http_mcp_servers(
     service: &RunService,
     task: &TaskRecord,
 ) -> Result<Vec<McpHttpServer>, String> {
-    let mut servers = Vec::new();
-    if let Some(server) = build_chatos_plan_project_management_server(&service.config, task)? {
-        servers.push(server);
-    }
-    Ok(servers)
-}
-
-fn build_chatos_plan_project_management_server(
-    config: &AppConfig,
-    task: &TaskRecord,
-) -> Result<Option<McpHttpServer>, String> {
-    if !is_chatos_plan_task(task) {
-        return Ok(None);
-    }
-    let base_url = config
-        .project_service_base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "project service base url is not configured".to_string())?;
-    let sync_secret = config
-        .project_service_sync_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "project service sync secret is not configured".to_string())?;
-    let project_id = normalize_project_id(Some(task.project_id.clone()));
-    if project_id == PUBLIC_PROJECT_ID {
-        return Err("Chatos Plan mode requires concrete project_id".to_string());
-    }
-    let owner_user_id = task
-        .owner_user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "plan task missing owner_user_id".to_string())?;
-    let mut headers = std::collections::HashMap::new();
-    headers.insert(
-        "X-Project-Service-Sync-Secret".to_string(),
-        sync_secret.to_string(),
-    );
-    headers.insert(
-        "X-Task-Runner-Owner-User-Id".to_string(),
-        owner_user_id.to_string(),
-    );
-    if let Some(username) = task
-        .owner_username
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        headers.insert(
-            "X-Task-Runner-Owner-Username".to_string(),
-            username.to_string(),
-        );
-    }
-    if let Some(display_name) = task
-        .owner_display_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        headers.insert(
-            "X-Task-Runner-Owner-Display-Name".to_string(),
-            display_name.to_string(),
-        );
-    }
-    headers.insert("X-Chatos-Project-Id".to_string(), project_id);
-    headers.insert(
-        "X-Task-Runner-Task-Profile".to_string(),
-        crate::models::TASK_PROFILE_CHATOS_PLAN.to_string(),
-    );
-    Ok(Some(
-        McpHttpServer::new(
-            PROJECT_MANAGEMENT_MCP_SERVER_NAME,
-            format!("{}/mcp", base_url.trim_end_matches('/')),
-        )
-        .with_headers(headers),
-    ))
+    let _ = (service, task);
+    Ok(Vec::new())
 }
 
 fn external_mcp_prefixed_input_items(
@@ -265,6 +189,67 @@ fn external_mcp_prefixed_input_items(
             "text": text
         }]
     })]
+}
+
+async fn project_management_skill_prefixed_input_items(
+    service: &RunService,
+    task: &TaskRecord,
+    locale: BuiltinMcpPromptLocale,
+) -> Vec<Value> {
+    if !is_chatos_plan_task(task) {
+        return Vec::new();
+    }
+    match crate::services::project_management_api_client::get_project_management_skill(
+        &service.config,
+        locale,
+    )
+    .await
+    {
+        Ok(Some(skill)) => project_management_skill_prefixed_input_item(skill, locale)
+            .into_iter()
+            .collect(),
+        Ok(None) => Vec::new(),
+        Err(err) => {
+            warn!(
+                task_id = task.id.as_str(),
+                "failed to load project management skill for plan task: {err}"
+            );
+            Vec::new()
+        }
+    }
+}
+
+fn project_management_skill_prefixed_input_item(
+    skill: crate::services::project_management_api_client::ProjectManagementSkillDocument,
+    locale: BuiltinMcpPromptLocale,
+) -> Option<Value> {
+    let crate::services::project_management_api_client::ProjectManagementSkillDocument {
+        name,
+        locale: skill_locale,
+        content,
+    } = skill;
+    let content = content.trim();
+    if content.is_empty() {
+        return None;
+    }
+    let text = if locale.is_english() {
+        format!(
+            "[Project Management MCP Skill]\nTask Runner loaded this skill from the Project Management service. Follow it whenever you use `project_management_service_*` tools. The skill may mention unprefixed tool names such as `list_project_tasks`; in this Task Runner run, call the exposed prefixed form such as `project_management_service_list_project_tasks`. Skill: {name} ({skill_locale}).\n\n{content}"
+        )
+    } else {
+        format!(
+            "[Project Management MCP Skill]\nTask Runner 已从 Project Management 服务加载以下 skill。只要使用 `project_management_service_*` 工具，就必须遵循它。skill 中可能写的是 `list_project_tasks` 这类未加服务前缀的工具名；在本次 Task Runner 运行里，要调用实际暴露的前缀形式，例如 `project_management_service_list_project_tasks`。Skill: {name} ({skill_locale})。\n\n{content}"
+        )
+    };
+
+    Some(json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": text
+        }]
+    }))
 }
 
 fn build_execution_metadata(
@@ -421,6 +406,7 @@ async fn build_mcp_builder_parts(
     );
     let mut builtin_servers =
         builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
+    apply_project_management_builtin_context(&mut builtin_servers, task);
     if is_chatos_plan_task(task) {
         builtin_servers.push(
             chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
@@ -459,6 +445,31 @@ fn is_chatos_plan_task(task: &TaskRecord) -> bool {
         .eq_ignore_ascii_case(crate::models::TASK_PROFILE_CHATOS_PLAN)
 }
 
+fn apply_project_management_builtin_context(
+    builtin_servers: &mut [chatos_mcp_runtime::McpBuiltinServer],
+    task: &TaskRecord,
+) {
+    let owner_user_id = normalized_task_owner_user_id(task);
+    let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
+    for server in builtin_servers {
+        if server.name != chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME {
+            continue;
+        }
+        server.user_id = owner_user_id.clone();
+        server.project_id = Some(project_id.clone());
+    }
+}
+
+fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
+    task.owner_user_id
+        .as_deref()
+        .or(task.creator_user_id.as_deref())
+        .or(Some(task.subject_id.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 async fn persist_builtin_init_errors(
     service: &RunService,
     run: &TaskRunRecord,
@@ -489,66 +500,102 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
-    use crate::config::StoreMode;
+    use crate::config::{AppConfig, StoreMode};
     use crate::models::{now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus};
+    use crate::services::project_management_api_client::ProjectManagementSkillDocument;
+    use serde_json::json;
+    use serde_json::Value;
+    use tokio::sync::broadcast;
 
     use super::*;
 
     #[test]
-    fn chatos_plan_project_management_server_includes_required_headers() {
+    fn project_management_skill_prefixed_item_wraps_service_skill() {
+        let item = project_management_skill_prefixed_input_item(
+            ProjectManagementSkillDocument {
+                name: "project-management-mcp-agent-zh-cn".to_string(),
+                locale: "zh-CN".to_string(),
+                content: "# Project Management MCP Agent Skill\n\nbody".to_string(),
+            },
+            BuiltinMcpPromptLocale::ZhCn,
+        )
+        .expect("prefixed item");
+        let text = item
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .expect("system text");
+
+        assert!(text.contains("Project Management 服务加载"));
+        assert!(text.contains("project-management-mcp-agent-zh-cn"));
+        assert!(text.contains("# Project Management MCP Agent Skill"));
+    }
+
+    #[tokio::test]
+    async fn chatos_plan_builtin_servers_include_project_management_provider() {
         let config = test_config();
+        let service = test_run_service(config);
         let task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, "project-1");
+        let run = sample_run(&task);
+        let task_service = TaskService::new(service.config.clone(), service.store.clone());
 
-        let server = build_chatos_plan_project_management_server(&config, &task)
-            .expect("build server")
-            .expect("plan server");
+        let (builtin_servers, builtin_registry) =
+            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service).await;
+        let server = builtin_servers
+            .iter()
+            .find(|server| server.name == chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME)
+            .expect("project management builtin server");
 
-        assert_eq!(server.name, PROJECT_MANAGEMENT_MCP_SERVER_NAME);
-        assert_eq!(server.url, "http://127.0.0.1:39210/mcp");
-        let headers = server.headers.expect("headers");
         assert_eq!(
-            headers
-                .get("X-Project-Service-Sync-Secret")
-                .map(String::as_str),
-            Some("sync-secret")
+            server.kind.as_str(),
+            chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement.kind_name()
         );
-        assert_eq!(
-            headers
-                .get("X-Task-Runner-Owner-User-Id")
-                .map(String::as_str),
-            Some("owner-1")
-        );
-        assert_eq!(
-            headers.get("X-Chatos-Project-Id").map(String::as_str),
-            Some("project-1")
-        );
-        assert_eq!(
-            headers
-                .get("X-Task-Runner-Task-Profile")
-                .map(String::as_str),
-            Some(crate::models::TASK_PROFILE_CHATOS_PLAN)
-        );
+        assert_eq!(server.user_id.as_deref(), Some("owner-1"));
+        assert_eq!(server.project_id.as_deref(), Some("project-1"));
+
+        let executor = chatos_mcp_runtime::McpExecutorBuilder::new()
+            .with_builtin_servers(builtin_servers)
+            .with_builtin_registry(builtin_registry)
+            .build_builtin_only()
+            .expect("builtin executor");
+        let tool_names = executor
+            .available_tools()
+            .into_iter()
+            .filter_map(|tool| {
+                tool.get("name")
+                    .and_then(|name| name.as_str())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>();
+        assert!(tool_names
+            .iter()
+            .any(|name| name == "project_management_service_create_requirement"));
     }
 
-    #[test]
-    fn chatos_plan_project_management_server_requires_concrete_project() {
+    #[tokio::test]
+    async fn default_task_does_not_include_project_management_builtin() {
         let config = test_config();
-        let task = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, PUBLIC_PROJECT_ID);
-
-        let err = build_chatos_plan_project_management_server(&config, &task)
-            .expect_err("public project should fail");
-
-        assert_eq!(err, "Chatos Plan mode requires concrete project_id");
-    }
-
-    #[test]
-    fn default_task_does_not_inject_project_management_server() {
-        let config = test_config();
+        let service = test_run_service(config);
         let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let run = sample_run(&task);
+        let task_service = TaskService::new(service.config.clone(), service.store.clone());
 
-        assert!(build_chatos_plan_project_management_server(&config, &task)
-            .expect("default task build")
-            .is_none());
+        let system_servers = load_system_http_mcp_servers(&service, &task).expect("system servers");
+        assert!(system_servers.is_empty());
+
+        let (builtin_servers, builtin_registry) =
+            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service).await;
+        assert!(builtin_servers
+            .iter()
+            .all(|server| server.name != chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME));
+        let executor = chatos_mcp_runtime::McpExecutorBuilder::new()
+            .with_builtin_servers(builtin_servers)
+            .with_builtin_registry(builtin_registry)
+            .build_builtin_only()
+            .expect("builtin executor");
+        assert!(executor.available_tools().into_iter().all(|tool| tool
+            .get("name")
+            .and_then(|name| name.as_str())
+            .is_none_or(|name| !name.starts_with("project_management_service_"))));
     }
 
     fn test_config() -> AppConfig {
@@ -582,6 +629,17 @@ mod tests {
             project_service_sync_secret: Some("sync-secret".to_string()),
             project_service_request_timeout: Duration::from_millis(5_000),
         }
+    }
+
+    fn test_run_service(config: AppConfig) -> RunService {
+        let (run_event_sender, _) = broadcast::channel(512);
+        let store =
+            crate::store::AppStore::InMemory(crate::store::InMemoryStore::new(run_event_sender));
+        RunService::new(
+            config,
+            store.clone(),
+            crate::ask_user_prompt_service::AskUserPromptService::new(store),
+        )
     }
 
     fn sample_task(task_profile: &str, project_id: &str) -> TaskRecord {
@@ -622,6 +680,29 @@ mod tests {
             created_at: now.clone(),
             updated_at: now,
             deleted_at: None,
+        }
+    }
+
+    fn sample_run(task: &TaskRecord) -> TaskRunRecord {
+        let now = now_rfc3339();
+        TaskRunRecord {
+            id: "run-1".to_string(),
+            task_id: task.id.clone(),
+            model_config_id: "model-1".to_string(),
+            memory_thread_id: task.memory_thread_id.clone(),
+            status: crate::models::TaskRunStatus::Queued,
+            started_at: None,
+            finished_at: None,
+            input_snapshot: json!({}),
+            context_snapshot: None,
+            result_summary: None,
+            error_message: None,
+            usage: None,
+            report: None,
+            cancel_requested: false,
+            summary_job_run_id: None,
+            created_at: now.clone(),
+            updated_at: now,
         }
     }
 }

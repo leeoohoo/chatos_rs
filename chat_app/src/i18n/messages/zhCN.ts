@@ -491,6 +491,7 @@ export const zhCN: MessageDictionary = {
   'projectExplorer.emptyProject': '请选择一个项目查看文件',
   'projectExplorer.tab.files': '项目目录',
   'projectExplorer.tab.team': '用户消息',
+  'projectExplorer.tab.plan': 'Plan',
   'projectExplorer.tab.settings': '项目设置',
   'projectContact.title': '项目联系人',
   'projectContact.description': '每个项目只绑定一个联系人；聊天、项目上下文和后台运行默认使用这个联系人。',

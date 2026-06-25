@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::normalize_task_profile;
 
 impl TaskService {
     pub async fn update_task(
@@ -60,6 +61,9 @@ impl TaskService {
             } else {
                 task.default_model_config_id = None;
             }
+        }
+        if let Some(task_profile) = patch.task_profile {
+            task.task_profile = normalize_task_profile(Some(task_profile.as_str()))?;
         }
         if let Some(schedule) = patch.schedule {
             task.schedule = sanitize_task_schedule_config(schedule, Some(&task.schedule))?;

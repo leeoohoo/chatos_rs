@@ -58,7 +58,7 @@ impl Default for TaskMcpConfig {
     fn default() -> Self {
         Self {
             enabled: task_mcp_enabled_default(),
-            init_mode: TaskMcpInitMode::BuiltinOnly,
+            init_mode: TaskMcpInitMode::Full,
             builtin_prompt_mode: TaskBuiltinMcpPromptMode::Effective,
             builtin_prompt_locale: task_mcp_locale_default(),
             enabled_builtin_kinds: task_mcp_builtin_kinds_default(),
@@ -86,6 +86,7 @@ fn task_mcp_locale_default() -> String {
 fn task_mcp_builtin_kinds_default() -> Vec<String> {
     configurable_builtin_kinds()
         .into_iter()
+        .filter(|kind| !matches!(kind, chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement))
         .map(|kind| kind.kind_name().to_string())
         .collect()
 }

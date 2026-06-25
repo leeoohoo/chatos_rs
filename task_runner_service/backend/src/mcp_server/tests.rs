@@ -280,9 +280,11 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
     assert!(
         chatos_async_planner::ensure_planner_required_fields(&builtin_without_model_id).is_ok()
     );
-    let planned_builtin =
-        chatos_async_planner::planner_root_create_request(builtin_without_model_id.clone())
-            .expect("planner request");
+    let planned_builtin = chatos_async_planner::planner_root_create_request(
+        builtin_without_model_id.clone(),
+        &McpRequestContext::default(),
+    )
+    .expect("planner request");
     let planned_builtin_kinds = planned_builtin
         .mcp_config
         .expect("mcp config")
@@ -301,9 +303,11 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
     assert!(
         chatos_async_planner::ensure_planner_required_fields(&external_without_model_id).is_ok()
     );
-    let planned_external =
-        chatos_async_planner::planner_root_create_request(external_without_model_id)
-            .expect("planner request");
+    let planned_external = chatos_async_planner::planner_root_create_request(
+        external_without_model_id,
+        &McpRequestContext::default(),
+    )
+    .expect("planner request");
     let planned_external_mcp = planned_external.mcp_config.expect("mcp config");
     assert_eq!(
         planned_external_mcp.external_mcp_config_ids,
@@ -320,9 +324,11 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
         ..builtin_without_model_id.clone()
     };
     assert!(chatos_async_planner::ensure_planner_required_fields(&no_explicit_tool_source).is_ok());
-    let planned_default =
-        chatos_async_planner::planner_root_create_request(no_explicit_tool_source)
-            .expect("planner request");
+    let planned_default = chatos_async_planner::planner_root_create_request(
+        no_explicit_tool_source,
+        &McpRequestContext::default(),
+    )
+    .expect("planner request");
     assert_eq!(
         planned_default
             .mcp_config
@@ -342,7 +348,8 @@ fn async_planner_tasks_allow_free_mcp_combinations_and_auto_task_manager() {
     };
     assert!(chatos_async_planner::ensure_planner_required_fields(&combined).is_ok());
     let planned_combined =
-        chatos_async_planner::planner_root_create_request(combined).expect("planner request");
+        chatos_async_planner::planner_root_create_request(combined, &McpRequestContext::default())
+            .expect("planner request");
     let planned_combined_mcp = planned_combined.mcp_config.expect("mcp config");
     assert!(planned_combined_mcp
         .enabled_builtin_kinds
@@ -448,7 +455,8 @@ fn async_planner_update_schema_hides_task_manager_from_builtin_selection() {
 fn async_planner_root_tasks_are_forced_to_contact_async_schedule() {
     let request = valid_planner_create_request();
     let planned =
-        chatos_async_planner::planner_root_create_request(request).expect("planner request");
+        chatos_async_planner::planner_root_create_request(request, &McpRequestContext::default())
+            .expect("planner request");
     assert_eq!(
         planned.schedule.expect("schedule").mode,
         TaskScheduleMode::ContactAsync
@@ -458,8 +466,11 @@ fn async_planner_root_tasks_are_forced_to_contact_async_schedule() {
 #[test]
 fn async_planner_prerequisite_tasks_are_forced_to_contact_async_schedule() {
     let request = valid_planner_create_request();
-    let planned = chatos_async_planner::planner_prerequisite_create_request(request)
-        .expect("planner request");
+    let planned = chatos_async_planner::planner_prerequisite_create_request(
+        request,
+        &McpRequestContext::default(),
+    )
+    .expect("planner request");
     assert_eq!(
         planned.schedule.expect("schedule").mode,
         TaskScheduleMode::ContactAsync
@@ -909,6 +920,7 @@ async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
+                builtin_prompt_locale: Some("en-US".to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -930,6 +942,7 @@ async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
     assert_eq!(task.status, TaskStatus::Ready);
     assert_eq!(task.schedule.mode, TaskScheduleMode::ContactAsync);
     assert!(task.mcp_config.enabled);
+    assert_eq!(task.mcp_config.builtin_prompt_locale, "en-US");
 }
 
 #[tokio::test]

@@ -1,8 +1,9 @@
-import React, { useState, type ComponentProps } from 'react';
+import React, { useMemo, useState, type ComponentProps } from 'react';
 
 import { MessageList } from '../MessageList';
 import { MessageTaskDrawer } from '../messageTasks/MessageTaskDrawer';
 import ConversationUserMessagesSidebar from '../userMessages/ConversationUserMessagesSidebar';
+import { getLatestUserMessageRefreshKey } from '../userMessages/userMessageRefreshKey';
 import { useUserMessageHistoryAnchor } from '../userMessages/useUserMessageHistoryAnchor';
 import ChatComposerPanel from './ChatComposerPanel';
 import ConversationAskUserPromptPanel from './ConversationAskUserPromptPanel';
@@ -242,6 +243,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   const [taskMessage, setTaskMessage] = useState<Message | null>(null);
   const userMessageSidebarVisible = Boolean(currentSession?.id && currentContactId);
   const planModeAvailable = hasConcreteProjectContext(currentProjectIdForMemory);
+  const userMessagesRefreshKey = useMemo(
+    () => getLatestUserMessageRefreshKey(messages, currentSession?.id || null),
+    [currentSession?.id, messages],
+  );
   const {
     anchorMessageId,
     anchorRequestKey,
@@ -260,6 +265,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
       {userMessageSidebarVisible ? (
         <ConversationUserMessagesSidebar
           sessionId={currentSession?.id || null}
+          refreshKey={userMessagesRefreshKey}
           className="w-[360px]"
           summaryActive={sessionSummaryPaneVisible}
           runtimeContextActive={Boolean(

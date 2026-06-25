@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
@@ -6,6 +6,7 @@ import type { Message, Project } from '../../types';
 import TurnRuntimeContextDrawer from '../chatInterface/TurnRuntimeContextDrawer';
 import { MessageTaskDrawer } from '../messageTasks/MessageTaskDrawer';
 import ConversationUserMessagesSidebar from '../userMessages/ConversationUserMessagesSidebar';
+import { getLatestUserMessageRefreshKey } from '../userMessages/userMessageRefreshKey';
 import { useUserMessageHistoryAnchor } from '../userMessages/useUserMessageHistoryAnchor';
 import TeamMemberWorkspace from './teamMembers/TeamMemberWorkspace';
 import { useTeamMembersPaneModel } from './teamMembers/useTeamMembersPaneModel';
@@ -23,7 +24,11 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     runtimeContextDrawerProps,
     userMessageSidebarActions,
   } = useTeamMembersPaneModel({ project });
-  const activeSessionId = project.latestSessionId || null;
+  const activeSessionId = workspaceProps.selectedProjectSession?.id || null;
+  const userMessagesRefreshKey = useMemo(
+    () => getLatestUserMessageRefreshKey(workspaceProps.messages, activeSessionId),
+    [activeSessionId, workspaceProps.messages],
+  );
   const {
     anchorMessageId,
     anchorRequestKey,
@@ -49,6 +54,8 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     <div className={cn('flex h-full overflow-hidden', className)}>
       <ConversationUserMessagesSidebar
         sessionId={activeSessionId}
+        hasProjectContact={Boolean(workspaceProps.selectedContact)}
+        refreshKey={userMessagesRefreshKey}
         className="w-[400px]"
         summaryActive={userMessageSidebarActions.summaryActive}
         runtimeContextActive={userMessageSidebarActions.runtimeContextActive}

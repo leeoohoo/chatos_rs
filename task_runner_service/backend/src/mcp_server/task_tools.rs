@@ -93,7 +93,7 @@ impl TaskRunnerMcpService {
                     }
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
-                    input = planner_root_create_request(input)?;
+                    input = planner_root_create_request(input, request_context)?;
                 } else {
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;

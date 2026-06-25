@@ -14,9 +14,10 @@ pub(in crate::mcp_server) fn planner_update_task_request(
 
 pub(in crate::mcp_server) fn planner_root_create_request(
     mut input: CreateTaskRequest,
+    request_context: &McpRequestContext,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
-    ensure_system_injected_builtin_mcp(&mut input);
+    ensure_system_injected_builtin_mcp(&mut input, request_context);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -48,9 +49,10 @@ pub(in crate::mcp_server) fn require_chatos_async_source_context(
 
 pub(in crate::mcp_server) fn planner_prerequisite_create_request(
     mut input: CreateTaskRequest,
+    request_context: &McpRequestContext,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
-    ensure_system_injected_builtin_mcp(&mut input);
+    ensure_system_injected_builtin_mcp(&mut input, request_context);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -65,7 +67,10 @@ pub(in crate::mcp_server) fn ensure_planner_required_fields(
     Ok(())
 }
 
-fn ensure_system_injected_builtin_mcp(input: &mut CreateTaskRequest) {
+fn ensure_system_injected_builtin_mcp(
+    input: &mut CreateTaskRequest,
+    request_context: &McpRequestContext,
+) {
     let defaults = TaskMcpConfig::default();
     let config = input.mcp_config.get_or_insert_with(|| TaskMcpConfig {
         enabled_builtin_kinds: Vec::new(),
@@ -74,7 +79,7 @@ fn ensure_system_injected_builtin_mcp(input: &mut CreateTaskRequest) {
     config.enabled = true;
     config.init_mode = defaults.init_mode;
     config.builtin_prompt_mode = defaults.builtin_prompt_mode;
-    config.builtin_prompt_locale = defaults.builtin_prompt_locale;
+    config.builtin_prompt_locale = request_context.requested_builtin_prompt_locale();
     ensure_system_injected_builtin_config(config);
 }
 

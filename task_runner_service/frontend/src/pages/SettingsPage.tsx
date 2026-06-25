@@ -76,7 +76,7 @@ export function SettingsPage() {
     queryFn: () =>
       api.previewMcpPrompt({
         enabled: true,
-        init_mode: 'builtin_only',
+        init_mode: 'full',
         builtin_prompt_mode: 'effective',
         builtin_prompt_locale: internalPromptLocale,
       }),
@@ -488,7 +488,6 @@ export function SettingsPage() {
 
           <Space wrap>
             <Tag color="success">{t('common.enabled')}</Tag>
-            <Tag>builtin_only</Tag>
             <Tag color="blue">effective</Tag>
             <Tag>{internalPromptLocale}</Tag>
             <Tag color="processing">{t('settings.runtimeDefaultPreset')}</Tag>

@@ -8,6 +8,7 @@ export type RequirementStatus =
   | 'done'
   | 'cancelled'
   | 'archived';
+export type RequirementType = 'requirement' | 'change' | 'bug_fix';
 export type ProjectWorkItemStatus =
   | 'todo'
   | 'ready'
@@ -45,6 +46,14 @@ export interface AgentAccountListItem {
   created_at: string;
   updated_at: string;
   last_login_at?: string | null;
+}
+
+export type ProjectManagementSkillLocale = 'zh-CN' | 'en-US';
+
+export interface ProjectManagementSkillResponse {
+  name: string;
+  locale: ProjectManagementSkillLocale;
+  content: string;
 }
 
 export interface ProjectRecord {
@@ -88,6 +97,7 @@ export interface RequirementRecord {
   id: string;
   project_id: string;
   parent_requirement_id?: string | null;
+  requirement_type: RequirementType;
   title: string;
   summary?: string | null;
   detail?: string | null;
@@ -105,6 +115,7 @@ export interface RequirementRecord {
 
 export interface CreateRequirementPayload {
   parent_requirement_id?: string;
+  requirement_type?: RequirementType;
   title: string;
   summary?: string;
   detail?: string;

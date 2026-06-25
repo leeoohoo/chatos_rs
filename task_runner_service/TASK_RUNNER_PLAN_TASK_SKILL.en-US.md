@@ -31,6 +31,7 @@ You are in Chatos Plan mode.
   - project tasks
   - task dependencies
   - acceptance criteria
+- Planning tasks should explicitly require the background run to verify that every actionable requirement has corresponding project tasks. If replanning creates multiple requirements, do not add tasks for only one of them.
 
 ## Capability Boundaries
 

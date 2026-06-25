@@ -1,4 +1,4 @@
-import { FolderOutlined, ProjectOutlined, TeamOutlined } from '@ant-design/icons';
+import { FolderOutlined, ProjectOutlined, SettingOutlined } from '@ant-design/icons';
 import { Layout, Menu, Space, Typography, Button } from 'antd';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
@@ -12,11 +12,9 @@ interface AppShellProps {
 }
 
 export function AppShell({ user }: AppShellProps) {
-  const location = useLocation();
   const navigate = useNavigate();
-  const selectedKey = location.pathname.startsWith('/agent-accounts')
-    ? '/agent-accounts'
-    : '/projects';
+  const location = useLocation();
+  const selectedKey = location.pathname.startsWith('/config') ? '/config' : '/projects';
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -38,9 +36,9 @@ export function AppShell({ user }: AppShellProps) {
               label: <Link to="/projects">项目</Link>,
             },
             {
-              key: '/agent-accounts',
-              icon: <TeamOutlined />,
-              label: <Link to="/agent-accounts">Agent 账号</Link>,
+              key: '/config',
+              icon: <SettingOutlined />,
+              label: <Link to="/config">配置</Link>,
             },
           ]}
         />

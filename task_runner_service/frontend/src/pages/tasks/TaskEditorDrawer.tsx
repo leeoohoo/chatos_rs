@@ -25,9 +25,13 @@ import type {
 import {
   CODE_MAINTAINER_READ_KIND,
   CODE_MAINTAINER_WRITE_KIND,
+  PROJECT_MANAGEMENT_KIND,
   completeEnabledBuiltinKindDependencies,
   scheduleModeDescriptionKeys,
   scheduleModeLabelKeys,
+  systemInjectedMcpServerNames,
+  taskProfileLabel,
+  taskProfileValues,
   taskStatusValues,
   type TaskFormValues,
 } from './taskPageUtils';
@@ -76,7 +80,9 @@ export function TaskEditorDrawer({
   const mcpEnabled = Form.useWatch('mcpEnabled', form);
   const enabledBuiltinKinds = Form.useWatch('enabledBuiltinKinds', form) || [];
   const defaultRemoteServerId = Form.useWatch('defaultRemoteServerId', form);
+  const taskProfile = Form.useWatch('taskProfile', form);
   const scheduleMode = Form.useWatch('scheduleMode', form);
+  const systemMcpServers = systemInjectedMcpServerNames(taskProfile);
   const effectiveScheduleMode = scheduleMode ?? 'manual';
   const scheduleModeLabels = useMemo(
     () =>
@@ -115,17 +121,27 @@ export function TaskEditorDrawer({
       })),
     [t],
   );
+  const taskProfileOptions = useMemo(
+    () =>
+      taskProfileValues.map((value) => ({
+        label: taskProfileLabel(value, t),
+        value,
+      })),
+    [t],
+  );
   const mcpOptions = useMemo(
     () =>
-      mcpCatalogEntries.map((entry) => ({
-        label: entry.kind,
-        value: entry.kind,
-        disabled: !entry.implemented,
-        description: entry.description,
-        useCases: entry.use_cases,
-        capabilities: entry.capabilities,
-        message: entry.message || undefined,
-      })),
+      mcpCatalogEntries
+        .filter((entry) => entry.kind !== PROJECT_MANAGEMENT_KIND)
+        .map((entry) => ({
+          label: entry.kind,
+          value: entry.kind,
+          disabled: !entry.implemented,
+          description: entry.description,
+          useCases: entry.use_cases,
+          capabilities: entry.capabilities,
+          message: entry.message || undefined,
+        })),
     [mcpCatalogEntries],
   );
   const remoteControllerEntry = useMemo(
@@ -226,6 +242,13 @@ export function TaskEditorDrawer({
           >
             <Select style={{ width: '100%' }} options={taskStatusOptions} />
           </Form.Item>
+          <Form.Item
+            name="taskProfile"
+            label={t('tasks.form.taskProfile')}
+            style={{ flex: '0 0 220px', minWidth: 220 }}
+          >
+            <Select style={{ width: '100%' }} options={taskProfileOptions} />
+          </Form.Item>
           <Form.Item name="priority" label={t('tasks.column.priority')} style={{ width: 140 }}>
             <InputNumber style={{ width: '100%' }} />
           </Form.Item>
@@ -324,17 +347,6 @@ export function TaskEditorDrawer({
           >
             <Switch />
           </Form.Item>
-          <Form.Item name="mcpInitMode" label={t('tasks.form.initMode')} style={{ marginBottom: 0 }}>
-            <Select
-              style={{ width: 180 }}
-              disabled={!mcpEnabled}
-              options={[
-                { label: 'builtin_only', value: 'builtin_only' },
-                { label: 'full', value: 'full' },
-                { label: 'disabled', value: 'disabled' },
-              ]}
-            />
-          </Form.Item>
         </Space>
 
         <Space size="middle" style={{ width: '100%' }} align="start">
@@ -389,6 +401,19 @@ export function TaskEditorDrawer({
             </Space>
           </Checkbox.Group>
         </Form.Item>
+
+        {systemMcpServers.length ? (
+          <Space direction="vertical" size={4} style={{ marginBottom: 16, width: '100%' }}>
+            <Typography.Text type="secondary">{t('tasks.form.systemMcpServers')}</Typography.Text>
+            <Space wrap>
+              {systemMcpServers.map((serverName) => (
+                <Tag key={serverName} color="geekblue">
+                  {serverName}
+                </Tag>
+              ))}
+            </Space>
+          </Space>
+        ) : null}
 
         <Form.Item name="workspaceDir" label={t('tasks.form.workspaceDir')}>
           <Input

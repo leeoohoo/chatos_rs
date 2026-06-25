@@ -243,11 +243,45 @@ impl DbStatus for RequirementStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementType {
+    Requirement,
+    Change,
+    BugFix,
+}
+
+impl Default for RequirementType {
+    fn default() -> Self {
+        Self::Requirement
+    }
+}
+
+impl DbStatus for RequirementType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Requirement => "requirement",
+            Self::Change => "change",
+            Self::BugFix => "bug_fix",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        match value.trim() {
+            "change" => Self::Change,
+            "bug_fix" => Self::BugFix,
+            _ => Self::Requirement,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequirementRecord {
     pub id: String,
     pub project_id: String,
     pub parent_requirement_id: Option<String>,
+    #[serde(default)]
+    pub requirement_type: RequirementType,
     pub title: String,
     pub summary: Option<String>,
     pub detail: Option<String>,
@@ -276,6 +310,7 @@ pub struct RequirementRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRequirementRequest {
     pub parent_requirement_id: Option<String>,
+    pub requirement_type: Option<RequirementType>,
     pub title: String,
     pub summary: Option<String>,
     pub detail: Option<String>,
@@ -290,6 +325,7 @@ pub struct CreateRequirementRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateRequirementRequest {
     pub parent_requirement_id: Option<String>,
+    pub requirement_type: Option<RequirementType>,
     pub title: Option<String>,
     pub summary: Option<String>,
     pub detail: Option<String>,

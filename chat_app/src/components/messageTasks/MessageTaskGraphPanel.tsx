@@ -1,5 +1,5 @@
 import { memo, useMemo, useState, type FC, type MouseEvent } from 'react';
-import { Activity, FileText } from 'lucide-react';
+import { Activity, FileText, ScrollText } from 'lucide-react';
 import type { Edge, Node } from '@xyflow/react';
 import type {
   MessageTaskRunnerGraphEdge,
@@ -23,7 +23,9 @@ interface MessageTaskGraphPanelProps {
   error: string | null;
   loadingRunId: string | null;
   panelWidth: number;
+  loadingProcessTaskId: string | null;
   onOpenDetail: (task: MessageTaskRunnerTask) => void;
+  onOpenProcessLog: (task: MessageTaskRunnerTask) => void | Promise<void>;
   onOpenRun: (task: MessageTaskRunnerTask) => void | Promise<void>;
 }
 
@@ -32,9 +34,11 @@ interface TaskGraphNodeData extends Record<string, unknown> {
   currentSourceUserMessageId: string | null;
   isActive: boolean;
   isDimmed: boolean;
+  loadingProcessLog: boolean;
   loadingRun: boolean;
   onSelectTask: (taskId: string) => void;
   onOpenDetail: (task: MessageTaskRunnerTask) => void;
+  onOpenProcessLog: (task: MessageTaskRunnerTask) => void | Promise<void>;
   onOpenRun: (task: MessageTaskRunnerTask) => void | Promise<void>;
 }
 
@@ -216,9 +220,11 @@ const buildFlowNodes = (
   currentSourceUserMessageId: string | null,
   activeTaskId: string | null,
   relatedTaskIds: Set<string> | null,
+  loadingProcessTaskId: string | null,
   loadingRunId: string | null,
   onSelectTask: (taskId: string | null) => void,
   onOpenDetail: (task: MessageTaskRunnerTask) => void,
+  onOpenProcessLog: (task: MessageTaskRunnerTask) => void | Promise<void>,
   onOpenRun: (task: MessageTaskRunnerTask) => void | Promise<void>,
 ): TaskGraphFlowNode[] => (
   graphNodes.map((graphNode) => ({
@@ -232,9 +238,11 @@ const buildFlowNodes = (
       graphNode,
       isActive: activeTaskId === graphNode.task.id,
       isDimmed: Boolean(activeTaskId && relatedTaskIds && !relatedTaskIds.has(graphNode.task.id)),
+      loadingProcessLog: graphNode.task.id === loadingProcessTaskId,
       loadingRun: Boolean(graphNode.task.last_run_id && graphNode.task.last_run_id === loadingRunId),
       onSelectTask: (taskId) => onSelectTask(activeTaskId === taskId ? null : taskId),
       onOpenDetail,
+      onOpenProcessLog,
       onOpenRun,
     },
     style: {
@@ -357,9 +365,10 @@ const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode }) => {
     graphNode,
     isActive,
     isDimmed,
+    loadingProcessLog,
     loadingRun,
-    onSelectTask,
     onOpenDetail,
+    onOpenProcessLog,
     onOpenRun,
   } = node.data;
   const { task } = graphNode;
@@ -434,19 +443,16 @@ const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode }) => {
           <div className="mt-3 grid grid-cols-3 gap-2">
             <button
               type="button"
-              className={cn(
-                'inline-flex items-center justify-center rounded-md border px-2 py-1.5 text-xs transition-colors',
-                isActive
-                  ? 'border-primary/30 bg-primary/10 text-primary'
-                  : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
-              )}
+              className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+              disabled={loadingProcessLog}
               onMouseDown={stopNodeButtonEvent}
               onClick={(event) => {
                 stopNodeButtonEvent(event);
-                onSelectTask(task.id);
+                void onOpenProcessLog(task);
               }}
             >
-              {isActive ? '已聚焦' : '聚焦链路'}
+              <ScrollText className="h-3.5 w-3.5" />
+              {loadingProcessLog ? '加载中' : '执行过程'}
             </button>
             <button
               type="button"
@@ -487,8 +493,10 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
   loading,
   error,
   loadingRunId,
+  loadingProcessTaskId,
   panelWidth,
   onOpenDetail,
+  onOpenProcessLog,
   onOpenRun,
 }) => {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -541,9 +549,11 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
       readString(graph.source_user_message_id),
       activeTaskId,
       activeContext?.relatedTaskIds || null,
+      loadingProcessTaskId,
       loadingRunId,
       setActiveTaskId,
       onOpenDetail,
+      onOpenProcessLog,
       onOpenRun,
     );
     const flowEdges = buildFlowEdges(
@@ -559,8 +569,10 @@ export const MessageTaskGraphPanel: FC<MessageTaskGraphPanelProps> = ({
     displayGraph.nodes,
     displayEdges,
     graph.source_user_message_id,
+    loadingProcessTaskId,
     loadingRunId,
     onOpenDetail,
+    onOpenProcessLog,
     onOpenRun,
     taskById,
   ]);

@@ -5,6 +5,11 @@ import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { ContactResponse, ProjectContactLinkResponse } from '../../lib/api/client/types';
 import { normalizeContact } from '../../lib/domain/contacts';
+import {
+  removeProjectRunnerContactRow,
+  syncProjectRunnerContactRows,
+  upsertProjectRunnerContactRow,
+} from '../../lib/domain/projectRunner';
 import { cn } from '../../lib/utils';
 import type { Project } from '../../types';
 import { ProjectContactPickerModal } from '../sessionList/ProjectContactPickerModal';
@@ -82,11 +87,13 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
     setError(null);
     try {
       const [projectContacts, allContacts, lockState] = await Promise.all([
-        apiClient.listProjectContacts(project.id, { limit: 10, offset: 0 }),
+        apiClient.listProjectContacts(project.id, { limit: 500, offset: 0 }),
         apiClient.getContacts(undefined, { limit: 500, offset: 0 }),
         apiClient.getProjectContactLock(project.id),
       ]);
-      setProjectContactRows(projectContacts);
+      setProjectContactRows(
+        syncProjectRunnerContactRows(apiClient, project.id, projectContacts) || projectContacts,
+      );
       setContacts(normalizeContactOptions(allContacts));
       setLocked(lockState.locked === true);
     } catch (err) {
@@ -117,7 +124,17 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
     setSaving(true);
     setError(null);
     try {
-      await apiClient.addProjectContact(project.id, { contact_id: selectedContactId });
+      const nextRow = await apiClient.addProjectContact(project.id, { contact_id: selectedContactId });
+      const nextContactId = normalizeProjectContact(nextRow)?.contactId || selectedContactId;
+      const optimisticRows = [
+        nextRow,
+        ...projectContactRows.filter((row) => normalizeProjectContact(row)?.contactId !== nextContactId),
+      ];
+      setProjectContactRows(
+        upsertProjectRunnerContactRow(apiClient, project.id, nextRow)
+        || syncProjectRunnerContactRows(apiClient, project.id, optimisticRows)
+        || optimisticRows,
+      );
       setPickerOpen(false);
       setSelectedContactId(null);
       await loadProjectContact();
@@ -126,7 +143,7 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
     } finally {
       setSaving(false);
     }
-  }, [apiClient, loadProjectContact, project.id, selectedContactId, t]);
+  }, [apiClient, loadProjectContact, project.id, projectContactRows, selectedContactId, t]);
 
   const handleUnbind = useCallback(async () => {
     if (!currentContact || locked) {
@@ -136,13 +153,21 @@ const ProjectContactSettingsCard: React.FC<ProjectContactSettingsCardProps> = ({
     setError(null);
     try {
       await apiClient.removeProjectContact(project.id, currentContact.contactId);
+      const optimisticRows = projectContactRows.filter(
+        (row) => normalizeProjectContact(row)?.contactId !== currentContact.contactId,
+      );
+      setProjectContactRows(
+        removeProjectRunnerContactRow(apiClient, project.id, currentContact.contactId)
+        || syncProjectRunnerContactRows(apiClient, project.id, optimisticRows)
+        || optimisticRows,
+      );
       await loadProjectContact();
     } catch (err) {
       setError(err instanceof Error ? err.message : t('projectContact.error.unbindFailed'));
     } finally {
       setSaving(false);
     }
-  }, [apiClient, currentContact, loadProjectContact, locked, project.id, t]);
+  }, [apiClient, currentContact, loadProjectContact, locked, project.id, projectContactRows, t]);
 
   const actionsDisabled = loading || saving || locked;
 

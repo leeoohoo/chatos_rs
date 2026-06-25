@@ -335,6 +335,10 @@ async fn build_contact_task_runner_runtime(
         "X-Task-Runner-Tool-Profile".to_string(),
         "chatos_async_planner".to_string(),
     );
+    headers.insert(
+        "X-Task-Runner-Builtin-Prompt-Locale".to_string(),
+        task_runner_skill_lang(locale).to_string(),
+    );
     if plan_mode {
         headers.insert(
             "X-Task-Runner-Task-Profile".to_string(),

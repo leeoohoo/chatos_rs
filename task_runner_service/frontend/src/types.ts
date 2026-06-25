@@ -26,7 +26,7 @@ export type AskUserPromptStatus =
 
 export type UserRole = 'admin' | 'agent';
 
-export type TaskMcpInitMode = 'full' | 'builtin_only' | 'disabled';
+export type TaskMcpInitMode = 'full' | 'disabled';
 export type TaskBuiltinPromptMode = 'configured' | 'effective';
 export type TaskScheduleMode = 'manual' | 'once' | 'interval' | 'contact_async';
 export type TaskProcessLogOperation = 'append' | 'replace' | 'clear';
@@ -134,7 +134,7 @@ export interface TaskRecord {
   tenant_id: string;
   subject_id: string;
   project_id: string;
-  task_profile: string;
+  task_profile: TaskProfile;
   creator_user_id?: string | null;
   creator_username?: string | null;
   creator_display_name?: string | null;
@@ -744,6 +744,8 @@ export interface SystemConfigResponse {
   tool_results_model_total_max_chars: number;
 }
 
+export type TaskProfile = 'default' | 'chatos_plan';
+
 export interface CreateTaskPayload {
   title: string;
   description?: string;
@@ -754,6 +756,7 @@ export interface CreateTaskPayload {
   tags?: string[];
   default_model_config_id?: string;
   project_id?: string;
+  task_profile?: TaskProfile;
   schedule?: TaskScheduleConfig;
   mcp_config?: TaskMcpConfig;
   prerequisite_task_ids?: string[];
@@ -777,6 +780,7 @@ export interface TaskListFilters {
   parent_task_id?: string;
   include_subtasks?: boolean;
   source_run_id?: string;
+  task_profile?: TaskProfile;
   limit?: number;
   offset?: number;
 }

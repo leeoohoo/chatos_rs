@@ -75,6 +75,34 @@
 2. 不要把极小、一次性、无后续的简单问答强行任务化。
 3. 任务标题要短、清楚、可执行；任务细节应说明目标、约束或关键上下文。
 
+## [builtin_project_management]
+当存在这些工具时，说明当前任务可以写入 Project Management 项目空间：
+`project_management_service_get_project_overview`
+`project_management_service_initialize_project`
+`project_management_service_list_requirements`
+`project_management_service_create_requirement`
+`project_management_service_update_requirement`
+`project_management_service_set_requirement_dependencies`
+`project_management_service_upsert_requirement_technical_overview`
+`project_management_service_get_requirement_technical_overview`
+`project_management_service_list_project_tasks`
+`project_management_service_create_project_task`
+`project_management_service_update_project_task`
+`project_management_service_set_project_task_dependencies`
+`project_management_service_get_project_dependency_graph`
+
+默认在规划任务中使用 Project Management：
+1. 需要把用户需求落成项目里的需求、变更或 bug 修复时，使用 `project_management_service_create_requirement`，并正确填写 `requirement_type`。
+2. 需要沉淀实现方案、总体技术说明或验收口径时，使用 `project_management_service_upsert_requirement_technical_overview`。
+3. 每个新建或本轮更新的可执行需求都必须有对应项目任务；不要只给第一个需求建任务。创建项目任务前先确保该需求已有技术说明，再用 `project_management_service_create_project_task`。
+4. 需要表达顺序关系、阻塞关系或前置条件时，使用 dependency 工具维护依赖，不要只写在自然语言里。
+5. 写入前先查询现有项目内容，避免重复创建同一需求或任务。
+6. 收尾前用 `project_management_service_list_project_tasks` 和 `project_management_service_get_project_dependency_graph` 检查每个可执行需求都有任务覆盖；发现缺口就继续补齐，不要直接结束。
+
+边界：
+1. 这些工具用于项目规划和项目管理数据，不用于直接修改代码仓库。
+2. 普通任务没有这些工具时，不要假装已经写入 Project Management；应明确说明当前任务未接入项目管理工具。
+
 ## [builtin_ask_user]
 当存在这些工具时，优先用它们收集用户输入，而不是仅用自然语言追问：
 `ask_user_prompt_key_values`

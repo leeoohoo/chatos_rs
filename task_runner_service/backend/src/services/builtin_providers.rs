@@ -26,10 +26,12 @@ use super::task_manager_bridge::TaskRunnerTaskManagerStore;
 use super::TaskService;
 
 mod builders;
+mod project_management;
 mod provider;
 mod registry;
 
 pub(super) use self::builders::build_task_runner_builtin_provider;
+use self::project_management::{ProjectManagementBuiltinService, ProjectManagementOptions};
 pub(super) use self::provider::DisabledBuiltinProvider;
 pub(super) use self::registry::build_builtin_registry;
 
@@ -132,5 +134,45 @@ mod tests {
 
         assert!(description.contains(task_workspace.to_string_lossy().as_ref()));
         assert!(!description.contains(default_workspace.to_string_lossy().as_ref()));
+    }
+
+    #[tokio::test]
+    async fn project_management_provider_exposes_builtin_tools() {
+        let default_workspace = unique_temp_dir("default");
+        std::fs::create_dir_all(&default_workspace).expect("create default workspace");
+
+        let mut config = test_config(default_workspace);
+        config.project_service_base_url = Some("http://127.0.0.1:39210".to_string());
+        config.project_service_sync_secret = Some("sync-secret".to_string());
+        let store = AppStore::new(&config).await.expect("create store");
+        let task_service = TaskService::new(config, store.clone());
+        let ask_user_prompt_service = AskUserPromptService::new(store);
+        let server = McpBuiltinServer {
+            name: chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME.to_string(),
+            kind: chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement
+                .kind_name()
+                .to_string(),
+            workspace_dir: ".".to_string(),
+            user_id: Some("owner-1".to_string()),
+            project_id: Some("project-1".to_string()),
+            remote_connection_id: None,
+            contact_agent_id: None,
+            auto_create_task: true,
+            allow_writes: true,
+            max_file_bytes: 1_000,
+            max_write_bytes: 1_000,
+            search_limit: 10,
+        };
+
+        let provider =
+            build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
+                .expect("build provider")
+                .expect("project management provider");
+        let tools = provider.list_tools();
+
+        assert!(tools.iter().any(|tool| {
+            tool.get("name").and_then(Value::as_str) == Some("create_requirement")
+        }));
+        assert!(provider.unavailable_tools().is_empty());
     }
 }

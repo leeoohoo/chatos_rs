@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -416,7 +418,7 @@ fn task_runner_internal_mcp_user(
     let task_profile = header_text(headers, "x-task-runner-task-profile")
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::forbidden("task runner MCP sync branch requires task profile"))?;
-    if !task_profile.eq_ignore_ascii_case("chatos_plan") {
+    if !is_supported_task_runner_mcp_profile(task_profile.as_str()) {
         return Err(ApiError::forbidden(
             "task runner MCP sync branch only supports chatos_plan",
         ));
@@ -441,6 +443,10 @@ fn task_runner_internal_mcp_user(
         owner_username: Some(owner_username),
         owner_display_name: Some(owner_display_name),
     }))
+}
+
+fn is_supported_task_runner_mcp_profile(value: &str) -> bool {
+    value.eq_ignore_ascii_case("chatos_plan")
 }
 
 fn header_text(headers: &HeaderMap, key: &'static str) -> Result<Option<String>, String> {
@@ -637,6 +643,7 @@ async fn upsert_project_profile(
 struct RequirementListQuery {
     status: Option<RequirementStatus>,
     keyword: Option<String>,
+    include_archived: Option<bool>,
 }
 
 async fn list_project_requirements(
@@ -646,12 +653,19 @@ async fn list_project_requirements(
     Query(query): Query<RequirementListQuery>,
 ) -> Result<Json<Vec<RequirementRecord>>, ApiError> {
     require_project_access(&state, &project_id, &user).await?;
-    state
+    let include_archived = should_include_archived(
+        query.include_archived,
+        matches!(query.status, Some(RequirementStatus::Archived)),
+    );
+    let mut requirements = state
         .store
         .list_requirements(&project_id, query.status, query.keyword)
         .await
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    if !include_archived {
+        requirements.retain(|item| item.status != RequirementStatus::Archived);
+    }
+    Ok(Json(requirements))
 }
 
 async fn create_requirement(
@@ -805,6 +819,7 @@ async fn upsert_requirement_technical_overview(
 struct WorkItemListQuery {
     status: Option<ProjectWorkItemStatus>,
     keyword: Option<String>,
+    include_archived: Option<bool>,
 }
 
 async fn list_project_work_items(
@@ -814,26 +829,42 @@ async fn list_project_work_items(
     Query(query): Query<WorkItemListQuery>,
 ) -> Result<Json<Vec<ProjectWorkItemRecord>>, ApiError> {
     require_project_access(&state, &project_id, &user).await?;
-    state
+    let include_archived = should_include_archived(
+        query.include_archived,
+        matches!(query.status, Some(ProjectWorkItemStatus::Archived)),
+    );
+    let mut items = state
         .store
         .list_work_items_by_project(&project_id, query.status, query.keyword)
         .await
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    if !include_archived {
+        items.retain(|item| item.status != ProjectWorkItemStatus::Archived);
+    }
+    Ok(Json(items))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RequirementWorkItemListQuery {
+    include_archived: Option<bool>,
 }
 
 async fn list_requirement_work_items(
     Path(requirement_id): Path<String>,
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
+    Query(query): Query<RequirementWorkItemListQuery>,
 ) -> Result<Json<Vec<ProjectWorkItemRecord>>, ApiError> {
     require_requirement_access(&state, &requirement_id, &user).await?;
-    state
+    let mut items = state
         .store
         .list_work_items_by_requirement(&requirement_id)
         .await
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    if !query.include_archived.unwrap_or(false) {
+        items.retain(|item| item.status != ProjectWorkItemStatus::Archived);
+    }
+    Ok(Json(items))
 }
 
 async fn create_work_item(
@@ -1134,22 +1165,42 @@ async fn get_work_item_dependency_graph(
     }))
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct DependencyGraphQuery {
+    include_archived: Option<bool>,
+}
+
 async fn get_project_dependency_graph(
     Path(project_id): Path<String>,
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
+    Query(query): Query<DependencyGraphQuery>,
 ) -> Result<Json<DependencyGraphResponse>, ApiError> {
     require_project_access(&state, &project_id, &user).await?;
-    let requirements = state
+    let include_archived = query.include_archived.unwrap_or(false);
+    let mut requirements = state
         .store
         .list_requirements(&project_id, None, None)
         .await
         .map_err(ApiError::bad_request)?;
-    let work_items = state
+    if !include_archived {
+        requirements.retain(|item| item.status != RequirementStatus::Archived);
+    }
+    let visible_requirement_ids: HashSet<String> =
+        requirements.iter().map(|item| item.id.clone()).collect();
+    let mut work_items = state
         .store
         .list_work_items_by_project(&project_id, None, None)
         .await
         .map_err(ApiError::bad_request)?;
+    if !include_archived {
+        work_items.retain(|item| {
+            item.status != ProjectWorkItemStatus::Archived
+                && visible_requirement_ids.contains(item.requirement_id.as_str())
+        });
+    }
+    let requirement_ids: HashSet<&str> = requirements.iter().map(|item| item.id.as_str()).collect();
+    let work_item_ids: HashSet<&str> = work_items.iter().map(|item| item.id.as_str()).collect();
 
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
@@ -1161,31 +1212,37 @@ async fn get_project_dependency_graph(
             .await
             .map_err(ApiError::bad_request)?
         {
-            edges.push(DependencyGraphEdge {
-                from: format!("requirement:{}", dep.prerequisite_requirement_id),
-                to: format!("requirement:{}", dep.requirement_id),
-                edge_type: dep.relation_type,
-            });
+            if requirement_ids.contains(dep.prerequisite_requirement_id.as_str()) {
+                edges.push(DependencyGraphEdge {
+                    from: format!("requirement:{}", dep.prerequisite_requirement_id),
+                    to: format!("requirement:{}", dep.requirement_id),
+                    edge_type: dep.relation_type,
+                });
+            }
         }
     }
     for item in &work_items {
         nodes.push(work_item_node(item));
-        edges.push(DependencyGraphEdge {
-            from: format!("requirement:{}", item.requirement_id),
-            to: format!("work_item:{}", item.id),
-            edge_type: "contains".to_string(),
-        });
+        if requirement_ids.contains(item.requirement_id.as_str()) {
+            edges.push(DependencyGraphEdge {
+                from: format!("requirement:{}", item.requirement_id),
+                to: format!("work_item:{}", item.id),
+                edge_type: "contains".to_string(),
+            });
+        }
         for dep in state
             .store
             .list_work_item_dependencies(&item.id)
             .await
             .map_err(ApiError::bad_request)?
         {
-            edges.push(DependencyGraphEdge {
-                from: format!("work_item:{}", dep.prerequisite_work_item_id),
-                to: format!("work_item:{}", dep.work_item_id),
-                edge_type: dep.relation_type,
-            });
+            if work_item_ids.contains(dep.prerequisite_work_item_id.as_str()) {
+                edges.push(DependencyGraphEdge {
+                    from: format!("work_item:{}", dep.prerequisite_work_item_id),
+                    to: format!("work_item:{}", dep.work_item_id),
+                    edge_type: dep.relation_type,
+                });
+            }
         }
     }
 
@@ -1252,6 +1309,10 @@ fn ensure_project_writable(project: &ProjectRecord) -> Result<(), ApiError> {
     } else {
         Ok(())
     }
+}
+
+fn should_include_archived(include_archived: Option<bool>, explicit_archived_filter: bool) -> bool {
+    include_archived.unwrap_or(false) || explicit_archived_filter
 }
 
 fn requirement_node(requirement: &RequirementRecord) -> DependencyGraphNode {

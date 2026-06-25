@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use serde_json::{json, Value};
 
 use crate::model_config::{
-    is_gpt_provider, normalize_provider, reasoning_effort_for_provider, thinking_mode_for_provider,
+    normalize_provider, reasoning_effort_for_provider, thinking_mode_for_provider,
 };
 use crate::response_parse::{chat_message_content_to_text, tool_arguments_to_string};
 
@@ -24,6 +24,8 @@ pub fn build_responses_request_payload(
     stream: bool,
     include_prompt_cache_retention: bool,
 ) -> Value {
+    let should_request_reasoning_summary =
+        should_request_responses_reasoning_summary(provider.as_deref(), model.as_str());
     let mut payload = json!({
         "model": model,
         "input": input,
@@ -56,7 +58,7 @@ pub fn build_responses_request_payload(
         reasoning_effort_for_provider(provider.as_deref(), thinking_level.as_deref())
     {
         let mut reasoning_payload = json!({ "effort": level });
-        if is_gpt_provider(provider.as_deref().unwrap_or("gpt")) {
+        if should_request_reasoning_summary {
             reasoning_payload["summary"] = Value::String("auto".to_string());
         }
         payload["reasoning"] = reasoning_payload;
@@ -65,6 +67,25 @@ pub fn build_responses_request_payload(
         payload["stream"] = Value::Bool(true);
     }
     payload
+}
+
+fn should_request_responses_reasoning_summary(provider: Option<&str>, model: &str) -> bool {
+    let provider = normalize_provider(provider.unwrap_or("gpt"));
+    if provider == "gpt" {
+        return true;
+    }
+    provider == "openai_compatible" && looks_like_openai_reasoning_model(model)
+}
+
+fn looks_like_openai_reasoning_model(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    normalized.starts_with("gpt-")
+        || normalized.starts_with("o1")
+        || normalized.starts_with("o3")
+        || normalized.starts_with("o4")
+        || normalized.starts_with("o5")
+        || normalized.starts_with("codex")
+        || normalized.contains("-codex-")
 }
 
 #[allow(clippy::too_many_arguments)]

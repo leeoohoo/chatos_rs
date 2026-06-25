@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::core::time::now_rfc3339;
 use crate::models::project::Project;
 use crate::models::project_run::{ProjectRunCatalog, ProjectRunTarget};
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use regex::Regex;
 
 const MAX_SCAN_DIRS: usize = 2500;
@@ -217,6 +219,180 @@ fn build_target(
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct MavenPomInfo {
+    packaging: Option<String>,
+    modules: Vec<String>,
+    spring_boot_main_classes: Vec<String>,
+    has_spring_boot_plugin: bool,
+    has_spring_boot_dependency: bool,
+}
+
+fn xml_local_name(raw: &[u8]) -> String {
+    std::str::from_utf8(raw)
+        .ok()
+        .and_then(|value| value.rsplit(':').next())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn stack_ends_with(stack: &[String], suffix: &[&str]) -> bool {
+    if stack.len() < suffix.len() {
+        return false;
+    }
+    let offset = stack.len() - suffix.len();
+    suffix
+        .iter()
+        .enumerate()
+        .all(|(index, expected)| stack[offset + index] == *expected)
+}
+
+fn normalize_maven_module_path(value: &str) -> String {
+    value
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn parse_maven_pom(pom_path: &Path) -> MavenPomInfo {
+    let Ok(content) = fs::read_to_string(pom_path) else {
+        return MavenPomInfo::default();
+    };
+
+    let mut reader = Reader::from_str(&content);
+    reader.trim_text(true);
+    let mut buf = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
+    let mut info = MavenPomInfo::default();
+    let mut seen_main_classes = HashSet::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(event)) => {
+                stack.push(xml_local_name(event.name().as_ref()));
+            }
+            Ok(Event::End(_)) => {
+                stack.pop();
+            }
+            Ok(Event::Text(event)) => {
+                let value = event
+                    .unescape()
+                    .map(|value| value.trim().to_string())
+                    .unwrap_or_default();
+                if value.is_empty() {
+                    buf.clear();
+                    continue;
+                }
+                if stack == ["project", "packaging"] {
+                    info.packaging = Some(value);
+                } else if stack_ends_with(&stack, &["modules", "module"]) {
+                    let module = normalize_maven_module_path(&value);
+                    if !module.is_empty() {
+                        info.modules.push(module);
+                    }
+                } else if stack_ends_with(&stack, &["plugin", "artifactId"])
+                    && value == "spring-boot-maven-plugin"
+                {
+                    info.has_spring_boot_plugin = true;
+                } else if stack_ends_with(&stack, &["dependency", "artifactId"])
+                    && value.starts_with("spring-boot")
+                {
+                    info.has_spring_boot_dependency = true;
+                } else if stack_ends_with(&stack, &["configuration", "mainClass"])
+                    && seen_main_classes.insert(value.clone())
+                {
+                    info.spring_boot_main_classes.push(value);
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    info
+}
+
+fn path_relative_to(base: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(base).ok()?;
+    let normalized = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    let normalized = normalize_maven_module_path(&normalized);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn find_maven_reactor_invocation(scan_root: &Path, module_dir: &Path) -> Option<(PathBuf, String)> {
+    for ancestor in module_dir.ancestors().skip(1) {
+        if !ancestor.starts_with(scan_root) {
+            continue;
+        }
+        let pom_path = ancestor.join("pom.xml");
+        if !pom_path.is_file() {
+            continue;
+        }
+        let Some(module_path) = path_relative_to(ancestor, module_dir) else {
+            continue;
+        };
+        let pom_info = parse_maven_pom(&pom_path);
+        if pom_info.modules.iter().any(|module| module == &module_path) {
+            return Some((ancestor.to_path_buf(), module_path));
+        }
+    }
+    None
+}
+
+fn merge_java_entrypoints(mut detected: Vec<String>, configured: &[String]) -> Vec<String> {
+    let mut seen: HashSet<String> = detected.iter().cloned().collect();
+    for entrypoint in configured {
+        if seen.insert(entrypoint.clone()) {
+            detected.push(entrypoint.clone());
+        }
+    }
+    detected.sort();
+    detected
+}
+
+fn format_maven_label(module_path: Option<&str>, suffix: &str) -> String {
+    match module_path {
+        Some(module) if !module.trim().is_empty() => {
+            format!("Java(Maven): {module} {suffix}")
+        }
+        _ => format!("Java(Maven): {suffix}"),
+    }
+}
+
+fn maven_command_prefix(cwd: &Path, module_path: Option<&str>) -> (String, Vec<&'static str>) {
+    let has_mvnw = cwd.join("mvnw").is_file();
+    let runner = if has_mvnw { "./mvnw" } else { "mvn" };
+    let required_toolchains = if has_mvnw {
+        vec!["java_home"]
+    } else {
+        vec!["java_home", "mvn"]
+    };
+    let prefix = match module_path {
+        Some(module) if !module.trim().is_empty() => {
+            format!("{runner} -pl {module} -am")
+        }
+        _ => runner.to_string(),
+    };
+    (prefix, required_toolchains)
+}
+
 fn detect_node_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
     let package_json = dir.join("package.json");
     if !package_json.is_file() {
@@ -294,16 +470,14 @@ fn detect_node_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
     }
 }
 
-fn detect_java_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
-    let cwd = dir.to_string_lossy().to_string();
+fn detect_java_targets(scan_root: &Path, dir: &Path, out: &mut Vec<ProjectRunTarget>) {
     let has_pom = dir.join("pom.xml").is_file();
     let has_gradle = dir.join("build.gradle").is_file()
         || dir.join("build.gradle.kts").is_file()
         || dir.join("settings.gradle").is_file()
         || dir.join("settings.gradle.kts").is_file();
-    let has_mvnw = dir.join("mvnw").is_file();
     let has_gradlew = dir.join("gradlew").is_file();
-    let java_entrypoints = detect_java_entrypoints(dir);
+    let detected_java_entrypoints = detect_java_entrypoints(dir);
     let pom_path = dir.join("pom.xml");
     let gradle_manifest = if dir.join("build.gradle").is_file() {
         Some(dir.join("build.gradle"))
@@ -318,38 +492,77 @@ fn detect_java_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
     };
 
     if has_pom {
-        let runner = if has_mvnw { "./mvnw" } else { "mvn" };
-        let required_toolchains = if has_mvnw {
-            vec!["java_home"]
-        } else {
-            vec!["java_home", "mvn"]
-        };
+        let pom_info = parse_maven_pom(&pom_path);
+        let packaging = pom_info.packaging.as_deref().unwrap_or("jar");
+        let reactor_invocation = find_maven_reactor_invocation(scan_root, dir);
+        let invocation_cwd_path = reactor_invocation
+            .as_ref()
+            .map(|(root, _)| root.as_path())
+            .unwrap_or(dir);
+        let module_path = reactor_invocation
+            .as_ref()
+            .map(|(_, module)| module.as_str());
+        let cwd = invocation_cwd_path.to_string_lossy().to_string();
+        let manifest_path = Some(pom_path.to_string_lossy().to_string());
+        let (command_prefix, required_toolchains) =
+            maven_command_prefix(invocation_cwd_path, module_path);
+        let java_entrypoints = merge_java_entrypoints(
+            detected_java_entrypoints.clone(),
+            &pom_info.spring_boot_main_classes,
+        );
+        let has_spring_boot_hint = pom_info.has_spring_boot_plugin
+            || pom_info.has_spring_boot_dependency
+            || !pom_info.spring_boot_main_classes.is_empty();
         if java_entrypoints.is_empty() {
-            push_target(
-                out,
-                build_target(
-                    cwd.as_str(),
-                    "Java(Maven): spring-boot:run".to_string(),
-                    "java",
-                    format!("{runner} spring-boot:run"),
-                    0.9,
-                    None,
-                    Some(pom_path.to_string_lossy().to_string()),
-                    required_toolchains.clone(),
-                ),
-            );
-        } else {
-            for entrypoint in &java_entrypoints {
+            if has_spring_boot_hint && packaging != "pom" {
                 push_target(
                     out,
                     build_target(
                         cwd.as_str(),
-                        format!("Java(Maven): {}", entrypoint),
+                        format_maven_label(module_path, "spring-boot:run"),
                         "java",
-                        format!("{runner} -Dexec.mainClass={} exec:java", entrypoint),
+                        format!("{command_prefix} spring-boot:run"),
+                        0.9,
+                        None,
+                        manifest_path.clone(),
+                        required_toolchains.clone(),
+                    ),
+                );
+            }
+        } else {
+            for entrypoint in &java_entrypoints {
+                let (label_suffix, command, confidence) = if has_spring_boot_hint {
+                    (
+                        entrypoint.as_str(),
+                        if pom_info.spring_boot_main_classes.len() == 1
+                            && pom_info.spring_boot_main_classes[0] == *entrypoint
+                        {
+                            format!("{command_prefix} spring-boot:run")
+                        } else {
+                            format!(
+                                "{command_prefix} -Dspring-boot.run.main-class={} spring-boot:run",
+                                entrypoint
+                            )
+                        },
+                        0.96,
+                    )
+                } else {
+                    (
+                        entrypoint.as_str(),
+                        format!("{command_prefix} -Dexec.mainClass={} exec:java", entrypoint),
                         0.94,
+                    )
+                };
+                push_target(
+                    out,
+                    build_target(
+                        cwd.as_str(),
+                        format_maven_label(module_path, label_suffix),
+                        "java",
+                        command,
+                        confidence,
                         Some(entrypoint.clone()),
-                        Some(pom_path.to_string_lossy().to_string()),
+                        manifest_path.clone(),
                         required_toolchains.clone(),
                     ),
                 );
@@ -359,17 +572,19 @@ fn detect_java_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
             out,
             build_target(
                 cwd.as_str(),
-                "Java(Maven): test".to_string(),
+                format_maven_label(module_path, "test"),
                 "java",
-                format!("{runner} test"),
+                format!("{command_prefix} test"),
                 0.8,
                 None,
-                Some(pom_path.to_string_lossy().to_string()),
+                manifest_path,
                 required_toolchains,
             ),
         );
     }
     if has_gradle {
+        let cwd = dir.to_string_lossy().to_string();
+        let java_entrypoints = detected_java_entrypoints;
         let runner = if has_gradlew { "./gradlew" } else { "gradle" };
         let required_toolchains = if has_gradlew {
             vec!["java_home", "gradle_user_home"]
@@ -853,7 +1068,7 @@ fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>, String> {
 
     let mut targets: Vec<ProjectRunTarget> = Vec::new();
     let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();
-    queue.push_back((root, 0));
+    queue.push_back((root.clone(), 0));
     let mut visited = 0usize;
 
     while let Some((dir, depth)) = queue.pop_front() {
@@ -881,7 +1096,7 @@ fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>, String> {
         }
 
         detect_node_targets(&dir, &mut targets);
-        detect_java_targets(&dir, &mut targets);
+        detect_java_targets(&root, &dir, &mut targets);
         detect_python_targets(&dir, &file_names, &mut targets);
         detect_go_targets(&dir, &file_names, &mut targets);
         detect_rust_targets(&dir, &file_names, &mut targets);
@@ -971,4 +1186,157 @@ pub(crate) fn apply_default_target(
     updated.default_target_id = Some(target_id.to_string());
     updated.updated_at = now_rfc3339();
     Ok(updated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "chatos_project_run_{name}_{}",
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn write_file(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create test directory");
+        }
+        fs::write(path, content).expect("write test file");
+    }
+
+    #[test]
+    fn detects_maven_reactor_spring_boot_modules() {
+        let root = temp_root("maven_reactor");
+        let _ = fs::remove_dir_all(&root);
+
+        write_file(
+            &root.join("pom.xml"),
+            r#"
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo-parent</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+  <modules>
+    <module>admin-server</module>
+    <module>agent-server</module>
+    <module>common-lib</module>
+  </modules>
+</project>
+"#,
+        );
+
+        write_file(
+            &root.join("admin-server/pom.xml"),
+            r#"
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>demo-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+  <artifactId>admin-server</artifactId>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>com.example.admin.AdminApplication</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+"#,
+        );
+        write_file(
+            &root.join("admin-server/src/main/java/com/example/admin/AdminApplication.java"),
+            r#"
+package com.example.admin;
+
+public class AdminApplication {
+    public static void main(String[] args) {}
+}
+"#,
+        );
+
+        write_file(
+            &root.join("agent-server/pom.xml"),
+            r#"
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>demo-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+  <artifactId>agent-server</artifactId>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>com.example.agent.AgentApplication</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+"#,
+        );
+        write_file(
+            &root.join("agent-server/src/main/java/com/example/agent/AgentApplication.java"),
+            r#"
+package com.example.agent;
+
+public class AgentApplication {
+    public static void main(String[] args) {}
+}
+"#,
+        );
+
+        write_file(
+            &root.join("common-lib/pom.xml"),
+            r#"
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>demo-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+  <artifactId>common-lib</artifactId>
+</project>
+"#,
+        );
+
+        let targets = detect_targets_sync(root.clone()).expect("detect targets");
+        let commands = targets
+            .iter()
+            .map(|target| target.command.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(commands.contains(&"mvn -pl admin-server -am spring-boot:run"));
+        assert!(commands.contains(&"mvn -pl agent-server -am spring-boot:run"));
+        assert!(!targets.iter().any(|target| {
+            is_same_cwd(target.cwd.as_str(), root.to_string_lossy().as_ref())
+                && target.command == "mvn spring-boot:run"
+        }));
+        assert!(!commands.iter().any(
+            |command| command.contains("-pl common-lib") && command.contains("spring-boot:run")
+        ));
+        assert!(targets.iter().any(|target| {
+            target.entrypoint.as_deref() == Some("com.example.admin.AdminApplication")
+                && target.manifest_path.as_deref()
+                    == Some(root.join("admin-server/pom.xml").to_string_lossy().as_ref())
+        }));
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }

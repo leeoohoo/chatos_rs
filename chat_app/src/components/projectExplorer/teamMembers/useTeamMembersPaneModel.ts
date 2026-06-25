@@ -70,8 +70,8 @@ export const useTeamMembersPaneModel = ({
       selectedContact?.id
       && resources.runtimeContext.openingRuntimeContextContactId === selectedContact.id,
     ),
-    summaryDisabled: !selectedContact,
-    runtimeContextDisabled: !selectedContact,
+    summaryDisabled: !selectedContact || !selectedSessionId,
+    runtimeContextDisabled: !selectedContact || !selectedSessionId,
     onOpenSummary: handleOpenSelectedSummary,
     onOpenRuntimeContext: handleOpenSelectedRuntimeContext,
   }), [

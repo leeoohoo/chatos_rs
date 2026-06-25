@@ -3,6 +3,7 @@ import type {
   DeleteSuccessResponse,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectPlanResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
@@ -45,6 +46,15 @@ export const deleteProject = (request: ApiRequestFn, id: string): Promise<Delete
 
 export const getProject = (request: ApiRequestFn, id: string): Promise<ProjectResponse> => {
   return request<ProjectResponse>(`/projects/${id}`);
+};
+
+export const getProjectPlan = (
+  request: ApiRequestFn,
+  projectId: string,
+  options?: { includeArchived?: boolean },
+): Promise<ProjectPlanResponse> => {
+  const query = buildQuery({ include_archived: options?.includeArchived });
+  return request<ProjectPlanResponse>(`/projects/${encodeURIComponent(projectId)}/plan${query}`);
 };
 
 export const analyzeProjectRun = (

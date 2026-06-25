@@ -110,11 +110,6 @@ pub(crate) fn task_mcp_config_schema() -> Value {
         "type": "object",
         "properties": {
             "enabled": { "type": "boolean", "description": "是否启用 MCP。通常保持 true。" },
-            "init_mode": {
-                "type": "string",
-                "enum": ["builtin_only", "full", "disabled"],
-                "description": "MCP 初始化方式。任务系统通常使用 builtin_only。"
-            },
             "builtin_prompt_mode": {
                 "type": "string",
                 "enum": ["effective", "configured"],

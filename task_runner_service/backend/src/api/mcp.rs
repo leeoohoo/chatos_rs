@@ -158,6 +158,8 @@ fn mcp_request_context_from_headers(headers: &HeaderMap) -> McpRequestContext {
             .or_else(|| header_text(headers, "x-task-runner-remote-server-json")),
         tool_profile: header_text(headers, "x-task-runner-tool-profile"),
         task_profile: header_text(headers, "x-task-runner-task-profile"),
+        builtin_prompt_locale: header_text(headers, "x-task-runner-builtin-prompt-locale")
+            .or_else(|| header_text(headers, "x-chatos-internal-context-locale")),
         chatos_plan_mode: header_bool(headers, "x-chatos-plan-mode"),
     }
 }

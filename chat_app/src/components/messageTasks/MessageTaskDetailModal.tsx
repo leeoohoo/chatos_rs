@@ -15,6 +15,11 @@ interface MessageTaskDetailModalProps {
   onClose: () => void;
 }
 
+interface MessageTaskProcessLogModalProps {
+  task: MessageTaskRunnerTask | null;
+  onClose: () => void;
+}
+
 const shortId = (value: string): string => (
   value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value
 );
@@ -213,6 +218,29 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
       <CollapsibleSection title="原始输入">
         <CollapsibleText value={task.input_payload || '-'} code />
       </CollapsibleSection>
+    </ModalShell>
+  );
+};
+
+export const MessageTaskProcessLogModal: FC<MessageTaskProcessLogModalProps> = ({
+  task,
+  onClose,
+}) => {
+  if (!task) {
+    return null;
+  }
+
+  return (
+    <ModalShell
+      title="执行过程"
+      subtitle={task.title || task.id}
+      onClose={onClose}
+      widthClassName="max-w-4xl"
+    >
+      <CollapsibleText
+        value={task.process_log || '暂无执行过程'}
+        maxHeightClassName="max-h-[68vh]"
+      />
     </ModalShell>
   );
 };

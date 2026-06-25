@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { api, getAuthToken } from './api/client';
 import { AppShell } from './components/AppShell';
-import { AgentAccountsPage } from './pages/AgentAccountsPage';
+import { ConfigPage } from './pages/ConfigPage';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -44,7 +44,8 @@ export function App() {
         <Route index element={<Navigate to="/projects" replace />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-        <Route path="/agent-accounts" element={<AgentAccountsPage />} />
+        <Route path="/config" element={<ConfigPage />} />
+        <Route path="*" element={<Navigate to="/projects" replace />} />
       </Route>
     </Routes>
   );

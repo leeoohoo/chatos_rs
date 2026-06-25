@@ -29,7 +29,10 @@ import {
   promptStatusColorMap,
   runStatusColorMap,
   statusColorMap,
+  systemInjectedMcpServerNames,
   taskCreatorLabel,
+  taskProfileColorMap,
+  taskProfileLabel,
   type TaskRemoteOperationStats,
   type TaskRemoteOperationView,
 } from './taskPageUtils';
@@ -107,6 +110,8 @@ export function TaskDetailDrawer({
   onOpenServers,
   onOpenDetail,
 }: TaskDetailDrawerProps) {
+  const systemMcpServers = task ? systemInjectedMcpServerNames(task) : [];
+
   return (
     <Drawer
       title={task ? t('tasks.detail.titleWithName', { title: task.title }) : t('tasks.detail.title')}
@@ -162,6 +167,11 @@ export function TaskDetailDrawer({
             <Descriptions.Item label={t('tasks.detail.taskId')}>{task.id}</Descriptions.Item>
             <Descriptions.Item label={t('common.status')}>
               <Tag color={statusColorMap[task.status]}>{taskStatusLabel(task.status)}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.taskProfile')}>
+              <Tag color={taskProfileColorMap[task.task_profile] || 'default'}>
+                {taskProfileLabel(task.task_profile, t)}
+              </Tag>
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.column.creator')}>
               {taskCreatorLabel(task)}
@@ -226,6 +236,19 @@ export function TaskDetailDrawer({
                       </Tag>
                     );
                   })}
+                </Space>
+              ) : (
+                t('common.noData')
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('tasks.detail.systemMcpServers')}>
+              {systemMcpServers.length ? (
+                <Space wrap>
+                  {systemMcpServers.map((serverName) => (
+                    <Tag key={serverName} color="geekblue">
+                      {serverName}
+                    </Tag>
+                  ))}
                 </Space>
               ) : (
                 t('common.noData')

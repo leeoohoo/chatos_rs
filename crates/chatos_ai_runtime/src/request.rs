@@ -18,7 +18,8 @@ use crate::request_retry::should_retry_without_prompt_cache_retention;
 use crate::stream::consume_sse_stream;
 use crate::stream_parse::{
     apply_chat_completions_stream_event, apply_responses_stream_event,
-    finalize_chat_completions_stream_state, finalize_responses_stream_state, StreamState,
+    finalize_chat_completions_stream_state, finalize_responses_stream_state, FinalizedStreamState,
+    StreamState,
 };
 use crate::tool_call::collect_ordered_tool_calls;
 
@@ -435,6 +436,7 @@ async fn parse_stream_response(
 ) -> Result<AiResponse, String> {
     let mut state = StreamState::default();
     let mut parsed_event_count = 0usize;
+    let mut sent_any_thinking = false;
     let reasoning_enabled = reasoning_effort_for_provider(provider, thinking_level).is_some()
         || thinking_mode_for_provider(provider, thinking_level) == Some("enabled");
 
@@ -452,6 +454,7 @@ async fn parse_stream_response(
             }
         }
         if let Some(thinking) = payload.thinking {
+            sent_any_thinking = true;
             if let Some(cb) = &callbacks.on_thinking {
                 cb(thinking);
             }
@@ -468,11 +471,12 @@ async fn parse_stream_response(
         AiTransport::ChatCompletions => finalize_chat_completions_stream_state(&mut state),
     };
 
-    if !state.sent_any_chunk && !finalized.content.is_empty() {
-        if let Some(cb) = &callbacks.on_chunk {
-            cb(finalized.content.clone());
-        }
-    }
+    emit_finalized_stream_callbacks(
+        &finalized,
+        state.sent_any_chunk,
+        sent_any_thinking,
+        &callbacks,
+    );
 
     Ok(AiResponse {
         content: finalized.content,
@@ -488,6 +492,30 @@ async fn parse_stream_response(
         usage: finalized.usage,
         response_id: finalized.response_id,
     })
+}
+
+fn emit_finalized_stream_callbacks(
+    finalized: &FinalizedStreamState,
+    sent_any_chunk: bool,
+    sent_any_thinking: bool,
+    callbacks: &StreamCallbacks,
+) {
+    if !sent_any_chunk && !finalized.content.is_empty() {
+        if let Some(cb) = &callbacks.on_chunk {
+            cb(finalized.content.clone());
+        }
+    }
+
+    if sent_any_thinking {
+        return;
+    }
+    if let Some(reasoning) = finalized.reasoning.as_deref().map(str::trim) {
+        if !reasoning.is_empty() {
+            if let Some(cb) = &callbacks.on_thinking {
+                cb(reasoning.to_string());
+            }
+        }
+    }
 }
 
 fn collect_tool_calls(tool_calls: &BTreeMap<usize, Value>) -> Option<Value> {
@@ -542,12 +570,16 @@ fn validate_request_payload_size(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use serde_json::{json, Value};
 
     use super::{
         build_chat_completions_request_payload, build_responses_request_payload,
-        effective_provider_for_request, response_items_to_chat_messages, AiRequestOptions,
+        effective_provider_for_request, emit_finalized_stream_callbacks,
+        response_items_to_chat_messages, AiRequestOptions, StreamCallbacks,
     };
+    use crate::stream_parse::FinalizedStreamState;
 
     #[test]
     fn response_items_to_chat_messages_keeps_complete_tool_exchange() {
@@ -672,6 +704,57 @@ mod tests {
     }
 
     #[test]
+    fn responses_payload_requests_summary_for_gpt_model_on_compatible_provider() {
+        let payload = build_responses_request_payload(
+            json!([]),
+            "gpt-5.4".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("openai_compatible".to_string()),
+            Some("xhigh".to_string()),
+            true,
+            false,
+        );
+
+        assert_eq!(
+            payload.pointer("/reasoning/effort"),
+            Some(&Value::String("xhigh".to_string()))
+        );
+        assert_eq!(
+            payload.pointer("/reasoning/summary"),
+            Some(&Value::String("auto".to_string()))
+        );
+    }
+
+    #[test]
+    fn responses_payload_omits_summary_for_generic_compatible_model() {
+        let payload = build_responses_request_payload(
+            json!([]),
+            "generic-compatible-model".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("openai_compatible".to_string()),
+            Some("high".to_string()),
+            true,
+            false,
+        );
+
+        assert_eq!(
+            payload.pointer("/reasoning/effort"),
+            Some(&Value::String("high".to_string()))
+        );
+        assert!(payload.pointer("/reasoning/summary").is_none());
+    }
+
+    #[test]
     fn custom_openai_base_url_uses_compatible_provider() {
         assert_eq!(
             effective_provider_for_request(
@@ -689,5 +772,54 @@ mod tests {
             .as_deref(),
             Some("openai")
         );
+    }
+
+    #[test]
+    fn finalized_stream_callbacks_emit_final_reasoning_when_no_stream_thinking() {
+        let thinkings = Arc::new(Mutex::new(Vec::<String>::new()));
+        let callbacks = StreamCallbacks {
+            on_chunk: None,
+            on_thinking: Some(Arc::new({
+                let thinkings = thinkings.clone();
+                move |value| {
+                    thinkings.lock().expect("lock poisoned").push(value);
+                }
+            })),
+        };
+        let finalized = FinalizedStreamState {
+            content: "done".to_string(),
+            reasoning: Some("final reasoning".to_string()),
+            ..FinalizedStreamState::default()
+        };
+
+        emit_finalized_stream_callbacks(&finalized, true, false, &callbacks);
+
+        assert_eq!(
+            thinkings.lock().expect("lock poisoned").as_slice(),
+            ["final reasoning"]
+        );
+    }
+
+    #[test]
+    fn finalized_stream_callbacks_do_not_duplicate_streamed_thinking() {
+        let thinkings = Arc::new(Mutex::new(Vec::<String>::new()));
+        let callbacks = StreamCallbacks {
+            on_chunk: None,
+            on_thinking: Some(Arc::new({
+                let thinkings = thinkings.clone();
+                move |value| {
+                    thinkings.lock().expect("lock poisoned").push(value);
+                }
+            })),
+        };
+        let finalized = FinalizedStreamState {
+            content: "done".to_string(),
+            reasoning: Some("final reasoning".to_string()),
+            ..FinalizedStreamState::default()
+        };
+
+        emit_finalized_stream_callbacks(&finalized, true, true, &callbacks);
+
+        assert!(thinkings.lock().expect("lock poisoned").is_empty());
     }
 }

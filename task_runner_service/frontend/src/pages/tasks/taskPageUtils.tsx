@@ -5,10 +5,10 @@ import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   RemoteServerRecord,
   TaskBuiltinPromptMode,
-  TaskMcpInitMode,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
+  TaskProfile,
   TaskScheduleConfig,
   TaskScheduleMode,
   TaskStatus,
@@ -35,7 +35,6 @@ export type TaskFormValues = {
   prerequisite_task_ids?: string[];
   tagsText?: string;
   mcpEnabled: boolean;
-  mcpInitMode: TaskMcpInitMode;
   builtinPromptMode: TaskBuiltinPromptMode;
   builtinPromptLocale: string;
   enabledBuiltinKinds: string[];
@@ -45,6 +44,7 @@ export type TaskFormValues = {
   scheduleMode: TaskScheduleMode;
   scheduleRunAt?: string;
   scheduleIntervalSeconds?: number;
+  taskProfile: TaskProfile;
 };
 
 export type RunTaskFormValues = {
@@ -54,12 +54,37 @@ export type RunTaskFormValues = {
 
 export const CODE_MAINTAINER_READ_KIND = 'CodeMaintainerRead';
 export const CODE_MAINTAINER_WRITE_KIND = 'CodeMaintainerWrite';
+export const PROJECT_MANAGEMENT_KIND = 'ProjectManagement';
+export const PROJECT_MANAGEMENT_MCP_SERVER_NAME = 'project_management_service';
+export const taskProfileValues: TaskProfile[] = ['default', 'chatos_plan'];
+
+export const taskProfileColorMap: Record<TaskProfile, string> = {
+  default: 'default',
+  chatos_plan: 'geekblue',
+};
+
+export function taskProfileLabel(profile: string | undefined, t: TranslateFn): string {
+  if (profile === 'chatos_plan') {
+    return t('tasks.profile.chatosPlan');
+  }
+  return t('tasks.profile.default');
+}
+
+export function systemInjectedMcpServerNames(
+  taskOrProfile: Pick<TaskRecord, 'task_profile'> | TaskProfile | string | undefined,
+): string[] {
+  const profile =
+    typeof taskOrProfile === 'string' || taskOrProfile === undefined
+      ? taskOrProfile
+      : taskOrProfile.task_profile;
+  return profile === 'chatos_plan' ? [PROJECT_MANAGEMENT_MCP_SERVER_NAME] : [];
+}
 
 export function completeEnabledBuiltinKindDependencies(values?: string[]): string[] {
   const out: string[] = [];
   (values || []).forEach((value) => {
     const trimmed = value.trim();
-    if (trimmed && !out.includes(trimmed)) {
+    if (trimmed && trimmed !== PROJECT_MANAGEMENT_KIND && !out.includes(trimmed)) {
       out.push(trimmed);
     }
   });

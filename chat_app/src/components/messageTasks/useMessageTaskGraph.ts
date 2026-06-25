@@ -3,6 +3,7 @@ import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
   getMessageTaskRunnerGraph,
   getMessageTaskRunnerGraphRun,
+  getMessageTaskRunnerTask,
 } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
@@ -33,7 +34,9 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<MessageTaskRunnerTask | null>(null);
+  const [processTask, setProcessTask] = useState<MessageTaskRunnerTask | null>(null);
   const [runDetail, setRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
+  const [loadingProcessTaskId, setLoadingProcessTaskId] = useState<string | null>(null);
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
 
   const reloadGraph = useCallback(async () => {
@@ -88,6 +91,31 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     setDetailTask(task);
   }, []);
 
+  const openProcessLog = useCallback(async (task: MessageTaskRunnerTask) => {
+    const taskId = readString(task.id);
+    if (!taskId) {
+      return;
+    }
+    setLoadingProcessTaskId(taskId);
+    setError(null);
+    try {
+      const detailLookup = sourceUserMessageId
+        ? { ...lookup, sourceUserMessageId }
+        : lookup;
+      const detail = await getMessageTaskRunnerTask(
+        apiClient.getRequestFn(),
+        messageId,
+        taskId,
+        detailLookup,
+      );
+      setProcessTask(detail);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '读取执行过程失败');
+    } finally {
+      setLoadingProcessTaskId(null);
+    }
+  }, [apiClient, lookup, messageId, sourceUserMessageId]);
+
   const openRun = useCallback(async (task: MessageTaskRunnerTask) => {
     const runId = readString(task.last_run_id);
     if (!runId) {
@@ -123,6 +151,7 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
   useEffect(() => {
     if (!open) {
       setDetailTask(null);
+      setProcessTask(null);
       setRunDetail(null);
       setError(null);
     }
@@ -136,12 +165,16 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     loading,
     error,
     detailTask,
+    processTask,
+    loadingProcessTaskId,
     runDetail,
     loadingRunId,
     reloadGraph,
     openDetail,
+    openProcessLog,
     openRun,
     closeDetail: () => setDetailTask(null),
+    closeProcessLog: () => setProcessTask(null),
     closeRun: () => setRunDetail(null),
   };
 }

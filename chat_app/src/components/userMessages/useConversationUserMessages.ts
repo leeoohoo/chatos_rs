@@ -12,6 +12,12 @@ import type { UserMessageTaskState, UserMessageTurn } from './types';
 
 const PAGE_SIZE = 10;
 const LIVE_TASK_POLL_INTERVAL_MS = 12000;
+const EXTERNAL_REFRESH_DELAY_MS = 350;
+
+interface UseConversationUserMessagesOptions {
+  refreshKey?: string | number | null;
+  refreshDelayMs?: number;
+}
 
 const readRecord = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -21,6 +27,22 @@ const readRecord = (value: unknown): Record<string, unknown> | null => (
 
 const readString = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
+);
+
+const readRefreshKey = (value: string | number | null | undefined): string => {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  return '';
+};
+
+const resolveRefreshDelay = (value: number | null | undefined): number => (
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : EXTERNAL_REFRESH_DELAY_MS
 );
 
 const readStringArray = (value: unknown): string[] => {
@@ -209,9 +231,14 @@ const normalizeTurn = (
   };
 };
 
-export const useConversationUserMessages = (sessionId: string | null | undefined) => {
+export const useConversationUserMessages = (
+  sessionId: string | null | undefined,
+  options: UseConversationUserMessagesOptions = {},
+) => {
   const { t } = useI18n();
   const apiClient = useApiClient();
+  const externalRefreshKey = readRefreshKey(options.refreshKey);
+  const externalRefreshDelayMs = resolveRefreshDelay(options.refreshDelayMs);
   const [items, setItems] = useState<UserMessageTurn[]>([]);
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -222,6 +249,7 @@ export const useConversationUserMessages = (sessionId: string | null | undefined
   const activeSessionIdRef = useRef<string | null | undefined>(sessionId);
   const itemsRef = useRef<UserMessageTurn[]>([]);
   const hydratingLiveTaskStatesRef = useRef(false);
+  const externalRefreshKeyRef = useRef(externalRefreshKey);
 
   useEffect(() => {
     activeSessionIdRef.current = sessionId;
@@ -346,6 +374,25 @@ export const useConversationUserMessages = (sessionId: string | null | undefined
     setLoadingMore(false);
     void loadPage(null, 'replace');
   }, [loadPage, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      externalRefreshKeyRef.current = externalRefreshKey;
+      return undefined;
+    }
+    if (!externalRefreshKey || externalRefreshKeyRef.current === externalRefreshKey) {
+      return undefined;
+    }
+    externalRefreshKeyRef.current = externalRefreshKey;
+    if (itemsRef.current.some((item) => item.userMessage.id === externalRefreshKey)) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void loadPage(null, 'replace');
+    }, externalRefreshDelayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [externalRefreshDelayMs, externalRefreshKey, loadPage, sessionId]);
 
   useEffect(() => {
     if (!sessionId) {

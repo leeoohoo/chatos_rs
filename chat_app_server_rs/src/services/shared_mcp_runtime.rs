@@ -105,6 +105,9 @@ pub(crate) fn shared_builtin_kind(
             chatos_mcp_runtime::BuiltinMcpKind::TerminalController
         }
         ChatosBuiltinMcpKind::TaskManager => chatos_mcp_runtime::BuiltinMcpKind::TaskManager,
+        ChatosBuiltinMcpKind::ProjectManagement => {
+            chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement
+        }
         ChatosBuiltinMcpKind::Notepad => chatos_mcp_runtime::BuiltinMcpKind::Notepad,
         ChatosBuiltinMcpKind::AgentBuilder => chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder,
         ChatosBuiltinMcpKind::AskUser => chatos_mcp_runtime::BuiltinMcpKind::AskUser,
@@ -160,6 +163,9 @@ pub(crate) fn chatos_builtin_kind(
             ChatosBuiltinMcpKind::TerminalController
         }
         chatos_mcp_runtime::BuiltinMcpKind::TaskManager => ChatosBuiltinMcpKind::TaskManager,
+        chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
+            ChatosBuiltinMcpKind::ProjectManagement
+        }
         chatos_mcp_runtime::BuiltinMcpKind::Notepad => ChatosBuiltinMcpKind::Notepad,
         chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder => ChatosBuiltinMcpKind::AgentBuilder,
         chatos_mcp_runtime::BuiltinMcpKind::AskUser => ChatosBuiltinMcpKind::AskUser,

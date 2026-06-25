@@ -22,6 +22,7 @@ pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMc
         return plan_task_runtime_builtin_kinds();
     }
     let mut kinds = selected_builtin_kinds(&task.mcp_config);
+    kinds.retain(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement));
     if is_chatos_async_task(task) {
         ensure_system_injected_builtin_kinds(&mut kinds);
     }
@@ -33,6 +34,7 @@ fn plan_task_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
         BuiltinMcpKind::CodeMaintainerRead,
         BuiltinMcpKind::TerminalController,
         BuiltinMcpKind::TaskManager,
+        BuiltinMcpKind::ProjectManagement,
         BuiltinMcpKind::Notepad,
         BuiltinMcpKind::AskUser,
         BuiltinMcpKind::RemoteConnectionController,
@@ -72,6 +74,7 @@ pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {
     let kinds = values
         .into_iter()
         .filter_map(|value| builtin_kind_by_any(&value))
+        .filter(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement))
         .collect::<Vec<_>>();
     complete_builtin_kind_dependencies(kinds)
         .into_iter()
@@ -80,6 +83,7 @@ pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {
 }
 
 pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConfig {
+    config.init_mode = chatos_ai_runtime::TaskMcpInitMode::Full;
     config.builtin_prompt_locale = normalized_optional(Some(config.builtin_prompt_locale))
         .unwrap_or_else(|| chatos_mcp_runtime::BuiltinMcpPromptLocale::DEFAULT_KEY.to_string());
     config.enabled_builtin_kinds = normalize_builtin_kind_names(config.enabled_builtin_kinds);
@@ -199,6 +203,7 @@ mod tests {
 
         assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
         assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+        assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
         assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
         assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
         assert!(!selected.contains(&BuiltinMcpKind::AgentBuilder));
@@ -215,6 +220,29 @@ mod tests {
 
         assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
         assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    }
+
+    #[test]
+    fn normalized_config_removes_project_management_selection() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec![
+                "ProjectManagement".to_string(),
+                "CodeMaintainerWrite".to_string(),
+            ],
+            ..TaskMcpConfig::default()
+        };
+
+        let sanitized = super::sanitize_task_mcp_config(config);
+
+        assert!(!sanitized
+            .enabled_builtin_kinds
+            .contains(&"ProjectManagement".to_string()));
+        assert!(sanitized
+            .enabled_builtin_kinds
+            .contains(&"CodeMaintainerWrite".to_string()));
+        assert!(sanitized
+            .enabled_builtin_kinds
+            .contains(&"CodeMaintainerRead".to_string()));
     }
 
     fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRecord {

@@ -74,6 +74,9 @@ impl McpCatalogService {
                                 chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
                                     Some("服务器列表来自 Task Runner 的“服务器”页面".to_string())
                                 }
+                                chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
+                                    Some("规划任务运行时会自动启用；普通任务不可选择。".to_string())
+                                }
                                 _ => None,
                             },
                         }

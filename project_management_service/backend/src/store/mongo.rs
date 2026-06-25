@@ -381,6 +381,14 @@ impl MongoStore {
         user: &CurrentUser,
     ) -> Result<RequirementRecord, String> {
         validate_required("title", &input.title)?;
+        let requirement_id = Uuid::new_v4().to_string();
+        let parent_requirement_id = normalized_optional(input.parent_requirement_id);
+        self.validate_parent_requirement(
+            requirement_id.as_str(),
+            project_id,
+            parent_requirement_id.as_deref(),
+        )
+        .await?;
         let owner_user_id = user.effective_owner_user_id().map(ToOwned::to_owned);
         let owner_username = user.effective_owner_username().map(ToOwned::to_owned);
         let owner_display_name = user
@@ -389,9 +397,10 @@ impl MongoStore {
             .or_else(|| user.effective_owner_username().map(ToOwned::to_owned));
         let now = now_rfc3339();
         let requirement = RequirementRecord {
-            id: Uuid::new_v4().to_string(),
+            id: requirement_id,
             project_id: project_id.to_string(),
-            parent_requirement_id: normalized_optional(input.parent_requirement_id),
+            parent_requirement_id,
+            requirement_type: input.requirement_type.unwrap_or_default(),
             title: input.title.trim().to_string(),
             summary: normalized_optional(input.summary),
             detail: normalized_optional(input.detail),
@@ -432,7 +441,17 @@ impl MongoStore {
         };
         let mut should_archive_work_items = false;
         if patch.parent_requirement_id.is_some() {
-            requirement.parent_requirement_id = normalized_optional(patch.parent_requirement_id);
+            let parent_requirement_id = normalized_optional(patch.parent_requirement_id);
+            self.validate_parent_requirement(
+                requirement.id.as_str(),
+                requirement.project_id.as_str(),
+                parent_requirement_id.as_deref(),
+            )
+            .await?;
+            requirement.parent_requirement_id = parent_requirement_id;
+        }
+        if let Some(requirement_type) = patch.requirement_type {
+            requirement.requirement_type = requirement_type;
         }
         if let Some(title) = patch.title {
             validate_required("title", &title)?;
@@ -479,6 +498,58 @@ impl MongoStore {
                 .await?;
         }
         Ok(Some(requirement))
+    }
+
+    async fn validate_parent_requirement(
+        &self,
+        requirement_id: &str,
+        project_id: &str,
+        parent_requirement_id: Option<&str>,
+    ) -> Result<(), String> {
+        let Some(parent_requirement_id) = parent_requirement_id else {
+            return Ok(());
+        };
+        if parent_requirement_id == requirement_id {
+            return Err("需求不能作为自身父需求".to_string());
+        }
+        let parent = self
+            .get_requirement(parent_requirement_id)
+            .await?
+            .ok_or_else(|| format!("父需求不存在: {parent_requirement_id}"))?;
+        if parent.project_id != project_id {
+            return Err(format!("父需求必须属于同一项目: {parent_requirement_id}"));
+        }
+        if matches!(
+            parent.status,
+            RequirementStatus::Cancelled | RequirementStatus::Archived
+        ) {
+            return Err(format!(
+                "已取消或归档需求不能作为父需求: {parent_requirement_id}"
+            ));
+        }
+
+        let mut current_parent_id = parent.parent_requirement_id;
+        let mut visited = BTreeSet::new();
+        while let Some(current_id) = current_parent_id {
+            if current_id == requirement_id {
+                return Err(format!("父子需求不能形成循环关系: {requirement_id}"));
+            }
+            if !visited.insert(current_id.clone()) {
+                return Err("已有父子需求关系存在循环，请先修复数据".to_string());
+            }
+            if visited.len() > 200 {
+                return Err("父子需求层级过深，请拆分后再保存".to_string());
+            }
+            let current = self
+                .get_requirement(&current_id)
+                .await?
+                .ok_or_else(|| format!("父需求不存在: {current_id}"))?;
+            if current.project_id != project_id {
+                return Err(format!("父需求必须属于同一项目: {current_id}"));
+            }
+            current_parent_id = current.parent_requirement_id;
+        }
+        Ok(())
     }
 
     pub async fn archive_requirement(&self, id: &str) -> Result<Option<RequirementRecord>, String> {
