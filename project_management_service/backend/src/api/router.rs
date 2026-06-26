@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
@@ -1188,6 +1188,12 @@ async fn sync_task_runner_work_item_status(
         item
     };
 
+    if work_item.status == ProjectWorkItemStatus::Done {
+        complete_related_in_progress_requirements_if_work_items_done(&state.store, &work_item)
+            .await
+            .map_err(ApiError::bad_request)?;
+    }
+
     Ok(Json(SyncTaskRunnerWorkItemStatusResponse {
         work_item,
         link,
@@ -1299,6 +1305,108 @@ fn project_work_item_status_from_task_runner_status(status: &str) -> Option<Proj
         "cancelled" | "canceled" => Some(ProjectWorkItemStatus::Cancelled),
         _ => None,
     }
+}
+
+async fn complete_related_in_progress_requirements_if_work_items_done(
+    store: &crate::store::AppStore,
+    work_item: &ProjectWorkItemRecord,
+) -> Result<Vec<RequirementRecord>, String> {
+    if work_item.status != ProjectWorkItemStatus::Done {
+        return Ok(Vec::new());
+    }
+
+    let requirements = store
+        .list_requirements(&work_item.project_id, None, None)
+        .await?;
+    let requirement_by_id = requirements
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<HashMap<_, _>>();
+    let mut candidate_ids = Vec::new();
+    let mut seen = HashSet::new();
+    let mut current_id = Some(work_item.requirement_id.as_str());
+    while let Some(requirement_id) = current_id {
+        if !seen.insert(requirement_id.to_string()) {
+            break;
+        }
+        let Some(requirement) = requirement_by_id.get(requirement_id) else {
+            break;
+        };
+        candidate_ids.push(requirement.id.clone());
+        current_id = requirement.parent_requirement_id.as_deref();
+    }
+
+    if candidate_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let project_work_items = store
+        .list_work_items_by_project(&work_item.project_id, None, None)
+        .await?;
+    let mut updated_requirements = Vec::new();
+    for requirement_id in candidate_ids {
+        let Some(requirement) = requirement_by_id.get(requirement_id.as_str()) else {
+            continue;
+        };
+        if requirement.status != RequirementStatus::InProgress {
+            continue;
+        }
+
+        let subtree_ids =
+            collect_requirement_subtree_ids_from_list(&requirements, requirement.id.as_str());
+        let active_work_items = project_work_items
+            .iter()
+            .filter(|item| subtree_ids.contains(item.requirement_id.as_str()))
+            .filter(|item| item.status != ProjectWorkItemStatus::Archived)
+            .collect::<Vec<_>>();
+        if active_work_items.is_empty() {
+            continue;
+        }
+        if !active_work_items
+            .iter()
+            .all(|item| item.status == ProjectWorkItemStatus::Done)
+        {
+            continue;
+        }
+
+        if let Some(updated_requirement) = store
+            .update_requirement(
+                requirement.id.as_str(),
+                UpdateRequirementRequest {
+                    status: Some(RequirementStatus::Done),
+                    ..UpdateRequirementRequest::default()
+                },
+            )
+            .await?
+        {
+            updated_requirements.push(updated_requirement);
+        }
+    }
+
+    Ok(updated_requirements)
+}
+
+fn collect_requirement_subtree_ids_from_list(
+    requirements: &[RequirementRecord],
+    root_id: &str,
+) -> HashSet<String> {
+    let mut scope = HashSet::from([root_id.to_string()]);
+    loop {
+        let before = scope.len();
+        for requirement in requirements {
+            if requirement
+                .parent_requirement_id
+                .as_deref()
+                .is_some_and(|parent_id| scope.contains(parent_id))
+            {
+                scope.insert(requirement.id.clone());
+            }
+        }
+        if scope.len() == before {
+            break;
+        }
+    }
+    scope
 }
 
 async fn derive_task_runner_prerequisite_task_ids(
@@ -1581,12 +1689,16 @@ fn work_item_node(item: &ProjectWorkItemRecord) -> DependencyGraphNode {
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use axum::http::HeaderValue;
 
     use super::*;
     use crate::config::AppConfig;
+    use crate::store::AppStore;
+
+    static NEXT_TEST_DB: AtomicUsize = AtomicUsize::new(1);
 
     fn test_principal(principal_type: &str, id: &str, owner_user_id: Option<&str>) -> CurrentUser {
         CurrentUser {
@@ -1599,6 +1711,175 @@ mod tests {
             owner_username: owner_user_id.map(|value| format!("{value}-name")),
             owner_display_name: owner_user_id.map(|value| format!("{value} display")),
         }
+    }
+
+    fn test_user() -> CurrentUser {
+        test_principal("human_user", "user-1", Some("user-1"))
+    }
+
+    async fn test_store() -> AppStore {
+        let path = std::env::temp_dir().join(format!(
+            "project-management-router-test-{}-{}.db",
+            std::process::id(),
+            NEXT_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        AppStore::new(format!("sqlite://{}", path.display()).as_str())
+            .await
+            .expect("create sqlite store")
+    }
+
+    async fn create_test_project(store: &AppStore) -> ProjectRecord {
+        store
+            .create_project(
+                CreateProjectRequest {
+                    name: "Project".to_string(),
+                    root_path: None,
+                    git_url: None,
+                    description: None,
+                },
+                &test_user(),
+            )
+            .await
+            .expect("create project")
+    }
+
+    async fn create_test_requirement(
+        store: &AppStore,
+        project_id: &str,
+        parent_requirement_id: Option<String>,
+        title: &str,
+    ) -> RequirementRecord {
+        store
+            .create_requirement(
+                project_id,
+                CreateRequirementRequest {
+                    parent_requirement_id,
+                    requirement_type: None,
+                    title: title.to_string(),
+                    summary: None,
+                    detail: None,
+                    business_value: None,
+                    acceptance_criteria: None,
+                    source: None,
+                    priority: None,
+                    status: None,
+                    assignee_user_id: None,
+                },
+                &test_user(),
+            )
+            .await
+            .expect("create requirement")
+    }
+
+    async fn create_test_work_item(
+        store: &AppStore,
+        requirement: &RequirementRecord,
+        title: &str,
+    ) -> ProjectWorkItemRecord {
+        store
+            .upsert_requirement_document(
+                &requirement.id,
+                UpsertRequirementDocumentRequest {
+                    title: None,
+                    format: None,
+                    content: "Technical overview".to_string(),
+                },
+                &test_user(),
+            )
+            .await
+            .expect("upsert requirement document");
+        store
+            .create_work_item(
+                requirement,
+                CreateProjectWorkItemRequest {
+                    title: title.to_string(),
+                    description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                    status: None,
+                    priority: None,
+                    assignee_user_id: None,
+                    estimate_points: None,
+                    due_at: None,
+                    sort_order: None,
+                    tags: None,
+                },
+                &test_user(),
+            )
+            .await
+            .expect("create work item")
+    }
+
+    #[tokio::test]
+    async fn completed_child_requirement_work_items_complete_in_progress_parent_requirement() {
+        let store = test_store().await;
+        let project = create_test_project(&store).await;
+        let parent = create_test_requirement(&store, &project.id, None, "Parent").await;
+        let child =
+            create_test_requirement(&store, &project.id, Some(parent.id.clone()), "Child").await;
+        let first = create_test_work_item(&store, &child, "First").await;
+        let second = create_test_work_item(&store, &child, "Second").await;
+
+        store
+            .update_requirement(
+                &parent.id,
+                UpdateRequirementRequest {
+                    status: Some(RequirementStatus::InProgress),
+                    ..UpdateRequirementRequest::default()
+                },
+            )
+            .await
+            .expect("mark parent in progress");
+        let first_done = store
+            .update_work_item(
+                &first.id,
+                UpdateProjectWorkItemRequest {
+                    status: Some(ProjectWorkItemStatus::Done),
+                    ..UpdateProjectWorkItemRequest::default()
+                },
+            )
+            .await
+            .expect("mark first done")
+            .expect("first item");
+
+        complete_related_in_progress_requirements_if_work_items_done(&store, &first_done)
+            .await
+            .expect("complete related requirements");
+        let parent_before_last_item = store
+            .get_requirement(&parent.id)
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(
+            parent_before_last_item.status,
+            RequirementStatus::InProgress
+        );
+
+        let second_done = store
+            .update_work_item(
+                &second.id,
+                UpdateProjectWorkItemRequest {
+                    status: Some(ProjectWorkItemStatus::Done),
+                    ..UpdateProjectWorkItemRequest::default()
+                },
+            )
+            .await
+            .expect("mark second done")
+            .expect("second item");
+        let updated_requirements =
+            complete_related_in_progress_requirements_if_work_items_done(&store, &second_done)
+                .await
+                .expect("complete related requirements");
+
+        assert_eq!(updated_requirements.len(), 1);
+        assert_eq!(updated_requirements[0].id, parent.id);
+        assert_eq!(updated_requirements[0].status, RequirementStatus::Done);
+        let parent_after_last_item = store
+            .get_requirement(&parent.id)
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent_after_last_item.status, RequirementStatus::Done);
     }
 
     #[test]

@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
+
+static TASK_RUNNER_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct UserServiceTaskRunnerExchange {
@@ -121,7 +124,7 @@ pub async fn exchange_task_runner_token_via_user_service(
         "{}/api/token/exchange/task-runner",
         request.base_url.trim().trim_end_matches('/')
     );
-    let response = reqwest::Client::new()
+    let response = task_runner_http_client()
         .post(endpoint)
         .bearer_auth(request.access_token.trim())
         .json(&serde_json::json!({
@@ -162,7 +165,7 @@ pub async fn fetch_task_runner_skill(
         "{}/api/skills/task-runner",
         base_url.trim().trim_end_matches('/')
     );
-    let mut request = reqwest::Client::new()
+    let mut request = task_runner_http_client()
         .get(endpoint)
         .query(&[("lang", normalized_lang)]);
     if let Some(profile) = profile.map(str::trim).filter(|value| !value.is_empty()) {
@@ -315,7 +318,7 @@ pub async fn submit_task_runner_prompt(
         urlencoding::encode(prompt_id.trim())
     );
     send_json(
-        reqwest::Client::new()
+        task_runner_http_client()
             .post(endpoint)
             .bearer_auth(access_token.trim())
             .json(request),
@@ -335,7 +338,7 @@ pub async fn cancel_task_runner_prompt(
         urlencoding::encode(prompt_id.trim())
     );
     send_json(
-        reqwest::Client::new()
+        task_runner_http_client()
             .post(endpoint)
             .bearer_auth(access_token.trim())
             .json(request),
@@ -380,7 +383,7 @@ fn task_runner_request(
     path: &str,
 ) -> reqwest::RequestBuilder {
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
-    reqwest::Client::new()
+    task_runner_http_client()
         .request(method, endpoint)
         .bearer_auth(access_token.trim())
 }
@@ -403,6 +406,10 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn task_runner_http_client() -> &'static reqwest::Client {
+    TASK_RUNNER_HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
+
 fn normalize_tool_ids(values: &[String]) -> Vec<String> {
     let mut out = values
         .iter()
@@ -419,7 +426,7 @@ async fn get_internal_json(
     query: &[(&str, &str)],
 ) -> Result<Value, String> {
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
-    let response = reqwest::Client::new()
+    let response = task_runner_http_client()
         .get(endpoint)
         .query(query)
         .send()
@@ -444,7 +451,7 @@ async fn post_internal_json<T: Serialize + ?Sized>(
     body: &T,
 ) -> Result<Value, String> {
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
-    let response = reqwest::Client::new()
+    let response = task_runner_http_client()
         .post(endpoint)
         .json(body)
         .send()

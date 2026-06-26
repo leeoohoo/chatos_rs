@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde_json::{json, Value};
 use tracing::info;
@@ -34,6 +35,7 @@ pub(super) async fn execute_runtime_tools(
             }) as ToolResultCallback
         });
     let tool_call_values = tool_calls.as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let started_at = Instant::now();
     let tool_results = executor
         .execute_tools_stream(
             tool_call_values,
@@ -62,6 +64,7 @@ pub(super) async fn execute_runtime_tools(
         iteration,
         tool_result_count,
         tool_result_names = tool_result_names.join(", "),
+        tool_batch_ms = started_at.elapsed().as_millis(),
         "ai runtime finished tool execution"
     );
 

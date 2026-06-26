@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use serde_json::{json, Value};
 use tokio::task::JoinSet;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::builtin_prompt::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale};
 use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
@@ -55,6 +56,7 @@ impl McpExecutor {
     }
 
     pub async fn init(&mut self) -> Result<(), String> {
+        let started_at = Instant::now();
         self.available_tools.clear();
         self.unavailable_tools.clear();
         self.tool_metadata.clear();
@@ -62,15 +64,36 @@ impl McpExecutor {
         self.register_http_tools().await;
         self.register_stdio_tools().await;
         self.register_builtin_tools();
+        info!(
+            mcp_init_mode = "full",
+            http_server_count = self.http_servers.len(),
+            stdio_server_count = self.stdio_servers.len(),
+            builtin_server_count = self.builtin_servers.len(),
+            available_tool_count = self.available_tools.len(),
+            unavailable_tool_count = self.unavailable_tools.len(),
+            mcp_init_ms = started_at.elapsed().as_millis(),
+            "mcp executor initialized"
+        );
         Ok(())
     }
 
     pub fn init_builtin_only(&mut self) -> Result<(), String> {
+        let started_at = Instant::now();
         self.available_tools.clear();
         self.unavailable_tools.clear();
         self.tool_metadata.clear();
         self.tool_aliases.clear();
         self.register_builtin_tools();
+        info!(
+            mcp_init_mode = "builtin_only",
+            http_server_count = self.http_servers.len(),
+            stdio_server_count = self.stdio_servers.len(),
+            builtin_server_count = self.builtin_servers.len(),
+            available_tool_count = self.available_tools.len(),
+            unavailable_tool_count = self.unavailable_tools.len(),
+            mcp_init_ms = started_at.elapsed().as_millis(),
+            "mcp executor initialized"
+        );
         Ok(())
     }
 
@@ -166,7 +189,10 @@ impl McpExecutor {
         }
 
         let mut normalized = tool_call.clone();
-        if let Some(function) = normalized.get_mut("function").and_then(Value::as_object_mut) {
+        if let Some(function) = normalized
+            .get_mut("function")
+            .and_then(Value::as_object_mut)
+        {
             function.insert("name".to_string(), Value::String(resolved_name.to_string()));
         } else if let Some(object) = normalized.as_object_mut() {
             object.insert("name".to_string(), Value::String(resolved_name.to_string()));
@@ -382,7 +408,12 @@ impl McpExecutor {
                 context.clone(),
             );
             let outcome = self
-                .call_tool_once(execution_name.as_str(), args, context.clone(), stream_callback)
+                .call_tool_once(
+                    execution_name.as_str(),
+                    args,
+                    context.clone(),
+                    stream_callback,
+                )
                 .await;
             if context.is_aborted() {
                 break;
@@ -544,8 +575,27 @@ impl McpExecutor {
     }
 
     async fn register_http_tools(&mut self) {
-        for server in self.http_servers.clone() {
-            match list_tools_http(server.url.as_str(), server.headers.as_ref()).await {
+        let server_count = self.http_servers.len();
+        let mut ordered = (0..server_count).map(|_| None).collect::<Vec<_>>();
+        let mut joins = JoinSet::new();
+        for (index, server) in self.http_servers.clone().into_iter().enumerate() {
+            joins.spawn(async move {
+                let tools = list_tools_http(server.url.as_str(), server.headers.as_ref()).await;
+                (index, server, tools)
+            });
+        }
+
+        while let Some(joined) = joins.join_next().await {
+            match joined {
+                Ok((index, server, tools)) => ordered[index] = Some((server, tools)),
+                Err(err) => {
+                    warn!("[MCP] HTTP tools/list task failed: {err}");
+                }
+            }
+        }
+
+        for (server, tools) in ordered.into_iter().flatten() {
+            match tools {
                 Ok(tools) => {
                     for tool in tools {
                         if let Some(def) = parse_tool_definition(&tool) {
@@ -579,8 +629,27 @@ impl McpExecutor {
     }
 
     async fn register_stdio_tools(&mut self) {
-        for server in self.stdio_servers.clone() {
-            match list_tools_stdio(&server).await {
+        let server_count = self.stdio_servers.len();
+        let mut ordered = (0..server_count).map(|_| None).collect::<Vec<_>>();
+        let mut joins = JoinSet::new();
+        for (index, server) in self.stdio_servers.clone().into_iter().enumerate() {
+            joins.spawn(async move {
+                let tools = list_tools_stdio(&server).await;
+                (index, server, tools)
+            });
+        }
+
+        while let Some(joined) = joins.join_next().await {
+            match joined {
+                Ok((index, server, tools)) => ordered[index] = Some((server, tools)),
+                Err(err) => {
+                    warn!("[MCP] stdio tools/list task failed: {err}");
+                }
+            }
+        }
+
+        for (server, tools) in ordered.into_iter().flatten() {
+            match tools {
                 Ok(tools) => {
                     for tool in tools {
                         if let Some(def) = parse_tool_definition(&tool) {

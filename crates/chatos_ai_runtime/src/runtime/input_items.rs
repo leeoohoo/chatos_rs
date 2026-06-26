@@ -12,7 +12,9 @@ pub(super) fn input_item_count(input: &Value) -> usize {
 }
 
 pub(super) fn json_value_size_bytes(value: &Value) -> usize {
-    value.to_string().len()
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .unwrap_or_else(|_| value.to_string().len())
 }
 
 pub(super) fn attach_runtime_debug(mut payload: Value, runtime_debug: &Value) -> Value {

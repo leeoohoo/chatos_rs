@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -253,7 +253,8 @@ impl AiRequestHandler {
         abort_token: Option<CancellationToken>,
         force_identity_encoding: bool,
     ) -> Result<AiResponse, String> {
-        validate_request_payload_size(&payload, request_body_limit_bytes)?;
+        let payload_body = serialize_request_payload(&payload)?;
+        validate_request_payload_size(payload_body.len(), request_body_limit_bytes)?;
         if let Some(cb) = on_before_send_model_request {
             cb(payload.clone());
         }
@@ -266,26 +267,35 @@ impl AiRequestHandler {
         info!(
             transport = transport_label(transport),
             url = url.as_str(),
-            request_payload = payload.to_string(),
+            payload_bytes = payload_body.len(),
             "dispatching ai provider request"
         );
+        let request_started_at = Instant::now();
         let response = send_json_request(
             &self.client,
             url.as_str(),
             api_key,
-            &payload,
+            payload_body,
             abort_token.clone(),
             force_identity_encoding,
         )
         .await?;
+        let response_headers_ms = request_started_at.elapsed().as_millis();
+        info!(
+            transport = transport_label(transport),
+            url = url.as_str(),
+            response_headers_ms,
+            "ai provider response headers received"
+        );
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            let body_preview = log_preview(body.as_str());
             warn!(
                 transport = transport_label(transport),
                 url = url.as_str(),
                 status = status.as_u16(),
-                response_body = body.as_str(),
+                response_body = body_preview.as_str(),
                 "ai provider request failed"
             );
             return Err(format!("status {status}: {body}"));
@@ -302,19 +312,17 @@ impl AiRequestHandler {
         .await;
         match &parsed {
             Ok(ai_response) => {
-                let response_log = serde_json::json!({
-                    "response_id": ai_response.response_id,
-                    "finish_reason": ai_response.finish_reason,
-                    "content": ai_response.content,
-                    "reasoning": ai_response.reasoning,
-                    "tool_calls": ai_response.tool_calls,
-                    "provider_error": ai_response.provider_error,
-                    "usage": ai_response.usage,
-                });
                 info!(
                     transport = transport_label(transport),
                     url = url.as_str(),
-                    response_payload = response_log.to_string(),
+                    response_id = ai_response.response_id.as_deref().unwrap_or(""),
+                    finish_reason = ai_response.finish_reason.as_deref().unwrap_or(""),
+                    content_bytes = ai_response.content.len(),
+                    reasoning_bytes = ai_response.reasoning.as_deref().map(str::len).unwrap_or(0),
+                    tool_call_count = ai_response_tool_call_count(ai_response),
+                    has_provider_error = ai_response.provider_error.is_some(),
+                    has_usage = ai_response.usage.is_some(),
+                    ai_provider_request_ms = request_started_at.elapsed().as_millis(),
                     "received ai provider response"
                 );
             }
@@ -341,11 +349,15 @@ async fn send_json_request(
     client: &reqwest::Client,
     url: &str,
     api_key: &str,
-    payload: &Value,
+    payload_body: Vec<u8>,
     abort_token: Option<CancellationToken>,
     force_identity_encoding: bool,
 ) -> Result<reqwest::Response, String> {
-    let mut request = client.post(url).bearer_auth(api_key);
+    let mut request = client
+        .post(url)
+        .bearer_auth(api_key)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(payload_body);
     if force_identity_encoding {
         request = request
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
@@ -353,7 +365,7 @@ async fn send_json_request(
             .version(reqwest::Version::HTTP_11);
     }
 
-    let future = request.json(payload).send();
+    let future = request.send();
     if let Some(token) = abort_token {
         tokio::select! {
             _ = token.cancelled() => Err("aborted".to_string()),
@@ -551,14 +563,18 @@ fn parsed_stream_response_is_empty(parsed_event_count: usize, state: &StreamStat
         && state.provider_error.is_none()
 }
 
+fn serialize_request_payload(payload: &Value) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(payload)
+        .map_err(|err| format!("failed to serialize AI request payload: {err}"))
+}
+
 fn validate_request_payload_size(
-    payload: &Value,
+    size: usize,
     request_body_limit_bytes: Option<usize>,
 ) -> Result<(), String> {
     let Some(limit) = request_body_limit_bytes.filter(|value| *value > 0) else {
         return Ok(());
     };
-    let size = payload.to_string().len();
     if size > limit {
         Err(format!(
             "AI request payload too large: {size} bytes exceeds {limit} bytes"
@@ -566,6 +582,28 @@ fn validate_request_payload_size(
     } else {
         Ok(())
     }
+}
+
+fn ai_response_tool_call_count(response: &AiResponse) -> usize {
+    response
+        .tool_calls
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default()
+}
+
+fn log_preview(value: &str) -> String {
+    const MAX_LOG_PREVIEW_CHARS: usize = 2_000;
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= MAX_LOG_PREVIEW_CHARS {
+        return trimmed.to_string();
+    }
+    let preview = trimmed
+        .chars()
+        .take(MAX_LOG_PREVIEW_CHARS)
+        .collect::<String>();
+    format!("{preview}... [truncated]")
 }
 
 #[cfg(test)]

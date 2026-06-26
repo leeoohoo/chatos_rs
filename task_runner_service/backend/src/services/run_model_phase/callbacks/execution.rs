@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 const MAX_COMPLETION_GATE_FOLLOWUPS: usize = 3;
 
@@ -32,12 +33,21 @@ impl RunService {
         let mcp_builder = prepared_execution.mcp_builder;
         let runtime_options = runtime_execution.runtime_options;
         let report = match tokio::time::timeout(execution_timeout, async {
+            let runtime_init_started_at = Instant::now();
             let runtime = match runtime_config
                 .build_runtime_with_mcp_builder(mcp_builder)
                 .await
             {
                 Ok(runtime) => runtime,
                 Err(err) => {
+                    warn!(
+                        run_id = run.id.as_str(),
+                        task_id = task.id.as_str(),
+                        model_config_id = model_config.id.as_str(),
+                        runtime_init_ms = runtime_init_started_at.elapsed().as_millis(),
+                        error = err.as_str(),
+                        "task runner runtime init failed"
+                    );
                     return TaskRunReport::from_ai_report(
                         task.id.clone(),
                         run.id.clone(),
@@ -46,6 +56,13 @@ impl RunService {
                     );
                 }
             };
+            info!(
+                run_id = run.id.as_str(),
+                task_id = task.id.as_str(),
+                model_config_id = model_config.id.as_str(),
+                runtime_init_ms = runtime_init_started_at.elapsed().as_millis(),
+                "task runner runtime initialized"
+            );
             self.persist_mcp_runtime_snapshot(task, run, &runtime_config, &runtime)
                 .await;
             append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);

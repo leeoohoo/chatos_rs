@@ -1,27 +1,67 @@
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 use crate::types::McpStdioServer;
 
 const MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
+const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
+const MCP_TOOLS_LIST_ERROR_CACHE_TTL: Duration = Duration::from_secs(10);
+static MCP_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
+    OnceLock::new();
+static MCP_STDIO_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<StdioRpcSession>>>>> =
+    OnceLock::new();
+
+#[derive(Clone)]
+struct ToolsListCacheEntry {
+    expires_at: Instant,
+    result: Result<Vec<Value>, String>,
+}
+
+struct StdioRpcSession {
+    child: Child,
+    stdin: ChildStdin,
+    reader: Lines<BufReader<ChildStdout>>,
+}
 
 pub async fn list_tools_http(
     url: &str,
     headers: Option<&HashMap<String, String>>,
 ) -> Result<Vec<Value>, String> {
-    let response = jsonrpc_http_call(url, headers, "tools/list", json!({})).await?;
-    extract_tools(&response)
+    let cache_key = tools_list_http_cache_key(url, headers);
+    if let Some(cached) = cached_tools_list(cache_key.as_str()) {
+        return cached;
+    }
+    let result = async {
+        let response = jsonrpc_http_call(url, headers, "tools/list", json!({})).await?;
+        extract_tools(&response)
+    }
+    .await;
+    store_tools_list_cache(cache_key, result.clone());
+    result
 }
 
 pub async fn list_tools_stdio(cfg: &McpStdioServer) -> Result<Vec<Value>, String> {
-    let response = jsonrpc_stdio_call(cfg, "tools/list", json!({}), None).await?;
-    extract_tools(&response)
+    let cache_key = tools_list_stdio_cache_key(cfg);
+    if let Some(cached) = cached_tools_list(cache_key.as_str()) {
+        return cached;
+    }
+    let result = async {
+        let response = jsonrpc_stdio_call(cfg, "tools/list", json!({}), None).await?;
+        extract_tools(&response)
+    }
+    .await;
+    store_tools_list_cache(cache_key, result.clone());
+    result
 }
 
 pub fn extract_tools(response: &Value) -> Result<Vec<Value>, String> {
@@ -45,11 +85,7 @@ pub async fn jsonrpc_http_call(
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-    let client = reqwest::Client::builder()
-        .timeout(MCP_RPC_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|err| err.to_string())?;
+    let client = mcp_http_client()?;
     let mut request = client.post(url).json(&payload);
     if let Some(headers) = headers {
         for (key, value) in headers {
@@ -94,6 +130,84 @@ pub async fn jsonrpc_http_call(
         ));
     }
     Ok(value.get("result").cloned().unwrap_or(value))
+}
+
+fn mcp_http_client() -> Result<reqwest::Client, String> {
+    MCP_HTTP_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(MCP_RPC_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|err| err.to_string())
+        })
+        .clone()
+}
+
+fn cached_tools_list(cache_key: &str) -> Option<Result<Vec<Value>, String>> {
+    let cache = MCP_TOOLS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().ok()?;
+    let entry = guard.get(cache_key)?;
+    if Instant::now() < entry.expires_at {
+        return Some(entry.result.clone());
+    }
+    guard.remove(cache_key);
+    None
+}
+
+fn store_tools_list_cache(cache_key: String, result: Result<Vec<Value>, String>) {
+    let ttl = if result.is_ok() {
+        MCP_TOOLS_LIST_SUCCESS_CACHE_TTL
+    } else {
+        MCP_TOOLS_LIST_ERROR_CACHE_TTL
+    };
+    let Some(expires_at) = Instant::now().checked_add(ttl) else {
+        return;
+    };
+    let cache = MCP_TOOLS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(cache_key, ToolsListCacheEntry { expires_at, result });
+    }
+}
+
+fn tools_list_http_cache_key(url: &str, headers: Option<&HashMap<String, String>>) -> String {
+    let mut parts = vec![format!("http:url={}", url.trim())];
+    if let Some(headers) = headers {
+        let mut entries = headers.iter().collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(right.0));
+        for (key, value) in entries {
+            parts.push(format!("header:{}={}", key.trim(), value.trim()));
+        }
+    }
+    parts.join("\n")
+}
+
+fn tools_list_stdio_cache_key(cfg: &McpStdioServer) -> String {
+    let mut parts = vec![format!("stdio:command={}", cfg.command.trim())];
+    if let Some(args) = &cfg.args {
+        for arg in args {
+            parts.push(format!("arg={arg}"));
+        }
+    }
+    if let Some(cwd) = &cfg.cwd {
+        parts.push(format!("cwd={}", cwd.trim()));
+    }
+    if let Some(env) = &cfg.env {
+        let mut entries = env.iter().collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(right.0));
+        for (key, value) in entries {
+            parts.push(format!("env:{}={}", key.trim(), value.trim()));
+        }
+    }
+    parts.join("\n")
+}
+
+fn stdio_session_cache_key(cfg: &McpStdioServer) -> String {
+    format!(
+        "stdio-session:name={}\n{}",
+        cfg.name.trim(),
+        tools_list_stdio_cache_key(cfg)
+    )
 }
 
 fn format_http_send_error(method: &str, url: &str, err: &reqwest::Error) -> String {
@@ -177,12 +291,14 @@ pub async fn jsonrpc_stdio_call(
     params: Value,
     _conversation_id: Option<&str>,
 ) -> Result<Value, String> {
+    let session_key = stdio_session_cache_key(cfg);
     tokio::time::timeout(
         MCP_RPC_TIMEOUT,
-        jsonrpc_stdio_call_inner(cfg, method, params),
+        jsonrpc_stdio_call_with_session(cfg, session_key.clone(), method, params),
     )
     .await
     .map_err(|_| {
+        remove_stdio_session(session_key.as_str());
         format!(
             "{method} stdio MCP command `{}` timed out after {}s",
             cfg.command,
@@ -191,14 +307,55 @@ pub async fn jsonrpc_stdio_call(
     })?
 }
 
-async fn jsonrpc_stdio_call_inner(
+async fn jsonrpc_stdio_call_with_session(
     cfg: &McpStdioServer,
+    session_key: String,
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
 
+    let session = get_stdio_session(cfg, session_key.as_str()).await?;
+    let mut guard = session.lock().await;
+    let result = guard.send_request(id.as_str(), &payload).await;
+    if result.is_err() || guard.is_finished().await {
+        drop(guard);
+        remove_stdio_session(session_key.as_str());
+    }
+    result
+}
+
+async fn get_stdio_session(
+    cfg: &McpStdioServer,
+    session_key: &str,
+) -> Result<Arc<AsyncMutex<StdioRpcSession>>, String> {
+    if let Some(session) = lookup_stdio_session(session_key) {
+        return Ok(session);
+    }
+
+    let session = Arc::new(AsyncMutex::new(spawn_stdio_session(cfg).await?));
+    let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = sessions.lock().map_err(|err| err.to_string())?;
+    Ok(guard
+        .entry(session_key.to_string())
+        .or_insert_with(|| session)
+        .clone())
+}
+
+fn lookup_stdio_session(session_key: &str) -> Option<Arc<AsyncMutex<StdioRpcSession>>> {
+    let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    sessions.lock().ok()?.get(session_key).cloned()
+}
+
+fn remove_stdio_session(session_key: &str) {
+    let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = sessions.lock() {
+        guard.remove(session_key);
+    }
+}
+
+async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, String> {
     let mut cmd = tokio::process::Command::new(&cfg.command);
     if let Some(args) = &cfg.args {
         cmd.args(args);
@@ -211,40 +368,191 @@ async fn jsonrpc_stdio_call_inner(
     }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::null());
     cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn().map_err(|err| err.to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
+    let stdin = child.stdin.take().ok_or("missing stdin")?;
+    let stdout = child.stdout.take().ok_or("missing stdout")?;
+    let reader = BufReader::new(stdout).lines();
+
+    Ok(StdioRpcSession {
+        child,
+        stdin,
+        reader,
+    })
+}
+
+impl StdioRpcSession {
+    async fn send_request(&mut self, id: &str, payload: &Value) -> Result<Value, String> {
         let data = payload.to_string() + "\n";
-        stdin
+        self.stdin
             .write_all(data.as_bytes())
             .await
             .map_err(|err| err.to_string())?;
-    }
+        self.stdin.flush().await.map_err(|err| err.to_string())?;
 
-    let stdout = child.stdout.take().ok_or("missing stdout")?;
-    let mut reader = BufReader::new(stdout).lines();
-
-    loop {
-        match reader.next_line().await {
-            Ok(Some(line)) => {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if let Ok(value) = serde_json::from_str::<Value>(&line) {
-                    if value.get("id").and_then(Value::as_str) == Some(id.as_str()) {
-                        if value.get("error").is_some() {
-                            return Err(value.to_string());
+        loop {
+            match self.reader.next_line().await {
+                Ok(Some(line)) => {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                        if value.get("id").and_then(Value::as_str) == Some(id) {
+                            if value.get("error").is_some() {
+                                return Err(value.to_string());
+                            }
+                            return Ok(value.get("result").cloned().unwrap_or(value));
                         }
-                        return Ok(value.get("result").cloned().unwrap_or(value));
                     }
                 }
+                Ok(None) => break,
+                Err(err) => return Err(err.to_string()),
             }
-            Ok(None) => break,
-            Err(err) => return Err(err.to_string()),
         }
+
+        Err("no response from stdio server".to_string())
     }
 
-    Err("no response from stdio server".to_string())
+    async fn is_finished(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn http_tools_list_cache_key_sorts_headers() {
+        let headers_a = HashMap::from([
+            ("X-Zed".to_string(), "last".to_string()),
+            ("X-Alpha".to_string(), "first".to_string()),
+        ]);
+        let headers_b = HashMap::from([
+            ("X-Alpha".to_string(), "first".to_string()),
+            ("X-Zed".to_string(), "last".to_string()),
+        ]);
+
+        assert_eq!(
+            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_a)),
+            tools_list_http_cache_key("https://example.test/mcp", Some(&headers_b))
+        );
+    }
+
+    #[test]
+    fn stdio_tools_list_cache_key_includes_config_shape() {
+        let base = McpStdioServer {
+            name: "demo".to_string(),
+            command: "node".to_string(),
+            args: Some(vec!["server.js".to_string()]),
+            cwd: Some("/workspace".to_string()),
+            env: Some(HashMap::from([("TOKEN".to_string(), "one".to_string())])),
+        };
+        let mut changed = base.clone();
+        changed.args = Some(vec!["other.js".to_string()]);
+
+        assert_ne!(
+            tools_list_stdio_cache_key(&base),
+            tools_list_stdio_cache_key(&changed)
+        );
+    }
+
+    #[test]
+    fn stdio_session_cache_key_includes_server_name() {
+        let mut first = McpStdioServer {
+            name: "alpha".to_string(),
+            command: "node".to_string(),
+            args: Some(vec!["server.js".to_string()]),
+            cwd: Some("/workspace".to_string()),
+            env: None,
+        };
+        let mut second = first.clone();
+        second.name = "beta".to_string();
+
+        assert_ne!(
+            stdio_session_cache_key(&first),
+            stdio_session_cache_key(&second)
+        );
+
+        first.name = "beta".to_string();
+        assert_eq!(
+            stdio_session_cache_key(&first),
+            stdio_session_cache_key(&second)
+        );
+    }
+
+    #[test]
+    fn tools_list_cache_returns_fresh_entries_and_drops_expired_entries() {
+        let key = format!("test-cache-key-{}", uuid::Uuid::new_v4());
+        let result = Ok(vec![json!({"name": "demo_tool"})]);
+        store_tools_list_cache(key.clone(), result.clone());
+        assert_eq!(cached_tools_list(key.as_str()), Some(result));
+
+        let cache = MCP_TOOLS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = cache.lock().expect("cache lock");
+        guard.insert(
+            key.clone(),
+            ToolsListCacheEntry {
+                expires_at: Instant::now()
+                    .checked_sub(Duration::from_secs(1))
+                    .expect("expired instant"),
+                result: Ok(vec![json!({"name": "expired_tool"})]),
+            },
+        );
+        drop(guard);
+
+        assert!(cached_tools_list(key.as_str()).is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdio_jsonrpc_reuses_session_for_same_config() {
+        let count_file = std::env::temp_dir().join(format!(
+            "chatos_mcp_stdio_session_count_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let script = r#"
+count=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+echo $((count + 1)) > "$COUNT_FILE"
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  printf '{"jsonrpc":"2.0","id":"%s","result":{"ok":true}}\n' "$id"
+done
+"#;
+        let cfg = McpStdioServer {
+            name: format!("session-reuse-{}", uuid::Uuid::new_v4()),
+            command: "sh".to_string(),
+            args: Some(vec!["-c".to_string(), script.to_string()]),
+            cwd: None,
+            env: Some(HashMap::from([(
+                "COUNT_FILE".to_string(),
+                count_file.to_string_lossy().to_string(),
+            )])),
+        };
+
+        let first = jsonrpc_stdio_call(&cfg, "demo/one", json!({}), None)
+            .await
+            .expect("first stdio response");
+        let second = jsonrpc_stdio_call(&cfg, "demo/two", json!({}), None)
+            .await
+            .expect("second stdio response");
+        assert_eq!(first.pointer("/ok"), Some(&Value::Bool(true)));
+        assert_eq!(second.pointer("/ok"), Some(&Value::Bool(true)));
+        assert_eq!(
+            std::fs::read_to_string(&count_file)
+                .expect("count file")
+                .trim(),
+            "1"
+        );
+
+        remove_stdio_session(stdio_session_cache_key(&cfg).as_str());
+        let _ = std::fs::remove_file(count_file);
+    }
 }

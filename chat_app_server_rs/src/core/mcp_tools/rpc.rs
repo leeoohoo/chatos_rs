@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::OnceLock;
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use crate::services::mcp_loader::McpStdioServer;
+
+static MCP_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub async fn list_tools_http(
     url: &str,
@@ -44,7 +47,7 @@ pub async fn jsonrpc_http_call(
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-    let client = reqwest::Client::new();
+    let client = mcp_http_client();
     let mut request = client.post(url).json(&payload);
     if let Some(headers) = headers {
         for (key, value) in headers {
@@ -59,6 +62,10 @@ pub async fn jsonrpc_http_call(
     }
 
     Ok(value.get("result").cloned().unwrap_or(value))
+}
+
+fn mcp_http_client() -> &'static reqwest::Client {
+    MCP_HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
 pub async fn jsonrpc_stdio_call(
