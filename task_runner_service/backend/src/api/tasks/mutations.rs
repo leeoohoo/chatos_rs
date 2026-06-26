@@ -3,14 +3,47 @@ use super::*;
 pub(in crate::api) async fn create_task(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
+    headers: HeaderMap,
     Json(input): Json<CreateTaskRequest>,
 ) -> Result<(StatusCode, Json<TaskRecord>), ApiError> {
+    let source_context = task_source_context_from_headers(&headers, input.project_id.clone());
     let task = state
         .task_service
-        .create_task(input, Some(&current_user), None)
+        .create_task(input, Some(&current_user), source_context)
         .await
         .map_err(ApiError::bad_request)?;
     Ok((StatusCode::CREATED, Json(task)))
+}
+
+fn task_source_context_from_headers(
+    headers: &HeaderMap,
+    project_id: Option<String>,
+) -> Option<TaskSourceContext> {
+    let source_session_id = header_text(headers, "x-chatos-session-id")
+        .or_else(|| header_text(headers, "x-chatos-source-session-id"));
+    let source_user_message_id = header_text(headers, "x-chatos-user-message-id")
+        .or_else(|| header_text(headers, "x-chatos-source-user-message-id"));
+    let source_turn_id = header_text(headers, "x-chatos-turn-id")
+        .or_else(|| header_text(headers, "x-chatos-source-turn-id"));
+    if source_session_id.is_none() && source_user_message_id.is_none() && source_turn_id.is_none() {
+        return None;
+    }
+    Some(TaskSourceContext {
+        project_id,
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+        ..TaskSourceContext::default()
+    })
+}
+
+fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 pub(in crate::api) async fn batch_update_task_status(

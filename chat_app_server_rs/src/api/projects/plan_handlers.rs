@@ -52,10 +52,7 @@ pub(super) async fn get_project_plan(
     {
         Ok(requirements) => requirements,
         Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": err })),
-            );
+            return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err })));
         }
     };
 
@@ -69,28 +66,23 @@ pub(super) async fn get_project_plan(
     {
         Ok(work_items) => work_items,
         Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": err })),
-            );
+            return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err })));
         }
     };
-    let dependency_graph = match project_management_api_client::get_project_service_dependency_graph(
-        cfg.project_service_base_url.as_str(),
-        access_token.as_str(),
-        project.id.as_str(),
-        include_archived,
-    )
-    .await
-    {
-        Ok(graph) => graph,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": err })),
-            );
-        }
-    };
+    let dependency_graph =
+        match project_management_api_client::get_project_service_dependency_graph(
+            cfg.project_service_base_url.as_str(),
+            access_token.as_str(),
+            project.id.as_str(),
+            include_archived,
+        )
+        .await
+        {
+            Ok(graph) => graph,
+            Err(err) => {
+                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err })));
+            }
+        };
 
     (
         StatusCode::OK,

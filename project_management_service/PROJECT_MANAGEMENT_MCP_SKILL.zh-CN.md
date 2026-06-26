@@ -12,6 +12,7 @@ Project Management MCP 是项目管理微服务对外提供的项目结构化管
 - 把 `project_task` 理解为项目管理里的任务/工作项，也就是 `ProjectWorkItem`。
 - 最小有效建模：先判断是否真的需要新需求层级。能用一个需求加多个项目任务表达的，就不要拆成父需求/子需求。需求描述“要交付什么”，项目任务描述“怎么执行”。
 - 创建新需求或项目任务前，优先使用列表/概览工具检查是否已经存在同义内容，能更新就不要重复创建。
+- 规划阶段创建错的需求或项目任务，使用 `delete_requirement` / `delete_project_task` 直接删除；不要用 cancelled 表达“我不想要这个计划项”。已经产生执行关联的项目任务，以及包含这类项目任务的需求，不能直接删除，应保留执行链路并更新状态。
 - 需求覆盖不变量：每个新建或本轮更新的可执行需求，必须至少有一个对应的项目任务/工作项。不要只给第一个需求建任务；如果一次规划创建了 N 个可执行需求，收尾时必须能看到 N 个需求都被项目任务覆盖。
 - 依赖工具使用“完整替换列表”语义。调用前先确认现有依赖，避免误删用户已维护的前置关系。
 - 需求之间可以有父子层级，也可以有前置需求；同一个需求下面的项目任务之间也可以有前置项目任务。默认优先使用前置关系和项目任务，只有子需求需要独立范围、验收标准、状态或依赖时才使用父子层级。
@@ -51,12 +52,14 @@ Project Management MCP 是项目管理微服务对外提供的项目结构化管
 - `list_requirements`: 查询项目需求。
 - `create_requirement`: 创建项目需求。
 - `update_requirement`: 更新需求，并可同时替换前置需求。
+- `delete_requirement`: 删除尚未关联 Task Runner 执行任务的需求；会同时删除其子需求、技术总体文档、项目任务和依赖边。
 - `set_requirement_dependencies`: 替换某个需求的前置需求列表。
 - `upsert_requirement_technical_overview`: 创建或更新需求的实现技术总体文档。
 - `get_requirement_technical_overview`: 读取需求的实现技术总体文档。
 - `list_project_tasks`: 查询项目管理任务/工作项。
 - `create_project_task`: 在某个需求下创建项目管理任务/工作项；要求该需求已有非空技术总体文档内容。
 - `update_project_task`: 更新项目管理任务/工作项，并可同时替换前置项目任务。
+- `delete_project_task`: 删除尚未关联 Task Runner 执行任务的项目任务；规划阶段删除误建任务时使用。
 - `set_project_task_dependencies`: 替换某个项目任务的前置项目任务列表。
 - `get_project_dependency_graph`: 查询项目级需求、项目任务和依赖图。
 

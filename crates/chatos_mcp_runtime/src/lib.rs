@@ -2,6 +2,7 @@ pub mod builder;
 pub mod builtin_catalog;
 pub mod builtin_prompt;
 pub mod executor;
+pub mod naming;
 pub mod parallelism;
 pub mod registry;
 pub mod rpc;
@@ -37,6 +38,7 @@ pub use builtin_prompt::{
     BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale,
 };
 pub use executor::McpExecutor;
+pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
 pub use rpc::{jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio};
 pub use schema::{build_function_tool_schema, parse_tool_definition};

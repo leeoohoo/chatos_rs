@@ -97,6 +97,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/work-items/:work_item_id/task-runner-task",
             post(create_task_runner_task_from_work_item),
         )
+        .route(
+            "/api/task-runner/execution-options",
+            get(get_task_runner_execution_options),
+        )
         .route("/api/mcp/server", get(get_mcp_server_info))
         .route("/api/mcp/tools", get(list_mcp_tools))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
@@ -116,6 +120,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/projects/:project_id",
             get(sync_get_project),
+        )
+        .route(
+            "/api/chatos-sync/work-items/:work_item_id/task-runner-status",
+            post(sync_task_runner_work_item_status),
+        )
+        .route(
+            "/api/chatos-sync/requirements/:requirement_id/execution-state",
+            post(sync_requirement_execution_state),
         )
         .merge(protected_api)
         .route("/mcp", post(mcp_entrypoint))
@@ -265,6 +277,16 @@ async fn mcp_entrypoint(
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = request.id.clone().unwrap_or(Value::Null);
+    let real_user_access_token = match user_access_token_from_headers(&headers) {
+        Ok(value) => value,
+        Err(message) => {
+            return Json(mcp_server::jsonrpc_error_response(
+                StatusCode::UNAUTHORIZED,
+                id,
+                message,
+            ));
+        }
+    };
     let current_user = match task_runner_internal_mcp_user(&state.config, &headers) {
         Ok(Some(user)) => user,
         Ok(None) => {
@@ -295,22 +317,17 @@ async fn mcp_entrypoint(
                     "project management MCP requires an agent account token".to_string(),
                 ));
             }
-            let user_access_token = match require_user_access_token_from_headers(&headers) {
-                Ok(value) => value,
-                Err(message) => {
+            let user_access_token = match real_user_access_token.as_deref() {
+                Some(value) => value,
+                None => {
                     return Json(mcp_server::jsonrpc_error_response(
                         StatusCode::UNAUTHORIZED,
                         id,
-                        message,
+                        "project management MCP requires a real user token header".to_string(),
                     ));
                 }
             };
-            let user = match verify_token_via_user_service(
-                &state.config,
-                user_access_token.as_str(),
-            )
-            .await
-            {
+            let user = match verify_token_via_user_service(&state.config, user_access_token).await {
                 Ok(user) => user,
                 Err(message) => {
                     return Json(mcp_server::jsonrpc_error_response(
@@ -355,11 +372,6 @@ fn project_id_from_headers(headers: &HeaderMap) -> Option<String> {
         .flatten()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn require_user_access_token_from_headers(headers: &HeaderMap) -> Result<String, String> {
-    user_access_token_from_headers(headers)?
-        .ok_or_else(|| "project management MCP requires a real user token header".to_string())
 }
 
 fn user_access_token_from_headers(headers: &HeaderMap) -> Result<Option<String>, String> {
@@ -871,11 +883,27 @@ async fn create_work_item(
     Path(requirement_id): Path<String>,
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
-    Json(input): Json<CreateProjectWorkItemRequest>,
+    Json(mut input): Json<CreateProjectWorkItemRequest>,
 ) -> Result<(StatusCode, Json<ProjectWorkItemRecord>), ApiError> {
     let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
     let project = require_project_access(&state, &requirement.project_id, &user).await?;
     ensure_project_writable(&project)?;
+    let owner_user_id = user
+        .effective_owner_user_id()
+        .ok_or_else(|| ApiError::unauthorized("当前登录态缺少用户归属信息"))?;
+    let execution_options =
+        task_runner_api_client::fetch_execution_options(&state.config, owner_user_id)
+            .await
+            .map_err(ApiError::bad_gateway)?;
+    input.task_runner_default_model_config_id = execution_options
+        .validate_model_config_id(input.task_runner_default_model_config_id.as_str())
+        .map_err(ApiError::bad_request)?;
+    input.task_runner_enabled_tool_ids =
+        task_runner_api_client::normalize_tool_ids(input.task_runner_enabled_tool_ids)
+            .map_err(ApiError::bad_request)?;
+    let _ = execution_options
+        .mcp_config_for_tool_ids(&input.task_runner_enabled_tool_ids)
+        .map_err(ApiError::bad_request)?;
     let item = state
         .store
         .create_work_item(&requirement, input, &user)
@@ -1034,6 +1062,8 @@ async fn create_task_runner_task_from_work_item(
                 .map_err(ApiError::bad_request)?,
         );
     }
+    let source_session_id = input.source_session_id.clone();
+    let source_user_message_id = input.source_user_message_id.clone();
     let task = task_runner_api_client::create_task_from_work_item(
         &state.config,
         access_token.0.as_str(),
@@ -1050,6 +1080,12 @@ async fn create_task_runner_task_from_work_item(
                 task_runner_task_id: task.id.clone(),
                 task_runner_run_id: task.last_run_id.clone(),
                 link_type: Some("execution".to_string()),
+                source_session_id,
+                source_user_message_id,
+                task_runner_status: Some(task.status.clone()),
+                last_callback_event: None,
+                last_callback_at: None,
+                last_error_message: None,
             },
         )
         .await
@@ -1058,6 +1094,211 @@ async fn create_task_runner_task_from_work_item(
         StatusCode::CREATED,
         Json(CreateTaskRunnerTaskFromWorkItemResponse { task, link }),
     ))
+}
+
+async fn get_task_runner_execution_options(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<TaskRunnerExecutionOptionsResponse>, ApiError> {
+    let owner_user_id = user
+        .effective_owner_user_id()
+        .ok_or_else(|| ApiError::unauthorized("当前登录态缺少用户归属信息"))?;
+    let options = task_runner_api_client::fetch_execution_options(&state.config, owner_user_id)
+        .await
+        .map_err(ApiError::bad_gateway)?;
+    Ok(Json(TaskRunnerExecutionOptionsResponse {
+        model_configs: options
+            .model_config_ids()
+            .into_iter()
+            .map(execution_option_record)
+            .collect(),
+        tools: options
+            .tool_ids()
+            .into_iter()
+            .map(execution_option_record)
+            .collect(),
+    }))
+}
+
+fn execution_option_record(id: String) -> TaskRunnerExecutionOptionRecord {
+    TaskRunnerExecutionOptionRecord {
+        label: id.clone(),
+        id,
+    }
+}
+
+async fn sync_task_runner_work_item_status(
+    Path(work_item_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<SyncTaskRunnerWorkItemStatusRequest>,
+) -> Result<Json<SyncTaskRunnerWorkItemStatusResponse>, ApiError> {
+    require_project_sync_secret(&state, &headers)?;
+    let item = state
+        .store
+        .get_work_item(&work_item_id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("项目工作项不存在: {work_item_id}")))?;
+    let task_runner_task_id = input.task_runner_task_id.trim();
+    if task_runner_task_id.is_empty() {
+        return Err(ApiError::bad_request("task_runner_task_id is required"));
+    }
+    let task_runner_status = normalized_optional(input.task_runner_status.clone());
+    let link = state
+        .store
+        .upsert_task_runner_link(
+            &work_item_id,
+            LinkTaskRunnerTaskRequest {
+                task_runner_task_id: task_runner_task_id.to_string(),
+                task_runner_run_id: input.task_runner_run_id,
+                link_type: Some("execution".to_string()),
+                source_session_id: input.source_session_id,
+                source_user_message_id: input.source_user_message_id,
+                task_runner_status: task_runner_status.clone(),
+                last_callback_event: input.last_callback_event,
+                last_callback_at: input.last_callback_at,
+                last_error_message: input.last_error_message,
+            },
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
+
+    let work_item = if let Some(next_status) = task_runner_status
+        .as_deref()
+        .and_then(project_work_item_status_from_task_runner_status)
+    {
+        if item.status == next_status {
+            item
+        } else {
+            state
+                .store
+                .update_work_item(
+                    &work_item_id,
+                    UpdateProjectWorkItemRequest {
+                        status: Some(next_status),
+                        ..UpdateProjectWorkItemRequest::default()
+                    },
+                )
+                .await
+                .map_err(ApiError::bad_request)?
+                .unwrap_or(item)
+        }
+    } else {
+        item
+    };
+
+    Ok(Json(SyncTaskRunnerWorkItemStatusResponse {
+        work_item,
+        link,
+    }))
+}
+
+async fn sync_requirement_execution_state(
+    Path(requirement_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<SyncRequirementExecutionStateRequest>,
+) -> Result<Json<SyncRequirementExecutionStateResponse>, ApiError> {
+    require_project_sync_secret(&state, &headers)?;
+    let requirement = state
+        .store
+        .get_requirement(&requirement_id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("需求不存在: {requirement_id}")))?;
+    let requirement = if let Some(status) = input.requirement_status {
+        if requirement.status == status {
+            requirement
+        } else {
+            state
+                .store
+                .update_requirement(
+                    &requirement_id,
+                    UpdateRequirementRequest {
+                        status: Some(status),
+                        ..UpdateRequirementRequest::default()
+                    },
+                )
+                .await
+                .map_err(ApiError::bad_request)?
+                .unwrap_or(requirement)
+        }
+    } else {
+        requirement
+    };
+
+    let mut seen_work_item_ids = HashSet::new();
+    let mut work_items = Vec::new();
+    for work_item_id in input
+        .work_item_ids
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        if !seen_work_item_ids.insert(work_item_id.clone()) {
+            continue;
+        }
+        let Some(item) = state
+            .store
+            .get_work_item(work_item_id.as_str())
+            .await
+            .map_err(ApiError::bad_request)?
+        else {
+            continue;
+        };
+        if item.project_id != requirement.project_id {
+            return Err(ApiError::bad_request(format!(
+                "项目任务不属于同一项目: {work_item_id}"
+            )));
+        }
+        if item.status == ProjectWorkItemStatus::Archived {
+            work_items.push(item);
+            continue;
+        }
+        if input.skip_done_work_items && item.status == ProjectWorkItemStatus::Done {
+            work_items.push(item);
+            continue;
+        }
+        let Some(status) = input.work_item_status else {
+            work_items.push(item);
+            continue;
+        };
+        if item.status == status {
+            work_items.push(item);
+        } else {
+            let updated = state
+                .store
+                .update_work_item(
+                    work_item_id.as_str(),
+                    UpdateProjectWorkItemRequest {
+                        status: Some(status),
+                        ..UpdateProjectWorkItemRequest::default()
+                    },
+                )
+                .await
+                .map_err(ApiError::bad_request)?
+                .unwrap_or(item);
+            work_items.push(updated);
+        }
+    }
+
+    Ok(Json(SyncRequirementExecutionStateResponse {
+        requirement,
+        work_items,
+    }))
+}
+
+fn project_work_item_status_from_task_runner_status(status: &str) -> Option<ProjectWorkItemStatus> {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "queued" | "running" | "processing" | "in_progress" => {
+            Some(ProjectWorkItemStatus::InProgress)
+        }
+        "succeeded" | "success" | "completed" | "done" => Some(ProjectWorkItemStatus::Done),
+        "failed" | "error" | "blocked" => Some(ProjectWorkItemStatus::Blocked),
+        "cancelled" | "canceled" => Some(ProjectWorkItemStatus::Cancelled),
+        _ => None,
+    }
 }
 
 async fn derive_task_runner_prerequisite_task_ids(
@@ -1361,13 +1602,9 @@ mod tests {
     }
 
     #[test]
-    fn mcp_requires_real_user_token_header() {
+    fn mcp_user_token_header_is_optional_at_parse_layer() {
         let headers = HeaderMap::new();
-        let message = require_user_access_token_from_headers(&headers).unwrap_err();
-        assert_eq!(
-            message,
-            "project management MCP requires a real user token header"
-        );
+        assert_eq!(user_access_token_from_headers(&headers).unwrap(), None);
     }
 
     #[test]
@@ -1379,8 +1616,8 @@ mod tests {
         );
 
         assert_eq!(
-            require_user_access_token_from_headers(&headers).unwrap(),
-            "real-user-token"
+            user_access_token_from_headers(&headers).unwrap().as_deref(),
+            Some("real-user-token")
         );
     }
 
@@ -1514,6 +1751,7 @@ mod tests {
             user_service_request_timeout: Duration::from_millis(5_000),
             task_runner_base_url: Some("http://127.0.0.1:39090".to_string()),
             task_runner_request_timeout: Duration::from_millis(10_000),
+            task_runner_internal_secret: Some("sync-secret".to_string()),
             sync_secret: Some("sync-secret".to_string()),
         }
     }

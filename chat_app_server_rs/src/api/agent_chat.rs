@@ -32,8 +32,8 @@ use crate::services::ai_common::normalize_turn_id;
 use crate::services::ask_user_prompt_manager::{
     upsert_external_ask_user_prompt_record, AskUserPromptRecord, AskUserPromptStatus,
 };
-use crate::services::chatos_sessions;
 use crate::services::realtime::{publish_chat_stream_event, publish_sessions_updated};
+use crate::services::{chatos_sessions, project_management_api_client};
 use crate::utils::abort_registry;
 use crate::utils::sse::SseSender;
 
@@ -299,6 +299,21 @@ async fn task_runner_callback(
         Some(user_message.clone())
     };
 
+    if let Some(saved_user_message) = saved_user_message.as_ref() {
+        if let Err(err) =
+            sync_project_requirement_execution_status(saved_user_message, &payload).await
+        {
+            warn!(
+                session_id = session.id.as_str(),
+                user_message_id = user_message_id.as_str(),
+                task_id = payload.task_id.as_str(),
+                event = payload.event.as_str(),
+                error = err.as_str(),
+                "failed to sync project requirement execution status"
+            );
+        }
+    }
+
     let (saved_assistant_message, assistant_message_changed) = if is_task_runner_terminal_event(
         payload.event.as_str(),
     ) {
@@ -540,6 +555,96 @@ fn verify_task_runner_callback_secret(headers: &HeaderMap) -> Result<(), String>
     } else {
         Err("invalid task runner callback secret".to_string())
     }
+}
+
+async fn sync_project_requirement_execution_status(
+    message: &Message,
+    payload: &TaskRunnerCallbackRequest,
+) -> Result<(), String> {
+    if should_ignore_stopped_task_cancel_callback(message.metadata.as_ref(), payload) {
+        return Ok(());
+    }
+    let Some(work_item_id) =
+        project_work_item_id_for_task(message.metadata.as_ref(), payload.task_id.as_str())
+    else {
+        return Ok(());
+    };
+    let cfg = Config::try_get().map_err(|err| err.to_string())?;
+    let Some(sync_secret) = cfg
+        .project_service_sync_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err("project service sync secret is not configured".to_string());
+    };
+    let task_runner_status = payload
+        .task_status
+        .clone()
+        .or_else(|| Some(payload.status.clone()));
+    project_management_api_client::sync_work_item_task_runner_status(
+        cfg.project_service_base_url.as_str(),
+        sync_secret,
+        work_item_id.as_str(),
+        &project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: payload.task_id.clone(),
+            task_runner_run_id: payload.run_id.clone(),
+            task_runner_status,
+            last_callback_event: Some(payload.event.clone()),
+            last_callback_at: payload.callback_at.clone(),
+            last_error_message: payload.error_message.clone(),
+            source_session_id: payload.source_session_id.clone(),
+            source_user_message_id: payload.source_user_message_id.clone(),
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+fn should_ignore_stopped_task_cancel_callback(
+    metadata: Option<&Value>,
+    payload: &TaskRunnerCallbackRequest,
+) -> bool {
+    if payload.event != "task.cancelled" {
+        return false;
+    }
+    let task_id = payload.task_id.trim();
+    if task_id.is_empty() {
+        return false;
+    }
+    metadata
+        .and_then(|value| value.get("task_runner_async"))
+        .and_then(|value| value.get("stopped_task_ids"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|value| value.trim() == task_id)
+        })
+}
+
+fn project_work_item_id_for_task(metadata: Option<&Value>, task_id: &str) -> Option<String> {
+    let normalized_task_id = task_id.trim();
+    if normalized_task_id.is_empty() {
+        return None;
+    }
+    metadata?
+        .get("project_requirement_execution")?
+        .get("task_links")?
+        .as_array()?
+        .iter()
+        .find(|item| {
+            item.get("task_runner_task_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                == Some(normalized_task_id)
+        })
+        .and_then(|item| item.get("project_task_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn normalize_callback_value(value: Option<&str>) -> Option<String> {

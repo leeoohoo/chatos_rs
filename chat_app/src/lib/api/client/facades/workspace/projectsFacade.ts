@@ -5,6 +5,8 @@ import type {
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
   ProjectPlanResponse,
+  ProjectRequirementExecuteResponse,
+  ProjectRequirementStopResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
@@ -20,6 +22,16 @@ export interface WorkspaceProjectFacade {
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
   getProjectPlan(projectId: string, options?: { includeArchived?: boolean }): Promise<ProjectPlanResponse>;
+  executeProjectRequirement(
+    projectId: string,
+    requirementId: string,
+    data?: { contact_id?: string },
+  ): Promise<ProjectRequirementExecuteResponse>;
+  stopProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data?: { contact_id?: string },
+  ): Promise<ProjectRequirementStopResponse>;
   analyzeProjectRun(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunCatalog(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunState(projectId: string): Promise<ProjectRunStateResponse>;
@@ -68,6 +80,12 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async getProjectPlan(projectId, options) {
     return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);
+  },
+  async executeProjectRequirement(projectId, requirementId, data) {
+    return workspaceApi.executeProjectRequirement(this.getRequestFn(), projectId, requirementId, data);
+  },
+  async stopProjectRequirementExecution(projectId, requirementId, data) {
+    return workspaceApi.stopProjectRequirementExecution(this.getRequestFn(), projectId, requirementId, data);
   },
   async analyzeProjectRun(projectId) {
     return workspaceApi.analyzeProjectRun(this.getRequestFn(), projectId);

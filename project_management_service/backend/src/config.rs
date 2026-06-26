@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub user_service_request_timeout: Duration,
     pub task_runner_base_url: Option<String>,
     pub task_runner_request_timeout: Duration,
+    pub task_runner_internal_secret: Option<String>,
     pub sync_secret: Option<String>,
 }
 
@@ -51,6 +52,11 @@ impl AppConfig {
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
             task_runner_base_url: normalized_env("PROJECT_SERVICE_TASK_RUNNER_BASE_URL"),
             task_runner_request_timeout: Duration::from_millis(task_runner_request_timeout_ms),
+            task_runner_internal_secret: normalized_env(
+                "PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET",
+            )
+            .or_else(|| normalized_env("TASK_RUNNER_INTERNAL_API_SECRET"))
+            .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET")),
             sync_secret: normalized_env("PROJECT_SERVICE_SYNC_SECRET"),
         })
     }

@@ -33,8 +33,9 @@ use super::task_process_log::{
 };
 use super::workspace_mcp::runtime_selected_builtin_kinds;
 use super::{
-    build_builtin_registry, summarized_report_content, unfinished_subtasks_error,
-    unfinished_subtasks_for_task, DisabledBuiltinProvider, RunService, TaskService,
+    build_builtin_registry_with_project_management_options, summarized_report_content,
+    unfinished_subtasks_error, unfinished_subtasks_for_task, DisabledBuiltinProvider,
+    ProjectManagementExecutionOptions, RunService, TaskService,
 };
 
 mod callbacks;

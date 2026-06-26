@@ -160,6 +160,13 @@ impl AppStore {
         }
     }
 
+    pub async fn delete_requirement(&self, id: &str) -> Result<Option<RequirementRecord>, String> {
+        match self {
+            Self::Mongo(store) => store.delete_requirement(id).await,
+            Self::Sqlite(store) => store.delete_requirement(id).await,
+        }
+    }
+
     pub async fn list_requirement_dependencies(
         &self,
         requirement_id: &str,
@@ -286,6 +293,16 @@ impl AppStore {
         match self {
             Self::Mongo(store) => store.archive_work_item(id).await,
             Self::Sqlite(store) => store.archive_work_item(id).await,
+        }
+    }
+
+    pub async fn delete_work_item(
+        &self,
+        id: &str,
+    ) -> Result<Option<ProjectWorkItemRecord>, String> {
+        match self {
+            Self::Mongo(store) => store.delete_work_item(id).await,
+            Self::Sqlite(store) => store.delete_work_item(id).await,
         }
     }
 

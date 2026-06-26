@@ -20,6 +20,7 @@ import type {
   RequirementDocumentRecord,
   RequirementRecord,
   RequirementStatus,
+  TaskRunnerExecutionOptionsResponse,
   UpdateProjectPayload,
   UpdateRequirementPayload,
   UpdateWorkItemPayload,
@@ -247,6 +248,8 @@ export const api = {
     request<void>(`/api/work-items/${workItemId}/task-runner-links/${linkId}`, {
       method: 'DELETE',
     }),
+  getTaskRunnerExecutionOptions: () =>
+    request<TaskRunnerExecutionOptionsResponse>('/api/task-runner/execution-options'),
   createTaskRunnerTask: (workItemId: string, payload: CreateTaskRunnerTaskPayload) =>
     request<CreateTaskRunnerTaskResponse>(
       `/api/work-items/${workItemId}/task-runner-task`,

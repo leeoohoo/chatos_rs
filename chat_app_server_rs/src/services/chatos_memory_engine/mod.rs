@@ -22,8 +22,9 @@ pub use self::review_repair::{
 };
 pub use self::sessions::{
     archive_chatos_session, compose_chatos_context, create_chatos_session,
-    delete_all_chatos_messages, delete_chatos_message_by_id, delete_chatos_summary,
-    get_chatos_message_by_id, get_chatos_message_by_id_in_session, get_chatos_session,
+    delete_all_chatos_messages, delete_chatos_message_by_id,
+    delete_chatos_message_by_id_for_tenant, delete_chatos_summary, get_chatos_message_by_id,
+    get_chatos_message_by_id_for_tenant, get_chatos_message_by_id_in_session, get_chatos_session,
     get_chatos_turn_process_records, list_chatos_compact_turns, list_chatos_messages,
     list_chatos_messages_including_hidden, list_chatos_sessions, list_chatos_sessions_by_agent,
     list_chatos_summaries, sync_chatos_session, update_chatos_session, upsert_chatos_message,

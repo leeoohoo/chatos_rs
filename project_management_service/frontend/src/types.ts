@@ -154,6 +154,8 @@ export interface ProjectWorkItemRecord {
   requirement_id: string;
   title: string;
   description?: string | null;
+  task_runner_default_model_config_id: string;
+  task_runner_enabled_tool_ids: string[];
   status: ProjectWorkItemStatus;
   priority: number;
   assignee_user_id?: string | null;
@@ -169,6 +171,8 @@ export interface ProjectWorkItemRecord {
 export interface CreateWorkItemPayload {
   title: string;
   description?: string;
+  task_runner_default_model_config_id: string;
+  task_runner_enabled_tool_ids: string[];
   status?: ProjectWorkItemStatus;
   priority?: number;
   assignee_user_id?: string;
@@ -195,6 +199,12 @@ export interface ProjectWorkItemTaskRunnerLinkRecord {
   task_runner_task_id: string;
   task_runner_run_id?: string | null;
   link_type: string;
+  source_session_id?: string | null;
+  source_user_message_id?: string | null;
+  task_runner_status?: string | null;
+  last_callback_event?: string | null;
+  last_callback_at?: string | null;
+  last_error_message?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -245,4 +255,14 @@ export interface DependencyGraphResponse {
   edges: DependencyGraphEdge[];
   blocked_by: DependencyGraphNode[];
   ready: boolean;
+}
+
+export interface TaskRunnerExecutionOptionRecord {
+  id: string;
+  label: string;
+}
+
+export interface TaskRunnerExecutionOptionsResponse {
+  model_configs: TaskRunnerExecutionOptionRecord[];
+  tools: TaskRunnerExecutionOptionRecord[];
 }

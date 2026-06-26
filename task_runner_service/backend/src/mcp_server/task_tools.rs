@@ -89,7 +89,14 @@ impl TaskRunnerMcpService {
                         .first_existing_chatos_async_task(current_user, request_context)
                         .await?
                     {
-                        return Ok(text_result(task_for_external_mcp(existing)));
+                        self.dispatch_chatos_async_tasks(std::slice::from_ref(&existing))
+                            .await?;
+                        let task = self
+                            .task_service
+                            .get_task(existing.id.as_str())
+                            .await?
+                            .unwrap_or(existing);
+                        return Ok(text_result(task_for_external_mcp(task)));
                     }
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
@@ -105,6 +112,16 @@ impl TaskRunnerMcpService {
                     .task_service
                     .create_task(input, Some(current_user), source_context)
                     .await?;
+                let task = if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
+                    self.dispatch_chatos_async_tasks(std::slice::from_ref(&task))
+                        .await?;
+                    self.task_service
+                        .get_task(task.id.as_str())
+                        .await?
+                        .unwrap_or(task)
+                } else {
+                    task
+                };
                 Ok(text_result(task_for_external_mcp(task)))
             }
             "list_mcp_builtin_catalog" => {

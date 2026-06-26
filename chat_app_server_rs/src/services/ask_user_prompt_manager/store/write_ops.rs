@@ -299,10 +299,21 @@ async fn publish_ask_user_prompt_created(record: &AskUserPromptRecord) {
     let Some(user_id) = scope.user_id.as_deref() else {
         return;
     };
+    let project_id = scope
+        .project_id
+        .as_deref()
+        .and_then(trimmed_non_empty)
+        .or_else(|| {
+            record
+                .external_project_id
+                .as_deref()
+                .and_then(trimmed_non_empty)
+        });
     publish_ask_user_prompt_updated(
         user_id,
         record.conversation_id.as_str(),
         Some(record.conversation_turn_id.as_str()),
+        project_id,
         record.id.as_str(),
         "prompt_required",
         Some(record.status.as_str()),
@@ -335,10 +346,21 @@ async fn publish_ask_user_prompt_resolved(record: &AskUserPromptRecord) {
     let Some(user_id) = scope.user_id.as_deref() else {
         return;
     };
+    let project_id = scope
+        .project_id
+        .as_deref()
+        .and_then(trimmed_non_empty)
+        .or_else(|| {
+            record
+                .external_project_id
+                .as_deref()
+                .and_then(trimmed_non_empty)
+        });
     publish_ask_user_prompt_updated(
         user_id,
         record.conversation_id.as_str(),
         Some(record.conversation_turn_id.as_str()),
+        project_id,
         record.id.as_str(),
         "prompt_resolved",
         Some(record.status.as_str()),

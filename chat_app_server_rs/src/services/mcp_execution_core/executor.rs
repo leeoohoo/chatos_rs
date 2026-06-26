@@ -91,6 +91,7 @@ impl McpExecutorCore {
             caller_model_runtime,
             on_tool_result,
             self.state.tool_metadata(),
+            self.state.tool_aliases(),
             self.state.builtin_services(),
         )
         .await

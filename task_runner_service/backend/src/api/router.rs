@@ -16,6 +16,7 @@ use super::external_mcp_configs::{
     create_external_mcp_config, delete_external_mcp_config, get_external_mcp_config,
     list_external_mcp_configs, update_external_mcp_config,
 };
+use super::internal::get_user_execution_options;
 use super::mcp::{get_mcp_server_info, list_mcp_catalog, mcp_entrypoint, preview_mcp_prompt};
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -215,6 +216,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/chatos-sync/model-configs/:id",
             delete(chatos_sync_delete_model_config),
+        )
+        .route(
+            "/internal/users/:owner_user_id/execution-options",
+            get(get_user_execution_options),
         )
         .merge(chatos_internal::router())
         .merge(protected_api)

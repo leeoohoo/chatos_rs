@@ -243,6 +243,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   const [taskMessage, setTaskMessage] = useState<Message | null>(null);
   const userMessageSidebarVisible = Boolean(currentSession?.id && currentContactId);
   const planModeAvailable = hasConcreteProjectContext(currentProjectIdForMemory);
+  const askUserPromptProjectId = currentSession?.project_id
+    || currentSession?.projectId
+    || currentProjectIdForMemory
+    || null;
   const userMessagesRefreshKey = useMemo(
     () => getLatestUserMessageRefreshKey(messages, currentSession?.id || null),
     [currentSession?.id, messages],
@@ -312,7 +316,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
 
         {currentSession && (
           <>
-            <ConversationAskUserPromptPanel sessionId={currentSession.id} />
+            <ConversationAskUserPromptPanel
+              sessionId={currentSession.id}
+              projectId={askUserPromptProjectId}
+            />
             <ChatComposerPanel
               onSend={onSend}
               inputDisabled={inputDisabled}

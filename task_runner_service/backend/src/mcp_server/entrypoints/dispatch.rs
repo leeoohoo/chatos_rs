@@ -8,6 +8,11 @@ impl TaskRunnerMcpService {
         request_context: McpRequestContext,
     ) -> JsonRpcResponse {
         let id = request.id.unwrap_or(Value::Null);
+        let method = request.method.clone();
+        tracing::info!(
+            method = %method,
+            "task runner mcp jsonrpc dispatch entered"
+        );
         if request_context.is_chatos_plan_task_profile()
             && !request_context.has_concrete_project_scope()
         {
@@ -22,16 +27,22 @@ impl TaskRunnerMcpService {
             };
         }
         match request.method.as_str() {
-            "tools/list" => JsonRpcResponse {
-                jsonrpc: "2.0",
-                id,
-                result: Some(json!({
-                    "tools": self
-                        .list_tools_for_user(&current_user, request_context.tool_profile())
-                        .await
-                })),
-                error: None,
-            },
+            "tools/list" => {
+                tracing::info!("task runner mcp tools/list started");
+                let tools = self
+                    .list_tools_for_user(&current_user, request_context.tool_profile())
+                    .await;
+                tracing::info!(
+                    tool_count = tools.len(),
+                    "task runner mcp tools/list finished"
+                );
+                JsonRpcResponse {
+                    jsonrpc: "2.0",
+                    id,
+                    result: Some(json!({ "tools": tools })),
+                    error: None,
+                }
+            }
             "tools/call" => match self
                 .handle_tool_call(request.params, &current_user, &request_context)
                 .await
@@ -76,6 +87,7 @@ impl TaskRunnerMcpService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "tools/call.name is required".to_string())?;
+        tracing::info!(tool_name = %name, "task runner mcp tools/call started");
         let args = params
             .get("arguments")
             .cloned()

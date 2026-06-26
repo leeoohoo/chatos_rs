@@ -3,10 +3,12 @@ use std::collections::BTreeSet;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::auth::CurrentUser;
 use crate::models::*;
 use crate::state::AppState;
+use crate::task_runner_api_client;
 
 const MCP_SERVER_NAME: &str = "project_management_service";
 const MCP_ENDPOINT_PATH: &str = "/mcp";
@@ -93,6 +95,8 @@ struct CreateProjectTaskArgs {
     requirement_id: String,
     title: String,
     description: Option<String>,
+    task_runner_default_model_config_id: String,
+    task_runner_enabled_tool_ids: Vec<String>,
     status: Option<ProjectWorkItemStatus>,
     priority: Option<i64>,
     assignee_user_id: Option<String>,
@@ -108,6 +112,11 @@ struct UpdateProjectTaskArgs {
     project_task_id: String,
     patch: UpdateProjectWorkItemRequest,
     prerequisite_project_task_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectTaskIdArgs {
+    project_task_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,6 +170,12 @@ pub fn server_info() -> McpServerInfo {
 }
 
 pub fn tool_definitions() -> Vec<Value> {
+    tool_definitions_with_execution_options(None)
+}
+
+pub fn tool_definitions_with_execution_options(
+    execution_options: Option<&task_runner_api_client::TaskRunnerExecutionOptions>,
+) -> Vec<Value> {
     vec![
         tool_definition(
             "get_project_overview",
@@ -226,6 +241,14 @@ pub fn tool_definitions() -> Vec<Value> {
             ),
         ),
         tool_definition(
+            "delete_requirement",
+            "Delete a requirement and its child requirements, technical overview documents, project tasks, and dependency edges when none of the affected project tasks are linked to Task Runner execution tasks. Use this during planning to remove incorrectly created requirements instead of archiving or cancelling them.",
+            object_schema(
+                vec![string_field("requirement_id", "Requirement id to delete.")],
+                vec!["requirement_id"],
+            ),
+        ),
+        tool_definition(
             "set_requirement_dependencies",
             "Replace prerequisite requirements for one requirement.",
             object_schema(
@@ -278,6 +301,8 @@ pub fn tool_definitions() -> Vec<Value> {
                     string_field("requirement_id", "Requirement id this project task belongs to."),
                     string_field("title", "Project task title."),
                     optional_string_field("description", "Project task description."),
+                    task_runner_model_config_field(execution_options),
+                    task_runner_tool_ids_field(execution_options),
                     enum_field("status", "Optional project task status.", project_task_status_values()),
                     integer_field("priority", "Optional priority; higher means more important."),
                     optional_string_field("assignee_user_id", "Optional assignee user id."),
@@ -287,7 +312,12 @@ pub fn tool_definitions() -> Vec<Value> {
                     string_array_field("tags", "Optional tags."),
                     string_array_field("prerequisite_project_task_ids", "Optional full list of prerequisite project task ids."),
                 ],
-                vec!["requirement_id", "title"],
+                vec![
+                    "requirement_id",
+                    "title",
+                    "task_runner_default_model_config_id",
+                    "task_runner_enabled_tool_ids",
+                ],
             ),
         ),
         tool_definition(
@@ -300,6 +330,17 @@ pub fn tool_definitions() -> Vec<Value> {
                     string_array_field("prerequisite_project_task_ids", "Optional full replacement list of prerequisite project task ids."),
                 ],
                 vec!["project_task_id", "patch"],
+            ),
+        ),
+        tool_definition(
+            "delete_project_task",
+            "Delete a project-management task/work item that has not been linked to a Task Runner execution task. Use this during planning to remove incorrectly created project tasks instead of cancelling them.",
+            object_schema(
+                vec![string_field(
+                    "project_task_id",
+                    "Project task/work item id to delete.",
+                )],
+                vec!["project_task_id"],
             ),
         ),
         tool_definition(
@@ -321,6 +362,24 @@ pub fn tool_definitions() -> Vec<Value> {
     ]
 }
 
+async fn tool_definitions_for_user(state: &AppState, current_user: &CurrentUser) -> Vec<Value> {
+    let Some(owner_user_id) = current_user.effective_owner_user_id() else {
+        warn!("project management MCP tools/list cannot enrich Task Runner execution options: missing owner user id");
+        return tool_definitions();
+    };
+    match task_runner_api_client::fetch_execution_options(&state.config, owner_user_id).await {
+        Ok(options) => tool_definitions_with_execution_options(Some(&options)),
+        Err(err) => {
+            warn!(
+                owner_user_id,
+                error = err.as_str(),
+                "project management MCP tools/list failed to fetch Task Runner execution options"
+            );
+            tool_definitions()
+        }
+    }
+}
+
 pub async fn handle_jsonrpc(
     state: AppState,
     current_user: CurrentUser,
@@ -340,7 +399,10 @@ pub async fn handle_jsonrpc(
             }
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tool_definitions() })),
+        "tools/list" => {
+            let tools = tool_definitions_for_user(&state, &current_user).await;
+            Ok(json!({ "tools": tools }))
+        }
         "tools/call" => {
             let project_id = match project_id
                 .as_deref()
@@ -473,6 +535,7 @@ async fn call_tool(
         }
         "create_requirement" => {
             let args: CreateRequirementArgs = decode_value(params.arguments)?;
+            ensure_requirement_status_queryable_by_mcp(args.status)?;
             let project = require_project_access(state, project_id, current_user).await?;
             ensure_project_writable(&project)?;
             let requirement = state
@@ -499,6 +562,7 @@ async fn call_tool(
         }
         "update_requirement" => {
             let args: UpdateRequirementArgs = decode_value(params.arguments)?;
+            ensure_requirement_status_queryable_by_mcp(args.patch.status)?;
             let requirement = require_requirement_in_project(
                 state,
                 &args.requirement_id,
@@ -531,6 +595,27 @@ async fn call_tool(
             Ok(tool_text_result(json!({
                 "requirement": requirement,
                 "dependencies": dependencies
+            })))
+        }
+        "delete_requirement" => {
+            let args: RequirementIdArgs = decode_value(params.arguments)?;
+            let requirement = require_requirement_in_project(
+                state,
+                &args.requirement_id,
+                project_id,
+                current_user,
+            )
+            .await?;
+            let project =
+                require_project_access(state, &requirement.project_id, current_user).await?;
+            ensure_project_writable(&project)?;
+            let deleted = state
+                .store
+                .delete_requirement(&args.requirement_id)
+                .await?
+                .ok_or_else(|| format!("需求不存在: {}", args.requirement_id))?;
+            Ok(tool_text_result(json!({
+                "deleted_requirement": deleted
             })))
         }
         "set_requirement_dependencies" => {
@@ -602,10 +687,13 @@ async fn call_tool(
                 .list_work_items_by_project(project_id, args.status, args.keyword)
                 .await?;
             let items = visible_project_tasks_for_mcp(items, args.status);
+            let items =
+                retain_project_tasks_with_visible_requirements(state, project_id, items).await?;
             Ok(tool_text_result(json!(items)))
         }
         "create_project_task" => {
             let args: CreateProjectTaskArgs = decode_value(params.arguments)?;
+            ensure_project_task_status_queryable_by_mcp(args.status)?;
             let requirement = require_requirement_in_project(
                 state,
                 &args.requirement_id,
@@ -616,6 +704,17 @@ async fn call_tool(
             let project =
                 require_project_access(state, &requirement.project_id, current_user).await?;
             ensure_project_writable(&project)?;
+            let owner_user_id = current_user.effective_owner_user_id().ok_or_else(|| {
+                "project management MCP create_project_task requires owner user id for Task Runner model/tool validation".to_string()
+            })?;
+            let execution_options =
+                task_runner_api_client::fetch_execution_options(&state.config, owner_user_id)
+                    .await?;
+            let task_runner_default_model_config_id = execution_options
+                .validate_model_config_id(args.task_runner_default_model_config_id.as_str())?;
+            let task_runner_enabled_tool_ids =
+                task_runner_api_client::normalize_tool_ids(args.task_runner_enabled_tool_ids)?;
+            let _ = execution_options.mcp_config_for_tool_ids(&task_runner_enabled_tool_ids)?;
             let item = state
                 .store
                 .create_work_item(
@@ -623,6 +722,8 @@ async fn call_tool(
                     CreateProjectWorkItemRequest {
                         title: args.title,
                         description: args.description,
+                        task_runner_default_model_config_id,
+                        task_runner_enabled_tool_ids,
                         status: args.status,
                         priority: args.priority,
                         assignee_user_id: args.assignee_user_id,
@@ -650,6 +751,11 @@ async fn call_tool(
         }
         "update_project_task" => {
             let args: UpdateProjectTaskArgs = decode_value(params.arguments)?;
+            ensure_project_task_status_queryable_by_mcp(args.patch.status)?;
+            if let Some(requirement_id) = normalized_optional(args.patch.requirement_id.clone()) {
+                require_requirement_in_project(state, &requirement_id, project_id, current_user)
+                    .await?;
+            }
             let item = require_project_task_in_project(
                 state,
                 &args.project_task_id,
@@ -684,6 +790,26 @@ async fn call_tool(
             Ok(tool_text_result(json!({
                 "project_task": item,
                 "dependencies": dependencies
+            })))
+        }
+        "delete_project_task" => {
+            let args: ProjectTaskIdArgs = decode_value(params.arguments)?;
+            let item = require_project_task_in_project(
+                state,
+                &args.project_task_id,
+                project_id,
+                current_user,
+            )
+            .await?;
+            let project = require_project_access(state, &item.project_id, current_user).await?;
+            ensure_project_writable(&project)?;
+            let deleted = state
+                .store
+                .delete_work_item(&args.project_task_id)
+                .await?
+                .ok_or_else(|| format!("项目任务不存在: {}", args.project_task_id))?;
+            Ok(tool_text_result(json!({
+                "deleted_project_task": deleted
             })))
         }
         "set_project_task_dependencies" => {
@@ -755,6 +881,7 @@ async fn require_requirement_in_project(
             "需求不属于当前项目，requirement_id={requirement_id}"
         ));
     }
+    ensure_requirement_queryable_by_mcp(&requirement)?;
     require_project_access(state, project_id, user).await?;
     Ok(requirement)
 }
@@ -776,6 +903,18 @@ async fn require_project_task_in_project(
         return Err(format!(
             "项目任务不属于当前项目，project_task_id={project_task_id}"
         ));
+    }
+    ensure_project_task_queryable_by_mcp(&item)?;
+    let requirement = state
+        .store
+        .get_requirement(&item.requirement_id)
+        .await?
+        .ok_or_else(|| format!("项目任务不存在: {project_task_id}"))?;
+    if requirement.project_id != project_id {
+        return Err(format!("项目任务不存在: {project_task_id}"));
+    }
+    if ensure_requirement_queryable_by_mcp(&requirement).is_err() {
+        return Err(format!("项目任务不存在: {project_task_id}"));
     }
     require_project_access(state, project_id, user).await?;
     Ok(item)
@@ -811,6 +950,10 @@ async fn build_project_dependency_graph(
         .iter()
         .map(|requirement| requirement.id.as_str())
         .collect::<BTreeSet<_>>();
+    let work_items = work_items
+        .into_iter()
+        .filter(|item| requirement_ids.contains(item.requirement_id.as_str()))
+        .collect::<Vec<_>>();
     let work_item_ids = work_items
         .iter()
         .map(|item| item.id.as_str())
@@ -863,11 +1006,8 @@ async fn build_project_dependency_graph(
 
 fn visible_requirements_for_mcp(
     requirements: Vec<RequirementRecord>,
-    requested_status: Option<RequirementStatus>,
+    _requested_status: Option<RequirementStatus>,
 ) -> Vec<RequirementRecord> {
-    if requested_status.is_some() {
-        return requirements;
-    }
     requirements
         .into_iter()
         .filter(|requirement| requirement.status != RequirementStatus::Archived)
@@ -876,15 +1016,69 @@ fn visible_requirements_for_mcp(
 
 fn visible_project_tasks_for_mcp(
     items: Vec<ProjectWorkItemRecord>,
-    requested_status: Option<ProjectWorkItemStatus>,
+    _requested_status: Option<ProjectWorkItemStatus>,
 ) -> Vec<ProjectWorkItemRecord> {
-    if requested_status.is_some() {
-        return items;
-    }
     items
         .into_iter()
         .filter(|item| item.status != ProjectWorkItemStatus::Archived)
         .collect()
+}
+
+async fn retain_project_tasks_with_visible_requirements(
+    state: &AppState,
+    project_id: &str,
+    items: Vec<ProjectWorkItemRecord>,
+) -> Result<Vec<ProjectWorkItemRecord>, String> {
+    let requirement_ids = visible_requirements_for_mcp(
+        state
+            .store
+            .list_requirements(project_id, None, None)
+            .await?,
+        None,
+    )
+    .into_iter()
+    .map(|requirement| requirement.id)
+    .collect::<BTreeSet<_>>();
+    Ok(items
+        .into_iter()
+        .filter(|item| requirement_ids.contains(item.requirement_id.as_str()))
+        .collect())
+}
+
+fn ensure_requirement_queryable_by_mcp(requirement: &RequirementRecord) -> Result<(), String> {
+    if requirement.status == RequirementStatus::Archived {
+        Err(format!("需求不存在: {}", requirement.id))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_project_task_queryable_by_mcp(item: &ProjectWorkItemRecord) -> Result<(), String> {
+    if item.status == ProjectWorkItemStatus::Archived {
+        Err(format!("项目任务不存在: {}", item.id))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_requirement_status_queryable_by_mcp(
+    status: Option<RequirementStatus>,
+) -> Result<(), String> {
+    if matches!(status, Some(RequirementStatus::Archived)) {
+        Err("Project Management MCP 不允许访问归档需求".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_project_task_status_queryable_by_mcp(
+    status: Option<ProjectWorkItemStatus>,
+) -> Result<(), String> {
+    if matches!(status, Some(ProjectWorkItemStatus::Archived)) {
+        Err("Project Management MCP 不允许访问归档项目任务".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn requirement_node(requirement: &RequirementRecord) -> DependencyGraphNode {
@@ -993,6 +1187,48 @@ fn string_array_field(name: &'static str, description: &'static str) -> (&'stati
     )
 }
 
+fn task_runner_model_config_field(
+    execution_options: Option<&task_runner_api_client::TaskRunnerExecutionOptions>,
+) -> (&'static str, Value) {
+    let mut schema = json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Required Task Runner model config id. Use one of the enum values when present; if multiple are available, choose the model best suited for the project task instead of asking the user for an internal id."
+    });
+    if let Some(options) = execution_options {
+        let model_config_ids = options.model_config_ids();
+        if !model_config_ids.is_empty() {
+            schema["enum"] = json!(model_config_ids);
+        }
+    }
+    ("task_runner_default_model_config_id", schema)
+}
+
+fn task_runner_tool_ids_field(
+    execution_options: Option<&task_runner_api_client::TaskRunnerExecutionOptions>,
+) -> (&'static str, Value) {
+    let mut item_schema = json!({ "type": "string" });
+    let mut description = "Required Task Runner tool id multi-select. Use only visible tool ids. Choose tools according to the work item's execution needs; for code implementation tasks, include appropriate code reading and terminal tools when available."
+        .to_string();
+    if let Some(options) = execution_options {
+        let tool_ids = options.tool_ids();
+        if !tool_ids.is_empty() {
+            description.push_str(" Available tool ids are exposed in the item enum.");
+            item_schema["enum"] = json!(tool_ids);
+        }
+    }
+    (
+        "task_runner_enabled_tool_ids",
+        json!({
+            "type": "array",
+            "items": item_schema,
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": description
+        }),
+    )
+}
+
 fn patch_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
     (
         name,
@@ -1012,7 +1248,6 @@ fn requirement_status_values() -> Vec<&'static str> {
         "in_progress",
         "done",
         "cancelled",
-        "archived",
     ]
 }
 
@@ -1028,7 +1263,6 @@ fn project_task_status_values() -> Vec<&'static str> {
         "blocked",
         "done",
         "cancelled",
-        "archived",
     ]
 }
 
@@ -1078,12 +1312,14 @@ mod tests {
             "list_requirements",
             "create_requirement",
             "update_requirement",
+            "delete_requirement",
             "set_requirement_dependencies",
             "upsert_requirement_technical_overview",
             "get_requirement_technical_overview",
             "list_project_tasks",
             "create_project_task",
             "update_project_task",
+            "delete_project_task",
             "set_project_task_dependencies",
             "get_project_dependency_graph",
         ]);
@@ -1121,7 +1357,54 @@ mod tests {
     }
 
     #[test]
-    fn mcp_lists_hide_archived_items_by_default() {
+    fn create_project_task_schema_exposes_task_runner_execution_options() {
+        let execution_options = task_runner_api_client::TaskRunnerExecutionOptions::for_test(
+            ["model-1"],
+            ["CodeMaintainerRead", "TerminalController"],
+            ["external-tool-1"],
+        );
+        let tools = tool_definitions_with_execution_options(Some(&execution_options));
+        let create_task = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some("create_project_task"))
+            .expect("create_project_task tool");
+        let properties = create_task
+            .pointer("/inputSchema/properties")
+            .and_then(Value::as_object)
+            .expect("properties");
+
+        assert_eq!(
+            properties
+                .get("task_runner_default_model_config_id")
+                .and_then(|schema| schema.get("enum"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            vec![json!("model-1")]
+        );
+        let tool_items = properties
+            .get("task_runner_enabled_tool_ids")
+            .and_then(|schema| schema.get("items"))
+            .expect("tool items schema");
+        let tool_enum = tool_items
+            .get("enum")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(tool_enum.contains(&json!("CodeMaintainerRead")));
+        assert!(tool_enum.contains(&json!("TerminalController")));
+        assert!(tool_enum.contains(&json!("external-tool-1")));
+        assert_eq!(
+            properties
+                .get("task_runner_enabled_tool_ids")
+                .and_then(|schema| schema.get("minItems"))
+                .and_then(Value::as_i64),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn mcp_lists_never_return_archived_items() {
         let requirements = vec![
             requirement_record("req-active", RequirementStatus::Draft),
             requirement_record("req-archived", RequirementStatus::Archived),
@@ -1130,9 +1413,11 @@ mod tests {
         assert_eq!(visible_requirements.len(), 1);
         assert_eq!(visible_requirements[0].id, "req-active");
 
-        let archived_requirements =
-            visible_requirements_for_mcp(requirements, Some(RequirementStatus::Archived));
-        assert_eq!(archived_requirements.len(), 2);
+        let archived_requirements = visible_requirements_for_mcp(
+            vec![requirements[1].clone()],
+            Some(RequirementStatus::Archived),
+        );
+        assert!(archived_requirements.is_empty());
 
         let items = vec![
             work_item_record("item-active", ProjectWorkItemStatus::Todo),
@@ -1142,9 +1427,39 @@ mod tests {
         assert_eq!(visible_items.len(), 1);
         assert_eq!(visible_items[0].id, "item-active");
 
-        let archived_items =
-            visible_project_tasks_for_mcp(items, Some(ProjectWorkItemStatus::Archived));
-        assert_eq!(archived_items.len(), 2);
+        let archived_items = visible_project_tasks_for_mcp(
+            vec![items[1].clone()],
+            Some(ProjectWorkItemStatus::Archived),
+        );
+        assert!(archived_items.is_empty());
+    }
+
+    #[test]
+    fn mcp_status_schemas_do_not_advertise_archived() {
+        assert!(!requirement_status_values().contains(&"archived"));
+        assert!(!project_task_status_values().contains(&"archived"));
+    }
+
+    #[test]
+    fn mcp_rejects_archived_records_by_id() {
+        let requirement = requirement_record("req-archived", RequirementStatus::Archived);
+        let item = work_item_record("item-archived", ProjectWorkItemStatus::Archived);
+
+        assert_eq!(
+            ensure_requirement_queryable_by_mcp(&requirement).unwrap_err(),
+            "需求不存在: req-archived"
+        );
+        assert_eq!(
+            ensure_project_task_queryable_by_mcp(&item).unwrap_err(),
+            "项目任务不存在: item-archived"
+        );
+        assert!(
+            ensure_requirement_status_queryable_by_mcp(Some(RequirementStatus::Archived)).is_err()
+        );
+        assert!(
+            ensure_project_task_status_queryable_by_mcp(Some(ProjectWorkItemStatus::Archived))
+                .is_err()
+        );
     }
 
     fn requirement_record(id: &str, status: RequirementStatus) -> RequirementRecord {
@@ -1181,6 +1496,8 @@ mod tests {
             requirement_id: "req-active".to_string(),
             title: id.to_string(),
             description: None,
+            task_runner_default_model_config_id: "model-config-test".to_string(),
+            task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
             status,
             priority: 0,
             assignee_user_id: None,

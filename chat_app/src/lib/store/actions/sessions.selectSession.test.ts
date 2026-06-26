@@ -615,6 +615,66 @@ describe('selectSession', () => {
     expect(readSessionMessagesCache(state, 'session_1')?.messages.map((message) => message.id)).toEqual(['msg_older', 'msg_latest']);
   });
 
+  it('can force refresh messages instead of serving a cached session snapshot', async () => {
+    const state = {
+      sessions: [createSession('session_1')],
+      currentSessionId: null,
+      currentSession: null,
+      activePanel: 'project',
+      messages: [],
+      isLoading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      hasMoreMessages: true,
+      error: null,
+      selectedModelId: null,
+      selectedAgentId: null,
+      sessionAiSelectionBySession: {},
+      sessionChatState: {},
+      sessionMessagePaginationState: {},
+      sessionMessagesCache: {},
+      sessionMessagesCacheOrder: [],
+    } as unknown as ChatStoreShape;
+
+    writeSessionMessagesCache(state, 'session_1', {
+      messages: [createMessage('session_1', 'msg_stale', 'stale cached message')],
+      nextBefore: null,
+      loaded: true,
+    });
+
+    const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
+      updater(state as unknown as ChatStoreDraft);
+    });
+    const get = () => state;
+
+    vi.mocked(fetchSessionMessages).mockResolvedValue({
+      messages: [createMessage('session_1', 'msg_latest', 'latest network message')],
+      hasMore: false,
+      nextBefore: null,
+    });
+
+    const actions = createSelectSessionActions({
+      set,
+      get,
+      client: {} as never,
+      getSessionParams: () => ({ userId: 'user_1', projectId: '' }),
+    });
+
+    await actions.selectSession('session_1', {
+      forceRefreshMessages: true,
+      initialPageSize: 25,
+      skipBackgroundSync: true,
+    });
+
+    expect(fetchSessionMessages).toHaveBeenCalledWith(
+      {} as never,
+      'session_1',
+      { limit: 25, before: null },
+    );
+    expect(state.activePanel).toBe('chat');
+    expect(state.messages.map((message) => message.id)).toEqual(['msg_latest']);
+  });
+
   it('restores only the most recent cached compact-history page when revisiting a session', async () => {
     const state = {
       sessions: [createSession('session_1')],

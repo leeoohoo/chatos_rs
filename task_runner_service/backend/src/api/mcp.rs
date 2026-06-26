@@ -26,6 +26,17 @@ pub(super) async fn mcp_entrypoint(
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = request.id.clone().unwrap_or(Value::Null);
+    let request_method = request.method.clone();
+    let request_tool_name = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    tracing::info!(
+        method = %request_method,
+        tool_name = request_tool_name.as_deref().unwrap_or(""),
+        "task runner mcp request received"
+    );
     let agent_access_token = match bearer_token_from_headers(&headers) {
         Ok(token) => token.to_string(),
         Err(err) => {
@@ -41,6 +52,11 @@ pub(super) async fn mcp_entrypoint(
             });
         }
     };
+    tracing::info!(
+        method = %request_method,
+        tool_name = request_tool_name.as_deref().unwrap_or(""),
+        "task runner mcp agent token extracted"
+    );
     let current_user =
         match current_user_from_user_service_token(&state.config, &agent_access_token).await {
             Ok(value) => value,
@@ -56,6 +72,11 @@ pub(super) async fn mcp_entrypoint(
                 });
             }
         };
+    tracing::info!(
+        method = %request_method,
+        tool_name = request_tool_name.as_deref().unwrap_or(""),
+        "task runner mcp agent token verified"
+    );
     let downstream_access_token = match downstream_access_token_from_headers(
         &state.config,
         &headers,
@@ -77,7 +98,20 @@ pub(super) async fn mcp_entrypoint(
             });
         }
     };
+    tracing::info!(
+        method = %request_method,
+        tool_name = request_tool_name.as_deref().unwrap_or(""),
+        "task runner mcp downstream token resolved"
+    );
     let request_context = mcp_request_context_from_headers(&headers);
+    tracing::info!(
+        method = %request_method,
+        tool_name = request_tool_name.as_deref().unwrap_or(""),
+        project_id = request_context.project_id.as_deref().unwrap_or(""),
+        task_profile = request_context.task_profile.as_deref().unwrap_or(""),
+        tool_profile = request_context.tool_profile.as_deref().unwrap_or(""),
+        "task runner mcp dispatching jsonrpc"
+    );
     Json(
         crate::auth::with_access_token_scope(Some(downstream_access_token), async move {
             state

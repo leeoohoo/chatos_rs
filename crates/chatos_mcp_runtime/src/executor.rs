@@ -5,6 +5,7 @@ use tokio::task::JoinSet;
 use tracing::warn;
 
 use crate::builtin_prompt::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale};
+use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 use crate::parallelism::should_parallelize_tool_batch;
 use crate::registry::BuiltinToolRegistry;
 use crate::rpc::{jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio};
@@ -12,8 +13,8 @@ use crate::schema::{build_function_tool_schema, parse_tool_definition};
 use crate::text::{inject_agent_builder_args, to_text_and_structured_result};
 use crate::tool_call::{clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name};
 use crate::types::{
-    McpBuiltinServer, McpHttpServer, McpStdioServer, ToolCallContext, ToolInfo, ToolResult,
-    ToolResultCallback, ToolStreamChunkCallback,
+    McpBuiltinServer, McpHttpServer, McpStdioServer, ParsedToolDefinition, ToolCallContext,
+    ToolInfo, ToolResult, ToolResultCallback, ToolStreamChunkCallback,
 };
 
 const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
@@ -27,6 +28,7 @@ pub struct McpExecutor {
     available_tools: Vec<Value>,
     unavailable_tools: Vec<Value>,
     tool_metadata: HashMap<String, ToolInfo>,
+    tool_aliases: HashMap<String, String>,
 }
 
 impl McpExecutor {
@@ -48,6 +50,7 @@ impl McpExecutor {
             available_tools: Vec::new(),
             unavailable_tools: Vec::new(),
             tool_metadata: HashMap::new(),
+            tool_aliases: HashMap::new(),
         }
     }
 
@@ -55,6 +58,7 @@ impl McpExecutor {
         self.available_tools.clear();
         self.unavailable_tools.clear();
         self.tool_metadata.clear();
+        self.tool_aliases.clear();
         self.register_http_tools().await;
         self.register_stdio_tools().await;
         self.register_builtin_tools();
@@ -65,6 +69,7 @@ impl McpExecutor {
         self.available_tools.clear();
         self.unavailable_tools.clear();
         self.tool_metadata.clear();
+        self.tool_aliases.clear();
         self.register_builtin_tools();
         Ok(())
     }
@@ -130,7 +135,108 @@ impl McpExecutor {
     }
 
     pub fn should_parallelize_tool_batch(&self, tool_calls: &[Value]) -> bool {
-        should_parallelize_tool_batch(tool_calls, &self.tool_metadata)
+        let normalized = self.normalize_tool_calls(tool_calls);
+        should_parallelize_tool_batch(normalized.as_slice(), &self.tool_metadata)
+    }
+
+    fn resolve_tool_name<'a>(&'a self, tool_name: &'a str) -> Option<&'a str> {
+        if self.tool_metadata.contains_key(tool_name) {
+            Some(tool_name)
+        } else {
+            self.tool_aliases.get(tool_name).map(String::as_str)
+        }
+    }
+
+    fn normalize_tool_calls(&self, tool_calls: &[Value]) -> Vec<Value> {
+        tool_calls
+            .iter()
+            .map(|tool_call| self.normalize_tool_call(tool_call))
+            .collect()
+    }
+
+    fn normalize_tool_call(&self, tool_call: &Value) -> Value {
+        let Some(requested_name) = extract_tool_call_name(tool_call) else {
+            return tool_call.clone();
+        };
+        let Some(resolved_name) = self.resolve_tool_name(requested_name) else {
+            return tool_call.clone();
+        };
+        if resolved_name == requested_name {
+            return tool_call.clone();
+        }
+
+        let mut normalized = tool_call.clone();
+        if let Some(function) = normalized.get_mut("function").and_then(Value::as_object_mut) {
+            function.insert("name".to_string(), Value::String(resolved_name.to_string()));
+        } else if let Some(object) = normalized.as_object_mut() {
+            object.insert("name".to_string(), Value::String(resolved_name.to_string()));
+        }
+        normalized
+    }
+
+    fn register_available_tool(
+        &mut self,
+        server_name: &str,
+        server_type: &str,
+        server_url: Option<String>,
+        server_headers: Option<HashMap<String, String>>,
+        server_config: Option<McpStdioServer>,
+        def: ParsedToolDefinition,
+        tool: Value,
+    ) {
+        let public_name = self.reserve_tool_name(server_name, def.name.as_str());
+        self.register_tool_aliases(server_name, def.name.as_str(), public_name.as_str());
+        self.available_tools.push(build_function_tool_schema(
+            public_name.as_str(),
+            def.description.as_str(),
+            &def.parameters,
+        ));
+        self.tool_metadata.insert(
+            public_name,
+            ToolInfo {
+                original_name: def.name,
+                server_name: server_name.to_string(),
+                server_type: server_type.to_string(),
+                server_url,
+                server_headers,
+                server_config,
+                tool_info: tool,
+            },
+        );
+    }
+
+    fn reserve_tool_name(&self, server_name: &str, tool_name: &str) -> String {
+        let canonical = canonical_prefixed_tool_name(server_name, tool_name);
+        if !self.tool_metadata.contains_key(canonical.as_str()) {
+            return canonical;
+        }
+
+        let hashed = format!(
+            "{}_{:08x}",
+            canonical,
+            stable_tool_name_hash(server_name, tool_name)
+        );
+        if !self.tool_metadata.contains_key(hashed.as_str()) {
+            return hashed;
+        }
+
+        let mut counter = 2usize;
+        loop {
+            let candidate = format!("{hashed}_{counter}");
+            if !self.tool_metadata.contains_key(candidate.as_str()) {
+                return candidate;
+            }
+            counter += 1;
+        }
+    }
+
+    fn register_tool_aliases(&mut self, server_name: &str, tool_name: &str, public_name: &str) {
+        let legacy = legacy_prefixed_tool_name(server_name, tool_name);
+        if legacy != public_name {
+            self.tool_aliases
+                .entry(legacy)
+                .or_insert_with(|| public_name.to_string());
+        }
     }
 
     pub fn codex_gateway_request_tools(&self) -> Vec<Value> {
@@ -189,7 +295,7 @@ impl McpExecutor {
         context: ToolCallContext,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
-        if should_parallelize_tool_batch(tool_calls, &self.tool_metadata) {
+        if self.should_parallelize_tool_batch(tool_calls) {
             return self
                 .execute_tools_parallel(tool_calls, context, on_tool_result)
                 .await;
@@ -243,7 +349,8 @@ impl McpExecutor {
                     continue;
                 }
             };
-            if !self.tool_metadata.contains_key(name.as_str()) {
+            let resolved_name = self.resolve_tool_name(name.as_str()).map(ToOwned::to_owned);
+            if resolved_name.is_none() {
                 if let Some(reason) =
                     unavailable_tool_reason(self.unavailable_tools.as_slice(), name.as_str())
                 {
@@ -265,6 +372,7 @@ impl McpExecutor {
                     continue;
                 }
             }
+            let execution_name = resolved_name.unwrap_or_else(|| name.clone());
 
             let stream_callback = build_stream_callback(
                 on_tool_result.as_ref(),
@@ -274,7 +382,7 @@ impl McpExecutor {
                 context.clone(),
             );
             let outcome = self
-                .call_tool_once(name.as_str(), args, context.clone(), stream_callback)
+                .call_tool_once(execution_name.as_str(), args, context.clone(), stream_callback)
                 .await;
             if context.is_aborted() {
                 break;
@@ -356,7 +464,8 @@ impl McpExecutor {
                     continue;
                 }
             };
-            if !self.tool_metadata.contains_key(name.as_str()) {
+            let resolved_name = self.resolve_tool_name(name.as_str()).map(ToOwned::to_owned);
+            if resolved_name.is_none() {
                 if let Some(reason) =
                     unavailable_tool_reason(self.unavailable_tools.as_slice(), name.as_str())
                 {
@@ -373,6 +482,7 @@ impl McpExecutor {
                     continue;
                 }
             }
+            let execution_name = resolved_name.unwrap_or_else(|| name.clone());
             let executor = self.clone();
             let context = context.clone();
             joins.spawn(async move {
@@ -393,7 +503,7 @@ impl McpExecutor {
                 }
 
                 let result = match executor
-                    .call_tool_once(name.as_str(), args, context.clone(), None)
+                    .call_tool_once(execution_name.as_str(), args, context.clone(), None)
                     .await
                 {
                     Ok((content, structured)) => ToolResult {
@@ -434,29 +544,19 @@ impl McpExecutor {
     }
 
     async fn register_http_tools(&mut self) {
-        for server in &self.http_servers {
+        for server in self.http_servers.clone() {
             match list_tools_http(server.url.as_str(), server.headers.as_ref()).await {
                 Ok(tools) => {
                     for tool in tools {
                         if let Some(def) = parse_tool_definition(&tool) {
-                            let prefixed =
-                                prefixed_tool_name(server.name.as_str(), def.name.as_str());
-                            self.available_tools.push(build_function_tool_schema(
-                                prefixed.as_str(),
-                                def.description.as_str(),
-                                &def.parameters,
-                            ));
-                            self.tool_metadata.insert(
-                                prefixed,
-                                ToolInfo {
-                                    original_name: def.name,
-                                    server_name: server.name.clone(),
-                                    server_type: "http".to_string(),
-                                    server_url: Some(server.url.clone()),
-                                    server_headers: server.headers.clone(),
-                                    server_config: None,
-                                    tool_info: tool,
-                                },
+                            self.register_available_tool(
+                                server.name.as_str(),
+                                "http",
+                                Some(server.url.clone()),
+                                server.headers.clone(),
+                                None,
+                                def,
+                                tool,
                             );
                         }
                     }
@@ -479,29 +579,19 @@ impl McpExecutor {
     }
 
     async fn register_stdio_tools(&mut self) {
-        for server in &self.stdio_servers {
-            match list_tools_stdio(server).await {
+        for server in self.stdio_servers.clone() {
+            match list_tools_stdio(&server).await {
                 Ok(tools) => {
                     for tool in tools {
                         if let Some(def) = parse_tool_definition(&tool) {
-                            let prefixed =
-                                prefixed_tool_name(server.name.as_str(), def.name.as_str());
-                            self.available_tools.push(build_function_tool_schema(
-                                prefixed.as_str(),
-                                def.description.as_str(),
-                                &def.parameters,
-                            ));
-                            self.tool_metadata.insert(
-                                prefixed,
-                                ToolInfo {
-                                    original_name: def.name,
-                                    server_name: server.name.clone(),
-                                    server_type: "stdio".to_string(),
-                                    server_url: None,
-                                    server_headers: None,
-                                    server_config: Some(server.clone()),
-                                    tool_info: tool,
-                                },
+                            self.register_available_tool(
+                                server.name.as_str(),
+                                "stdio",
+                                None,
+                                None,
+                                Some(server.clone()),
+                                def,
+                                tool,
                             );
                         }
                     }
@@ -524,7 +614,7 @@ impl McpExecutor {
     }
 
     fn register_builtin_tools(&mut self) {
-        for server in &self.builtin_servers {
+        for server in self.builtin_servers.clone() {
             let Some(provider) = self.builtin_registry.get(server.name.as_str()) else {
                 self.unavailable_tools.push(unavailable_server(
                     server.name.as_str(),
@@ -543,23 +633,14 @@ impl McpExecutor {
             }
             for tool in provider.list_tools() {
                 if let Some(def) = parse_tool_definition(&tool) {
-                    let prefixed = prefixed_tool_name(server.name.as_str(), def.name.as_str());
-                    self.available_tools.push(build_function_tool_schema(
-                        prefixed.as_str(),
-                        def.description.as_str(),
-                        &def.parameters,
-                    ));
-                    self.tool_metadata.insert(
-                        prefixed,
-                        ToolInfo {
-                            original_name: def.name,
-                            server_name: server.name.clone(),
-                            server_type: "builtin".to_string(),
-                            server_url: None,
-                            server_headers: None,
-                            server_config: None,
-                            tool_info: tool,
-                        },
+                    self.register_available_tool(
+                        server.name.as_str(),
+                        "builtin",
+                        None,
+                        None,
+                        None,
+                        def,
+                        tool,
                     );
                 }
             }
@@ -653,10 +734,6 @@ fn build_stream_callback(
     })
 }
 
-fn prefixed_tool_name(server_name: &str, tool_name: &str) -> String {
-    format!("{}_{}", server_name, tool_name)
-}
-
 fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) -> Option<String> {
     unavailable_tools.iter().find_map(|item| {
         let server_name = item
@@ -669,7 +746,9 @@ fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) ->
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())?;
-        (full_tool_name == prefixed_tool_name(server_name, tool_name)).then(|| {
+        let canonical = canonical_prefixed_tool_name(server_name, tool_name);
+        let legacy = legacy_prefixed_tool_name(server_name, tool_name);
+        ([canonical.as_str(), legacy.as_str()].contains(&full_tool_name)).then(|| {
             item.get("reason")
                 .and_then(Value::as_str)
                 .map(str::trim)
@@ -678,6 +757,24 @@ fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) ->
                 .to_string()
         })
     })
+}
+
+fn stable_tool_name_hash(server_name: &str, tool_name: &str) -> u32 {
+    const OFFSET: u32 = 0x811c9dc5;
+    const PRIME: u32 = 0x01000193;
+
+    let mut hash = OFFSET;
+    for byte in server_name
+        .as_bytes()
+        .iter()
+        .copied()
+        .chain(std::iter::once(0xff))
+        .chain(tool_name.as_bytes().iter().copied())
+    {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }
 
 fn unavailable_server(server_name: &str, server_type: &str, reason: &str) -> Value {

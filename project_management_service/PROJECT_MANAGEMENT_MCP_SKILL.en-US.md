@@ -12,6 +12,7 @@ Project Management MCP is the structured project-management entry point exposed 
 - Treat `project_task` as a Project Management work item, also called `ProjectWorkItem`.
 - Minimal effective modeling: first decide whether a new requirement layer is needed at all. If one requirement with multiple project work items expresses the work, do not split it into parent and child requirements. Requirements describe what must be delivered; project work items describe how to execute it.
 - Before creating a requirement or project work item, list or inspect existing records first. Update matching existing records instead of creating duplicates.
+- During planning, use `delete_requirement` / `delete_project_task` to remove incorrectly created requirements or project work items; do not use cancelled to mean "I do not want this plan item." Project work items already linked to Task Runner execution tasks, and requirements containing those work items, cannot be directly deleted.
 - Requirement coverage invariant: every newly created or currently updated actionable requirement must have at least one corresponding project work item. Do not create work items only for the first requirement; if one planning pass creates N actionable requirements, the final state must show work-item coverage for all N requirements.
 - Dependency tools use full replacement semantics. Read existing dependencies first to avoid removing user-maintained prerequisite relationships.
 - Requirements can have parent-child hierarchy and prerequisite requirements. Project work items under a requirement can depend on prerequisite project work items. Prefer prerequisite relationships and project work items by default; use parent-child requirement hierarchy only when a child requirement needs its own scope, acceptance criteria, status, or dependencies.
@@ -51,12 +52,14 @@ If the current run created "one parent requirement + multiple title-only or step
 - `list_requirements`: List project requirements.
 - `create_requirement`: Create a project requirement.
 - `update_requirement`: Update a requirement and optionally replace prerequisite requirements.
+- `delete_requirement`: Delete a requirement that has not been linked to Task Runner execution through any contained work item; also deletes child requirements, technical overview documents, project work items, and dependency edges.
 - `set_requirement_dependencies`: Replace one requirement's prerequisite requirement list.
 - `upsert_requirement_technical_overview`: Create or update a requirement implementation technical overview.
 - `get_requirement_technical_overview`: Read a requirement implementation technical overview.
 - `list_project_tasks`: List project-management work items.
 - `create_project_task`: Create a project-management work item under a requirement; requires non-empty technical overview content on that requirement.
 - `update_project_task`: Update a project-management work item and optionally replace prerequisite work items.
+- `delete_project_task`: Delete a project work item that has not been linked to a Task Runner execution task; use this for mistaken planning-stage work items.
 - `set_project_task_dependencies`: Replace one project work item's prerequisite work item list.
 - `get_project_dependency_graph`: Get the project dependency graph across requirements and project work items.
 

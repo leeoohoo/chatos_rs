@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::builtin_catalog::{builtin_kind_by_any, BuiltinMcpKind};
+use crate::naming::canonical_prefixed_tool_name;
 use crate::types::{McpBuiltinServer, ToolInfo};
 
 const SECTION_GLOBAL: &str = "global";
@@ -337,7 +338,7 @@ fn collect_server_availability(
             .or_default()
             .unavailable_tools
             .push(UnavailableBuiltinTool {
-                prefixed_name: format!("{server_name}_{tool_name}"),
+                prefixed_name: canonical_prefixed_tool_name(server_name, tool_name),
                 reason,
             });
     }

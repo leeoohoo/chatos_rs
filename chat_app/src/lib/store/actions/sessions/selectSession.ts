@@ -55,6 +55,7 @@ export function createSelectSessionActions({
       const requestedInitialPageSize = Number.isFinite(options.initialPageSize)
         ? Math.max(1, Math.floor(options.initialPageSize as number))
         : SESSION_MESSAGES_INITIAL_PAGE_SIZE;
+      const forceRefreshMessages = options.forceRefreshMessages === true;
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
         // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
@@ -69,8 +70,8 @@ export function createSelectSessionActions({
 
       try {
         const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
-        const visibleSnapshot = readVisibleSessionMessagesSnapshot(get(), sessionId);
-        const cachedPage = readSessionMessagesCache(get(), sessionId);
+        const visibleSnapshot = forceRefreshMessages ? null : readVisibleSessionMessagesSnapshot(get(), sessionId);
+        const cachedPage = forceRefreshMessages ? null : readSessionMessagesCache(get(), sessionId);
         const sessionSnapshot = trimCompactHistorySnapshotToRecent(
           visibleSnapshot ?? cachedPage,
           requestedInitialPageSize,

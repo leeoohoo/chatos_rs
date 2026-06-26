@@ -7,10 +7,14 @@ import {
   ClipboardList,
   GitBranch,
   Link2,
+  Play,
   RefreshCw,
+  Square,
 } from 'lucide-react';
 
 import { useApiClient } from '../../lib/api/ApiClientContext';
+import { useChatStore } from '../../lib/store';
+import { normalizeRawMessages } from '../../lib/domain/messages';
 import type {
   ProjectPlanResponse,
   ProjectRequirementResponse,
@@ -291,7 +295,7 @@ const groupWorkItemsByRequirement = (
 };
 
 const countOpenItems = (items: ProjectWorkItemResponse[]): number => (
-  items.filter((item) => !['done', 'cancelled', 'archived'].includes(item.status || '')).length
+  items.filter((item) => item.status !== 'done').length
 );
 
 const sortWorkItemsByDependencies = (
@@ -458,13 +462,13 @@ const WorkItemRow: React.FC<{
     <div className="mt-2 space-y-1.5 rounded-md border border-border/70 bg-muted/10 px-2 py-2">
       <DependencyLine
         ids={prerequisites}
-        label="前置任务"
+        label="前置项目任务"
         resolveLabel={resolveWorkItemTitle}
       />
       {dependents.length > 0 ? (
         <DependencyLine
           ids={dependents}
-          label="后续任务"
+          label="后续项目任务"
           resolveLabel={resolveWorkItemTitle}
           tone="dependent"
         />
@@ -493,6 +497,12 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<ProjectPlanResponse | null>(null);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
+  const [executingRequirementId, setExecutingRequirementId] = useState<string | null>(null);
+  const [executionMessage, setExecutionMessage] = useState<string | null>(null);
+  const updateChatConfig = useChatStore((state) => state.updateChatConfig);
+  const refreshSessionById = useChatStore((state) => state.refreshSessionById);
+  const selectSession = useChatStore((state) => state.selectSession);
+  const upsertSessionMessage = useChatStore((state) => state.upsertSessionMessage);
 
   const loadPlan = useCallback(async () => {
     setLoading(true);
@@ -512,6 +522,70 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setSelectedRequirementId(null);
     void loadPlan();
   }, [loadPlan]);
+
+  const executeRequirement = useCallback(async (requirement: ProjectRequirementResponse) => {
+    if (executingRequirementId) {
+      return;
+    }
+    setExecutingRequirementId(requirement.id);
+    setExecutionMessage(null);
+    setError(null);
+    void updateChatConfig({ planModeEnabled: false });
+    try {
+      const result = await apiClient.executeProjectRequirement(project.id, requirement.id);
+      const createdTasks = result.created_tasks || result.createdTasks || [];
+      await loadPlan();
+      const conversationId = readText(result.conversation_id) || readText(result.conversationId);
+      if (!conversationId) {
+        setExecutionMessage(`已创建 ${createdTasks.length} 个执行任务，但后端没有返回执行会话`);
+        return;
+      }
+      try {
+        await refreshSessionById(conversationId);
+        const [executionMessage] = result.message
+          ? normalizeRawMessages([result.message], conversationId)
+          : [];
+        await selectSession(conversationId, {
+          initialPageSize: 25,
+          forceRefreshMessages: true,
+        });
+        if (result.message) {
+          if (executionMessage) {
+            upsertSessionMessage(executionMessage);
+          }
+        }
+        setExecutionMessage(`已创建 ${createdTasks.length} 个执行任务，已打开执行会话`);
+      } catch (navigationErr) {
+        setExecutionMessage(`已创建 ${createdTasks.length} 个执行任务`);
+        setError(navigationErr instanceof Error
+          ? `执行任务已创建，但打开执行会话失败：${navigationErr.message}`
+          : '执行任务已创建，但打开执行会话失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '执行需求失败');
+    } finally {
+      setExecutingRequirementId(null);
+    }
+  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectSession, updateChatConfig, upsertSessionMessage]);
+
+  const stopRequirementExecution = useCallback(async (requirement: ProjectRequirementResponse) => {
+    if (executingRequirementId) {
+      return;
+    }
+    setExecutingRequirementId(requirement.id);
+    setExecutionMessage(null);
+    setError(null);
+    try {
+      const result = await apiClient.stopProjectRequirementExecution(project.id, requirement.id);
+      const cancelledTasks = result.cancelled_tasks || result.cancelledTasks || [];
+      setExecutionMessage(`已停止 ${cancelledTasks.length} 个执行任务`);
+      await loadPlan();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '停止需求执行失败');
+    } finally {
+      setExecutingRequirementId(null);
+    }
+  }, [apiClient, executingRequirementId, loadPlan, project.id]);
 
   const requirements = useMemo(
     () => (Array.isArray(plan?.requirements) ? plan.requirements : []),
@@ -578,6 +652,10 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     () => requirements.find((requirement) => requirement.id === selectedRequirementId) || null,
     [requirements, selectedRequirementId],
   );
+  const selectedRequirementIsExecuting = selectedRequirement?.status === 'in_progress';
+  const selectedRequirementActionBusy = Boolean(
+    selectedRequirement && executingRequirementId === selectedRequirement.id,
+  );
   const rawSelectedWorkItems = selectedRequirement
     ? workItemsByRequirement.get(selectedRequirement.id) || []
     : [];
@@ -603,7 +681,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground">Plan</h2>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {requirements.length} 个需求 · {workItems.length} 个任务 · {countOpenItems(workItems)} 个未完成
+            {requirements.length} 个需求 · {workItems.length} 个项目任务 · {countOpenItems(workItems)} 个未完成
           </p>
         </div>
         <button
@@ -622,6 +700,11 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       {error ? (
         <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
           {error}
+        </div>
+      ) : null}
+      {executionMessage ? (
+        <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+          {executionMessage}
         </div>
       ) : null}
 
@@ -781,6 +864,28 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                       更新于 {formatDateTime(getUpdatedAt(selectedRequirement))}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className={cn(
+                      'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none',
+                      selectedRequirementIsExecuting
+                        ? 'border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                        : 'border-primary/40 bg-primary text-primary-foreground hover:bg-primary/90',
+                    )}
+                    disabled={!!executingRequirementId || selectedWorkItems.length === 0}
+                    onClick={() => {
+                      if (selectedRequirementIsExecuting) {
+                        void stopRequirementExecution(selectedRequirement);
+                      } else {
+                        void executeRequirement(selectedRequirement);
+                      }
+                    }}
+                  >
+                    {selectedRequirementIsExecuting ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                    {selectedRequirementActionBusy
+                      ? (selectedRequirementIsExecuting ? '停止中' : '执行中')
+                      : (selectedRequirementIsExecuting ? '停止' : '执行')}
+                  </button>
                 </div>
 
                 <div className="mt-4 rounded-md border border-border bg-muted/10 px-3 py-3">
@@ -831,9 +936,9 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                 <section className="mt-5 border-t border-border pt-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <h4 className="text-sm font-semibold text-foreground">任务</h4>
+                      <h4 className="text-sm font-semibold text-foreground">项目任务</h4>
                       <div className="mt-0.5 text-xs text-muted-foreground">
-                        {selectedWorkItems.length} 个任务 · {countOpenItems(selectedWorkItems)} 个未完成
+                        {selectedWorkItems.length} 个项目任务 · {countOpenItems(selectedWorkItems)} 个未完成
                       </div>
                     </div>
                     {selectedWorkItems.length > 0 && countOpenItems(selectedWorkItems) === 0 ? (
@@ -846,7 +951,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                   {selectedWorkItems.length > 0 ? (
                     <div className="mb-3 flex items-start gap-2 rounded-md border border-border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
                       <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>任务已按前置关系尽量排序；“前置任务”是当前任务开始前需要先完成的任务。</span>
+                      <span>项目任务已按前置关系尽量排序；“前置项目任务”是当前项目任务开始前需要先完成的任务。</span>
                     </div>
                   ) : null}
                   {selectedWorkItems.length === 0 ? (

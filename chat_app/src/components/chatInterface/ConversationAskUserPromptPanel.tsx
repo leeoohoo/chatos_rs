@@ -13,6 +13,7 @@ import { useConversationAskUserPromptRealtime } from '../../lib/realtime/useConv
 
 interface ConversationAskUserPromptPanelProps {
   sessionId: string | null;
+  projectId?: string | null;
 }
 
 const isPendingPrompt = (prompt: AskUserPromptRecord): boolean => (
@@ -88,6 +89,7 @@ const promptAllowCancel = (prompt: AskUserPromptRecord): boolean => (
 
 const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelProps> = ({
   sessionId,
+  projectId,
 }) => {
   const apiClient = useApiClient();
   const { t } = useI18n();
@@ -125,6 +127,7 @@ const ConversationAskUserPromptPanel: React.FC<ConversationAskUserPromptPanelPro
 
   useConversationAskUserPromptRealtime({
     sessionId,
+    projectId,
     enabled: Boolean(sessionId),
     onEvent: async () => {
       await loadPrompts();

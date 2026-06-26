@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone)]
 pub struct UserServiceTaskRunnerExchange {
@@ -17,6 +18,100 @@ struct UserServiceTaskRunnerTokenResponse {
 #[derive(Debug, Deserialize)]
 struct TaskRunnerSkillResponse {
     content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskRunnerTaskRecord {
+    pub id: String,
+    pub status: String,
+    pub last_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TaskRunnerMcpConfigRequest {
+    pub enabled_builtin_kinds: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin_prompt_locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_dir: Option<String>,
+    pub external_mcp_config_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CreateTaskRunnerTaskRequest {
+    pub title: String,
+    pub description: Option<String>,
+    pub objective: String,
+    pub input_payload: Option<Value>,
+    pub status: Option<String>,
+    pub priority: Option<i32>,
+    pub tags: Option<Vec<String>>,
+    pub default_model_config_id: Option<String>,
+    pub project_id: Option<String>,
+    pub task_profile: Option<String>,
+    pub schedule: Option<TaskRunnerTaskScheduleRequest>,
+    pub mcp_config: Option<TaskRunnerMcpConfigRequest>,
+    pub prerequisite_task_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TaskRunnerTaskScheduleRequest {
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CancelTaskRunnerTaskRequest {
+    pub reason: String,
+    pub replacement_task_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TaskRunnerMcpCatalogEntry {
+    kind: String,
+    config_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TaskRunnerExternalMcpConfig {
+    id: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskRunnerExecutionOptions {
+    builtin_tool_ids: BTreeSet<String>,
+    external_tool_ids: BTreeSet<String>,
+}
+
+impl TaskRunnerExecutionOptions {
+    pub fn mcp_config_for_tool_ids(
+        &self,
+        values: &[String],
+    ) -> Result<TaskRunnerMcpConfigRequest, String> {
+        let values = normalize_tool_ids(values);
+        if values.is_empty() {
+            return Err("task_runner_enabled_tool_ids is required".to_string());
+        }
+        let mut enabled_builtin_kinds = Vec::new();
+        let mut external_mcp_config_ids = Vec::new();
+        for value in values {
+            if self.builtin_tool_ids.contains(value.as_str()) {
+                enabled_builtin_kinds.push(value);
+            } else if self.external_tool_ids.contains(value.as_str()) {
+                external_mcp_config_ids.push(value);
+            } else {
+                return Err(format!("Task Runner 工具不可用或无权限访问: {value}"));
+            }
+        }
+        Ok(TaskRunnerMcpConfigRequest {
+            enabled_builtin_kinds,
+            builtin_prompt_locale: None,
+            workspace_dir: None,
+            external_mcp_config_ids,
+        })
+    }
 }
 
 pub async fn exchange_task_runner_token_via_user_service(
@@ -90,6 +185,112 @@ pub async fn fetch_task_runner_skill(
     Ok(content.to_string())
 }
 
+pub async fn fetch_task_runner_execution_options(
+    base_url: &str,
+    access_token: &str,
+) -> Result<TaskRunnerExecutionOptions, String> {
+    let catalog: Vec<TaskRunnerMcpCatalogEntry> = task_runner_json(
+        base_url,
+        access_token,
+        reqwest::Method::GET,
+        "/api/mcp/tools",
+        None::<&()>,
+    )
+    .await?;
+    let external_configs: Vec<TaskRunnerExternalMcpConfig> = task_runner_json(
+        base_url,
+        access_token,
+        reqwest::Method::GET,
+        "/api/external-mcp-configs",
+        None::<&()>,
+    )
+    .await
+    .unwrap_or_default();
+
+    let mut builtin_tool_ids = BTreeSet::new();
+    for item in catalog {
+        if let Some(kind) = normalize_optional(Some(item.kind)) {
+            builtin_tool_ids.insert(kind);
+        }
+        if let Some(config_id) = item
+            .config_id
+            .and_then(|value| normalize_optional(Some(value)))
+        {
+            builtin_tool_ids.insert(config_id);
+        }
+    }
+    let external_tool_ids = external_configs
+        .into_iter()
+        .filter(|item| item.enabled)
+        .filter_map(|item| normalize_optional(Some(item.id)))
+        .collect::<BTreeSet<_>>();
+
+    Ok(TaskRunnerExecutionOptions {
+        builtin_tool_ids,
+        external_tool_ids,
+    })
+}
+
+pub async fn create_task_runner_task(
+    base_url: &str,
+    access_token: &str,
+    user_access_token: Option<&str>,
+    source_session_id: Option<&str>,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+    request: &CreateTaskRunnerTaskRequest,
+) -> Result<TaskRunnerTaskRecord, String> {
+    let mut builder =
+        task_runner_request(base_url, access_token, reqwest::Method::POST, "/api/tasks")
+            .json(request);
+    if let Some(value) = normalize_optional(source_session_id.map(ToOwned::to_owned)) {
+        builder = builder.header("X-Chatos-Session-Id", value);
+    }
+    if let Some(value) = normalize_optional(source_user_message_id.map(ToOwned::to_owned)) {
+        builder = builder.header("X-Chatos-User-Message-Id", value);
+    }
+    if let Some(value) = normalize_optional(source_turn_id.map(ToOwned::to_owned)) {
+        builder = builder.header("X-Chatos-Turn-Id", value);
+    }
+    if let Some(value) = normalize_optional(user_access_token.map(ToOwned::to_owned)) {
+        builder = builder.header("X-Chatos-User-Authorization", format!("Bearer {value}"));
+    }
+    send_task_runner_response(builder).await
+}
+
+pub async fn get_task_runner_task(
+    base_url: &str,
+    access_token: &str,
+    task_id: &str,
+) -> Result<TaskRunnerTaskRecord, String> {
+    let path = format!("/api/tasks/{}", urlencoding::encode(task_id.trim()));
+    task_runner_json(
+        base_url,
+        access_token,
+        reqwest::Method::GET,
+        path.as_str(),
+        None::<&()>,
+    )
+    .await
+}
+
+pub async fn cancel_task_runner_task(
+    base_url: &str,
+    access_token: &str,
+    user_access_token: Option<&str>,
+    task_id: &str,
+    request: &CancelTaskRunnerTaskRequest,
+) -> Result<Value, String> {
+    let path = format!("/api/tasks/{}/cancel", urlencoding::encode(task_id.trim()));
+    let mut builder =
+        task_runner_request(base_url, access_token, reqwest::Method::POST, path.as_str())
+            .json(request);
+    if let Some(value) = normalize_optional(user_access_token.map(ToOwned::to_owned)) {
+        builder = builder.header("X-Chatos-User-Authorization", format!("Bearer {value}"));
+    }
+    send_task_runner_response(builder).await
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct SubmitTaskRunnerPromptRequest {
     pub values: Option<Value>,
@@ -152,6 +353,64 @@ async fn send_json<T: for<'de> Deserialize<'de>>(
         return Err(format!("Task Runner request failed: {status} {body}"));
     }
     response.json::<T>().await.map_err(|err| err.to_string())
+}
+
+async fn task_runner_json<T, B>(
+    base_url: &str,
+    access_token: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<&B>,
+) -> Result<T, String>
+where
+    T: for<'de> Deserialize<'de>,
+    B: Serialize + ?Sized,
+{
+    let mut request = task_runner_request(base_url, access_token, method, path);
+    if let Some(body) = body {
+        request = request.json(body);
+    }
+    send_task_runner_response(request).await
+}
+
+fn task_runner_request(
+    base_url: &str,
+    access_token: &str,
+    method: reqwest::Method,
+    path: &str,
+) -> reqwest::RequestBuilder {
+    let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
+    reqwest::Client::new()
+        .request(method, endpoint)
+        .bearer_auth(access_token.trim())
+}
+
+async fn send_task_runner_response<T: for<'de> Deserialize<'de>>(
+    request: reqwest::RequestBuilder,
+) -> Result<T, String> {
+    let response = request.send().await.map_err(|err| err.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Task Runner request failed: {status} {body}"));
+    }
+    response.json::<T>().await.map_err(|err| err.to_string())
+}
+
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_tool_ids(values: &[String]) -> Vec<String> {
+    let mut out = values
+        .iter()
+        .filter_map(|value| normalize_optional(Some(value.clone())))
+        .collect::<Vec<_>>();
+    out.sort();
+    out.dedup();
+    out
 }
 
 async fn get_internal_json(

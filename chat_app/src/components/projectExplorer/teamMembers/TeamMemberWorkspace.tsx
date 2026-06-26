@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 
+import ConversationAskUserPromptPanel from '../../chatInterface/ConversationAskUserPromptPanel';
 import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/viewHelpers';
 import { TeamMemberWorkspaceComposer } from './TeamMemberWorkspaceComposer';
 import { TeamMemberWorkspaceContent } from './TeamMemberWorkspaceContent';
@@ -79,6 +80,15 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
           onDeleteSummary={onDeleteSummary}
         />
       </div>
+
+      <ConversationAskUserPromptPanel
+        sessionId={
+          selectedContact && selectedProjectSession && isSelectedSessionActive
+            ? selectedProjectSession.id
+            : null
+        }
+        projectId={project.id || null}
+      />
 
       <TeamMemberWorkspaceComposer
         project={project}

@@ -163,6 +163,7 @@ pub struct TaskBoardRealtimePayload {
 pub struct AskUserPromptRealtimePayload {
     pub conversation_id: String,
     pub conversation_turn_id: Option<String>,
+    pub project_id: Option<String>,
     pub prompt_id: String,
     pub action: String,
     pub status: Option<String>,

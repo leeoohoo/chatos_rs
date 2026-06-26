@@ -3,8 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::CreateTaskRequest;
-use crate::models::TASK_PROFILE_CHATOS_PLAN;
+use crate::models::{CreateTaskRequest, TaskRunRecord, TASK_PROFILE_CHATOS_PLAN};
 
 use super::chatos_async_planner::{
     planner_prerequisite_create_request, planner_root_create_request,
@@ -29,6 +28,9 @@ impl TaskRunnerMcpService {
                 .existing_chatos_async_tasks(current_user, request_context)
                 .await?;
             if !existing.is_empty() {
+                let auto_started_runs = self
+                    .dispatch_chatos_async_tasks(existing.as_slice())
+                    .await?;
                 return Ok(json!({
                     "idempotent_reused": true,
                     "created_tasks": existing.into_iter().map(|task| {
@@ -39,6 +41,7 @@ impl TaskRunnerMcpService {
                         })
                     }).collect::<Vec<_>>(),
                     "dependency_edges": [],
+                    "auto_started_runs": auto_started_runs_for_mcp(auto_started_runs),
                 }));
             }
         }
@@ -188,9 +191,30 @@ impl TaskRunnerMcpService {
             }
         }
 
+        let auto_started_runs = if tool_profile == McpToolProfile::ChatosAsyncPlanner {
+            let task_ids = ref_to_task_id.values().cloned().collect::<Vec<_>>();
+            self.dispatch_chatos_async_task_graph_roots(task_ids.as_slice())
+                .await?
+        } else {
+            Vec::new()
+        };
+
         Ok(json!({
             "created_tasks": created_tasks,
             "dependency_edges": dependency_edges,
+            "auto_started_runs": auto_started_runs_for_mcp(auto_started_runs),
         }))
     }
+}
+
+fn auto_started_runs_for_mcp(runs: Vec<TaskRunRecord>) -> Vec<Value> {
+    runs.into_iter()
+        .map(|run| {
+            json!({
+                "run_id": run.id,
+                "task_id": run.task_id,
+                "status": run.status,
+            })
+        })
+        .collect()
 }

@@ -374,6 +374,7 @@ export interface RealtimeAskUserPromptPayloadWrapper {
   kind: 'ask_user_prompt';
   conversation_id: string;
   conversation_turn_id?: string | null;
+  project_id?: string | null;
   prompt_id: string;
   action: string;
   status?: string | null;

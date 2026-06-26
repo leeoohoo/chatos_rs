@@ -433,6 +433,10 @@ pub struct ProjectWorkItemRecord {
     pub requirement_id: String,
     pub title: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub task_runner_default_model_config_id: String,
+    #[serde(default)]
+    pub task_runner_enabled_tool_ids: Vec<String>,
     pub status: ProjectWorkItemStatus,
     pub priority: i64,
     pub assignee_user_id: Option<String>,
@@ -461,6 +465,8 @@ pub struct ProjectWorkItemRecord {
 pub struct CreateProjectWorkItemRequest {
     pub title: String,
     pub description: Option<String>,
+    pub task_runner_default_model_config_id: String,
+    pub task_runner_enabled_tool_ids: Vec<String>,
     pub status: Option<ProjectWorkItemStatus>,
     pub priority: Option<i64>,
     pub assignee_user_id: Option<String>,
@@ -504,6 +510,18 @@ pub struct ProjectWorkItemTaskRunnerLinkRecord {
     pub task_runner_task_id: String,
     pub task_runner_run_id: Option<String>,
     pub link_type: String,
+    #[serde(default)]
+    pub source_session_id: Option<String>,
+    #[serde(default)]
+    pub source_user_message_id: Option<String>,
+    #[serde(default)]
+    pub task_runner_status: Option<String>,
+    #[serde(default)]
+    pub last_callback_event: Option<String>,
+    #[serde(default)]
+    pub last_callback_at: Option<String>,
+    #[serde(default)]
+    pub last_error_message: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -513,6 +531,12 @@ pub struct LinkTaskRunnerTaskRequest {
     pub task_runner_task_id: String,
     pub task_runner_run_id: Option<String>,
     pub link_type: Option<String>,
+    pub source_session_id: Option<String>,
+    pub source_user_message_id: Option<String>,
+    pub task_runner_status: Option<String>,
+    pub last_callback_event: Option<String>,
+    pub last_callback_at: Option<String>,
+    pub last_error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -524,6 +548,8 @@ pub struct CreateTaskRunnerTaskFromWorkItemRequest {
     pub tags: Option<Vec<String>>,
     pub default_model_config_id: Option<String>,
     pub prerequisite_task_ids: Option<Vec<String>>,
+    pub source_session_id: Option<String>,
+    pub source_user_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -541,6 +567,40 @@ pub struct TaskRunnerTaskRecord {
 pub struct CreateTaskRunnerTaskFromWorkItemResponse {
     pub task: TaskRunnerTaskRecord,
     pub link: ProjectWorkItemTaskRunnerLinkRecord,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SyncTaskRunnerWorkItemStatusRequest {
+    pub task_runner_task_id: String,
+    pub task_runner_run_id: Option<String>,
+    pub task_runner_status: Option<String>,
+    pub last_callback_event: Option<String>,
+    pub last_callback_at: Option<String>,
+    pub last_error_message: Option<String>,
+    pub source_session_id: Option<String>,
+    pub source_user_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncTaskRunnerWorkItemStatusResponse {
+    pub work_item: ProjectWorkItemRecord,
+    pub link: ProjectWorkItemTaskRunnerLinkRecord,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SyncRequirementExecutionStateRequest {
+    pub requirement_status: Option<RequirementStatus>,
+    #[serde(default)]
+    pub work_item_ids: Vec<String>,
+    pub work_item_status: Option<ProjectWorkItemStatus>,
+    #[serde(default)]
+    pub skip_done_work_items: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncRequirementExecutionStateResponse {
+    pub requirement: RequirementRecord,
+    pub work_items: Vec<ProjectWorkItemRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -567,6 +627,18 @@ pub struct DependencyGraphResponse {
     pub edges: Vec<DependencyGraphEdge>,
     pub blocked_by: Vec<DependencyGraphNode>,
     pub ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunnerExecutionOptionRecord {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRunnerExecutionOptionsResponse {
+    pub model_configs: Vec<TaskRunnerExecutionOptionRecord>,
+    pub tools: Vec<TaskRunnerExecutionOptionRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

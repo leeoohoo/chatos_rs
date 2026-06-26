@@ -29,11 +29,12 @@ use crate::models::{
     TaskListFilters, TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
     TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskProjectRecord, TaskProjectStatus,
     TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, TestModelConfigRequest, TestRemoteServerRequest,
-    UpdateExternalMcpConfigRequest, UpdateModelConfigRequest, UpdateRemoteServerRequest,
-    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskProjectRequest,
-    UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord, PUBLIC_PROJECT_ID,
+    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
+    TestRemoteServerRequest, UpdateExternalMcpConfigRequest, UpdateModelConfigRequest,
+    UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    UpdateTaskProjectRequest, UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord,
+    PUBLIC_PROJECT_ID,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
@@ -41,6 +42,7 @@ use crate::state::AppState;
 mod chatos_internal;
 mod core;
 mod external_mcp_configs;
+mod internal;
 mod mcp;
 mod models;
 mod projects;

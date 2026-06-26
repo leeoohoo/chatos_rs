@@ -19,6 +19,11 @@ interface UseMessageTaskGraphArgs {
   lookup?: MessageTaskRunnerLookupOptions;
 }
 
+interface TaskSourceLookup {
+  messageId: string;
+  lookup?: MessageTaskRunnerLookupOptions;
+}
+
 const EMPTY_GRAPH: MessageTaskRunnerGraphResponse = {
   root_task_ids: [],
   nodes: [],
@@ -26,6 +31,47 @@ const EMPTY_GRAPH: MessageTaskRunnerGraphResponse = {
   source_session_id: null,
   source_turn_id: null,
   source_user_message_id: null,
+};
+
+const isTemporaryMessageId = (value: string): boolean => value.startsWith('temp_');
+
+export const buildTaskSourceLookup = ({
+  task,
+  graph,
+  fallbackMessageId,
+  fallbackLookup,
+}: {
+  task: MessageTaskRunnerTask;
+  graph: MessageTaskRunnerGraphResponse;
+  fallbackMessageId: string;
+  fallbackLookup?: MessageTaskRunnerLookupOptions;
+}): TaskSourceLookup => {
+  const taskId = readString(task.id);
+  const taskSourceSessionId = readString(task.source_session_id)
+    || readString(graph.source_session_id)
+    || readString(fallbackLookup?.sessionId);
+  const taskSourceUserMessageId = readString(task.source_user_message_id);
+  const taskSourceTurnId = readString(task.source_turn_id);
+  const lookupSourceUserMessageId = taskSourceUserMessageId
+    || (!taskSourceTurnId ? readString(fallbackLookup?.sourceUserMessageId) : '');
+  const lookupTurnId = taskSourceTurnId
+    || (!taskSourceUserMessageId ? readString(fallbackLookup?.turnId) : '');
+  const lookup: MessageTaskRunnerLookupOptions = {
+    ...fallbackLookup,
+    sessionId: taskSourceSessionId || fallbackLookup?.sessionId || null,
+    turnId: lookupTurnId || null,
+    sourceUserMessageId: lookupSourceUserMessageId || null,
+  };
+  const lookupMessageId = taskSourceUserMessageId && !isTemporaryMessageId(taskSourceUserMessageId)
+    ? taskSourceUserMessageId
+    : taskSourceSessionId && (taskSourceUserMessageId || taskSourceTurnId)
+      ? `task-source-${taskId || 'unknown'}`
+      : fallbackMessageId;
+
+  return {
+    messageId: lookupMessageId,
+    lookup,
+  };
 };
 
 export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskGraphArgs) {
@@ -99,14 +145,17 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     setLoadingProcessTaskId(taskId);
     setError(null);
     try {
-      const detailLookup = sourceUserMessageId
-        ? { ...lookup, sourceUserMessageId }
-        : lookup;
+      const detailSource = buildTaskSourceLookup({
+        task,
+        graph,
+        fallbackMessageId: messageId,
+        fallbackLookup: lookup,
+      });
       const detail = await getMessageTaskRunnerTask(
         apiClient.getRequestFn(),
-        messageId,
+        detailSource.messageId,
         taskId,
-        detailLookup,
+        detailSource.lookup,
       );
       setProcessTask(detail);
     } catch (err) {
@@ -114,7 +163,7 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     } finally {
       setLoadingProcessTaskId(null);
     }
-  }, [apiClient, lookup, messageId, sourceUserMessageId]);
+  }, [apiClient, graph, lookup, messageId]);
 
   const openRun = useCallback(async (task: MessageTaskRunnerTask) => {
     const runId = readString(task.last_run_id);
@@ -124,14 +173,17 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     setLoadingRunId(runId);
     setError(null);
     try {
-      const detailLookup = sourceUserMessageId
-        ? { ...lookup, sourceUserMessageId }
-        : lookup;
+      const detailSource = buildTaskSourceLookup({
+        task,
+        graph,
+        fallbackMessageId: messageId,
+        fallbackLookup: lookup,
+      });
       const detail = await getMessageTaskRunnerGraphRun(
         apiClient.getRequestFn(),
-        messageId,
+        detailSource.messageId,
         runId,
-        detailLookup,
+        detailSource.lookup,
       );
       setRunDetail(detail);
     } catch (err) {
@@ -139,7 +191,7 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     } finally {
       setLoadingRunId(null);
     }
-  }, [apiClient, lookup, messageId, sourceUserMessageId]);
+  }, [apiClient, graph, lookup, messageId]);
 
   useEffect(() => {
     if (!open) {

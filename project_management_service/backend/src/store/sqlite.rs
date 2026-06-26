@@ -75,6 +75,46 @@ impl SqliteStore {
         }
         self.ensure_text_column("requirements", "requirement_type")
             .await?;
+        self.ensure_text_column("project_work_items", "task_runner_default_model_config_id")
+            .await?;
+        self.ensure_text_column("project_work_items", "task_runner_enabled_tool_ids_json")
+            .await?;
+        for column in [
+            "source_session_id",
+            "source_user_message_id",
+            "task_runner_status",
+            "last_callback_event",
+            "last_callback_at",
+            "last_error_message",
+        ] {
+            self.ensure_text_column("project_work_item_task_runner_links", column)
+                .await?;
+        }
+        sqlx::query(
+            "DELETE FROM project_work_item_task_runner_links
+             WHERE rowid NOT IN (
+               SELECT MAX(rowid)
+               FROM project_work_item_task_runner_links
+               GROUP BY work_item_id
+             )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_work_item_unique
+             ON project_work_item_task_runner_links(work_item_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_task_id
+             ON project_work_item_task_runner_links(task_runner_task_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -528,6 +568,10 @@ impl SqliteStore {
             requirement.priority = priority;
         }
         if let Some(status) = patch.status {
+            if status == RequirementStatus::Archived {
+                self.ensure_requirement_subtree_not_executing(&requirement, "归档", false)
+                    .await?;
+            }
             requirement.status = status;
             if matches!(status, RequirementStatus::Archived) {
                 should_archive_work_items = true;
@@ -608,6 +652,8 @@ impl SqliteStore {
         let Some(mut requirement) = self.get_requirement(id).await? else {
             return Ok(None);
         };
+        self.ensure_requirement_subtree_not_executing(&requirement, "归档", false)
+            .await?;
         let now = now_rfc3339();
         requirement.status = RequirementStatus::Archived;
         requirement.archived_at = Some(now.clone());
@@ -616,6 +662,121 @@ impl SqliteStore {
         self.archive_work_items_for_requirement(&requirement.id, &requirement.updated_at)
             .await?;
         Ok(Some(requirement))
+    }
+
+    pub async fn delete_requirement(&self, id: &str) -> Result<Option<RequirementRecord>, String> {
+        let Some(requirement) = self.get_requirement(id).await? else {
+            return Ok(None);
+        };
+        let (requirement_ids, work_items) = self
+            .ensure_requirement_subtree_not_executing(&requirement, "删除", true)
+            .await?;
+        let work_item_ids = work_items
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+
+        let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
+        for work_item_id in &work_item_ids {
+            sqlx::query(
+                "DELETE FROM project_work_item_dependencies
+                 WHERE work_item_id = ?1 OR prerequisite_work_item_id = ?1",
+            )
+            .bind(work_item_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        }
+        for work_item_id in &work_item_ids {
+            sqlx::query("DELETE FROM project_work_items WHERE id = ?1")
+                .bind(work_item_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        for requirement_id in &requirement_ids {
+            sqlx::query(
+                "DELETE FROM requirement_dependencies
+                 WHERE requirement_id = ?1 OR prerequisite_requirement_id = ?1",
+            )
+            .bind(requirement_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+            sqlx::query("DELETE FROM requirement_documents WHERE requirement_id = ?1")
+                .bind(requirement_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        for requirement_id in requirement_ids.iter().rev() {
+            sqlx::query("DELETE FROM requirements WHERE id = ?1")
+                .bind(requirement_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        tx.commit().await.map_err(|err| err.to_string())?;
+        Ok(Some(requirement))
+    }
+
+    async fn ensure_requirement_subtree_not_executing(
+        &self,
+        requirement: &RequirementRecord,
+        action: &str,
+        reject_any_task_runner_link: bool,
+    ) -> Result<(Vec<String>, Vec<ProjectWorkItemRecord>), String> {
+        let requirement_ids = self.collect_requirement_subtree_ids(requirement).await?;
+        let requirements = self
+            .list_requirements(&requirement.project_id, None, None)
+            .await?;
+        for item in requirements
+            .iter()
+            .filter(|item| requirement_ids.contains(&item.id))
+        {
+            if item.status == RequirementStatus::InProgress {
+                return Err(format!(
+                    "需求正在执行中，不能{action}: {}（{}），当前状态：{}",
+                    item.title,
+                    item.id,
+                    item.status.as_str()
+                ));
+            }
+        }
+
+        let mut work_items = Vec::new();
+        for requirement_id in &requirement_ids {
+            for item in self.list_work_items_by_requirement(requirement_id).await? {
+                self.ensure_work_item_not_executing(&item, action, reject_any_task_runner_link)
+                    .await?;
+                work_items.push(item);
+            }
+        }
+        Ok((requirement_ids, work_items))
+    }
+
+    async fn collect_requirement_subtree_ids(
+        &self,
+        requirement: &RequirementRecord,
+    ) -> Result<Vec<String>, String> {
+        let requirements = self
+            .list_requirements(&requirement.project_id, None, None)
+            .await?;
+        let mut ids = vec![requirement.id.clone()];
+        let mut seen = BTreeSet::from([requirement.id.clone()]);
+        let mut index = 0;
+        while index < ids.len() {
+            let parent_id = ids[index].clone();
+            for child in &requirements {
+                if child.parent_requirement_id.as_deref() == Some(parent_id.as_str())
+                    && seen.insert(child.id.clone())
+                {
+                    ids.push(child.id.clone());
+                }
+            }
+            index += 1;
+        }
+        Ok(ids)
     }
 
     async fn archive_work_items_for_requirement(
@@ -962,6 +1123,14 @@ impl SqliteStore {
         user: &CurrentUser,
     ) -> Result<ProjectWorkItemRecord, String> {
         validate_required("title", &input.title)?;
+        validate_required(
+            "task_runner_default_model_config_id",
+            &input.task_runner_default_model_config_id,
+        )?;
+        let task_runner_enabled_tool_ids = normalize_tags(input.task_runner_enabled_tool_ids);
+        if task_runner_enabled_tool_ids.is_empty() {
+            return Err("task_runner_enabled_tool_ids is required".to_string());
+        }
         self.ensure_requirement_technical_overview_ready(&requirement.id)
             .await?;
         let now = now_rfc3339();
@@ -971,6 +1140,11 @@ impl SqliteStore {
             requirement_id: requirement.id.clone(),
             title: input.title.trim().to_string(),
             description: normalized_optional(input.description),
+            task_runner_default_model_config_id: input
+                .task_runner_default_model_config_id
+                .trim()
+                .to_string(),
+            task_runner_enabled_tool_ids,
             status: input.status.unwrap_or_default(),
             priority: input.priority.unwrap_or_default(),
             assignee_user_id: normalized_optional(input.assignee_user_id),
@@ -1043,6 +1217,10 @@ impl SqliteStore {
             item.description = normalized_optional(patch.description);
         }
         if let Some(status) = patch.status {
+            if status == ProjectWorkItemStatus::Archived {
+                self.ensure_work_item_not_executing(&item, "归档", false)
+                    .await?;
+            }
             item.status = status;
             if matches!(status, ProjectWorkItemStatus::Archived) && item.archived_at.is_none() {
                 item.archived_at = Some(now_rfc3339());
@@ -1078,6 +1256,8 @@ impl SqliteStore {
         let Some(mut item) = self.get_work_item(id).await? else {
             return Ok(None);
         };
+        self.ensure_work_item_not_executing(&item, "归档", false)
+            .await?;
         let now = now_rfc3339();
         item.status = ProjectWorkItemStatus::Archived;
         item.archived_at = Some(now.clone());
@@ -1086,20 +1266,87 @@ impl SqliteStore {
         Ok(Some(item))
     }
 
+    pub async fn delete_work_item(
+        &self,
+        id: &str,
+    ) -> Result<Option<ProjectWorkItemRecord>, String> {
+        let Some(item) = self.get_work_item(id).await? else {
+            return Ok(None);
+        };
+        self.ensure_work_item_not_executing(&item, "删除", true)
+            .await?;
+        let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
+        sqlx::query(
+            "DELETE FROM project_work_item_dependencies
+             WHERE work_item_id = ?1 OR prerequisite_work_item_id = ?1",
+        )
+        .bind(id.trim())
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query("DELETE FROM project_work_items WHERE id = ?1")
+            .bind(id.trim())
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+        tx.commit().await.map_err(|err| err.to_string())?;
+        Ok(Some(item))
+    }
+
+    async fn ensure_work_item_not_executing(
+        &self,
+        item: &ProjectWorkItemRecord,
+        action: &str,
+        reject_any_task_runner_link: bool,
+    ) -> Result<(), String> {
+        if item.status == ProjectWorkItemStatus::InProgress {
+            return Err(format!(
+                "项目任务正在执行中，不能{action}: {}（{}），当前状态：{}",
+                item.title,
+                item.id,
+                item.status.as_str()
+            ));
+        }
+        let links = self.list_task_runner_links(&item.id).await?;
+        if reject_any_task_runner_link && !links.is_empty() {
+            return Err(format!(
+                "项目任务已有执行任务关联，不能直接{action}；请保留执行链路并更新状态: {}（{}）",
+                item.title, item.id
+            ));
+        }
+        if let Some(status) = links
+            .iter()
+            .filter_map(|link| link.task_runner_status.as_deref())
+            .find(|status| task_runner_status_is_active(status))
+        {
+            return Err(format!(
+                "项目任务已有执行任务正在进行，不能{action}: {}（{}），Task Runner 状态：{}",
+                item.title, item.id, status
+            ));
+        }
+        Ok(())
+    }
+
     async fn save_work_item(&self, item: &ProjectWorkItemRecord) -> Result<(), String> {
         let tags_json = serde_json::to_string(&item.tags).map_err(|err| err.to_string())?;
+        let task_runner_enabled_tool_ids_json =
+            serde_json::to_string(&item.task_runner_enabled_tool_ids)
+                .map_err(|err| err.to_string())?;
         sqlx::query(
             "INSERT INTO project_work_items (
-                id, project_id, requirement_id, title, description, status, priority,
-                assignee_user_id, estimate_points, due_at, sort_order, tags_json,
+                id, project_id, requirement_id, title, description,
+                task_runner_default_model_config_id, task_runner_enabled_tool_ids_json,
+                status, priority, assignee_user_id, estimate_points, due_at, sort_order, tags_json,
                 creator_user_id, creator_username, creator_display_name,
                 owner_user_id, owner_username, owner_display_name,
                 created_at, updated_at, archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
              ON CONFLICT(id) DO UPDATE SET
                 requirement_id = excluded.requirement_id,
                 title = excluded.title,
                 description = excluded.description,
+                task_runner_default_model_config_id = excluded.task_runner_default_model_config_id,
+                task_runner_enabled_tool_ids_json = excluded.task_runner_enabled_tool_ids_json,
                 status = excluded.status,
                 priority = excluded.priority,
                 assignee_user_id = excluded.assignee_user_id,
@@ -1121,6 +1368,8 @@ impl SqliteStore {
         .bind(&item.requirement_id)
         .bind(&item.title)
         .bind(&item.description)
+        .bind(&item.task_runner_default_model_config_id)
+        .bind(task_runner_enabled_tool_ids_json)
         .bind(item.status.as_str())
         .bind(item.priority)
         .bind(&item.assignee_user_id)
@@ -1282,10 +1531,9 @@ impl SqliteStore {
         let now = now_rfc3339();
         let existing = sqlx::query(
             "SELECT * FROM project_work_item_task_runner_links
-             WHERE work_item_id = ?1 AND task_runner_task_id = ?2",
+             WHERE work_item_id = ?1",
         )
         .bind(work_item_id)
-        .bind(&task_runner_task_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|err| err.to_string())?
@@ -1300,6 +1548,12 @@ impl SqliteStore {
             task_runner_task_id,
             task_runner_run_id: normalized_optional(input.task_runner_run_id),
             link_type,
+            source_session_id: normalized_optional(input.source_session_id),
+            source_user_message_id: normalized_optional(input.source_user_message_id),
+            task_runner_status: normalized_optional(input.task_runner_status),
+            last_callback_event: normalized_optional(input.last_callback_event),
+            last_callback_at: normalized_optional(input.last_callback_at),
+            last_error_message: normalized_optional(input.last_error_message),
             created_at: existing
                 .as_ref()
                 .map(|link| link.created_at.clone())
@@ -1309,11 +1563,20 @@ impl SqliteStore {
         sqlx::query(
             "INSERT INTO project_work_item_task_runner_links (
                 id, work_item_id, task_runner_task_id, task_runner_run_id,
-                link_type, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(work_item_id, task_runner_task_id) DO UPDATE SET
+                link_type, source_session_id, source_user_message_id,
+                task_runner_status, last_callback_event, last_callback_at,
+                last_error_message, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(work_item_id) DO UPDATE SET
+                task_runner_task_id = excluded.task_runner_task_id,
                 task_runner_run_id = excluded.task_runner_run_id,
                 link_type = excluded.link_type,
+                source_session_id = excluded.source_session_id,
+                source_user_message_id = excluded.source_user_message_id,
+                task_runner_status = excluded.task_runner_status,
+                last_callback_event = excluded.last_callback_event,
+                last_callback_at = excluded.last_callback_at,
+                last_error_message = excluded.last_error_message,
                 updated_at = excluded.updated_at",
         )
         .bind(&link.id)
@@ -1321,6 +1584,12 @@ impl SqliteStore {
         .bind(&link.task_runner_task_id)
         .bind(&link.task_runner_run_id)
         .bind(&link.link_type)
+        .bind(&link.source_session_id)
+        .bind(&link.source_user_message_id)
+        .bind(&link.task_runner_status)
+        .bind(&link.last_callback_event)
+        .bind(&link.last_callback_at)
+        .bind(&link.last_error_message)
         .bind(&link.created_at)
         .bind(&link.updated_at)
         .execute(&self.pool)
@@ -1403,6 +1672,13 @@ fn normalize_id_list(values: Vec<String>) -> Vec<String> {
         .filter_map(|value| normalized_optional(Some(value)))
         .filter(|value| seen.insert(value.clone()))
         .collect()
+}
+
+fn task_runner_status_is_active(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "ready" | "queued" | "running" | "processing" | "in_progress"
+    )
 }
 
 fn normalize_tags(values: Vec<String>) -> Vec<String> {
@@ -1508,12 +1784,25 @@ fn requirement_document_from_row(row: &SqliteRow) -> RequirementDocumentRecord {
 fn work_item_from_row(row: &SqliteRow) -> ProjectWorkItemRecord {
     let tags_json = row.get::<String, _>("tags_json").trim().to_string();
     let tags = serde_json::from_str::<Vec<String>>(&tags_json).unwrap_or_default();
+    let task_runner_enabled_tool_ids_json = row
+        .try_get::<Option<String>, _>("task_runner_enabled_tool_ids_json")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "[]".to_string());
+    let task_runner_enabled_tool_ids =
+        serde_json::from_str::<Vec<String>>(&task_runner_enabled_tool_ids_json).unwrap_or_default();
     ProjectWorkItemRecord {
         id: row.get("id"),
         project_id: row.get("project_id"),
         requirement_id: row.get("requirement_id"),
         title: row.get("title"),
         description: row.get("description"),
+        task_runner_default_model_config_id: row
+            .try_get::<Option<String>, _>("task_runner_default_model_config_id")
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+        task_runner_enabled_tool_ids,
         status: ProjectWorkItemStatus::from_db(row.get::<String, _>("status").as_str()),
         priority: row.get("priority"),
         assignee_user_id: row.get("assignee_user_id"),
@@ -1549,6 +1838,12 @@ fn task_runner_link_from_row(row: &SqliteRow) -> ProjectWorkItemTaskRunnerLinkRe
         task_runner_task_id: row.get("task_runner_task_id"),
         task_runner_run_id: row.get("task_runner_run_id"),
         link_type: row.get("link_type"),
+        source_session_id: row.try_get("source_session_id").ok().flatten(),
+        source_user_message_id: row.try_get("source_user_message_id").ok().flatten(),
+        task_runner_status: row.try_get("task_runner_status").ok().flatten(),
+        last_callback_event: row.try_get("last_callback_event").ok().flatten(),
+        last_callback_at: row.try_get("last_callback_at").ok().flatten(),
+        last_error_message: row.try_get("last_error_message").ok().flatten(),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -1660,6 +1955,8 @@ mod tests {
                 CreateProjectWorkItemRequest {
                     title: title.to_string(),
                     description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -1686,6 +1983,8 @@ mod tests {
                 CreateProjectWorkItemRequest {
                     title: "Implementation".to_string(),
                     description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -1721,6 +2020,8 @@ mod tests {
                 CreateProjectWorkItemRequest {
                     title: "Implementation".to_string(),
                     description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -1756,6 +2057,8 @@ mod tests {
                 CreateProjectWorkItemRequest {
                     title: "Implementation".to_string(),
                     description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -1878,6 +2181,8 @@ mod tests {
                 CreateProjectWorkItemRequest {
                     title: "Work item".to_string(),
                     description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -2040,6 +2345,172 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_requirement_removes_subtree_edges_and_rejects_linked_work_items() {
+        let store = test_store().await;
+        let project = create_project(&store).await;
+        let parent = create_requirement(&store, &project.id, "Parent").await;
+        let child = store
+            .create_requirement(
+                &project.id,
+                CreateRequirementRequest {
+                    parent_requirement_id: Some(parent.id.clone()),
+                    requirement_type: None,
+                    title: "Child".to_string(),
+                    summary: None,
+                    detail: None,
+                    business_value: None,
+                    acceptance_criteria: None,
+                    source: None,
+                    priority: None,
+                    status: None,
+                    assignee_user_id: None,
+                },
+                &test_user(),
+            )
+            .await
+            .expect("create child requirement");
+        let dependent = create_requirement(&store, &project.id, "Dependent").await;
+        let parent_item = create_work_item(&store, &parent, "Parent item").await;
+        let child_item = create_work_item(&store, &child, "Child item").await;
+        let dependent_item = create_work_item(&store, &dependent, "Dependent item").await;
+
+        store
+            .set_requirement_dependencies(&dependent.id, vec![child.id.clone()])
+            .await
+            .expect("save requirement dependency");
+        store
+            .set_work_item_dependencies(&dependent_item.id, vec![child_item.id.clone()])
+            .await
+            .expect("save work item dependency");
+
+        let deleted = store
+            .delete_requirement(&parent.id)
+            .await
+            .expect("delete requirement")
+            .expect("deleted requirement");
+
+        assert_eq!(deleted.id, parent.id);
+        assert!(store
+            .get_requirement(&parent.id)
+            .await
+            .expect("get parent")
+            .is_none());
+        assert!(store
+            .get_requirement(&child.id)
+            .await
+            .expect("get child")
+            .is_none());
+        assert!(store
+            .get_work_item(&parent_item.id)
+            .await
+            .expect("get parent item")
+            .is_none());
+        assert!(store
+            .get_work_item(&child_item.id)
+            .await
+            .expect("get child item")
+            .is_none());
+        assert!(store
+            .get_requirement_document(&child.id)
+            .await
+            .expect("get child document")
+            .is_none());
+        assert!(store
+            .list_requirement_dependencies(&dependent.id)
+            .await
+            .expect("list dependent requirement dependencies")
+            .is_empty());
+        assert!(store
+            .list_work_item_dependencies(&dependent_item.id)
+            .await
+            .expect("list dependent item dependencies")
+            .is_empty());
+
+        let linked_requirement = create_requirement(&store, &project.id, "Linked").await;
+        let linked_item = create_work_item(&store, &linked_requirement, "Linked item").await;
+        store
+            .upsert_task_runner_link(
+                &linked_item.id,
+                LinkTaskRunnerTaskRequest {
+                    task_runner_task_id: "task-runner-task-1".to_string(),
+                    task_runner_run_id: None,
+                    link_type: None,
+                    source_session_id: None,
+                    source_user_message_id: None,
+                    task_runner_status: Some("ready".to_string()),
+                    last_callback_event: None,
+                    last_callback_at: None,
+                    last_error_message: None,
+                },
+            )
+            .await
+            .expect("insert link");
+        let err = store
+            .delete_requirement(&linked_requirement.id)
+            .await
+            .expect_err("linked requirement cannot be deleted");
+
+        assert!(err.contains("已有执行任务关联"));
+        assert!(store
+            .get_requirement(&linked_requirement.id)
+            .await
+            .expect("get linked requirement")
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn archive_rejects_executing_work_items_and_requirements() {
+        let store = test_store().await;
+        let project = create_project(&store).await;
+        let requirement = create_requirement(&store, &project.id, "Requirement").await;
+        let item = create_work_item(&store, &requirement, "Running item").await;
+
+        store
+            .upsert_task_runner_link(
+                &item.id,
+                LinkTaskRunnerTaskRequest {
+                    task_runner_task_id: "task-runner-task-1".to_string(),
+                    task_runner_run_id: Some("run-1".to_string()),
+                    link_type: None,
+                    source_session_id: None,
+                    source_user_message_id: None,
+                    task_runner_status: Some("running".to_string()),
+                    last_callback_event: None,
+                    last_callback_at: None,
+                    last_error_message: None,
+                },
+            )
+            .await
+            .expect("insert running link");
+
+        let work_item_archive_error = store
+            .archive_work_item(&item.id)
+            .await
+            .expect_err("running work item cannot be archived");
+        assert!(work_item_archive_error.contains("不能归档"));
+        assert!(work_item_archive_error.contains("running"));
+
+        let requirement_archive_error = store
+            .archive_requirement(&requirement.id)
+            .await
+            .expect_err("requirement with running work item cannot be archived");
+        assert!(requirement_archive_error.contains("不能归档"));
+        assert!(requirement_archive_error.contains("running"));
+
+        let status_archive_error = store
+            .update_work_item(
+                &item.id,
+                UpdateProjectWorkItemRequest {
+                    status: Some(ProjectWorkItemStatus::Archived),
+                    ..UpdateProjectWorkItemRequest::default()
+                },
+            )
+            .await
+            .expect_err("running work item cannot be archived through status update");
+        assert!(status_archive_error.contains("不能归档"));
+    }
+
+    #[tokio::test]
     async fn work_item_dependencies_reject_cross_project_dependency() {
         let store = test_store().await;
         let project_a = create_project(&store).await;
@@ -2058,6 +2529,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_work_item_removes_dependency_edges_and_rejects_linked_items() {
+        let store = test_store().await;
+        let project = create_project(&store).await;
+        let requirement = create_requirement(&store, &project.id, "Requirement").await;
+        let first = create_work_item(&store, &requirement, "First").await;
+        let second = create_work_item(&store, &requirement, "Second").await;
+        let third = create_work_item(&store, &requirement, "Third").await;
+
+        store
+            .set_work_item_dependencies(&second.id, vec![first.id.clone()])
+            .await
+            .expect("save second dependency");
+        store
+            .set_work_item_dependencies(&third.id, vec![second.id.clone()])
+            .await
+            .expect("save third dependency");
+
+        let deleted = store
+            .delete_work_item(&second.id)
+            .await
+            .expect("delete work item")
+            .expect("deleted work item");
+
+        assert_eq!(deleted.id, second.id);
+        assert!(store
+            .get_work_item(&second.id)
+            .await
+            .expect("get deleted work item")
+            .is_none());
+        assert!(store
+            .list_work_item_dependencies(&second.id)
+            .await
+            .expect("list deleted item dependencies")
+            .is_empty());
+        assert!(store
+            .list_work_item_dependencies(&third.id)
+            .await
+            .expect("list dependent item dependencies")
+            .is_empty());
+
+        store
+            .upsert_task_runner_link(
+                &first.id,
+                LinkTaskRunnerTaskRequest {
+                    task_runner_task_id: "task-runner-task-1".to_string(),
+                    task_runner_run_id: None,
+                    link_type: None,
+                    source_session_id: None,
+                    source_user_message_id: None,
+                    task_runner_status: Some("ready".to_string()),
+                    last_callback_event: None,
+                    last_callback_at: None,
+                    last_error_message: None,
+                },
+            )
+            .await
+            .expect("insert link");
+        let err = store
+            .delete_work_item(&first.id)
+            .await
+            .expect_err("linked work item cannot be deleted");
+
+        assert!(err.contains("已有执行任务关联"));
+        assert!(store
+            .get_work_item(&first.id)
+            .await
+            .expect("get linked work item")
+            .is_some());
+    }
+
+    #[tokio::test]
     async fn task_runner_links_are_upserted_and_deleted_per_work_item() {
         let store = test_store().await;
         let project = create_project(&store).await;
@@ -2071,6 +2613,12 @@ mod tests {
                     task_runner_task_id: "task-runner-task-1".to_string(),
                     task_runner_run_id: Some("run-1".to_string()),
                     link_type: None,
+                    source_session_id: Some("session-1".to_string()),
+                    source_user_message_id: Some("message-1".to_string()),
+                    task_runner_status: Some("ready".to_string()),
+                    last_callback_event: None,
+                    last_callback_at: None,
+                    last_error_message: None,
                 },
             )
             .await
@@ -2079,9 +2627,15 @@ mod tests {
             .upsert_task_runner_link(
                 &item.id,
                 LinkTaskRunnerTaskRequest {
-                    task_runner_task_id: "task-runner-task-1".to_string(),
+                    task_runner_task_id: "task-runner-task-2".to_string(),
                     task_runner_run_id: Some("run-2".to_string()),
                     link_type: Some("execution".to_string()),
+                    source_session_id: Some("session-1".to_string()),
+                    source_user_message_id: Some("message-1".to_string()),
+                    task_runner_status: Some("running".to_string()),
+                    last_callback_event: Some("task.running".to_string()),
+                    last_callback_at: Some("2026-06-25T00:00:00.000Z".to_string()),
+                    last_error_message: None,
                 },
             )
             .await
@@ -2093,7 +2647,9 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(links.len(), 1);
+        assert_eq!(links[0].task_runner_task_id, "task-runner-task-2");
         assert_eq!(links[0].task_runner_run_id.as_deref(), Some("run-2"));
+        assert_eq!(links[0].task_runner_status.as_deref(), Some("running"));
 
         assert!(store
             .delete_task_runner_link(&item.id, &second.id)

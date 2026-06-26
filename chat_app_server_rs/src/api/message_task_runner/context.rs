@@ -202,7 +202,9 @@ pub(super) async fn resolve_message_task_runner_context(
     let direct_message = if is_temporary_message_id(message_id) && query.has_fallback_hints() {
         None
     } else {
-        match conversation_messages::get_message_by_id(message_id).await {
+        match conversation_messages::get_message_by_id_for_user(message_id, auth.user_id.as_str())
+            .await
+        {
             Ok(Some(message)) => Some(message),
             Ok(None) => None,
             Err(err) => {

@@ -14,8 +14,18 @@ pub(in crate::api) async fn require_auth(
     let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
     let access_token = token.to_string();
     let current_user = current_user_from_user_service_token(&state.config, token).await?;
+    let downstream_access_token = downstream_access_token_from_headers(
+        &state.config,
+        request.headers(),
+        &access_token,
+        &current_user,
+    )
+    .await?;
     request.extensions_mut().insert(current_user);
-    Ok(crate::auth::with_access_token_scope(Some(access_token), next.run(request)).await)
+    Ok(
+        crate::auth::with_access_token_scope(Some(downstream_access_token), next.run(request))
+            .await,
+    )
 }
 
 pub(in crate::api) async fn login_handler(
@@ -83,6 +93,69 @@ pub(in crate::api) fn bearer_token_from_headers(headers: &HeaderMap) -> Result<&
         return Err("登录令牌格式不正确".to_string());
     }
     Ok(token)
+}
+
+async fn downstream_access_token_from_headers(
+    config: &crate::config::AppConfig,
+    headers: &HeaderMap,
+    access_token: &str,
+    current_user: &CurrentUser,
+) -> Result<String, ApiError> {
+    let Some(user_access_token) = user_access_token_from_headers(headers)? else {
+        return Ok(access_token.to_string());
+    };
+    let user = current_user_from_user_service_token(config, user_access_token.as_str()).await?;
+    ensure_same_owner_scope(current_user, &user)?;
+    Ok(user_access_token)
+}
+
+fn user_access_token_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    for key in [
+        "x-chatos-user-authorization",
+        "x-user-service-authorization",
+        "x-chatos-user-token",
+    ] {
+        let Some(value) = header_text(headers, key) else {
+            continue;
+        };
+        let token = if let Some(token) = value.strip_prefix("Bearer ").map(str::trim) {
+            token
+        } else if let Some(token) = value.strip_prefix("bearer ").map(str::trim) {
+            token
+        } else {
+            value.as_str()
+        };
+        if token.is_empty() {
+            continue;
+        }
+        return Ok(Some(token.to_string()));
+    }
+    Ok(None)
+}
+
+fn ensure_same_owner_scope(current_user: &CurrentUser, user: &CurrentUser) -> Result<(), ApiError> {
+    let current_owner = current_user
+        .effective_owner_user_id()
+        .ok_or_else(|| ApiError::unauthorized("token missing owner scope"))?;
+    let user_owner = user
+        .effective_owner_user_id()
+        .ok_or_else(|| ApiError::unauthorized("user token missing owner scope"))?;
+    if current_owner == user_owner {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "token and user token owner scope do not match",
+        ))
+    }
+}
+
+fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
+    headers
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn token_from_query(query: Option<&str>) -> Option<&str> {

@@ -31,9 +31,12 @@ mod provider;
 mod registry;
 
 pub(super) use self::builders::build_task_runner_builtin_provider;
+pub(super) use self::project_management::ProjectManagementExecutionOptions;
 use self::project_management::{ProjectManagementBuiltinService, ProjectManagementOptions};
 pub(super) use self::provider::DisabledBuiltinProvider;
-pub(super) use self::registry::build_builtin_registry;
+pub(super) use self::registry::{
+    build_builtin_registry, build_builtin_registry_with_project_management_options,
+};
 
 #[cfg(test)]
 mod tests {
@@ -80,6 +83,7 @@ mod tests {
             default_tool_results_model_total_max_chars: 1_000,
             chatos_callback_url: None,
             chatos_callback_secret: None,
+            internal_api_secret: None,
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),

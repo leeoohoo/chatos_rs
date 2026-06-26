@@ -45,24 +45,27 @@ pub(crate) async fn execute_tools_stream_with_registry(
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
     builtin_services: &HashMap<String, BuiltinToolService>,
 ) -> Vec<ToolResult> {
-    if should_parallelize_tool_batch(tool_calls, tool_metadata) {
+    let normalized_tool_calls = normalize_tool_calls(tool_calls, tool_metadata, tool_aliases);
+    if should_parallelize_tool_batch(normalized_tool_calls.as_slice(), tool_metadata) {
         return execute_tools_stream_parallel_with_registry(
-            tool_calls,
+            normalized_tool_calls.as_slice(),
             session_id,
             conversation_turn_id,
             caller_model,
             caller_model_runtime,
             on_tool_result,
             tool_metadata,
+            tool_aliases,
             builtin_services,
         )
         .await;
     }
 
     execute_tools_stream_common(
-        tool_calls,
+        normalized_tool_calls.as_slice(),
         session_id,
         conversation_turn_id,
         on_tool_result,
@@ -76,6 +79,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
                 conversation_turn_id,
                 caller_model,
                 caller_model_runtime,
+                tool_aliases,
                 on_stream_chunk,
             )
             .await
@@ -93,10 +97,13 @@ pub(crate) async fn call_tool_once(
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
+    tool_aliases: &HashMap<String, String>,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 ) -> Result<(String, Option<Value>), String> {
+    let resolved_tool_name =
+        resolve_tool_name(tool_name, tool_metadata, tool_aliases).unwrap_or(tool_name);
     let info = tool_metadata
-        .get(tool_name)
+        .get(resolved_tool_name)
         .ok_or_else(|| format!("工具未找到: {}", tool_name))?;
 
     if info.server_type == "http" {
@@ -176,9 +183,11 @@ async fn execute_tools_stream_parallel_with_registry(
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
     builtin_services: &HashMap<String, BuiltinToolService>,
 ) -> Vec<ToolResult> {
     let tool_metadata = tool_metadata.clone();
+    let tool_aliases = tool_aliases.clone();
     let builtin_services = builtin_services.clone();
 
     execute_tools_stream_parallel(
@@ -196,6 +205,7 @@ async fn execute_tools_stream_parallel_with_registry(
               caller_model_runtime_owned,
               on_stream_chunk| {
             let tool_metadata = tool_metadata.clone();
+            let tool_aliases = tool_aliases.clone();
             let builtin_services = builtin_services.clone();
             async move {
                 call_tool_once(
@@ -207,6 +217,7 @@ async fn execute_tools_stream_parallel_with_registry(
                     turn_id_owned.as_deref(),
                     caller_model_owned.as_deref(),
                     caller_model_runtime_owned.as_ref(),
+                    &tool_aliases,
                     on_stream_chunk,
                 )
                 .await
@@ -214,6 +225,56 @@ async fn execute_tools_stream_parallel_with_registry(
         },
     )
     .await
+}
+
+fn resolve_tool_name<'a>(
+    tool_name: &'a str,
+    tool_metadata: &'a HashMap<String, ToolInfo>,
+    tool_aliases: &'a HashMap<String, String>,
+) -> Option<&'a str> {
+    if tool_metadata.contains_key(tool_name) {
+        Some(tool_name)
+    } else {
+        tool_aliases.get(tool_name).map(String::as_str)
+    }
+}
+
+fn normalize_tool_calls(
+    tool_calls: &[Value],
+    tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
+) -> Vec<Value> {
+    tool_calls
+        .iter()
+        .map(|tool_call| normalize_tool_call(tool_call, tool_metadata, tool_aliases))
+        .collect()
+}
+
+fn normalize_tool_call(
+    tool_call: &Value,
+    tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
+) -> Value {
+    let Some(requested_name) = extract_tool_call_name(tool_call) else {
+        return tool_call.clone();
+    };
+    let Some(resolved_name) = resolve_tool_name(requested_name, tool_metadata, tool_aliases) else {
+        return tool_call.clone();
+    };
+    if resolved_name == requested_name {
+        return tool_call.clone();
+    }
+
+    let mut normalized = tool_call.clone();
+    if let Some(function) = normalized
+        .get_mut("function")
+        .and_then(Value::as_object_mut)
+    {
+        function.insert("name".to_string(), Value::String(resolved_name.to_string()));
+    } else if let Some(object) = normalized.as_object_mut() {
+        object.insert("name".to_string(), Value::String(resolved_name.to_string()));
+    }
+    normalized
 }
 
 pub(crate) async fn execute_tools_stream_parallel<E, Fut>(

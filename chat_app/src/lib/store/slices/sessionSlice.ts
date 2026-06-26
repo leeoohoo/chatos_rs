@@ -18,6 +18,7 @@ export interface SessionSelectOptions {
   keepActivePanel?: boolean;
   initialPageSize?: number;
   skipBackgroundSync?: boolean;
+  forceRefreshMessages?: boolean;
 }
 
 export interface SessionCreateOptions {

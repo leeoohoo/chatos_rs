@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { useRealtimeEvent, useRealtimeTopic } from './RealtimeProvider';
+import { useRealtimeEvent, useRealtimeTopics } from './RealtimeProvider';
 import type {
   RealtimeEventEnvelope,
   RealtimeAskUserPromptPayloadWrapper,
@@ -8,6 +8,7 @@ import type {
 
 interface UseConversationAskUserPromptRealtimeOptions {
   sessionId?: string | null;
+  projectId?: string | null;
   enabled?: boolean;
   onEvent: (payload: RealtimeAskUserPromptPayloadWrapper) => void | Promise<void>;
 }
@@ -20,6 +21,7 @@ const isAskUserPromptPayload = (
 
 export const useConversationAskUserPromptRealtime = ({
   sessionId,
+  projectId,
   enabled = true,
   onEvent,
 }: UseConversationAskUserPromptRealtimeOptions) => {
@@ -29,9 +31,12 @@ export const useConversationAskUserPromptRealtime = ({
     onEventRef.current = onEvent;
   }, [onEvent]);
 
-  useRealtimeTopic(
-    sessionId ? { scope: 'conversation', id: sessionId } : null,
-    enabled && Boolean(sessionId),
+  useRealtimeTopics(
+    [
+      sessionId ? { scope: 'conversation', id: sessionId } : null,
+      projectId ? { scope: 'project', id: projectId } : null,
+    ],
+    enabled && (Boolean(sessionId) || Boolean(projectId)),
   );
 
   useRealtimeEvent((event) => {
@@ -48,6 +53,16 @@ export const useConversationAskUserPromptRealtime = ({
     ).trim();
     if (!payloadSessionId || payloadSessionId !== sessionId) {
       return;
+    }
+    if (projectId) {
+      const payloadProjectId = String(
+        event.project_id
+        || event.payload.project_id
+        || '',
+      ).trim();
+      if (payloadProjectId && payloadProjectId !== projectId) {
+        return;
+      }
     }
     void onEventRef.current(event.payload);
   });

@@ -103,6 +103,7 @@ type RequirementTableRecord = RequirementRecord & {
 };
 
 type ProfileMarkdownFieldName = 'background' | 'introduction';
+type ExecutionOptionLabelMap = Map<string, string>;
 
 const emptyRequirements: RequirementRecord[] = [];
 const emptyWorkItems: ProjectWorkItemRecord[] = [];
@@ -178,6 +179,11 @@ export function ProjectDetailPage() {
     queryFn: () => api.listProjectWorkItems(projectId!, { include_archived: showArchived }),
     enabled: Boolean(projectId),
   });
+  const executionOptionsQuery = useQuery({
+    queryKey: ['task-runner-execution-options'],
+    queryFn: () => api.getTaskRunnerExecutionOptions(),
+    enabled: Boolean(projectId),
+  });
   const graphQuery = useQuery({
     queryKey: ['project-graph', projectId, showArchived],
     queryFn: () => api.getProjectDependencyGraph(projectId!, { include_archived: showArchived }),
@@ -206,6 +212,42 @@ export function ProjectDetailPage() {
     [requirements],
   );
   const selectableWorkItems = useMemo(() => workItems.filter(isSelectableWorkItem), [workItems]);
+  const taskRunnerModelOptions = useMemo(
+    () =>
+      (executionOptionsQuery.data?.model_configs || []).map((item) => ({
+        value: item.id,
+        label: item.label || item.id,
+      })),
+    [executionOptionsQuery.data?.model_configs],
+  );
+  const taskRunnerToolOptions = useMemo(
+    () =>
+      (executionOptionsQuery.data?.tools || []).map((item) => ({
+        value: item.id,
+        label: item.label || item.id,
+      })),
+    [executionOptionsQuery.data?.tools],
+  );
+  const taskRunnerModelLabelMap = useMemo<ExecutionOptionLabelMap>(
+    () =>
+      new Map(
+        (executionOptionsQuery.data?.model_configs || []).map((item) => [
+          item.id,
+          item.label || item.id,
+        ]),
+      ),
+    [executionOptionsQuery.data?.model_configs],
+  );
+  const taskRunnerToolLabelMap = useMemo<ExecutionOptionLabelMap>(
+    () =>
+      new Map(
+        (executionOptionsQuery.data?.tools || []).map((item) => [
+          item.id,
+          item.label || item.id,
+        ]),
+      ),
+    [executionOptionsQuery.data?.tools],
+  );
   const selectableRequirementIds = useMemo(
     () => new Set(selectableRequirements.map((item) => item.id)),
     [selectableRequirements],
@@ -307,6 +349,8 @@ export function ProjectDetailPage() {
       const payload: CreateWorkItemPayload = {
         title: values.title,
         description: values.description,
+        task_runner_default_model_config_id: values.task_runner_default_model_config_id,
+        task_runner_enabled_tool_ids: values.task_runner_enabled_tool_ids,
         status: values.status,
         priority: values.priority,
         assignee_user_id: values.assignee_user_id,
@@ -450,6 +494,25 @@ export function ProjectDetailPage() {
         render: (status: ProjectWorkItemRecord['status']) => workItemStatusTag(status),
       },
       {
+        title: '执行模型',
+        dataIndex: 'task_runner_default_model_config_id',
+        width: 200,
+        render: (modelConfigId: string) => (
+          <Typography.Text
+            ellipsis={{ tooltip: resolveExecutionOptionLabel(modelConfigId, taskRunnerModelLabelMap) }}
+            style={{ maxWidth: 176 }}
+          >
+            {resolveExecutionOptionLabel(modelConfigId, taskRunnerModelLabelMap)}
+          </Typography.Text>
+        ),
+      },
+      {
+        title: '工具集',
+        dataIndex: 'task_runner_enabled_tool_ids',
+        width: 240,
+        render: (toolIds: string[]) => renderExecutionToolTags(toolIds, taskRunnerToolLabelMap),
+      },
+      {
         title: '标签',
         dataIndex: 'tags',
         width: 180,
@@ -485,7 +548,7 @@ export function ProjectDetailPage() {
         ),
       },
     ],
-    [archiveWorkItemMutation, requirements],
+    [archiveWorkItemMutation, requirements, taskRunnerModelLabelMap, taskRunnerToolLabelMap],
   );
 
   if (!projectId) {
@@ -647,7 +710,7 @@ export function ProjectDetailPage() {
                   columns={workItemColumns}
                   dataSource={workItems}
                   pagination={{ pageSize: 8, showSizeChanger: true }}
-                  scroll={{ x: 1200 }}
+                  scroll={{ x: 1640 }}
                 />
               </Space>
             ),
@@ -844,7 +907,12 @@ export function ProjectDetailPage() {
         <Form<WorkItemFormValues>
           form={workItemForm}
           layout="vertical"
-          initialValues={{ status: 'todo', priority: 0, sort_order: 0 }}
+          initialValues={{
+            status: 'todo',
+            priority: 0,
+            sort_order: 0,
+            task_runner_enabled_tool_ids: [],
+          }}
           onFinish={(values) => createWorkItemMutation.mutate(values)}
         >
           <Form.Item
@@ -872,6 +940,45 @@ export function ProjectDetailPage() {
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={4} />
+          </Form.Item>
+          {executionOptionsQuery.isError ? (
+            <Typography.Text type="danger">
+              {(executionOptionsQuery.error as Error).message}
+            </Typography.Text>
+          ) : null}
+          <Form.Item
+            name="task_runner_default_model_config_id"
+            label="执行模型"
+            rules={[{ required: true, message: '请选择执行模型' }]}
+          >
+            <Select
+              showSearch
+              loading={executionOptionsQuery.isLoading}
+              options={taskRunnerModelOptions}
+              placeholder="选择 Task Runner 模型配置"
+            />
+          </Form.Item>
+          <Form.Item
+            name="task_runner_enabled_tool_ids"
+            label="工具集"
+            rules={[
+              {
+                validator: async (_, value?: string[]) => {
+                  if (value?.length) {
+                    return;
+                  }
+                  throw new Error('请选择工具集');
+                },
+              },
+            ]}
+          >
+            <Select
+              mode="multiple"
+              showSearch
+              loading={executionOptionsQuery.isLoading}
+              options={taskRunnerToolOptions}
+              placeholder="选择可用工具"
+            />
           </Form.Item>
           <Form.Item name="status" label="状态">
             <Select options={workItemStatusOptions} />
@@ -939,6 +1046,8 @@ export function ProjectDetailPage() {
         {workItemDetailTarget ? (
           <WorkItemDetailPreview
             workItem={workItemDetailTarget}
+            modelLabelMap={taskRunnerModelLabelMap}
+            toolLabelMap={taskRunnerToolLabelMap}
             requirementTitle={
               requirements.find((item) => item.id === workItemDetailTarget.requirement_id)?.title ||
               workItemDetailTarget.requirement_id
@@ -1049,9 +1158,13 @@ function RequirementDetailPreview({ requirement }: { requirement: RequirementRec
 function WorkItemDetailPreview({
   workItem,
   requirementTitle,
+  modelLabelMap,
+  toolLabelMap,
 }: {
   workItem: ProjectWorkItemRecord;
   requirementTitle: string;
+  modelLabelMap: ExecutionOptionLabelMap;
+  toolLabelMap: ExecutionOptionLabelMap;
 }) {
   return (
     <div style={detailPreviewShellStyle}>
@@ -1077,6 +1190,15 @@ function WorkItemDetailPreview({
           <Descriptions.Item label="计划完成">{formatDateTime(workItem.due_at)}</Descriptions.Item>
           <Descriptions.Item label="排序">{workItem.sort_order}</Descriptions.Item>
           <Descriptions.Item label="负责人">{workItem.assignee_user_id || '-'}</Descriptions.Item>
+          <Descriptions.Item label="执行模型">
+            {resolveExecutionOptionLabel(
+              workItem.task_runner_default_model_config_id,
+              modelLabelMap,
+            )}
+          </Descriptions.Item>
+          <Descriptions.Item label="工具集">
+            {renderExecutionToolTags(workItem.task_runner_enabled_tool_ids, toolLabelMap)}
+          </Descriptions.Item>
           <Descriptions.Item label="创建时间">{formatDateTime(workItem.created_at)}</Descriptions.Item>
           <Descriptions.Item label="更新时间">{formatDateTime(workItem.updated_at)}</Descriptions.Item>
           <Descriptions.Item label="归档时间">{formatDateTime(workItem.archived_at)}</Descriptions.Item>
@@ -1092,6 +1214,25 @@ function WorkItemDetailPreview({
 
 function projectStatusTag(status: 'active' | 'archived') {
   return <Tag color={status === 'active' ? 'success' : 'default'}>{status === 'active' ? '进行中' : '已归档'}</Tag>;
+}
+
+function resolveExecutionOptionLabel(value: string | null | undefined, labelMap: ExecutionOptionLabelMap) {
+  const id = value?.trim();
+  return id ? labelMap.get(id) || id : '-';
+}
+
+function renderExecutionToolTags(values: string[] | null | undefined, labelMap: ExecutionOptionLabelMap) {
+  const ids = values?.filter((value) => value.trim()) || [];
+  if (ids.length === 0) {
+    return <Typography.Text type="secondary">-</Typography.Text>;
+  }
+  return (
+    <Space size={[4, 4]} wrap>
+      {ids.map((id) => (
+        <Tag key={id}>{resolveExecutionOptionLabel(id, labelMap)}</Tag>
+      ))}
+    </Space>
+  );
 }
 
 function renderGraphNode(node: DependencyGraphNode | undefined, fallback: string) {

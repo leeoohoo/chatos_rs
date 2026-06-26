@@ -11,11 +11,13 @@ use super::{register_tools_from_builtin, register_tools_from_http, register_tool
 pub(crate) fn reset_tool_state(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,
+    tool_aliases: &mut HashMap<String, String>,
     unavailable_tools: &mut Vec<Value>,
     builtin_services: &mut HashMap<String, BuiltinToolService>,
 ) {
     tools.clear();
     tool_metadata.clear();
+    tool_aliases.clear();
     unavailable_tools.clear();
     builtin_services.clear();
 }
@@ -23,22 +25,32 @@ pub(crate) fn reset_tool_state(
 pub(crate) async fn build_tool_state(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,
+    tool_aliases: &mut HashMap<String, String>,
     unavailable_tools: &mut Vec<Value>,
     builtin_services: &mut HashMap<String, BuiltinToolService>,
     http_servers: &[McpHttpServer],
     stdio_servers: &[McpStdioServer],
     builtin_servers: &[McpBuiltinServer],
 ) -> Result<(), String> {
-    reset_tool_state(tools, tool_metadata, unavailable_tools, builtin_services);
+    reset_tool_state(
+        tools,
+        tool_metadata,
+        tool_aliases,
+        unavailable_tools,
+        builtin_services,
+    );
 
     for server in http_servers {
-        if let Err(err) = register_tools_from_http(tools, tool_metadata, server).await {
+        if let Err(err) = register_tools_from_http(tools, tool_metadata, tool_aliases, server).await
+        {
             warn!("failed to build tools from http {}: {}", server.name, err);
         }
     }
 
     for server in stdio_servers {
-        if let Err(err) = register_tools_from_stdio(tools, tool_metadata, server).await {
+        if let Err(err) =
+            register_tools_from_stdio(tools, tool_metadata, tool_aliases, server).await
+        {
             warn!("failed to build tools from stdio {}: {}", server.name, err);
         }
     }
@@ -47,6 +59,7 @@ pub(crate) async fn build_tool_state(
         if let Err(err) = register_tools_from_builtin(
             tools,
             tool_metadata,
+            tool_aliases,
             unavailable_tools,
             builtin_services,
             server,
@@ -65,16 +78,24 @@ pub(crate) async fn build_tool_state(
 pub(crate) fn build_builtin_tool_state(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,
+    tool_aliases: &mut HashMap<String, String>,
     unavailable_tools: &mut Vec<Value>,
     builtin_services: &mut HashMap<String, BuiltinToolService>,
     builtin_servers: &[McpBuiltinServer],
 ) -> Result<(), String> {
-    reset_tool_state(tools, tool_metadata, unavailable_tools, builtin_services);
+    reset_tool_state(
+        tools,
+        tool_metadata,
+        tool_aliases,
+        unavailable_tools,
+        builtin_services,
+    );
 
     for server in builtin_servers {
         if let Err(err) = register_tools_from_builtin(
             tools,
             tool_metadata,
+            tool_aliases,
             unavailable_tools,
             builtin_services,
             server,

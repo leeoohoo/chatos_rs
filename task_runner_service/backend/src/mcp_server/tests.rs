@@ -939,10 +939,18 @@ async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
         .expect("task");
 
     assert_eq!(task.task_profile, TASK_PROFILE_CHATOS_PLAN);
-    assert_eq!(task.status, TaskStatus::Ready);
+    assert_ne!(task.status, TaskStatus::Ready);
     assert_eq!(task.schedule.mode, TaskScheduleMode::ContactAsync);
+    assert!(task.schedule.next_run_at.is_none());
+    assert!(task.schedule.last_scheduled_at.is_some());
     assert!(task.mcp_config.enabled);
     assert_eq!(task.mcp_config.builtin_prompt_locale, "en-US");
+    let runs = mcp_service
+        .run_service
+        .list_runs(Some(task_id))
+        .await
+        .expect("list runs");
+    assert_eq!(runs.len(), 1);
 }
 
 #[tokio::test]
@@ -1011,11 +1019,12 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
         .await
         .expect("create plan task graph");
 
-    let task_ids = result
+    let created_tasks = result
         .get("_structured_result")
         .and_then(|value| value.get("created_tasks"))
         .and_then(|value| value.as_array())
-        .expect("created tasks")
+        .expect("created tasks");
+    let task_ids = created_tasks
         .iter()
         .map(|task| {
             task.get("task_id")
@@ -1025,6 +1034,24 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
         })
         .collect::<Vec<_>>();
     assert_eq!(task_ids.len(), 2);
+    let child_task_id = created_tasks
+        .iter()
+        .find(|task| task.get("client_ref").and_then(|value| value.as_str()) == Some("child"))
+        .and_then(|task| task.get("task_id"))
+        .and_then(|value| value.as_str())
+        .expect("child task id");
+    let auto_started_runs = result
+        .get("_structured_result")
+        .and_then(|value| value.get("auto_started_runs"))
+        .and_then(|value| value.as_array())
+        .expect("auto started runs");
+    assert_eq!(auto_started_runs.len(), 1);
+    assert_eq!(
+        auto_started_runs[0]
+            .get("task_id")
+            .and_then(|value| value.as_str()),
+        Some(child_task_id)
+    );
 
     for task_id in task_ids {
         let task = task_service
@@ -1034,6 +1061,7 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
             .expect("task");
         assert_eq!(task.task_profile, TASK_PROFILE_CHATOS_PLAN);
         assert_eq!(task.project_id, project.id);
+        assert!(task.schedule.next_run_at.is_none());
     }
 }
 
@@ -1217,6 +1245,7 @@ fn test_config() -> AppConfig {
         default_tool_results_model_total_max_chars: 2000,
         chatos_callback_url: None,
         chatos_callback_secret: None,
+        internal_api_secret: None,
         callback_timeout: Duration::from_millis(1000),
         admin_username: "admin".to_string(),
         admin_password: "admin".to_string(),

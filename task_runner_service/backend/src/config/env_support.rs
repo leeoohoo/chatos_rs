@@ -137,6 +137,9 @@ impl AppConfig {
             default_tool_results_model_total_max_chars,
             chatos_callback_url: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_URL"),
             chatos_callback_secret: normalized_env("TASK_RUNNER_CHATOS_CALLBACK_SECRET"),
+            internal_api_secret: normalized_env("TASK_RUNNER_INTERNAL_API_SECRET")
+                .or_else(|| normalized_env("PROJECT_SERVICE_SYNC_SECRET"))
+                .or_else(|| normalized_env("TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET")),
             callback_timeout: Duration::from_millis(callback_timeout_ms.max(1_000)),
             admin_username,
             admin_password,

@@ -111,11 +111,13 @@ impl MongoStore {
         .await?;
 
         ensure_index(&self.task_runner_links, doc! { "id": 1 }, true).await?;
-        ensure_index(&self.task_runner_links, doc! { "work_item_id": 1 }, false).await?;
-        ensure_index(
+        self.dedupe_task_runner_links_by_work_item().await?;
+        drop_index_if_exists(&self.task_runner_links, "work_item_id_1").await?;
+        ensure_named_index(
             &self.task_runner_links,
-            doc! { "work_item_id": 1, "task_runner_task_id": 1 },
+            doc! { "work_item_id": 1 },
             true,
+            "idx_project_work_item_task_runner_links_work_item_unique",
         )
         .await?;
         ensure_index(
@@ -125,6 +127,36 @@ impl MongoStore {
         )
         .await?;
 
+        Ok(())
+    }
+
+    async fn dedupe_task_runner_links_by_work_item(&self) -> Result<(), String> {
+        let find_options = FindOptions::builder()
+            .sort(doc! { "work_item_id": 1, "updated_at": -1, "created_at": -1 })
+            .build();
+        let mut cursor = self
+            .task_runner_links
+            .find(None, find_options)
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut seen_work_items = BTreeSet::new();
+        let mut duplicate_link_ids = Vec::new();
+        while let Some(link) = cursor.try_next().await.map_err(|err| err.to_string())? {
+            let work_item_id = link.work_item_id.trim().to_string();
+            if work_item_id.is_empty() {
+                continue;
+            }
+            if !seen_work_items.insert(work_item_id) {
+                duplicate_link_ids.push(link.id);
+            }
+        }
+        if duplicate_link_ids.is_empty() {
+            return Ok(());
+        }
+        self.task_runner_links
+            .delete_many(doc! { "id": { "$in": duplicate_link_ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -476,6 +508,10 @@ impl MongoStore {
             requirement.priority = priority;
         }
         if let Some(status) = patch.status {
+            if status == RequirementStatus::Archived {
+                self.ensure_requirement_subtree_not_executing(&requirement, "归档", false)
+                    .await?;
+            }
             requirement.status = status;
             if matches!(status, RequirementStatus::Archived) {
                 should_archive_work_items = true;
@@ -556,6 +592,8 @@ impl MongoStore {
         let Some(mut requirement) = self.get_requirement(id).await? else {
             return Ok(None);
         };
+        self.ensure_requirement_subtree_not_executing(&requirement, "归档", false)
+            .await?;
         let now = now_rfc3339();
         requirement.status = RequirementStatus::Archived;
         requirement.archived_at = Some(now.clone());
@@ -564,6 +602,121 @@ impl MongoStore {
         self.archive_work_items_for_requirement(&requirement.id, &requirement.updated_at)
             .await?;
         Ok(Some(requirement))
+    }
+
+    pub async fn delete_requirement(&self, id: &str) -> Result<Option<RequirementRecord>, String> {
+        let Some(requirement) = self.get_requirement(id).await? else {
+            return Ok(None);
+        };
+        let (requirement_ids, work_items) = self
+            .ensure_requirement_subtree_not_executing(&requirement, "删除", true)
+            .await?;
+        let work_item_ids = work_items
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+
+        if !work_item_ids.is_empty() {
+            self.work_item_dependencies
+                .delete_many(
+                    doc! {
+                        "$or": [
+                            { "work_item_id": { "$in": work_item_ids.clone() } },
+                            { "prerequisite_work_item_id": { "$in": work_item_ids.clone() } }
+                        ]
+                    },
+                    None,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+            self.work_items
+                .delete_many(doc! { "id": { "$in": work_item_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        self.requirement_dependencies
+            .delete_many(
+                doc! {
+                    "$or": [
+                        { "requirement_id": { "$in": requirement_ids.clone() } },
+                        { "prerequisite_requirement_id": { "$in": requirement_ids.clone() } }
+                    ]
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.requirement_documents
+            .delete_many(
+                doc! { "requirement_id": { "$in": requirement_ids.clone() } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.requirements
+            .delete_many(doc! { "id": { "$in": requirement_ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(Some(requirement))
+    }
+
+    async fn ensure_requirement_subtree_not_executing(
+        &self,
+        requirement: &RequirementRecord,
+        action: &str,
+        reject_any_task_runner_link: bool,
+    ) -> Result<(Vec<String>, Vec<ProjectWorkItemRecord>), String> {
+        let requirement_ids = self.collect_requirement_subtree_ids(requirement).await?;
+        let requirements = self
+            .list_requirements(&requirement.project_id, None, None)
+            .await?;
+        for item in requirements
+            .iter()
+            .filter(|item| requirement_ids.contains(&item.id))
+        {
+            if item.status == RequirementStatus::InProgress {
+                return Err(format!(
+                    "需求正在执行中，不能{action}: {}（{}），当前状态：{}",
+                    item.title,
+                    item.id,
+                    item.status.as_str()
+                ));
+            }
+        }
+
+        let mut work_items = Vec::new();
+        for requirement_id in &requirement_ids {
+            for item in self.list_work_items_by_requirement(requirement_id).await? {
+                self.ensure_work_item_not_executing(&item, action, reject_any_task_runner_link)
+                    .await?;
+                work_items.push(item);
+            }
+        }
+        Ok((requirement_ids, work_items))
+    }
+
+    async fn collect_requirement_subtree_ids(
+        &self,
+        requirement: &RequirementRecord,
+    ) -> Result<Vec<String>, String> {
+        let requirements = self
+            .list_requirements(&requirement.project_id, None, None)
+            .await?;
+        let mut ids = vec![requirement.id.clone()];
+        let mut seen = BTreeSet::from([requirement.id.clone()]);
+        let mut index = 0;
+        while index < ids.len() {
+            let parent_id = ids[index].clone();
+            for child in &requirements {
+                if child.parent_requirement_id.as_deref() == Some(parent_id.as_str())
+                    && seen.insert(child.id.clone())
+                {
+                    ids.push(child.id.clone());
+                }
+            }
+            index += 1;
+        }
+        Ok(ids)
     }
 
     async fn archive_work_items_for_requirement(
@@ -816,6 +969,14 @@ impl MongoStore {
         user: &CurrentUser,
     ) -> Result<ProjectWorkItemRecord, String> {
         validate_required("title", &input.title)?;
+        validate_required(
+            "task_runner_default_model_config_id",
+            &input.task_runner_default_model_config_id,
+        )?;
+        let task_runner_enabled_tool_ids = normalize_id_list(input.task_runner_enabled_tool_ids);
+        if task_runner_enabled_tool_ids.is_empty() {
+            return Err("task_runner_enabled_tool_ids is required".to_string());
+        }
         self.ensure_requirement_technical_overview_ready(&requirement.id)
             .await?;
         let now = now_rfc3339();
@@ -825,6 +986,11 @@ impl MongoStore {
             requirement_id: requirement.id.clone(),
             title: input.title.trim().to_string(),
             description: normalized_optional(input.description),
+            task_runner_default_model_config_id: input
+                .task_runner_default_model_config_id
+                .trim()
+                .to_string(),
+            task_runner_enabled_tool_ids,
             status: input.status.unwrap_or_default(),
             priority: input.priority.unwrap_or_default(),
             assignee_user_id: normalized_optional(input.assignee_user_id),
@@ -895,6 +1061,10 @@ impl MongoStore {
             item.description = normalized_optional(patch.description);
         }
         if let Some(status) = patch.status {
+            if status == ProjectWorkItemStatus::Archived {
+                self.ensure_work_item_not_executing(&item, "归档", false)
+                    .await?;
+            }
             item.status = status;
             if matches!(status, ProjectWorkItemStatus::Archived) && item.archived_at.is_none() {
                 item.archived_at = Some(now_rfc3339());
@@ -930,12 +1100,76 @@ impl MongoStore {
         let Some(mut item) = self.get_work_item(id).await? else {
             return Ok(None);
         };
+        self.ensure_work_item_not_executing(&item, "归档", false)
+            .await?;
         let now = now_rfc3339();
         item.status = ProjectWorkItemStatus::Archived;
         item.archived_at = Some(now.clone());
         item.updated_at = now;
         upsert_by_id(&self.work_items, &item.id, &item).await?;
         Ok(Some(item))
+    }
+
+    pub async fn delete_work_item(
+        &self,
+        id: &str,
+    ) -> Result<Option<ProjectWorkItemRecord>, String> {
+        let Some(item) = self.get_work_item(id).await? else {
+            return Ok(None);
+        };
+        self.ensure_work_item_not_executing(&item, "删除", true)
+            .await?;
+        self.work_item_dependencies
+            .delete_many(
+                doc! {
+                    "$or": [
+                        { "work_item_id": id.trim() },
+                        { "prerequisite_work_item_id": id.trim() }
+                    ]
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.work_items
+            .delete_one(doc! { "id": id.trim() }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(Some(item))
+    }
+
+    async fn ensure_work_item_not_executing(
+        &self,
+        item: &ProjectWorkItemRecord,
+        action: &str,
+        reject_any_task_runner_link: bool,
+    ) -> Result<(), String> {
+        if item.status == ProjectWorkItemStatus::InProgress {
+            return Err(format!(
+                "项目任务正在执行中，不能{action}: {}（{}），当前状态：{}",
+                item.title,
+                item.id,
+                item.status.as_str()
+            ));
+        }
+        let links = self.list_task_runner_links(&item.id).await?;
+        if reject_any_task_runner_link && !links.is_empty() {
+            return Err(format!(
+                "项目任务已有执行任务关联，不能直接{action}；请保留执行链路并更新状态: {}（{}）",
+                item.title, item.id
+            ));
+        }
+        if let Some(status) = links
+            .iter()
+            .filter_map(|link| link.task_runner_status.as_deref())
+            .find(|status| task_runner_status_is_active(status))
+        {
+            return Err(format!(
+                "项目任务已有执行任务正在进行，不能{action}: {}（{}），Task Runner 状态：{}",
+                item.title, item.id, status
+            ));
+        }
+        Ok(())
     }
 
     pub async fn list_work_item_dependencies(
@@ -1068,10 +1302,7 @@ impl MongoStore {
         let now = now_rfc3339();
         let existing = self
             .task_runner_links
-            .find_one(
-                doc! { "work_item_id": work_item_id, "task_runner_task_id": &task_runner_task_id },
-                None,
-            )
+            .find_one(doc! { "work_item_id": work_item_id }, None)
             .await
             .map_err(|err| err.to_string())?;
         let link = ProjectWorkItemTaskRunnerLinkRecord {
@@ -1083,6 +1314,12 @@ impl MongoStore {
             task_runner_task_id,
             task_runner_run_id: normalized_optional(input.task_runner_run_id),
             link_type,
+            source_session_id: normalized_optional(input.source_session_id),
+            source_user_message_id: normalized_optional(input.source_user_message_id),
+            task_runner_status: normalized_optional(input.task_runner_status),
+            last_callback_event: normalized_optional(input.last_callback_event),
+            last_callback_at: normalized_optional(input.last_callback_at),
+            last_error_message: normalized_optional(input.last_error_message),
             created_at: existing
                 .as_ref()
                 .map(|link| link.created_at.clone())
@@ -1093,7 +1330,6 @@ impl MongoStore {
             &self.task_runner_links,
             doc! {
                 "work_item_id": work_item_id,
-                "task_runner_task_id": &link.task_runner_task_id,
             },
             &link,
         )
@@ -1133,6 +1369,44 @@ where
         .await
         .map_err(|err| format!("create mongodb index failed: {err}"))?;
     Ok(())
+}
+
+async fn ensure_named_index<T>(
+    collection: &Collection<T>,
+    keys: Document,
+    unique: bool,
+    name: &str,
+) -> Result<(), String>
+where
+    T: Send + Sync,
+{
+    let options = IndexOptions::builder()
+        .name(name.to_string())
+        .unique(unique)
+        .build();
+    let model = IndexModel::builder().keys(keys).options(options).build();
+    collection
+        .create_index(model, None)
+        .await
+        .map_err(|err| format!("create mongodb index failed: {err}"))?;
+    Ok(())
+}
+
+async fn drop_index_if_exists<T>(collection: &Collection<T>, name: &str) -> Result<(), String>
+where
+    T: Send + Sync,
+{
+    match collection.drop_index(name, None).await {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            let message = err.to_string();
+            if message.contains("IndexNotFound") || message.contains("index not found") {
+                Ok(())
+            } else {
+                Err(format!("drop mongodb index failed: {message}"))
+            }
+        }
+    }
 }
 
 async fn find_many<T>(
@@ -1233,4 +1507,11 @@ fn normalize_id_list(values: Vec<String>) -> Vec<String> {
         .filter_map(|value| normalized_optional(Some(value)))
         .filter(|value| seen.insert(value.clone()))
         .collect()
+}
+
+fn task_runner_status_is_active(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "ready" | "queued" | "running" | "processing" | "in_progress"
+    )
 }

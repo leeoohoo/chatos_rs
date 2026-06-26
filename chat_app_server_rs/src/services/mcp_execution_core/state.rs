@@ -11,6 +11,7 @@ use super::{build_builtin_tool_state, build_tool_state};
 pub(crate) struct McpToolState {
     tools: Vec<Value>,
     tool_metadata: HashMap<String, ToolInfo>,
+    tool_aliases: HashMap<String, String>,
     unavailable_tools: Vec<Value>,
     builtin_services: HashMap<String, BuiltinToolService>,
 }
@@ -29,6 +30,7 @@ impl McpToolState {
         build_tool_state(
             &mut self.tools,
             &mut self.tool_metadata,
+            &mut self.tool_aliases,
             &mut self.unavailable_tools,
             &mut self.builtin_services,
             http_servers,
@@ -45,6 +47,7 @@ impl McpToolState {
         build_builtin_tool_state(
             &mut self.tools,
             &mut self.tool_metadata,
+            &mut self.tool_aliases,
             &mut self.unavailable_tools,
             &mut self.builtin_services,
             builtin_servers,
@@ -59,9 +62,18 @@ impl McpToolState {
         &self.tool_metadata
     }
 
+    pub(crate) fn tool_aliases(&self) -> &HashMap<String, String> {
+        &self.tool_aliases
+    }
+
     #[cfg(test)]
     pub(crate) fn tool_metadata_mut(&mut self) -> &mut HashMap<String, ToolInfo> {
         &mut self.tool_metadata
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tool_aliases_mut(&mut self) -> &mut HashMap<String, String> {
+        &mut self.tool_aliases
     }
 
     pub(crate) fn unavailable_tools(&self) -> Vec<Value> {

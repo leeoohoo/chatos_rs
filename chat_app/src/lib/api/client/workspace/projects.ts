@@ -4,6 +4,8 @@ import type {
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
   ProjectPlanResponse,
+  ProjectRequirementExecuteResponse,
+  ProjectRequirementStopResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
@@ -55,6 +57,36 @@ export const getProjectPlan = (
 ): Promise<ProjectPlanResponse> => {
   const query = buildQuery({ include_archived: options?.includeArchived });
   return request<ProjectPlanResponse>(`/projects/${encodeURIComponent(projectId)}/plan${query}`);
+};
+
+export const executeProjectRequirement = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data?: { contact_id?: string },
+): Promise<ProjectRequirementExecuteResponse> => {
+  return request<ProjectRequirementExecuteResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/execute`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    },
+  );
+};
+
+export const stopProjectRequirementExecution = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data?: { contact_id?: string },
+): Promise<ProjectRequirementStopResponse> => {
+  return request<ProjectRequirementStopResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/stop`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    },
+  );
 };
 
 export const analyzeProjectRun = (
