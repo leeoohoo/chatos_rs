@@ -1,4 +1,5 @@
 import type {
+  ProjectDependencyGraphResponse,
   ProjectPlanResponse,
   ProjectRequirementResponse,
   ProjectWorkItemResponse,
@@ -6,6 +7,8 @@ import type {
 
 export const REQUIREMENT_COLUMN_WIDTH = 320;
 export const MAX_REQUIREMENT_PANE_WIDTH = 860;
+export const SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT = 80;
+export const SELECTED_WORK_ITEM_RENDER_INCREMENT = 80;
 
 export type DependencyMaps = {
   requirementDependents: Map<string, string[]>;
@@ -19,6 +22,13 @@ export type RequirementColumn = {
   items: ProjectRequirementResponse[];
   selectedId: string | null;
   title: string;
+};
+
+export type VisiblePlanItems<T> = {
+  hasMore: boolean;
+  hiddenCount: number;
+  items: T[];
+  totalCount: number;
 };
 
 export const readText = (value: unknown): string => (
@@ -169,6 +179,31 @@ export const buildDependencyMaps = (plan: ProjectPlanResponse | null): Dependenc
   return maps;
 };
 
+export const buildDependencyMapsFromGraph = (
+  dependencyGraph: ProjectDependencyGraphResponse | null | undefined,
+): DependencyMaps => (
+  buildDependencyMaps(dependencyGraph ? { dependencyGraph } : null)
+);
+
+export const mergeDependencyMaps = (...mapList: DependencyMaps[]): DependencyMaps => {
+  const merged = createEmptyDependencyMaps();
+  mapList.forEach((maps) => {
+    maps.requirementDependents.forEach((values, key) => {
+      values.forEach((value) => appendUnique(merged.requirementDependents, key, value));
+    });
+    maps.requirementPrerequisites.forEach((values, key) => {
+      values.forEach((value) => appendUnique(merged.requirementPrerequisites, key, value));
+    });
+    maps.workItemDependents.forEach((values, key) => {
+      values.forEach((value) => appendUnique(merged.workItemDependents, key, value));
+    });
+    maps.workItemPrerequisites.forEach((values, key) => {
+      values.forEach((value) => appendUnique(merged.workItemPrerequisites, key, value));
+    });
+  });
+  return merged;
+};
+
 export const buildRequirementChildrenMap = (
   requirements: ProjectRequirementResponse[],
 ): Map<string, ProjectRequirementResponse[]> => {
@@ -272,6 +307,27 @@ export const groupWorkItemsByRequirement = (
 export const countOpenItems = (items: ProjectWorkItemResponse[]): number => (
   items.filter((item) => item.status !== 'done').length
 );
+
+export const buildVisiblePlanItems = <T>(
+  items: T[],
+  visibleLimit: number,
+): VisiblePlanItems<T> => {
+  const totalCount = items.length;
+  const normalizedLimit = Number.isFinite(visibleLimit)
+    ? Math.max(1, Math.floor(visibleLimit))
+    : totalCount;
+  const visibleItems = totalCount > normalizedLimit
+    ? items.slice(0, normalizedLimit)
+    : items;
+  const hiddenCount = Math.max(0, totalCount - visibleItems.length);
+
+  return {
+    hasMore: hiddenCount > 0,
+    hiddenCount,
+    items: visibleItems,
+    totalCount,
+  };
+};
 
 export const sortWorkItemsByDependencies = (
   items: ProjectWorkItemResponse[],

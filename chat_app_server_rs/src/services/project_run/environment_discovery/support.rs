@@ -11,6 +11,8 @@ use super::super::environment_support::{
 pub(super) type ToolchainOptions = BTreeMap<String, Vec<ProjectRunToolchainOption>>;
 pub(super) type ToolchainSeen = HashSet<String>;
 
+const MAX_TOOLCHAIN_CHILD_DIRS: usize = 512;
+
 pub(super) fn push_option(
     out: &mut ToolchainOptions,
     seen: &mut ToolchainSeen,
@@ -137,6 +139,7 @@ pub(super) fn list_child_dirs(root: &Path) -> Vec<PathBuf> {
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
+        .take(MAX_TOOLCHAIN_CHILD_DIRS)
         .collect()
 }
 

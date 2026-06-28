@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
@@ -27,6 +28,9 @@ static PROJECT_SYMBOL_INDEX_CACHE: Lazy<DashMap<String, ProjectSymbolIndexCacheE
     Lazy::new(DashMap::new);
 static PROJECT_SYMBOL_INDEX_DIRTY_PATHS: Lazy<DashMap<String, Vec<PathBuf>>> =
     Lazy::new(DashMap::new);
+
+const PROJECT_SYMBOL_INDEX_MAX_VISITS: usize = 20_000;
+const PROJECT_SYMBOL_INDEX_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct IndexedSymbol {
@@ -237,12 +241,17 @@ fn build_project_symbol_index(
     ignored_dirs: &[&str],
     analyze_file: &impl Fn(&Path) -> Result<Vec<IndexedSymbol>, String>,
 ) -> Result<(ProjectSymbolIndex, ProjectSymbolIndexSnapshot), String> {
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
     let mut index = ProjectSymbolIndex::default();
     let mut files = Vec::new();
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| should_visit_path(entry, ignored_dirs))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_symbol_index_scan_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -357,11 +366,16 @@ fn project_symbol_index_snapshot(
     extensions: &[&str],
     ignored_dirs: &[&str],
 ) -> Result<ProjectSymbolIndexSnapshot, String> {
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
     let mut files = Vec::new();
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| should_visit_path(entry, ignored_dirs))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_symbol_index_scan_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -375,6 +389,24 @@ fn project_symbol_index_snapshot(
     }
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(ProjectSymbolIndexSnapshot { files })
+}
+
+fn ensure_symbol_index_scan_budget(
+    started_at: Instant,
+    visited_entries: usize,
+) -> Result<(), String> {
+    if visited_entries > PROJECT_SYMBOL_INDEX_MAX_VISITS {
+        return Err(format!(
+            "code-nav symbol index scan exceeded {PROJECT_SYMBOL_INDEX_MAX_VISITS} entries"
+        ));
+    }
+    if started_at.elapsed() >= PROJECT_SYMBOL_INDEX_DEADLINE {
+        return Err(format!(
+            "code-nav symbol index scan exceeded {:?}",
+            PROJECT_SYMBOL_INDEX_DEADLINE
+        ));
+    }
+    Ok(())
 }
 
 fn is_type_like(token: &str) -> bool {

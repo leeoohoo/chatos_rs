@@ -14,6 +14,8 @@ mod environment_runtime;
 mod environment_support;
 #[path = "environment_validation.rs"]
 mod environment_validation;
+#[path = "file_limits.rs"]
+mod file_limits;
 
 const SHELL_BUILTINS: &[&str] = &[
     "cd", "export", "unset", "alias", "unalias", "source", ".", "echo", "printf", "test", "[",

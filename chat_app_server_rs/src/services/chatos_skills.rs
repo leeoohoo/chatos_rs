@@ -136,20 +136,12 @@ pub async fn import_skills_from_git(
     super::chatos_skills_helpers::ensure_dir(plugins_root.as_path())?;
     super::chatos_skills_helpers::ensure_dir(git_cache_root.as_path())?;
 
-    let repo_root = tokio::task::spawn_blocking({
-        let repository = repository.clone();
-        let branch = branch.clone();
-        let git_cache_root = git_cache_root.clone();
-        move || {
-            ensure_git_repo(
-                repository.as_str(),
-                branch.as_deref(),
-                git_cache_root.as_path(),
-            )
-        }
-    })
-    .await
-    .map_err(|err| format!("blocking task join failed: {}", err))??;
+    let repo_root = ensure_git_repo(
+        repository.as_str(),
+        branch.as_deref(),
+        git_cache_root.as_path(),
+    )
+    .await?;
 
     let candidates = tokio::task::spawn_blocking({
         let repo_root = repo_root.clone();

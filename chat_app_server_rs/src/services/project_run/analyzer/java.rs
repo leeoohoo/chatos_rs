@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::models::project_run::ProjectRunTarget;
@@ -7,6 +6,9 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use regex::Regex;
 
+use super::scan_budget::{
+    read_to_string_limited, ScanBudget, MAX_MANIFEST_BYTES, MAX_SOURCE_PROBE_BYTES,
+};
 use super::target_model::{build_target, push_target};
 
 #[derive(Debug, Clone, Default)]
@@ -49,7 +51,7 @@ fn normalize_maven_module_path(value: &str) -> String {
 }
 
 fn parse_maven_pom(pom_path: &Path) -> MavenPomInfo {
-    let Ok(content) = fs::read_to_string(pom_path) else {
+    let Some(content) = read_to_string_limited(pom_path, MAX_MANIFEST_BYTES) else {
         return MavenPomInfo::default();
     };
 
@@ -126,8 +128,13 @@ fn path_relative_to(base: &Path, path: &Path) -> Option<String> {
     }
 }
 
-fn find_maven_reactor_invocation(scan_root: &Path, module_dir: &Path) -> Option<(PathBuf, String)> {
+fn find_maven_reactor_invocation(
+    scan_root: &Path,
+    module_dir: &Path,
+    budget: &mut ScanBudget,
+) -> Result<Option<(PathBuf, String)>, String> {
     for ancestor in module_dir.ancestors().skip(1) {
+        budget.check()?;
         if !ancestor.starts_with(scan_root) {
             continue;
         }
@@ -140,10 +147,10 @@ fn find_maven_reactor_invocation(scan_root: &Path, module_dir: &Path) -> Option<
         };
         let pom_info = parse_maven_pom(&pom_path);
         if pom_info.modules.iter().any(|module| module == &module_path) {
-            return Some((ancestor.to_path_buf(), module_path));
+            return Ok(Some((ancestor.to_path_buf(), module_path)));
         }
     }
-    None
+    Ok(None)
 }
 
 fn merge_java_entrypoints(mut detected: Vec<String>, configured: &[String]) -> Vec<String> {
@@ -183,14 +190,22 @@ fn maven_command_prefix(cwd: &Path, module_path: Option<&str>) -> (String, Vec<&
     (prefix, required_toolchains)
 }
 
-pub(super) fn detect_java_targets(scan_root: &Path, dir: &Path, out: &mut Vec<ProjectRunTarget>) {
+pub(super) fn detect_java_targets(
+    scan_root: &Path,
+    dir: &Path,
+    out: &mut Vec<ProjectRunTarget>,
+    budget: &mut ScanBudget,
+) -> Result<(), String> {
     let has_pom = dir.join("pom.xml").is_file();
     let has_gradle = dir.join("build.gradle").is_file()
         || dir.join("build.gradle.kts").is_file()
         || dir.join("settings.gradle").is_file()
         || dir.join("settings.gradle.kts").is_file();
+    if !has_pom && !has_gradle {
+        return Ok(());
+    }
     let has_gradlew = dir.join("gradlew").is_file();
-    let detected_java_entrypoints = detect_java_entrypoints(dir);
+    let detected_java_entrypoints = detect_java_entrypoints(dir, budget)?;
     let pom_path = dir.join("pom.xml");
     let gradle_manifest = if dir.join("build.gradle").is_file() {
         Some(dir.join("build.gradle"))
@@ -207,7 +222,7 @@ pub(super) fn detect_java_targets(scan_root: &Path, dir: &Path, out: &mut Vec<Pr
     if has_pom {
         let pom_info = parse_maven_pom(&pom_path);
         let packaging = pom_info.packaging.as_deref().unwrap_or("jar");
-        let reactor_invocation = find_maven_reactor_invocation(scan_root, dir);
+        let reactor_invocation = find_maven_reactor_invocation(scan_root, dir, budget)?;
         let invocation_cwd_path = reactor_invocation
             .as_ref()
             .map(|(root, _)| root.as_path())
@@ -355,12 +370,13 @@ pub(super) fn detect_java_targets(scan_root: &Path, dir: &Path, out: &mut Vec<Pr
             ),
         );
     }
+    Ok(())
 }
 
-fn detect_java_entrypoints(dir: &Path) -> Vec<String> {
+fn detect_java_entrypoints(dir: &Path, budget: &mut ScanBudget) -> Result<Vec<String>, String> {
     let src_root = dir.join("src").join("main").join("java");
     if !src_root.is_dir() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let package_re = Regex::new(r"(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;").ok();
@@ -370,13 +386,14 @@ fn detect_java_entrypoints(dir: &Path) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for entry in walkdir::WalkDir::new(&src_root).into_iter().flatten() {
+        budget.account_entry()?;
         if !entry.file_type().is_file() {
             continue;
         }
         if entry.path().extension().and_then(|value| value.to_str()) != Some("java") {
             continue;
         }
-        let Ok(content) = fs::read_to_string(entry.path()) else {
+        let Some(content) = read_to_string_limited(entry.path(), MAX_SOURCE_PROBE_BYTES) else {
             continue;
         };
         if !main_re.as_ref().is_some_and(|re| re.is_match(&content)) {
@@ -404,5 +421,5 @@ fn detect_java_entrypoints(dir: &Path) -> Vec<String> {
         }
     }
     out.sort();
-    out
+    Ok(out)
 }

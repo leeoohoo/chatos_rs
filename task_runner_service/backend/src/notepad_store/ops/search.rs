@@ -55,8 +55,9 @@ impl TaskRunnerNotepadStore {
             let mut content_match = false;
             let mut preview = None;
             if include_content {
+                let note_path = self.note_path(note.folder.as_str(), note.id.as_str());
                 if let Ok(content) =
-                    fs::read_to_string(self.note_path(note.folder.as_str(), note.id.as_str())).await
+                    read_text_limited(note_path.as_path(), MAX_NOTE_CONTENT_BYTES).await
                 {
                     let lowered = content.to_ascii_lowercase();
                     if lowered.contains(needle.as_str()) {

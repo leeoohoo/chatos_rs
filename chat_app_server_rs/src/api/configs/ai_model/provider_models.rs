@@ -1,8 +1,16 @@
+use bytes::BytesMut;
+use futures::StreamExt;
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::models::ai_model_config::AiModelConfig;
 use crate::utils::model_config::{default_base_url_for_provider, normalize_provider};
+
+static PROVIDER_MODELS_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+const PROVIDER_MODELS_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const PROVIDER_MODELS_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
 pub(super) fn normalize_base_url_for_models(provider: &str, base_url: Option<&str>) -> String {
     base_url
@@ -85,21 +93,34 @@ pub(super) async fn fetch_provider_models(profile: &AiModelConfig) -> Result<Vec
     else {
         return Err("当前供应商配置未保存 API Key".to_string());
     };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|err| err.to_string())?;
     let mut last_error = None;
     for url in model_list_urls(profile.provider.as_str(), profile.base_url.as_deref()) {
-        match client.get(url.as_str()).bearer_auth(api_key).send().await {
+        match provider_models_http_client()
+            .get(url.as_str())
+            .bearer_auth(api_key)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+        {
             Ok(response) => {
                 let status = response.status();
-                let raw_text = response.text().await.map_err(|err| err.to_string())?;
                 if !status.is_success() {
+                    let raw_text = read_provider_models_body_limited(
+                        response,
+                        PROVIDER_MODELS_ERROR_BODY_PREVIEW_BYTES,
+                    )
+                    .await
+                    .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
+                    .unwrap_or_else(|err| err);
                     last_error = Some(format!("{}: {}", status, raw_text));
                     continue;
                 }
-                let raw: Value = serde_json::from_str(raw_text.as_str())
+                let raw_body = read_provider_models_body_limited(
+                    response,
+                    PROVIDER_MODELS_RESPONSE_LIMIT_BYTES,
+                )
+                .await?;
+                let raw: Value = serde_json::from_slice(raw_body.as_ref())
                     .map_err(|err| format!("解析模型列表失败: {err}"))?;
                 return Ok(normalize_provider_models(profile.provider.as_str(), &raw));
             }
@@ -109,6 +130,41 @@ pub(super) async fn fetch_provider_models(profile: &AiModelConfig) -> Result<Vec
         }
     }
     Err(last_error.unwrap_or_else(|| "获取模型列表失败".to_string()))
+}
+
+fn provider_models_http_client() -> &'static reqwest::Client {
+    PROVIDER_MODELS_HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
+
+async fn read_provider_models_body_limited(
+    response: reqwest::Response,
+    limit_bytes: usize,
+) -> Result<bytes::Bytes, String> {
+    if let Some(content_length) = response.content_length() {
+        ensure_provider_models_body_within_limit(content_length as usize, limit_bytes)?;
+    }
+
+    let mut body = BytesMut::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| err.to_string())?;
+        let next_len = body.len().saturating_add(chunk.len());
+        ensure_provider_models_body_within_limit(next_len, limit_bytes)?;
+        body.extend_from_slice(chunk.as_ref());
+    }
+    Ok(body.freeze())
+}
+
+fn ensure_provider_models_body_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "provider model list response exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn fallback_model_list(profile: &AiModelConfig) -> Vec<Value> {
@@ -126,4 +182,23 @@ pub(super) fn fallback_model_list(profile: &AiModelConfig) -> Vec<Value> {
         "supports_responses": profile.supports_responses,
         "raw": null,
     })]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_provider_models_body_within_limit;
+
+    #[test]
+    fn provider_models_body_limit_accepts_boundary_size() {
+        assert!(ensure_provider_models_body_within_limit(1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn provider_models_body_limit_rejects_oversized_body() {
+        let err = ensure_provider_models_body_within_limit(1025, 1024)
+            .expect_err("oversized body should fail");
+
+        assert!(err.contains("exceeded limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
 }

@@ -5,7 +5,7 @@ import {
   getRealtimeConnectionStateSnapshot,
   waitForRealtimeConnectedSnapshot,
 } from '../../realtime/state';
-import { debugLog } from '@/lib/utils';
+import { debugLog, debugLogLazy } from '@/lib/utils';
 import {
   assertPayloadWithinTransportBudget,
   prepareAttachmentsForStreaming,
@@ -216,7 +216,7 @@ export function createSendMessageHandler({
         });
       });
 
-      const chatRequest = buildChatRequestLogPayload({
+      debugLogLazy(() => ['🚀 开始调用后端流式聊天API:', buildChatRequestLogPayload({
         sessionId: currentSessionId,
         turnId: conversationTurnId,
         content,
@@ -231,9 +231,7 @@ export function createSendMessageHandler({
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
         planMode,
-      });
-
-      debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
+      })]);
 
       const streamRuntimeOptions = buildStreamChatRuntimeOptions({
         turnId: conversationTurnId,

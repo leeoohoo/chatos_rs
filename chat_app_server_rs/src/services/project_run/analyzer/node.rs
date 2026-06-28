@@ -1,8 +1,8 @@
-use std::fs;
 use std::path::Path;
 
 use crate::models::project_run::ProjectRunTarget;
 
+use super::scan_budget::{read_to_string_limited, MAX_MANIFEST_BYTES};
 use super::target_model::{build_target, normalize_confidence, push_target};
 
 pub(super) fn detect_node_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
@@ -24,7 +24,7 @@ pub(super) fn detect_node_targets(dir: &Path, out: &mut Vec<ProjectRunTarget>) {
         "yarn" => vec!["node", "yarn"],
         _ => vec!["node", "npm"],
     };
-    let raw = fs::read_to_string(&package_json).unwrap_or_default();
+    let raw = read_to_string_limited(&package_json, MAX_MANIFEST_BYTES).unwrap_or_default();
     let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok();
     let scripts = parsed
         .as_ref()

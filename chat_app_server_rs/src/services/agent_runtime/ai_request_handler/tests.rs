@@ -2,44 +2,13 @@ use serde_json::json;
 
 use crate::services::ai_common::{
     is_non_terminal_response_status, should_persist_assistant_message,
-    validate_request_payload_size,
 };
 
 use super::{
     build_chat_completions_request_payload, build_request_payload,
     is_prompt_cache_retention_unsupported_error, read_timeout_env_ms,
-    should_retry_without_prompt_cache_retention, AiResponse, REQUEST_BODY_LIMIT_ENV,
+    should_retry_without_prompt_cache_retention, AiResponse,
 };
-
-#[test]
-fn payload_precheck_accepts_small_payload() {
-    let payload = json!({
-        "model": "gpt-4o",
-        "input": [{"role": "user", "content": [{"type":"input_text","text":"hello"}]}]
-    });
-    assert!(validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV, None).is_ok());
-}
-
-#[test]
-fn payload_precheck_rejects_oversized_payload() {
-    let payload = json!({
-        "model": "gpt-4o",
-        "input": [{"role": "user", "content": [{"type":"input_text","text":"a".repeat(1_700_000)}]}]
-    });
-    let err = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV, Some(128))
-        .expect_err("should reject");
-    assert!(err.contains("request body too large"));
-}
-
-#[test]
-fn payload_precheck_accepts_when_explicit_limit_allows_payload() {
-    let payload = json!({
-        "model": "gpt-4o",
-        "input": [{"role": "user", "content": [{"type":"input_text","text":"a".repeat(4096)}]}]
-    });
-
-    assert!(validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV, Some(16_384)).is_ok());
-}
 
 #[test]
 fn build_request_payload_includes_request_cwd_when_present() {

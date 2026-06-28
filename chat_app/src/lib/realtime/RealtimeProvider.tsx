@@ -34,7 +34,8 @@ interface RealtimeContextValue extends RealtimeStateContextValue {
 }
 
 const RealtimeClientContext = createContext<RealtimeClient | null>(null);
-const RealtimeStateContext = createContext<RealtimeStateContextValue | null>(null);
+const RealtimeConnectionStateContext = createContext<RealtimeConnectionState | null>(null);
+const RealtimeDebugSnapshotContext = createContext<RealtimeDebugSnapshot | null>(null);
 
 interface RealtimeProviderProps {
   children: React.ReactNode;
@@ -116,16 +117,13 @@ export const RealtimeProvider: React.FC<RealtimeProviderProps> = ({
     client.destroy();
   }, [client]);
 
-  const stateValue = useMemo<RealtimeStateContextValue>(() => ({
-    connectionState,
-    debugSnapshot,
-  }), [connectionState, debugSnapshot]);
-
   return (
     <RealtimeClientContext.Provider value={client}>
-      <RealtimeStateContext.Provider value={stateValue}>
-        {children}
-      </RealtimeStateContext.Provider>
+      <RealtimeConnectionStateContext.Provider value={connectionState}>
+        <RealtimeDebugSnapshotContext.Provider value={debugSnapshot}>
+          {children}
+        </RealtimeDebugSnapshotContext.Provider>
+      </RealtimeConnectionStateContext.Provider>
     </RealtimeClientContext.Provider>
   );
 };
@@ -138,31 +136,41 @@ const useRealtimeClient = (): RealtimeClient => {
   return client;
 };
 
-const useRealtimeStateContext = (): RealtimeStateContextValue => {
-  const context = useContext(RealtimeStateContext);
+const useRealtimeConnectionStateContext = (): RealtimeConnectionState => {
+  const context = useContext(RealtimeConnectionStateContext);
   if (!context) {
-    throw new Error('useRealtimeStateContext must be used within a RealtimeProvider');
+    throw new Error('useRealtimeConnectionState must be used within a RealtimeProvider');
+  }
+  return context;
+};
+
+const useRealtimeDebugSnapshotContext = (): RealtimeDebugSnapshot => {
+  const context = useContext(RealtimeDebugSnapshotContext);
+  if (!context) {
+    throw new Error('useRealtimeDebugSnapshot must be used within a RealtimeProvider');
   }
   return context;
 };
 
 export const useRealtimeContext = (): RealtimeContextValue => {
   const client = useRealtimeClient();
-  const context = useRealtimeStateContext();
-  return {
+  const connectionState = useRealtimeConnectionStateContext();
+  const debugSnapshot = useRealtimeDebugSnapshotContext();
+  return useMemo(() => ({
     client,
-    ...context,
-  };
+    connectionState,
+    debugSnapshot,
+  }), [client, connectionState, debugSnapshot]);
 };
 
 export const useRealtimeConnectionState = (): RealtimeConnectionState => {
-  return useRealtimeStateContext().connectionState;
+  return useRealtimeConnectionStateContext();
 };
 
 export { getRealtimeConnectionStateSnapshot } from './state';
 
 export const useRealtimeDebugSnapshot = (): RealtimeDebugSnapshot => {
-  return useRealtimeStateContext().debugSnapshot;
+  return useRealtimeDebugSnapshotContext();
 };
 
 export const useRealtimeEvent = (

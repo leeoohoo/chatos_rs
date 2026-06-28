@@ -3,7 +3,10 @@ import type {
   DeleteSuccessResponse,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectPlanOptions,
   ProjectPlanResponse,
+  ProjectRequirementWorkItemsOptions,
+  ProjectRequirementWorkItemsResponse,
   ProjectRequirementExecuteResponse,
   ProjectRequirementStopResponse,
   ProjectRunEnvironmentResponse,
@@ -53,10 +56,28 @@ export const getProject = (request: ApiRequestFn, id: string): Promise<ProjectRe
 export const getProjectPlan = (
   request: ApiRequestFn,
   projectId: string,
-  options?: { includeArchived?: boolean },
+  options?: ProjectPlanOptions,
 ): Promise<ProjectPlanResponse> => {
-  const query = buildQuery({ include_archived: options?.includeArchived });
+  const query = buildQuery({
+    include_archived: options?.includeArchived,
+    include_work_items: options?.includeWorkItems,
+  });
   return request<ProjectPlanResponse>(`/projects/${encodeURIComponent(projectId)}/plan${query}`);
+};
+
+export const listProjectRequirementWorkItems = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  options?: ProjectRequirementWorkItemsOptions,
+): Promise<ProjectRequirementWorkItemsResponse> => {
+  const query = buildQuery({
+    include_archived: options?.includeArchived,
+    include_dependency_graph: options?.includeDependencyGraph,
+  });
+  return request<ProjectRequirementWorkItemsResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/work-items${query}`,
+  );
 };
 
 export const executeProjectRequirement = (

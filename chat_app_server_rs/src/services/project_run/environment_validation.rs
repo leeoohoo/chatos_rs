@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::models::project_run::ProjectRunTarget;
@@ -12,6 +11,7 @@ use super::environment_support::{
     infer_required_toolchains, normalize_path, resolve_user_path, selected_or_first_option,
     toolchain_display_name,
 };
+use super::file_limits::{read_to_string_limited, MAX_MANIFEST_BYTES};
 
 fn push_validation_issue(
     out: &mut Vec<ProjectRunValidationIssue>,
@@ -174,7 +174,7 @@ pub(crate) fn validate_project_run_target(
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mode = fs::metadata(&wrapper)
+                let mode = std::fs::metadata(&wrapper)
                     .ok()
                     .map(|meta| meta.permissions().mode())
                     .unwrap_or(0);
@@ -236,7 +236,7 @@ pub(crate) fn validate_project_run_target(
                 Some("请确认项目根目录正确，或切换到其它运行入口".to_string()),
             );
         } else {
-            let raw = fs::read_to_string(&package_json).unwrap_or_default();
+            let raw = read_to_string_limited(&package_json, MAX_MANIFEST_BYTES).unwrap_or_default();
             let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok();
             let scripts = parsed
                 .as_ref()

@@ -58,6 +58,7 @@ pub struct BasicFileAnalysis {
     pub symbols: Vec<BasicSymbol>,
 }
 
+#[derive(Clone, Copy)]
 pub struct BasicLanguageSpec {
     pub provider_id: &'static str,
     pub language_id: &'static str,
@@ -118,6 +119,40 @@ impl BasicLanguageSpec {
     ) -> Result<Vec<NavLocation>, String> {
         find_references(self, ctx, req)
     }
+}
+
+pub async fn definition_blocking(
+    spec: BasicLanguageSpec,
+    ctx: &ProjectContext,
+    req: &NavPositionRequest,
+) -> Result<Vec<NavLocation>, String> {
+    let ctx = ctx.clone();
+    let req = req.clone();
+    tokio::task::spawn_blocking(move || spec.definition(&ctx, &req))
+        .await
+        .map_err(|err| format!("code-nav basic definition task failed: {err}"))?
+}
+
+pub async fn references_blocking(
+    spec: BasicLanguageSpec,
+    ctx: &ProjectContext,
+    req: &NavPositionRequest,
+) -> Result<Vec<NavLocation>, String> {
+    let ctx = ctx.clone();
+    let req = req.clone();
+    tokio::task::spawn_blocking(move || spec.references(&ctx, &req))
+        .await
+        .map_err(|err| format!("code-nav basic references task failed: {err}"))?
+}
+
+pub async fn document_symbols_blocking(
+    spec: BasicLanguageSpec,
+    ctx: &ProjectContext,
+) -> Result<DocumentSymbolsResponse, String> {
+    let ctx = ctx.clone();
+    tokio::task::spawn_blocking(move || spec.document_symbols(&ctx))
+        .await
+        .map_err(|err| format!("code-nav basic document symbols task failed: {err}"))?
 }
 
 pub use self::helpers::{

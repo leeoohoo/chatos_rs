@@ -1,5 +1,12 @@
+use bytes::BytesMut;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+const PROJECT_SERVICE_DEFAULT_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const PROJECT_SERVICE_PLAN_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+const PROJECT_SERVICE_WORK_ITEMS_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const PROJECT_SERVICE_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectServiceProjectRecord {
@@ -121,16 +128,67 @@ pub async fn get_project_service_plan(
     project_id: &str,
     include_archived: bool,
 ) -> Result<Value, String> {
+    get_project_service_plan_with_options(
+        base_url,
+        access_token,
+        project_id,
+        ProjectServicePlanOptions {
+            include_archived,
+            include_work_items: None,
+        },
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectServicePlanOptions {
+    pub include_archived: bool,
+    pub include_work_items: Option<bool>,
+}
+
+pub async fn get_project_service_plan_with_options(
+    base_url: &str,
+    access_token: &str,
+    project_id: &str,
+    options: ProjectServicePlanOptions,
+) -> Result<Value, String> {
     let endpoint = format!(
         "{}/api/projects/{}/plan",
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
     );
+    let mut request = reqwest::Client::new()
+        .get(endpoint)
+        .bearer_auth(access_token.trim())
+        .query(&[("include_archived", options.include_archived)]);
+    if let Some(include_work_items) = options.include_work_items {
+        request = request.query(&[("include_work_items", include_work_items)]);
+    }
+    send_json_with_limit(request, PROJECT_SERVICE_PLAN_RESPONSE_LIMIT_BYTES).await
+}
+
+pub async fn list_project_service_requirement_work_items(
+    base_url: &str,
+    access_token: &str,
+    project_id: &str,
+    requirement_id: &str,
+    include_archived: bool,
+    include_dependency_graph: bool,
+) -> Result<Value, String> {
+    let endpoint = format!(
+        "{}/api/projects/{}/requirements/{}/work-items",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(requirement_id.trim())
+    );
     let request = reqwest::Client::new()
         .get(endpoint)
         .bearer_auth(access_token.trim())
-        .query(&[("include_archived", include_archived)]);
-    send_json(request).await
+        .query(&[
+            ("include_archived", include_archived),
+            ("include_dependency_graph", include_dependency_graph),
+        ]);
+    send_json_with_limit(request, PROJECT_SERVICE_WORK_ITEMS_RESPONSE_LIMIT_BYTES).await
 }
 
 pub async fn list_work_item_task_runner_links(
@@ -283,13 +341,25 @@ pub async fn sync_get_project_service_project(
 async fn send_json<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, String> {
+    send_json_with_limit(request, PROJECT_SERVICE_DEFAULT_RESPONSE_LIMIT_BYTES).await
+}
+
+async fn send_json_with_limit<T: for<'de> Deserialize<'de>>(
+    request: reqwest::RequestBuilder,
+    response_limit_bytes: usize,
+) -> Result<T, String> {
     let response = request.send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_project_service_body_limited(response, PROJECT_SERVICE_ERROR_BODY_PREVIEW_BYTES)
+                .await
+                .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
+                .unwrap_or_default();
         return Err(format!("Project service request failed: {status} {body}"));
     }
-    response.json::<T>().await.map_err(|err| err.to_string())
+    let body = read_project_service_body_limited(response, response_limit_bytes).await?;
+    serde_json::from_slice::<T>(body.as_ref()).map_err(|err| err.to_string())
 }
 
 async fn send_optional_json<T: for<'de> Deserialize<'de>>(
@@ -301,12 +371,67 @@ async fn send_optional_json<T: for<'de> Deserialize<'de>>(
         return Ok(None);
     }
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_project_service_body_limited(response, PROJECT_SERVICE_ERROR_BODY_PREVIEW_BYTES)
+                .await
+                .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
+                .unwrap_or_default();
         return Err(format!("Project service request failed: {status} {body}"));
     }
-    response
-        .json::<T>()
-        .await
+    let body =
+        read_project_service_body_limited(response, PROJECT_SERVICE_DEFAULT_RESPONSE_LIMIT_BYTES)
+            .await?;
+    serde_json::from_slice::<T>(body.as_ref())
         .map(Some)
         .map_err(|err| err.to_string())
+}
+
+async fn read_project_service_body_limited(
+    response: reqwest::Response,
+    limit_bytes: usize,
+) -> Result<bytes::Bytes, String> {
+    if let Some(content_length) = response.content_length() {
+        ensure_project_service_body_within_limit(content_length as usize, limit_bytes)?;
+    }
+
+    let mut body = BytesMut::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| err.to_string())?;
+        let next_len = body.len().saturating_add(chunk.len());
+        ensure_project_service_body_within_limit(next_len, limit_bytes)?;
+        body.extend_from_slice(chunk.as_ref());
+    }
+    Ok(body.freeze())
+}
+
+fn ensure_project_service_body_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "Project service response exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_project_service_body_within_limit;
+
+    #[test]
+    fn project_service_body_limit_accepts_boundary_size() {
+        assert!(ensure_project_service_body_within_limit(1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn project_service_body_limit_rejects_oversized_body() {
+        let err = ensure_project_service_body_within_limit(1025, 1024)
+            .expect_err("oversized body should fail");
+
+        assert!(err.contains("exceeded limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
 }

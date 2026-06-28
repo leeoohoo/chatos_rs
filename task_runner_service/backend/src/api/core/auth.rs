@@ -1,4 +1,8 @@
 use super::*;
+use crate::http_body::{
+    read_response_json_limited, read_response_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 use crate::models::UserRole;
 use serde::{Deserialize, Serialize};
 
@@ -263,8 +267,7 @@ where
     TResp: serde::de::DeserializeOwned,
 {
     let response = request_user_service(config, method, path, access_token, body).await?;
-    response
-        .json::<TResp>()
+    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|err| ApiError::bad_gateway(format!("parse user_service response failed: {err}")))
 }
@@ -318,7 +321,8 @@ where
     }
     let status =
         StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let message = response.text().await.unwrap_or_default();
+    let message =
+        read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
     Err(ApiError {
         status,
         message: if message.trim().is_empty() {

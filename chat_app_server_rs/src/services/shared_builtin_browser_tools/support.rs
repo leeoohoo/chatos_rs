@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 
 use crate::models::ai_model_config::AiModelConfig;
 
+const MAX_BROWSER_VISION_SCREENSHOT_BYTES: u64 = 10 * 1024 * 1024;
+
 pub(super) fn build_browser_vision_prompt(question: &str) -> String {
     format!(
         "你现在收到了一张当前网页截图。请仅基于截图内容回答用户问题，先给结论，再给1-3条关键依据。用户问题：{}",
@@ -67,6 +69,16 @@ pub(super) fn ai_model_config_to_runtime_value(model_cfg: &AiModelConfig) -> Val
 pub(super) async fn build_browser_vision_image_data_url(
     screenshot_path: &str,
 ) -> Result<String, String> {
+    let metadata = tokio::fs::metadata(screenshot_path)
+        .await
+        .map_err(|err| format!("read screenshot metadata failed: {}", err))?;
+    if metadata.len() > MAX_BROWSER_VISION_SCREENSHOT_BYTES {
+        return Err(format!(
+            "screenshot exceeds vision upload limit: {} bytes > {} bytes",
+            metadata.len(),
+            MAX_BROWSER_VISION_SCREENSHOT_BYTES
+        ));
+    }
     let image_bytes = tokio::fs::read(screenshot_path)
         .await
         .map_err(|err| format!("read screenshot failed: {}", err))?;

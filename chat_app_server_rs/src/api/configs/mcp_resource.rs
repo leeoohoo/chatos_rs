@@ -3,6 +3,9 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use crate::core::mcp_args::{parse_args_json_array, parse_env};
@@ -10,6 +13,10 @@ use crate::repositories::mcp_configs as mcp_repo;
 use crate::services::builtin_mcp::{get_builtin_mcp_config, is_builtin_mcp_id};
 
 use super::ResourceByCommandRequest;
+
+const MCP_RESOURCE_STDIO_TIMEOUT: Duration = Duration::from_secs(15);
+const MCP_RESOURCE_RESPONSE_LINE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const MCP_RESOURCE_TEXT_LIMIT_BYTES: usize = 1 * 1024 * 1024;
 
 pub(super) async fn get_mcp_resource_config(
     Path(config_id): Path<String>,
@@ -110,9 +117,25 @@ async fn read_mcp_resource_config(
     env: &HashMap<String, String>,
     cwd: Option<&str>,
 ) -> Result<String, String> {
-    use std::process::Stdio;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    tokio::time::timeout(
+        MCP_RESOURCE_STDIO_TIMEOUT,
+        read_mcp_resource_config_inner(command, args, env, cwd),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "stdio MCP resource read timed out after {}s",
+            MCP_RESOURCE_STDIO_TIMEOUT.as_secs()
+        )
+    })?
+}
 
+async fn read_mcp_resource_config_inner(
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+    cwd: Option<&str>,
+) -> Result<String, String> {
     let mut cmd = tokio::process::Command::new(command);
     if !args.is_empty() {
         cmd.args(args);
@@ -126,6 +149,7 @@ async fn read_mcp_resource_config(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let id = Uuid::new_v4().to_string();
@@ -137,8 +161,10 @@ async fn read_mcp_resource_config(
             .map_err(|e| e.to_string())?;
     }
     let stdout = child.stdout.take().ok_or("missing stdout")?;
-    let mut reader = BufReader::new(stdout).lines();
-    while let Some(line) = reader.next_line().await.map_err(|e| e.to_string())? {
+    let mut reader = BufReader::new(stdout);
+    while let Some(line) =
+        read_mcp_resource_line_limited(&mut reader, MCP_RESOURCE_RESPONSE_LINE_LIMIT_BYTES).await?
+    {
         if line.trim().is_empty() {
             continue;
         }
@@ -151,14 +177,111 @@ async fn read_mcp_resource_config(
                 if let Some(contents) = result.get("contents").and_then(|v| v.as_array()) {
                     if let Some(first) = contents.first() {
                         if let Some(text) = first.get("text").and_then(|v| v.as_str()) {
+                            ensure_mcp_resource_text_within_limit(text)?;
                             return Ok(text.to_string());
                         }
-                        return Ok(first.to_string());
+                        let text = first.to_string();
+                        ensure_mcp_resource_text_within_limit(text.as_str())?;
+                        return Ok(text);
                     }
                 }
-                return Ok(result.to_string());
+                let text = result.to_string();
+                ensure_mcp_resource_text_within_limit(text.as_str())?;
+                return Ok(text);
             }
         }
     }
     Err("no response from stdio server".to_string())
+}
+
+async fn read_mcp_resource_line_limited<R>(
+    reader: &mut R,
+    limit_bytes: usize,
+) -> Result<Option<String>, String>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf().await.map_err(|err| err.to_string())?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+
+        let take_len = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|index| index + 1)
+            .unwrap_or(available.len());
+        let next_len = line.len().saturating_add(take_len);
+        ensure_mcp_resource_line_within_limit(next_len, limit_bytes)?;
+        line.extend_from_slice(&available[..take_len]);
+        reader.consume(take_len);
+        if line.last().copied() == Some(b'\n') {
+            break;
+        }
+    }
+
+    while matches!(line.last().copied(), Some(b'\n' | b'\r')) {
+        line.pop();
+    }
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|err| format!("MCP resource response was not UTF-8: {err}"))
+}
+
+fn ensure_mcp_resource_line_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "MCP resource response line exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_mcp_resource_text_within_limit(text: &str) -> Result<(), String> {
+    let actual_bytes = text.len();
+    if actual_bytes > MCP_RESOURCE_TEXT_LIMIT_BYTES {
+        return Err(format!(
+            "MCP resource config text exceeded limit: {actual_bytes} bytes > {MCP_RESOURCE_TEXT_LIMIT_BYTES} bytes"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ensure_mcp_resource_line_within_limit, ensure_mcp_resource_text_within_limit,
+        MCP_RESOURCE_TEXT_LIMIT_BYTES,
+    };
+
+    #[test]
+    fn mcp_resource_line_limit_accepts_boundary_size() {
+        assert!(ensure_mcp_resource_line_within_limit(1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn mcp_resource_line_limit_rejects_oversized_line() {
+        let err = ensure_mcp_resource_line_within_limit(1025, 1024)
+            .expect_err("oversized line should fail");
+
+        assert!(err.contains("exceeded limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
+
+    #[test]
+    fn mcp_resource_text_limit_rejects_oversized_text() {
+        let text = "x".repeat(MCP_RESOURCE_TEXT_LIMIT_BYTES + 1);
+        let err = ensure_mcp_resource_text_within_limit(text.as_str())
+            .expect_err("oversized text should fail");
+
+        assert!(err.contains("exceeded limit"));
+    }
 }

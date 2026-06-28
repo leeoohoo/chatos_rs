@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+
+use super::super::file_limits::{read_to_string_limited, MAX_MANIFEST_BYTES};
 
 #[derive(Debug, Default)]
 pub(super) struct ProjectToolchainHints {
@@ -8,8 +9,7 @@ pub(super) struct ProjectToolchainHints {
 }
 
 fn read_trimmed_file(path: &Path) -> Option<String> {
-    fs::read_to_string(path)
-        .ok()
+    read_to_string_limited(path, MAX_MANIFEST_BYTES)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }

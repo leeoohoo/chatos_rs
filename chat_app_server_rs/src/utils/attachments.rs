@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::Read;
 
+const MAX_EXTRACTED_DOCUMENT_XML_BYTES: u64 = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Attachment {
     pub id: Option<String>,
@@ -63,8 +65,8 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
 
         if let Some(text) = &att.text {
             if !text.is_empty() {
-                let body = if text.len() > max_chars {
-                    format!("{}\n...[truncated]", &text[..max_chars])
+                let body = if text.chars().count() > max_chars {
+                    format!("{}\n...[truncated]", truncate_chars(text, max_chars))
                 } else {
                     text.clone()
                 };
@@ -78,8 +80,11 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             if mime == "text/plain" {
                 if let Some(decoded) = decode_data_url(data_url) {
                     let body = String::from_utf8_lossy(&decoded).to_string();
-                    let body = if body.len() > max_chars {
-                        format!("{}\n...[truncated]", &body[..max_chars])
+                    let body = if body.chars().count() > max_chars {
+                        format!(
+                            "{}\n...[truncated]",
+                            truncate_chars(body.as_str(), max_chars)
+                        )
                     } else {
                         body
                     };
@@ -92,8 +97,11 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             if mime == "application/pdf" {
                 if let Some(decoded) = decode_data_url(data_url) {
                     if let Some(text) = extract_pdf_text(&decoded) {
-                        let body = if text.len() > max_chars {
-                            format!("{}\n...[truncated]", &text[..max_chars])
+                        let body = if text.chars().count() > max_chars {
+                            format!(
+                                "{}\n...[truncated]",
+                                truncate_chars(text.as_str(), max_chars)
+                            )
                         } else {
                             text
                         };
@@ -105,8 +113,11 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
                 if let Some(decoded) = decode_data_url(data_url) {
                     if let Some(text) = extract_docx_text(&decoded) {
-                        let body = if text.len() > max_chars {
-                            format!("{}\n...[truncated]", &text[..max_chars])
+                        let body = if text.chars().count() > max_chars {
+                            format!(
+                                "{}\n...[truncated]",
+                                truncate_chars(text.as_str(), max_chars)
+                            )
                         } else {
                             text
                         };
@@ -161,8 +172,17 @@ fn extract_docx_text(data: &[u8]) -> Option<String> {
     let reader = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(reader).ok()?;
     let mut file = archive.by_name("word/document.xml").ok()?;
+    if file.size() > MAX_EXTRACTED_DOCUMENT_XML_BYTES {
+        return None;
+    }
     let mut xml = String::new();
-    file.read_to_string(&mut xml).ok()?;
+    file.by_ref()
+        .take(MAX_EXTRACTED_DOCUMENT_XML_BYTES.saturating_add(1))
+        .read_to_string(&mut xml)
+        .ok()?;
+    if xml.len() as u64 > MAX_EXTRACTED_DOCUMENT_XML_BYTES {
+        return None;
+    }
 
     let mut reader = quick_xml::Reader::from_str(&xml);
     reader.trim_text(true);
@@ -189,6 +209,10 @@ fn extract_docx_text(data: &[u8]) -> Option<String> {
     } else {
         Some(trimmed)
     }
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 pub fn sanitize_attachments_for_db(attachments: &[Attachment]) -> Vec<Value> {

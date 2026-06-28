@@ -2,6 +2,7 @@ pub mod api;
 pub mod ask_user_prompt_service;
 pub mod auth;
 pub mod config;
+mod http_body;
 pub mod mcp_server;
 pub mod models;
 pub mod notepad_store;

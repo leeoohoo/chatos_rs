@@ -2,6 +2,7 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod domain;
+mod http_body;
 pub mod mcp_server;
 mod mcp_tools;
 pub mod models;

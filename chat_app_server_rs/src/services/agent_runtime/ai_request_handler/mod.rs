@@ -23,7 +23,7 @@ use chatos_ai_runtime::{
     AiTransport as SharedAiTransport, StreamCallbacks as SharedStreamCallbacks,
 };
 use serde_json::Value;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use self::fingerprint::log_request_fingerprint;
 use self::http_client::build_http_client;
@@ -37,12 +37,11 @@ use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{
     build_abort_token, is_task_runner_async_plan_message_mode,
     normalize_task_runner_async_plan_metadata, normalize_task_runner_async_tool_call_metadata,
-    persist_assistant_response_with_policy, should_persist_assistant_message,
-    validate_request_payload_size, AiStreamCallbacks, AssistantResponsePersistenceRequest,
+    persist_assistant_response_with_policy, should_persist_assistant_message, AiStreamCallbacks,
+    AssistantResponsePersistenceRequest,
 };
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";
-const REQUEST_BODY_LIMIT_ENV: &str = "AI_AGENT_REQUEST_BODY_MAX_BYTES";
 
 pub type StreamCallbacks = AiStreamCallbacks;
 
@@ -135,7 +134,7 @@ impl AiRequestHandler {
         model: String,
         instructions: Option<String>,
         prompt_cache_key: Option<String>,
-        tools: Option<Vec<Value>>,
+        tools: Option<&[Value]>,
         request_cwd: Option<String>,
         temperature: Option<f64>,
         max_output_tokens: Option<i64>,
@@ -158,7 +157,7 @@ impl AiRequestHandler {
                 model,
                 instructions,
                 prompt_cache_key,
-                tools,
+                tools.map(|items| items.to_vec()),
                 request_cwd,
                 temperature,
                 max_output_tokens,
@@ -171,7 +170,7 @@ impl AiRequestHandler {
                 input,
                 model,
                 instructions,
-                tools,
+                tools.map(|items| items.to_vec()),
                 temperature,
                 max_output_tokens,
                 provider.clone(),
@@ -179,18 +178,6 @@ impl AiRequestHandler {
                 true,
             ),
         };
-
-        if let Err(err) = validate_request_payload_size(
-            &payload,
-            REQUEST_BODY_LIMIT_ENV,
-            request_body_limit_bytes,
-        ) {
-            error!(
-                "{} request payload rejected before send: purpose={}, detail={}",
-                AGENT_RUNTIME_LOG_PREFIX, purpose, err
-            );
-            return Err(err);
-        }
 
         let token = build_abort_token(session_id.as_deref(), turn_id.as_deref());
 
@@ -234,6 +221,7 @@ impl AiRequestHandler {
                 turn_id.clone(),
                 token.clone(),
                 force_identity_encoding,
+                request_body_limit_bytes,
                 persist_messages,
                 message_mode.clone(),
                 message_source.clone(),
@@ -277,6 +265,7 @@ impl AiRequestHandler {
                     turn_id,
                     token,
                     force_identity_encoding,
+                    request_body_limit_bytes,
                     persist_messages,
                     message_mode,
                     message_source,
@@ -301,6 +290,7 @@ impl AiRequestHandler {
         turn_id: Option<String>,
         token: Option<tokio_util::sync::CancellationToken>,
         force_identity_encoding: bool,
+        request_body_limit_bytes: Option<usize>,
         persist_messages: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
@@ -320,6 +310,7 @@ impl AiRequestHandler {
                 SharedAiRequestOptions {
                     abort_token: token,
                     force_identity_encoding,
+                    request_body_limit_bytes,
                     ..Default::default()
                 },
             )

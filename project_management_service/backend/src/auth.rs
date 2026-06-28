@@ -4,6 +4,7 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
+use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::{AgentAccountListItem, AuthUser, LoginRequest, LoginResponse, UserRole};
 
 #[derive(Debug, Clone)]
@@ -223,7 +224,8 @@ where
         .map_err(|err| format!("user_service request failed: {err}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(if text.trim().is_empty() {
             format!("user_service request failed with status {status}")
         } else {

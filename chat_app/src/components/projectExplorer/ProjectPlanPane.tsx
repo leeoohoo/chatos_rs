@@ -14,18 +14,37 @@ import { useApiClient } from '../../lib/api/ApiClientContext';
 import { useChatStore } from '../../lib/store';
 import { normalizeRawMessages } from '../../lib/domain/messages';
 import type {
+  ProjectDependencyGraphResponse,
   ProjectPlanResponse,
+  ProjectRequirementWorkItemsResponse,
   ProjectRequirementResponse,
+  ProjectWorkItemCountsResponse,
+  ProjectWorkItemResponse,
 } from '../../lib/api/client/types';
 import { cn } from '../../lib/utils';
 import type { Project } from '../../types';
 import { DependencyLine, PlanBannerMessages, PlanEmptyState, PlanLoadingState, PlanPaneHeader, PlanStatsBar, RequirementContentSection, WorkItemRow } from './projectPlanPane/components';
 import {
-  MAX_REQUIREMENT_PANE_WIDTH, REQUIREMENT_COLUMN_WIDTH, buildDependencyMaps,
-  buildRequirementChildrenMap, buildRequirementColumns, buildRequirementPath,
-  countOpenItems, formatDateTime, getUpdatedAt, groupWorkItemsByRequirement,
-  priorityLabel, readText, requirementTypeLabel, sortWorkItemsByDependencies,
-  statusClassName, statusLabel,
+  MAX_REQUIREMENT_PANE_WIDTH,
+  REQUIREMENT_COLUMN_WIDTH,
+  SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT,
+  SELECTED_WORK_ITEM_RENDER_INCREMENT,
+  buildDependencyMaps,
+  buildDependencyMapsFromGraph,
+  buildRequirementChildrenMap,
+  buildRequirementColumns,
+  buildRequirementPath,
+  buildVisiblePlanItems,
+  countOpenItems,
+  formatDateTime,
+  getUpdatedAt,
+  mergeDependencyMaps,
+  priorityLabel,
+  readText,
+  requirementTypeLabel,
+  sortWorkItemsByDependencies,
+  statusClassName,
+  statusLabel,
 } from './projectPlanPane/model';
 
 interface ProjectPlanPaneProps {
@@ -33,14 +52,37 @@ interface ProjectPlanPaneProps {
   className?: string;
 }
 
+const normalizeRequirementWorkItemsResponse = (
+  response: ProjectRequirementWorkItemsResponse | ProjectWorkItemResponse[],
+): {
+  dependencyGraph: ProjectDependencyGraphResponse | null;
+  workItems: ProjectWorkItemResponse[];
+} => {
+  if (Array.isArray(response)) {
+    return { dependencyGraph: null, workItems: response };
+  }
+  return {
+    dependencyGraph: response.dependencyGraph || response.dependency_graph || null,
+    workItems: Array.isArray(response.workItems) ? response.workItems : (response.work_items || []),
+  };
+};
+
+const planWorkItemCounts = (plan: ProjectPlanResponse | null): ProjectWorkItemCountsResponse | null => (
+  plan?.workItemCounts || plan?.work_item_counts || null
+);
+
 export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, className }) => {
   const apiClient = useApiClient();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<ProjectPlanResponse | null>(null);
+  const [workItemsByRequirement, setWorkItemsByRequirement] = useState<Map<string, ProjectWorkItemResponse[]>>(() => new Map());
+  const [workItemGraphsByRequirement, setWorkItemGraphsByRequirement] = useState<Map<string, ProjectDependencyGraphResponse>>(() => new Map());
+  const [loadingWorkItemsRequirementId, setLoadingWorkItemsRequirementId] = useState<string | null>(null);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
   const [executingRequirementId, setExecutingRequirementId] = useState<string | null>(null);
   const [executionMessage, setExecutionMessage] = useState<string | null>(null);
+  const [visibleWorkItemLimit, setVisibleWorkItemLimit] = useState(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
   const updateChatConfig = useChatStore((state) => state.updateChatConfig);
   const refreshSessionById = useChatStore((state) => state.refreshSessionById);
   const selectSession = useChatStore((state) => state.selectSession);
@@ -50,8 +92,10 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setLoading(true);
     setError(null);
     try {
-      const result = await apiClient.getProjectPlan(project.id);
+      const result = await apiClient.getProjectPlan(project.id, { includeWorkItems: false });
       setPlan(result);
+      setWorkItemsByRequirement(new Map());
+      setWorkItemGraphsByRequirement(new Map());
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载 Plan 失败');
     } finally {
@@ -61,9 +105,45 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
 
   useEffect(() => {
     setPlan(null);
+    setWorkItemsByRequirement(new Map());
+    setWorkItemGraphsByRequirement(new Map());
+    setLoadingWorkItemsRequirementId(null);
     setSelectedRequirementId(null);
     void loadPlan();
   }, [loadPlan]);
+
+  const loadRequirementWorkItems = useCallback(async (requirementId: string, force = false) => {
+    if (!force && workItemsByRequirement.has(requirementId)) {
+      return;
+    }
+
+    setLoadingWorkItemsRequirementId(requirementId);
+    setError(null);
+    try {
+      const response = await apiClient.listProjectRequirementWorkItems(project.id, requirementId, {
+        includeDependencyGraph: true,
+      });
+      const normalized = normalizeRequirementWorkItemsResponse(response);
+      setWorkItemsByRequirement((current) => {
+        const next = new Map(current);
+        next.set(requirementId, normalized.workItems);
+        return next;
+      });
+      setWorkItemGraphsByRequirement((current) => {
+        const next = new Map(current);
+        if (normalized.dependencyGraph) {
+          next.set(requirementId, normalized.dependencyGraph);
+        } else {
+          next.delete(requirementId);
+        }
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载项目任务失败');
+    } finally {
+      setLoadingWorkItemsRequirementId((current) => (current === requirementId ? null : current));
+    }
+  }, [apiClient, project.id, workItemsByRequirement]);
 
   const executeRequirement = useCallback(async (requirement: ProjectRequirementResponse) => {
     if (executingRequirementId) {
@@ -133,15 +213,30 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     () => (Array.isArray(plan?.requirements) ? plan.requirements : []),
     [plan?.requirements],
   );
-  const workItems = useMemo(
+  const planWorkItems = useMemo(
     () => (Array.isArray(plan?.workItems) ? plan.workItems : (plan?.work_items || [])),
     [plan?.workItems, plan?.work_items],
   );
-  const workItemsByRequirement = useMemo(
-    () => groupWorkItemsByRequirement(workItems),
-    [workItems],
+  const loadedWorkItems = useMemo(() => {
+    const items: ProjectWorkItemResponse[] = [];
+    workItemsByRequirement.forEach((requirementItems) => {
+      items.push(...requirementItems);
+    });
+    return items;
+  }, [workItemsByRequirement]);
+  const workItems = planWorkItems.length > 0 ? planWorkItems : loadedWorkItems;
+  const selectedWorkItemGraph = selectedRequirementId
+    ? workItemGraphsByRequirement.get(selectedRequirementId) || null
+    : null;
+  const planDependencyMaps = useMemo(() => buildDependencyMaps(plan), [plan]);
+  const selectedWorkItemDependencyMaps = useMemo(
+    () => buildDependencyMapsFromGraph(selectedWorkItemGraph),
+    [selectedWorkItemGraph],
   );
-  const dependencyMaps = useMemo(() => buildDependencyMaps(plan), [plan]);
+  const dependencyMaps = useMemo(
+    () => mergeDependencyMaps(planDependencyMaps, selectedWorkItemDependencyMaps),
+    [planDependencyMaps, selectedWorkItemDependencyMaps],
+  );
   const requirementById = useMemo(
     () => new Map(requirements.map((requirement) => [requirement.id, requirement])),
     [requirements],
@@ -194,9 +289,23 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     () => requirements.find((requirement) => requirement.id === selectedRequirementId) || null,
     [requirements, selectedRequirementId],
   );
+  useEffect(() => {
+    if (!selectedRequirement) {
+      return;
+    }
+    void loadRequirementWorkItems(selectedRequirement.id);
+  }, [loadRequirementWorkItems, selectedRequirement]);
   const selectedRequirementIsExecuting = selectedRequirement?.status === 'in_progress';
   const selectedRequirementActionBusy = Boolean(
     selectedRequirement && executingRequirementId === selectedRequirement.id,
+  );
+  const selectedRequirementWorkItemsLoaded = selectedRequirement
+    ? workItemsByRequirement.has(selectedRequirement.id)
+    : false;
+  const selectedWorkItemsLoading = Boolean(
+    selectedRequirement
+      && loadingWorkItemsRequirementId === selectedRequirement.id
+      && !selectedRequirementWorkItemsLoaded,
   );
   const rawSelectedWorkItems = selectedRequirement
     ? workItemsByRequirement.get(selectedRequirement.id) || []
@@ -204,6 +313,13 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const selectedWorkItems = useMemo(
     () => sortWorkItemsByDependencies(rawSelectedWorkItems, dependencyMaps.workItemPrerequisites),
     [dependencyMaps.workItemPrerequisites, rawSelectedWorkItems],
+  );
+  useEffect(() => {
+    setVisibleWorkItemLimit(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
+  }, [selectedRequirementId]);
+  const visibleSelectedWorkItems = useMemo(
+    () => buildVisiblePlanItems(selectedWorkItems, visibleWorkItemLimit),
+    [selectedWorkItems, visibleWorkItemLimit],
   );
   const selectedRequirementPrerequisites = selectedRequirement
     ? dependencyMaps.requirementPrerequisites.get(selectedRequirement.id) || []
@@ -214,8 +330,19 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const selectedRequirementChildren = selectedRequirement
     ? requirementChildrenMap.get(selectedRequirement.id) || []
     : [];
-  const doneWorkItemCount = workItems.filter((item) => item.status === 'done').length;
-  const blockedWorkItemCount = workItems.filter((item) => item.status === 'blocked').length;
+  const workItemCounts = planWorkItemCounts(plan);
+  const totalWorkItemCount = typeof workItemCounts?.total === 'number'
+    ? workItemCounts.total
+    : workItems.length;
+  const openWorkItemCount = typeof workItemCounts?.open === 'number'
+    ? workItemCounts.open
+    : countOpenItems(workItems);
+  const doneWorkItemCount = typeof workItemCounts?.done === 'number'
+    ? workItemCounts.done
+    : workItems.filter((item) => item.status === 'done').length;
+  const blockedWorkItemCount = typeof workItemCounts?.blocked === 'number'
+    ? workItemCounts.blocked
+    : workItems.filter((item) => item.status === 'blocked').length;
 
   return (
     <div className={cn('flex h-full flex-col overflow-hidden bg-background', className)}>
@@ -224,9 +351,9 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
         onRefresh={() => {
           void loadPlan();
         }}
-        openItemCount={countOpenItems(workItems)}
+        openItemCount={openWorkItemCount}
         requirementCount={requirements.length}
-        workItemCount={workItems.length}
+        workItemCount={totalWorkItemCount}
       />
 
       <PlanBannerMessages error={error} executionMessage={executionMessage} />
@@ -267,7 +394,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                     </div>
                     <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
                       {column.items.map((requirement) => {
-                        const tasks = workItemsByRequirement.get(requirement.id) || [];
+                        const tasks = workItemsByRequirement.get(requirement.id);
                         const prerequisiteCount = dependencyMaps.requirementPrerequisites.get(requirement.id)?.length || 0;
                         const children = requirementChildrenMap.get(requirement.id) || [];
                         const active = requirement.id === selectedRequirementId;
@@ -291,7 +418,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                                 {requirement.title || requirement.id}
                               </span>
                               <span className="shrink-0 rounded-full border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                {tasks.length}
+                                {tasks ? tasks.length : '-'}
                               </span>
                               {children.length > 0 ? (
                                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -372,7 +499,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                         ? 'border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90'
                         : 'border-primary/40 bg-primary text-primary-foreground hover:bg-primary/90',
                     )}
-                    disabled={!!executingRequirementId || selectedWorkItems.length === 0}
+                    disabled={!!executingRequirementId || selectedWorkItemsLoading || selectedWorkItems.length === 0}
                     onClick={() => {
                       if (selectedRequirementIsExecuting) {
                         void stopRequirementExecution(selectedRequirement);
@@ -438,7 +565,9 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                     <div>
                       <h4 className="text-sm font-semibold text-foreground">项目任务</h4>
                       <div className="mt-0.5 text-xs text-muted-foreground">
-                        {selectedWorkItems.length} 个项目任务 · {countOpenItems(selectedWorkItems)} 个未完成
+                        {selectedWorkItemsLoading
+                          ? '正在加载项目任务...'
+                          : `${selectedWorkItems.length} 个项目任务 · ${countOpenItems(selectedWorkItems)} 个未完成`}
                       </div>
                     </div>
                     {selectedWorkItems.length > 0 && countOpenItems(selectedWorkItems) === 0 ? (
@@ -454,7 +583,11 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                       <span>项目任务已按前置关系尽量排序；“前置项目任务”是当前项目任务开始前需要先完成的任务。</span>
                     </div>
                   ) : null}
-                  {selectedWorkItems.length === 0 ? (
+                  {selectedWorkItemsLoading ? (
+                    <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+                      正在加载项目任务...
+                    </div>
+                  ) : selectedWorkItems.length === 0 ? (
                     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
                       <div className="flex items-center gap-2 font-medium">
                         <AlertCircle className="h-4 w-4" />
@@ -463,7 +596,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {selectedWorkItems.map((item) => (
+                      {visibleSelectedWorkItems.items.map((item) => (
                         <WorkItemRow
                           key={item.id}
                           item={item}
@@ -472,6 +605,20 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                           resolveWorkItemTitle={resolveWorkItemTitle}
                         />
                       ))}
+                      {visibleSelectedWorkItems.hasMore ? (
+                        <button
+                          type="button"
+                          className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                          onClick={() => {
+                            setVisibleWorkItemLimit((value) => value + SELECTED_WORK_ITEM_RENDER_INCREMENT);
+                          }}
+                        >
+                          加载更多 {Math.min(
+                            SELECTED_WORK_ITEM_RENDER_INCREMENT,
+                            visibleSelectedWorkItems.hiddenCount,
+                          )} / {visibleSelectedWorkItems.hiddenCount}
+                        </button>
+                      ) : null}
                     </div>
                   )}
                 </section>

@@ -1,11 +1,12 @@
-use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 use regex::RegexBuilder;
 use walkdir::{DirEntry, WalkDir};
 
+use crate::services::code_nav::file_limits::{read_code_nav_file_to_string, truncate_preview};
 use crate::services::code_nav::languages::shared_nav::{
-    impl_nav_search_match_like_for_field_struct, normalize_path,
+    ensure_code_nav_text_search_budget, impl_nav_search_match_like_for_field_struct, normalize_path,
 };
 
 use super::RUST_IGNORED_DIRS;
@@ -40,11 +41,16 @@ pub(super) fn search_rust_occurrences(
         .map_err(|err| err.to_string())?;
 
     let mut out = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
 
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| should_visit_rust_path(entry))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -55,11 +61,15 @@ pub(super) fn search_rust_occurrences(
         if entry.path().extension().and_then(|value| value.to_str()) != Some("rs") {
             continue;
         }
-        let content = match fs::read_to_string(entry.path()) {
+        let content = match read_code_nav_file_to_string(entry.path()) {
             Ok(content) => content,
             Err(_) => continue,
         };
         for (index, line) in content.lines().enumerate() {
+            if index % 128 == 0 {
+                ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+            }
+
             let normalized_line = line.trim_end_matches('\r');
             for found in regex.find_iter(normalized_line) {
                 if out.len() >= max_results {
@@ -75,11 +85,7 @@ pub(super) fn search_rust_occurrences(
                     relative_path,
                     line: index + 1,
                     column,
-                    text: if normalized_line.len() > 400 {
-                        normalized_line[..400].to_string()
-                    } else {
-                        normalized_line.to_string()
-                    },
+                    text: truncate_preview(normalized_line, 400),
                 });
             }
         }

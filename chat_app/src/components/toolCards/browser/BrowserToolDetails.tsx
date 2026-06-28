@@ -2,6 +2,7 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { translateToolTitle } from '../../../i18n/toolText';
+import { stringifyJsonPreview } from '../../toolDetails/textPreview';
 import { ExtractResultsBriefCard, SearchResultsBriefCard } from '../shared/researchCards';
 import { RowsCard, StringListCard, TextBlockCard, formatToolCardCount, renderCardHeader } from '../shared/primitives';
 import { asArray, asBoolean, asNumber, asRecord, asString } from '../shared/value';
@@ -134,9 +135,16 @@ export const BrowserToolDetails: React.FC<BrowserToolDetailsProps> = ({
             ]}
             fullWidth
           />
-          {resultRecord && (
-            <TextBlockCard title={translateToolTitle('Result payload', locale)} content={JSON.stringify(resultRecord, null, 2)} />
-          )}
+          {resultRecord && (() => {
+            const preview = stringifyJsonPreview(resultRecord);
+            return (
+              <TextBlockCard
+                title={translateToolTitle('Result payload', locale)}
+                content={preview.content}
+                meta={preview.meta}
+              />
+            );
+          })()}
         </>
       )}
 

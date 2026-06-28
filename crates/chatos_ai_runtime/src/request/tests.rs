@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use super::{
     build_chat_completions_request_payload, build_responses_request_payload,
     effective_provider_for_request, emit_finalized_stream_callbacks,
-    response_items_to_chat_messages, AiRequestOptions, StreamCallbacks,
+    response_items_to_chat_messages, validate_request_payload_size, AiRequestOptions,
+    StreamCallbacks,
 };
 use crate::stream_parse::FinalizedStreamState;
 
@@ -197,6 +198,21 @@ fn custom_openai_base_url_uses_compatible_provider() {
             .as_deref(),
         Some("openai")
     );
+}
+
+#[test]
+fn request_payload_size_limit_rejects_oversized_body() {
+    let err = validate_request_payload_size(129, Some(128)).expect_err("should reject");
+    assert_eq!(
+        err,
+        "AI request payload too large: 129 bytes exceeds 128 bytes"
+    );
+}
+
+#[test]
+fn request_payload_size_limit_allows_unset_or_zero_limit() {
+    assert!(validate_request_payload_size(usize::MAX, None).is_ok());
+    assert!(validate_request_payload_size(usize::MAX, Some(0)).is_ok());
 }
 
 #[test]

@@ -379,6 +379,16 @@ function Build-ChatAppBackend {
   }
 }
 
+function Build-TaskRunnerBackend {
+  param([string]$RepoRoot)
+
+  Write-Host '[INFO] building task_runner backend'
+  & cargo build --manifest-path (Join-Path $RepoRoot 'task_runner_service\backend\Cargo.toml') --bin task_runner_service_backend --target-dir (Join-Path $RepoRoot 'target-shared')
+  if ($LASTEXITCODE -ne 0) {
+    throw 'task_runner backend build failed'
+  }
+}
+
 function Invoke-WslMongoScript {
   param(
     [string]$ResolvedDistro,
@@ -436,10 +446,16 @@ function Start-Stack {
     Remove-Item -Force -ErrorAction SilentlyContinue
 
   Build-ChatAppBackend -RepoRoot $repoRoot
+  Build-TaskRunnerBackend -RepoRoot $repoRoot
 
   $chatBackendExe = Join-Path $repoRoot 'target-shared\debug\chat_app_server_rs.exe'
   if (-not (Test-Path -LiteralPath $chatBackendExe)) {
     throw "Missing chat_app backend executable: $chatBackendExe"
+  }
+
+  $taskRunnerBackendExe = Join-Path $repoRoot 'target-shared\debug\task_runner_service_backend.exe'
+  if (-not (Test-Path -LiteralPath $taskRunnerBackendExe)) {
+    throw "Missing task_runner backend executable: $taskRunnerBackendExe"
   }
 
   $installedDistros = Get-InstalledWslDistros

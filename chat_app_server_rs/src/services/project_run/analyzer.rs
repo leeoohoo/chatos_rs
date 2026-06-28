@@ -12,6 +12,8 @@ mod python;
 mod rust;
 #[path = "analyzer/scan.rs"]
 mod scan;
+#[path = "analyzer/scan_budget.rs"]
+mod scan_budget;
 #[path = "analyzer/target_model.rs"]
 mod target_model;
 
@@ -35,13 +37,10 @@ pub(crate) async fn analyze_project(project: &Project) -> ProjectRunCatalog {
     let root_path = project.root_path.clone();
 
     let detected =
-        tokio::task::spawn_blocking(move || detect_targets_sync(PathBuf::from(root_path)))
-            .await
-            .ok()
-            .and_then(Result::ok);
+        tokio::task::spawn_blocking(move || detect_targets_sync(PathBuf::from(root_path))).await;
 
     match detected {
-        Some(mut targets) => {
+        Ok(Ok(mut targets)) => {
             let default_target_id = targets.first().map(|target| target.id.clone());
             if let Some(default_id) = default_target_id.as_deref() {
                 for target in &mut targets {
@@ -63,16 +62,32 @@ pub(crate) async fn analyze_project(project: &Project) -> ProjectRunCatalog {
                 updated_at: now,
             }
         }
-        None => ProjectRunCatalog {
+        Ok(Err(err)) => build_error_catalog(project_id, user_id, now, err),
+        Err(err) => build_error_catalog(
             project_id,
             user_id,
-            status: "error".to_string(),
-            default_target_id: None,
-            targets: Vec::new(),
-            error_message: Some("项目运行目标分析失败".to_string()),
-            analyzed_at: Some(now.clone()),
-            updated_at: now,
-        },
+            now,
+            format!("project run analysis task failed: {err}"),
+        ),
+    }
+}
+
+fn build_error_catalog(
+    project_id: String,
+    user_id: Option<String>,
+    now: String,
+    error_message: String,
+) -> ProjectRunCatalog {
+    tracing::warn!(error = %error_message, "project run target analysis failed");
+    ProjectRunCatalog {
+        project_id,
+        user_id,
+        status: "error".to_string(),
+        default_target_id: None,
+        targets: Vec::new(),
+        error_message: Some(error_message),
+        analyzed_at: Some(now.clone()),
+        updated_at: now,
     }
 }
 

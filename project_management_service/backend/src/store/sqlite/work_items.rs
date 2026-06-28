@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::common::{normalize_id_list, normalize_tags, task_runner_status_is_active};
@@ -48,6 +49,44 @@ impl SqliteStore {
         .await
         .map_err(|err| err.to_string())?;
         Ok(rows.iter().map(work_item_from_row).collect())
+    }
+
+    pub async fn count_work_items_by_project(
+        &self,
+        project_id: &str,
+        include_archived: bool,
+    ) -> Result<ProjectWorkItemStatusCounts, String> {
+        let rows = if include_archived {
+            sqlx::query(
+                "SELECT status, COUNT(*) AS item_count
+                 FROM project_work_items
+                 WHERE project_id = ?1
+                 GROUP BY status",
+            )
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query(
+                "SELECT status, COUNT(*) AS item_count
+                 FROM project_work_items
+                 WHERE project_id = ?1 AND status <> 'archived'
+                 GROUP BY status",
+            )
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+        }
+        .map_err(|err| err.to_string())?;
+
+        let mut counts = ProjectWorkItemStatusCounts::default();
+        for row in rows {
+            counts.add_status_count(
+                row.get::<String, _>("status").as_str(),
+                row.get::<i64, _>("item_count"),
+            );
+        }
+        Ok(counts)
     }
 
     pub async fn create_work_item(

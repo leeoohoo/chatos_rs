@@ -1,4 +1,8 @@
 use super::*;
+use crate::http_body::{
+    read_response_json_limited, read_response_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 
 #[derive(Debug, Deserialize)]
 struct UserServiceOwnerSummary {
@@ -297,16 +301,17 @@ async fn load_owner_identities_from_user_service(
         .map_err(|err| format!("user_service /api/users request failed: {err}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let message = response.text().await.unwrap_or_default();
+        let message =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(format!(
             "user_service /api/users failed: {status} {}",
             message.trim()
         ));
     }
-    let users = response
-        .json::<Vec<UserServiceOwnerSummary>>()
-        .await
-        .map_err(|err| format!("parse user_service /api/users response failed: {err}"))?;
+    let users =
+        read_response_json_limited::<Vec<UserServiceOwnerSummary>>(response, JSON_BODY_LIMIT_BYTES)
+            .await
+            .map_err(|err| format!("parse user_service /api/users response failed: {err}"))?;
     Ok(users
         .into_iter()
         .map(|user| {

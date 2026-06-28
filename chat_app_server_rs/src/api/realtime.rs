@@ -3,14 +3,18 @@ use axum::extract::WebSocketUpgrade;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::core::auth::AuthUser;
 use crate::services::realtime::{
     subscribe_user_events, RealtimeAckMessage, RealtimeClientControlMessage, RealtimeErrorMessage,
     RealtimeSubscriptionSet,
 };
+use crate::utils::ws_outbound;
+
+const REALTIME_WS_OUTBOUND_QUEUE_CAPACITY: usize = 256;
+const REALTIME_WS_CHANNEL: &str = "realtime";
 
 pub fn router() -> axum::Router {
     axum::Router::new().route("/api/realtime/ws", axum::routing::get(realtime_ws))
@@ -23,24 +27,46 @@ async fn realtime_ws(auth: AuthUser, ws: WebSocketUpgrade) -> impl IntoResponse 
 async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
     let mut receiver = subscribe_user_events();
     let (mut sender, mut receiver_ws) = socket.split();
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
+    let (outbound_tx, mut outbound_rx) = ws_outbound::channel(REALTIME_WS_OUTBOUND_QUEUE_CAPACITY);
+    let shutdown = CancellationToken::new();
     let subscriptions = Arc::new(Mutex::new(RealtimeSubscriptionSet::default()));
 
-    let send_task = tokio::spawn(async move {
-        while let Some(msg) = outbound_rx.recv().await {
-            if sender.send(msg).await.is_err() {
-                break;
+    let send_task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    maybe_msg = outbound_rx.recv() => {
+                        let Some(msg) = maybe_msg else {
+                            break;
+                        };
+                        tokio::select! {
+                            _ = shutdown.cancelled() => break,
+                            result = sender.send(msg) => {
+                                if result.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     });
 
     let events_task = tokio::spawn({
         let outbound_tx = outbound_tx.clone();
+        let shutdown = shutdown.clone();
         let user_id = user_id.clone();
         let subscriptions = subscriptions.clone();
         async move {
             loop {
-                match receiver.recv().await {
+                let received = tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    received = receiver.recv() => received,
+                };
+                match received {
                     Ok(envelope) => {
                         if envelope.user_id != user_id {
                             continue;
@@ -56,7 +82,12 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                             Ok(value) => value,
                             Err(_) => continue,
                         };
-                        if outbound_tx.send(Message::Text(payload)).is_err() {
+                        if !ws_outbound::try_send_or_close(
+                            &outbound_tx,
+                            Message::Text(payload),
+                            REALTIME_WS_CHANNEL,
+                            &shutdown,
+                        ) {
                             break;
                         }
                     }
@@ -67,15 +98,27 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
         }
     });
 
-    while let Some(msg) = receiver_ws.next().await {
+    loop {
+        let msg = tokio::select! {
+            _ = shutdown.cancelled() => break,
+            msg = receiver_ws.next() => msg,
+        };
         match msg {
-            Ok(Message::Text(text)) => {
+            None => break,
+            Some(Ok(Message::Text(text))) => {
                 if is_ping_message(text.as_str()) {
                     let pong = serde_json::json!({
                         "type": "pong",
                         "ts": crate::core::time::now_rfc3339()
                     });
-                    let _ = outbound_tx.send(Message::Text(pong.to_string()));
+                    if !ws_outbound::try_send_or_close(
+                        &outbound_tx,
+                        Message::Text(pong.to_string()),
+                        REALTIME_WS_CHANNEL,
+                        &shutdown,
+                    ) {
+                        break;
+                    }
                     continue;
                 }
                 match serde_json::from_str::<RealtimeClientControlMessage>(text.as_str()) {
@@ -84,8 +127,9 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                             let mut subscriptions = subscriptions.lock().await;
                             subscriptions.subscribe(control.topics)
                         };
-                        send_control_response(
+                        if !send_control_response(
                             &outbound_tx,
+                            &shutdown,
                             result.map(|topics| {
                                 serde_json::to_string(&RealtimeAckMessage {
                                     message_type: "ack",
@@ -93,15 +137,18 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                                     topics,
                                 })
                             }),
-                        );
+                        ) {
+                            break;
+                        }
                     }
                     Ok(control) if control.message_type == "unsubscribe" => {
                         let result = {
                             let mut subscriptions = subscriptions.lock().await;
                             subscriptions.unsubscribe(control.topics)
                         };
-                        send_control_response(
+                        if !send_control_response(
                             &outbound_tx,
+                            &shutdown,
                             result.map(|topics| {
                                 serde_json::to_string(&RealtimeAckMessage {
                                     message_type: "ack",
@@ -109,20 +156,30 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                                     topics,
                                 })
                             }),
-                        );
+                        ) {
+                            break;
+                        }
                     }
                     Ok(_) => {}
                     Err(_) => {}
                 }
             }
-            Ok(Message::Ping(bytes)) => {
-                let _ = outbound_tx.send(Message::Pong(bytes));
+            Some(Ok(Message::Ping(bytes))) => {
+                if !ws_outbound::try_send_or_close(
+                    &outbound_tx,
+                    Message::Pong(bytes),
+                    REALTIME_WS_CHANNEL,
+                    &shutdown,
+                ) {
+                    break;
+                }
             }
-            Ok(Message::Close(_)) | Err(_) => break,
-            _ => {}
+            Some(Ok(Message::Close(_))) | Some(Err(_)) => break,
+            Some(Ok(_)) => {}
         }
     }
 
+    shutdown.cancel();
     events_task.abort();
     send_task.abort();
 }
@@ -145,13 +202,17 @@ fn is_ping_message(text: &str) -> bool {
 }
 
 fn send_control_response(
-    outbound_tx: &mpsc::UnboundedSender<Message>,
+    outbound_tx: &ws_outbound::WsOutboundSender,
+    shutdown: &CancellationToken,
     payload: Result<Result<String, serde_json::Error>, String>,
-) {
+) -> bool {
     match payload {
-        Ok(Ok(text)) => {
-            let _ = outbound_tx.send(Message::Text(text));
-        }
+        Ok(Ok(text)) => ws_outbound::try_send_or_close(
+            outbound_tx,
+            Message::Text(text),
+            REALTIME_WS_CHANNEL,
+            shutdown,
+        ),
         Ok(Err(err)) => {
             let error = RealtimeErrorMessage {
                 message_type: "error",
@@ -159,8 +220,14 @@ fn send_control_response(
                 message: err.to_string(),
             };
             if let Ok(text) = serde_json::to_string(&error) {
-                let _ = outbound_tx.send(Message::Text(text));
+                return ws_outbound::try_send_or_close(
+                    outbound_tx,
+                    Message::Text(text),
+                    REALTIME_WS_CHANNEL,
+                    shutdown,
+                );
             }
+            true
         }
         Err(message) => {
             let error = RealtimeErrorMessage {
@@ -169,8 +236,14 @@ fn send_control_response(
                 message,
             };
             if let Ok(text) = serde_json::to_string(&error) {
-                let _ = outbound_tx.send(Message::Text(text));
+                return ws_outbound::try_send_or_close(
+                    outbound_tx,
+                    Message::Text(text),
+                    REALTIME_WS_CHANNEL,
+                    shutdown,
+                );
             }
+            true
         }
     }
 }

@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use super::support::{
     derive_title, filter_notes, normalize_folder, normalize_optional_folder, normalize_required,
-    normalize_tags, now_iso, optional_non_empty, value_string, value_string_array, write_atomic,
+    normalize_tags, now_iso, optional_non_empty, read_text_limited, value_string,
+    value_string_array, write_atomic_limited, MAX_NOTE_CONTENT_BYTES,
 };
 use super::{NoteMeta, TaskRunnerNotepadStore};
 

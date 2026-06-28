@@ -24,6 +24,14 @@ export const resolveModelCapabilities = (
   };
 };
 
+const compactLogText = (value: string, maxChars = 240): string => {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxChars)}...`;
+};
+
 export const buildChatRequestLogPayload = ({
   sessionId,
   turnId,
@@ -57,7 +65,8 @@ export const buildChatRequestLogPayload = ({
 }): StreamChatLogPayload => ({
   conversation_id: sessionId,
   turn_id: turnId,
-  message: content,
+  message_preview: compactLogText(content),
+  message_chars: content.length,
   model_config: {
     id: selectedModel.id,
     model: selectedModel.model_name,
@@ -68,8 +77,16 @@ export const buildChatRequestLogPayload = ({
     supports_images: selectedModel.supports_images === true,
     supports_reasoning: selectedModel.supports_reasoning === true,
   },
-  system_context: systemContext,
-  attachments: attachments || [],
+  system_context_preview: compactLogText(systemContext),
+  system_context_chars: systemContext.length,
+  attachment_count: attachments?.length || 0,
+  attachment_bytes: (attachments || []).reduce((total, attachment) => total + (attachment.size || 0), 0),
+  attachments: (attachments || []).map((attachment) => ({
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    type: attachment.type,
+  })),
   reasoning_enabled: reasoningEnabled,
   plan_mode: planMode,
   contact_agent_id: contactAgentId,

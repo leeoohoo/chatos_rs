@@ -1,7 +1,8 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
+use crate::services::code_nav::file_limits::read_code_nav_line_preview;
 use crate::services::code_nav::symbol_index::{
     nav_location_from_indexed_symbol, score_indexed_definition_candidate, IndexedSymbol,
     ProjectIndexedSymbol,
@@ -13,6 +14,8 @@ use crate::services::code_nav::types::{
 use crate::services::code_nav::CodeNavProvider;
 
 const MAX_PREVIEW_CHARS: usize = 400;
+const CODE_NAV_TEXT_SEARCH_MAX_VISITS: usize = 20_000;
+const CODE_NAV_TEXT_SEARCH_DEADLINE: Duration = Duration::from_secs(3);
 
 pub(crate) trait HeuristicNavLanguage: Send + Sync {
     type Symbol: NavSymbolLike + Send + Sync;
@@ -40,7 +43,7 @@ pub(crate) trait HeuristicNavLanguage: Send + Sync {
 #[axum::async_trait]
 impl<T> CodeNavProvider for T
 where
-    T: HeuristicNavLanguage,
+    T: HeuristicNavLanguage + 'static,
 {
     fn provider_id(&self) -> &'static str {
         T::PROVIDER_ID
@@ -79,7 +82,11 @@ where
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
-        T::definition(ctx, req)
+        let ctx = ctx.clone();
+        let req = req.clone();
+        tokio::task::spawn_blocking(move || T::definition(&ctx, &req))
+            .await
+            .map_err(|err| format!("code-nav heuristic definition task failed: {err}"))?
     }
 
     async fn references(
@@ -87,7 +94,11 @@ where
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
-        T::references(ctx, req)
+        let ctx = ctx.clone();
+        let req = req.clone();
+        tokio::task::spawn_blocking(move || T::references(&ctx, &req))
+            .await
+            .map_err(|err| format!("code-nav heuristic references task failed: {err}"))?
     }
 
     async fn document_symbols(
@@ -95,14 +106,20 @@ where
         ctx: &ProjectContext,
         _req: &DocumentSymbolsRequest,
     ) -> Result<DocumentSymbolsResponse, String> {
-        let symbols = T::analyze_document_symbols(&ctx.file_path)?;
-        Ok(document_symbols_response(
-            T::PROVIDER_ID,
-            T::LANGUAGE_ID,
-            self.document_symbols_mode(),
-            &symbols,
-            T::MAX_SYMBOL_RESULTS,
-        ))
+        let file_path = ctx.file_path.clone();
+        let mode = self.document_symbols_mode();
+        tokio::task::spawn_blocking(move || {
+            let symbols = T::analyze_document_symbols(&file_path)?;
+            Ok(document_symbols_response(
+                T::PROVIDER_ID,
+                T::LANGUAGE_ID,
+                mode,
+                &symbols,
+                T::MAX_SYMBOL_RESULTS,
+            ))
+        })
+        .await
+        .map_err(|err| format!("code-nav heuristic document symbols task failed: {err}"))?
     }
 }
 
@@ -220,6 +237,24 @@ where
         matches = search(false, true)?;
     }
     Ok(matches)
+}
+
+pub(crate) fn ensure_code_nav_text_search_budget(
+    started_at: Instant,
+    visited_entries: usize,
+) -> Result<(), String> {
+    if visited_entries > CODE_NAV_TEXT_SEARCH_MAX_VISITS {
+        return Err(format!(
+            "code-nav text search exceeded {CODE_NAV_TEXT_SEARCH_MAX_VISITS} entries"
+        ));
+    }
+    if started_at.elapsed() >= CODE_NAV_TEXT_SEARCH_DEADLINE {
+        return Err(format!(
+            "code-nav text search exceeded {:?}",
+            CODE_NAV_TEXT_SEARCH_DEADLINE
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn select_reference_locations<M, F>(
@@ -564,15 +599,7 @@ pub(crate) fn last_identifier(value: &str) -> Option<String> {
 }
 
 fn read_line_preview(path: &Path, line: usize) -> Result<String, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    Ok(content
-        .lines()
-        .nth(line.saturating_sub(1))
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .chars()
-        .take(MAX_PREVIEW_CHARS)
-        .collect())
+    read_code_nav_line_preview(path, line, MAX_PREVIEW_CHARS)
 }
 
 fn build_nav_key(location: &NavLocation) -> String {

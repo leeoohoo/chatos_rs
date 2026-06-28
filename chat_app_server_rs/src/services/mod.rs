@@ -13,6 +13,7 @@ pub mod chatos_memory_mappings;
 pub mod chatos_sessions;
 pub mod chatos_skills;
 pub(crate) mod chatos_skills_discovery;
+pub(crate) mod chatos_skills_file_limits;
 pub(crate) mod chatos_skills_git;
 pub(crate) mod chatos_skills_helpers;
 pub(crate) mod chatos_skills_import;

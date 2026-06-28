@@ -9,6 +9,7 @@ use super::java::detect_java_targets;
 use super::node::detect_node_targets;
 use super::python::detect_python_targets;
 use super::rust::detect_rust_targets;
+use super::scan_budget::ScanBudget;
 use super::target_model::MAX_TARGETS;
 
 #[cfg(test)]
@@ -73,6 +74,14 @@ fn default_target_priority(target: &ProjectRunTarget) -> i32 {
 }
 
 pub(super) fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>, String> {
+    let mut budget = ScanBudget::for_project_run_analysis();
+    detect_targets_with_budget(root, &mut budget)
+}
+
+fn detect_targets_with_budget(
+    root: PathBuf,
+    budget: &mut ScanBudget,
+) -> Result<Vec<ProjectRunTarget>, String> {
     if !root.exists() || !root.is_dir() {
         return Err("项目目录不存在或不可访问".to_string());
     }
@@ -86,6 +95,7 @@ pub(super) fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>
         if visited >= MAX_SCAN_DIRS || targets.len() >= MAX_TARGETS {
             break;
         }
+        budget.account_entry()?;
         visited += 1;
 
         let mut file_names: HashSet<String> = HashSet::new();
@@ -94,6 +104,7 @@ pub(super) fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>
             Err(_) => continue,
         };
         for entry in entries.flatten() {
+            budget.account_entry()?;
             let name = entry.file_name().to_string_lossy().to_string();
             let lower_name = name.to_lowercase();
             let path = entry.path();
@@ -107,10 +118,10 @@ pub(super) fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>
         }
 
         detect_node_targets(&dir, &mut targets);
-        detect_java_targets(&root, &dir, &mut targets);
+        detect_java_targets(&root, &dir, &mut targets, budget)?;
         detect_python_targets(&dir, &file_names, &mut targets);
-        detect_go_targets(&dir, &file_names, &mut targets);
-        detect_rust_targets(&dir, &file_names, &mut targets);
+        detect_go_targets(&dir, &file_names, &mut targets, budget)?;
+        detect_rust_targets(&dir, &file_names, &mut targets, budget)?;
     }
 
     targets.sort_by(|a, b| {
@@ -129,9 +140,11 @@ pub(super) fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_targets_sync, is_same_cwd};
+    use super::{detect_targets_sync, detect_targets_with_budget, is_same_cwd};
+    use crate::services::project_run::analyzer::scan_budget::ScanBudget;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     fn temp_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -279,6 +292,23 @@ public class AgentApplication {
                     == Some(&expected_admin_pom)
         }));
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stops_when_project_scan_budget_is_exhausted() {
+        let root = temp_root("scan_budget");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create root");
+        for index in 0..8 {
+            fs::create_dir_all(root.join(format!("module_{index}"))).expect("create module");
+        }
+
+        let mut budget = ScanBudget::for_test(2, Duration::from_secs(60));
+        let err = detect_targets_with_budget(root.clone(), &mut budget)
+            .expect_err("scan should stop when budget is exhausted");
+
+        assert!(err.contains("filesystem entries"));
         let _ = fs::remove_dir_all(&root);
     }
 }

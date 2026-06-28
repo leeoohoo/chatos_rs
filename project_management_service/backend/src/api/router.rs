@@ -34,8 +34,8 @@ use super::task_runner_links::{
     get_task_runner_execution_options, link_task_runner_task, list_task_runner_links,
 };
 use super::work_items::{
-    create_work_item, delete_work_item, get_work_item, list_project_work_items,
-    list_requirement_work_items, update_work_item,
+    create_work_item, delete_work_item, get_work_item, list_project_requirement_work_items,
+    list_project_work_items, list_requirement_work_items, update_work_item,
 };
 use super::ApiError;
 use crate::auth::{
@@ -69,6 +69,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/projects/:project_id/work-items",
             get(list_project_work_items),
+        )
+        .route(
+            "/api/projects/:project_id/requirements/:requirement_id/work-items",
+            get(list_project_requirement_work_items),
         )
         .route(
             "/api/projects/:project_id/dependency-graph",

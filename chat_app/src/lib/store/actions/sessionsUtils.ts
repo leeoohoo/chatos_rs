@@ -1,5 +1,5 @@
 import type { Message, Session } from '../../../types';
-import { debugLog } from '@/lib/utils';
+import { debugLogLazy } from '@/lib/utils';
 import {
   isSessionActive as isSessionActiveDomain,
   matchSessionContactProjectScope as matchSessionContactProjectScopeDomain,
@@ -117,11 +117,11 @@ export const writeSessionMessagesCache = (
     evictedSessionIds.push(oldestKey);
   }
 
-  debugLog('[Store] sessionMessagesCache write', {
+  debugLogLazy(() => ['[Store] sessionMessagesCache write', {
     ...buildSessionMessagesCacheLogPayload(state, sessionId, nextEntry),
     evicted: evictedSessionIds.length > 0,
     evictedSessionIds,
-  });
+  }]);
 };
 
 export const readSessionMessagesCache = (
@@ -193,13 +193,13 @@ export const touchSessionMessagesCacheEntry = (
     sessionId,
     ...state.sessionMessagesCacheOrder.filter((item) => item !== sessionId),
   ];
-  debugLog('[Store] sessionMessagesCache touch', {
+  debugLogLazy(() => ['[Store] sessionMessagesCache touch', {
     ...buildSessionMessagesCacheLogPayload(
       state,
       sessionId,
       state.sessionMessagesCache[sessionId],
     ),
-  });
+  }]);
   return true;
 };
 
@@ -209,10 +209,10 @@ export const clearSessionMessagesCache = (state: SessionMessagesCacheState) => {
     : Object.keys(state.sessionMessagesCache || {});
   state.sessionMessagesCache = {};
   state.sessionMessagesCacheOrder = [];
-  debugLog('[Store] sessionMessagesCache clear', {
+  debugLogLazy(() => ['[Store] sessionMessagesCache clear', {
     clearedCount: clearedSessionIds.length,
     clearedSessionIds,
-  });
+  }]);
 };
 
 export const deleteSessionMessagesCacheEntry = (
@@ -223,10 +223,10 @@ export const deleteSessionMessagesCacheEntry = (
   const deletedEntry = state.sessionMessagesCache[sessionId];
   delete state.sessionMessagesCache[sessionId];
   state.sessionMessagesCacheOrder = state.sessionMessagesCacheOrder.filter((item) => item !== sessionId);
-  debugLog('[Store] sessionMessagesCache delete', {
+  debugLogLazy(() => ['[Store] sessionMessagesCache delete', {
     ...buildSessionMessagesCacheLogPayload(state, sessionId, deletedEntry),
     existed: Boolean(deletedEntry),
-  });
+  }]);
 };
 
 export const resetCurrentSessionViewState = (state: CurrentSessionViewState) => {

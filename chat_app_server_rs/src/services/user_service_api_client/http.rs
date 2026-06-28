@@ -1,6 +1,14 @@
+use bytes::BytesMut;
+use futures::StreamExt;
 use reqwest::{Method, StatusCode};
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::OnceLock;
+
+static USER_SERVICE_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+const USER_SERVICE_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const USER_SERVICE_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
 pub(super) async fn request_json<TBody, TResp>(
     method: Method,
@@ -20,17 +28,18 @@ where
         .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body = read_user_service_body_limited(response, USER_SERVICE_ERROR_BODY_PREVIEW_BYTES)
+            .await
+            .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
+            .unwrap_or_default();
         return Err(format!(
             "user_service request failed: {} {}",
             status.as_u16(),
             extract_error_message(status, body.as_str())
         ));
     }
-    response
-        .json::<TResp>()
-        .await
-        .map_err(|err| err.to_string())
+    let body = read_user_service_body_limited(response, USER_SERVICE_RESPONSE_LIMIT_BYTES).await?;
+    serde_json::from_slice::<TResp>(body.as_ref()).map_err(|err| err.to_string())
 }
 
 pub(super) async fn request_empty<TBody>(
@@ -50,7 +59,10 @@ where
         .map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body = read_user_service_body_limited(response, USER_SERVICE_ERROR_BODY_PREVIEW_BYTES)
+            .await
+            .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
+            .unwrap_or_default();
         return Err(format!(
             "user_service request failed: {} {}",
             status.as_u16(),
@@ -72,11 +84,9 @@ where
     TBody: Serialize + ?Sized,
 {
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms.max(300) as u64))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let mut request = client.request(method, endpoint);
+    let mut request = user_service_http_client()
+        .request(method, endpoint)
+        .timeout(std::time::Duration::from_millis(timeout_ms.max(300) as u64));
     if let Some(access_token) = access_token {
         request = request.bearer_auth(access_token.trim());
     }
@@ -84,6 +94,41 @@ where
         request = request.json(body);
     }
     Ok(request)
+}
+
+fn user_service_http_client() -> &'static reqwest::Client {
+    USER_SERVICE_HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
+
+async fn read_user_service_body_limited(
+    response: reqwest::Response,
+    limit_bytes: usize,
+) -> Result<bytes::Bytes, String> {
+    if let Some(content_length) = response.content_length() {
+        ensure_user_service_body_within_limit(content_length as usize, limit_bytes)?;
+    }
+
+    let mut body = BytesMut::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| err.to_string())?;
+        let next_len = body.len().saturating_add(chunk.len());
+        ensure_user_service_body_within_limit(next_len, limit_bytes)?;
+        body.extend_from_slice(chunk.as_ref());
+    }
+    Ok(body.freeze())
+}
+
+fn ensure_user_service_body_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "user_service response exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
 }
 
 fn extract_error_message(status: StatusCode, body: &str) -> String {
@@ -108,4 +153,23 @@ fn extract_error_message(status: StatusCode, body: &str) -> String {
             }
         })
         .unwrap_or_else(|| format!("HTTP {}", status.as_u16()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_user_service_body_within_limit;
+
+    #[test]
+    fn user_service_body_limit_accepts_boundary_size() {
+        assert!(ensure_user_service_body_within_limit(1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn user_service_body_limit_rejects_oversized_body() {
+        let err = ensure_user_service_body_within_limit(1025, 1024)
+            .expect_err("oversized body should fail");
+
+        assert!(err.contains("exceeded limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
 }

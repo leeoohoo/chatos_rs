@@ -1,10 +1,12 @@
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::services::task_board_prompt::{
     build_runtime_prefixed_input_items, format_task_board_prompt,
 };
-use crate::services::task_manager::list_tasks_for_context;
+use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
 use crate::utils::events::Events;
 
 #[path = "task_board/snapshot.rs"]
@@ -14,7 +16,8 @@ use self::snapshot::sync_task_board_turn_snapshot;
 use super::guidance;
 use super::user_context::load_runtime_user_context;
 
-const TASK_BOARD_LIMIT: usize = 200;
+const TASK_BOARD_ACTIVE_LIMIT: usize = 200;
+const TASK_BOARD_DONE_HISTORY_LIMIT: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskTurnFollowUpMode {
@@ -62,9 +65,7 @@ pub async fn build_task_board_prompt(
         return None;
     }
 
-    let tasks = list_tasks_for_context(session_id, turn_id, true, TASK_BOARD_LIMIT)
-        .await
-        .unwrap_or_default();
+    let tasks = load_task_board_context_tasks(session_id, turn_id).await;
     Some(format_task_board_prompt(tasks.as_slice(), locale))
         .filter(|content| !content.trim().is_empty())
 }
@@ -80,10 +81,40 @@ pub async fn build_task_turn_follow_up_directive(
     }
 
     let locale = load_runtime_user_context(None, session_id).await.locale;
-    let tasks = list_tasks_for_context(session_id, Some(turn_id), true, TASK_BOARD_LIMIT)
+    let tasks = load_task_board_context_tasks(session_id, Some(turn_id)).await;
+    classify_task_turn_follow_up(tasks.as_slice(), locale)
+}
+
+async fn load_task_board_context_tasks(session_id: &str, turn_id: Option<&str>) -> Vec<TaskRecord> {
+    let active_tasks = list_tasks_for_context(session_id, turn_id, false, TASK_BOARD_ACTIVE_LIMIT)
         .await
         .unwrap_or_default();
-    classify_task_turn_follow_up(tasks.as_slice(), locale)
+    let done_candidates =
+        list_tasks_for_context(session_id, turn_id, true, TASK_BOARD_DONE_HISTORY_LIMIT)
+            .await
+            .unwrap_or_default();
+    merge_task_board_context_tasks(active_tasks, done_candidates)
+}
+
+fn merge_task_board_context_tasks(
+    mut active_tasks: Vec<TaskRecord>,
+    done_candidates: Vec<TaskRecord>,
+) -> Vec<TaskRecord> {
+    let mut seen = active_tasks
+        .iter()
+        .map(|task| task.id.clone())
+        .collect::<HashSet<_>>();
+
+    for task in done_candidates {
+        if !is_done_status(task.status.as_str()) {
+            continue;
+        }
+        if seen.insert(task.id.clone()) {
+            active_tasks.push(task);
+        }
+    }
+
+    active_tasks
 }
 
 pub fn classify_task_turn_follow_up(
@@ -372,6 +403,51 @@ mod tests {
     use crate::core::internal_context_locale::InternalContextLocale;
     use crate::services::task_manager::TaskRecord;
     use serde_json::Value;
+
+    fn build_task_record(id: &str, status: &str) -> TaskRecord {
+        TaskRecord {
+            id: id.to_string(),
+            conversation_id: "session-1".to_string(),
+            conversation_turn_id: "turn-1".to_string(),
+            title: id.to_string(),
+            details: String::new(),
+            priority: "medium".to_string(),
+            status: status.to_string(),
+            tags: Vec::new(),
+            due_at: None,
+            outcome_summary: String::new(),
+            outcome_items: Vec::new(),
+            resume_hint: String::new(),
+            blocker_reason: String::new(),
+            blocker_needs: Vec::new(),
+            blocker_kind: String::new(),
+            completed_at: None,
+            last_outcome_at: None,
+            created_at: "2026-05-21T00:00:00Z".to_string(),
+            updated_at: "2026-05-21T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn merge_task_board_context_keeps_active_tasks_and_unique_done_history() {
+        let merged = super::merge_task_board_context_tasks(
+            vec![
+                build_task_record("todo-1", "todo"),
+                build_task_record("done-duplicate", "done"),
+            ],
+            vec![
+                build_task_record("todo-from-done-query", "todo"),
+                build_task_record("done-duplicate", "done"),
+                build_task_record("done-2", "done"),
+            ],
+        );
+
+        let ids = merged
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["todo-1", "done-duplicate", "done-2"]);
+    }
 
     #[test]
     fn build_runtime_context_trims_session_and_turn() {

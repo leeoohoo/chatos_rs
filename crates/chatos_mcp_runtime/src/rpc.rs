@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex as AsyncMutex;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::types::McpStdioServer;
@@ -15,10 +16,16 @@ use crate::types::McpStdioServer;
 const MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
 const MCP_TOOLS_LIST_ERROR_CACHE_TTL: Duration = Duration::from_secs(10);
+const MCP_STDIO_SESSION_MAX: usize = 32;
+const MCP_STDIO_SESSION_IDLE_TTL: Duration = Duration::from_secs(10 * 60);
+const MCP_HTTP_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const MCP_HTTP_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
+const MCP_STDIO_RESPONSE_LINE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 static MCP_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
     OnceLock::new();
-static MCP_STDIO_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<StdioRpcSession>>>>> =
+static MCP_STDIO_SESSIONS: OnceLock<Mutex<HashMap<String, StdioSessionEntry>>> = OnceLock::new();
+static MCP_STDIO_SESSION_START_LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> =
     OnceLock::new();
 
 #[derive(Clone)]
@@ -30,7 +37,14 @@ struct ToolsListCacheEntry {
 struct StdioRpcSession {
     child: Child,
     stdin: ChildStdin,
-    reader: Lines<BufReader<ChildStdout>>,
+    reader: BufReader<ChildStdout>,
+}
+
+#[derive(Clone)]
+struct StdioSessionEntry {
+    session: Arc<AsyncMutex<StdioRpcSession>>,
+    created_at: Instant,
+    last_used_at: Instant,
 }
 
 pub async fn list_tools_http(
@@ -103,11 +117,11 @@ pub async fn jsonrpc_http_call(
         .get(reqwest::header::LOCATION)
         .and_then(|value| value.to_str().ok())
         .map(ToOwned::to_owned);
-    let body = response
-        .text()
-        .await
-        .map_err(|err| format!("{method} {url} failed to read response body: {err}"))?;
     if !status.is_success() {
+        let body = read_http_response_body_limited(response, MCP_HTTP_ERROR_BODY_PREVIEW_BYTES)
+            .await
+            .map(|body| String::from_utf8_lossy(body.as_slice()).into_owned())
+            .unwrap_or_else(|err| err);
         let location_suffix = redirect_location
             .as_deref()
             .map(|location| format!("; location={location}"))
@@ -117,10 +131,14 @@ pub async fn jsonrpc_http_call(
             response_preview(body.as_str())
         ));
     }
-    let value: Value = serde_json::from_str(body.as_str()).map_err(|err| {
+    let body = read_http_response_body_limited(response, MCP_HTTP_RESPONSE_LIMIT_BYTES)
+        .await
+        .map_err(|err| format!("{method} {url} failed after HTTP response: {err}"))?;
+    let value: Value = serde_json::from_slice(body.as_slice()).map_err(|err| {
+        let body_text = String::from_utf8_lossy(body.as_slice());
         format!(
             "{method} {url} failed after HTTP response: 外部 MCP 返回的不是 JSON: {err}; body={}",
-            response_preview(body.as_str())
+            response_preview(body_text.as_ref())
         )
     })?;
     if value.get("error").is_some() {
@@ -142,6 +160,35 @@ fn mcp_http_client() -> Result<reqwest::Client, String> {
                 .map_err(|err| err.to_string())
         })
         .clone()
+}
+
+async fn read_http_response_body_limited(
+    mut response: reqwest::Response,
+    limit_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if let Some(content_length) = response.content_length() {
+        ensure_http_response_body_within_limit(content_length as usize, limit_bytes)?;
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|err| err.to_string())? {
+        let next_len = body.len().saturating_add(chunk.len());
+        ensure_http_response_body_within_limit(next_len, limit_bytes)?;
+        body.extend_from_slice(chunk.as_ref());
+    }
+    Ok(body)
+}
+
+fn ensure_http_response_body_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "MCP HTTP response exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
 }
 
 fn cached_tools_list(cache_key: &str) -> Option<Result<Vec<Value>, String>> {
@@ -334,24 +381,159 @@ async fn get_stdio_session(
         return Ok(session);
     }
 
-    let session = Arc::new(AsyncMutex::new(spawn_stdio_session(cfg).await?));
-    let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = sessions.lock().map_err(|err| err.to_string())?;
-    Ok(guard
-        .entry(session_key.to_string())
-        .or_insert_with(|| session)
-        .clone())
+    let start_lock = stdio_session_start_lock(session_key)?;
+    let start_guard = start_lock.lock().await;
+    let result = async {
+        if let Some(session) = lookup_stdio_session(session_key) {
+            return Ok(session);
+        }
+
+        ensure_stdio_session_capacity()?;
+        let session = Arc::new(AsyncMutex::new(spawn_stdio_session(cfg).await?));
+        insert_stdio_session(session_key, session)
+    }
+    .await;
+    drop(start_guard);
+    maybe_remove_stdio_session_start_lock(session_key, &start_lock);
+    result
 }
 
 fn lookup_stdio_session(session_key: &str) -> Option<Arc<AsyncMutex<StdioRpcSession>>> {
+    let now = Instant::now();
     let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    sessions.lock().ok()?.get(session_key).cloned()
+    let mut guard = sessions.lock().ok()?;
+    prune_idle_stdio_sessions_locked(&mut guard, now);
+    let entry = guard.get_mut(session_key)?;
+    let idle_for = now.saturating_duration_since(entry.last_used_at);
+    entry.last_used_at = now;
+    debug!(
+        session_key = %session_key,
+        session_age_ms = entry.created_at.elapsed().as_millis(),
+        idle_ms = idle_for.as_millis(),
+        "reusing stdio MCP session"
+    );
+    Some(entry.session.clone())
+}
+
+fn insert_stdio_session(
+    session_key: &str,
+    session: Arc<AsyncMutex<StdioRpcSession>>,
+) -> Result<Arc<AsyncMutex<StdioRpcSession>>, String> {
+    let now = Instant::now();
+    let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = sessions.lock().map_err(|err| err.to_string())?;
+    ensure_stdio_session_capacity_locked(&mut guard, now)?;
+    info!(
+        session_key = %session_key,
+        active_sessions = guard.len() + 1,
+        max_sessions = MCP_STDIO_SESSION_MAX,
+        "spawned stdio MCP session"
+    );
+    guard.insert(
+        session_key.to_string(),
+        StdioSessionEntry {
+            session: session.clone(),
+            created_at: now,
+            last_used_at: now,
+        },
+    );
+    Ok(session)
+}
+
+fn ensure_stdio_session_capacity() -> Result<(), String> {
+    let now = Instant::now();
+    let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = sessions.lock().map_err(|err| err.to_string())?;
+    ensure_stdio_session_capacity_locked(&mut guard, now)
+}
+
+fn ensure_stdio_session_capacity_locked(
+    guard: &mut HashMap<String, StdioSessionEntry>,
+    now: Instant,
+) -> Result<(), String> {
+    prune_idle_stdio_sessions_locked(guard, now);
+    while guard.len() >= MCP_STDIO_SESSION_MAX {
+        let Some(evict_key) = least_recently_used_idle_stdio_session_key(guard) else {
+            return Err(format!(
+                "stdio MCP session pool exhausted: active_sessions={}, max_sessions={}",
+                guard.len(),
+                MCP_STDIO_SESSION_MAX
+            ));
+        };
+        guard.remove(evict_key.as_str());
+        info!(
+            session_key = %evict_key,
+            active_sessions = guard.len(),
+            max_sessions = MCP_STDIO_SESSION_MAX,
+            "evicted idle stdio MCP session for capacity"
+        );
+    }
+    Ok(())
+}
+
+fn prune_idle_stdio_sessions_locked(
+    guard: &mut HashMap<String, StdioSessionEntry>,
+    now: Instant,
+) -> usize {
+    let before = guard.len();
+    guard.retain(|session_key, entry| {
+        let idle_for = now.saturating_duration_since(entry.last_used_at);
+        let can_evict = Arc::strong_count(&entry.session) == 1;
+        let keep = idle_for < MCP_STDIO_SESSION_IDLE_TTL || !can_evict;
+        if !keep {
+            info!(
+                session_key = %session_key,
+                idle_ms = idle_for.as_millis(),
+                "evicted idle stdio MCP session"
+            );
+        }
+        keep
+    });
+    before.saturating_sub(guard.len())
+}
+
+fn least_recently_used_idle_stdio_session_key(
+    guard: &HashMap<String, StdioSessionEntry>,
+) -> Option<String> {
+    guard
+        .iter()
+        .filter(|(_, entry)| Arc::strong_count(&entry.session) == 1)
+        .min_by_key(|(_, entry)| entry.last_used_at)
+        .map(|(key, _)| key.clone())
 }
 
 fn remove_stdio_session(session_key: &str) {
     let sessions = MCP_STDIO_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut guard) = sessions.lock() {
-        guard.remove(session_key);
+        if guard.remove(session_key).is_some() {
+            warn!(
+                session_key = %session_key,
+                active_sessions = guard.len(),
+                "removed stdio MCP session"
+            );
+        }
+    }
+}
+
+fn stdio_session_start_lock(session_key: &str) -> Result<Arc<AsyncMutex<()>>, String> {
+    let locks = MCP_STDIO_SESSION_START_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = locks.lock().map_err(|err| err.to_string())?;
+    Ok(guard
+        .entry(session_key.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone())
+}
+
+fn maybe_remove_stdio_session_start_lock(session_key: &str, start_lock: &Arc<AsyncMutex<()>>) {
+    let locks = MCP_STDIO_SESSION_START_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = locks.lock() {
+        let should_remove = guard
+            .get(session_key)
+            .map(|current| Arc::ptr_eq(current, start_lock) && Arc::strong_count(current) <= 2)
+            .unwrap_or(false);
+        if should_remove {
+            guard.remove(session_key);
+        }
     }
 }
 
@@ -374,7 +556,7 @@ async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, St
     let mut child = cmd.spawn().map_err(|err| err.to_string())?;
     let stdin = child.stdin.take().ok_or("missing stdin")?;
     let stdout = child.stdout.take().ok_or("missing stdout")?;
-    let reader = BufReader::new(stdout).lines();
+    let reader = BufReader::new(stdout);
 
     Ok(StdioRpcSession {
         child,
@@ -393,7 +575,12 @@ impl StdioRpcSession {
         self.stdin.flush().await.map_err(|err| err.to_string())?;
 
         loop {
-            match self.reader.next_line().await {
+            match read_stdio_response_line_limited(
+                &mut self.reader,
+                MCP_STDIO_RESPONSE_LINE_LIMIT_BYTES,
+            )
+            .await
+            {
                 Ok(Some(line)) => {
                     if line.trim().is_empty() {
                         continue;
@@ -408,7 +595,7 @@ impl StdioRpcSession {
                     }
                 }
                 Ok(None) => break,
-                Err(err) => return Err(err.to_string()),
+                Err(err) => return Err(err),
             }
         }
 
@@ -420,6 +607,57 @@ impl StdioRpcSession {
     }
 }
 
+async fn read_stdio_response_line_limited<R>(
+    reader: &mut R,
+    limit_bytes: usize,
+) -> Result<Option<String>, String>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf().await.map_err(|err| err.to_string())?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+
+        let take_len = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|index| index + 1)
+            .unwrap_or(available.len());
+        let next_len = line.len().saturating_add(take_len);
+        ensure_stdio_response_line_within_limit(next_len, limit_bytes)?;
+        line.extend_from_slice(&available[..take_len]);
+        reader.consume(take_len);
+        if line.last().copied() == Some(b'\n') {
+            break;
+        }
+    }
+
+    while matches!(line.last().copied(), Some(b'\n' | b'\r')) {
+        line.pop();
+    }
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|err| format!("stdio MCP response was not UTF-8: {err}"))
+}
+
+fn ensure_stdio_response_line_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "stdio MCP response line exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -428,6 +666,34 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn http_response_body_limit_accepts_boundary_size() {
+        assert!(ensure_http_response_body_within_limit(1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn http_response_body_limit_rejects_oversized_body() {
+        let err = ensure_http_response_body_within_limit(1025, 1024)
+            .expect_err("oversized body should fail");
+
+        assert!(err.contains("exceeded limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
+
+    #[test]
+    fn stdio_response_line_limit_accepts_boundary_size() {
+        assert!(ensure_stdio_response_line_within_limit(1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn stdio_response_line_limit_rejects_oversized_line() {
+        let err = ensure_stdio_response_line_within_limit(1025, 1024)
+            .expect_err("oversized line should fail");
+
+        assert!(err.contains("exceeded limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
 
     #[test]
     fn http_tools_list_cache_key_sorts_headers() {
@@ -545,6 +811,56 @@ done
             .expect("second stdio response");
         assert_eq!(first.pointer("/ok"), Some(&Value::Bool(true)));
         assert_eq!(second.pointer("/ok"), Some(&Value::Bool(true)));
+        assert_eq!(
+            std::fs::read_to_string(&count_file)
+                .expect("count file")
+                .trim(),
+            "1"
+        );
+
+        remove_stdio_session(stdio_session_cache_key(&cfg).as_str());
+        let _ = std::fs::remove_file(count_file);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdio_jsonrpc_deduplicates_concurrent_cold_start() {
+        let count_file = std::env::temp_dir().join(format!(
+            "chatos_mcp_stdio_cold_start_count_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let script = r#"
+count=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+echo $((count + 1)) > "$COUNT_FILE"
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  printf '{"jsonrpc":"2.0","id":"%s","result":{"ok":true}}\n' "$id"
+done
+"#;
+        let cfg = McpStdioServer {
+            name: format!("cold-start-{}", uuid::Uuid::new_v4()),
+            command: "sh".to_string(),
+            args: Some(vec!["-c".to_string(), script.to_string()]),
+            cwd: None,
+            env: Some(HashMap::from([(
+                "COUNT_FILE".to_string(),
+                count_file.to_string_lossy().to_string(),
+            )])),
+        };
+
+        let mut handles = Vec::new();
+        for index in 0..8 {
+            let cfg = cfg.clone();
+            handles.push(tokio::spawn(async move {
+                jsonrpc_stdio_call(&cfg, "demo/concurrent", json!({ "index": index }), None).await
+            }));
+        }
+
+        for handle in handles {
+            let value = handle.await.expect("join stdio request").expect("response");
+            assert_eq!(value.pointer("/ok"), Some(&Value::Bool(true)));
+        }
+
         assert_eq!(
             std::fs::read_to_string(&count_file)
                 .expect("count file")

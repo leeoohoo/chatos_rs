@@ -1,4 +1,7 @@
 use super::*;
+use crate::http_body::{
+    read_response_text_limited, ERROR_BODY_PREVIEW_LIMIT_BYTES, MODEL_CATALOG_BODY_LIMIT_BYTES,
+};
 
 fn model_list_urls(provider: &str, base_url: &str) -> Vec<String> {
     let mut urls = vec![format!("{}/models", base_url.trim_end_matches('/'))];
@@ -91,8 +94,10 @@ async fn fetch_provider_models(
         match client.get(url.as_str()).bearer_auth(api_key).send().await {
             Ok(response) => {
                 let status = response.status();
-                let raw_text = response.text().await.map_err(|err| err.to_string())?;
                 if !status.is_success() {
+                    let raw_text =
+                        read_response_text_limited(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                            .await?;
                     warn!(
                         provider = profile.provider.as_str(),
                         model_config_id = profile.id.as_str(),
@@ -105,6 +110,8 @@ async fn fetch_provider_models(
                     last_error = Some(format!("{status}: {raw_text}"));
                     continue;
                 }
+                let raw_text =
+                    read_response_text_limited(response, MODEL_CATALOG_BODY_LIMIT_BYTES).await?;
                 let raw: Value = serde_json::from_str(raw_text.as_str())
                     .map_err(|err| format!("解析模型列表失败: {err}"))?;
                 let models = normalize_provider_models(profile.provider.as_str(), &raw);

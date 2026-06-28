@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use chatos_mcp_runtime::ToolCallerModelRuntime;
+use once_cell::sync::Lazy;
 use serde_json::{json, Value};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::{Id, JoinSet};
 use tracing::{error, warn};
 
@@ -20,6 +22,32 @@ use crate::utils::abort_registry;
 use super::parallelism::should_parallelize_tool_batch;
 
 const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
+const HEAVY_IO_TOOL_SESSION_LIMIT: usize = 2;
+const HEAVY_IO_TOOL_GLOBAL_LIMIT: usize = 8;
+const HEAVY_IO_TOOL_NAMES: &[&str] = &[
+    "apply_patch",
+    "delete_file",
+    "delete_path",
+    "edit_file",
+    "list_dir",
+    "list_directory",
+    "read_file",
+    "read_file_range",
+    "read_file_raw",
+    "search_files",
+    "search_text",
+    "write_file",
+];
+
+static HEAVY_IO_TOOL_GLOBAL_LIMITER: Lazy<Arc<Semaphore>> =
+    Lazy::new(|| Arc::new(Semaphore::new(HEAVY_IO_TOOL_GLOBAL_LIMIT)));
+static HEAVY_IO_TOOL_SESSION_LIMITERS: Lazy<Mutex<HashMap<String, Weak<Semaphore>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+struct HeavyIoToolPermits {
+    _session: OwnedSemaphorePermit,
+    _global: OwnedSemaphorePermit,
+}
 
 pub(crate) fn tool_call_name(tool_call: &Value) -> Option<&str> {
     extract_tool_call_name(tool_call)
@@ -106,6 +134,8 @@ pub(crate) async fn call_tool_once(
         .get(resolved_tool_name)
         .ok_or_else(|| format!("工具未找到: {}", tool_name))?;
 
+    let _io_permits = acquire_heavy_io_tool_permits(info, session_id).await?;
+
     if info.server_type == "http" {
         let url = info.server_url.clone().ok_or("missing server url")?;
         let headers = http_tool_call_headers(info, session_id, conversation_turn_id);
@@ -148,6 +178,53 @@ pub(crate) async fn call_tool_once(
         .await?;
         Ok(to_text_and_structured_result(&result))
     }
+}
+
+async fn acquire_heavy_io_tool_permits(
+    info: &ToolInfo,
+    session_id: Option<&str>,
+) -> Result<Option<HeavyIoToolPermits>, String> {
+    if !is_heavy_io_tool_name(info.original_name.as_str()) {
+        return Ok(None);
+    }
+
+    let session_limiter = heavy_io_session_limiter(session_id);
+    let session_permit = session_limiter
+        .acquire_owned()
+        .await
+        .map_err(|_| "heavy IO tool session limiter closed".to_string())?;
+    let global_permit = Arc::clone(&HEAVY_IO_TOOL_GLOBAL_LIMITER)
+        .acquire_owned()
+        .await
+        .map_err(|_| "heavy IO tool global limiter closed".to_string())?;
+
+    Ok(Some(HeavyIoToolPermits {
+        _session: session_permit,
+        _global: global_permit,
+    }))
+}
+
+pub(crate) fn is_heavy_io_tool_name(tool_name: &str) -> bool {
+    HEAVY_IO_TOOL_NAMES.iter().any(|name| *name == tool_name)
+}
+
+fn heavy_io_session_limiter(session_id: Option<&str>) -> Arc<Semaphore> {
+    let key = session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("anonymous")
+        .to_string();
+    let mut limiters = HEAVY_IO_TOOL_SESSION_LIMITERS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    if let Some(existing) = limiters.get(&key).and_then(Weak::upgrade) {
+        return existing;
+    }
+
+    limiters.retain(|_, limiter| limiter.strong_count() > 0);
+    let limiter = Arc::new(Semaphore::new(HEAVY_IO_TOOL_SESSION_LIMIT));
+    limiters.insert(key, Arc::downgrade(&limiter));
+    limiter
 }
 
 fn http_tool_call_headers(

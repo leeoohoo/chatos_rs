@@ -1,6 +1,6 @@
 import type { Message } from '../../../../types';
 import type ApiClient from '../../../api/client';
-import { debugLog } from '@/lib/utils';
+import { debugLogLazy } from '@/lib/utils';
 import {
   getConversationTurnId,
   isTaskRunnerCallbackMessage,
@@ -261,14 +261,14 @@ export const fetchSessionMessages = async (
   const nextBefore = typeof response?.next_before === 'string' && response.next_before.trim().length > 0
     ? response.next_before.trim()
     : null;
-  debugLog('[Store] Loaded compact session messages', {
+  debugLogLazy(() => ['[Store] Loaded compact session messages', {
     sessionId,
     requested: { limit, before: options.before ?? null },
     received: rawMessages.length,
     returned: messages.length,
     hasMore,
     nextBefore,
-  });
+  }]);
   return {
     messages,
     hasMore,

@@ -7,6 +7,7 @@ import {
   truncateText,
 } from './valueUtils';
 import { UI_MESSAGES, type UiLocale } from '../../i18n/messages';
+import { formatToolDetailText, stringifyJsonPreview } from '../toolDetails/textPreview';
 
 const renderCardHeader = (title: string, meta?: string) => (
   <div className="tool-card-header">
@@ -52,14 +53,19 @@ export const renderRowsCard = (
   );
 };
 
-export const renderTextBlock = (title: string, content: string, fullWidth: boolean = true) => {
-  const trimmed = content.trim();
-  if (!trimmed) return null;
+export const renderTextBlock = (
+  title: string,
+  content: string,
+  fullWidth: boolean = true,
+  meta?: string,
+) => {
+  const preview = formatToolDetailText(content);
+  if (!preview.content) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(title)}
-      <pre className="tool-detail-code">{trimmed}</pre>
+      {renderCardHeader(title, meta || preview.meta)}
+      <pre className="tool-detail-code">{preview.content}</pre>
     </div>
   );
 };
@@ -139,7 +145,7 @@ const buildObjectItemBody = (record: Record<string, unknown>): string => {
   );
 
   try {
-    const serialized = JSON.stringify(compactRecord, null, 2);
+    const serialized = stringifyJsonPreview(compactRecord, 640).content;
     return serialized === '{}' ? '' : truncateText(serialized, 320);
   } catch {
     return '';
@@ -204,5 +210,6 @@ export const renderObjectCard = (title: string, value: Record<string, unknown>) 
     return renderRowsCard(title, primitiveRows, true);
   }
 
-  return renderTextBlock(title, JSON.stringify(value, null, 2));
+  const preview = stringifyJsonPreview(value);
+  return renderTextBlock(title, preview.content, true, preview.meta);
 };

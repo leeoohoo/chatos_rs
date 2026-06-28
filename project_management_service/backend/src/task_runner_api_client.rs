@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::config::AppConfig;
+use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::{
     CreateTaskRunnerTaskFromWorkItemRequest, ProjectWorkItemRecord, TaskRunnerTaskRecord,
 };
@@ -175,7 +176,8 @@ pub async fn create_task_from_work_item(
         .map_err(|err| format!("task runner request failed: {err}"))?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(if body.trim().is_empty() {
             format!("task runner request failed with status {status}")
         } else {
@@ -267,7 +269,8 @@ where
         .map_err(|err| format!("task runner request failed: {err}"))?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(if body.trim().is_empty() {
             format!("task runner request failed with status {status}")
         } else {

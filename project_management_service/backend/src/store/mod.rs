@@ -259,6 +259,25 @@ impl AppStore {
         }
     }
 
+    pub async fn count_work_items_by_project(
+        &self,
+        project_id: &str,
+        include_archived: bool,
+    ) -> Result<ProjectWorkItemStatusCounts, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .count_work_items_by_project(project_id, include_archived)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .count_work_items_by_project(project_id, include_archived)
+                    .await
+            }
+        }
+    }
+
     pub async fn create_work_item(
         &self,
         requirement: &RequirementRecord,

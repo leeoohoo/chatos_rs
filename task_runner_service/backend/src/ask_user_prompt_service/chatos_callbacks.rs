@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::{info, warn};
 
+use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use crate::models::{now_rfc3339, AskUserPromptRecord, TaskRecord, TaskRunRecord, TaskStatus};
 
 use super::support::status_label;
@@ -189,7 +190,8 @@ async fn send_chatos_ask_user_prompt_callback(
     if status.is_success() {
         return Ok(());
     }
-    let body = response.text().await.unwrap_or_default();
+    let body =
+        read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
     Err(format!("callback request failed: {status} {body}"))
 }
 

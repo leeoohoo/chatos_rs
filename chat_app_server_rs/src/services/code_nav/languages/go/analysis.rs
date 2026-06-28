@@ -1,15 +1,17 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::services::code_nav::file_limits::{read_code_nav_file_to_string, truncate_preview};
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::languages::shared_nav::{
-    declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind, find_column,
-    is_type_like, nav_location_from_coordinates, normalize_path,
+    declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
+    ensure_code_nav_text_search_budget, find_column, is_type_like, nav_location_from_coordinates,
+    normalize_path,
 };
 use crate::services::code_nav::types::{NavLocation, NavPositionRequest, ProjectContext};
 
@@ -67,7 +69,7 @@ pub(crate) struct GoSearchMatch {
 }
 
 pub(crate) fn analyze_go_file(path: &Path) -> Result<GoFileAnalysis, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(path)?;
     let mut imports = Vec::new();
     let mut symbols = Vec::new();
     let mut in_block_comment = false;
@@ -217,11 +219,16 @@ pub(crate) fn search_go_occurrences(
         .map_err(|err| err.to_string())?;
 
     let mut out = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
 
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| should_visit_go_path(entry))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -232,12 +239,16 @@ pub(crate) fn search_go_occurrences(
         if entry.path().extension().and_then(|value| value.to_str()) != Some("go") {
             continue;
         }
-        let content = match fs::read_to_string(entry.path()) {
+        let content = match read_code_nav_file_to_string(entry.path()) {
             Ok(content) => content,
             Err(_) => continue,
         };
         let mut in_block_comment = false;
         for (index, raw_line) in content.lines().enumerate() {
+            if index % 128 == 0 {
+                ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+            }
+
             let sanitized = strip_go_comments(raw_line, &mut in_block_comment);
             let normalized = sanitized.trim_end_matches('\r');
             for found in regex.find_iter(normalized) {
@@ -254,7 +265,7 @@ pub(crate) fn search_go_occurrences(
                     relative_path,
                     line: index + 1,
                     column,
-                    text: raw_line.trim_end_matches('\r').chars().take(400).collect(),
+                    text: truncate_preview(raw_line.trim_end_matches('\r'), 400),
                 });
             }
         }
@@ -354,7 +365,7 @@ fn go_module_path(root: &Path) -> Result<Option<String>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(&path)?;
     for line in content.lines() {
         if let Some(capture) = GO_MODULE_RE.captures(line) {
             return Ok(Some(capture[1].to_string()));
@@ -382,11 +393,16 @@ fn resolve_go_import_dir(root: &Path, module_path: &str, import_path: &str) -> O
 
 fn go_package_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
     for entry in WalkDir::new(dir)
         .max_depth(1)
         .into_iter()
         .filter_entry(|entry| should_visit_go_path(entry))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(err) => return Err(err.to_string()),

@@ -13,6 +13,8 @@ use hunks::{apply_hunks, join_lines, split_lines};
 use parser::{parse_patch, parse_replace_style_patch};
 use replacement::replace_text_once;
 
+const DEFAULT_PATCH_TARGET_LIMIT_BYTES: i64 = 4 * 1024 * 1024;
+
 #[derive(Debug, Default, serde::Serialize)]
 pub struct ApplyPatchResult {
     pub updated: Vec<String>,
@@ -40,14 +42,25 @@ enum PatchOp {
     },
 }
 
+#[allow(dead_code)]
 pub fn apply_patch(
     root: &Path,
     patch: &str,
     allow_writes: bool,
 ) -> Result<ApplyPatchResult, String> {
+    apply_patch_limited(root, patch, allow_writes, DEFAULT_PATCH_TARGET_LIMIT_BYTES)
+}
+
+pub fn apply_patch_limited(
+    root: &Path,
+    patch: &str,
+    allow_writes: bool,
+    max_target_bytes: i64,
+) -> Result<ApplyPatchResult, String> {
     if !allow_writes {
         return Err("Writes are disabled.".to_string());
     }
+    let max_target_bytes = normalized_patch_target_limit(max_target_bytes);
     let ops = match parse_patch(patch) {
         Ok(ops) => ops,
         Err(primary_err) => parse_replace_style_patch(patch).map_err(|fallback_err| {
@@ -64,6 +77,7 @@ pub fn apply_patch(
                     fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
                 let content = lines.join("\n");
+                ensure_patch_target_within_limit(&target, content.len() as u64, max_target_bytes)?;
                 fs::write(&target, content).map_err(|err| err.to_string())?;
                 result.added.push(path);
             }
@@ -85,8 +99,9 @@ pub fn apply_patch(
                 if !target.exists() {
                     return Err(format!("Target not found for replace: {path}"));
                 }
-                let original = fs::read_to_string(&target).map_err(|err| err.to_string())?;
+                let original = read_patch_target_to_string(&target, max_target_bytes)?;
                 let output = replace_text_once(&original, &old_text, &new_text)?;
+                ensure_patch_target_within_limit(&target, output.len() as u64, max_target_bytes)?;
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
@@ -100,13 +115,14 @@ pub fn apply_patch(
             } => {
                 let target = ensure_path_inside_root(root, Path::new(&path))?;
                 let original = if target.exists() {
-                    fs::read_to_string(&target).map_err(|err| err.to_string())?
+                    read_patch_target_to_string(&target, max_target_bytes)?
                 } else {
                     String::new()
                 };
                 let (orig_lines, eol, ends_with_eol) = split_lines(&original);
                 let next_lines = apply_hunks(&orig_lines, &hunks)?;
                 let output = join_lines(&next_lines, &eol, ends_with_eol);
+                ensure_patch_target_within_limit(&target, output.len() as u64, max_target_bytes)?;
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
@@ -126,4 +142,34 @@ pub fn apply_patch(
     }
 
     Ok(result)
+}
+
+fn read_patch_target_to_string(path: &Path, max_target_bytes: u64) -> Result<String, String> {
+    let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
+    ensure_patch_target_within_limit(path, metadata.len(), max_target_bytes)?;
+    fs::read_to_string(path).map_err(|err| err.to_string())
+}
+
+fn ensure_patch_target_within_limit(
+    path: &Path,
+    actual_bytes: u64,
+    max_target_bytes: u64,
+) -> Result<(), String> {
+    if actual_bytes > max_target_bytes {
+        return Err(format!(
+            "Patch target exceeds write limit: {} bytes > {} bytes ({})",
+            actual_bytes,
+            max_target_bytes,
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn normalized_patch_target_limit(max_target_bytes: i64) -> u64 {
+    if max_target_bytes <= 0 {
+        DEFAULT_PATCH_TARGET_LIMIT_BYTES as u64
+    } else {
+        max_target_bytes as u64
+    }
 }

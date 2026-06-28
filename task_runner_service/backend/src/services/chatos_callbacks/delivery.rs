@@ -1,4 +1,5 @@
 use super::*;
+use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
 use std::sync::OnceLock;
 
 static CHATOS_CALLBACK_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -22,7 +23,8 @@ pub(super) async fn send_chatos_task_callback(
     if status.is_success() {
         return Ok(());
     }
-    let body = response.text().await.unwrap_or_default();
+    let body =
+        read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
     Err(format!("callback request failed: {status} {body}"))
 }
 

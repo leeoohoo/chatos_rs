@@ -1,10 +1,15 @@
 use crate::bundled_tools::bundled_tool_path;
 
 use super::utils::{ensure_path_inside_root, is_binary_buffer, sha256_bytes};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+const SEARCH_DEADLINE: Duration = Duration::from_secs(3);
+const SEARCH_MAX_VISITS: usize = 20_000;
 
 #[derive(Clone, Debug)]
 pub struct FsOps {
@@ -78,30 +83,71 @@ impl FsOps {
         end_line: usize,
         with_numbers: bool,
     ) -> Result<(String, u64, String, usize, usize, usize, String), String> {
-        let (path, size, hash, content) = self.read_file_raw(rel_path)?;
-        let lines: Vec<String> = content
-            .split('\n')
-            .map(|line| line.trim_end_matches('\r').to_string())
-            .collect();
-        let total_lines = lines.len();
+        let target = self.resolve_path(rel_path)?;
+        let metadata = fs::metadata(&target).map_err(|err| err.to_string())?;
+        if !metadata.is_file() {
+            return Err("Target is not a file.".to_string());
+        }
+        if metadata.len() as i64 > self.max_file_bytes {
+            return Err(format!("File too large ({} bytes).", metadata.len()));
+        }
+
         let start = start_line.max(1);
-        let end = end_line.min(total_lines.max(1));
-        let slice: Vec<String> = if start > end || total_lines == 0 {
-            Vec::new()
-        } else {
-            lines[start - 1..end]
-                .iter()
-                .enumerate()
-                .map(|(idx, line)| {
-                    if with_numbers {
-                        format!("{}: {}", start + idx, line)
-                    } else {
-                        line.to_string()
-                    }
-                })
-                .collect()
+        let mut reader = BufReader::new(fs::File::open(&target).map_err(|err| err.to_string())?);
+        let mut hasher = Sha256::new();
+        let mut selected = Vec::new();
+        let mut total_lines = 0usize;
+        let mut inspected_bytes = 0usize;
+        let mut saw_bytes = false;
+        let mut last_byte_was_newline = false;
+
+        loop {
+            let mut buffer = Vec::new();
+            let bytes_read = reader
+                .read_until(b'\n', &mut buffer)
+                .map_err(|err| err.to_string())?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            saw_bytes = true;
+            last_byte_was_newline = buffer.last() == Some(&b'\n');
+            inspect_binary_prefix(&buffer, &mut inspected_bytes)?;
+            hasher.update(&buffer);
+            total_lines += 1;
+
+            if start <= end_line && total_lines >= start && total_lines <= end_line {
+                let line = normalize_range_line(&buffer);
+                selected.push(if with_numbers {
+                    format!("{}: {}", total_lines, line)
+                } else {
+                    line
+                });
+            }
+        }
+
+        if !saw_bytes || last_byte_was_newline {
+            total_lines += 1;
+            if start <= end_line && total_lines >= start && total_lines <= end_line {
+                selected.push(if with_numbers {
+                    format!("{}: ", total_lines)
+                } else {
+                    String::new()
+                });
+            }
         };
-        Ok((path, size, hash, start, end, total_lines, slice.join("\n")))
+        let end = end_line.min(total_lines.max(1));
+        let hash = hex::encode(hasher.finalize());
+
+        Ok((
+            rel_path.to_string(),
+            metadata.len(),
+            hash,
+            start,
+            end,
+            total_lines,
+            selected.join("\n"),
+        ))
     }
 
     pub fn list_dir(&self, rel_path: &str, max_entries: usize) -> Result<Vec<FileEntry>, String> {
@@ -148,8 +194,16 @@ impl FsOps {
     ) -> Result<Vec<SearchResult>, String> {
         let root = self.resolve_path(rel_path)?;
         let limit = max_results.unwrap_or(self.search_limit);
+        let max_file_bytes = self.max_file_bytes.max(0) as u64;
         if root.is_file() {
-            return search_text_in_file(root.as_path(), self.root.as_path(), pattern, limit);
+            return search_text_in_file(
+                root.as_path(),
+                self.root.as_path(),
+                pattern,
+                limit,
+                max_file_bytes,
+                Instant::now(),
+            );
         }
 
         search_text_in_dir(
@@ -157,7 +211,7 @@ impl FsOps {
             self.root.as_path(),
             pattern,
             limit,
-            self.max_file_bytes.max(0) as u64,
+            max_file_bytes,
         )
     }
 
@@ -252,17 +306,50 @@ pub struct WriteResult {
     pub path: String,
 }
 
+fn inspect_binary_prefix(buffer: &[u8], inspected_bytes: &mut usize) -> Result<(), String> {
+    if *inspected_bytes >= 8000 {
+        return Ok(());
+    }
+
+    let remaining = 8000usize.saturating_sub(*inspected_bytes);
+    let sample_len = buffer.len().min(remaining);
+    if buffer.iter().take(sample_len).any(|byte| *byte == 0) {
+        return Err("Binary file not supported.".to_string());
+    }
+    *inspected_bytes += sample_len;
+    Ok(())
+}
+
+fn normalize_range_line(buffer: &[u8]) -> String {
+    let mut end = buffer.len();
+    if end > 0 && buffer[end - 1] == b'\n' {
+        end -= 1;
+    }
+    if end > 0 && buffer[end - 1] == b'\r' {
+        end -= 1;
+    }
+    String::from_utf8_lossy(&buffer[..end]).to_string()
+}
+
 fn search_text_in_file(
     file_path: &Path,
     workspace_root: &Path,
     pattern: &str,
     max_results: usize,
+    max_file_bytes: u64,
+    started_at: Instant,
 ) -> Result<Vec<SearchResult>, String> {
     let query = pattern.trim();
     if query.is_empty() {
         return Err("搜索关键字不能为空".to_string());
     }
 
+    if max_file_bytes > 0 {
+        let metadata = fs::metadata(file_path).map_err(|err| err.to_string())?;
+        if metadata.len() > max_file_bytes {
+            return Err(format!("File too large ({} bytes).", metadata.len()));
+        }
+    }
     let buffer = fs::read(file_path).map_err(|err| err.to_string())?;
     if is_binary_buffer(&buffer) {
         return Err("Binary file not supported.".to_string());
@@ -277,6 +364,9 @@ fn search_text_in_file(
     let limit = max_results.clamp(1, 500);
 
     for (index, line) in content.split('\n').enumerate() {
+        if index % 128 == 0 {
+            ensure_search_budget(started_at, 0)?;
+        }
         if entries.len() >= limit {
             break;
         }
@@ -287,7 +377,7 @@ fn search_text_in_file(
         entries.push(SearchResult {
             line: index + 1,
             path: relative_path.clone(),
-            text: normalized.to_string(),
+            text: truncate_search_text(normalized),
         });
     }
 
@@ -314,11 +404,16 @@ fn search_text_in_dir(
     }
 
     let mut entries = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
     for entry in walkdir::WalkDir::new(root)
         .follow_links(false)
         .into_iter()
         .filter_map(Result::ok)
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_search_budget(started_at, visited_entries)?;
+
         if entries.len() >= limit {
             break;
         }
@@ -333,7 +428,14 @@ fn search_text_in_dir(
             continue;
         }
         let remaining = limit.saturating_sub(entries.len());
-        let mut found = match search_text_in_file(path, workspace_root, query, remaining) {
+        let mut found = match search_text_in_file(
+            path,
+            workspace_root,
+            query,
+            remaining,
+            max_file_bytes,
+            started_at,
+        ) {
             Ok(value) => value,
             Err(_) => continue,
         };
@@ -366,6 +468,8 @@ fn search_text_in_dir_with_rg(
         .arg("--hidden")
         .arg("--glob")
         .arg("!.git/**")
+        .arg("--max-count")
+        .arg(limit.to_string())
         .arg("--no-messages");
     if max_file_bytes > 0 {
         command
@@ -409,6 +513,18 @@ fn search_text_in_dir_with_rg(
     Err(format!("rg exited with status {status}"))
 }
 
+fn ensure_search_budget(started_at: Instant, visited_entries: usize) -> Result<(), String> {
+    if visited_entries > SEARCH_MAX_VISITS {
+        return Err(format!(
+            "search_text scan exceeded {SEARCH_MAX_VISITS} entries"
+        ));
+    }
+    if started_at.elapsed() >= SEARCH_DEADLINE {
+        return Err(format!("search_text scan exceeded {:?}", SEARCH_DEADLINE));
+    }
+    Ok(())
+}
+
 fn parse_rg_match_line(line: &str, workspace_root: &Path) -> Option<SearchResult> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     if value.get("type").and_then(|value| value.as_str()) != Some("match") {
@@ -433,7 +549,18 @@ fn parse_rg_match_line(line: &str, workspace_root: &Path) -> Option<SearchResult
         .trim_end_matches(['\r', '\n'])
         .to_string();
 
-    Some(SearchResult { path, line, text })
+    Some(SearchResult {
+        path,
+        line,
+        text: truncate_search_text(text.as_str()),
+    })
+}
+
+fn truncate_search_text(value: &str) -> String {
+    match value.char_indices().nth(400) {
+        Some((boundary, _)) => value[..boundary].to_string(),
+        None => value.to_string(),
+    }
 }
 
 fn normalize_rg_result_path(raw_path: &str, workspace_root: &Path) -> String {
@@ -515,6 +642,65 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|entry| entry.path == "notes.txt"));
         assert_eq!(results[0].line, 2);
+
+        fs::remove_dir_all(&root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn read_file_range_streams_requested_lines_and_preserves_metadata() {
+        let root = make_temp_root();
+        let file_path = root.join("notes.txt");
+        fs::write(&file_path, "line1\nline2\nline3\n").expect("write range file");
+
+        let fs_ops = FsOps::new(root.clone(), true, 1024 * 1024, 1024 * 1024, 100);
+        let (_raw_path, raw_size, raw_hash, _content) = fs_ops
+            .read_file_raw("notes.txt")
+            .expect("read raw for hash");
+        let (path, size, hash, start, end, total, content) = fs_ops
+            .read_file_range("notes.txt", 2, 4, true)
+            .expect("read file range");
+
+        assert_eq!(path, "notes.txt");
+        assert_eq!(size, raw_size);
+        assert_eq!(hash, raw_hash);
+        assert_eq!(start, 2);
+        assert_eq!(end, 4);
+        assert_eq!(total, 4);
+        assert_eq!(content, "2: line2\n3: line3\n4: ");
+
+        fs::remove_dir_all(&root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn search_text_file_path_respects_max_file_bytes() {
+        let root = make_temp_root();
+        let file_path = root.join("large.txt");
+        fs::write(&file_path, "alias alias\n").expect("write search file");
+
+        let fs_ops = FsOps::new(root.clone(), true, 4, 1024 * 1024, 100);
+        let err = fs_ops
+            .search_text("alias", "large.txt", Some(10))
+            .expect_err("large file search should fail");
+
+        assert!(err.contains("File too large"));
+        fs::remove_dir_all(&root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn search_text_truncates_long_result_lines_safely() {
+        let root = make_temp_root();
+        let file_path = root.join("notes.txt");
+        let long_line = format!("{}alias", "页".repeat(450));
+        fs::write(&file_path, format!("{long_line}\n")).expect("write search file");
+
+        let fs_ops = FsOps::new(root.clone(), true, 1024 * 1024, 1024 * 1024, 100);
+        let results = fs_ops
+            .search_text("alias", "notes.txt", Some(10))
+            .expect("search file path");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].text.chars().count(), 400);
+        assert!(results[0].text.chars().all(|ch| ch == '页'));
 
         fs::remove_dir_all(&root).expect("cleanup temp root");
     }

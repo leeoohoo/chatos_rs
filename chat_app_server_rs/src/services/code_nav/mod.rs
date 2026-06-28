@@ -1,4 +1,5 @@
 pub mod fallback;
+pub(crate) mod file_limits;
 pub mod languages;
 pub mod manager;
 pub mod registry;

@@ -13,7 +13,8 @@ use crate::request_payload::{
 };
 use crate::request_retry::should_retry_without_prompt_cache_retention;
 use http::{
-    log_preview, send_json_request, serialize_request_payload, validate_request_payload_size,
+    log_preview, read_error_response_text_limited, send_json_request, serialize_request_payload,
+    validate_request_payload_size,
 };
 use streaming::parse_stream_response;
 
@@ -259,7 +260,7 @@ impl AiRequestHandler {
         );
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_error_response_text_limited(response).await;
             let body_preview = log_preview(body.as_str());
             warn!(
                 transport = transport_label(transport),

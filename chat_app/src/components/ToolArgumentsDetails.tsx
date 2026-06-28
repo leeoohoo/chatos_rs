@@ -20,6 +20,7 @@ import {
   isUrlLike,
   shouldRenderAsLongText,
 } from './toolArgumentsDetails/valueUtils';
+import { stringifyJsonPreview } from './toolDetails/textPreview';
 
 interface ToolArgumentsDetailsProps {
   argumentsValue: unknown;
@@ -166,9 +167,10 @@ export const ToolArgumentsDetails: React.FC<ToolArgumentsDetailsProps> = ({
       return null;
     }
 
+    const preview = stringifyJsonPreview(argumentsValue);
     return (
       <div className="tool-detail-stack">
-        {renderTextBlock(translateToolTitle('Input payload', locale), JSON.stringify(argumentsValue, null, 2))}
+        {renderTextBlock(translateToolTitle('Input payload', locale), preview.content, true, preview.meta)}
       </div>
     );
   }

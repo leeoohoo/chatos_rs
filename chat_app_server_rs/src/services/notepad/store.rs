@@ -16,6 +16,9 @@ use super::types::{NoteIndexEntry, NoteOutput, NotesIndex, INDEX_VERSION};
 mod folder_ops;
 mod note_ops;
 
+const MAX_NOTE_CONTENT_BYTES: u64 = 1024 * 1024;
+const MAX_NOTEPAD_INDEX_BYTES: u64 = 4 * 1024 * 1024;
+
 fn entry_to_output(entry: &NoteIndexEntry) -> NoteOutput {
     NoteOutput::from_entry(entry)
 }
@@ -139,6 +142,49 @@ impl NotepadStore {
         }
     }
 
+    async fn atomic_write_text_limited(
+        path: &Path,
+        text: &str,
+        max_bytes: u64,
+    ) -> Result<(), String> {
+        Self::ensure_text_size_within_limit(path, text.len() as u64, max_bytes)?;
+        Self::atomic_write_text(path, text).await
+    }
+
+    async fn atomic_write_note_content(path: &Path, text: &str) -> Result<(), String> {
+        Self::atomic_write_text_limited(path, text, MAX_NOTE_CONTENT_BYTES).await
+    }
+
+    async fn read_text_file_limited(path: &Path, max_bytes: u64) -> Result<String, String> {
+        let metadata = fs::metadata(path).await.map_err(|err| err.to_string())?;
+        Self::ensure_text_size_within_limit(path, metadata.len(), max_bytes)?;
+        fs::read_to_string(path)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    fn read_text_file_limited_sync(path: &Path, max_bytes: u64) -> Result<String, String> {
+        let metadata = std::fs::metadata(path).map_err(|err| err.to_string())?;
+        Self::ensure_text_size_within_limit(path, metadata.len(), max_bytes)?;
+        std::fs::read_to_string(path).map_err(|err| err.to_string())
+    }
+
+    fn ensure_text_size_within_limit(
+        path: &Path,
+        actual_bytes: u64,
+        max_bytes: u64,
+    ) -> Result<(), String> {
+        if actual_bytes > max_bytes {
+            return Err(format!(
+                "notepad file exceeds limit: {} bytes > {} bytes ({})",
+                actual_bytes,
+                max_bytes,
+                path.display()
+            ));
+        }
+        Ok(())
+    }
+
     fn list_markdown_files(&self) -> Vec<PathBuf> {
         if !self.notes_root.exists() {
             return Vec::new();
@@ -181,7 +227,8 @@ impl NotepadStore {
                 .map(|value| value.trim_matches('/').to_string())
                 .unwrap_or_default();
 
-            let content = std::fs::read_to_string(&file_abs).unwrap_or_default();
+            let content = Self::read_text_file_limited_sync(&file_abs, MAX_NOTE_CONTENT_BYTES)
+                .unwrap_or_default();
             let title = {
                 let from_content =
                     normalize_title(extract_title_from_markdown(content.as_str()).as_str());
@@ -230,11 +277,11 @@ impl NotepadStore {
 
     async fn rebuild_index_from_filesystem(&self) -> Result<NotesIndex, String> {
         let rebuilt = self.rebuild_index_from_filesystem_sync();
-        Self::atomic_write_text(
+        let text = serde_json::to_string_pretty(&rebuilt).map_err(|err| err.to_string())?;
+        Self::atomic_write_text_limited(
             self.index_path.as_path(),
-            serde_json::to_string_pretty(&rebuilt)
-                .map_err(|err| err.to_string())?
-                .as_str(),
+            text.as_str(),
+            MAX_NOTEPAD_INDEX_BYTES,
         )
         .await?;
         Ok(rebuilt)
@@ -249,13 +296,11 @@ impl NotepadStore {
             return self.rebuild_index_from_filesystem().await;
         }
 
-        let raw = match fs::read_to_string(&self.index_path).await {
-            Ok(value) => value,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return self.rebuild_index_from_filesystem().await;
-            }
-            Err(err) => return Err(err.to_string()),
-        };
+        let raw =
+            match Self::read_text_file_limited(&self.index_path, MAX_NOTEPAD_INDEX_BYTES).await {
+                Ok(value) => value,
+                Err(err) => return Err(err),
+            };
 
         let parsed = match serde_json::from_str::<NotesIndex>(&raw) {
             Ok(value) => value,
@@ -284,7 +329,12 @@ impl NotepadStore {
         let mut normalized = normalize_index(index.clone());
         normalized.version = INDEX_VERSION;
         let text = serde_json::to_string_pretty(&normalized).map_err(|err| err.to_string())?;
-        Self::atomic_write_text(self.index_path.as_path(), text.as_str()).await?;
+        Self::atomic_write_text_limited(
+            self.index_path.as_path(),
+            text.as_str(),
+            MAX_NOTEPAD_INDEX_BYTES,
+        )
+        .await?;
         Ok(normalized)
     }
 

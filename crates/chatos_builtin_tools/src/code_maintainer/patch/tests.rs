@@ -1,4 +1,4 @@
-use super::apply_patch;
+use super::{apply_patch, apply_patch_limited};
 use std::fs;
 use std::path::PathBuf;
 
@@ -146,6 +146,21 @@ End Patch";
 
     let err = apply_patch(&root, patch, true).expect_err("replace should be ambiguous");
     assert!(err.contains("multiple locations"));
+
+    fs::remove_dir_all(&root).expect("cleanup temp root");
+}
+
+#[test]
+fn apply_patch_limited_rejects_oversized_output() {
+    let root = make_temp_root();
+    let patch = "\
+*** Begin Patch
+*** Add File: large.txt
++12345
+*** End Patch";
+
+    let err = apply_patch_limited(&root, patch, true, 4).expect_err("oversized add should fail");
+    assert!(err.contains("Patch target exceeds write limit"));
 
     fs::remove_dir_all(&root).expect("cleanup temp root");
 }

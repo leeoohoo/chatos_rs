@@ -3,6 +3,10 @@ use serde::Deserialize;
 
 use crate::auth;
 use crate::config::AppConfig;
+use crate::http_body::{
+    read_response_json_limited, read_response_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
+};
 use crate::models::{
     ChatosProjectImportRequest, CreateTaskProjectRequest, TaskProjectRecord, TaskProjectStatus,
     UpdateTaskProjectRequest,
@@ -342,10 +346,11 @@ async fn send_json<T: for<'de> Deserialize<'de>>(
     let response = request.send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(format!("Project service request failed: {status} {body}"));
     }
-    response.json::<T>().await.map_err(|err| err.to_string())
+    read_response_json_limited::<T>(response, JSON_BODY_LIMIT_BYTES).await
 }
 
 async fn send_optional_json<T: for<'de> Deserialize<'de>>(
@@ -357,14 +362,13 @@ async fn send_optional_json<T: for<'de> Deserialize<'de>>(
         return Ok(None);
     }
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
         return Err(format!("Project service request failed: {status} {body}"));
     }
-    response
-        .json::<T>()
+    read_response_json_limited::<T>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map(Some)
-        .map_err(|err| err.to_string())
 }
 
 impl From<ProjectServiceProjectRecord> for TaskProjectRecord {

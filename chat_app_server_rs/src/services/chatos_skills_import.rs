@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::chatos_skills_file_limits::{
+    read_plugin_text_limited, MAX_PLUGIN_MARKETPLACE_BYTES, MAX_PLUGIN_SCAN_ENTRIES,
+};
 use super::chatos_skills_helpers::{
     has_parent_path_component, normalize_plugin_source, normalize_repo_relative_path,
     path_to_unix_relative,
@@ -23,13 +26,13 @@ pub(crate) fn load_plugin_candidates_from_repo(
                 file.to_string_lossy()
             ));
         }
-        let raw = fs::read_to_string(file.as_path()).map_err(|err| err.to_string())?;
+        let raw = read_plugin_text_limited(file.as_path(), MAX_PLUGIN_MARKETPLACE_BYTES)?;
         let parsed = parse_marketplace_candidates(raw.as_str())?;
         if !parsed.is_empty() {
             return Ok(parsed);
         }
     } else if let Some(file) = find_default_file_recursively(repo_root, &["marketplace.json"]) {
-        if let Ok(raw) = fs::read_to_string(file.as_path()) {
+        if let Ok(raw) = read_plugin_text_limited(file.as_path(), MAX_PLUGIN_MARKETPLACE_BYTES) {
             let parsed = parse_marketplace_candidates(raw.as_str())?;
             if !parsed.is_empty() {
                 return Ok(parsed);
@@ -160,9 +163,14 @@ fn find_default_file_recursively(root: &Path, names: &[&str]) -> Option<PathBuf>
         .map(|value| value.to_ascii_lowercase())
         .collect::<std::collections::HashSet<_>>();
     let mut stack = vec![root.to_path_buf()];
+    let mut visited_entries = 0usize;
     while let Some(dir) = stack.pop() {
         let entries = fs::read_dir(dir.as_path()).ok()?;
         for entry in entries.flatten() {
+            visited_entries = visited_entries.saturating_add(1);
+            if visited_entries > MAX_PLUGIN_SCAN_ENTRIES {
+                return None;
+            }
             let path = entry.path();
             let file_type = entry.file_type().ok()?;
             if file_type.is_dir() {

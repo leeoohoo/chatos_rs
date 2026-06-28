@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::requirements::{RequirementRecord, RequirementStatus};
@@ -13,6 +15,18 @@ pub enum ProjectWorkItemStatus {
     Done,
     Cancelled,
     Archived,
+}
+
+impl ProjectWorkItemStatus {
+    pub const ALL: [Self; 7] = [
+        Self::Todo,
+        Self::Ready,
+        Self::InProgress,
+        Self::Blocked,
+        Self::Done,
+        Self::Cancelled,
+        Self::Archived,
+    ];
 }
 
 impl Default for ProjectWorkItemStatus {
@@ -43,6 +57,41 @@ impl DbStatus for ProjectWorkItemStatus {
             "cancelled" => Self::Cancelled,
             "archived" => Self::Archived,
             _ => Self::Todo,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectWorkItemStatusCounts {
+    pub total: i64,
+    pub open: i64,
+    pub done: i64,
+    pub blocked: i64,
+    pub by_status: BTreeMap<String, i64>,
+}
+
+impl ProjectWorkItemStatusCounts {
+    pub fn add_status_count(&mut self, status: &str, count: i64) {
+        if count <= 0 {
+            return;
+        }
+
+        let status = ProjectWorkItemStatus::from_db(status);
+        let key = status.as_str().to_string();
+        *self.by_status.entry(key).or_default() += count;
+        self.total += count;
+
+        match status {
+            ProjectWorkItemStatus::Done => {
+                self.done += count;
+            }
+            ProjectWorkItemStatus::Blocked => {
+                self.blocked += count;
+                self.open += count;
+            }
+            _ => {
+                self.open += count;
+            }
         }
     }
 }

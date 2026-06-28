@@ -1,12 +1,13 @@
-use std::fs;
 use std::path::Path;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::services::code_nav::file_limits::read_code_nav_file_to_string;
 use crate::services::code_nav::languages::basic::{
-    count_char, find_balanced_end, find_column, last_identifier, make_symbol,
-    strip_c_style_comments, BasicFileAnalysis, BasicLanguageSpec, BasicSymbol,
+    count_char, definition_blocking, document_symbols_blocking, find_balanced_end, find_column,
+    last_identifier, make_symbol, references_blocking, strip_c_style_comments, BasicFileAnalysis,
+    BasicLanguageSpec, BasicSymbol,
 };
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::types::{
@@ -112,7 +113,7 @@ impl CodeNavProvider for CppCodeNavProvider {
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
-        SPEC.definition(ctx, req)
+        definition_blocking(SPEC, ctx, req).await
     }
 
     async fn references(
@@ -120,7 +121,7 @@ impl CodeNavProvider for CppCodeNavProvider {
         ctx: &ProjectContext,
         req: &NavPositionRequest,
     ) -> Result<Vec<NavLocation>, String> {
-        SPEC.references(ctx, req)
+        references_blocking(SPEC, ctx, req).await
     }
 
     async fn document_symbols(
@@ -128,12 +129,12 @@ impl CodeNavProvider for CppCodeNavProvider {
         ctx: &ProjectContext,
         _req: &DocumentSymbolsRequest,
     ) -> Result<DocumentSymbolsResponse, String> {
-        SPEC.document_symbols(ctx)
+        document_symbols_blocking(SPEC, ctx).await
     }
 }
 
 fn analyze_cpp_file(path: &Path) -> Result<BasicFileAnalysis, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(path)?;
     let mut symbols = Vec::new();
     let mut type_stack: Vec<CppTypeScope> = Vec::new();
     let mut brace_depth = 0i32;

@@ -1,7 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::process::{ExitStatus, Stdio};
+use std::time::Duration;
 
 use serde::Deserialize;
-use tokio::process::Command;
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::{Child, Command};
+use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
 use crate::services::code_nav::types::{
     DocumentSymbolItem, DocumentSymbolsResponse, NavCapabilities, NavLocation, NavPositionRequest,
@@ -10,6 +15,9 @@ use crate::services::code_nav::types::{
 
 const TS_BRIDGE_SCRIPT_RELATIVE: &str = "scripts/code_nav/typescript_language_service.cjs";
 const TYPESCRIPT_RUNTIME_RELATIVE: &str = "../chat_app/node_modules/typescript/lib/typescript.js";
+const TS_BRIDGE_TIMEOUT: Duration = Duration::from_secs(20);
+const TS_BRIDGE_STDOUT_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const TS_BRIDGE_STDERR_LIMIT_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub enum TsServiceMode {
@@ -159,6 +167,9 @@ async fn run_bridge(
 
     let mut command = Command::new("node");
     command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .arg(script_path)
         .arg("--mode")
         .arg(mode.as_str())
@@ -179,14 +190,15 @@ async fn run_bridge(
             .arg(req.column.to_string());
     }
 
-    let output = command
-        .output()
-        .await
-        .map_err(|err| format!("启动 TypeScript 语义导航进程失败: {err}"))?;
+    let output = run_ts_bridge_limited(command).await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(output.stderr.as_slice())
+            .trim()
+            .to_string();
+        let stdout = String::from_utf8_lossy(output.stdout.as_slice())
+            .trim()
+            .to_string();
         let message = if !stderr.is_empty() {
             stderr
         } else if !stdout.is_empty() {
@@ -202,6 +214,146 @@ async fn run_bridge(
         .map_err(|err| format!("TypeScript 语义导航输出不是合法 UTF-8: {err}"))
 }
 
+struct TsBridgeOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+async fn run_ts_bridge_limited(mut command: Command) -> Result<TsBridgeOutput, String> {
+    command.kill_on_drop(true);
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("启动 TypeScript 语义导航进程失败: {err}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "missing TypeScript bridge stdout".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "missing TypeScript bridge stderr".to_string())?;
+    let mut stdout_task = tokio::spawn(read_ts_bridge_stream_limited(
+        stdout,
+        "stdout",
+        TS_BRIDGE_STDOUT_LIMIT_BYTES,
+    ));
+    let mut stderr_task = tokio::spawn(read_ts_bridge_stream_limited(
+        stderr,
+        "stderr",
+        TS_BRIDGE_STDERR_LIMIT_BYTES,
+    ));
+    let timeout_sleep = sleep(TS_BRIDGE_TIMEOUT);
+    tokio::pin!(timeout_sleep);
+
+    let mut status: Option<ExitStatus> = None;
+    let mut stdout_result: Option<Vec<u8>> = None;
+    let mut stderr_result: Option<Vec<u8>> = None;
+
+    loop {
+        if status.is_some() && stdout_result.is_some() && stderr_result.is_some() {
+            break;
+        }
+
+        tokio::select! {
+            result = &mut stdout_task, if stdout_result.is_none() => {
+                match join_ts_bridge_stream_task("stdout", result) {
+                    Ok(output) => stdout_result = Some(output),
+                    Err(err) => {
+                        abort_ts_bridge_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                        return Err(err);
+                    }
+                }
+            }
+            result = &mut stderr_task, if stderr_result.is_none() => {
+                match join_ts_bridge_stream_task("stderr", result) {
+                    Ok(output) => stderr_result = Some(output),
+                    Err(err) => {
+                        abort_ts_bridge_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                        return Err(err);
+                    }
+                }
+            }
+            wait_result = child.wait(), if status.is_none() => {
+                match wait_result {
+                    Ok(value) => status = Some(value),
+                    Err(err) => {
+                        abort_ts_bridge_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                        return Err(format!("等待 TypeScript 语义导航进程失败: {err}"));
+                    }
+                }
+            }
+            _ = &mut timeout_sleep => {
+                abort_ts_bridge_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                return Err(format!(
+                    "TypeScript 语义导航进程超时: {}s",
+                    TS_BRIDGE_TIMEOUT.as_secs()
+                ));
+            }
+        }
+    }
+
+    Ok(TsBridgeOutput {
+        status: status.ok_or_else(|| "missing TypeScript bridge exit status".to_string())?,
+        stdout: stdout_result.unwrap_or_default(),
+        stderr: stderr_result.unwrap_or_default(),
+    })
+}
+
+async fn abort_ts_bridge_child(
+    child: &mut Child,
+    stdout_task: &mut JoinHandle<Result<Vec<u8>, String>>,
+    stderr_task: &mut JoinHandle<Result<Vec<u8>, String>>,
+) {
+    let _ = child.kill().await;
+    stdout_task.abort();
+    stderr_task.abort();
+}
+
+async fn read_ts_bridge_stream_limited<R>(
+    mut reader: R,
+    stream_label: &'static str,
+    limit_bytes: usize,
+) -> Result<Vec<u8>, String>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|err| format!("读取 TypeScript 语义导航 {stream_label} 失败: {err}"))?;
+        if read == 0 {
+            return Ok(output);
+        }
+        let next_len = output.len().saturating_add(read);
+        ensure_ts_bridge_stream_within_limit(stream_label, next_len, limit_bytes)?;
+        output.extend_from_slice(&buffer[..read]);
+    }
+}
+
+fn join_ts_bridge_stream_task(
+    stream_label: &str,
+    result: Result<Result<Vec<u8>, String>, tokio::task::JoinError>,
+) -> Result<Vec<u8>, String> {
+    result.map_err(|err| format!("读取 TypeScript 语义导航 {stream_label} join 失败: {err}"))?
+}
+
+fn ensure_ts_bridge_stream_within_limit(
+    stream_label: &str,
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "TypeScript bridge {stream_label} exceeded output limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
+}
+
 impl TsServiceMode {
     fn as_str(&self) -> &'static str {
         match self {
@@ -214,7 +366,10 @@ impl TsServiceMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_semantic_locations, semantic_capabilities, TsServiceMode};
+    use super::{
+        ensure_ts_bridge_stream_within_limit, get_semantic_locations, semantic_capabilities,
+        TsServiceMode,
+    };
     use crate::services::code_nav::types::{NavPositionRequest, ProjectContext};
     use std::fs;
     use std::path::PathBuf;
@@ -241,6 +396,20 @@ mod tests {
         )
         .expect("write b.ts");
         root
+    }
+
+    #[test]
+    fn ts_bridge_stream_limit_accepts_boundary_size() {
+        assert!(ensure_ts_bridge_stream_within_limit("stdout", 1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn ts_bridge_stream_limit_rejects_oversized_output() {
+        let err = ensure_ts_bridge_stream_within_limit("stderr", 1025, 1024)
+            .expect_err("oversized output should fail");
+
+        assert!(err.contains("exceeded output limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
     }
 
     #[tokio::test]

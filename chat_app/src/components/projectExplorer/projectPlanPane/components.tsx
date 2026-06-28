@@ -12,6 +12,8 @@ import {
   statusLabel,
 } from './model';
 
+const DEPENDENCY_PILL_RENDER_LIMIT = 16;
+
 export const PlanPaneHeader: React.FC<{
   loading: boolean;
   onRefresh: () => void;
@@ -150,22 +152,36 @@ export const DependencyLine: React.FC<{
   label,
   resolveLabel,
   tone = 'dependency',
-}) => (
-  <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
-    <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
-    {ids.length === 0 ? (
-      <span className="rounded border border-border/70 bg-muted/20 px-1.5 py-0.5 text-muted-foreground">
-        {emptyLabel}
-      </span>
-    ) : (
-      ids.map((id) => (
-        <DependencyPill key={id} tone={tone}>
-          {resolveLabel(id)}
-        </DependencyPill>
-      ))
-    )}
-  </div>
-);
+}) => {
+  const visibleIds = ids.length > DEPENDENCY_PILL_RENDER_LIMIT
+    ? ids.slice(0, DEPENDENCY_PILL_RENDER_LIMIT)
+    : ids;
+  const hiddenCount = ids.length - visibleIds.length;
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
+      <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
+      {ids.length === 0 ? (
+        <span className="rounded border border-border/70 bg-muted/20 px-1.5 py-0.5 text-muted-foreground">
+          {emptyLabel}
+        </span>
+      ) : (
+        <>
+          {visibleIds.map((id) => (
+            <DependencyPill key={id} tone={tone}>
+              {resolveLabel(id)}
+            </DependencyPill>
+          ))}
+          {hiddenCount > 0 ? (
+            <DependencyPill tone={tone}>
+              +{hiddenCount}
+            </DependencyPill>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+};
 
 export const WorkItemRow: React.FC<{
   dependents: string[];

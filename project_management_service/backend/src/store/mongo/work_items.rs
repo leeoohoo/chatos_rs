@@ -48,6 +48,32 @@ impl MongoStore {
         .await
     }
 
+    pub async fn count_work_items_by_project(
+        &self,
+        project_id: &str,
+        include_archived: bool,
+    ) -> Result<ProjectWorkItemStatusCounts, String> {
+        let mut counts = ProjectWorkItemStatusCounts::default();
+        for status in ProjectWorkItemStatus::ALL {
+            if !include_archived && status == ProjectWorkItemStatus::Archived {
+                continue;
+            }
+            let count = self
+                .work_items
+                .count_documents(
+                    doc! {
+                        "project_id": project_id,
+                        "status": status.as_str(),
+                    },
+                    None,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+            counts.add_status_count(status.as_str(), count as i64);
+        }
+        Ok(counts)
+    }
+
     pub async fn create_work_item(
         &self,
         requirement: &RequirementRecord,

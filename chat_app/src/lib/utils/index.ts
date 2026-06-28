@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { format, formatDistanceToNow } from 'date-fns';
 
 type AnyFunction = (...args: unknown[]) => unknown;
+type DebugLogFactory = () => unknown[];
 type ImportMetaEnvLike = {
   DEV?: boolean;
 };
@@ -352,9 +353,30 @@ const isDev =
   typeof import.meta !== 'undefined' &&
   (import.meta as ImportMeta & { env?: ImportMetaEnvLike }).env?.DEV === true;
 
+const DEBUG_LOG_STORAGE_KEY = 'chatos.debugLog';
+
+export const isDebugLogEnabled = (): boolean => {
+  if (!isDev || typeof localStorage === 'undefined') {
+    return false;
+  }
+  try {
+    const value = localStorage.getItem(DEBUG_LOG_STORAGE_KEY);
+    return value === '1' || value === 'true';
+  } catch {
+    return false;
+  }
+};
+
 export const debugLog = (...args: unknown[]) => {
-  if (!isDev) {
+  if (!isDebugLogEnabled()) {
     return;
   }
-  void args;
+  console.debug(...args);
+};
+
+export const debugLogLazy = (factory: DebugLogFactory) => {
+  if (!isDebugLogEnabled()) {
+    return;
+  }
+  console.debug(...factory());
 };

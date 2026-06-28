@@ -67,7 +67,8 @@ export interface ApiAttachmentPayload {
 export interface StreamChatLogPayload {
   conversation_id: string;
   turn_id: string;
-  message: string;
+  message_preview: string;
+  message_chars: number;
   model_config: {
     id: string;
     model: string;
@@ -78,8 +79,11 @@ export interface StreamChatLogPayload {
     supports_images: boolean;
     supports_reasoning: boolean;
   };
-  system_context: string;
-  attachments: ApiAttachmentPayload[];
+  system_context_preview: string;
+  system_context_chars: number;
+  attachment_count: number;
+  attachment_bytes: number;
+  attachments: Array<Pick<ApiAttachmentPayload, 'name' | 'mimeType' | 'size' | 'type'>>;
   reasoning_enabled: boolean;
   plan_mode: boolean;
   contact_agent_id: string | null;

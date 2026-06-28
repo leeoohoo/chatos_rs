@@ -2,6 +2,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use serde::Deserialize;
+use serde_json::{json, Value};
 
 use super::access::{
     ensure_project_writable, require_project_access, require_requirement_access,
@@ -11,9 +12,10 @@ use super::ApiError;
 use crate::auth::CurrentUser;
 use crate::domain::visibility::{non_archived_project_tasks, should_include_archived};
 use crate::models::{
-    CreateProjectWorkItemRequest, ProjectWorkItemRecord, ProjectWorkItemStatus,
+    CreateProjectWorkItemRequest, ProjectWorkItemRecord, ProjectWorkItemStatus, RequirementRecord,
     UpdateProjectWorkItemRequest,
 };
+use crate::services::project_plan;
 use crate::state::AppState;
 use crate::task_runner_api_client;
 
@@ -49,6 +51,7 @@ pub(in crate::api) async fn list_project_work_items(
 #[derive(Debug, Default, Deserialize)]
 pub(in crate::api) struct RequirementWorkItemListQuery {
     include_archived: Option<bool>,
+    include_dependency_graph: Option<bool>,
 }
 
 pub(in crate::api) async fn list_requirement_work_items(
@@ -56,17 +59,60 @@ pub(in crate::api) async fn list_requirement_work_items(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Query(query): Query<RequirementWorkItemListQuery>,
-) -> Result<Json<Vec<ProjectWorkItemRecord>>, ApiError> {
-    require_requirement_access(&state, &requirement_id, &user).await?;
+) -> Result<Json<Value>, ApiError> {
+    let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
+    list_requirement_work_items_response(&state, &requirement, query)
+        .await
+        .map(Json)
+}
+
+pub(in crate::api) async fn list_project_requirement_work_items(
+    Path((project_id, requirement_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Query(query): Query<RequirementWorkItemListQuery>,
+) -> Result<Json<Value>, ApiError> {
+    require_project_access(&state, &project_id, &user).await?;
+    let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
+    if requirement.project_id != project_id {
+        return Err(ApiError::not_found(format!(
+            "requirement does not belong to project: {requirement_id}"
+        )));
+    }
+    list_requirement_work_items_response(&state, &requirement, query)
+        .await
+        .map(Json)
+}
+
+async fn list_requirement_work_items_response(
+    state: &AppState,
+    requirement: &RequirementRecord,
+    query: RequirementWorkItemListQuery,
+) -> Result<Value, ApiError> {
     let mut items = state
         .store
-        .list_work_items_by_requirement(&requirement_id)
+        .list_work_items_by_requirement(&requirement.id)
         .await
         .map_err(ApiError::bad_request)?;
     if !query.include_archived.unwrap_or(false) {
         items = non_archived_project_tasks(items);
     }
-    Ok(Json(items))
+    if !query.include_dependency_graph.unwrap_or(false) {
+        return Ok(json!(items));
+    }
+
+    let dependency_graph =
+        project_plan::requirement_work_items_dependency_graph(&state.store, requirement, &items)
+            .await
+            .map_err(ApiError::bad_request)?;
+    let work_items = json!(items);
+    let dependency_graph = json!(dependency_graph);
+    Ok(json!({
+        "work_items": work_items.clone(),
+        "workItems": work_items,
+        "dependency_graph": dependency_graph.clone(),
+        "dependencyGraph": dependency_graph,
+    }))
 }
 
 pub(in crate::api) async fn create_work_item(

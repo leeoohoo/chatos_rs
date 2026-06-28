@@ -135,16 +135,20 @@ pub fn prepare_chat_execution(
 ) -> PreparedChatExecution {
     send_tools_unavailable_event(&sink, unavailable_tools);
     let live_request_snapshot_for_context = live_request_snapshot.clone();
-    callbacks.on_before_model_request = Some(Arc::new(
-        move |request_input, _, override_context| {
+    callbacks.on_before_model_request =
+        Some(Arc::new(move |request_input, _, override_context| {
             let snapshot_context =
                 override_context.unwrap_or_else(|| live_request_snapshot_for_context.clone());
             let mode = actual_context_mode.to_string();
+            let items =
+                crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(
+                    request_input,
+                );
             tokio::spawn(async move {
                 let actual_request =
                     crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
                         context_mode: Some(mode.clone()),
-                        items: crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input),
+                        items,
                         model_request_payload: None,
                     };
                 let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
@@ -153,8 +157,7 @@ pub fn prepare_chat_execution(
                 )
                 .await;
             });
-        },
-    ));
+        }));
     let live_request_snapshot_for_payload = live_request_snapshot.clone();
     callbacks.on_before_send_model_request = Some(Arc::new(move |payload| {
         let snapshot_context = live_request_snapshot_for_payload.clone();

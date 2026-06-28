@@ -1,9 +1,15 @@
+use bytes::BytesMut;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 static TASK_RUNNER_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+const TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const TASK_RUNNER_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
 mod types;
 
@@ -30,27 +36,18 @@ pub async fn exchange_task_runner_token_via_user_service(
         "{}/api/token/exchange/task-runner",
         request.base_url.trim().trim_end_matches('/')
     );
-    let response = task_runner_http_client()
-        .post(endpoint)
-        .bearer_auth(request.access_token.trim())
-        .json(&serde_json::json!({
-            "task_runner_agent_account_id": request.task_runner_agent_account_id,
-            "contact_id": request.contact_id,
-        }))
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "User service task runner token exchange failed: {status} {body}"
-        ));
-    }
-    let payload = response
-        .json::<UserServiceTaskRunnerTokenResponse>()
-        .await
-        .map_err(|err| err.to_string())?;
+    let payload: UserServiceTaskRunnerTokenResponse = send_task_runner_response_with_limit(
+        task_runner_http_client()
+            .post(endpoint)
+            .bearer_auth(request.access_token.trim())
+            .json(&serde_json::json!({
+                "task_runner_agent_account_id": request.task_runner_agent_account_id,
+                "contact_id": request.contact_id,
+            })),
+        TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES,
+        "User service task runner token exchange failed",
+    )
+    .await?;
     let token = payload.access_token.trim();
     if token.is_empty() {
         return Err("User service task runner token exchange returned empty token".to_string());
@@ -77,16 +74,12 @@ pub async fn fetch_task_runner_skill(
     if let Some(profile) = profile.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.query(&[("profile", profile)]);
     }
-    let response = request.send().await.map_err(|err| err.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Task Runner skill request failed: {status} {body}"));
-    }
-    let payload = response
-        .json::<TaskRunnerSkillResponse>()
-        .await
-        .map_err(|err| err.to_string())?;
+    let payload: TaskRunnerSkillResponse = send_task_runner_response_with_limit(
+        request,
+        TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES,
+        "Task Runner skill request failed",
+    )
+    .await?;
     let content = payload.content.trim();
     if content.is_empty() {
         return Err("Task Runner skill request returned empty content".to_string());
@@ -243,13 +236,7 @@ pub async fn cancel_task_runner_prompt(
 async fn send_json<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, String> {
-    let response = request.send().await.map_err(|err| err.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Task Runner request failed: {status} {body}"));
-    }
-    response.json::<T>().await.map_err(|err| err.to_string())
+    send_task_runner_response(request).await
 }
 
 async fn task_runner_json<T, B>(
@@ -285,13 +272,30 @@ fn task_runner_request(
 async fn send_task_runner_response<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, String> {
+    send_task_runner_response_with_limit(
+        request,
+        TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES,
+        "Task Runner request failed",
+    )
+    .await
+}
+
+async fn send_task_runner_response_with_limit<T: for<'de> Deserialize<'de>>(
+    request: reqwest::RequestBuilder,
+    response_limit_bytes: usize,
+    error_prefix: &str,
+) -> Result<T, String> {
     let response = request.send().await.map_err(|err| err.to_string())?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Task Runner request failed: {status} {body}"));
+        let body = read_task_runner_body_limited(response, TASK_RUNNER_ERROR_BODY_PREVIEW_BYTES)
+            .await
+            .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
+            .unwrap_or_default();
+        return Err(format!("{error_prefix}: {status} {body}"));
     }
-    response.json::<T>().await.map_err(|err| err.to_string())
+    let body = read_task_runner_body_limited(response, response_limit_bytes).await?;
+    serde_json::from_slice::<T>(body.as_ref()).map_err(|err| err.to_string())
 }
 
 fn normalize_optional(value: Option<String>) -> Option<String> {
@@ -310,23 +314,12 @@ async fn get_internal_json(
     query: &[(&str, &str)],
 ) -> Result<Value, String> {
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
-    let response = task_runner_http_client()
-        .get(endpoint)
-        .query(query)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Task Runner internal request failed: {status} {body}"
-        ));
-    }
-    response
-        .json::<Value>()
-        .await
-        .map_err(|err| err.to_string())
+    send_task_runner_response_with_limit(
+        task_runner_http_client().get(endpoint).query(query),
+        TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES,
+        "Task Runner internal request failed",
+    )
+    .await
 }
 
 async fn post_internal_json<T: Serialize + ?Sized>(
@@ -335,23 +328,43 @@ async fn post_internal_json<T: Serialize + ?Sized>(
     body: &T,
 ) -> Result<Value, String> {
     let endpoint = format!("{}{}", base_url.trim().trim_end_matches('/'), path);
-    let response = task_runner_http_client()
-        .post(endpoint)
-        .json(body)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+    send_task_runner_response_with_limit(
+        task_runner_http_client().post(endpoint).json(body),
+        TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES,
+        "Task Runner internal request failed",
+    )
+    .await
+}
+
+async fn read_task_runner_body_limited(
+    response: reqwest::Response,
+    limit_bytes: usize,
+) -> Result<bytes::Bytes, String> {
+    if let Some(content_length) = response.content_length() {
+        ensure_task_runner_body_within_limit(content_length as usize, limit_bytes)?;
+    }
+
+    let mut body = BytesMut::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| err.to_string())?;
+        let next_len = body.len().saturating_add(chunk.len());
+        ensure_task_runner_body_within_limit(next_len, limit_bytes)?;
+        body.extend_from_slice(chunk.as_ref());
+    }
+    Ok(body.freeze())
+}
+
+fn ensure_task_runner_body_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
         return Err(format!(
-            "Task Runner internal request failed: {status} {body}"
+            "Task Runner response exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
         ));
     }
-    response
-        .json::<Value>()
-        .await
-        .map_err(|err| err.to_string())
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]

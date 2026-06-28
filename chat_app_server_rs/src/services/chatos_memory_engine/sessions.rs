@@ -22,6 +22,8 @@ use super::register_subject_memory_scopes;
 use super::types::ComposedChatHistoryContext;
 use memory_engine_sdk::{SdkBatchSyncRecordsRequest, UpsertRecordInput};
 
+const CHATOS_CONTEXT_RECENT_RECORD_LIMIT: usize = 200;
+
 async fn count_chatos_message_records(
     client: &MemoryEngineClient,
     thread_id: &str,
@@ -90,7 +92,7 @@ pub async fn compose_chatos_context(
                 include_recent_records: Some(include_raw_messages),
                 include_thread_summary: Some(true),
                 include_subject_memory: Some(true),
-                recent_record_limit: None,
+                recent_record_limit: Some(CHATOS_CONTEXT_RECENT_RECORD_LIMIT),
                 summary_limit: None,
             }),
         })

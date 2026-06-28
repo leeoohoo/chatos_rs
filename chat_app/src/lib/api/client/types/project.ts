@@ -354,10 +354,38 @@ export interface ProjectDependencyGraphResponse {
   ready?: boolean;
 }
 
+export interface ProjectWorkItemCountsResponse {
+  total?: number;
+  open?: number;
+  done?: number;
+  blocked?: number;
+  by_status?: Record<string, number>;
+  byStatus?: Record<string, number>;
+}
+
 export interface ProjectPlanResponse {
   project_id?: string;
   projectId?: string;
   requirements?: ProjectRequirementResponse[];
+  work_items?: ProjectWorkItemResponse[];
+  workItems?: ProjectWorkItemResponse[];
+  work_item_counts?: ProjectWorkItemCountsResponse;
+  workItemCounts?: ProjectWorkItemCountsResponse;
+  dependency_graph?: ProjectDependencyGraphResponse;
+  dependencyGraph?: ProjectDependencyGraphResponse;
+}
+
+export interface ProjectPlanOptions {
+  includeArchived?: boolean;
+  includeWorkItems?: boolean;
+}
+
+export interface ProjectRequirementWorkItemsOptions {
+  includeArchived?: boolean;
+  includeDependencyGraph?: boolean;
+}
+
+export interface ProjectRequirementWorkItemsResponse {
   work_items?: ProjectWorkItemResponse[];
   workItems?: ProjectWorkItemResponse[];
   dependency_graph?: ProjectDependencyGraphResponse;

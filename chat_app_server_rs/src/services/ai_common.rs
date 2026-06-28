@@ -13,8 +13,8 @@ pub(crate) use self::request_support::{
     normalize_task_runner_async_plan_metadata, normalize_task_runner_async_tool_call_metadata,
     normalize_turn_id, persist_assistant_response_with_policy,
     persist_user_message_and_build_content_parts, should_persist_assistant_message,
-    terminal_empty_response_error, validate_request_payload_size,
-    AssistantResponsePersistenceRequest, TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE,
+    terminal_empty_response_error, AssistantResponsePersistenceRequest,
+    TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE,
 };
 #[cfg(test)]
 pub(crate) use self::stream_support::drain_sse_json_events;

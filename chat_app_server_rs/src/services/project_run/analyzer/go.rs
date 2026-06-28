@@ -5,19 +5,21 @@ use std::path::Path;
 use crate::models::project_run::ProjectRunTarget;
 use regex::Regex;
 
+use super::scan_budget::{read_to_string_limited, ScanBudget, MAX_SOURCE_PROBE_BYTES};
 use super::target_model::{build_target, push_target};
 
 pub(super) fn detect_go_targets(
     dir: &Path,
     files: &HashSet<String>,
     out: &mut Vec<ProjectRunTarget>,
-) {
+    budget: &mut ScanBudget,
+) -> Result<(), String> {
     if !files.contains("go.mod") {
-        return;
+        return Ok(());
     }
     let cwd = dir.to_string_lossy().to_string();
     let manifest_path = Some(dir.join("go.mod").to_string_lossy().to_string());
-    let go_entrypoints = detect_go_entrypoints(dir);
+    let go_entrypoints = detect_go_entrypoints_with_budget(dir, budget)?;
     if go_entrypoints.is_empty() {
         push_target(
             out,
@@ -62,9 +64,18 @@ pub(super) fn detect_go_targets(
             vec!["go"],
         ),
     );
+    Ok(())
 }
 
 pub(in crate::services::project_run) fn detect_go_entrypoints(dir: &Path) -> Vec<String> {
+    let mut budget = ScanBudget::for_project_run_analysis();
+    detect_go_entrypoints_with_budget(dir, &mut budget).unwrap_or_default()
+}
+
+fn detect_go_entrypoints_with_budget(
+    dir: &Path,
+    budget: &mut ScanBudget,
+) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     let main_re = Regex::new(r"(?m)^\s*func\s+main\s*\(").ok();
@@ -72,24 +83,29 @@ pub(in crate::services::project_run) fn detect_go_entrypoints(dir: &Path) -> Vec
     let cmd_dir = dir.join("cmd");
     if cmd_dir.is_dir() {
         for entry in fs::read_dir(&cmd_dir).into_iter().flatten().flatten() {
+            budget.account_entry()?;
             let path = entry.path();
             if !path.is_dir() {
                 continue;
             }
-            let has_main = walkdir::WalkDir::new(&path)
+            let mut has_main = false;
+            for item in walkdir::WalkDir::new(&path)
                 .max_depth(2)
                 .into_iter()
                 .flatten()
-                .filter(|item| item.file_type().is_file())
-                .filter(|item| {
-                    item.path().extension().and_then(|value| value.to_str()) == Some("go")
-                })
-                .any(|item| {
-                    fs::read_to_string(item.path())
-                        .ok()
-                        .zip(main_re.as_ref())
-                        .is_some_and(|(content, re)| re.is_match(&content))
-                });
+            {
+                budget.account_entry()?;
+                if !item.file_type().is_file() {
+                    continue;
+                }
+                if item.path().extension().and_then(|value| value.to_str()) != Some("go") {
+                    continue;
+                }
+                if go_file_contains_main(item.path(), main_re.as_ref()) {
+                    has_main = true;
+                    break;
+                }
+            }
             if !has_main {
                 continue;
             }
@@ -104,23 +120,32 @@ pub(in crate::services::project_run) fn detect_go_entrypoints(dir: &Path) -> Vec
     }
 
     if seen.is_empty() {
-        let has_root_main = fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|entry| entry.path().is_file())
-            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("go"))
-            .any(|entry| {
-                fs::read_to_string(entry.path())
-                    .ok()
-                    .zip(main_re.as_ref())
-                    .is_some_and(|(content, re)| re.is_match(&content))
-            });
+        let mut has_root_main = false;
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            budget.account_entry()?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if path.extension().and_then(|value| value.to_str()) != Some("go") {
+                continue;
+            }
+            if go_file_contains_main(&path, main_re.as_ref()) {
+                has_root_main = true;
+                break;
+            }
+        }
         if has_root_main {
             out.push(".".to_string());
         }
     }
 
     out.sort();
-    out
+    Ok(out)
+}
+
+fn go_file_contains_main(path: &Path, main_re: Option<&Regex>) -> bool {
+    read_to_string_limited(path, MAX_SOURCE_PROBE_BYTES)
+        .zip(main_re)
+        .is_some_and(|(content, re)| re.is_match(&content))
 }

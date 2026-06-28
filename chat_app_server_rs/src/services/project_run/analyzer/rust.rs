@@ -1,22 +1,23 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 
 use crate::models::project_run::ProjectRunTarget;
 
+use super::scan_budget::{read_to_string_limited, ScanBudget, MAX_MANIFEST_BYTES};
 use super::target_model::{build_target, push_target};
 
 pub(super) fn detect_rust_targets(
     dir: &Path,
     files: &HashSet<String>,
     out: &mut Vec<ProjectRunTarget>,
-) {
+    budget: &mut ScanBudget,
+) -> Result<(), String> {
     if !files.contains("cargo.toml") {
-        return;
+        return Ok(());
     }
     let cwd = dir.to_string_lossy().to_string();
     let manifest_path = Some(dir.join("Cargo.toml").to_string_lossy().to_string());
-    let rust_bins = detect_rust_bins(dir);
+    let rust_bins = detect_rust_bins_with_budget(dir, budget)?;
     let has_default_main = dir.join("src").join("main.rs").is_file();
     if has_default_main {
         push_target(
@@ -80,9 +81,18 @@ pub(super) fn detect_rust_targets(
             vec!["cargo"],
         ),
     );
+    Ok(())
 }
 
 pub(in crate::services::project_run) fn detect_rust_bins(dir: &Path) -> Vec<String> {
+    let mut budget = ScanBudget::for_project_run_analysis();
+    detect_rust_bins_with_budget(dir, &mut budget).unwrap_or_default()
+}
+
+fn detect_rust_bins_with_budget(
+    dir: &Path,
+    budget: &mut ScanBudget,
+) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
 
@@ -93,6 +103,7 @@ pub(in crate::services::project_run) fn detect_rust_bins(dir: &Path) -> Vec<Stri
             .into_iter()
             .flatten()
         {
+            budget.account_entry()?;
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -125,7 +136,7 @@ pub(in crate::services::project_run) fn detect_rust_bins(dir: &Path) -> Vec<Stri
 
     let cargo_toml = dir.join("Cargo.toml");
     if cargo_toml.is_file() {
-        if let Ok(content) = fs::read_to_string(&cargo_toml) {
+        if let Some(content) = read_to_string_limited(&cargo_toml, MAX_MANIFEST_BYTES) {
             for raw_line in content.lines() {
                 let line = raw_line.trim();
                 if line == "[[bin]]" {
@@ -151,5 +162,5 @@ pub(in crate::services::project_run) fn detect_rust_bins(dir: &Path) -> Vec<Stri
     }
 
     out.sort();
-    out
+    Ok(out)
 }

@@ -5,7 +5,7 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use std::sync::mpsc as std_mpsc;
-use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::core::auth::AuthUser;
@@ -13,19 +13,27 @@ use crate::core::remote_connection_access::{
     ensure_owned_remote_connection, map_remote_connection_access_error,
 };
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
+use crate::utils::ws_outbound;
 
 use super::{
     get_remote_terminal_manager, resolve_jump_connection_snapshot, ws_error_output,
     RemoteTerminalEvent, WsInput, WsOutput,
 };
 
+const REMOTE_TERMINAL_WS_OUTBOUND_QUEUE_CAPACITY: usize = 512;
+const REMOTE_TERMINAL_WS_CHANNEL: &str = "remote_terminal";
+
 pub(super) async fn send_startup_error_and_shutdown(
-    outbound_tx: mpsc::UnboundedSender<Message>,
+    outbound_tx: ws_outbound::WsOutboundSender,
     payload: String,
     challenge_task: tokio::task::JoinHandle<()>,
     forward_task: tokio::task::JoinHandle<()>,
 ) {
-    let _ = outbound_tx.send(Message::Text(payload));
+    let _ = ws_outbound::try_send(
+        &outbound_tx,
+        Message::Text(payload),
+        REMOTE_TERMINAL_WS_CHANNEL,
+    );
     challenge_task.abort();
     let _ = challenge_task.await;
     drop(outbound_tx);
@@ -65,12 +73,30 @@ async fn handle_remote_terminal_socket(
         .filter(|value| !value.is_empty())
         .is_some();
     let (mut sender, mut receiver_ws) = socket.split();
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
+    let (outbound_tx, mut outbound_rx) =
+        ws_outbound::channel(REMOTE_TERMINAL_WS_OUTBOUND_QUEUE_CAPACITY);
+    let shutdown = CancellationToken::new();
 
-    let forward_task = tokio::spawn(async move {
-        while let Some(msg) = outbound_rx.recv().await {
-            if sender.send(msg).await.is_err() {
-                break;
+    let forward_task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    maybe_msg = outbound_rx.recv() => {
+                        let Some(msg) = maybe_msg else {
+                            break;
+                        };
+                        tokio::select! {
+                            _ = shutdown.cancelled() => break,
+                            result = sender.send(msg) => {
+                                if result.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     });
@@ -78,6 +104,7 @@ async fn handle_remote_terminal_socket(
     let (verification_tx, verification_rx) = std_mpsc::channel::<String>();
     let (challenge_tx, challenge_rx) = std_mpsc::channel::<String>();
     let challenge_outbound_tx = outbound_tx.clone();
+    let challenge_shutdown = shutdown.clone();
     let challenge_task = tokio::task::spawn_blocking(move || {
         while let Ok(prompt) = challenge_rx.recv() {
             let payload = serde_json::to_string(&WsOutput::Error {
@@ -87,7 +114,12 @@ async fn handle_remote_terminal_socket(
                 challenge_prompt: Some(prompt),
             })
             .unwrap_or_else(|_| "{}".to_string());
-            if challenge_outbound_tx.send(Message::Text(payload)).is_err() {
+            if !ws_outbound::try_send_or_close(
+                &challenge_outbound_tx,
+                Message::Text(payload),
+                REMOTE_TERMINAL_WS_CHANNEL,
+                &challenge_shutdown,
+            ) {
                 break;
             }
         }
@@ -109,6 +141,17 @@ async fn handle_remote_terminal_socket(
 
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => {
+                if let Some(handle) = startup.take() {
+                    handle.abort();
+                    let _ = handle.await;
+                }
+                challenge_task.abort();
+                forward_task.abort();
+                let _ = challenge_task.await;
+                let _ = forward_task.await;
+                return;
+            }
             startup_result = async {
                 match startup.as_mut() {
                     Some(handle) => handle.await,
@@ -158,6 +201,7 @@ async fn handle_remote_terminal_socket(
                     session,
                     receiver_ws,
                     outbound_tx,
+                    shutdown,
                     forward_task,
                     challenge_task,
                 )
@@ -175,7 +219,14 @@ async fn handle_remote_terminal_socket(
                                 let timestamp = crate::core::time::now_rfc3339();
                                 let payload = serde_json::to_string(&WsOutput::Pong { timestamp })
                                     .unwrap_or_else(|_| "{}".to_string());
-                                let _ = outbound_tx.send(Message::Text(payload));
+                                if !ws_outbound::try_send_or_close(
+                                    &outbound_tx,
+                                    Message::Text(payload),
+                                    REMOTE_TERMINAL_WS_CHANNEL,
+                                    &shutdown,
+                                ) {
+                                    continue;
+                                }
                             }
                             Ok(_) => {
                                 // Defer normal terminal input until the SSH shell is ready.
@@ -185,11 +236,23 @@ async fn handle_remote_terminal_socket(
                                     "invalid ws message: {err}"
                                 )))
                                 .unwrap_or_else(|_| "{}".to_string());
-                                let _ = outbound_tx.send(Message::Text(payload));
+                                if !ws_outbound::try_send_or_close(
+                                    &outbound_tx,
+                                    Message::Text(payload),
+                                    REMOTE_TERMINAL_WS_CHANNEL,
+                                    &shutdown,
+                                ) {
+                                    continue;
+                                }
                             }
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {
+                        shutdown.cancel();
+                        if let Some(handle) = startup.take() {
+                            handle.abort();
+                            let _ = handle.await;
+                        }
                         challenge_task.abort();
                         forward_task.abort();
                         let _ = challenge_task.await;
@@ -198,6 +261,11 @@ async fn handle_remote_terminal_socket(
                     }
                     Some(Ok(_)) => {}
                     Some(Err(_)) => {
+                        shutdown.cancel();
+                        if let Some(handle) = startup.take() {
+                            handle.abort();
+                            let _ = handle.await;
+                        }
                         challenge_task.abort();
                         forward_task.abort();
                         let _ = challenge_task.await;
@@ -214,7 +282,8 @@ async fn run_connected_remote_terminal_socket(
     connection: RemoteConnection,
     session: std::sync::Arc<super::remote_terminal::RemoteTerminalSession>,
     mut receiver_ws: futures::stream::SplitStream<WebSocket>,
-    tx: mpsc::UnboundedSender<Message>,
+    tx: ws_outbound::WsOutboundSender,
+    shutdown: CancellationToken,
     forward_task: tokio::task::JoinHandle<()>,
     challenge_task: tokio::task::JoinHandle<()>,
 ) {
@@ -227,7 +296,16 @@ async fn run_connected_remote_terminal_socket(
     if !snapshot.is_empty() {
         let payload = serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
             .unwrap_or_else(|_| "{}".to_string());
-        if tx.send(Message::Text(payload)).is_err() {
+        if !ws_outbound::try_send_or_close(
+            &tx,
+            Message::Text(payload),
+            REMOTE_TERMINAL_WS_CHANNEL,
+            &shutdown,
+        ) {
+            challenge_task.abort();
+            forward_task.abort();
+            let _ = challenge_task.await;
+            let _ = forward_task.await;
             return;
         }
     }
@@ -235,31 +313,60 @@ async fn run_connected_remote_terminal_socket(
         busy: session.is_busy(),
     })
     .unwrap_or_else(|_| "{}".to_string());
-    if tx.send(Message::Text(payload)).is_err() {
+    if !ws_outbound::try_send_or_close(
+        &tx,
+        Message::Text(payload),
+        REMOTE_TERMINAL_WS_CHANNEL,
+        &shutdown,
+    ) {
+        challenge_task.abort();
+        forward_task.abort();
+        let _ = challenge_task.await;
+        let _ = forward_task.await;
         return;
     }
 
     let tx_events = tx.clone();
+    let event_shutdown = shutdown.clone();
     let event_task = tokio::spawn(async move {
         loop {
-            match receiver.recv().await {
+            let received = tokio::select! {
+                _ = event_shutdown.cancelled() => break,
+                received = receiver.recv() => received,
+            };
+            match received {
                 Ok(RemoteTerminalEvent::Output(data)) => {
                     let text = serde_json::to_string(&WsOutput::Output { data })
                         .unwrap_or_else(|_| "{}".to_string());
-                    if tx_events.send(Message::Text(text)).is_err() {
+                    if !ws_outbound::try_send_or_close(
+                        &tx_events,
+                        Message::Text(text),
+                        REMOTE_TERMINAL_WS_CHANNEL,
+                        &event_shutdown,
+                    ) {
                         break;
                     }
                 }
                 Ok(RemoteTerminalEvent::Exit(code)) => {
                     let text = serde_json::to_string(&WsOutput::Exit { code })
                         .unwrap_or_else(|_| "{}".to_string());
-                    let _ = tx_events.send(Message::Text(text));
+                    let _ = ws_outbound::try_send_or_close(
+                        &tx_events,
+                        Message::Text(text),
+                        REMOTE_TERMINAL_WS_CHANNEL,
+                        &event_shutdown,
+                    );
                     break;
                 }
                 Ok(RemoteTerminalEvent::State(busy)) => {
                     let text = serde_json::to_string(&WsOutput::State { busy })
                         .unwrap_or_else(|_| "{}".to_string());
-                    if tx_events.send(Message::Text(text)).is_err() {
+                    if !ws_outbound::try_send_or_close(
+                        &tx_events,
+                        Message::Text(text),
+                        REMOTE_TERMINAL_WS_CHANNEL,
+                        &event_shutdown,
+                    ) {
                         break;
                     }
                 }
@@ -269,7 +376,14 @@ async fn run_connected_remote_terminal_socket(
         }
     });
 
-    while let Some(Ok(msg)) = receiver_ws.next().await {
+    loop {
+        let msg = tokio::select! {
+            _ = shutdown.cancelled() => break,
+            msg = receiver_ws.next() => msg,
+        };
+        let Some(Ok(msg)) = msg else {
+            break;
+        };
         match msg {
             Message::Text(text) => {
                 let parsed = serde_json::from_str::<WsInput>(&text);
@@ -278,7 +392,14 @@ async fn run_connected_remote_terminal_socket(
                         if let Err(err) = session.write_input(data.as_str()) {
                             let payload = serde_json::to_string(&ws_error_output(err))
                                 .unwrap_or_else(|_| "{}".to_string());
-                            let _ = tx.send(Message::Text(payload));
+                            if !ws_outbound::try_send_or_close(
+                                &tx,
+                                Message::Text(payload),
+                                REMOTE_TERMINAL_WS_CHANNEL,
+                                &shutdown,
+                            ) {
+                                break;
+                            }
                         } else {
                             let _ = RemoteConnectionService::touch(&connection.id).await;
                         }
@@ -291,7 +412,14 @@ async fn run_connected_remote_terminal_socket(
                         if let Err(err) = session.write_input(cmd.as_str()) {
                             let payload = serde_json::to_string(&ws_error_output(err))
                                 .unwrap_or_else(|_| "{}".to_string());
-                            let _ = tx.send(Message::Text(payload));
+                            if !ws_outbound::try_send_or_close(
+                                &tx,
+                                Message::Text(payload),
+                                REMOTE_TERMINAL_WS_CHANNEL,
+                                &shutdown,
+                            ) {
+                                break;
+                            }
                         } else {
                             let _ = RemoteConnectionService::touch(&connection.id).await;
                         }
@@ -300,7 +428,14 @@ async fn run_connected_remote_terminal_socket(
                         if let Err(err) = session.resize(cols, rows) {
                             let payload = serde_json::to_string(&ws_error_output(err))
                                 .unwrap_or_else(|_| "{}".to_string());
-                            let _ = tx.send(Message::Text(payload));
+                            if !ws_outbound::try_send_or_close(
+                                &tx,
+                                Message::Text(payload),
+                                REMOTE_TERMINAL_WS_CHANNEL,
+                                &shutdown,
+                            ) {
+                                break;
+                            }
                         }
                     }
                     Ok(WsInput::Verification { .. }) => {}
@@ -309,14 +444,28 @@ async fn run_connected_remote_terminal_socket(
                         let timestamp = crate::core::time::now_rfc3339();
                         let payload = serde_json::to_string(&WsOutput::Pong { timestamp })
                             .unwrap_or_else(|_| "{}".to_string());
-                        let _ = tx.send(Message::Text(payload));
+                        if !ws_outbound::try_send_or_close(
+                            &tx,
+                            Message::Text(payload),
+                            REMOTE_TERMINAL_WS_CHANNEL,
+                            &shutdown,
+                        ) {
+                            break;
+                        }
                     }
                     Err(err) => {
                         let payload = serde_json::to_string(&ws_error_output(format!(
                             "invalid ws message: {err}"
                         )))
                         .unwrap_or_else(|_| "{}".to_string());
-                        let _ = tx.send(Message::Text(payload));
+                        if !ws_outbound::try_send_or_close(
+                            &tx,
+                            Message::Text(payload),
+                            REMOTE_TERMINAL_WS_CHANNEL,
+                            &shutdown,
+                        ) {
+                            break;
+                        }
                     }
                 }
             }
@@ -336,6 +485,7 @@ async fn run_connected_remote_terminal_socket(
         "Remote terminal websocket closed"
     );
 
+    shutdown.cancel();
     drop(tx);
     event_task.abort();
     challenge_task.abort();

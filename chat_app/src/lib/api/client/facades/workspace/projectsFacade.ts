@@ -4,7 +4,10 @@ import type {
   PagingOptions,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectPlanOptions,
   ProjectPlanResponse,
+  ProjectRequirementWorkItemsOptions,
+  ProjectRequirementWorkItemsResponse,
   ProjectRequirementExecuteResponse,
   ProjectRequirementStopResponse,
   ProjectRunEnvironmentResponse,
@@ -21,7 +24,12 @@ export interface WorkspaceProjectFacade {
   updateProject(id: string, data: { name?: string; root_path?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
-  getProjectPlan(projectId: string, options?: { includeArchived?: boolean }): Promise<ProjectPlanResponse>;
+  getProjectPlan(projectId: string, options?: ProjectPlanOptions): Promise<ProjectPlanResponse>;
+  listProjectRequirementWorkItems(
+    projectId: string,
+    requirementId: string,
+    options?: ProjectRequirementWorkItemsOptions,
+  ): Promise<ProjectRequirementWorkItemsResponse>;
   executeProjectRequirement(
     projectId: string,
     requirementId: string,
@@ -80,6 +88,14 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async getProjectPlan(projectId, options) {
     return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);
+  },
+  async listProjectRequirementWorkItems(projectId, requirementId, options) {
+    return workspaceApi.listProjectRequirementWorkItems(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+      options,
+    );
   },
   async executeProjectRequirement(projectId, requirementId, data) {
     return workspaceApi.executeProjectRequirement(this.getRequestFn(), projectId, requirementId, data);

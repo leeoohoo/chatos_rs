@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 use crate::core::time::now_rfc3339;
 use crate::models::memory_skill::{MemorySkill, MemorySkillPluginCommand};
 
+use super::chatos_skills_file_limits::{
+    read_plugin_text_limited, MAX_PLUGIN_JSON_BYTES, MAX_PLUGIN_MARKDOWN_BYTES,
+    MAX_PLUGIN_SCAN_ENTRIES,
+};
 use super::chatos_skills_helpers::{hash_id, normalize_repo_relative_path, path_to_unix_relative};
 
 #[derive(Default)]
@@ -16,6 +20,7 @@ pub struct ExtractedPluginContent {
 pub fn discover_plugin_roots(plugins_root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     let mut stack = vec![plugins_root.to_path_buf()];
+    let mut visited_entries = 0usize;
     while let Some(dir) = stack.pop() {
         let entries = match fs::read_dir(dir.as_path()) {
             Ok(entries) => entries,
@@ -24,6 +29,12 @@ pub fn discover_plugin_roots(plugins_root: &Path) -> Result<Vec<PathBuf>, String
         let mut children = Vec::new();
         let mut qualifies = false;
         for entry in entries.flatten() {
+            visited_entries = visited_entries.saturating_add(1);
+            if visited_entries > MAX_PLUGIN_SCAN_ENTRIES {
+                return Err(format!(
+                    "plugin root discovery exceeded {MAX_PLUGIN_SCAN_ENTRIES} entries"
+                ));
+            }
             let path = entry.path();
             let file_type = match entry.file_type() {
                 Ok(value) => value,
@@ -66,7 +77,7 @@ pub fn extract_plugin_content(plugin_root: &Path) -> ExtractedPluginContent {
         let mut agent_files = collect_markdown_files(agents_root.as_path());
         agent_files.sort();
         for path in agent_files {
-            let raw = match fs::read_to_string(path.as_path()) {
+            let raw = match read_plugin_text_limited(path.as_path(), MAX_PLUGIN_MARKDOWN_BYTES) {
                 Ok(value) => value,
                 Err(_) => continue,
             };
@@ -110,7 +121,7 @@ pub fn extract_plugin_content(plugin_root: &Path) -> ExtractedPluginContent {
         let mut command_files = collect_markdown_files(commands_root.as_path());
         command_files.sort();
         for path in command_files {
-            let raw = match fs::read_to_string(path.as_path()) {
+            let raw = match read_plugin_text_limited(path.as_path(), MAX_PLUGIN_MARKDOWN_BYTES) {
                 Ok(value) => value,
                 Err(_) => continue,
             };
@@ -163,7 +174,7 @@ pub fn build_skills_from_plugin(
         let Some(file_path) = normalize_skill_entry_to_file(plugin_root, entry.as_str()) else {
             continue;
         };
-        let raw = match fs::read_to_string(file_path.as_path()) {
+        let raw = match read_plugin_text_limited(file_path.as_path(), MAX_PLUGIN_MARKDOWN_BYTES) {
             Ok(value) => value,
             Err(_) => continue,
         };
@@ -254,13 +265,18 @@ fn collect_markdown_entries(root: &Path) -> Vec<PathBuf> {
         return out;
     }
     let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    let mut visited_entries = 0usize;
+    'walk: while let Some(dir) = stack.pop() {
         let entries = match fs::read_dir(dir.as_path()) {
             Ok(entries) => entries,
             Err(_) => continue,
         };
 
         for entry in entries.flatten() {
+            visited_entries = visited_entries.saturating_add(1);
+            if visited_entries > MAX_PLUGIN_SCAN_ENTRIES {
+                break 'walk;
+            }
             let path = entry.path();
             let file_type = match entry.file_type() {
                 Ok(value) => value,
@@ -295,13 +311,18 @@ fn collect_markdown_files(root: &Path) -> Vec<PathBuf> {
     }
 
     let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    let mut visited_entries = 0usize;
+    'walk: while let Some(dir) = stack.pop() {
         let entries = match fs::read_dir(dir.as_path()) {
             Ok(entries) => entries,
             Err(_) => continue,
         };
 
         for entry in entries.flatten() {
+            visited_entries = visited_entries.saturating_add(1);
+            if visited_entries > MAX_PLUGIN_SCAN_ENTRIES {
+                break 'walk;
+            }
             let path = entry.path();
             let file_type = match entry.file_type() {
                 Ok(value) => value,
@@ -397,7 +418,7 @@ fn is_skipped_repo_dir(path: &Path) -> bool {
 
 fn read_plugin_json_value(plugin_root: &Path, key: &str) -> Option<String> {
     let plugin_json = plugin_root.join(".claude-plugin").join("plugin.json");
-    let raw = fs::read_to_string(plugin_json.as_path()).ok()?;
+    let raw = read_plugin_text_limited(plugin_json.as_path(), MAX_PLUGIN_JSON_BYTES).ok()?;
     let value = serde_json::from_str::<serde_json::Value>(raw.as_str()).ok()?;
     value
         .get(key)

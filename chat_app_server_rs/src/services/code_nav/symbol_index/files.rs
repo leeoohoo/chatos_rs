@@ -5,6 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use walkdir::DirEntry;
 
+use crate::services::code_nav::file_limits::read_code_nav_line_preview;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ProjectSymbolIndexSnapshot {
     pub(super) files: Vec<ProjectSymbolFileFingerprint>,
@@ -39,15 +41,7 @@ pub(super) fn fingerprint_symbol_file(
 }
 
 pub(super) fn read_line_preview(path: &Path, line: usize) -> Result<String, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    Ok(content
-        .lines()
-        .nth(line.saturating_sub(1))
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .chars()
-        .take(400)
-        .collect())
+    read_code_nav_line_preview(path, line, 400)
 }
 
 pub(super) fn should_visit_path(entry: &DirEntry, ignored_dirs: &[&str]) -> bool {

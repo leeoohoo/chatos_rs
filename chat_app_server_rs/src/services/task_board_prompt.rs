@@ -253,14 +253,15 @@ fn append_completed_task_line(
 }
 
 fn select_active_task_id(tasks: &[TaskRecord]) -> Option<String> {
-    if let Some(task) = tasks
+    tasks
         .iter()
-        .rev()
-        .find(|task| normalize_status(task.status.as_str()) == STATUS_DOING)
-    {
-        return Some(task.id.clone());
-    }
-    None
+        .filter(|task| normalize_status(task.status.as_str()) == STATUS_DOING)
+        .max_by(|left, right| {
+            left.updated_at
+                .cmp(&right.updated_at)
+                .then_with(|| left.created_at.cmp(&right.created_at))
+        })
+        .map(|task| task.id.clone())
 }
 
 fn normalize_status(status: &str) -> &'static str {
@@ -414,6 +415,15 @@ mod tests {
     use crate::services::task_manager::TaskRecord;
 
     fn build_task(id: &str, title: &str, status: &str) -> TaskRecord {
+        build_task_with_updated(id, title, status, "2026-04-21T00:00:00Z")
+    }
+
+    fn build_task_with_updated(
+        id: &str,
+        title: &str,
+        status: &str,
+        updated_at: &str,
+    ) -> TaskRecord {
         TaskRecord {
             id: id.to_string(),
             conversation_id: "session_1".to_string(),
@@ -433,7 +443,7 @@ mod tests {
             completed_at: None,
             last_outcome_at: None,
             created_at: "2026-04-21T00:00:00Z".to_string(),
-            updated_at: "2026-04-21T00:00:00Z".to_string(),
+            updated_at: updated_at.to_string(),
         }
     }
 
@@ -483,9 +493,19 @@ mod tests {
     fn prefers_latest_doing_over_older_doing() {
         let prompt = format_task_board_prompt(
             &[
-                build_task("task_doing_a", "doing task a", "doing"),
+                build_task_with_updated(
+                    "task_doing_b",
+                    "doing task b",
+                    "doing",
+                    "2026-04-21T00:02:00Z",
+                ),
                 build_task("task_todo", "todo task", "todo"),
-                build_task("task_doing_b", "doing task b", "doing"),
+                build_task_with_updated(
+                    "task_doing_a",
+                    "doing task a",
+                    "doing",
+                    "2026-04-21T00:01:00Z",
+                ),
             ],
             InternalContextLocale::ZhCn,
         );

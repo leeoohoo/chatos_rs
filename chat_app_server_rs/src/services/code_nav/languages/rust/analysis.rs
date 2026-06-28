@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::services::code_nav::file_limits::read_code_nav_file_to_string;
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::languages::shared_nav::{
     count_char, declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
@@ -44,7 +44,7 @@ struct BlockScope {
 }
 
 pub(super) fn analyze_rust_file(path: &Path) -> Result<RustFileAnalysis, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(path)?;
     let mut symbols = Vec::new();
     let mut block_scopes: Vec<BlockScope> = Vec::new();
     let mut brace_depth: i32 = 0;

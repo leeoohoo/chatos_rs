@@ -81,6 +81,7 @@ impl AiClient {
                     .map(|sid| self.no_system_message_sessions.contains(sid))
                     .unwrap_or(false);
         let mut stateless_context_items = input.as_array().cloned();
+        let mut stateless_context_fresh = stable_prefix_mode && stateless_context_items.is_some();
         let mut remote_active_summary_attempted = false;
         let mut non_terminal_empty_retry_count = 0usize;
         let max_non_terminal_empty_retries = 3usize;
@@ -113,11 +114,15 @@ impl AiClient {
 
             info!("Agent Runtime request iteration {}", iteration);
 
-            let effective_prefixed_input_items = self
+            let runtime_prefixed_input_items = self
                 .load_runtime_prefixed_input_items()
                 .await
-                .filter(|items| !items.is_empty())
-                .unwrap_or_else(|| prefixed_input_items.clone());
+                .filter(|items| !items.is_empty());
+            if runtime_prefixed_input_items.is_some() {
+                stateless_context_fresh = false;
+            }
+            let effective_prefixed_input_items =
+                runtime_prefixed_input_items.unwrap_or_else(|| prefixed_input_items.clone());
             let runtime_guidance_items = load_runtime_guidance_input_items(
                 session_id.as_deref(),
                 turn_id.as_deref(),
@@ -128,17 +133,21 @@ impl AiClient {
             )
             .await;
             let follow_up_input_items = pending_follow_up_input_items.take().unwrap_or_default();
-            self.maybe_refresh_stateless_context(
-                session_id.as_deref(),
-                stable_prefix_mode,
-                &raw_input,
-                force_text_content,
-                include_tool_items,
-                effective_prefixed_input_items.as_slice(),
-                &mut stateless_context_items,
-                &mut input,
-            )
-            .await;
+            if stateless_context_fresh {
+                stateless_context_fresh = false;
+            } else {
+                self.maybe_refresh_stateless_context(
+                    session_id.as_deref(),
+                    stable_prefix_mode,
+                    &raw_input,
+                    force_text_content,
+                    include_tool_items,
+                    effective_prefixed_input_items.as_slice(),
+                    &mut stateless_context_items,
+                    &mut input,
+                )
+                .await;
+            }
 
             let mut ai_response = None;
             let mut last_error: Option<String> = None;
@@ -181,7 +190,7 @@ impl AiClient {
                     request_input_source
                 };
                 if let Some(cb) = &callbacks.on_before_model_request {
-                    cb(request_input.clone(), None, None);
+                    cb(&request_input, None, None);
                 }
                 let stream_callbacks = if matches!(
                     task_follow_up_mode,
@@ -220,7 +229,7 @@ impl AiClient {
                         if tools.is_empty() || !tools_enabled_for_iteration {
                             None
                         } else {
-                            Some(tools.clone())
+                            Some(tools.as_slice())
                         },
                         request_cwd.clone(),
                         Some(temperature),
@@ -596,6 +605,7 @@ impl AiClient {
                     &mut pending_tool_outputs,
                 )
                 .await;
+            stateless_context_fresh = true;
 
             if task_runner_async_plan_mode
                 && task_runner_async_planner_requested_final_summary(persisted_results.as_slice())

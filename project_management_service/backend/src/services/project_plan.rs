@@ -3,8 +3,8 @@ use crate::domain::visibility::{
     non_archived_project_tasks, non_archived_requirements, retain_project_tasks_for_requirements,
 };
 use crate::models::{
-    DependencyGraphResponse, ProjectWorkItemRecord, RequirementDependencyRecord, RequirementRecord,
-    WorkItemDependencyRecord,
+    DependencyGraphResponse, ProjectWorkItemRecord, ProjectWorkItemStatusCounts,
+    RequirementDependencyRecord, RequirementRecord, WorkItemDependencyRecord,
 };
 use crate::store::AppStore;
 
@@ -12,6 +12,13 @@ pub struct ProjectPlanSnapshot {
     pub project_id: String,
     pub requirements: Vec<RequirementRecord>,
     pub work_items: Vec<ProjectWorkItemRecord>,
+    pub dependency_graph: DependencyGraphResponse,
+}
+
+pub struct ProjectPlanSummarySnapshot {
+    pub project_id: String,
+    pub requirements: Vec<RequirementRecord>,
+    pub work_item_counts: ProjectWorkItemStatusCounts,
     pub dependency_graph: DependencyGraphResponse,
 }
 
@@ -53,6 +60,52 @@ pub async fn project_plan_snapshot(
         work_items,
         dependency_graph,
     })
+}
+
+pub async fn project_plan_summary_snapshot(
+    store: &AppStore,
+    project_id: &str,
+    include_archived: bool,
+) -> Result<ProjectPlanSummarySnapshot, String> {
+    let mut requirements = store.list_requirements(project_id, None, None).await?;
+    if !include_archived {
+        requirements = non_archived_requirements(requirements);
+    }
+
+    let requirement_dependencies =
+        load_requirement_dependencies(store, requirements.as_slice()).await?;
+    let dependency_graph = build_project_dependency_graph(
+        project_id,
+        requirements.as_slice(),
+        &[],
+        requirement_dependencies.as_slice(),
+        &[],
+    );
+    let work_item_counts = store
+        .count_work_items_by_project(project_id, include_archived)
+        .await?;
+
+    Ok(ProjectPlanSummarySnapshot {
+        project_id: project_id.to_string(),
+        requirements,
+        work_item_counts,
+        dependency_graph,
+    })
+}
+
+pub async fn requirement_work_items_dependency_graph(
+    store: &AppStore,
+    requirement: &RequirementRecord,
+    work_items: &[ProjectWorkItemRecord],
+) -> Result<DependencyGraphResponse, String> {
+    let work_item_dependencies = load_work_item_dependencies(store, work_items).await?;
+    Ok(build_project_dependency_graph(
+        requirement.project_id.as_str(),
+        std::slice::from_ref(requirement),
+        work_items,
+        &[],
+        work_item_dependencies.as_slice(),
+    ))
 }
 
 async fn load_requirement_dependencies(
@@ -218,5 +271,18 @@ mod tests {
             .nodes
             .iter()
             .any(|node| node.raw_id == archived.id));
+
+        let summary = project_plan_summary_snapshot(&store, &project.id, false)
+            .await
+            .expect("summary snapshot");
+        assert_eq!(summary.project_id, project.id);
+        assert_eq!(summary.requirements.len(), 1);
+        assert_eq!(summary.work_item_counts.total, 1);
+        assert_eq!(summary.work_item_counts.open, 1);
+        assert!(summary
+            .dependency_graph
+            .nodes
+            .iter()
+            .all(|node| node.node_type == "requirement"));
     }
 }

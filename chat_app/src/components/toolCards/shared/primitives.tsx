@@ -5,6 +5,7 @@ import {
   formatToolPrimitive,
   translateToolTitle,
 } from '../../../i18n/toolText';
+import { formatToolDetailText } from '../../toolDetails/textPreview';
 
 export const renderCardHeader = (title: string, meta?: string) => (
   <div className="tool-card-header">
@@ -33,13 +34,13 @@ export const TextBlockCard: React.FC<TextBlockCardProps> = ({
   meta,
 }) => {
   const { locale } = useI18n();
-  const trimmed = content.trim();
-  if (!trimmed) return null;
+  const preview = formatToolDetailText(content);
+  if (!preview.content) return null;
 
   return (
     <div className={`tool-detail-card${fullWidth ? ' tool-detail-card--full' : ''}`}>
-      {renderCardHeader(translateToolTitle(title, locale), meta)}
-      <pre className="tool-detail-code">{trimmed}</pre>
+      {renderCardHeader(translateToolTitle(title, locale), meta || preview.meta)}
+      <pre className="tool-detail-code">{preview.content}</pre>
     </div>
   );
 };

@@ -1,6 +1,6 @@
 use super::{
-    exchange_task_runner_token_via_user_service, fetch_task_runner_skill,
-    UserServiceTaskRunnerExchange,
+    ensure_task_runner_body_within_limit, exchange_task_runner_token_via_user_service,
+    fetch_task_runner_skill, UserServiceTaskRunnerExchange,
 };
 use axum::extract::State;
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
@@ -215,4 +215,18 @@ async fn fetch_task_runner_skill_normalizes_english_locale_without_profile() {
     assert!(captured.profile.is_none());
 
     handle.abort();
+}
+
+#[test]
+fn task_runner_body_limit_accepts_boundary_size() {
+    assert!(ensure_task_runner_body_within_limit(1024, 1024).is_ok());
+}
+
+#[test]
+fn task_runner_body_limit_rejects_oversized_body() {
+    let err =
+        ensure_task_runner_body_within_limit(1025, 1024).expect_err("oversized body should fail");
+
+    assert!(err.contains("exceeded limit"));
+    assert!(err.contains("1025 bytes > 1024 bytes"));
 }

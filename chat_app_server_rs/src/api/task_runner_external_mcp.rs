@@ -2,13 +2,21 @@ use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use bytes::BytesMut;
+use futures::StreamExt;
 use reqwest::Method;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::config::Config;
 use crate::services::access_token_scope;
+
+static TASK_RUNNER_EXTERNAL_MCP_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+const TASK_RUNNER_EXTERNAL_MCP_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const TASK_RUNNER_EXTERNAL_MCP_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
 pub fn router() -> Router {
     Router::new()
@@ -79,9 +87,13 @@ async fn task_runner_json<T: Serialize + ?Sized>(
     body: Option<&T>,
 ) -> Result<Value, (StatusCode, Json<Value>)> {
     let response = task_runner_request(method, path, body).await?;
-    response
-        .json::<Value>()
-        .await
+    let body = read_task_runner_external_mcp_body_limited(
+        response,
+        TASK_RUNNER_EXTERNAL_MCP_RESPONSE_LIMIT_BYTES,
+    )
+    .await
+    .map_err(|err| bad_gateway("读取任务系统响应失败", err))?;
+    serde_json::from_slice::<Value>(body.as_ref())
         .map_err(|err| bad_gateway("解析任务系统响应失败", err.to_string()))
 }
 
@@ -116,11 +128,10 @@ async fn task_runner_request<T: Serialize + ?Sized>(
     let endpoint = format!("{base_url}{path}");
     let timeout_ms = cfg.task_runner_request_timeout_ms.max(300) as u64;
     let method_label = method.as_str().to_string();
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(timeout_ms))
-        .build()
-        .map_err(|err| bad_gateway("创建任务系统请求客户端失败", err.to_string()))?;
-    let mut request = client.request(method, &endpoint).bearer_auth(token);
+    let mut request = task_runner_external_mcp_http_client()
+        .request(method, &endpoint)
+        .bearer_auth(token)
+        .timeout(Duration::from_millis(timeout_ms));
     if let Some(body) = body {
         request = request.json(body);
     }
@@ -139,13 +150,54 @@ async fn task_runner_request<T: Serialize + ?Sized>(
     }
     let status =
         StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let text = response.text().await.unwrap_or_default();
+    let text = read_task_runner_external_mcp_body_limited(
+        response,
+        TASK_RUNNER_EXTERNAL_MCP_ERROR_BODY_PREVIEW_BYTES,
+    )
+    .await
+    .map(|bytes| String::from_utf8_lossy(bytes.as_ref()).into_owned())
+    .unwrap_or_else(|err| err);
     let payload = serde_json::from_str::<Value>(&text).unwrap_or_else(|_| {
         json!({
             "error": if text.trim().is_empty() { "任务系统请求失败" } else { text.trim() }
         })
     });
     Err((status, Json(payload)))
+}
+
+fn task_runner_external_mcp_http_client() -> &'static reqwest::Client {
+    TASK_RUNNER_EXTERNAL_MCP_HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
+
+async fn read_task_runner_external_mcp_body_limited(
+    response: reqwest::Response,
+    limit_bytes: usize,
+) -> Result<bytes::Bytes, String> {
+    if let Some(content_length) = response.content_length() {
+        ensure_task_runner_external_mcp_body_within_limit(content_length as usize, limit_bytes)?;
+    }
+
+    let mut body = BytesMut::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| err.to_string())?;
+        let next_len = body.len().saturating_add(chunk.len());
+        ensure_task_runner_external_mcp_body_within_limit(next_len, limit_bytes)?;
+        body.extend_from_slice(chunk.as_ref());
+    }
+    Ok(body.freeze())
+}
+
+fn ensure_task_runner_external_mcp_body_within_limit(
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "Task Runner external MCP response exceeded limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
 }
 
 fn internal_error(message: &str, detail: String) -> (StatusCode, Json<Value>) {
@@ -156,6 +208,25 @@ fn internal_error(message: &str, detail: String) -> (StatusCode, Json<Value>) {
             "detail": detail,
         })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_task_runner_external_mcp_body_within_limit;
+
+    #[test]
+    fn task_runner_external_mcp_body_limit_accepts_boundary_size() {
+        assert!(ensure_task_runner_external_mcp_body_within_limit(1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn task_runner_external_mcp_body_limit_rejects_oversized_body() {
+        let err = ensure_task_runner_external_mcp_body_within_limit(1025, 1024)
+            .expect_err("oversized body should fail");
+
+        assert!(err.contains("exceeded limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
 }
 
 fn bad_gateway(message: &str, detail: String) -> (StatusCode, Json<Value>) {

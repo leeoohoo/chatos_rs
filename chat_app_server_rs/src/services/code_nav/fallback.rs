@@ -2,11 +2,11 @@ use super::types::{
     DocumentSymbolItem, DocumentSymbolsRequest, DocumentSymbolsResponse, NavLocation,
     NavLocationsResponse, NavPositionRequest, ProjectContext,
 };
+use crate::services::code_nav::file_limits::read_code_nav_file_to_string;
 use crate::services::code_nav::languages::shared_nav::is_request_token_location;
 use crate::services::workspace_search::{
     search_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_RESULTS, DEFAULT_MAX_VISITS,
 };
-use std::fs;
 use std::path::Path;
 
 pub fn fallback_definition(
@@ -33,6 +33,7 @@ pub fn fallback_definition(
         max_visits: DEFAULT_MAX_VISITS,
         case_sensitive: true,
         whole_word: true,
+        deadline: None,
     })?;
 
     if outcome.entries.is_empty() {
@@ -44,6 +45,7 @@ pub fn fallback_definition(
             max_visits: DEFAULT_MAX_VISITS,
             case_sensitive: false,
             whole_word: true,
+            deadline: None,
         })?;
     }
 
@@ -124,6 +126,7 @@ pub fn fallback_references(
         max_visits: DEFAULT_MAX_VISITS,
         case_sensitive: true,
         whole_word: true,
+        deadline: None,
     })?;
 
     let mut locations: Vec<NavLocation> = outcome
@@ -175,7 +178,7 @@ pub fn fallback_document_symbols(
     _req: &DocumentSymbolsRequest,
     provider: &str,
 ) -> Result<DocumentSymbolsResponse, String> {
-    let content = fs::read_to_string(&ctx.file_path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(&ctx.file_path)?;
     let mut symbols = Vec::new();
 
     for (index, line) in content.lines().enumerate() {
@@ -395,7 +398,7 @@ pub(crate) fn extract_token_at_position(
     line: usize,
     column: usize,
 ) -> Result<Option<String>, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(path)?;
     let lines: Vec<&str> = content.lines().collect();
     if line == 0 || line > lines.len() {
         return Ok(None);
