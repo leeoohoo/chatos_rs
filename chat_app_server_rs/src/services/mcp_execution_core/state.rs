@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::core::mcp_tools::{BuiltinToolService, ToolInfo};
-use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
+use crate::services::mcp_loader::McpBuiltinServer;
 
-use super::{build_builtin_tool_state, build_tool_state};
+use super::build_builtin_tool_state;
 
 #[derive(Clone, Default)]
 pub(crate) struct McpToolState {
@@ -19,25 +19,6 @@ pub(crate) struct McpToolState {
 impl McpToolState {
     pub(crate) fn new() -> Self {
         Self::default()
-    }
-
-    pub(crate) async fn build_all(
-        &mut self,
-        http_servers: &[McpHttpServer],
-        stdio_servers: &[McpStdioServer],
-        builtin_servers: &[McpBuiltinServer],
-    ) -> Result<(), String> {
-        build_tool_state(
-            &mut self.tools,
-            &mut self.tool_metadata,
-            &mut self.tool_aliases,
-            &mut self.unavailable_tools,
-            &mut self.builtin_services,
-            http_servers,
-            stdio_servers,
-            builtin_servers,
-        )
-        .await
     }
 
     pub(crate) fn build_builtin_only(

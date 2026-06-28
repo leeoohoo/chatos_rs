@@ -218,121 +218,59 @@ impl Config {
     }
 
     pub fn print(&self) {
-        println!("当前配置:");
-        println!("  - NODE_ENV: {}", self.node_env);
-        println!("  - BACKEND_PORT: {}", self.port);
-        println!("  - HOST: {}", self.host);
-        println!("  - OPENAI_BASE_URL: {}", self.openai_base_url);
-        println!(
-            "  - OPENAI_API_KEY: {}",
-            if self.openai_api_key.is_empty() {
-                "未设置"
-            } else {
-                "已设置"
-            }
-        );
-        println!("  - LOG_LEVEL: {}", self.log_level);
-        println!("  - 摘要配置:");
-        println!("    • SUMMARY_ENABLED: {}", self.summary_enabled);
-        println!(
-            "    • DYNAMIC_SUMMARY_ENABLED: {}",
-            self.dynamic_summary_enabled
-        );
-        println!(
-            "    • SUMMARY_MESSAGE_LIMIT: {}",
-            self.summary_message_limit
-        );
-        println!(
-            "    • SUMMARY_MAX_CONTEXT_TOKENS: {}",
-            self.summary_max_context_tokens
-        );
-        println!("    • SUMMARY_KEEP_LAST_N: {}", self.summary_keep_last_n);
-        println!(
-            "    • SUMMARY_TARGET_TOKENS: {}",
-            self.summary_target_tokens
-        );
-        println!(
-            "    • SUMMARY_MERGE_TARGET_TOKENS: {}",
-            self.summary_merge_target_tokens
-        );
-        println!("    • SUMMARY_TEMPERATURE: {}", self.summary_temperature);
-        println!(
-            "    • SUMMARY_COOLDOWN_SECONDS: {}",
-            self.summary_cooldown_seconds
-        );
-        println!(
-            "    • SUMMARY_BISECT_ENABLED: {}",
-            self.summary_bisect_enabled
-        );
-        println!(
-            "    • SUMMARY_BISECT_MAX_DEPTH: {}",
-            self.summary_bisect_max_depth
-        );
-        println!(
-            "    • SUMMARY_BISECT_MIN_MESSAGES: {}",
-            self.summary_bisect_min_messages
-        );
-        println!(
-            "    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}",
-            self.summary_retry_on_context_overflow
-        );
-        println!("  - 认证配置:");
-        println!(
-            "    • AUTH_JWT_SECRET: {}",
-            if self.auth_jwt_secret.is_empty() {
-                "未设置"
-            } else {
-                "已设置"
-            }
-        );
-        println!(
-            "    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}",
-            self.auth_access_token_ttl_seconds
-        );
-        println!(
-            "    • AUTH_COMPAT_SECRET: {}",
-            if self.auth_compat_secret.is_some() {
-                "已设置"
-            } else {
-                "未设置"
-            }
-        );
-        println!("  - Memory Engine 配置:");
-        println!(
-            "    • PROJECT_SERVICE_BASE_URL: {}",
-            self.project_service_base_url
-        );
-        println!("    • TASK_RUNNER_BASE_URL: {}", self.task_runner_base_url);
-        println!(
-            "    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}",
-            self.task_runner_request_timeout_ms
-        );
-        println!(
-            "    • MEMORY_ENGINE_BASE_URL: {}",
-            self.memory_engine_base_url
-        );
-        println!(
-            "    • MEMORY_ENGINE_OPERATOR_TOKEN: {}",
-            if self.memory_engine_operator_token.is_some() {
-                "已设置"
-            } else {
-                "未设置"
-            }
-        );
-        println!(
-            "    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}",
-            self.memory_engine_request_timeout_ms
-        );
-        println!(
-            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}",
-            self.memory_engine_active_summary_trigger_timeout_ms
-        );
-        println!(
-            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}",
-            self.memory_engine_active_summary_poll_interval_ms
-        );
-        println!(
-            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+        let openai_api_key_status = if self.openai_api_key.is_empty() {
+            "未设置"
+        } else {
+            "已设置"
+        };
+        let auth_jwt_secret_status = if self.auth_jwt_secret.is_empty() {
+            "未设置"
+        } else {
+            "已设置"
+        };
+        let auth_compat_secret_status = if self.auth_compat_secret.is_some() {
+            "已设置"
+        } else {
+            "未设置"
+        };
+        let memory_engine_operator_token_status = if self.memory_engine_operator_token.is_some() {
+            "已设置"
+        } else {
+            "未设置"
+        };
+
+        tracing::info!(
+            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Memory Engine 配置:\n    • PROJECT_SERVICE_BASE_URL: {}\n    • TASK_RUNNER_BASE_URL: {}\n    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+            self.node_env,
+            self.port,
+            self.host,
+            self.openai_base_url,
+            openai_api_key_status,
+            self.log_level,
+            self.summary_enabled,
+            self.dynamic_summary_enabled,
+            self.summary_message_limit,
+            self.summary_max_context_tokens,
+            self.summary_keep_last_n,
+            self.summary_target_tokens,
+            self.summary_merge_target_tokens,
+            self.summary_temperature,
+            self.summary_cooldown_seconds,
+            self.summary_bisect_enabled,
+            self.summary_bisect_max_depth,
+            self.summary_bisect_min_messages,
+            self.summary_retry_on_context_overflow,
+            auth_jwt_secret_status,
+            self.auth_access_token_ttl_seconds,
+            auth_compat_secret_status,
+            self.project_service_base_url,
+            self.task_runner_base_url,
+            self.task_runner_request_timeout_ms,
+            self.memory_engine_base_url,
+            memory_engine_operator_token_status,
+            self.memory_engine_request_timeout_ms,
+            self.memory_engine_active_summary_trigger_timeout_ms,
+            self.memory_engine_active_summary_poll_interval_ms,
             self.memory_engine_active_summary_poll_timeout_ms
         );
     }

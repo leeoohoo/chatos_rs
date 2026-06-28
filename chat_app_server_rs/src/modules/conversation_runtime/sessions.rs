@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{is_owned_session, SessionAccessError};
@@ -277,9 +278,10 @@ async fn sync_session_memory_projections(session: &Session, user_id: &str) {
                     })
                     .await
                 {
-                    eprintln!(
-                        "[SESSIONS] sync memory project failed while creating session: project_id={} err={}",
-                        project.id, err
+                    warn!(
+                        project_id = project.id.as_str(),
+                        error = err.as_str(),
+                        "sync memory project failed while creating session"
                     );
                 }
             }
@@ -296,9 +298,9 @@ async fn sync_session_memory_projections(session: &Session, user_id: &str) {
         })
         .await
     {
-        eprintln!(
-            "[SESSIONS] sync virtual memory project failed while creating session: err={}",
-            err
+        warn!(
+            error = err.as_str(),
+            "sync virtual memory project failed while creating session"
         );
     }
 }

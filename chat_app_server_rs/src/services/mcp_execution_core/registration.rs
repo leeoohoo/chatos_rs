@@ -11,53 +11,6 @@ use crate::core::mcp_tools::{
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
-pub(crate) async fn register_tools_from_http(
-    tools: &mut Vec<Value>,
-    tool_metadata: &mut HashMap<String, ToolInfo>,
-    tool_aliases: &mut HashMap<String, String>,
-    server: &McpHttpServer,
-) -> Result<(), String> {
-    let discovered_tools =
-        crate::core::mcp_tools::list_tools_http(&server.url, server.headers.as_ref()).await?;
-    for tool in discovered_tools {
-        register_tool(
-            tools,
-            tool_metadata,
-            tool_aliases,
-            &server.name,
-            "http",
-            Some(server.url.clone()),
-            server.headers.clone(),
-            None,
-            tool,
-        );
-    }
-    Ok(())
-}
-
-pub(crate) async fn register_tools_from_stdio(
-    tools: &mut Vec<Value>,
-    tool_metadata: &mut HashMap<String, ToolInfo>,
-    tool_aliases: &mut HashMap<String, String>,
-    server: &McpStdioServer,
-) -> Result<(), String> {
-    let discovered_tools = crate::core::mcp_tools::list_tools_stdio(server).await?;
-    for tool in discovered_tools {
-        register_tool(
-            tools,
-            tool_metadata,
-            tool_aliases,
-            &server.name,
-            "stdio",
-            None,
-            None,
-            Some(server.clone()),
-            tool,
-        );
-    }
-    Ok(())
-}
-
 pub(crate) fn register_tools_from_builtin(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,

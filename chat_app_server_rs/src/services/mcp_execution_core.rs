@@ -15,13 +15,10 @@ pub(crate) use self::execution::{
     execute_tools_stream_with_registry, parse_tool_args, response_tool_name, tool_call_name,
 };
 pub(crate) use self::executor::McpExecutorCore;
-pub(crate) use self::lifecycle::{build_builtin_tool_state, build_tool_state};
+pub(crate) use self::lifecycle::build_builtin_tool_state;
 #[cfg(test)]
 pub(crate) use self::parallelism::should_parallelize_tool_batch;
-pub(crate) use self::registration::{
-    codex_gateway_request_tools, register_tools_from_builtin, register_tools_from_http,
-    register_tools_from_stdio,
-};
+pub(crate) use self::registration::{codex_gateway_request_tools, register_tools_from_builtin};
 pub(crate) use self::state::McpToolState;
 
 #[cfg(test)]

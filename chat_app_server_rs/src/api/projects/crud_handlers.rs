@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use serde_json::Value;
+use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
@@ -199,9 +200,10 @@ pub(super) async fn update_project(
     match ProjectService::get_by_id(&id).await {
         Ok(Some(project)) => {
             if let Err(err) = sync_active_project(&project).await {
-                eprintln!(
-                    "[PROJECTS] sync memory project failed after update: project_id={} err={}",
-                    project.id, err
+                warn!(
+                    project_id = project.id.as_str(),
+                    error = err.as_str(),
+                    "sync memory project failed after update"
                 );
             }
             publish_projects_updated(
@@ -241,9 +243,10 @@ pub(super) async fn delete_project(
     match ProjectService::delete(&id).await {
         Ok(_) => {
             if let Err(err) = sync_archived_project(&project).await {
-                eprintln!(
-                    "[PROJECTS] sync memory project failed after delete: project_id={} err={}",
-                    project.id, err
+                warn!(
+                    project_id = project.id.as_str(),
+                    error = err.as_str(),
+                    "sync memory project failed after delete"
                 );
             }
             publish_projects_updated(

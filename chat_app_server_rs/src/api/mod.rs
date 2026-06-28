@@ -14,7 +14,7 @@ use std::time::Instant;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{info, info_span};
+use tracing::{debug, debug_span};
 
 use crate::config::Config;
 use crate::core::auth::{
@@ -99,7 +99,7 @@ pub fn router() -> Result<Router, String> {
             let user_id = header_value(req, &HeaderName::from_static("x-user-id"));
             let project_id = header_value(req, &HeaderName::from_static("x-project-id"));
             let conversation_id = header_value(req, &HeaderName::from_static("x-conversation-id"));
-            info_span!(
+            debug_span!(
                 "http.request",
                 method = %req.method(),
                 uri = %sanitize_request_uri(req.uri()),
@@ -111,11 +111,11 @@ pub fn router() -> Result<Router, String> {
             )
         })
         .on_request(|_req: &Request<Body>, _span: &tracing::Span| {
-            info!("request.start");
+            debug!("request.start");
         })
         .on_response(
             |res: &Response, latency: std::time::Duration, _span: &tracing::Span| {
-                info!(status = %res.status(), latency_ms = %latency.as_millis(), "request.end");
+                debug!(status = %res.status(), latency_ms = %latency.as_millis(), "request.end");
             },
         )
         .on_failure(|err, latency: std::time::Duration, _span: &tracing::Span| {

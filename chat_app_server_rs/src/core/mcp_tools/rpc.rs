@@ -10,35 +10,6 @@ use crate::services::mcp_loader::McpStdioServer;
 
 static MCP_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
-pub async fn list_tools_http(
-    url: &str,
-    headers: Option<&HashMap<String, String>>,
-) -> Result<Vec<Value>, String> {
-    let response = jsonrpc_http_call(url, headers, "tools/list", json!({})).await?;
-    extract_tools(&response)
-}
-
-pub async fn list_tools_stdio(cfg: &McpStdioServer) -> Result<Vec<Value>, String> {
-    let response = jsonrpc_stdio_call(cfg, "tools/list", json!({}), None).await?;
-    extract_tools(&response)
-}
-
-pub fn extract_tools(response: &Value) -> Result<Vec<Value>, String> {
-    if let Some(arr) = response.get("tools").and_then(|value| value.as_array()) {
-        return Ok(arr.clone());
-    }
-
-    if let Some(arr) = response
-        .get("result")
-        .and_then(|result| result.get("tools"))
-        .and_then(|value| value.as_array())
-    {
-        return Ok(arr.clone());
-    }
-
-    Err("tools not found in response".to_string())
-}
-
 pub async fn jsonrpc_http_call(
     url: &str,
     headers: Option<&HashMap<String, String>>,

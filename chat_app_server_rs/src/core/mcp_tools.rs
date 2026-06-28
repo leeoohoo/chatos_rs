@@ -16,7 +16,7 @@ mod text;
 
 pub use self::builtin::{build_builtin_tool_service, BuiltinToolService};
 pub use self::execution::execute_tools_stream;
-pub use self::rpc::{jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio};
+pub use self::rpc::{jsonrpc_http_call, jsonrpc_stdio_call};
 #[cfg(test)]
 pub(crate) use self::schema::normalize_json_schema;
 pub use self::schema::{build_function_tool_schema, parse_tool_definition};

@@ -51,7 +51,6 @@ pub(super) async fn execute_runtime_tools(
     }
 
     let tool_result_count = tool_results.len();
-    let tool_result_names = summarize_tool_result_names(tool_results.as_slice(), 8);
     let tool_call_items = build_tool_call_items(tool_call_values);
     let tool_output_items = build_tool_output_items_for_calls_with_budget(
         tool_call_values,
@@ -63,7 +62,7 @@ pub(super) async fn execute_runtime_tools(
         conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
         iteration,
         tool_result_count,
-        tool_result_names = tool_result_names.join(", "),
+        tool_result_names = summarize_tool_result_names(tool_results.as_slice(), 8).join(", "),
         tool_batch_ms = started_at.elapsed().as_millis(),
         "ai runtime finished tool execution"
     );

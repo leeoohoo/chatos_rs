@@ -21,13 +21,13 @@ pub fn spawn_task_scheduler(
             match task_service.list_due_scheduled_tasks(now).await {
                 Ok(tasks) => {
                     if !tasks.is_empty() {
-                        let due_task_ids = tasks
-                            .iter()
-                            .map(|task| format!("{}:{}", task.id, task.title))
-                            .collect::<Vec<_>>();
                         info!(
                             due_count = tasks.len(),
-                            due_tasks = due_task_ids.join(" | "),
+                            due_tasks = tasks
+                                .iter()
+                                .map(|task| format!("{}:{}", task.id, task.title))
+                                .collect::<Vec<_>>()
+                                .join(" | "),
                             "scheduler found due tasks"
                         );
                     }

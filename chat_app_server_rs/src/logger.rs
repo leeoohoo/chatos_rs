@@ -8,6 +8,7 @@ use tracing_subscriber::fmt::time::UtcTime;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 struct LoggerGuards {
+    _stdout: tracing_appender::non_blocking::WorkerGuard,
     _file: tracing_appender::non_blocking::WorkerGuard,
     _error: tracing_appender::non_blocking::WorkerGuard,
 }
@@ -32,11 +33,13 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
     let error_appender = rolling::daily(log_dir.as_path(), "error.log");
     let (error_writer, error_guard) = tracing_appender::non_blocking(error_appender);
 
+    let (stdout_writer, stdout_guard) = tracing_appender::non_blocking(std::io::stdout());
+
     let fmt_layer = fmt::layer()
         .with_target(false)
         .with_timer(UtcTime::rfc_3339())
         .with_thread_ids(true)
-        .with_writer(std::io::stdout);
+        .with_writer(stdout_writer);
 
     let file_layer = fmt::layer()
         .with_target(false)
@@ -61,6 +64,7 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
         .init();
 
     let _ = LOG_GUARDS.set(LoggerGuards {
+        _stdout: stdout_guard,
         _file: file_guard,
         _error: error_guard,
     });

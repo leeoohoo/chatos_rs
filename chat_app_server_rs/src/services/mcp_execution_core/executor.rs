@@ -33,16 +33,6 @@ impl McpExecutorCore {
         }
     }
 
-    pub(crate) async fn build_tools(&mut self) -> Result<(), String> {
-        self.state
-            .build_all(
-                self.mcp_servers.as_slice(),
-                self.stdio_mcp_servers.as_slice(),
-                self.builtin_mcp_servers.as_slice(),
-            )
-            .await
-    }
-
     pub(crate) fn build_builtin_only(&mut self) -> Result<(), String> {
         self.state
             .build_builtin_only(self.builtin_mcp_servers.as_slice())

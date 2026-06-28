@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::warn;
 
 use crate::core::chat_runtime::{
     contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
@@ -268,9 +269,11 @@ async fn sync_project_agent_link_after_user_message(session: &Session, message: 
     )
     .await
     {
-        eprintln!(
-            "[SESSIONS] touch project contact session after user message failed: session_id={} message_id={} err={}",
-            session.id, message.id, err
+        warn!(
+            session_id = session.id.as_str(),
+            message_id = message.id.as_str(),
+            error = err.as_str(),
+            "touch project contact session after user message failed"
         );
     }
 }

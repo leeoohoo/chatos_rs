@@ -2,6 +2,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::config::Config;
 use crate::core::auth::{access_token_from_headers, AuthUser};
@@ -252,11 +253,11 @@ async fn register_via_user_service(
             )
             .await
             {
-                eprintln!(
-                    "[AUTH] bootstrap new user defaults failed: user_id={} username={} detail={}",
-                    payload.user.id,
-                    payload.user.username.as_deref().unwrap_or_default(),
-                    err
+                warn!(
+                    user_id = payload.user.id.as_str(),
+                    username = payload.user.username.as_deref().unwrap_or_default(),
+                    error = err.as_str(),
+                    "bootstrap new user defaults failed"
                 );
             }
             proxy_login_success_response(payload)
