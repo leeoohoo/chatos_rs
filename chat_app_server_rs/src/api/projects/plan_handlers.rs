@@ -42,7 +42,7 @@ pub(super) async fn get_project_plan(
     };
 
     let include_archived = query.include_archived.unwrap_or(false);
-    let requirements = match project_management_api_client::list_project_service_requirements(
+    let plan = match project_management_api_client::get_project_service_plan(
         cfg.project_service_base_url.as_str(),
         access_token.as_str(),
         project.id.as_str(),
@@ -50,50 +50,10 @@ pub(super) async fn get_project_plan(
     )
     .await
     {
-        Ok(requirements) => requirements,
+        Ok(plan) => plan,
         Err(err) => {
             return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err })));
         }
     };
-
-    let work_items = match project_management_api_client::list_project_service_work_items(
-        cfg.project_service_base_url.as_str(),
-        access_token.as_str(),
-        project.id.as_str(),
-        include_archived,
-    )
-    .await
-    {
-        Ok(work_items) => work_items,
-        Err(err) => {
-            return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err })));
-        }
-    };
-    let dependency_graph =
-        match project_management_api_client::get_project_service_dependency_graph(
-            cfg.project_service_base_url.as_str(),
-            access_token.as_str(),
-            project.id.as_str(),
-            include_archived,
-        )
-        .await
-        {
-            Ok(graph) => graph,
-            Err(err) => {
-                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err })));
-            }
-        };
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "project_id": project.id,
-            "projectId": project.id,
-            "requirements": requirements,
-            "work_items": work_items.clone(),
-            "workItems": work_items,
-            "dependency_graph": dependency_graph.clone(),
-            "dependencyGraph": dependency_graph,
-        })),
-    )
+    (StatusCode::OK, Json(plan))
 }

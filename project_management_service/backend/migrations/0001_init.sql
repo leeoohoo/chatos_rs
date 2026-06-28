@@ -72,6 +72,12 @@ ON requirements(project_id);
 CREATE INDEX IF NOT EXISTS idx_requirements_project_status
 ON requirements(project_id, status);
 
+CREATE INDEX IF NOT EXISTS idx_requirements_project_sort
+ON requirements(project_id, priority DESC, updated_at DESC, id);
+
+CREATE INDEX IF NOT EXISTS idx_requirements_project_status_sort
+ON requirements(project_id, status, priority DESC, updated_at DESC, id);
+
 CREATE TABLE IF NOT EXISTS requirement_dependencies (
   requirement_id TEXT NOT NULL,
   prerequisite_requirement_id TEXT NOT NULL,
@@ -144,6 +150,15 @@ ON project_work_items(requirement_id);
 
 CREATE INDEX IF NOT EXISTS idx_project_work_items_project_status
 ON project_work_items(project_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_project_work_items_project_sort
+ON project_work_items(project_id, sort_order ASC, priority DESC, updated_at DESC, id);
+
+CREATE INDEX IF NOT EXISTS idx_project_work_items_project_status_sort
+ON project_work_items(project_id, status, sort_order ASC, priority DESC, updated_at DESC, id);
+
+CREATE INDEX IF NOT EXISTS idx_project_work_items_requirement_sort
+ON project_work_items(requirement_id, sort_order ASC, priority DESC, updated_at DESC, id);
 
 CREATE TABLE IF NOT EXISTS project_work_item_dependencies (
   work_item_id TEXT NOT NULL,

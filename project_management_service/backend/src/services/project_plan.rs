@@ -1,0 +1,222 @@
+use crate::domain::dependency_graph::project_dependency_graph as build_project_dependency_graph;
+use crate::domain::visibility::{
+    non_archived_project_tasks, non_archived_requirements, retain_project_tasks_for_requirements,
+};
+use crate::models::{
+    DependencyGraphResponse, ProjectWorkItemRecord, RequirementDependencyRecord, RequirementRecord,
+    WorkItemDependencyRecord,
+};
+use crate::store::AppStore;
+
+pub struct ProjectPlanSnapshot {
+    pub project_id: String,
+    pub requirements: Vec<RequirementRecord>,
+    pub work_items: Vec<ProjectWorkItemRecord>,
+    pub dependency_graph: DependencyGraphResponse,
+}
+
+pub async fn project_plan_snapshot(
+    store: &AppStore,
+    project_id: &str,
+    include_archived: bool,
+) -> Result<ProjectPlanSnapshot, String> {
+    let mut requirements = store.list_requirements(project_id, None, None).await?;
+    let mut work_items = store
+        .list_work_items_by_project(project_id, None, None)
+        .await?;
+    if !include_archived {
+        requirements = non_archived_requirements(requirements);
+        work_items = non_archived_project_tasks(work_items);
+    }
+
+    let graph_requirements = requirements.clone();
+    let graph_work_items = if include_archived {
+        work_items.clone()
+    } else {
+        retain_project_tasks_for_requirements(work_items.clone(), &graph_requirements)
+    };
+    let requirement_dependencies =
+        load_requirement_dependencies(store, graph_requirements.as_slice()).await?;
+    let work_item_dependencies =
+        load_work_item_dependencies(store, graph_work_items.as_slice()).await?;
+    let dependency_graph = build_project_dependency_graph(
+        project_id,
+        graph_requirements.as_slice(),
+        graph_work_items.as_slice(),
+        requirement_dependencies.as_slice(),
+        work_item_dependencies.as_slice(),
+    );
+
+    Ok(ProjectPlanSnapshot {
+        project_id: project_id.to_string(),
+        requirements,
+        work_items,
+        dependency_graph,
+    })
+}
+
+async fn load_requirement_dependencies(
+    store: &AppStore,
+    requirements: &[RequirementRecord],
+) -> Result<Vec<RequirementDependencyRecord>, String> {
+    let mut dependencies = Vec::new();
+    for requirement in requirements {
+        dependencies.extend(store.list_requirement_dependencies(&requirement.id).await?);
+    }
+    Ok(dependencies)
+}
+
+async fn load_work_item_dependencies(
+    store: &AppStore,
+    work_items: &[ProjectWorkItemRecord],
+) -> Result<Vec<WorkItemDependencyRecord>, String> {
+    let mut dependencies = Vec::new();
+    for item in work_items {
+        dependencies.extend(store.list_work_item_dependencies(&item.id).await?);
+    }
+    Ok(dependencies)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::CurrentUser;
+    use crate::models::{
+        CreateProjectRequest, CreateProjectWorkItemRequest, CreateRequirementRequest,
+        RequirementStatus, UpsertRequirementDocumentRequest, UserRole,
+    };
+    use crate::store::{AppStore, SqliteStore};
+    use uuid::Uuid;
+
+    async fn test_store() -> AppStore {
+        let path =
+            std::env::temp_dir().join(format!("project-plan-snapshot-test-{}.db", Uuid::new_v4()));
+        AppStore::Sqlite(
+            SqliteStore::new(format!("sqlite://{}", path.display()).as_str())
+                .await
+                .expect("sqlite store"),
+        )
+    }
+
+    fn test_user() -> CurrentUser {
+        CurrentUser {
+            principal_type: "human_user".to_string(),
+            id: "user-1".to_string(),
+            username: "owner".to_string(),
+            display_name: "Owner".to_string(),
+            role: UserRole::Agent,
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn project_plan_snapshot_returns_visible_plan_and_graph() {
+        let store = test_store().await;
+        let user = test_user();
+        let project = store
+            .create_project(
+                CreateProjectRequest {
+                    name: "Project".to_string(),
+                    root_path: None,
+                    git_url: None,
+                    description: None,
+                },
+                &user,
+            )
+            .await
+            .expect("create project");
+        let requirement = store
+            .create_requirement(
+                &project.id,
+                CreateRequirementRequest {
+                    parent_requirement_id: None,
+                    requirement_type: None,
+                    title: "Requirement".to_string(),
+                    summary: None,
+                    detail: None,
+                    business_value: None,
+                    acceptance_criteria: None,
+                    source: None,
+                    priority: None,
+                    status: None,
+                    assignee_user_id: None,
+                },
+                &user,
+            )
+            .await
+            .expect("create requirement");
+        let archived = store
+            .create_requirement(
+                &project.id,
+                CreateRequirementRequest {
+                    parent_requirement_id: None,
+                    requirement_type: None,
+                    title: "Archived".to_string(),
+                    summary: None,
+                    detail: None,
+                    business_value: None,
+                    acceptance_criteria: None,
+                    source: None,
+                    priority: None,
+                    status: Some(RequirementStatus::Archived),
+                    assignee_user_id: None,
+                },
+                &user,
+            )
+            .await
+            .expect("create archived requirement");
+        store
+            .upsert_requirement_document(
+                &requirement.id,
+                UpsertRequirementDocumentRequest {
+                    title: None,
+                    format: None,
+                    content: "Technical overview".to_string(),
+                },
+                &user,
+            )
+            .await
+            .expect("upsert document");
+        let item = store
+            .create_work_item(
+                &requirement,
+                CreateProjectWorkItemRequest {
+                    title: "Task".to_string(),
+                    description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                    status: None,
+                    priority: None,
+                    assignee_user_id: None,
+                    estimate_points: None,
+                    due_at: None,
+                    sort_order: None,
+                    tags: None,
+                },
+                &user,
+            )
+            .await
+            .expect("create work item");
+        let snapshot = project_plan_snapshot(&store, &project.id, false)
+            .await
+            .expect("snapshot");
+
+        assert_eq!(snapshot.project_id, project.id);
+        assert_eq!(snapshot.requirements.len(), 1);
+        assert_eq!(snapshot.requirements[0].id, requirement.id);
+        assert_eq!(snapshot.work_items.len(), 1);
+        assert_eq!(snapshot.work_items[0].id, item.id);
+        assert!(snapshot
+            .dependency_graph
+            .nodes
+            .iter()
+            .any(|node| node.raw_id == requirement.id));
+        assert!(!snapshot
+            .dependency_graph
+            .nodes
+            .iter()
+            .any(|node| node.raw_id == archived.id));
+    }
+}

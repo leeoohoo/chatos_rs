@@ -1,0 +1,219 @@
+.tool-chip {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  width: 100%;
+  max-width: 100%;
+  padding: 0.38rem 0 0.42rem;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  box-shadow: var(--tool-chip-shadow);
+  overflow: visible;
+  transition: color 0.2s ease;
+}
+
+.tool-chip--clickable {
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tool-chip--clickable:hover .tool-name,
+.tool-chip--clickable:hover .tool-inline-toggle,
+.tool-chip--clickable:hover .tool-chip-subtitle {
+  color: var(--tool-name-color);
+}
+
+.tool-chip--clickable:focus-visible {
+  outline: 2px solid rgba(var(--tool-accent-rgb), 0.28);
+  outline-offset: 2px;
+  border-radius: 0.45rem;
+}
+
+.tool-chip::after {
+  display: none;
+}
+
+.tool-chip.expanded {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.tool-chip-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.62rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.tool-icon-shell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  border: none;
+  background: rgba(var(--tool-accent-rgb), 0.08);
+  flex-shrink: 0;
+}
+
+.tool-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  color: var(--tool-name-color);
+}
+
+.tool-chip-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.tool-chip-topline {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+}
+
+.tool-family-badge,
+.tool-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.tool-family-badge {
+  color: var(--tool-name-color);
+  background: transparent;
+  border: none;
+}
+
+.tool-source-badge {
+  color: var(--tool-text-secondary);
+  background: transparent;
+  border: none;
+}
+
+.tool-name {
+  color: var(--tool-text);
+  font-weight: 700;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  word-break: break-word;
+}
+
+.tool-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.tool-chip-subtitle {
+  color: var(--tool-text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.tool-inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  color: var(--tool-text-secondary);
+  font-size: 0.71rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tool-inline-toggle.expanded {
+  color: var(--tool-name-color);
+}
+
+.tool-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.25rem;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border: none;
+  white-space: nowrap;
+}
+
+.tool-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.92;
+}
+
+.tool-status.success {
+  color: var(--tool-success-text);
+}
+
+.tool-status.error {
+  color: var(--tool-error-text);
+}
+
+.tool-status.pending {
+  color: var(--tool-pending-text);
+}
+
+.tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  margin-top: 0;
+  padding: 0.12rem;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--tool-text-secondary);
+  cursor: pointer;
+  box-shadow: none;
+  transition: color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.tool-toggle:hover {
+  background: transparent;
+  color: var(--tool-name-color);
+  border-color: transparent;
+  transform: none;
+}
+
+.tool-toggle-icon {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s ease;
+}
+
+.tool-inline-toggle.expanded .tool-toggle-icon,
+.tool-toggle.expanded .tool-toggle-icon {
+  transform: rotate(180deg);
+}

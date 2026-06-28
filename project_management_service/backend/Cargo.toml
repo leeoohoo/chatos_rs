@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 axum = { version = "0.7", features = ["json"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
+chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
 dotenvy = "0.15"
 futures-util = "0.3"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }

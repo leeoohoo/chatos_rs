@@ -5,117 +5,23 @@ use std::sync::OnceLock;
 
 static TASK_RUNNER_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
-#[derive(Debug, Clone)]
-pub struct UserServiceTaskRunnerExchange {
-    pub base_url: String,
-    pub access_token: String,
-    pub task_runner_agent_account_id: String,
-    pub contact_id: Option<String>,
-}
+mod types;
 
-#[derive(Debug, Deserialize)]
-struct UserServiceTaskRunnerTokenResponse {
-    access_token: String,
-}
+#[cfg(test)]
+mod tests;
 
-#[derive(Debug, Deserialize)]
-struct TaskRunnerSkillResponse {
-    content: String,
-}
+#[allow(unused_imports)]
+pub use types::TaskRunnerMcpConfigRequest;
+pub use types::{
+    CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, CreateTaskRunnerTaskRequest,
+    SubmitTaskRunnerPromptRequest, TaskRunnerExecutionOptions, TaskRunnerTaskRecord,
+    TaskRunnerTaskScheduleRequest, UserServiceTaskRunnerExchange,
+};
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct TaskRunnerTaskRecord {
-    pub id: String,
-    pub status: String,
-    pub last_run_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct TaskRunnerMcpConfigRequest {
-    pub enabled_builtin_kinds: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub builtin_prompt_locale: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_dir: Option<String>,
-    pub external_mcp_config_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct CreateTaskRunnerTaskRequest {
-    pub title: String,
-    pub description: Option<String>,
-    pub objective: String,
-    pub input_payload: Option<Value>,
-    pub status: Option<String>,
-    pub priority: Option<i32>,
-    pub tags: Option<Vec<String>>,
-    pub default_model_config_id: Option<String>,
-    pub project_id: Option<String>,
-    pub task_profile: Option<String>,
-    pub schedule: Option<TaskRunnerTaskScheduleRequest>,
-    pub mcp_config: Option<TaskRunnerMcpConfigRequest>,
-    pub prerequisite_task_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct TaskRunnerTaskScheduleRequest {
-    pub mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub run_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct CancelTaskRunnerTaskRequest {
-    pub reason: String,
-    pub replacement_task_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TaskRunnerMcpCatalogEntry {
-    kind: String,
-    config_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TaskRunnerExternalMcpConfig {
-    id: String,
-    enabled: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TaskRunnerExecutionOptions {
-    builtin_tool_ids: BTreeSet<String>,
-    external_tool_ids: BTreeSet<String>,
-}
-
-impl TaskRunnerExecutionOptions {
-    pub fn mcp_config_for_tool_ids(
-        &self,
-        values: &[String],
-    ) -> Result<TaskRunnerMcpConfigRequest, String> {
-        let values = normalize_tool_ids(values);
-        if values.is_empty() {
-            return Err("task_runner_enabled_tool_ids is required".to_string());
-        }
-        let mut enabled_builtin_kinds = Vec::new();
-        let mut external_mcp_config_ids = Vec::new();
-        for value in values {
-            if self.builtin_tool_ids.contains(value.as_str()) {
-                enabled_builtin_kinds.push(value);
-            } else if self.external_tool_ids.contains(value.as_str()) {
-                external_mcp_config_ids.push(value);
-            } else {
-                return Err(format!("Task Runner 工具不可用或无权限访问: {value}"));
-            }
-        }
-        Ok(TaskRunnerMcpConfigRequest {
-            enabled_builtin_kinds,
-            builtin_prompt_locale: None,
-            workspace_dir: None,
-            external_mcp_config_ids,
-        })
-    }
-}
+use types::{
+    TaskRunnerExternalMcpConfig, TaskRunnerMcpCatalogEntry, TaskRunnerSkillResponse,
+    UserServiceTaskRunnerTokenResponse,
+};
 
 pub async fn exchange_task_runner_token_via_user_service(
     request: &UserServiceTaskRunnerExchange,
@@ -294,18 +200,6 @@ pub async fn cancel_task_runner_task(
     send_task_runner_response(builder).await
 }
 
-#[derive(Debug, Default, Serialize)]
-pub struct SubmitTaskRunnerPromptRequest {
-    pub values: Option<Value>,
-    pub selection: Option<Value>,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct CancelTaskRunnerPromptRequest {
-    pub reason: Option<String>,
-}
-
 pub async fn submit_task_runner_prompt(
     base_url: &str,
     access_token: &str,
@@ -408,16 +302,6 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 
 fn task_runner_http_client() -> &'static reqwest::Client {
     TASK_RUNNER_HTTP_CLIENT.get_or_init(reqwest::Client::new)
-}
-
-fn normalize_tool_ids(values: &[String]) -> Vec<String> {
-    let mut out = values
-        .iter()
-        .filter_map(|value| normalize_optional(Some(value.clone())))
-        .collect::<Vec<_>>();
-    out.sort();
-    out.dedup();
-    out
 }
 
 async fn get_internal_json(
@@ -588,226 +472,4 @@ pub async fn get_message_graph_run(
         query.push(("source_turn_id", source_turn_id));
     }
     get_internal_json(base_url, path.as_str(), query.as_slice()).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        exchange_task_runner_token_via_user_service, fetch_task_runner_skill,
-        UserServiceTaskRunnerExchange,
-    };
-    use axum::extract::State;
-    use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
-    use axum::{routing::get, routing::post, Json, Router};
-    use serde_json::{json, Value};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
-    #[derive(Debug, Default)]
-    struct CapturedExchange {
-        authorization: Option<String>,
-        body: Option<Value>,
-    }
-
-    #[derive(Debug, Default)]
-    struct CapturedSkillRequest {
-        lang: Option<String>,
-        profile: Option<String>,
-    }
-
-    #[derive(Clone)]
-    struct ExchangeServerState {
-        captured: Arc<Mutex<CapturedExchange>>,
-        response_status: StatusCode,
-        response_body: Value,
-    }
-
-    #[derive(Clone)]
-    struct SkillServerState {
-        captured: Arc<Mutex<CapturedSkillRequest>>,
-        response_status: StatusCode,
-        response_body: Value,
-    }
-
-    async fn start_test_server(
-        captured: Arc<Mutex<CapturedExchange>>,
-        status: StatusCode,
-        body: Value,
-    ) -> (String, tokio::task::JoinHandle<()>) {
-        async fn handler(
-            State(state): State<ExchangeServerState>,
-            headers: HeaderMap,
-            Json(payload): Json<Value>,
-        ) -> (StatusCode, Json<Value>) {
-            let mut captured = state.captured.lock().await;
-            captured.authorization = headers
-                .get(AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .map(ToOwned::to_owned);
-            captured.body = Some(payload);
-            (state.response_status, Json(state.response_body))
-        }
-
-        let app = Router::new()
-            .route("/api/token/exchange/task-runner", post(handler))
-            .with_state(ExchangeServerState {
-                captured,
-                response_status: status,
-                response_body: body,
-            });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("read test server addr");
-        let handle = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
-        (format!("http://{addr}"), handle)
-    }
-
-    async fn start_skill_test_server(
-        captured: Arc<Mutex<CapturedSkillRequest>>,
-        status: StatusCode,
-        body: Value,
-    ) -> (String, tokio::task::JoinHandle<()>) {
-        async fn handler(
-            State(state): State<SkillServerState>,
-            query: axum::extract::Query<std::collections::HashMap<String, String>>,
-        ) -> (StatusCode, Json<Value>) {
-            let mut captured = state.captured.lock().await;
-            captured.lang = query.get("lang").cloned();
-            captured.profile = query.get("profile").cloned();
-            (state.response_status, Json(state.response_body))
-        }
-
-        let app = Router::new()
-            .route("/api/skills/task-runner", get(handler))
-            .with_state(SkillServerState {
-                captured,
-                response_status: status,
-                response_body: body,
-            });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("read test server addr");
-        let handle = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
-        (format!("http://{addr}"), handle)
-    }
-
-    #[tokio::test]
-    async fn exchange_task_runner_token_via_user_service_sends_bearer_and_body() {
-        let captured = Arc::new(Mutex::new(CapturedExchange::default()));
-        let (base_url, handle) = start_test_server(
-            captured.clone(),
-            StatusCode::OK,
-            json!({ "access_token": "task-runner-token" }),
-        )
-        .await;
-
-        let token = exchange_task_runner_token_via_user_service(&UserServiceTaskRunnerExchange {
-            base_url,
-            access_token: "human-user-token".to_string(),
-            task_runner_agent_account_id: "agent-123".to_string(),
-            contact_id: Some("contact-456".to_string()),
-        })
-        .await
-        .expect("exchange response");
-
-        assert_eq!(token, "task-runner-token");
-        let captured = captured.lock().await;
-        assert_eq!(
-            captured.authorization.as_deref(),
-            Some("Bearer human-user-token")
-        );
-        assert_eq!(
-            captured
-                .body
-                .as_ref()
-                .and_then(|value| value.get("task_runner_agent_account_id"))
-                .and_then(Value::as_str),
-            Some("agent-123")
-        );
-        assert_eq!(
-            captured
-                .body
-                .as_ref()
-                .and_then(|value| value.get("contact_id"))
-                .and_then(Value::as_str),
-            Some("contact-456")
-        );
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn exchange_task_runner_token_via_user_service_surfaces_remote_error() {
-        let captured = Arc::new(Mutex::new(CapturedExchange::default()));
-        let (base_url, handle) = start_test_server(
-            captured,
-            StatusCode::FORBIDDEN,
-            json!({ "error": "owner mismatch" }),
-        )
-        .await;
-
-        let error = exchange_task_runner_token_via_user_service(&UserServiceTaskRunnerExchange {
-            base_url,
-            access_token: "human-user-token".to_string(),
-            task_runner_agent_account_id: "agent-123".to_string(),
-            contact_id: None,
-        })
-        .await
-        .expect_err("expected remote error");
-
-        assert!(error.contains("403"));
-        assert!(error.contains("owner mismatch"));
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn fetch_task_runner_skill_includes_profile_query() {
-        let captured = Arc::new(Mutex::new(CapturedSkillRequest::default()));
-        let (base_url, handle) = start_skill_test_server(
-            captured.clone(),
-            StatusCode::OK,
-            json!({ "content": "plan skill" }),
-        )
-        .await;
-
-        let content = fetch_task_runner_skill(&base_url, "zh-CN", Some("chatos_plan"))
-            .await
-            .expect("fetch skill");
-
-        assert_eq!(content, "plan skill");
-        let captured = captured.lock().await;
-        assert_eq!(captured.lang.as_deref(), Some("zh-CN"));
-        assert_eq!(captured.profile.as_deref(), Some("chatos_plan"));
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn fetch_task_runner_skill_normalizes_english_locale_without_profile() {
-        let captured = Arc::new(Mutex::new(CapturedSkillRequest::default()));
-        let (base_url, handle) = start_skill_test_server(
-            captured.clone(),
-            StatusCode::OK,
-            json!({ "content": "default skill" }),
-        )
-        .await;
-
-        let content = fetch_task_runner_skill(&base_url, "english", None)
-            .await
-            .expect("fetch skill");
-
-        assert_eq!(content, "default skill");
-        let captured = captured.lock().await;
-        assert_eq!(captured.lang.as_deref(), Some("en-US"));
-        assert!(captured.profile.is_none());
-
-        handle.abort();
-    }
 }

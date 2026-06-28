@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help dev restart status stop build test smoke smoke-user-service-flow
+.PHONY: help dev restart status stop build test smoke smoke-user-service-flow code-size-report hotspot-line-warnings
 .PHONY: restart-wsl status-wsl stop-wsl bootstrap-wsl
 .PHONY: restart-user-service-wsl status-user-service-wsl stop-user-service-wsl
 .PHONY: restart-task-runner-wsl status-task-runner-wsl stop-task-runner-wsl
@@ -42,6 +42,8 @@ help:
 	@echo "  make test                # run repo checks + subproject tests"
 	@echo "  make smoke               # repo governance + lightweight cross-subproject probes"
 	@echo "  make smoke-user-service-flow # call the live user_service API flow end-to-end"
+	@echo "  make code-size-report    # report source-code file size and line-count hotspots"
+	@echo "  make hotspot-line-warnings # warn on planned refactor hotspot line budgets"
 	@echo "  make bootstrap-wsl       # bootstrap Ubuntu/WSL dependencies for Rust + Node dev"
 	@echo "  make restart-wsl         # run root restart_services.sh inside WSL"
 	@echo "  make status-wsl          # show root service status inside WSL"
@@ -163,6 +165,12 @@ smoke-user-service:
 
 smoke-user-service-flow:
 	@powershell.exe -ExecutionPolicy Bypass -File scripts/smoke-user-service-flow.ps1
+
+code-size-report:
+	@bash scripts/code-size-report.sh
+
+hotspot-line-warnings:
+	@bash scripts/check-hotspot-line-budgets.sh --warn-planned
 
 bootstrap-wsl:
 	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action bootstrap -Target main

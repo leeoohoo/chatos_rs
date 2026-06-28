@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -6,60 +5,31 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::model_config::{
-    normalize_provider, reasoning_effort_for_provider, thinking_mode_for_provider,
-};
+use crate::model_config::normalize_provider;
 #[cfg(test)]
 use crate::request_payload::response_items_to_chat_messages;
 use crate::request_payload::{
     build_chat_completions_request_payload, build_responses_request_payload,
 };
 use crate::request_retry::should_retry_without_prompt_cache_retention;
-use crate::stream::consume_sse_stream;
-use crate::stream_parse::{
-    apply_chat_completions_stream_event, apply_responses_stream_event,
-    finalize_chat_completions_stream_state, finalize_responses_stream_state, FinalizedStreamState,
-    StreamState,
+use http::{
+    log_preview, send_json_request, serialize_request_payload, validate_request_payload_size,
 };
-use crate::tool_call::collect_ordered_tool_calls;
+use streaming::parse_stream_response;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(120);
-const EMPTY_STREAM_RESPONSE_PARSE_ERROR: &str =
-    "stream response parse failed: no valid SSE events parsed from provider";
 
-#[derive(Debug, Clone)]
-pub struct AiResponse {
-    pub content: String,
-    pub reasoning: Option<String>,
-    pub tool_calls: Option<Value>,
-    pub finish_reason: Option<String>,
-    pub provider_error: Option<Value>,
-    pub usage: Option<Value>,
-    pub response_id: Option<String>,
-}
+mod http;
+mod streaming;
+#[cfg(test)]
+mod tests;
+mod types;
 
-#[derive(Clone, Default)]
-pub struct StreamCallbacks {
-    pub on_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    pub on_thinking: Option<Arc<dyn Fn(String) + Send + Sync>>,
-}
+pub use types::{AiRequestOptions, AiResponse, AiTransport, StreamCallbacks};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AiTransport {
-    Responses,
-    ChatCompletions,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct AiRequestOptions {
-    pub prompt_cache_key: Option<String>,
-    pub request_cwd: Option<String>,
-    pub include_prompt_cache_retention: bool,
-    pub request_body_limit_bytes: Option<usize>,
-    pub abort_token: Option<CancellationToken>,
-    pub force_identity_encoding: bool,
-}
+#[cfg(test)]
+use streaming::emit_finalized_stream_callbacks;
 
 #[derive(Clone)]
 pub struct AiRequestHandler {
@@ -345,37 +315,6 @@ impl Default for AiRequestHandler {
     }
 }
 
-async fn send_json_request(
-    client: &reqwest::Client,
-    url: &str,
-    api_key: &str,
-    payload_body: Vec<u8>,
-    abort_token: Option<CancellationToken>,
-    force_identity_encoding: bool,
-) -> Result<reqwest::Response, String> {
-    let mut request = client
-        .post(url)
-        .bearer_auth(api_key)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(payload_body);
-    if force_identity_encoding {
-        request = request
-            .header(reqwest::header::ACCEPT_ENCODING, "identity")
-            .header(reqwest::header::CONNECTION, "close")
-            .version(reqwest::Version::HTTP_11);
-    }
-
-    let future = request.send();
-    if let Some(token) = abort_token {
-        tokio::select! {
-            _ = token.cancelled() => Err("aborted".to_string()),
-            response = future => response.map_err(|err| err.to_string()),
-        }
-    } else {
-        future.await.map_err(|err| err.to_string())
-    }
-}
-
 fn build_request_payload(
     transport: AiTransport,
     input: Value,
@@ -438,152 +377,6 @@ fn transport_label(transport: AiTransport) -> &'static str {
     }
 }
 
-async fn parse_stream_response(
-    response: reqwest::Response,
-    transport: AiTransport,
-    callbacks: StreamCallbacks,
-    provider: Option<&str>,
-    thinking_level: Option<&str>,
-    abort_token: Option<CancellationToken>,
-) -> Result<AiResponse, String> {
-    let mut state = StreamState::default();
-    let mut parsed_event_count = 0usize;
-    let mut sent_any_thinking = false;
-    let reasoning_enabled = reasoning_effort_for_provider(provider, thinking_level).is_some()
-        || thinking_mode_for_provider(provider, thinking_level) == Some("enabled");
-
-    consume_sse_stream(response.bytes_stream(), abort_token, |event| {
-        parsed_event_count += 1;
-        let payload = match transport {
-            AiTransport::Responses => apply_responses_stream_event(&mut state, &event),
-            AiTransport::ChatCompletions => {
-                apply_chat_completions_stream_event(&mut state, &event, reasoning_enabled)
-            }
-        };
-        if let Some(chunk) = payload.chunk {
-            if let Some(cb) = &callbacks.on_chunk {
-                cb(chunk);
-            }
-        }
-        if let Some(thinking) = payload.thinking {
-            sent_any_thinking = true;
-            if let Some(cb) = &callbacks.on_thinking {
-                cb(thinking);
-            }
-        }
-    })
-    .await?;
-
-    if parsed_stream_response_is_empty(parsed_event_count, &state) {
-        return Err(EMPTY_STREAM_RESPONSE_PARSE_ERROR.to_string());
-    }
-
-    let finalized = match transport {
-        AiTransport::Responses => finalize_responses_stream_state(&mut state),
-        AiTransport::ChatCompletions => finalize_chat_completions_stream_state(&mut state),
-    };
-
-    emit_finalized_stream_callbacks(
-        &finalized,
-        state.sent_any_chunk,
-        sent_any_thinking,
-        &callbacks,
-    );
-
-    Ok(AiResponse {
-        content: finalized.content,
-        reasoning: finalized.reasoning,
-        tool_calls: match transport {
-            AiTransport::Responses => finalized.tool_calls,
-            AiTransport::ChatCompletions => {
-                collect_tool_calls(&state.tool_calls_map).or(finalized.tool_calls)
-            }
-        },
-        finish_reason: finalized.finish_reason,
-        provider_error: finalized.provider_error,
-        usage: finalized.usage,
-        response_id: finalized.response_id,
-    })
-}
-
-fn emit_finalized_stream_callbacks(
-    finalized: &FinalizedStreamState,
-    sent_any_chunk: bool,
-    sent_any_thinking: bool,
-    callbacks: &StreamCallbacks,
-) {
-    if !sent_any_chunk && !finalized.content.is_empty() {
-        if let Some(cb) = &callbacks.on_chunk {
-            cb(finalized.content.clone());
-        }
-    }
-
-    if sent_any_thinking {
-        return;
-    }
-    if let Some(reasoning) = finalized.reasoning.as_deref().map(str::trim) {
-        if !reasoning.is_empty() {
-            if let Some(cb) = &callbacks.on_thinking {
-                cb(reasoning.to_string());
-            }
-        }
-    }
-}
-
-fn collect_tool_calls(tool_calls: &BTreeMap<usize, Value>) -> Option<Value> {
-    collect_ordered_tool_calls(tool_calls).and_then(|value| {
-        let calls = value
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|item| {
-                item.get("function")
-                    .and_then(|function| function.get("name"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .is_some()
-            })
-            .collect::<Vec<_>>();
-        if calls.is_empty() {
-            None
-        } else {
-            Some(Value::Array(calls))
-        }
-    })
-}
-
-fn parsed_stream_response_is_empty(parsed_event_count: usize, state: &StreamState) -> bool {
-    parsed_event_count == 0
-        && state.full_content.trim().is_empty()
-        && state.reasoning.trim().is_empty()
-        && state.tool_calls_map.is_empty()
-        && state.response_obj.is_none()
-        && state.provider_error.is_none()
-}
-
-fn serialize_request_payload(payload: &Value) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(payload)
-        .map_err(|err| format!("failed to serialize AI request payload: {err}"))
-}
-
-fn validate_request_payload_size(
-    size: usize,
-    request_body_limit_bytes: Option<usize>,
-) -> Result<(), String> {
-    let Some(limit) = request_body_limit_bytes.filter(|value| *value > 0) else {
-        return Ok(());
-    };
-    if size > limit {
-        Err(format!(
-            "AI request payload too large: {size} bytes exceeds {limit} bytes"
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 fn ai_response_tool_call_count(response: &AiResponse) -> usize {
     response
         .tool_calls
@@ -591,273 +384,4 @@ fn ai_response_tool_call_count(response: &AiResponse) -> usize {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default()
-}
-
-fn log_preview(value: &str) -> String {
-    const MAX_LOG_PREVIEW_CHARS: usize = 2_000;
-    let trimmed = value.trim();
-    if trimmed.chars().count() <= MAX_LOG_PREVIEW_CHARS {
-        return trimmed.to_string();
-    }
-    let preview = trimmed
-        .chars()
-        .take(MAX_LOG_PREVIEW_CHARS)
-        .collect::<String>();
-    format!("{preview}... [truncated]")
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use serde_json::{json, Value};
-
-    use super::{
-        build_chat_completions_request_payload, build_responses_request_payload,
-        effective_provider_for_request, emit_finalized_stream_callbacks,
-        response_items_to_chat_messages, AiRequestOptions, StreamCallbacks,
-    };
-    use crate::stream_parse::FinalizedStreamState;
-
-    #[test]
-    fn response_items_to_chat_messages_keeps_complete_tool_exchange() {
-        let messages = response_items_to_chat_messages(vec![
-            json!({
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": "checking"}]
-            }),
-            json!({
-                "type": "function_call",
-                "call_id": "call_1",
-                "name": "memory_search",
-                "arguments": "{\"q\":\"rust\"}"
-            }),
-            json!({
-                "type": "function_call_output",
-                "call_id": "call_1",
-                "output": "done"
-            }),
-        ]);
-
-        assert_eq!(messages.len(), 2);
-        assert_eq!(
-            messages[0]
-                .get("tool_calls")
-                .and_then(Value::as_array)
-                .map(Vec::len),
-            Some(1)
-        );
-        assert_eq!(
-            messages[1].get("role").and_then(Value::as_str),
-            Some("tool")
-        );
-    }
-
-    #[test]
-    fn response_items_to_chat_messages_drops_incomplete_tool_exchange() {
-        let messages = response_items_to_chat_messages(vec![
-            json!({
-                "type": "function_call",
-                "call_id": "call_1",
-                "name": "memory_search",
-                "arguments": "{}"
-            }),
-            json!({
-                "type": "message",
-                "role": "user",
-                "content": "next"
-            }),
-        ]);
-
-        assert_eq!(messages.len(), 1);
-        assert_eq!(
-            messages[0].get("role").and_then(Value::as_str),
-            Some("user")
-        );
-    }
-
-    #[test]
-    fn deepseek_thinking_chat_payload_skips_temperature() {
-        let payload = build_chat_completions_request_payload(
-            json!("hello"),
-            "deepseek-reasoner".to_string(),
-            None,
-            None,
-            Some(0.7),
-            None,
-            Some("deepseek".to_string()),
-            Some("high".to_string()),
-            true,
-        );
-
-        assert!(payload.get("temperature").is_none());
-        assert_eq!(
-            payload.get("thinking").and_then(|value| value.get("type")),
-            Some(&Value::String("enabled".to_string()))
-        );
-        assert_eq!(
-            payload.get("reasoning_effort"),
-            Some(&Value::String("high".to_string()))
-        );
-    }
-
-    #[test]
-    fn responses_payload_supports_prompt_cache_and_cwd() {
-        let options = AiRequestOptions {
-            prompt_cache_key: Some("session_1".to_string()),
-            request_cwd: Some("/workspace".to_string()),
-            include_prompt_cache_retention: true,
-            request_body_limit_bytes: None,
-            abort_token: None,
-            force_identity_encoding: false,
-        };
-        let payload = build_responses_request_payload(
-            json!([]),
-            "gpt-4.1".to_string(),
-            Some("system".to_string()),
-            options.prompt_cache_key,
-            None,
-            options.request_cwd,
-            None,
-            None,
-            Some("gpt".to_string()),
-            Some("medium".to_string()),
-            true,
-            options.include_prompt_cache_retention,
-        );
-
-        assert_eq!(
-            payload.get("prompt_cache_key"),
-            Some(&Value::String("session_1".to_string()))
-        );
-        assert_eq!(
-            payload.get("prompt_cache_retention"),
-            Some(&Value::String("24h".to_string()))
-        );
-        assert_eq!(
-            payload.get("cwd"),
-            Some(&Value::String("/workspace".to_string()))
-        );
-    }
-
-    #[test]
-    fn responses_payload_requests_summary_for_gpt_model_on_compatible_provider() {
-        let payload = build_responses_request_payload(
-            json!([]),
-            "gpt-5.4".to_string(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("openai_compatible".to_string()),
-            Some("xhigh".to_string()),
-            true,
-            false,
-        );
-
-        assert_eq!(
-            payload.pointer("/reasoning/effort"),
-            Some(&Value::String("xhigh".to_string()))
-        );
-        assert_eq!(
-            payload.pointer("/reasoning/summary"),
-            Some(&Value::String("auto".to_string()))
-        );
-    }
-
-    #[test]
-    fn responses_payload_omits_summary_for_generic_compatible_model() {
-        let payload = build_responses_request_payload(
-            json!([]),
-            "generic-compatible-model".to_string(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("openai_compatible".to_string()),
-            Some("high".to_string()),
-            true,
-            false,
-        );
-
-        assert_eq!(
-            payload.pointer("/reasoning/effort"),
-            Some(&Value::String("high".to_string()))
-        );
-        assert!(payload.pointer("/reasoning/summary").is_none());
-    }
-
-    #[test]
-    fn custom_openai_base_url_uses_compatible_provider() {
-        assert_eq!(
-            effective_provider_for_request(
-                "https://gateway.example.test/v1",
-                Some("openai".to_string()),
-            )
-            .as_deref(),
-            Some("openai_compatible")
-        );
-        assert_eq!(
-            effective_provider_for_request(
-                "https://api.openai.com/v1",
-                Some("openai".to_string()),
-            )
-            .as_deref(),
-            Some("openai")
-        );
-    }
-
-    #[test]
-    fn finalized_stream_callbacks_emit_final_reasoning_when_no_stream_thinking() {
-        let thinkings = Arc::new(Mutex::new(Vec::<String>::new()));
-        let callbacks = StreamCallbacks {
-            on_chunk: None,
-            on_thinking: Some(Arc::new({
-                let thinkings = thinkings.clone();
-                move |value| {
-                    thinkings.lock().expect("lock poisoned").push(value);
-                }
-            })),
-        };
-        let finalized = FinalizedStreamState {
-            content: "done".to_string(),
-            reasoning: Some("final reasoning".to_string()),
-            ..FinalizedStreamState::default()
-        };
-
-        emit_finalized_stream_callbacks(&finalized, true, false, &callbacks);
-
-        assert_eq!(
-            thinkings.lock().expect("lock poisoned").as_slice(),
-            ["final reasoning"]
-        );
-    }
-
-    #[test]
-    fn finalized_stream_callbacks_do_not_duplicate_streamed_thinking() {
-        let thinkings = Arc::new(Mutex::new(Vec::<String>::new()));
-        let callbacks = StreamCallbacks {
-            on_chunk: None,
-            on_thinking: Some(Arc::new({
-                let thinkings = thinkings.clone();
-                move |value| {
-                    thinkings.lock().expect("lock poisoned").push(value);
-                }
-            })),
-        };
-        let finalized = FinalizedStreamState {
-            content: "done".to_string(),
-            reasoning: Some("final reasoning".to_string()),
-            ..FinalizedStreamState::default()
-        };
-
-        emit_finalized_stream_callbacks(&finalized, true, true, &callbacks);
-
-        assert!(thinkings.lock().expect("lock poisoned").is_empty());
-    }
 }

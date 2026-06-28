@@ -1,20 +1,46 @@
-use std::collections::HashMap;
-
-use crate::core::messages::{
-    is_session_summary_message as is_session_summary, message_is_hidden, message_turn_id,
-};
+use crate::core::messages::is_session_summary_message as is_session_summary;
 use crate::models::message::Message;
-use crate::services::chatos_memory_engine::engine_record_to_message;
 
 use super::history_process_support::{
-    attach_user_history_process_metadata, build_embedded_process_message,
-    count_assistant_thinking_steps, enrich_assistant_message_for_display,
+    attach_user_history_process_metadata, count_assistant_thinking_steps,
     extract_tool_calls_from_message, is_task_runner_async_plan_summary_message,
-    is_task_runner_callback_message, mark_process_message_loaded,
-    normalize_task_runner_async_user_status_for_display,
+    is_task_runner_callback_message, normalize_task_runner_async_user_status_for_display,
     normalize_task_runner_callback_for_display, select_final_assistant_index,
     strip_assistant_for_compact_history,
 };
+
+mod turn_display;
+mod turn_slices;
+
+pub(super) fn build_compact_history_messages_from_turn_slices(
+    slices: Vec<memory_engine_sdk::TurnRecordSlice>,
+) -> Vec<Message> {
+    turn_slices::build_compact_history_messages_from_turn_slices(slices)
+}
+
+pub(super) fn build_compact_history_messages_from_turn_slices_with_process(
+    slices: Vec<memory_engine_sdk::TurnRecordSlice>,
+    process_messages_by_turn: &std::collections::HashMap<String, Vec<Message>>,
+) -> Vec<Message> {
+    turn_slices::build_compact_history_messages_from_turn_slices_with_process(
+        slices,
+        process_messages_by_turn,
+    )
+}
+
+pub(super) fn turn_slice_final_assistant_is_task_runner_callback(
+    slice: &memory_engine_sdk::TurnRecordSlice,
+) -> bool {
+    turn_slices::turn_slice_final_assistant_is_task_runner_callback(slice)
+}
+
+pub(super) fn find_user_index_by_turn_id(messages: &[Message], turn_id: &str) -> Option<usize> {
+    turn_display::find_user_index_by_turn_id(messages, turn_id)
+}
+
+pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usize) -> Vec<Message> {
+    turn_display::build_turn_display_messages(messages, user_index)
+}
 
 pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
     if messages.is_empty() {
@@ -106,264 +132,6 @@ pub(super) fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Mess
     }
 
     compact
-}
-
-pub(super) fn build_compact_history_messages_from_turn_slices(
-    slices: Vec<memory_engine_sdk::TurnRecordSlice>,
-) -> Vec<Message> {
-    build_compact_history_messages_from_turn_slices_with_process(slices, &HashMap::new())
-}
-
-pub(super) fn build_compact_history_messages_from_turn_slices_with_process(
-    slices: Vec<memory_engine_sdk::TurnRecordSlice>,
-    process_messages_by_turn: &HashMap<String, Vec<Message>>,
-) -> Vec<Message> {
-    let mut compact = Vec::new();
-
-    for slice in slices {
-        let mut user_message = engine_record_to_message(slice.user_record);
-        if message_is_hidden(&user_message) {
-            continue;
-        }
-
-        let user_message_id = user_message.id.clone();
-        let final_assistant = slice
-            .final_assistant_record
-            .map(engine_record_to_message)
-            .filter(|message| !message_is_hidden(message));
-        let turn_process_messages = process_messages_by_turn.get(slice.turn_id.as_str());
-        let recovered_plan_summary =
-            recover_task_runner_plan_summary(final_assistant.as_ref(), turn_process_messages);
-        let recovered_callback_updates =
-            recover_task_runner_callback_updates(final_assistant.as_ref(), turn_process_messages);
-        let final_assistant_message_id = recovered_plan_summary
-            .as_ref()
-            .or(final_assistant.as_ref())
-            .map(|message| message.id.clone());
-        let process_message_count = slice
-            .process_message_count
-            .saturating_sub(usize::from(recovered_plan_summary.is_some()))
-            .saturating_sub(recovered_callback_updates.len());
-        attach_user_history_process_metadata(
-            &mut user_message,
-            slice.has_process,
-            slice.tool_call_count,
-            slice.thinking_count,
-            process_message_count,
-            final_assistant_message_id,
-        );
-        normalize_task_runner_async_user_status_for_display(
-            &mut user_message,
-            final_assistant.is_some(),
-        );
-        compact.push(user_message);
-
-        if let Some(mut assistant) = recovered_plan_summary {
-            strip_assistant_for_compact_history(&mut assistant, &user_message_id);
-            compact.push(assistant);
-        }
-
-        for mut assistant in recovered_callback_updates {
-            normalize_task_runner_callback_for_display(&mut assistant);
-            compact.push(assistant);
-        }
-
-        if let Some(mut assistant) = final_assistant {
-            if is_task_runner_callback_message(&assistant) {
-                normalize_task_runner_callback_for_display(&mut assistant);
-            } else {
-                strip_assistant_for_compact_history(&mut assistant, &user_message_id);
-            }
-            compact.push(assistant);
-        }
-    }
-
-    compact
-}
-
-pub(super) fn turn_slice_final_assistant_is_task_runner_callback(
-    slice: &memory_engine_sdk::TurnRecordSlice,
-) -> bool {
-    slice
-        .final_assistant_record
-        .as_ref()
-        .map(|record| is_task_runner_callback_message(&engine_record_to_message(record.clone())))
-        .unwrap_or(false)
-}
-
-fn recover_task_runner_plan_summary(
-    final_assistant: Option<&Message>,
-    turn_process_messages: Option<&Vec<Message>>,
-) -> Option<Message> {
-    if !final_assistant.is_some_and(is_task_runner_callback_message) {
-        return None;
-    }
-
-    turn_process_messages.and_then(|messages| {
-        messages
-            .iter()
-            .rev()
-            .find(|message| {
-                !message_is_hidden(message) && is_task_runner_async_plan_summary_message(message)
-            })
-            .cloned()
-    })
-}
-
-fn recover_task_runner_callback_updates(
-    final_assistant: Option<&Message>,
-    turn_process_messages: Option<&Vec<Message>>,
-) -> Vec<Message> {
-    let Some(final_assistant) =
-        final_assistant.filter(|message| is_task_runner_callback_message(message))
-    else {
-        return Vec::new();
-    };
-
-    turn_process_messages
-        .map(|messages| {
-            messages
-                .iter()
-                .filter(|message| {
-                    message.id != final_assistant.id
-                        && !message_is_hidden(message)
-                        && is_task_runner_callback_message(message)
-                })
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub(super) fn find_user_index_by_turn_id(messages: &[Message], turn_id: &str) -> Option<usize> {
-    let normalized = turn_id.trim();
-    if normalized.is_empty() {
-        return None;
-    }
-
-    messages
-        .iter()
-        .position(|message| message.role == "user" && message_turn_id(message) == Some(normalized))
-}
-
-pub(super) fn build_turn_process_messages(messages: &[Message], user_index: usize) -> Vec<Message> {
-    let user_message_id = messages[user_index].id.clone();
-    let next_user_index = messages
-        .iter()
-        .enumerate()
-        .skip(user_index + 1)
-        .find_map(|(index, message)| (message.role == "user").then_some(index))
-        .unwrap_or(messages.len());
-
-    let final_assistant_index =
-        select_final_assistant_index(messages, user_index + 1, next_user_index);
-
-    let mut process_messages: Vec<Message> = Vec::new();
-    for index in (user_index + 1)..next_user_index {
-        if Some(index) == final_assistant_index {
-            continue;
-        }
-
-        let source = &messages[index];
-        if is_task_runner_callback_message(source) {
-            continue;
-        }
-        if source.role == "assistant" && !is_session_summary(source) {
-            let mut assistant = source.clone();
-            enrich_assistant_message_for_display(&mut assistant);
-            mark_process_message_loaded(&mut assistant, &user_message_id);
-            process_messages.push(assistant);
-        } else if source.role == "tool" {
-            let mut tool_message = source.clone();
-            mark_process_message_loaded(&mut tool_message, &user_message_id);
-            process_messages.push(tool_message);
-        }
-    }
-
-    if process_messages.is_empty() {
-        if let Some(final_assistant_index) = final_assistant_index {
-            if let Some(synthetic) =
-                build_embedded_process_message(&messages[final_assistant_index], &user_message_id)
-            {
-                process_messages.push(synthetic);
-            }
-        }
-    }
-
-    process_messages
-}
-
-pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usize) -> Vec<Message> {
-    let mut user_message = messages[user_index].clone();
-    let user_message_id = user_message.id.clone();
-    let next_user_index = messages
-        .iter()
-        .enumerate()
-        .skip(user_index + 1)
-        .find_map(|(index, message)| (message.role == "user").then_some(index))
-        .unwrap_or(messages.len());
-
-    let final_assistant_index =
-        select_final_assistant_index(messages, user_index + 1, next_user_index);
-
-    let mut tool_call_count = 0usize;
-    let mut thinking_count = 0usize;
-    let mut process_message_count = 0usize;
-    let mut callback_updates = Vec::new();
-
-    for index in (user_index + 1)..next_user_index {
-        let message = &messages[index];
-        if is_task_runner_callback_message(message) {
-            callback_updates.push(index);
-            continue;
-        }
-
-        if message.role == "assistant" && !is_session_summary(message) {
-            tool_call_count += extract_tool_calls_from_message(message).len();
-            thinking_count += count_assistant_thinking_steps(message);
-        }
-
-        if Some(index) != final_assistant_index
-            && (message.role == "assistant" || message.role == "tool")
-            && !(message.role == "assistant" && is_session_summary(message))
-        {
-            process_message_count += 1;
-        }
-    }
-
-    let final_assistant_message_id = final_assistant_index.map(|index| messages[index].id.clone());
-    let task_runner_async_turn_completed = final_assistant_index
-        .is_some_and(|index| is_task_runner_async_plan_summary_message(&messages[index]))
-        || !callback_updates.is_empty();
-    attach_user_history_process_metadata(
-        &mut user_message,
-        process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
-        tool_call_count,
-        thinking_count,
-        process_message_count,
-        final_assistant_message_id,
-    );
-    normalize_task_runner_async_user_status_for_display(
-        &mut user_message,
-        task_runner_async_turn_completed,
-    );
-
-    let mut display_messages = vec![user_message];
-    display_messages.extend(build_turn_process_messages(messages, user_index));
-
-    if let Some(final_index) = final_assistant_index {
-        let mut assistant = messages[final_index].clone();
-        strip_assistant_for_compact_history(&mut assistant, &user_message_id);
-        display_messages.push(assistant);
-    }
-
-    for index in callback_updates {
-        let mut assistant = messages[index].clone();
-        normalize_task_runner_callback_for_display(&mut assistant);
-        display_messages.push(assistant);
-    }
-
-    display_messages
 }
 
 #[cfg(test)]

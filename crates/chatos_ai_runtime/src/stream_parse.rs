@@ -4,11 +4,22 @@ use serde_json::{json, Value};
 
 use crate::response_parse::{
     append_stream_text, extract_output_text, extract_reasoning_from_response, join_stream_text,
-    looks_like_response_id, text_value_or_json, tool_arguments_to_string,
+    looks_like_response_id,
 };
-use crate::tool_call::{
-    build_function_tool_call, collect_ordered_tool_calls, merge_indexed_tool_call_parts,
-    remember_tool_call_index, resolve_tool_call_index,
+
+#[path = "stream_parse/text.rs"]
+mod text;
+#[path = "stream_parse/tool_calls.rs"]
+mod tool_calls;
+
+use self::text::{
+    extract_chat_delta_text, extract_chat_reasoning_text, extract_reasoning_event_text,
+    extract_text_delta, extract_text_from_fields, non_empty_trimmed,
+};
+pub use self::tool_calls::{collect_stream_tool_calls, extract_responses_tool_calls};
+use self::tool_calls::{
+    ingest_tool_call_item, ingest_tool_calls_from_response_output, merge_chat_tool_call_delta,
+    merge_function_call_arguments_delta, merge_function_call_done,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -266,22 +277,13 @@ pub fn apply_chat_completions_stream_event(
 
     let delta = choice.get("delta").or_else(|| choice.get("message"));
     if let Some(delta) = delta {
-        if let Some(content) = delta
-            .get("content")
-            .and_then(|value| text_value_or_json(value, &["text", "value", "content", "delta"]))
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(content) = extract_chat_delta_text(delta) {
             append_stream_text(&mut state.full_content, content.as_str());
             state.sent_any_chunk = true;
             payload.chunk = Some(content);
         }
         if reasoning_enabled {
-            if let Some(reasoning) = delta
-                .get("reasoning_content")
-                .or_else(|| delta.get("reasoning"))
-                .and_then(|value| text_value_or_json(value, &["text", "value", "content", "delta"]))
-                .filter(|value| !value.is_empty())
-            {
+            if let Some(reasoning) = extract_chat_reasoning_text(delta) {
                 append_stream_text(&mut state.reasoning, reasoning.as_str());
                 payload.thinking = Some(reasoning);
             }
@@ -294,10 +296,6 @@ pub fn apply_chat_completions_stream_event(
     }
 
     payload
-}
-
-pub fn collect_stream_tool_calls(tool_calls_map: &BTreeMap<usize, Value>) -> Option<Value> {
-    collect_ordered_tool_calls(tool_calls_map)
 }
 
 pub fn finalize_responses_stream_state(state: &mut StreamState) -> FinalizedStreamState {
@@ -359,339 +357,5 @@ pub fn finalize_chat_completions_stream_state(state: &mut StreamState) -> Finali
         provider_error: state.provider_error.clone(),
         usage: state.usage.clone(),
         response_id: state.response_id.clone(),
-    }
-}
-
-pub fn extract_responses_tool_calls(response: &Value) -> Option<Value> {
-    let mut tool_calls = Vec::new();
-
-    if let Some(items) = response.get("output").and_then(Value::as_array) {
-        for item in items {
-            if item.get("type").and_then(Value::as_str) != Some("function_call") {
-                continue;
-            }
-
-            let call_id = item
-                .get("call_id")
-                .or_else(|| item.get("id"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if call_id.is_empty() {
-                continue;
-            }
-
-            let name = item
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let arguments = item
-                .get("arguments")
-                .map(tool_arguments_to_string)
-                .unwrap_or_else(|| "{}".to_string());
-
-            tool_calls.push(build_function_tool_call(
-                call_id,
-                name.as_str(),
-                arguments.as_str(),
-            ));
-        }
-    }
-
-    if tool_calls.is_empty() {
-        None
-    } else {
-        Some(Value::Array(tool_calls))
-    }
-}
-
-fn ingest_tool_call_item(
-    state: &mut StreamState,
-    event: &Value,
-    item: &Value,
-    extra_arguments_piece: Option<&str>,
-) {
-    let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
-    if item_type != "function_call" {
-        return;
-    }
-
-    let item_id = item
-        .get("id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let call_id = item
-        .get("call_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let index = resolve_tool_call_index(event, Some(item), &state.tool_call_index_map)
-        .unwrap_or_else(|| state.tool_calls_map.len());
-    remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
-    let item_arguments_piece = item.get("arguments").map(|value| {
-        value
-            .as_str()
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| value.to_string())
-    });
-    merge_indexed_tool_call_parts(
-        &mut state.tool_calls_map,
-        index,
-        item_id,
-        call_id,
-        item.get("name").and_then(Value::as_str),
-        item_arguments_piece.as_deref().or(extra_arguments_piece),
-    );
-    if item_arguments_piece.is_some() && extra_arguments_piece.is_some() {
-        merge_indexed_tool_call_parts(
-            &mut state.tool_calls_map,
-            index,
-            item_id,
-            call_id,
-            None,
-            extra_arguments_piece,
-        );
-    }
-}
-
-fn ingest_tool_calls_from_response_output(state: &mut StreamState, response: &Value) {
-    if let Some(items) = response.get("output").and_then(Value::as_array) {
-        for (fallback_index, item) in items.iter().enumerate() {
-            let mut event = json!({});
-            if let Some(output_index) = item.get("output_index").and_then(Value::as_u64) {
-                event["output_index"] = json!(output_index);
-            } else {
-                event["output_index"] = json!(fallback_index as u64);
-            }
-            ingest_tool_call_item(state, &event, item, None);
-        }
-    }
-}
-
-fn merge_function_call_arguments_delta(
-    state: &mut StreamState,
-    event: &Value,
-    arguments_piece: &str,
-) {
-    let call_id = event
-        .get("call_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let item_id = event
-        .get("item_id")
-        .or_else(|| event.get("id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
-        .unwrap_or_else(|| state.tool_calls_map.len());
-    remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
-    merge_indexed_tool_call_parts(
-        &mut state.tool_calls_map,
-        index,
-        item_id,
-        call_id,
-        None,
-        Some(arguments_piece),
-    );
-}
-
-fn merge_function_call_done(
-    state: &mut StreamState,
-    event: &Value,
-    name_piece: Option<&str>,
-    arguments_piece: Option<&str>,
-) {
-    let call_id = event
-        .get("call_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let item_id = event
-        .get("item_id")
-        .or_else(|| event.get("id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
-        .unwrap_or_else(|| state.tool_calls_map.len());
-    remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
-    merge_indexed_tool_call_parts(
-        &mut state.tool_calls_map,
-        index,
-        item_id,
-        call_id,
-        name_piece,
-        arguments_piece,
-    );
-}
-
-fn merge_chat_tool_call_delta(state: &mut StreamState, fallback_index: usize, tool_call: &Value) {
-    let index = tool_call
-        .get("index")
-        .and_then(Value::as_u64)
-        .map(|value| value as usize)
-        .unwrap_or(fallback_index);
-    let id = tool_call.get("id").and_then(Value::as_str);
-    let call_id = tool_call.get("call_id").and_then(Value::as_str);
-    let function = tool_call.get("function");
-    let name = function
-        .and_then(|value| value.get("name"))
-        .and_then(Value::as_str)
-        .or_else(|| tool_call.get("name").and_then(Value::as_str));
-    let arguments = function
-        .and_then(|value| value.get("arguments"))
-        .and_then(Value::as_str)
-        .or_else(|| tool_call.get("arguments").and_then(Value::as_str));
-
-    merge_indexed_tool_call_parts(
-        &mut state.tool_calls_map,
-        index,
-        id,
-        call_id,
-        name,
-        arguments,
-    );
-}
-
-fn extract_text_delta(delta: &Value) -> Option<String> {
-    extract_non_empty_text_value(delta, &["text", "value", "content", "output_text", "delta"])
-}
-
-fn extract_text_from_fields(value: &Value, fields: &[&str]) -> Option<String> {
-    for key in fields {
-        if let Some(inner) = value.get(*key) {
-            if let Some(text) = extract_text_delta(inner) {
-                return Some(text);
-            }
-        }
-    }
-
-    None
-}
-
-fn extract_reasoning_event_text(event_type: &str, event: &Value) -> Option<String> {
-    let is_reasoning_event = event_type.starts_with("response.reasoning")
-        || event_type.starts_with("response.reasoning_text")
-        || event_type.starts_with("response.reasoning_summary");
-
-    if is_reasoning_event {
-        for key in [
-            "delta",
-            "summary_text",
-            "summary",
-            "text",
-            "part",
-            "item",
-            "content",
-        ] {
-            if let Some(value) = event.get(key) {
-                let text = normalize_reasoning_delta(Some(value));
-                if !text.is_empty() {
-                    return Some(text);
-                }
-            }
-        }
-
-        if let Some(response) = event.get("response") {
-            let text = extract_reasoning_from_response(response);
-            if !text.is_empty() {
-                return Some(text);
-            }
-        }
-    }
-
-    if event_type == "response.output_item.added"
-        || event_type == "response.output_item.delta"
-        || event_type == "response.output_item.done"
-    {
-        let item = event.get("item").or_else(|| event.get("output_item"));
-        if let Some(item) = item {
-            let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
-            if item_type == "reasoning" || item_type == "reasoning_summary" {
-                let text = extract_reasoning_from_response(&json!({ "output": [item.clone()] }));
-                if !text.is_empty() {
-                    return Some(text);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn flatten_text_value(value: &Value, object_keys: &[&str]) -> String {
-    if let Some(text) = value.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(array) = value.as_array() {
-        let mut out = Vec::new();
-        for item in array {
-            let text = flatten_text_value(item, object_keys);
-            if !text.is_empty() {
-                out.push(text);
-            }
-        }
-        return out.join("");
-    }
-
-    let Some(object) = value.as_object() else {
-        return String::new();
-    };
-
-    for key in object_keys {
-        if let Some(inner) = object.get(*key) {
-            let text = flatten_text_value(inner, object_keys);
-            if !text.is_empty() {
-                return text;
-            }
-        }
-    }
-
-    String::new()
-}
-
-fn extract_non_empty_text_value(value: &Value, object_keys: &[&str]) -> Option<String> {
-    let text = flatten_text_value(value, object_keys);
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
-fn normalize_reasoning_delta(delta: Option<&Value>) -> String {
-    delta
-        .map(|value| {
-            flatten_text_value(
-                value,
-                &[
-                    "text",
-                    "summary_text",
-                    "delta",
-                    "content",
-                    "summary",
-                    "reasoning",
-                    "reasoning_text",
-                    "value",
-                    "part",
-                    "item",
-                ],
-            )
-        })
-        .unwrap_or_default()
-}
-
-fn non_empty_trimmed(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else if trimmed.len() == value.len() {
-        Some(value.to_string())
-    } else {
-        Some(trimmed.to_string())
     }
 }

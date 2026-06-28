@@ -1,5 +1,5 @@
 use chatos_mcp_runtime::ToolCallerModelRuntime;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tracing::info;
 
 use crate::core::tool_call::tool_calls_value_has_items;
@@ -11,8 +11,8 @@ use crate::modules::conversation_runtime::task_board::{
 };
 use crate::services::agent_runtime::ai_request_handler::StreamCallbacks;
 use crate::services::ai_common::{
-    attach_ai_client_success_extra, build_ai_client_success_payload, completion_failed_error,
-    execute_tool_lifecycle, handle_transient_retry, is_retryable_provider_backpressure_error,
+    build_ai_client_success_payload, completion_failed_error, execute_tool_lifecycle,
+    handle_transient_retry, is_retryable_provider_backpressure_error,
     is_task_runner_async_plan_message_mode, terminal_empty_response_error,
 };
 use crate::utils::abort_registry;
@@ -20,6 +20,11 @@ use tokio::time::{sleep, Duration};
 use tracing::warn;
 
 use super::compat::{log_usage_snapshot, rewrite_system_messages_to_user};
+use super::execution_loop_follow_up::{
+    attach_review_metadata, emit_turn_phase_event, should_persist_tool_messages_for_turn,
+    task_runner_async_planner_requested_final_summary,
+    TASK_RUNNER_ASYNC_PLANNER_FINAL_SUMMARY_PROMPT,
+};
 use super::execution_loop_guidance::{append_input_items, load_runtime_guidance_input_items};
 use super::execution_loop_tool_io::build_tool_output_items;
 use super::prev_context::base_url_disallows_system_messages;
@@ -27,59 +32,6 @@ use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
 };
 use super::{build_current_input_items, AiClient, AiClientCallbacks};
-
-const TASK_RUNNER_ASYNC_PLANNER_FINAL_SUMMARY_PROMPT: &str = "Task planning is complete. Do not call any more tools. Reply to the user now with a concise final summary that confirms the tasks were created or adjusted, summarizes the execution plan and prerequisite relationships, and states that the tasks will run automatically in the background and results will be sent later when completed.\n任务安排已经完成。不要再调用任何工具。现在直接给用户简要总结：确认任务已创建或调整，概括执行计划和前置关系，并说明任务会在后台自动执行，完成后会再把结果发送给用户。";
-
-fn task_runner_async_planner_requested_final_summary(
-    tool_results: &[crate::core::mcp_tools::ToolResult],
-) -> bool {
-    tool_results
-        .iter()
-        .any(|result| result.success && result.name.as_str() == "wait_for_task_completion")
-}
-
-fn should_persist_tool_messages_for_turn(
-    purpose: &str,
-    _task_runner_async_plan_mode: bool,
-) -> bool {
-    purpose != "agent_builder"
-}
-
-fn emit_turn_phase_event(
-    callbacks: &AiClientCallbacks,
-    phase: &'static str,
-    mode: Option<TaskTurnFollowUpMode>,
-    iteration: i64,
-) {
-    if let Some(cb) = &callbacks.on_turn_phase {
-        cb(json!({
-            "phase": phase,
-            "reason": "task_follow_up",
-            "task_follow_up_mode": mode.map(|item| match item {
-                TaskTurnFollowUpMode::ContinueExecution => "continue",
-                TaskTurnFollowUpMode::ReviewExecution => "review",
-            }),
-            "iteration": iteration
-        }));
-    }
-}
-
-fn build_review_metadata_payload(attempted: bool, outcome: &str, rounds: usize) -> Value {
-    json!({
-        "task_turn_review": {
-            "attempted": attempted,
-            "outcome": outcome,
-            "rounds": rounds
-        }
-    })
-}
-
-fn attach_review_metadata(payload: Value, attempted: bool, outcome: &str, rounds: usize) -> Value {
-    attach_ai_client_success_extra(
-        payload,
-        build_review_metadata_payload(attempted, outcome, rounds),
-    )
-}
 
 impl AiClient {
     pub(super) async fn process_with_tools(
@@ -661,23 +613,5 @@ impl AiClient {
             input = next_input;
             iteration += 1;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::should_persist_tool_messages_for_turn;
-
-    #[test]
-    fn task_runner_async_planner_still_persists_tool_messages() {
-        assert!(should_persist_tool_messages_for_turn("chat", true));
-    }
-
-    #[test]
-    fn agent_builder_keeps_tool_message_persistence_disabled() {
-        assert!(!should_persist_tool_messages_for_turn(
-            "agent_builder",
-            false
-        ));
     }
 }

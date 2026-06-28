@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use chatos_project_mcp_contract::{mcp, schemas, tools};
 use serde_json::{json, Value};
 
 use crate::models::{normalize_project_id, PUBLIC_PROJECT_ID};
@@ -82,9 +83,9 @@ impl ProjectManagementBuiltinService {
         }
 
         let result = chatos_mcp_runtime::jsonrpc_http_call(
-            format!("{}/mcp", base_url.trim_end_matches('/')).as_str(),
+            format!("{}{}", base_url.trim_end_matches('/'), mcp::ENDPOINT_PATH).as_str(),
             Some(&headers),
-            "tools/call",
+            mcp::METHOD_TOOLS_CALL,
             json!({
                 "name": name,
                 "arguments": args,
@@ -145,319 +146,25 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 }
 
 fn tool_definitions(execution_options: Option<&ProjectManagementExecutionOptions>) -> Vec<Value> {
-    vec![
-        tool_definition(
-            "get_project_overview",
-            "Get the current project's base information and profile.",
-            object_schema(vec![], vec![]),
-        ),
-        tool_definition(
-            "initialize_project",
-            "Initialize or update the current project's base description and one-to-one profile fields such as background and introduction.",
-            object_schema(
-                vec![
-                    optional_string_field("name", "Optional project name update."),
-                    optional_string_field("root_path", "Optional repository or workspace root path."),
-                    optional_string_field("git_url", "Optional git remote URL."),
-                    optional_string_field("description", "Short project description on the base project record."),
-                    optional_string_field("background", "Project background stored in project profile."),
-                    optional_string_field("introduction", "Project introduction stored in project profile."),
-                ],
-                vec![],
-            ),
-        ),
-        tool_definition(
-            "list_requirements",
-            "List requirements for the current project.",
-            object_schema(
-                vec![
-                    enum_field("status", "Optional requirement status filter.", requirement_status_values()),
-                    optional_string_field("keyword", "Optional fuzzy keyword."),
-                ],
-                vec![],
-            ),
-        ),
-        tool_definition(
-            "create_requirement",
-            "Create a requirement in the current project.",
-            object_schema(
-                vec![
-                    string_field("title", "Requirement title."),
-                    optional_string_field("parent_requirement_id", "Optional parent requirement id."),
-                    enum_field("requirement_type", "Optional requirement type.", requirement_type_values()),
-                    optional_string_field("summary", "Short requirement summary."),
-                    optional_string_field("detail", "Detailed requirement description."),
-                    optional_string_field("business_value", "Business value or why this matters."),
-                    optional_string_field("acceptance_criteria", "Acceptance criteria."),
-                    optional_string_field("source", "Requirement source."),
-                    integer_field("priority", "Optional priority; higher means more important."),
-                    enum_field("status", "Optional requirement status.", requirement_status_values()),
-                    optional_string_field("assignee_user_id", "Optional assignee user id."),
-                ],
-                vec!["title"],
-            ),
-        ),
-        tool_definition(
-            "update_requirement",
-            "Update a requirement and optionally replace its prerequisite requirement ids.",
-            object_schema(
-                vec![
-                    string_field("requirement_id", "Requirement id to update."),
-                    patch_field("patch", "Fields to update on the requirement."),
-                    string_array_field("prerequisite_requirement_ids", "Optional full replacement list of prerequisite requirement ids."),
-                ],
-                vec!["requirement_id", "patch"],
-            ),
-        ),
-        tool_definition(
-            "set_requirement_dependencies",
-            "Replace prerequisite requirements for one requirement.",
-            object_schema(
-                vec![
-                    string_field("requirement_id", "Requirement id to update."),
-                    string_array_field("prerequisite_requirement_ids", "Full replacement list of prerequisite requirement ids."),
-                ],
-                vec!["requirement_id", "prerequisite_requirement_ids"],
-            ),
-        ),
-        tool_definition(
-            "upsert_requirement_technical_overview",
-            "Create or update the implementation technical overview document for a requirement.",
-            object_schema(
-                vec![
-                    string_field("requirement_id", "Requirement id."),
-                    optional_string_field("title", "Document title."),
-                    optional_string_field("format", "Document format, usually markdown."),
-                    string_field("content", "Document content."),
-                ],
-                vec!["requirement_id", "content"],
-            ),
-        ),
-        tool_definition(
-            "get_requirement_technical_overview",
-            "Get the implementation technical overview document for a requirement.",
-            object_schema(
-                vec![string_field("requirement_id", "Requirement id.")],
-                vec!["requirement_id"],
-            ),
-        ),
-        tool_definition(
-            "list_project_tasks",
-            "List project-management tasks/work items for the current project.",
-            object_schema(
-                vec![
-                    enum_field("status", "Optional project task status filter.", project_task_status_values()),
-                    optional_string_field("keyword", "Optional fuzzy keyword."),
-                ],
-                vec![],
-            ),
-        ),
-        tool_definition(
-            "create_project_task",
-            "Create a project-management task/work item under a requirement. The requirement must already have non-empty technical overview content.",
-            object_schema(
-                vec![
-                    string_field("requirement_id", "Requirement id this project task belongs to."),
-                    string_field("title", "Project task title."),
-                    optional_string_field("description", "Project task description."),
-                    task_runner_model_config_field(execution_options),
-                    task_runner_tool_ids_field(execution_options),
-                    enum_field("status", "Optional project task status.", project_task_status_values()),
-                    integer_field("priority", "Optional priority; higher means more important."),
-                    optional_string_field("assignee_user_id", "Optional assignee user id."),
-                    integer_field("estimate_points", "Optional estimate points."),
-                    optional_string_field("due_at", "Optional due time as string."),
-                    integer_field("sort_order", "Optional sort order."),
-                    string_array_field("tags", "Optional tags."),
-                    string_array_field("prerequisite_project_task_ids", "Optional full list of prerequisite project task ids."),
-                ],
-                vec![
-                    "requirement_id",
-                    "title",
-                    "task_runner_default_model_config_id",
-                    "task_runner_enabled_tool_ids",
-                ],
-            ),
-        ),
-        tool_definition(
-            "update_project_task",
-            "Update a project-management task/work item and optionally replace its prerequisite project task ids.",
-            object_schema(
-                vec![
-                    string_field("project_task_id", "Project task/work item id to update."),
-                    patch_field("patch", "Fields to update on the project task."),
-                    string_array_field("prerequisite_project_task_ids", "Optional full replacement list of prerequisite project task ids."),
-                ],
-                vec!["project_task_id", "patch"],
-            ),
-        ),
-        tool_definition(
-            "set_project_task_dependencies",
-            "Replace prerequisite project task ids for one project task.",
-            object_schema(
-                vec![
-                    string_field("project_task_id", "Project task/work item id to update."),
-                    string_array_field("prerequisite_project_task_ids", "Full replacement list of prerequisite project task ids."),
-                ],
-                vec!["project_task_id", "prerequisite_project_task_ids"],
-            ),
-        ),
-        tool_definition(
-            "get_project_dependency_graph",
-            "Get the current project's dependency graph with requirements, project tasks, contains edges, and blocks edges.",
-            object_schema(vec![], vec![]),
-        ),
-    ]
+    let execution_options = execution_options.map(project_management_execution_schema_options);
+    schemas::task_runner_builtin_tool_definitions(execution_options.as_ref())
 }
 
-fn tool_definition(name: &str, description: &str, input_schema: Value) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": input_schema
-    })
-}
-
-fn object_schema(properties: Vec<(&'static str, Value)>, required: Vec<&'static str>) -> Value {
-    let mut props = serde_json::Map::new();
-    for (name, schema) in properties {
-        props.insert(name.to_string(), schema);
+fn project_management_execution_schema_options(
+    options: &ProjectManagementExecutionOptions,
+) -> schemas::TaskRunnerExecutionSchemaOptions {
+    let default_model_config_id =
+        options.preferred_model_config_id.clone().or_else(|| {
+            match options.model_config_ids.as_slice() {
+                [only] => Some(only.clone()),
+                _ => None,
+            }
+        });
+    schemas::TaskRunnerExecutionSchemaOptions {
+        model_config_ids: options.model_config_ids.clone(),
+        default_model_config_id,
+        tool_ids: options.tool_ids.clone(),
     }
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": props,
-        "required": required
-    })
-}
-
-fn string_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
-    (
-        name,
-        json!({ "type": "string", "description": description }),
-    )
-}
-
-fn optional_string_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
-    (
-        name,
-        json!({ "type": ["string", "null"], "description": description }),
-    )
-}
-
-fn integer_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
-    (
-        name,
-        json!({ "type": ["integer", "null"], "description": description }),
-    )
-}
-
-fn enum_field(
-    name: &'static str,
-    description: &'static str,
-    values: Vec<&'static str>,
-) -> (&'static str, Value) {
-    (
-        name,
-        json!({
-            "type": ["string", "null"],
-            "enum": values.into_iter().map(Value::from).chain(std::iter::once(Value::Null)).collect::<Vec<_>>(),
-            "description": description
-        }),
-    )
-}
-
-fn string_array_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
-    (
-        name,
-        json!({
-            "type": ["array", "null"],
-            "items": { "type": "string" },
-            "description": description
-        }),
-    )
-}
-
-fn patch_field(name: &'static str, description: &'static str) -> (&'static str, Value) {
-    (
-        name,
-        json!({
-            "type": "object",
-            "description": description,
-            "additionalProperties": true
-        }),
-    )
-}
-
-fn task_runner_model_config_field(
-    execution_options: Option<&ProjectManagementExecutionOptions>,
-) -> (&'static str, Value) {
-    let mut schema = json!({
-        "type": "string",
-        "minLength": 1,
-        "description": "Required Task Runner model config id. Use one of the enum values when present; if multiple are available, choose the model best suited for the project task instead of asking the user for an internal id."
-    });
-    if let Some(options) = execution_options {
-        if !options.model_config_ids.is_empty() {
-            schema["enum"] = json!(&options.model_config_ids);
-        }
-        if let Some(default_id) = options.preferred_model_config_id.as_deref() {
-            schema["default"] = json!(default_id);
-        } else if options.model_config_ids.len() == 1 {
-            schema["default"] = json!(options.model_config_ids[0].as_str());
-        }
-    }
-    ("task_runner_default_model_config_id", schema)
-}
-
-fn task_runner_tool_ids_field(
-    execution_options: Option<&ProjectManagementExecutionOptions>,
-) -> (&'static str, Value) {
-    let mut item_schema = json!({ "type": "string" });
-    let mut description = "Required Task Runner tool id multi-select. Use only visible tool ids. Choose tools according to the work item's execution needs; for code implementation tasks, include appropriate code reading and terminal tools when available."
-        .to_string();
-    if let Some(options) = execution_options {
-        if !options.tool_ids.is_empty() {
-            description.push_str(" Available tool ids are exposed in the item enum.");
-            item_schema["enum"] = json!(&options.tool_ids);
-        }
-    }
-    (
-        "task_runner_enabled_tool_ids",
-        json!({
-            "type": "array",
-            "items": item_schema,
-            "minItems": 1,
-            "uniqueItems": true,
-            "description": description
-        }),
-    )
-}
-
-fn requirement_status_values() -> Vec<&'static str> {
-    vec![
-        "draft",
-        "reviewing",
-        "approved",
-        "in_progress",
-        "done",
-        "cancelled",
-    ]
-}
-
-fn requirement_type_values() -> Vec<&'static str> {
-    vec!["requirement", "change", "bug_fix"]
-}
-
-fn project_task_status_values() -> Vec<&'static str> {
-    vec![
-        "todo",
-        "ready",
-        "in_progress",
-        "blocked",
-        "done",
-        "cancelled",
-    ]
 }
 
 fn archived_status_short_circuit(name: &str, args: &Value) -> Result<Option<Value>, String> {
@@ -473,11 +180,13 @@ fn archived_status_short_circuit(name: &str, args: &Value) -> Result<Option<Valu
     }
 
     match name {
-        "list_requirements" | "list_project_tasks" => Ok(Some(tool_text_result(json!([])))),
-        "create_requirement" | "update_requirement" => {
+        tools::LIST_REQUIREMENTS | tools::LIST_PROJECT_TASKS => {
+            Ok(Some(tool_text_result(json!([]))))
+        }
+        tools::CREATE_REQUIREMENT | tools::UPDATE_REQUIREMENT => {
             Err("Project Management MCP 不允许访问归档需求".to_string())
         }
-        "create_project_task" | "update_project_task" => {
+        tools::CREATE_PROJECT_TASK | tools::UPDATE_PROJECT_TASK => {
             Err("Project Management MCP 不允许访问归档项目任务".to_string())
         }
         _ => Ok(None),
@@ -486,10 +195,10 @@ fn archived_status_short_circuit(name: &str, args: &Value) -> Result<Option<Valu
 
 fn filter_archived_tool_result(name: &str, result: Value) -> Result<Value, String> {
     match name {
-        "list_requirements" | "list_project_tasks" => {
+        tools::LIST_REQUIREMENTS | tools::LIST_PROJECT_TASKS => {
             transform_tool_text_payload(result, filter_archived_array)
         }
-        "get_project_dependency_graph" => {
+        tools::GET_PROJECT_DEPENDENCY_GRAPH => {
             transform_tool_text_payload(result, filter_archived_dependency_graph)
         }
         _ => Ok(result),
@@ -618,7 +327,23 @@ fn tool_text_result(payload: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
+
+    #[test]
+    fn builtin_tool_names_match_contract() {
+        let expected = tools::TASK_RUNNER_BUILTIN_TOOL_NAMES
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let definitions = tool_definitions(None);
+        let actual = definitions
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn create_project_task_schema_exposes_execution_options() {
@@ -631,10 +356,12 @@ mod tests {
                 "external-tool-1".to_string(),
             ],
         };
-        let tools = tool_definitions(Some(&execution_options));
-        let create_task = tools
+        let definitions = tool_definitions(Some(&execution_options));
+        let create_task = definitions
             .iter()
-            .find(|tool| tool.get("name").and_then(Value::as_str) == Some("create_project_task"))
+            .find(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some(tools::CREATE_PROJECT_TASK)
+            })
             .expect("create_project_task tool");
         let properties = create_task
             .pointer("/inputSchema/properties")
@@ -671,16 +398,18 @@ mod tests {
 
     #[test]
     fn status_schemas_do_not_advertise_archived() {
-        assert!(!requirement_status_values().contains(&"archived"));
-        assert!(!project_task_status_values().contains(&"archived"));
+        assert!(!schemas::requirement_status_values().contains(&"archived"));
+        assert!(!schemas::project_task_status_values().contains(&"archived"));
     }
 
     #[test]
     fn archived_status_queries_are_short_circuited() {
-        let result =
-            archived_status_short_circuit("list_requirements", &json!({ "status": "archived" }))
-                .expect("short circuit")
-                .expect("empty result");
+        let result = archived_status_short_circuit(
+            tools::LIST_REQUIREMENTS,
+            &json!({ "status": "archived" }),
+        )
+        .expect("short circuit")
+        .expect("empty result");
         let text = result
             .pointer("/content/0/text")
             .and_then(Value::as_str)
@@ -688,7 +417,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(text).unwrap(), json!([]));
 
         assert!(archived_status_short_circuit(
-            "update_project_task",
+            tools::UPDATE_PROJECT_TASK,
             &json!({ "patch": { "status": "archived" } }),
         )
         .is_err());

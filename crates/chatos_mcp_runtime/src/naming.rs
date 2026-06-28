@@ -56,7 +56,10 @@ mod tests {
     #[test]
     fn canonical_segments_keep_safe_chars_and_collapse_invalid_runs() {
         assert_eq!(canonical_name_segment("demo.search", "tool"), "demo_search");
-        assert_eq!(canonical_name_segment("  multi / hop  ", "tool"), "multi_hop");
+        assert_eq!(
+            canonical_name_segment("  multi / hop  ", "tool"),
+            "multi_hop"
+        );
         assert_eq!(canonical_name_segment("___", "tool"), "tool");
     }
 

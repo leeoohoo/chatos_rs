@@ -115,50 +115,14 @@ pub async fn archive_project_service_project(
     .await
 }
 
-pub async fn list_project_service_requirements(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-    include_archived: bool,
-) -> Result<Vec<Value>, String> {
-    let endpoint = format!(
-        "{}/api/projects/{}/requirements",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    let request = reqwest::Client::new()
-        .get(endpoint)
-        .bearer_auth(access_token.trim())
-        .query(&[("include_archived", include_archived)]);
-    send_json(request).await
-}
-
-pub async fn list_project_service_work_items(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-    include_archived: bool,
-) -> Result<Vec<Value>, String> {
-    let endpoint = format!(
-        "{}/api/projects/{}/work-items",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    let request = reqwest::Client::new()
-        .get(endpoint)
-        .bearer_auth(access_token.trim())
-        .query(&[("include_archived", include_archived)]);
-    send_json(request).await
-}
-
-pub async fn get_project_service_dependency_graph(
+pub async fn get_project_service_plan(
     base_url: &str,
     access_token: &str,
     project_id: &str,
     include_archived: bool,
 ) -> Result<Value, String> {
     let endpoint = format!(
-        "{}/api/projects/{}/dependency-graph",
+        "{}/api/projects/{}/plan",
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
     );

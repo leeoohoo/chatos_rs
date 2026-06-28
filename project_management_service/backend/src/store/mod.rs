@@ -1,5 +1,8 @@
+mod common;
 mod mongo;
 mod sqlite;
+mod sqlite_rows;
+mod sqlite_util;
 
 use crate::auth::CurrentUser;
 use crate::models::*;

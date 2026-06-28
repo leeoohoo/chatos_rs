@@ -25,8 +25,8 @@ async fn main() -> Result<(), String> {
     let config = AppConfig::from_env()?;
     let source_user_message_id = optional_env("TASK_RUNNER_REPAIR_SOURCE_USER_MESSAGE_ID")
         .ok_or_else(|| "TASK_RUNNER_REPAIR_SOURCE_USER_MESSAGE_ID is required".to_string())?;
-    let source_turn_id =
-        optional_env("TASK_RUNNER_REPAIR_SOURCE_TURN_ID").unwrap_or_else(|| source_user_message_id.clone());
+    let source_turn_id = optional_env("TASK_RUNNER_REPAIR_SOURCE_TURN_ID")
+        .unwrap_or_else(|| source_user_message_id.clone());
     let apply = env_flag("TASK_RUNNER_REPAIR_APPLY");
 
     let client = mongodb::Client::with_uri_str(config.database_url.as_str())

@@ -1,15 +1,27 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
-use walkdir::{DirEntry, WalkDir};
+use walkdir::WalkDir;
 
 use super::types::{NavLocation, NavPositionRequest, ProjectContext};
-use crate::services::project_local_cache::{cache_key, read_cache_json, write_cache_json};
+use crate::services::project_local_cache::{read_cache_json, write_cache_json};
+
+mod files;
+mod persistence;
+
+#[cfg(test)]
+mod tests;
+
+use files::{
+    extension_matches, fingerprint_symbol_file, normalize_path, read_line_preview,
+    should_visit_path, ProjectSymbolIndexSnapshot,
+};
+use persistence::{
+    from_persisted_index, persisted_project_symbol_index_entry, symbol_index_cache_path,
+    PersistedProjectSymbolIndexEntry,
+};
 
 static PROJECT_SYMBOL_INDEX_CACHE: Lazy<DashMap<String, ProjectSymbolIndexCacheEntry>> =
     Lazy::new(DashMap::new);
@@ -45,108 +57,6 @@ struct ProjectSymbolIndexCacheEntry {
     index: ProjectSymbolIndex,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct ProjectSymbolIndexSnapshot {
-    files: Vec<ProjectSymbolFileFingerprint>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct ProjectSymbolFileFingerprint {
-    relative_path: String,
-    size: u64,
-    modified_unix_nanos: u128,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedIndexedSymbol {
-    name: String,
-    kind: String,
-    line: usize,
-    column: usize,
-    end_line: usize,
-    end_column: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedProjectIndexedSymbol {
-    path: String,
-    relative_path: String,
-    symbol: PersistedIndexedSymbol,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct PersistedProjectSymbolIndex {
-    symbols_by_name: HashMap<String, Vec<PersistedProjectIndexedSymbol>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedProjectSymbolIndexEntry {
-    snapshot: ProjectSymbolIndexSnapshot,
-    index: PersistedProjectSymbolIndex,
-}
-
-fn symbol_index_cache_path(provider_id: &str) -> String {
-    format!("code_nav/index-{}.json", cache_key(provider_id))
-}
-
-fn to_persisted_index(index: &ProjectSymbolIndex) -> PersistedProjectSymbolIndex {
-    PersistedProjectSymbolIndex {
-        symbols_by_name: index
-            .symbols_by_name
-            .iter()
-            .map(|(name, items)| {
-                (
-                    name.clone(),
-                    items
-                        .iter()
-                        .map(|item| PersistedProjectIndexedSymbol {
-                            path: item.path.clone(),
-                            relative_path: item.relative_path.clone(),
-                            symbol: PersistedIndexedSymbol {
-                                name: item.symbol.name.clone(),
-                                kind: item.symbol.kind.clone(),
-                                line: item.symbol.line,
-                                column: item.symbol.column,
-                                end_line: item.symbol.end_line,
-                                end_column: item.symbol.end_column,
-                            },
-                        })
-                        .collect(),
-                )
-            })
-            .collect(),
-    }
-}
-
-fn from_persisted_index(index: PersistedProjectSymbolIndex) -> ProjectSymbolIndex {
-    ProjectSymbolIndex {
-        symbols_by_name: index
-            .symbols_by_name
-            .into_iter()
-            .map(|(name, items)| {
-                (
-                    name,
-                    items
-                        .into_iter()
-                        .map(|item| ProjectIndexedSymbol {
-                            path: item.path,
-                            relative_path: item.relative_path,
-                            symbol: IndexedSymbol {
-                                name: item.symbol.name,
-                                kind: item.symbol.kind,
-                                line: item.symbol.line,
-                                column: item.symbol.column,
-                                end_line: item.symbol.end_line,
-                                end_column: item.symbol.end_column,
-                            },
-                        })
-                        .collect(),
-                )
-            })
-            .collect(),
-    }
-}
-
 pub fn project_symbol_index(
     root: &Path,
     provider_id: &str,
@@ -155,7 +65,10 @@ pub fn project_symbol_index(
     analyze_file: impl Fn(&Path) -> Result<Vec<IndexedSymbol>, String>,
 ) -> Result<ProjectSymbolIndex, String> {
     let key = project_symbol_index_cache_key(root, provider_id);
-    if let Some(entry) = PROJECT_SYMBOL_INDEX_CACHE.get(&key) {
+    if let Some(entry) = PROJECT_SYMBOL_INDEX_CACHE
+        .get(&key)
+        .map(|entry| entry.value().clone())
+    {
         if let Some((_, dirty_paths)) = PROJECT_SYMBOL_INDEX_DIRTY_PATHS.remove(&key) {
             let current_snapshot = project_symbol_index_snapshot(root, extensions, ignored_dirs)?;
             let rebuilt = rebuild_project_symbol_index_for_dirty_paths(
@@ -169,10 +82,7 @@ pub fn project_symbol_index(
             let _ = write_cache_json(
                 root.to_string_lossy().as_ref(),
                 symbol_index_cache_path(provider_id).as_str(),
-                &PersistedProjectSymbolIndexEntry {
-                    snapshot: rebuilt.1.clone(),
-                    index: to_persisted_index(&rebuilt.0),
-                },
+                &persisted_project_symbol_index_entry(rebuilt.1.clone(), &rebuilt.0),
             );
             PROJECT_SYMBOL_INDEX_CACHE.insert(
                 key.clone(),
@@ -214,10 +124,7 @@ pub fn project_symbol_index(
     let _ = write_cache_json(
         root.to_string_lossy().as_ref(),
         symbol_index_cache_path(provider_id).as_str(),
-        &PersistedProjectSymbolIndexEntry {
-            snapshot: snapshot.clone(),
-            index: to_persisted_index(&index),
-        },
+        &persisted_project_symbol_index_entry(snapshot.clone(), &index),
     );
     PROJECT_SYMBOL_INDEX_CACHE.insert(
         key,
@@ -470,264 +377,10 @@ fn project_symbol_index_snapshot(
     Ok(ProjectSymbolIndexSnapshot { files })
 }
 
-fn fingerprint_symbol_file(root: &Path, path: &Path) -> Option<ProjectSymbolFileFingerprint> {
-    let metadata = fs::metadata(path).ok()?;
-    let normalized_path = normalize_path(path);
-    let relative_path = pathdiff::diff_paths(normalized_path.as_path(), root)
-        .unwrap_or_else(|| normalized_path.clone())
-        .to_string_lossy()
-        .replace('\\', "/");
-    Some(ProjectSymbolFileFingerprint {
-        relative_path,
-        size: metadata.len(),
-        modified_unix_nanos: metadata
-            .modified()
-            .ok()
-            .map(system_time_to_unix_nanos)
-            .unwrap_or(0),
-    })
-}
-
-fn system_time_to_unix_nanos(value: SystemTime) -> u128 {
-    value
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_nanos()
-}
-
-fn read_line_preview(path: &Path, line: usize) -> Result<String, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    Ok(content
-        .lines()
-        .nth(line.saturating_sub(1))
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .chars()
-        .take(400)
-        .collect())
-}
-
-fn should_visit_path(entry: &DirEntry, ignored_dirs: &[&str]) -> bool {
-    if entry.depth() == 0 {
-        return true;
-    }
-    let Some(name) = entry.file_name().to_str() else {
-        return true;
-    };
-    !ignored_dirs.contains(&name)
-}
-
-fn extension_matches(path: &Path, extensions: &[&str]) -> bool {
-    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
-        return false;
-    };
-    extensions
-        .iter()
-        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            _ => normalized.push(component.as_os_str()),
-        }
-    }
-    normalized
-}
-
 fn is_type_like(token: &str) -> bool {
     token
         .chars()
         .next()
         .map(|value| value.is_uppercase())
         .unwrap_or(false)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        invalidate_project_symbol_indexes_for_path, nav_location_from_indexed_symbol,
-        project_symbol_index, IndexedSymbol,
-    };
-    use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
-
-    fn make_temp_symbol_index_project() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "code_nav_symbol_index_test_{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(root.join("src")).expect("create source dir");
-        root
-    }
-
-    fn analyze_fixture_file(path: &Path) -> Result<Vec<IndexedSymbol>, String> {
-        let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
-        let mut symbols = Vec::new();
-        for (index, line) in content.lines().enumerate() {
-            let Some(name) = line.strip_prefix("symbol ") else {
-                continue;
-            };
-            let name = name.trim().to_string();
-            let column = line.find(&name).unwrap_or(0) + 1;
-            symbols.push(IndexedSymbol {
-                end_column: column + name.chars().count().saturating_sub(1),
-                name,
-                kind: "function".to_string(),
-                line: index + 1,
-                column,
-                end_line: index + 1,
-            });
-        }
-        Ok(symbols)
-    }
-
-    #[test]
-    fn project_symbol_index_collects_symbols_and_builds_locations() {
-        let root = make_temp_symbol_index_project();
-        let path = root.join("src/main.demo");
-        fs::write(&path, "symbol greet\ncall greet\n").expect("write fixture");
-
-        let index = project_symbol_index(
-            root.as_path(),
-            "test-symbol-index",
-            &["demo"],
-            &["ignored"],
-            analyze_fixture_file,
-        )
-        .expect("build project symbol index");
-
-        let symbols = index
-            .symbols_by_name
-            .get("greet")
-            .expect("greet should be indexed");
-        assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].relative_path, "src/main.demo");
-
-        let location =
-            nav_location_from_indexed_symbol(root.as_path(), &symbols[0], 7.0).expect("location");
-        assert_eq!(location.line, 1);
-        assert_eq!(location.column, 8);
-        assert_eq!(location.preview, "symbol greet");
-
-        fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn project_symbol_index_reuses_cache_while_source_snapshot_is_unchanged() {
-        let root = make_temp_symbol_index_project();
-        let path = root.join("src/main.demo");
-        fs::write(&path, "symbol greet\n").expect("write fixture");
-        let analyze_calls = Arc::new(AtomicUsize::new(0));
-        let provider_id = format!("test-symbol-index-cache-{}", uuid::Uuid::new_v4());
-
-        let first_counter = Arc::clone(&analyze_calls);
-        project_symbol_index(
-            root.as_path(),
-            provider_id.as_str(),
-            &["demo"],
-            &["ignored"],
-            move |path| {
-                first_counter.fetch_add(1, Ordering::SeqCst);
-                analyze_fixture_file(path)
-            },
-        )
-        .expect("build project symbol index");
-
-        let second_counter = Arc::clone(&analyze_calls);
-        project_symbol_index(
-            root.as_path(),
-            provider_id.as_str(),
-            &["demo"],
-            &["ignored"],
-            move |path| {
-                second_counter.fetch_add(1, Ordering::SeqCst);
-                analyze_fixture_file(path)
-            },
-        )
-        .expect("reuse project symbol index");
-
-        assert_eq!(analyze_calls.load(Ordering::SeqCst), 1);
-        fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn project_symbol_index_rebuilds_when_source_snapshot_changes() {
-        let root = make_temp_symbol_index_project();
-        let path = root.join("src/main.demo");
-        fs::write(&path, "symbol greet\n").expect("write fixture");
-        let provider_id = format!("test-symbol-index-refresh-{}", uuid::Uuid::new_v4());
-
-        project_symbol_index(
-            root.as_path(),
-            provider_id.as_str(),
-            &["demo"],
-            &["ignored"],
-            analyze_fixture_file,
-        )
-        .expect("build project symbol index");
-
-        fs::write(&path, "symbol greet\nsymbol farewell\n").expect("update fixture");
-        let index = project_symbol_index(
-            root.as_path(),
-            provider_id.as_str(),
-            &["demo"],
-            &["ignored"],
-            analyze_fixture_file,
-        )
-        .expect("refresh project symbol index");
-
-        assert!(index.symbols_by_name.contains_key("farewell"));
-        fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn project_symbol_index_can_be_invalidated_by_changed_path() {
-        let root = make_temp_symbol_index_project();
-        let path = root.join("src/main.demo");
-        fs::write(&path, "symbol greet\n").expect("write fixture");
-        let analyze_calls = Arc::new(AtomicUsize::new(0));
-        let provider_id = format!("test-symbol-index-invalidate-{}", uuid::Uuid::new_v4());
-
-        let first_counter = Arc::clone(&analyze_calls);
-        project_symbol_index(
-            root.as_path(),
-            provider_id.as_str(),
-            &["demo"],
-            &["ignored"],
-            move |path| {
-                first_counter.fetch_add(1, Ordering::SeqCst);
-                analyze_fixture_file(path)
-            },
-        )
-        .expect("build project symbol index");
-
-        let removed = invalidate_project_symbol_indexes_for_path(path.as_path());
-        assert_eq!(removed, 1);
-
-        let second_counter = Arc::clone(&analyze_calls);
-        project_symbol_index(
-            root.as_path(),
-            provider_id.as_str(),
-            &["demo"],
-            &["ignored"],
-            move |path| {
-                second_counter.fetch_add(1, Ordering::SeqCst);
-                analyze_fixture_file(path)
-            },
-        )
-        .expect("rebuild project symbol index after invalidation");
-
-        assert_eq!(analyze_calls.load(Ordering::SeqCst), 2);
-        fs::remove_dir_all(root).ok();
-    }
 }

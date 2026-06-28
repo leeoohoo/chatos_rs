@@ -1,4 +1,13 @@
+mod access;
+mod dependencies;
+mod dependency_graph;
+mod plan;
+mod projects;
+mod requirements;
 mod router;
+mod sync;
+mod task_runner_links;
+mod work_items;
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

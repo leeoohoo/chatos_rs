@@ -8,6 +8,7 @@ mod contracts;
 mod crud_handlers;
 mod memory_sync;
 mod plan_handlers;
+mod requirement_execution;
 mod requirement_execution_handlers;
 mod run_handlers;
 mod session_resolver;

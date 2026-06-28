@@ -3,6 +3,7 @@ import { Typography } from 'antd';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
+  CreateTaskPayload,
   RemoteServerRecord,
   TaskBuiltinPromptMode,
   TaskRecord,
@@ -51,6 +52,98 @@ export type RunTaskFormValues = {
   model_config_id?: string;
   prompt_override?: string;
 };
+
+export function buildCreateTaskFormValues(locale: string): TaskFormValues {
+  return {
+    title: '',
+    objective: '',
+    description: '',
+    priority: 0,
+    status: 'draft',
+    taskProfile: 'default',
+    default_model_config_id: undefined,
+    prerequisite_task_ids: [],
+    tagsText: '',
+    mcpEnabled: true,
+    builtinPromptMode: 'effective',
+    builtinPromptLocale: locale,
+    enabledBuiltinKinds: [],
+    workspaceDir: '',
+    defaultRemoteServerId: undefined,
+    externalMcpConfigIds: [],
+    scheduleMode: 'manual',
+    scheduleRunAt: undefined,
+    scheduleIntervalSeconds: undefined,
+  };
+}
+
+export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
+  return {
+    title: task.title,
+    objective: task.objective,
+    description: task.description || '',
+    priority: task.priority,
+    status: task.status,
+    taskProfile: task.task_profile || 'default',
+    default_model_config_id: task.default_model_config_id || undefined,
+    prerequisite_task_ids: task.prerequisite_task_ids || [],
+    tagsText: task.tags.join(', '),
+    mcpEnabled: task.mcp_config.enabled,
+    builtinPromptMode: task.mcp_config.builtin_prompt_mode,
+    builtinPromptLocale: task.mcp_config.builtin_prompt_locale,
+    enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
+    workspaceDir: task.mcp_config.workspace_dir || '',
+    defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
+    externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
+    scheduleMode: task.schedule.mode,
+    scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
+    scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
+  };
+}
+
+export function buildTaskPayload(
+  values: TaskFormValues,
+  options: {
+    editingTask?: TaskRecord | null;
+    routeProjectId?: string;
+  },
+): CreateTaskPayload | null {
+  const schedule = buildSchedulePayload(values);
+  if (!schedule) {
+    return null;
+  }
+
+  const enabledBuiltinKinds = completeEnabledBuiltinKindDependencies(
+    values.enabledBuiltinKinds,
+  );
+
+  return {
+    title: values.title,
+    objective: values.objective,
+    description: values.description?.trim() || undefined,
+    priority: values.priority,
+    status: values.status,
+    task_profile: values.taskProfile,
+    default_model_config_id: values.default_model_config_id,
+    project_id: options.editingTask ? undefined : options.routeProjectId,
+    prerequisite_task_ids: values.prerequisite_task_ids || [],
+    tags: values.tagsText
+      ?.split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+    schedule,
+    mcp_config: {
+      enabled: values.mcpEnabled,
+      init_mode: 'full',
+      builtin_prompt_mode: values.builtinPromptMode,
+      builtin_prompt_locale: values.builtinPromptLocale,
+      enabled_builtin_kinds: enabledBuiltinKinds,
+      workspace_dir: values.workspaceDir?.trim() || undefined,
+      default_remote_server_id: values.defaultRemoteServerId,
+      external_mcp_config_ids: values.externalMcpConfigIds || [],
+    },
+  };
+}
 
 export const CODE_MAINTAINER_READ_KIND = 'CodeMaintainerRead';
 export const CODE_MAINTAINER_WRITE_KIND = 'CodeMaintainerWrite';

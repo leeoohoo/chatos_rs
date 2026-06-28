@@ -530,6 +530,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_project_mcp_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2536,6 +2544,7 @@ name = "project_management_service_backend"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chatos_project_mcp_contract",
  "chrono",
  "dotenvy",
  "futures-util",
@@ -3788,6 +3797,7 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
+ "chatos_project_mcp_contract",
  "chrono",
  "dotenvy",
  "futures-util",

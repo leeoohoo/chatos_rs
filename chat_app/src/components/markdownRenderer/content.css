@@ -1,0 +1,266 @@
+/* ===== 引用样式 ===== */
+.markdown-renderer blockquote {
+    margin: 0 0 16px 0;
+    padding: 0 1em;
+    color: var(--md-secondary-text);
+    border-left: 0.25em solid var(--md-quote-border);
+    background: var(--md-quote-bg);
+    border-radius: 0 4px 4px 0;
+}
+
+/* ===== 列表样式 ===== */
+.markdown-renderer ul,
+.markdown-renderer ol {
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding-left: 2em;
+}
+
+.markdown-renderer li {
+    margin-top: 0.25em;
+    color: var(--md-text);
+}
+
+/* ===== 🔥 统一表格样式 - 完全参考 chat.css 的设计理念 ===== */
+.markdown-renderer table,
+.markdown-renderer .streaming-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 12px 0;
+    border: 1px dashed var(--md-border);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.05);
+    overflow: hidden;
+    table-layout: fixed; /* 保证列宽均分，便于自动换行 */
+}
+
+/* 深色模式表格背景 */
+.dark .markdown-renderer table,
+.dark .markdown-renderer .streaming-table {
+    background: rgba(148, 163, 184, 0.02);
+}
+
+/* 统一表头样式 */
+.markdown-renderer table th,
+.markdown-renderer .streaming-table th {
+    padding: 8px 12px;
+    border: 1px solid var(--md-border);
+    background: var(--md-code-bg);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--md-text);
+    text-align: left;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* 统一单元格样式 */
+.markdown-renderer table td,
+.markdown-renderer .streaming-table td {
+    padding: 8px 12px;
+    border: 1px solid var(--md-border);
+    background: var(--md-bg);
+    font-size: 13px;
+    color: var(--md-text);
+    white-space: normal; /* 自动换行 */
+    word-break: break-word; /* 长单词或连续字符也换行 */
+    overflow-wrap: anywhere; /* 过长内容强制换行 */
+}
+
+/* 统一斑马纹样式 */
+.markdown-renderer table tr:nth-child(even) td,
+.markdown-renderer .streaming-table tr:nth-child(even) td {
+    background: var(--md-secondary-bg);
+}
+
+/* 表格悬停效果 */
+.markdown-renderer table tr:hover td,
+.markdown-renderer .streaming-table tr:hover td {
+    background: var(--md-hover-bg);
+}
+
+/* 流式表格包装器 */
+.markdown-renderer .streaming-table-wrapper {
+    margin: 12px 0;
+    padding: 8px;
+    border: 1px dashed var(--md-border);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.05);
+    transition: all 0.3s ease;
+}
+
+.dark .markdown-renderer .streaming-table-wrapper {
+    background: rgba(148, 163, 184, 0.02);
+    border-color: var(--md-border);
+}
+
+.markdown-renderer .streaming-table-indicator {
+    font-size: 11px;
+    color: var(--md-secondary-text);
+    margin-bottom: 4px;
+    font-weight: 500;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+}
+
+/* 流式完成状态 */
+.markdown-renderer .streaming-complete table {
+    transition: opacity 0.3s ease;
+    opacity: 1;
+}
+
+/* ===== 响应式表格支持 ===== */
+@media (max-width: 768px) {
+    .markdown-renderer table,
+    .markdown-renderer .streaming-table {
+        font-size: 12px;
+    }
+
+    .markdown-renderer table th,
+    .markdown-renderer table td,
+    .markdown-renderer .streaming-table th,
+    .markdown-renderer .streaming-table td {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+
+    .markdown-renderer .streaming-table-wrapper {
+        padding: 6px;
+        margin: 12px 0;
+    }
+
+    .markdown-renderer .streaming-table-indicator {
+        font-size: 10px;
+    }
+}
+
+/* ===== 数学公式样式 ===== */
+.markdown-renderer .math-block {
+    background: var(--md-secondary-bg);
+    padding: 12px;
+    border-radius: 6px;
+    margin: 16px 0;
+    text-align: center;
+    font-family: 'Times New Roman', serif;
+    font-size: 14px;
+    border: 1px solid var(--md-border);
+    color: var(--md-text);
+}
+
+.markdown-renderer .math-inline {
+    background: var(--md-code-bg);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Times New Roman', serif;
+    font-size: 13px;
+    color: var(--md-text);
+}
+
+/* ===== 流式光标样式 ===== */
+.markdown-renderer .streaming-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    background-color: var(--md-text);
+    animation: blink 1s infinite;
+    margin-left: 4px;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+/* ===== 分隔线样式 ===== */
+.markdown-renderer hr {
+    height: 1px;
+    margin: 24px 0;
+    background-color: var(--md-border);
+    border: none;
+}
+
+/* ===== 图片样式 ===== */
+.markdown-renderer img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 8px 0;
+}
+
+/* ===== 打印样式 ===== */
+@media print {
+    .markdown-renderer {
+        color: #000;
+        background: #fff;
+    }
+    
+    .markdown-renderer table {
+        border: 1px solid #000;
+        background: #fff;
+    }
+    
+    .markdown-renderer table th,
+    .markdown-renderer table td {
+        border: 1px solid #000;
+        background: #fff;
+    }
+    
+    .markdown-renderer .streaming-cursor {
+        display: none;
+    }
+}
+
+/* ===== 减少动画模式支持 ===== */
+@media (prefers-reduced-motion: reduce) {
+    .markdown-renderer .streaming-cursor,
+    .markdown-renderer .streaming-indicator {
+        animation: none;
+    }
+    
+    .markdown-renderer .streaming-table {
+        transition: none;
+    }
+}
+
+/* ===== 样式隔离保护 ===== */
+.markdown-renderer * {
+    box-sizing: border-box;
+}
+
+/* 确保不受外部样式影响 */
+.markdown-renderer {
+    /* 重置可能的外部影响 */
+    font-style: normal;
+    font-variant: normal;
+    text-transform: none;
+    text-decoration: none;
+    letter-spacing: normal;
+    word-spacing: normal;
+    text-indent: 0;
+    text-shadow: none;
+    text-align: left;
+    vertical-align: baseline;
+    white-space: normal;
+    direction: ltr;
+    unicode-bidi: normal;
+}
+
+/* ===== 用户消息样式 ===== */
+/* 用户消息背景样式 - 浅色主题 */
+.bg-user-message {
+    background: #dbeafe; /* blue-100 */
+    color: #1e40af; /* blue-800 */
+}
+
+/* 用户消息背景样式 - 深色主题 */
+.dark .bg-user-message {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    color: #ffffff;
+    font-weight: 500;
+}

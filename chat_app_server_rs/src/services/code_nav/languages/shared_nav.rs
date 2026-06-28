@@ -224,7 +224,7 @@ where
 
 pub(crate) fn select_reference_locations<M, F>(
     ctx: &ProjectContext,
-    req: &NavPositionRequest,
+    _req: &NavPositionRequest,
     token: &str,
     matches: Vec<M>,
     max_results: usize,
@@ -243,9 +243,6 @@ where
             1.0
         };
         let location = nav_location_from_search_match(token, &entry, score);
-        if is_request_token_location(ctx, req, token, &location) {
-            continue;
-        }
         push_unique_location(&mut locations, &mut seen, location);
     }
 

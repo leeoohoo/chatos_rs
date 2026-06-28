@@ -15,6 +15,7 @@ pub mod chatos_skills;
 pub(crate) mod chatos_skills_discovery;
 pub(crate) mod chatos_skills_git;
 pub(crate) mod chatos_skills_helpers;
+pub(crate) mod chatos_skills_import;
 pub(crate) mod chatos_skills_manifest;
 pub(crate) mod chatos_skills_types;
 pub mod code_nav;

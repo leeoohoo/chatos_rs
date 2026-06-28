@@ -4,11 +4,9 @@ import {
   ArrowRight,
   ChevronRight,
   CheckCircle2,
-  ClipboardList,
   GitBranch,
   Link2,
   Play,
-  RefreshCw,
   Square,
 } from 'lucide-react';
 
@@ -18,478 +16,22 @@ import { normalizeRawMessages } from '../../lib/domain/messages';
 import type {
   ProjectPlanResponse,
   ProjectRequirementResponse,
-  ProjectWorkItemResponse,
 } from '../../lib/api/client/types';
 import { cn } from '../../lib/utils';
 import type { Project } from '../../types';
-import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
+import { DependencyLine, PlanBannerMessages, PlanEmptyState, PlanLoadingState, PlanPaneHeader, PlanStatsBar, RequirementContentSection, WorkItemRow } from './projectPlanPane/components';
+import {
+  MAX_REQUIREMENT_PANE_WIDTH, REQUIREMENT_COLUMN_WIDTH, buildDependencyMaps,
+  buildRequirementChildrenMap, buildRequirementColumns, buildRequirementPath,
+  countOpenItems, formatDateTime, getUpdatedAt, groupWorkItemsByRequirement,
+  priorityLabel, readText, requirementTypeLabel, sortWorkItemsByDependencies,
+  statusClassName, statusLabel,
+} from './projectPlanPane/model';
 
 interface ProjectPlanPaneProps {
   project: Project;
   className?: string;
 }
-
-const REQUIREMENT_COLUMN_WIDTH = 320;
-const MAX_REQUIREMENT_PANE_WIDTH = 860;
-
-type DependencyMaps = {
-  requirementDependents: Map<string, string[]>;
-  requirementPrerequisites: Map<string, string[]>;
-  workItemDependents: Map<string, string[]>;
-  workItemPrerequisites: Map<string, string[]>;
-};
-
-type RequirementColumn = {
-  id: string;
-  items: ProjectRequirementResponse[];
-  selectedId: string | null;
-  title: string;
-};
-
-const readText = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
-
-const requirementParentId = (requirement: ProjectRequirementResponse): string => (
-  readText(requirement.parent_requirement_id) || readText(requirement.parentRequirementId)
-);
-
-const workItemRequirementId = (item: ProjectWorkItemResponse): string => (
-  readText(item.requirement_id) || readText(item.requirementId)
-);
-
-const getUpdatedAt = (value: { updated_at?: string; updatedAt?: string }): string => (
-  readText(value.updated_at) || readText(value.updatedAt)
-);
-
-const formatDateTime = (value: string): string => {
-  if (!value) {
-    return '-';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-};
-
-const statusLabel = (status?: string): string => {
-  switch (status) {
-    case 'reviewing':
-      return '评审中';
-    case 'approved':
-      return '已确认';
-    case 'in_progress':
-      return '进行中';
-    case 'ready':
-      return '就绪';
-    case 'blocked':
-      return '阻塞';
-    case 'done':
-      return '完成';
-    case 'cancelled':
-      return '取消';
-    case 'archived':
-      return '归档';
-    case 'todo':
-      return '待办';
-    case 'draft':
-    default:
-      return '草稿';
-  }
-};
-
-const requirementTypeLabel = (type?: string): string => {
-  switch (type) {
-    case 'change':
-      return '变更';
-    case 'bug_fix':
-      return '缺陷修复';
-    case 'requirement':
-    default:
-      return '需求';
-  }
-};
-
-const statusClassName = (status?: string): string => {
-  switch (status) {
-    case 'done':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300';
-    case 'in_progress':
-    case 'reviewing':
-      return 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300';
-    case 'blocked':
-      return 'border-destructive/30 bg-destructive/10 text-destructive';
-    case 'cancelled':
-    case 'archived':
-      return 'border-border bg-muted/40 text-muted-foreground';
-    case 'approved':
-    case 'ready':
-      return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300';
-    default:
-      return 'border-border bg-muted/30 text-muted-foreground';
-  }
-};
-
-const priorityLabel = (priority?: number): string => {
-  if (typeof priority !== 'number' || !Number.isFinite(priority)) {
-    return 'P-';
-  }
-  return `P${priority}`;
-};
-
-const createEmptyDependencyMaps = (): DependencyMaps => ({
-  requirementDependents: new Map(),
-  requirementPrerequisites: new Map(),
-  workItemDependents: new Map(),
-  workItemPrerequisites: new Map(),
-});
-
-const graphNodeRef = (value: string): { rawId: string; type: string } | null => {
-  const [type, ...rest] = value.split(':');
-  const rawId = rest.join(':').trim();
-  if (!type || !rawId) {
-    return null;
-  }
-  return { rawId, type };
-};
-
-const appendUnique = (map: Map<string, string[]>, key: string, value: string) => {
-  const list = map.get(key) || [];
-  if (!list.includes(value)) {
-    list.push(value);
-    map.set(key, list);
-  }
-};
-
-const buildDependencyMaps = (plan: ProjectPlanResponse | null): DependencyMaps => {
-  const maps = createEmptyDependencyMaps();
-  const graph = plan?.dependencyGraph || plan?.dependency_graph;
-  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-
-  edges.forEach((edge) => {
-    const edgeType = readText(edge.edge_type) || readText(edge.edgeType);
-    if (edgeType === 'contains') {
-      return;
-    }
-
-    const source = graphNodeRef(edge.from);
-    const target = graphNodeRef(edge.to);
-    if (!source || !target || source.type !== target.type) {
-      return;
-    }
-
-    if (source.type === 'requirement') {
-      appendUnique(maps.requirementPrerequisites, target.rawId, source.rawId);
-      appendUnique(maps.requirementDependents, source.rawId, target.rawId);
-      return;
-    }
-
-    if (source.type === 'work_item') {
-      appendUnique(maps.workItemPrerequisites, target.rawId, source.rawId);
-      appendUnique(maps.workItemDependents, source.rawId, target.rawId);
-    }
-  });
-
-  return maps;
-};
-
-const buildRequirementChildrenMap = (
-  requirements: ProjectRequirementResponse[],
-): Map<string, ProjectRequirementResponse[]> => {
-  const byParent = new Map<string, ProjectRequirementResponse[]>();
-  const byId = new Map<string, ProjectRequirementResponse>();
-  requirements.forEach((requirement) => {
-    byId.set(requirement.id, requirement);
-  });
-  requirements.forEach((requirement) => {
-    const parentId = requirementParentId(requirement);
-    const key = parentId && byId.has(parentId) ? parentId : '';
-    const list = byParent.get(key) || [];
-    list.push(requirement);
-    byParent.set(key, list);
-  });
-
-  return byParent;
-};
-
-const buildRequirementPath = (
-  requirementId: string | null,
-  requirementById: Map<string, ProjectRequirementResponse>,
-): string[] => {
-  if (!requirementId) {
-    return [];
-  }
-
-  const path: string[] = [];
-  const visited = new Set<string>();
-  let current = requirementById.get(requirementId);
-
-  while (current && !visited.has(current.id)) {
-    visited.add(current.id);
-    path.unshift(current.id);
-    const parentId = requirementParentId(current);
-    current = parentId ? requirementById.get(parentId) : undefined;
-  }
-
-  return path;
-};
-
-const buildRequirementColumns = ({
-  childrenMap,
-  path,
-  requirementById,
-}: {
-  childrenMap: Map<string, ProjectRequirementResponse[]>;
-  path: string[];
-  requirementById: Map<string, ProjectRequirementResponse>;
-}): RequirementColumn[] => {
-  const rootItems = childrenMap.get('') || [];
-  const columns: RequirementColumn[] = [{
-    id: 'root',
-    items: rootItems,
-    selectedId: path[0] || null,
-    title: '主需求',
-  }];
-
-  path.forEach((requirementId, index) => {
-    const children = childrenMap.get(requirementId) || [];
-    if (children.length === 0) {
-      return;
-    }
-    columns.push({
-      id: requirementId,
-      items: children,
-      selectedId: path[index + 1] || null,
-      title: requirementById.get(requirementId)?.title || '子需求',
-    });
-  });
-
-  return columns;
-};
-
-const groupWorkItemsByRequirement = (
-  workItems: ProjectWorkItemResponse[],
-): Map<string, ProjectWorkItemResponse[]> => {
-  const map = new Map<string, ProjectWorkItemResponse[]>();
-  workItems.forEach((item) => {
-    const requirementId = workItemRequirementId(item);
-    if (!requirementId) {
-      return;
-    }
-    const list = map.get(requirementId) || [];
-    list.push(item);
-    map.set(requirementId, list);
-  });
-  map.forEach((items) => {
-    items.sort((a, b) => {
-      const orderA = typeof a.sort_order === 'number' ? a.sort_order : (a.sortOrder || 0);
-      const orderB = typeof b.sort_order === 'number' ? b.sort_order : (b.sortOrder || 0);
-      if (orderA !== orderB) {
-        return orderA - orderB;
-      }
-      return getUpdatedAt(b).localeCompare(getUpdatedAt(a));
-    });
-  });
-  return map;
-};
-
-const countOpenItems = (items: ProjectWorkItemResponse[]): number => (
-  items.filter((item) => item.status !== 'done').length
-);
-
-const sortWorkItemsByDependencies = (
-  items: ProjectWorkItemResponse[],
-  dependencies: Map<string, string[]>,
-): ProjectWorkItemResponse[] => {
-  const idSet = new Set(items.map((item) => item.id));
-  const baseOrder = new Map(items.map((item, index) => [item.id, index]));
-  const indegree = new Map<string, number>();
-  const outgoing = new Map<string, string[]>();
-
-  items.forEach((item) => {
-    indegree.set(item.id, 0);
-  });
-
-  items.forEach((item) => {
-    const prerequisites = dependencies.get(item.id) || [];
-    prerequisites.forEach((prerequisiteId) => {
-      if (!idSet.has(prerequisiteId)) {
-        return;
-      }
-      indegree.set(item.id, (indegree.get(item.id) || 0) + 1);
-      const list = outgoing.get(prerequisiteId) || [];
-      list.push(item.id);
-      outgoing.set(prerequisiteId, list);
-    });
-  });
-
-  const queue = items
-    .filter((item) => (indegree.get(item.id) || 0) === 0)
-    .sort((a, b) => (baseOrder.get(a.id) || 0) - (baseOrder.get(b.id) || 0));
-  const byId = new Map(items.map((item) => [item.id, item]));
-  const result: ProjectWorkItemResponse[] = [];
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) {
-      break;
-    }
-    result.push(current);
-    (outgoing.get(current.id) || []).forEach((nextId) => {
-      const nextIndegree = (indegree.get(nextId) || 0) - 1;
-      indegree.set(nextId, nextIndegree);
-      if (nextIndegree === 0) {
-        const next = byId.get(nextId);
-        if (next) {
-          queue.push(next);
-          queue.sort((a, b) => (baseOrder.get(a.id) || 0) - (baseOrder.get(b.id) || 0));
-        }
-      }
-    });
-  }
-
-  if (result.length !== items.length) {
-    const emitted = new Set(result.map((item) => item.id));
-    items.forEach((item) => {
-      if (!emitted.has(item.id)) {
-        result.push(item);
-      }
-    });
-  }
-
-  return result;
-};
-
-const RequirementContentSection: React.FC<{
-  title: string;
-  content?: string | null;
-}> = ({ title, content }) => {
-  const text = readText(content);
-  if (!text) {
-    return null;
-  }
-  return (
-    <section className="border-t border-border/70 py-3">
-      <h4 className="text-xs font-semibold text-muted-foreground">{title}</h4>
-      <div className="mt-2 rounded-md border border-border/70 bg-muted/10 px-3 py-2">
-        <LazyMarkdownRenderer content={text} className="text-sm" />
-      </div>
-    </section>
-  );
-};
-
-const DependencyPill: React.FC<{
-  children: React.ReactNode;
-  tone?: 'dependency' | 'dependent';
-}> = ({ children, tone = 'dependency' }) => (
-  <span className={cn(
-    'inline-flex min-w-0 items-center rounded border px-1.5 py-0.5',
-    tone === 'dependent'
-      ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300'
-      : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300',
-  )}
-  >
-    <span className="truncate">{children}</span>
-  </span>
-);
-
-const DependencyLine: React.FC<{
-  emptyLabel?: string;
-  ids: string[];
-  label: string;
-  resolveLabel: (id: string) => string;
-  tone?: 'dependency' | 'dependent';
-}> = ({
-  emptyLabel = '无',
-  ids,
-  label,
-  resolveLabel,
-  tone = 'dependency',
-}) => (
-  <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
-    <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
-    {ids.length === 0 ? (
-      <span className="rounded border border-border/70 bg-muted/20 px-1.5 py-0.5 text-muted-foreground">
-        {emptyLabel}
-      </span>
-    ) : (
-      ids.map((id) => (
-        <DependencyPill key={id} tone={tone}>
-          {resolveLabel(id)}
-        </DependencyPill>
-      ))
-    )}
-  </div>
-);
-
-const WorkItemRow: React.FC<{
-  dependents: string[];
-  item: ProjectWorkItemResponse;
-  prerequisites: string[];
-  resolveWorkItemTitle: (id: string) => string;
-}> = ({
-  dependents,
-  item,
-  prerequisites,
-  resolveWorkItemTitle,
-}) => (
-  <article className="rounded-md border border-border bg-background px-3 py-2">
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div className="min-w-0">
-        <div className="break-words text-sm font-medium text-foreground">
-          {item.title || item.id}
-        </div>
-        {readText(item.description) ? (
-          <div className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground">
-            {item.description}
-          </div>
-        ) : null}
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <span className={cn(
-          'rounded-full border px-2 py-0.5 text-[11px] font-medium',
-          statusClassName(item.status),
-        )}
-        >
-          {statusLabel(item.status)}
-        </span>
-        <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground">
-          {priorityLabel(item.priority)}
-        </span>
-      </div>
-    </div>
-    <div className="mt-2 space-y-1.5 rounded-md border border-border/70 bg-muted/10 px-2 py-2">
-      <DependencyLine
-        ids={prerequisites}
-        label="前置项目任务"
-        resolveLabel={resolveWorkItemTitle}
-      />
-      {dependents.length > 0 ? (
-        <DependencyLine
-          ids={dependents}
-          label="后续项目任务"
-          resolveLabel={resolveWorkItemTitle}
-          tone="dependent"
-        />
-      ) : null}
-    </div>
-    {(item.tags || []).length > 0 || item.due_at || item.dueAt ? (
-      <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-        {(item.tags || []).map((tag) => (
-          <span key={tag} className="rounded border border-border/70 bg-muted/20 px-1.5 py-0.5">
-            {tag}
-          </span>
-        ))}
-        {item.due_at || item.dueAt ? (
-          <span className="rounded border border-border/70 bg-muted/20 px-1.5 py-0.5">
-            截止 {formatDateTime(readText(item.due_at) || readText(item.dueAt))}
-          </span>
-        ) : null}
-      </div>
-    ) : null}
-  </article>
-);
 
 export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, className }) => {
   const apiClient = useApiClient();
@@ -677,75 +219,33 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
 
   return (
     <div className={cn('flex h-full flex-col overflow-hidden bg-background', className)}>
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">Plan</h2>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {requirements.length} 个需求 · {workItems.length} 个项目任务 · {countOpenItems(workItems)} 个未完成
-          </p>
-        </div>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
-          disabled={loading}
-          onClick={() => {
-            void loadPlan();
-          }}
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-          刷新
-        </button>
-      </div>
+      <PlanPaneHeader
+        loading={loading}
+        onRefresh={() => {
+          void loadPlan();
+        }}
+        openItemCount={countOpenItems(workItems)}
+        requirementCount={requirements.length}
+        workItemCount={workItems.length}
+      />
 
-      {error ? (
-        <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-      {executionMessage ? (
-        <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
-          {executionMessage}
-        </div>
-      ) : null}
+      <PlanBannerMessages error={error} executionMessage={executionMessage} />
 
       {loading && !plan ? (
-        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-          正在加载 Plan...
-        </div>
+        <PlanLoadingState />
       ) : requirements.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-4 text-center">
-          <div>
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <ClipboardList className="h-5 w-5" />
-            </div>
-            <div className="mt-3 text-sm font-medium text-foreground">暂无需求</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              规划任务写入 Project Management 后，需求和项目任务会显示在这里。
-            </div>
-          </div>
-        </div>
+        <PlanEmptyState />
       ) : (
         <div
           className="grid min-h-0 flex-1 overflow-hidden"
           style={{ gridTemplateColumns: `${requirementPaneWidth}px minmax(0, 1fr)` }}
         >
           <aside className="flex min-h-0 flex-col border-r border-border bg-muted/10">
-            <div className="shrink-0 border-b border-border bg-background/95 px-3 py-2">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-md border border-border bg-background px-2 py-1.5">
-                  <div className="text-[10px] text-muted-foreground">需求</div>
-                  <div className="text-sm font-semibold text-foreground">{requirements.length}</div>
-                </div>
-                <div className="rounded-md border border-border bg-background px-2 py-1.5">
-                  <div className="text-[10px] text-muted-foreground">完成</div>
-                  <div className="text-sm font-semibold text-foreground">{doneWorkItemCount}</div>
-                </div>
-                <div className="rounded-md border border-border bg-background px-2 py-1.5">
-                  <div className="text-[10px] text-muted-foreground">阻塞</div>
-                  <div className="text-sm font-semibold text-foreground">{blockedWorkItemCount}</div>
-                </div>
-              </div>
-            </div>
+            <PlanStatsBar
+              blockedWorkItemCount={blockedWorkItemCount}
+              doneWorkItemCount={doneWorkItemCount}
+              requirementCount={requirements.length}
+            />
             <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
               <div className="flex h-full min-w-max">
                 {requirementColumns.map((column, columnIndex) => (

@@ -54,6 +54,31 @@ function Get-EnvOrDefault {
   return $value.Trim()
 }
 
+function New-MongoConnectionString {
+  param(
+    [string]$MongoHostName,
+    [string]$Port,
+    [string]$Database,
+    [string]$Username,
+    [string]$Password,
+    [string]$AuthSource
+  )
+
+  $credentials = ''
+  if (-not [string]::IsNullOrWhiteSpace($Username)) {
+    $encodedUser = [System.Uri]::EscapeDataString($Username)
+    $encodedPassword = [System.Uri]::EscapeDataString($Password)
+    $credentials = "${encodedUser}:${encodedPassword}@"
+  }
+
+  $authQuery = ''
+  if (-not [string]::IsNullOrWhiteSpace($AuthSource)) {
+    $authQuery = '?authSource=' + [System.Uri]::EscapeDataString($AuthSource)
+  }
+
+  return ('mongodb://{0}{1}:{2}/{3}{4}' -f $credentials, $MongoHostName, $Port, $Database, $authQuery)
+}
+
 function ConvertTo-PowerShellLiteral {
   param([string]$Value)
 
@@ -344,6 +369,16 @@ function Ensure-FrontendDependencies {
   Ensure-FrontendNativePackages -ProjectDir $ProjectDir -Name $Name -CacheRoot $CacheRoot
 }
 
+function Build-ChatAppBackend {
+  param([string]$RepoRoot)
+
+  Write-Host '[INFO] building chat_app backend'
+  & cargo build --manifest-path (Join-Path $RepoRoot 'chat_app_server_rs\Cargo.toml') --target-dir (Join-Path $RepoRoot 'target-shared')
+  if ($LASTEXITCODE -ne 0) {
+    throw 'chat_app backend build failed'
+  }
+}
+
 function Invoke-WslMongoScript {
   param(
     [string]$ResolvedDistro,
@@ -374,194 +409,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
 $runDir = Join-Path $repoRoot '.local\run'
 $nativeCacheDir = Join-Path $runDir 'npm-native-cache'
-
-Import-DotEnvFile -Path (Join-Path $repoRoot '.env')
-
-$projectSyncSecret = Get-EnvOrDefault -Name 'PROJECT_SERVICE_SYNC_SECRET' -DefaultValue (Get-EnvOrDefault -Name 'CHATOS_PROJECT_SERVICE_SYNC_SECRET' -DefaultValue 'change_me_project_sync_secret')
-$taskRunnerCallbackSecret = Get-EnvOrDefault -Name 'TASK_RUNNER_CHATOS_CALLBACK_SECRET' -DefaultValue 'change_me_chatos_task_runner_secret'
-$memoryEngineOperatorToken = Get-EnvOrDefault -Name 'MEMORY_ENGINE_OPERATOR_TOKEN' -DefaultValue 'chatos-memory-engine-dev-operator-token'
-$userJwtSecret = Get-EnvOrDefault -Name 'USER_SERVICE_JWT_SECRET' -DefaultValue 'change_me_user_service_secret'
-$userJwtIssuer = Get-EnvOrDefault -Name 'USER_SERVICE_JWT_ISSUER' -DefaultValue 'user_service'
-$userAudience = Get-EnvOrDefault -Name 'USER_SERVICE_USER_AUDIENCE' -DefaultValue 'user_service'
-$taskRunnerAudience = Get-EnvOrDefault -Name 'USER_SERVICE_TASK_RUNNER_AUDIENCE' -DefaultValue 'task_runner'
-$authJwtSecret = Get-EnvOrDefault -Name 'AUTH_JWT_SECRET' -DefaultValue 'dev-only-change-me-please'
-
-$ports = @(39190, 39210, 39090, 7081, 3997, 39191, 39211, 39091, 4178, 8088)
-
-$serviceDefinitions = @(
-  [pscustomobject]@{
-    Name = 'user_service_backend'
-    Port = 39190
-    Url = 'http://127.0.0.1:39190/api/health'
-    StdOut = Join-Path $runDir 'user_service_backend.out.log'
-    StdErr = Join-Path $runDir 'user_service_backend.err.log'
-    WorkingDirectory = $repoRoot
-    Command = 'cargo run --manifest-path user_service/backend/Cargo.toml --bin user_service_backend'
-    Environment = @{
-      CARGO_TARGET_DIR = 'target-user-run'
-      USER_SERVICE_HOST = '127.0.0.1'
-      USER_SERVICE_PORT = '39190'
-      USER_SERVICE_DATABASE_URL = 'mongodb://admin:admin@127.0.0.1:27018/user_service?authSource=admin'
-      USER_SERVICE_JWT_SECRET = $userJwtSecret
-      USER_SERVICE_JWT_ISSUER = $userJwtIssuer
-      USER_SERVICE_USER_AUDIENCE = $userAudience
-      USER_SERVICE_TASK_RUNNER_AUDIENCE = $taskRunnerAudience
-      USER_SERVICE_SUPER_ADMIN_USERNAME = 'admin'
-      USER_SERVICE_SUPER_ADMIN_PASSWORD = 'admin123456'
-      USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME = 'System Admin'
-      TASK_RUNNER_BASE_URL = 'http://127.0.0.1:39090'
-      TASK_RUNNER_CHATOS_CALLBACK_SECRET = $taskRunnerCallbackSecret
-      MEMORY_ENGINE_BASE_URL = 'http://127.0.0.1:7081/api/memory-engine/v1'
-      MEMORY_ENGINE_OPERATOR_TOKEN = $memoryEngineOperatorToken
-    }
-  },
-  [pscustomobject]@{
-    Name = 'project_management_backend'
-    Port = 39210
-    Url = 'http://127.0.0.1:39210/api/health'
-    StdOut = Join-Path $runDir 'project_management_backend.out.log'
-    StdErr = Join-Path $runDir 'project_management_backend.err.log'
-    WorkingDirectory = $repoRoot
-    Command = 'cargo run --manifest-path project_management_service/backend/Cargo.toml --bin project_management_service_backend'
-    Environment = @{
-      CARGO_TARGET_DIR = 'target-pm-run'
-      PROJECT_SERVICE_HOST = '127.0.0.1'
-      PROJECT_SERVICE_PORT = '39210'
-      PROJECT_SERVICE_DATABASE_URL = 'sqlite://.local/run/project_management.dev.db'
-      PROJECT_SERVICE_USER_SERVICE_BASE_URL = 'http://127.0.0.1:39190'
-      PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS = '5000'
-      PROJECT_SERVICE_TASK_RUNNER_BASE_URL = 'http://127.0.0.1:39090'
-      PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS = '10000'
-      PROJECT_SERVICE_SYNC_SECRET = $projectSyncSecret
-    }
-  },
-  [pscustomobject]@{
-    Name = 'memory_engine_backend'
-    Port = 7081
-    Url = 'http://127.0.0.1:7081/health'
-    StdOut = Join-Path $runDir 'memory_engine_backend.out.log'
-    StdErr = Join-Path $runDir 'memory_engine_backend.err.log'
-    WorkingDirectory = $repoRoot
-    Command = 'cargo run --manifest-path memory_engine/backend/Cargo.toml --bin memory_engine'
-    Environment = @{
-      CARGO_TARGET_DIR = 'target-me-run'
-      MEMORY_ENGINE_HOST = '127.0.0.1'
-      MEMORY_ENGINE_PORT = '7081'
-      MEMORY_ENGINE_MONGODB_URI = 'mongodb://admin:admin@127.0.0.1:27018/admin'
-      MEMORY_ENGINE_MONGODB_DATABASE = 'memory_engine'
-      MEMORY_ENGINE_USER_SERVICE_BASE_URL = 'http://127.0.0.1:39190'
-      MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS = '5000'
-      MEMORY_ENGINE_OPERATOR_TOKEN = $memoryEngineOperatorToken
-    }
-  },
-  [pscustomobject]@{
-    Name = 'task_runner_backend'
-    Port = 39090
-    Url = 'http://127.0.0.1:39090/api/health'
-    StdOut = Join-Path $runDir 'task_runner_backend.out.log'
-    StdErr = Join-Path $runDir 'task_runner_backend.err.log'
-    WorkingDirectory = $repoRoot
-    Command = 'cargo run --manifest-path task_runner_service/backend/Cargo.toml --bin task_runner_service_backend'
-    Environment = @{
-      CARGO_TARGET_DIR = 'target-tr-run'
-      TASK_RUNNER_HOST = '127.0.0.1'
-      TASK_RUNNER_PORT = '39090'
-      TASK_RUNNER_STORE_MODE = 'mongo'
-      TASK_RUNNER_DATABASE_URL = 'mongodb://admin:admin@127.0.0.1:27018/task_runner_service?authSource=admin'
-      TASK_RUNNER_WORKSPACE_DIR = $repoRoot
-      TASK_RUNNER_ADMIN_USERNAME = 'admin'
-      TASK_RUNNER_ADMIN_PASSWORD = 'admin123456'
-      TASK_RUNNER_ADMIN_DISPLAY_NAME = 'System Admin'
-      TASK_RUNNER_USER_SERVICE_BASE_URL = 'http://127.0.0.1:39190'
-      TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS = '5000'
-      TASK_RUNNER_PROJECT_SERVICE_BASE_URL = 'http://127.0.0.1:39210'
-      TASK_RUNNER_PROJECT_SERVICE_SYNC_SECRET = $projectSyncSecret
-      TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS = '5000'
-      TASK_RUNNER_CHATOS_CALLBACK_URL = 'http://127.0.0.1:3997/api/agent/chat/task-runner/callback'
-      TASK_RUNNER_CHATOS_CALLBACK_SECRET = $taskRunnerCallbackSecret
-      TASK_RUNNER_MEMORY_ENGINE_BASE_URL = 'http://127.0.0.1:7081/api/memory-engine/v1'
-      TASK_RUNNER_MEMORY_ENGINE_OPERATOR_TOKEN = $memoryEngineOperatorToken
-      TASK_RUNNER_MEMORY_ENGINE_SOURCE_ID = 'task'
-    }
-  },
-  [pscustomobject]@{
-    Name = 'chat_app_backend'
-    Port = 3997
-    Url = 'http://127.0.0.1:3997/health'
-    StdOut = Join-Path $runDir 'chat_app_backend.out.log'
-    StdErr = Join-Path $runDir 'chat_app_backend.err.log'
-    WorkingDirectory = $repoRoot
-    Command = '& ".\target-shared\debug\chat_app_server_rs.exe"'
-    Environment = @{
-      NODE_ENV = 'development'
-      HOST = '127.0.0.1'
-      BACKEND_PORT = '3997'
-      DATABASE_TYPE = 'sqlite'
-      AUTH_JWT_SECRET = $authJwtSecret
-      CHATOS_USER_SERVICE_BASE_URL = 'http://127.0.0.1:39190'
-      CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS = '5000'
-      CHATOS_USER_SERVICE_JWT_SECRET = $userJwtSecret
-      CHATOS_USER_SERVICE_JWT_ISSUER = $userJwtIssuer
-      CHATOS_USER_SERVICE_USER_AUDIENCE = $userAudience
-      CHATOS_PROJECT_SERVICE_BASE_URL = 'http://127.0.0.1:39210'
-      CHATOS_PROJECT_SERVICE_SYNC_SECRET = $projectSyncSecret
-      CHATOS_TASK_RUNNER_BASE_URL = 'http://127.0.0.1:39090'
-      CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS = '30000'
-      TASK_RUNNER_CHATOS_CALLBACK_SECRET = $taskRunnerCallbackSecret
-      MEMORY_ENGINE_BASE_URL = 'http://127.0.0.1:7081/api/memory-engine/v1'
-      MEMORY_ENGINE_OPERATOR_TOKEN = $memoryEngineOperatorToken
-      MEMORY_ENGINE_REQUEST_TIMEOUT_MS = '5000'
-    }
-  }
-)
-
-$frontendDefinitions = @(
-  [pscustomobject]@{
-    Name = 'user_service_frontend'
-    Port = 39191
-    Url = 'http://127.0.0.1:39191'
-    ProjectDir = Join-Path $repoRoot 'user_service\frontend'
-    StdOut = Join-Path $runDir 'user_service_frontend.out.log'
-    StdErr = Join-Path $runDir 'user_service_frontend.err.log'
-    Command = 'npm --prefix user_service/frontend run dev -- --host 127.0.0.1'
-  },
-  [pscustomobject]@{
-    Name = 'project_management_frontend'
-    Port = 39211
-    Url = 'http://127.0.0.1:39211'
-    ProjectDir = Join-Path $repoRoot 'project_management_service\frontend'
-    StdOut = Join-Path $runDir 'project_management_frontend.out.log'
-    StdErr = Join-Path $runDir 'project_management_frontend.err.log'
-    Command = 'npm --prefix project_management_service/frontend run dev -- --host 127.0.0.1'
-  },
-  [pscustomobject]@{
-    Name = 'task_runner_frontend'
-    Port = 39091
-    Url = 'http://127.0.0.1:39091'
-    ProjectDir = Join-Path $repoRoot 'task_runner_service\frontend'
-    StdOut = Join-Path $runDir 'task_runner_frontend.out.log'
-    StdErr = Join-Path $runDir 'task_runner_frontend.err.log'
-    Command = 'npm --prefix task_runner_service/frontend run dev -- --host 127.0.0.1'
-  },
-  [pscustomobject]@{
-    Name = 'memory_engine_frontend'
-    Port = 4178
-    Url = 'http://127.0.0.1:4178'
-    ProjectDir = Join-Path $repoRoot 'memory_engine\frontend'
-    StdOut = Join-Path $runDir 'memory_engine_frontend.out.log'
-    StdErr = Join-Path $runDir 'memory_engine_frontend.err.log'
-    Command = 'npm --prefix memory_engine/frontend run dev -- --host 127.0.0.1'
-  },
-  [pscustomobject]@{
-    Name = 'chat_app_frontend'
-    Port = 8088
-    Url = 'http://127.0.0.1:8088'
-    ProjectDir = Join-Path $repoRoot 'chat_app'
-    StdOut = Join-Path $runDir 'chat_app_frontend.out.log'
-    StdErr = Join-Path $runDir 'chat_app_frontend.err.log'
-    Command = 'npm --prefix chat_app run dev -- --host 127.0.0.1'
-  }
-)
+. (Join-Path $scriptDir 'local-dev-stack\config.ps1')
 
 function Show-StackStatus {
   Write-Host 'Windows local stack status:'
@@ -586,6 +434,8 @@ function Start-Stack {
 
   Get-ChildItem -LiteralPath $runDir -Filter 'task_runner.dev.db*' -ErrorAction SilentlyContinue |
     Remove-Item -Force -ErrorAction SilentlyContinue
+
+  Build-ChatAppBackend -RepoRoot $repoRoot
 
   $chatBackendExe = Join-Path $repoRoot 'target-shared\debug\chat_app_server_rs.exe'
   if (-not (Test-Path -LiteralPath $chatBackendExe)) {

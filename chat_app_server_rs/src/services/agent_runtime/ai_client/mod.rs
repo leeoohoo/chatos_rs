@@ -14,6 +14,7 @@ use crate::services::user_settings::AiClientSettings;
 
 mod compat;
 mod execution_loop;
+mod execution_loop_follow_up;
 mod execution_loop_guidance;
 mod execution_loop_state;
 mod execution_loop_tool_io;

@@ -1,70 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Alert,
-  App,
-  Button,
-  Card,
-  Drawer,
-  Empty,
-  Form,
-  Input,
-  Popconfirm,
-  Select,
-  Space,
-  Switch,
-  Table,
-  Tag,
-  Typography,
-} from 'antd';
-import type { ColumnsType } from 'antd/es/table';
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import dayjs from 'dayjs';
+import { Alert, App, Button, Card, Empty, Form, Select, Space, Table, Typography } from 'antd';
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 
 import { api } from '../api/client';
 import type {
-  CreateUserModelProviderPayload,
-  UpdateUserModelProviderPayload,
   UserModelConfigRecord,
   UserModelProviderRecord,
   UserSummaryRecord,
 } from '../types';
-
-type ProviderFormValues = {
-  owner_user_id?: string;
-  name: string;
-  provider: string;
-  api_key?: string;
-  clear_api_key?: boolean;
-  base_url?: string;
-  enabled: boolean;
-  supports_images: boolean;
-  supports_reasoning: boolean;
-  supports_responses: boolean;
-};
-
-const PROVIDER_OPTIONS = [
-  { label: 'GPT / OpenAI', value: 'gpt' },
-  { label: 'DeepSeek', value: 'deepseek' },
-  { label: 'Kimi', value: 'kimi' },
-  { label: 'MiniMax', value: 'minimax' },
-  { label: 'OpenAI Compatible', value: 'openai_compatible' },
-];
-
-const ALL_USERS_SCOPE = '__all_users__';
-
-function providerCatalogStatusLabel(status?: string | null) {
-  switch (status) {
-    case 'ok':
-      return 'loaded';
-    case 'error':
-      return 'failed';
-    case 'empty':
-      return 'empty';
-    default:
-      return 'not fetched';
-  }
-}
+import { ModelProviderDrawer } from './models/ModelProviderDrawer';
+import {
+  ALL_USERS_SCOPE,
+  buildCreateProviderPayload,
+  buildModelColumns,
+  buildProviderColumns,
+  buildUpdateProviderPayload,
+  type ProviderFormValues,
+} from './models/modelPageUtils';
 
 export function ModelsPage() {
   const { message } = App.useApp();
@@ -115,7 +68,7 @@ export function ModelsPage() {
   });
 
   const createProviderMutation = useMutation({
-    mutationFn: (payload: CreateUserModelProviderPayload) => api.createModelProvider(payload),
+    mutationFn: api.createModelProvider,
     onSuccess: async (result) => {
       showWarnings(result.sync_warnings);
       message.success('Provider saved');
@@ -126,7 +79,7 @@ export function ModelsPage() {
   });
 
   const updateProviderMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: UpdateUserModelProviderPayload }) =>
+    mutationFn: ({ id, payload }: { id: string; payload: ReturnType<typeof buildUpdateProviderPayload> }) =>
       api.updateModelProvider(id, payload),
     onSuccess: async (result) => {
       showWarnings(result.sync_warnings);
@@ -184,160 +137,18 @@ export function ModelsPage() {
   const memoryEligibleConfigs = selectedUserId
     ? currentConfigs.filter((item) => item.owner_user_id === selectedUserId && item.model_name.trim())
     : [];
-
-  const providerColumns: ColumnsType<UserModelProviderRecord> = [
-    {
-      title: 'Provider',
-      dataIndex: 'name',
-      render: (_, record) => (
-        <Space direction="vertical" size={0}>
-          <Space size={8} wrap>
-            <Typography.Text strong>{record.name}</Typography.Text>
-            {record.has_api_key ? <Tag color="blue">Key Saved</Tag> : <Tag>Missing Key</Tag>}
-          </Space>
-          <Typography.Text type="secondary">
-            {record.provider}
-            {record.base_url ? ` | ${record.base_url}` : ''}
-          </Typography.Text>
-        </Space>
-      ),
-    },
-    {
-      title: 'Owner',
-      dataIndex: 'owner_user_id',
-      width: 220,
-      render: (ownerUserId: string) => {
-        const owner = (usersQuery.data || []).find((item) => item.id === ownerUserId);
-        return owner ? `${owner.display_name || owner.username} (${owner.username})` : ownerUserId;
-      },
-    },
-    {
-      title: 'Catalog',
-      key: 'catalog',
-      width: 260,
-      render: (_, record) => (
-        <Space direction="vertical" size={0}>
-          <Space size={8} wrap>
-            <Tag color={record.last_sync_status === 'ok' ? 'success' : 'default'}>
-              {providerCatalogStatusLabel(record.last_sync_status)}
-            </Tag>
-            <Tag>{record.imported_model_count || 0} models</Tag>
-          </Space>
-          {record.last_sync_error ? (
-            <Typography.Text type="danger" ellipsis={{ tooltip: record.last_sync_error }}>
-              {record.last_sync_error}
-            </Typography.Text>
-          ) : record.last_synced_at ? (
-            <Typography.Text type="secondary">
-              {dayjs(record.last_synced_at).format('YYYY-MM-DD HH:mm:ss')}
-            </Typography.Text>
-          ) : null}
-        </Space>
-      ),
-    },
-    {
-      title: 'Flags',
-      key: 'flags',
-      width: 220,
-      render: (_, record) => (
-        <Space wrap>
-          <Tag color={record.enabled ? 'success' : 'default'}>
-            {record.enabled ? 'Enabled' : 'Disabled'}
-          </Tag>
-          {record.supports_images ? <Tag>Image</Tag> : null}
-          {record.supports_reasoning ? <Tag>Reasoning</Tag> : null}
-          {record.supports_responses ? <Tag>Responses</Tag> : null}
-        </Space>
-      ),
-    },
-    {
-      title: 'Updated',
-      dataIndex: 'updated_at',
-      width: 180,
-      render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
-    },
-    {
-      title: 'Actions',
-      key: 'actions',
-      width: 240,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" icon={<ReloadOutlined />} onClick={() => refreshProviderMutation.mutate(record)}>
-            Refresh
-          </Button>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEditDrawer(record)}>
-            Edit
-          </Button>
-          <Popconfirm
-            title="Delete this provider and its imported models?"
-            onConfirm={() => deleteProviderMutation.mutate(record.id)}
-            okButtonProps={{ loading: deleteProviderMutation.isPending }}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />}>
-              Delete
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
-  const modelColumns: ColumnsType<UserModelConfigRecord> = [
-    {
-      title: 'Concrete Model',
-      dataIndex: 'name',
-      render: (_, record) => (
-        <Space direction="vertical" size={0}>
-          <Typography.Text strong>{record.name}</Typography.Text>
-          <Typography.Text type="secondary">
-            {record.provider} | {record.model_name}
-          </Typography.Text>
-        </Space>
-      ),
-    },
-    {
-      title: 'Owner',
-      dataIndex: 'owner_user_id',
-      width: 220,
-      render: (ownerUserId: string) => {
-        const owner = (usersQuery.data || []).find((item) => item.id === ownerUserId);
-        return owner ? `${owner.display_name || owner.username} (${owner.username})` : ownerUserId;
-      },
-    },
-    {
-      title: 'Task Usage',
-      dataIndex: 'task_usage_scenario',
-      width: 220,
-      render: (value?: string | null) => value || '-',
-    },
-    {
-      title: 'Task Thinking',
-      dataIndex: 'task_thinking_level',
-      width: 160,
-      render: (value?: string | null) => value || '-',
-    },
-    {
-      title: 'Flags',
-      key: 'flags',
-      width: 220,
-      render: (_, record) => (
-        <Space wrap>
-          <Tag color={record.enabled ? 'success' : 'default'}>
-            {record.enabled ? 'Enabled' : 'Disabled'}
-          </Tag>
-          {record.supports_images ? <Tag>Image</Tag> : null}
-          {record.supports_reasoning ? <Tag>Reasoning</Tag> : null}
-          {record.supports_responses ? <Tag>Responses</Tag> : null}
-        </Space>
-      ),
-    },
-    {
-      title: 'Updated',
-      dataIndex: 'updated_at',
-      width: 180,
-      render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
-    },
-  ];
+  const providerColumns = useMemo(
+    () =>
+      buildProviderColumns({
+        users: usersQuery.data,
+        onRefresh: (record) => refreshProviderMutation.mutate(record),
+        onEdit: openEditDrawer,
+        onDelete: (id) => deleteProviderMutation.mutate(id),
+        deleteLoading: deleteProviderMutation.isPending,
+      }),
+    [deleteProviderMutation, refreshProviderMutation, usersQuery.data],
+  );
+  const modelColumns = useMemo(() => buildModelColumns(usersQuery.data), [usersQuery.data]);
 
   function showWarnings(warnings?: string[]) {
     if (!warnings || warnings.length === 0) {
@@ -401,38 +212,22 @@ export function ModelsPage() {
       message.error('Owner user is required');
       return;
     }
-    const normalizedBaseUrl = values.base_url?.trim() || undefined;
-    const normalizedApiKey = values.api_key?.trim() || undefined;
 
     if (editingProvider) {
       updateProviderMutation.mutate({
         id: editingProvider.id,
-        payload: {
-          name: values.name.trim(),
-          provider: values.provider,
-          api_key: normalizedApiKey,
-          clear_api_key: values.clear_api_key === true,
-          base_url: normalizedBaseUrl ?? '',
-          enabled: values.enabled,
-          supports_images: values.supports_images,
-          supports_reasoning: values.supports_reasoning,
-          supports_responses: values.supports_responses,
-        },
+        payload: buildUpdateProviderPayload(values),
       });
       return;
     }
 
-    createProviderMutation.mutate({
-      owner_user_id: isSuperAdmin ? values.owner_user_id : selectedUserId,
-      name: values.name.trim(),
-      provider: values.provider,
-      api_key: normalizedApiKey,
-      base_url: normalizedBaseUrl,
-      enabled: values.enabled,
-      supports_images: values.supports_images,
-      supports_reasoning: values.supports_reasoning,
-      supports_responses: values.supports_responses,
-    });
+    createProviderMutation.mutate(
+      buildCreateProviderPayload({
+        values,
+        isSuperAdmin,
+        selectedUserId,
+      }),
+    );
   }
 
   return (
@@ -459,10 +254,7 @@ export function ModelsPage() {
           {isSuperAdmin ? (
             <Select
               value={selectedUserId || ALL_USERS_SCOPE}
-              options={[
-                { label: 'All users', value: ALL_USERS_SCOPE },
-                ...userOptions,
-              ]}
+              options={[{ label: 'All users', value: ALL_USERS_SCOPE }, ...userOptions]}
               onChange={(value) => setSelectedUserId(value === ALL_USERS_SCOPE ? undefined : value)}
               style={{ width: 280 }}
               placeholder="Select owner user"
@@ -477,7 +269,11 @@ export function ModelsPage() {
                 void modelSettingsQuery.refetch();
               }
             }}
-            loading={providersQuery.isFetching || modelConfigsQuery.isFetching || modelSettingsQuery.isFetching}
+            loading={
+              providersQuery.isFetching ||
+              modelConfigsQuery.isFetching ||
+              modelSettingsQuery.isFetching
+            }
           >
             Refresh
           </Button>
@@ -566,87 +362,16 @@ export function ModelsPage() {
         />
       </Card>
 
-      <Drawer
-        title={editingProvider ? `Edit ${editingProvider.name}` : 'New Provider'}
+      <ModelProviderDrawer
         open={drawerOpen}
-        width={520}
+        editingProvider={editingProvider}
+        isSuperAdmin={isSuperAdmin}
+        userOptions={userOptions}
+        form={form}
+        saveLoading={createProviderMutation.isPending || updateProviderMutation.isPending}
         onClose={closeDrawer}
-        destroyOnClose
-        extra={
-          <Space>
-            <Button onClick={closeDrawer}>Cancel</Button>
-            <Button
-              type="primary"
-              loading={createProviderMutation.isPending || updateProviderMutation.isPending}
-              onClick={() => form.submit()}
-            >
-              Save
-            </Button>
-          </Space>
-        }
-      >
-        <Form<ProviderFormValues>
-          form={form}
-          layout="vertical"
-          requiredMark={false}
-          initialValues={{
-            provider: 'gpt',
-            enabled: true,
-            supports_images: false,
-            supports_reasoning: false,
-            supports_responses: true,
-            clear_api_key: false,
-          }}
-          onFinish={submit}
-        >
-          {isSuperAdmin ? (
-            <Form.Item
-              name="owner_user_id"
-              label="Owner User"
-              rules={[{ required: true, message: 'Please choose an owner user' }]}
-            >
-              <Select options={userOptions} />
-            </Form.Item>
-          ) : null}
-          <Form.Item
-            name="name"
-            label="Name"
-            rules={[{ required: true, message: 'Please enter a name' }]}
-          >
-            <Input />
-          </Form.Item>
-          <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
-            <Select options={PROVIDER_OPTIONS} />
-          </Form.Item>
-          <Form.Item name="base_url" label="Base URL">
-            <Input placeholder="https://api.openai.com/v1" />
-          </Form.Item>
-          <Form.Item
-            name="api_key"
-            label={editingProvider ? 'New API Key' : 'API Key'}
-            rules={editingProvider ? undefined : [{ required: true, message: 'Please enter an API key' }]}
-          >
-            <Input.Password placeholder={editingProvider ? 'Leave empty to keep existing key' : ''} />
-          </Form.Item>
-          {editingProvider?.has_api_key ? (
-            <Form.Item name="clear_api_key" valuePropName="checked">
-              <Switch checkedChildren="Clear Saved Key" unCheckedChildren="Keep Saved Key" />
-            </Form.Item>
-          ) : null}
-          <Form.Item name="enabled" label="Enabled" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="supports_images" label="Supports Images" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="supports_reasoning" label="Supports Reasoning" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="supports_responses" label="Supports Responses API" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
-      </Drawer>
+        onSubmit={submit}
+      />
     </Space>
   );
 }

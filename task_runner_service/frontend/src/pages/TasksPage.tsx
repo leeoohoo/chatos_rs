@@ -10,9 +10,10 @@ import {
 
 import { useI18n } from '../i18n/I18nProvider';
 import {
-  buildSchedulePayload,
+  buildCreateTaskFormValues,
+  buildEditTaskFormValues,
+  buildTaskPayload,
   completeEnabledBuiltinKindDependencies,
-  formatScheduleInput,
   type TaskFormValues,
   type RunTaskFormValues,
 } from './tasks/taskPageUtils';
@@ -35,7 +36,6 @@ import { useTaskMutations } from './tasks/useTaskMutations';
 import { useTasksPageData } from './tasks/useTasksPageData';
 import { api } from '../api/client';
 import type {
-  CreateTaskPayload,
   StartTaskRunPayload,
   TaskRecord,
   TaskStatus,
@@ -255,53 +255,13 @@ export function TasksPage() {
 
   function openCreateDrawer() {
     setEditingTask(null);
-    form.setFieldsValue({
-      title: '',
-      objective: '',
-      description: '',
-      priority: 0,
-      status: 'draft',
-      taskProfile: 'default',
-      default_model_config_id: undefined,
-      prerequisite_task_ids: [],
-      tagsText: '',
-      mcpEnabled: true,
-      builtinPromptMode: 'effective',
-      builtinPromptLocale: locale,
-      enabledBuiltinKinds: [],
-      workspaceDir: '',
-      defaultRemoteServerId: undefined,
-      externalMcpConfigIds: [],
-      scheduleMode: 'manual',
-      scheduleRunAt: undefined,
-      scheduleIntervalSeconds: undefined,
-    });
+    form.setFieldsValue(buildCreateTaskFormValues(locale));
     setDrawerOpen(true);
   }
 
   function openEditDrawer(task: TaskRecord) {
     setEditingTask(task);
-    form.setFieldsValue({
-      title: task.title,
-      objective: task.objective,
-      description: task.description || '',
-      priority: task.priority,
-      status: task.status,
-      taskProfile: task.task_profile || 'default',
-      default_model_config_id: task.default_model_config_id || undefined,
-      prerequisite_task_ids: task.prerequisite_task_ids || [],
-      tagsText: task.tags.join(', '),
-      mcpEnabled: task.mcp_config.enabled,
-      builtinPromptMode: task.mcp_config.builtin_prompt_mode,
-      builtinPromptLocale: task.mcp_config.builtin_prompt_locale,
-      enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
-      workspaceDir: task.mcp_config.workspace_dir || '',
-      defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
-      externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
-      scheduleMode: task.schedule.mode,
-      scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
-      scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
-    });
+    form.setFieldsValue(buildEditTaskFormValues(task));
     setDrawerOpen(true);
   }
 
@@ -398,48 +358,10 @@ export function TasksPage() {
     });
   }
 
-  function buildTaskPayload(values: TaskFormValues): CreateTaskPayload | null {
-    const schedule = buildSchedulePayload(values);
-    if (!schedule) {
-      messageApi.error(t('tasks.scheduleInvalid'));
-      return null;
-    }
-
-    const enabledBuiltinKinds = completeEnabledBuiltinKindDependencies(
-      values.enabledBuiltinKinds,
-    );
-
-    return {
-      title: values.title,
-      objective: values.objective,
-      description: values.description?.trim() || undefined,
-      priority: values.priority,
-      status: values.status,
-      task_profile: values.taskProfile,
-      default_model_config_id: values.default_model_config_id,
-      project_id: editingTask ? undefined : routeProjectId,
-      prerequisite_task_ids: values.prerequisite_task_ids || [],
-      tags: values.tagsText
-        ?.split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-      schedule,
-      mcp_config: {
-        enabled: values.mcpEnabled,
-        init_mode: 'full',
-        builtin_prompt_mode: values.builtinPromptMode,
-        builtin_prompt_locale: values.builtinPromptLocale,
-        enabled_builtin_kinds: enabledBuiltinKinds,
-        workspace_dir: values.workspaceDir?.trim() || undefined,
-        default_remote_server_id: values.defaultRemoteServerId,
-        external_mcp_config_ids: values.externalMcpConfigIds || [],
-      },
-    };
-  }
-
   function handleSubmit(values: TaskFormValues) {
-    const payload = buildTaskPayload(values);
+    const payload = buildTaskPayload(values, { editingTask, routeProjectId });
     if (!payload) {
+      messageApi.error(t('tasks.scheduleInvalid'));
       return;
     }
 

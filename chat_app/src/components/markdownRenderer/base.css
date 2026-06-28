@@ -1,0 +1,154 @@
+/* MarkdownRenderer 独立样式文件 */
+/* 参考 chat.css 的设计理念，使用主题变量系统，确保样式隔离 */
+
+/* ===== 主题变量定义 ===== */
+.markdown-renderer {
+    /* 浅色主题 */
+    --md-bg: #ffffff;
+    --md-secondary-bg: #f8fafc;
+    --md-text: #1e293b;
+    --md-secondary-text: #64748b;
+    --md-border: #e2e8f0;
+    --md-hover-bg: #f1f5f9;
+    --md-code-bg: #f8fafc;
+    --md-code-text: #24292f;
+    --md-link-color: #0969da;
+    --md-quote-border: #d1d5db;
+    --md-quote-bg: #f9fafb;
+}
+
+/* 深色主题 */
+.dark .markdown-renderer {
+    --md-bg: #1e1e1e;
+    --md-secondary-bg: #2d2d2d;
+    --md-text: #e6edf3;
+    --md-secondary-text: #8b949e;
+    --md-border: #3d3d3d;
+    --md-hover-bg: #383838;
+    --md-code-bg: #161b22;
+    --md-code-text: #f0f6fc;
+    --md-link-color: #58a6ff;
+    --md-quote-border: #4b5563;
+    --md-quote-bg: #374151;
+}
+
+/* ===== 基础容器样式 ===== */
+.markdown-renderer {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--md-text);
+    word-wrap: break-word;
+    max-width: none;
+    /* 重置所有可能的外部样式影响 */
+    all: initial;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--md-text);
+}
+
+/* 思考内容变体：通过覆盖主题变量让整块内容显著变灰 */
+.markdown-renderer.thinking {
+    --md-text: #6b7280; /* gray-500 */
+    --md-secondary-text: #6b7280;
+    --md-link-color: #6b7280; /* 链接不再突出为蓝色 */
+    --md-code-text: #6b7280; /* 代码文字压灰 */
+    --md-code-bg: #f3f4f6;  /* 代码块浅灰底 */
+    --md-quote-bg: #f3f4f6; /* 引用浅灰底 */
+    --md-quote-border: #e5e7eb; /* 引用浅灰边 */
+}
+
+/* 强制所有子元素继承压灰文本颜色，避免外部样式影响 */
+.markdown-renderer.thinking,
+.markdown-renderer.thinking * {
+    color: var(--md-text) !important;
+}
+
+/* 暗色主题下的思考内容变体：使用更柔和的灰度与深色背景 */
+.dark .markdown-renderer.thinking {
+    --md-text: #9ca3af;          /* gray-400 - 统一为中性灰 */
+    --md-secondary-text: #9ca3af;
+    --md-link-color: #9ca3af;
+    --md-code-text: #9ca3af;
+    --md-code-bg: #0f172a;       /* slate-900 */
+    --md-quote-bg: #0f172a;
+    --md-quote-border: #334155;  /* slate-700 */
+}
+
+.dark .markdown-renderer.thinking,
+.dark .markdown-renderer.thinking * {
+    color: var(--md-text) !important;
+}
+
+/* ===== 标题样式 ===== */
+.markdown-renderer h1,
+.markdown-renderer h2,
+.markdown-renderer h3,
+.markdown-renderer h4,
+.markdown-renderer h5,
+.markdown-renderer h6 {
+    margin-top: 24px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--md-text);
+    font-family: inherit;
+}
+
+.markdown-renderer h1 {
+    font-size: 2em;
+    border-bottom: 1px solid var(--md-border);
+    padding-bottom: 0.3em;
+}
+
+.markdown-renderer h2 {
+    font-size: 1.5em;
+    border-bottom: 1px solid var(--md-border);
+    padding-bottom: 0.3em;
+}
+
+.markdown-renderer h3 {
+    font-size: 1.25em;
+}
+
+.markdown-renderer h4 {
+    font-size: 1em;
+}
+
+.markdown-renderer h5 {
+    font-size: 0.875em;
+}
+
+.markdown-renderer h6 {
+    font-size: 0.85em;
+    color: var(--md-secondary-text);
+}
+
+/* ===== 段落样式 ===== */
+.markdown-renderer p {
+    margin-top: 0;
+    margin-bottom:  0!important;
+    color: var(--md-text);
+}
+
+/* ===== 链接样式 ===== */
+.markdown-renderer a {
+    color: var(--md-link-color);
+    text-decoration: none;
+}
+
+.markdown-renderer a:hover {
+    text-decoration: underline;
+}
+
+/* ===== 强调和斜体 ===== */
+.markdown-renderer strong {
+    font-weight: 600;
+    color: var(--md-text);
+}
+
+.markdown-renderer em {
+    font-style: italic;
+    color: var(--md-text);
+}
