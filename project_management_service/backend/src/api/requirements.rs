@@ -9,7 +9,8 @@ use crate::auth::CurrentUser;
 use crate::domain::visibility::{non_archived_requirements, should_include_archived};
 use crate::models::{
     now_rfc3339, CreateRequirementRequest, RequirementDocumentRecord, RequirementRecord,
-    RequirementStatus, UpdateRequirementRequest, UpsertRequirementDocumentRequest,
+    RequirementStatus, UpdateRequirementDocumentRequest, UpdateRequirementRequest,
+    UpsertRequirementDocumentRequest,
 };
 use crate::state::AppState;
 
@@ -18,6 +19,11 @@ pub(in crate::api) struct RequirementListQuery {
     status: Option<RequirementStatus>,
     keyword: Option<String>,
     include_archived: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(in crate::api) struct RequirementDocumentListQuery {
+    doc_type: Option<String>,
 }
 
 pub(in crate::api) async fn list_project_requirements(
@@ -145,9 +151,79 @@ pub(in crate::api) async fn upsert_requirement_technical_overview(
     let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
     let project = require_project_access(&state, &requirement.project_id, &user).await?;
     ensure_project_writable(&project)?;
+    let input = UpsertRequirementDocumentRequest {
+        doc_type: None,
+        title: input.title,
+        format: input.format,
+        content: input.content,
+    };
     state
         .store
         .upsert_requirement_document(&requirement_id, input, &user)
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(in crate::api) async fn list_requirement_documents(
+    Path(requirement_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Query(query): Query<RequirementDocumentListQuery>,
+) -> Result<Json<Vec<RequirementDocumentRecord>>, ApiError> {
+    require_requirement_access(&state, &requirement_id, &user).await?;
+    state
+        .store
+        .list_requirement_documents(&requirement_id, query.doc_type)
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(in crate::api) async fn create_requirement_document(
+    Path(requirement_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Json(input): Json<UpsertRequirementDocumentRequest>,
+) -> Result<(StatusCode, Json<RequirementDocumentRecord>), ApiError> {
+    let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
+    let project = require_project_access(&state, &requirement.project_id, &user).await?;
+    ensure_project_writable(&project)?;
+    let doc = state
+        .store
+        .create_requirement_document(&requirement_id, input, &user)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok((StatusCode::CREATED, Json(doc)))
+}
+
+pub(in crate::api) async fn get_requirement_document(
+    Path((requirement_id, document_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<RequirementDocumentRecord>, ApiError> {
+    require_requirement_access(&state, &requirement_id, &user).await?;
+    state
+        .store
+        .get_requirement_document_by_id(&requirement_id, &document_id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found(format!("需求技术文档不存在: {document_id}")))
+}
+
+pub(in crate::api) async fn update_requirement_document(
+    Path((requirement_id, document_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Json(input): Json<UpdateRequirementDocumentRequest>,
+) -> Result<Json<RequirementDocumentRecord>, ApiError> {
+    let requirement = require_requirement_access(&state, &requirement_id, &user).await?;
+    let project = require_project_access(&state, &requirement.project_id, &user).await?;
+    ensure_project_writable(&project)?;
+    state
+        .store
+        .update_requirement_document(&requirement_id, &document_id, input)
         .await
         .map(Json)
         .map_err(ApiError::bad_request)

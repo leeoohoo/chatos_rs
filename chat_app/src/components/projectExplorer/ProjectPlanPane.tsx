@@ -4,8 +4,11 @@ import {
   ArrowRight,
   ChevronRight,
   CheckCircle2,
+  ClipboardList,
+  FileText,
   GitBranch,
   Link2,
+  ListChecks,
   Play,
   Square,
 } from 'lucide-react';
@@ -16,6 +19,7 @@ import { normalizeRawMessages } from '../../lib/domain/messages';
 import type {
   ProjectDependencyGraphResponse,
   ProjectPlanResponse,
+  ProjectRequirementDocumentResponse,
   ProjectRequirementWorkItemsResponse,
   ProjectRequirementResponse,
   ProjectWorkItemCountsResponse,
@@ -23,7 +27,17 @@ import type {
 } from '../../lib/api/client/types';
 import { cn } from '../../lib/utils';
 import type { Project } from '../../types';
-import { DependencyLine, PlanBannerMessages, PlanEmptyState, PlanLoadingState, PlanPaneHeader, PlanStatsBar, RequirementContentSection, WorkItemRow } from './projectPlanPane/components';
+import {
+  DependencyLine,
+  PlanBannerMessages,
+  PlanEmptyState,
+  PlanLoadingState,
+  PlanPaneHeader,
+  PlanStatsBar,
+  RequirementContentSection,
+  TechnicalDocumentsSection,
+  WorkItemRow,
+} from './projectPlanPane/components';
 import {
   MAX_REQUIREMENT_PANE_WIDTH,
   REQUIREMENT_COLUMN_WIDTH,
@@ -31,10 +45,12 @@ import {
   SELECTED_WORK_ITEM_RENDER_INCREMENT,
   buildDependencyMaps,
   buildDependencyMapsFromGraph,
+  buildDownstreamRequirementScope,
   buildRequirementChildrenMap,
   buildRequirementColumns,
   buildRequirementPath,
   buildVisiblePlanItems,
+  canShowRequirementExecutionAction,
   countOpenItems,
   formatDateTime,
   getUpdatedAt,
@@ -51,6 +67,8 @@ interface ProjectPlanPaneProps {
   project: Project;
   className?: string;
 }
+
+type DetailTabId = 'requirement' | 'documents' | 'tasks';
 
 const normalizeRequirementWorkItemsResponse = (
   response: ProjectRequirementWorkItemsResponse | ProjectWorkItemResponse[],
@@ -71,6 +89,18 @@ const planWorkItemCounts = (plan: ProjectPlanResponse | null): ProjectWorkItemCo
   plan?.workItemCounts || plan?.work_item_counts || null
 );
 
+const relationPreviewText = (
+  ids: string[],
+  resolveLabel: (id: string) => string,
+  limit = 2,
+): string => {
+  const visible = ids.slice(0, limit).map(resolveLabel);
+  const hiddenCount = ids.length - visible.length;
+  return hiddenCount > 0
+    ? `${visible.join('、')} 等 ${ids.length} 个`
+    : visible.join('、');
+};
+
 export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, className }) => {
   const apiClient = useApiClient();
   const [loading, setLoading] = useState(false);
@@ -78,8 +108,11 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const [plan, setPlan] = useState<ProjectPlanResponse | null>(null);
   const [workItemsByRequirement, setWorkItemsByRequirement] = useState<Map<string, ProjectWorkItemResponse[]>>(() => new Map());
   const [workItemGraphsByRequirement, setWorkItemGraphsByRequirement] = useState<Map<string, ProjectDependencyGraphResponse>>(() => new Map());
+  const [documentsByRequirement, setDocumentsByRequirement] = useState<Map<string, ProjectRequirementDocumentResponse[]>>(() => new Map());
   const [loadingWorkItemsRequirementId, setLoadingWorkItemsRequirementId] = useState<string | null>(null);
+  const [loadingDocumentsRequirementId, setLoadingDocumentsRequirementId] = useState<string | null>(null);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<DetailTabId>('requirement');
   const [executingRequirementId, setExecutingRequirementId] = useState<string | null>(null);
   const [executionMessage, setExecutionMessage] = useState<string | null>(null);
   const [visibleWorkItemLimit, setVisibleWorkItemLimit] = useState(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
@@ -96,6 +129,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       setPlan(result);
       setWorkItemsByRequirement(new Map());
       setWorkItemGraphsByRequirement(new Map());
+      setDocumentsByRequirement(new Map());
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载 Plan 失败');
     } finally {
@@ -107,7 +141,9 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     setPlan(null);
     setWorkItemsByRequirement(new Map());
     setWorkItemGraphsByRequirement(new Map());
+    setDocumentsByRequirement(new Map());
     setLoadingWorkItemsRequirementId(null);
+    setLoadingDocumentsRequirementId(null);
     setSelectedRequirementId(null);
     void loadPlan();
   }, [loadPlan]);
@@ -144,6 +180,27 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       setLoadingWorkItemsRequirementId((current) => (current === requirementId ? null : current));
     }
   }, [apiClient, project.id, workItemsByRequirement]);
+
+  const loadRequirementDocuments = useCallback(async (requirementId: string, force = false) => {
+    if (!force && documentsByRequirement.has(requirementId)) {
+      return;
+    }
+
+    setLoadingDocumentsRequirementId(requirementId);
+    setError(null);
+    try {
+      const documents = await apiClient.listProjectRequirementDocuments(project.id, requirementId);
+      setDocumentsByRequirement((current) => {
+        const next = new Map(current);
+        next.set(requirementId, Array.isArray(documents) ? documents : []);
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载技术文档失败');
+    } finally {
+      setLoadingDocumentsRequirementId((current) => (current === requirementId ? null : current));
+    }
+  }, [apiClient, documentsByRequirement, project.id]);
 
   const executeRequirement = useCallback(async (requirement: ProjectRequirementResponse) => {
     if (executingRequirementId) {
@@ -294,8 +351,12 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       return;
     }
     void loadRequirementWorkItems(selectedRequirement.id);
-  }, [loadRequirementWorkItems, selectedRequirement]);
+    void loadRequirementDocuments(selectedRequirement.id);
+  }, [loadRequirementDocuments, loadRequirementWorkItems, selectedRequirement]);
   const selectedRequirementIsExecuting = selectedRequirement?.status === 'in_progress';
+  const selectedRequirementCanShowAction = Boolean(
+    selectedRequirement && canShowRequirementExecutionAction(selectedRequirement.status),
+  );
   const selectedRequirementActionBusy = Boolean(
     selectedRequirement && executingRequirementId === selectedRequirement.id,
   );
@@ -309,6 +370,17 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   );
   const rawSelectedWorkItems = selectedRequirement
     ? workItemsByRequirement.get(selectedRequirement.id) || []
+    : [];
+  const selectedRequirementDocumentsLoaded = selectedRequirement
+    ? documentsByRequirement.has(selectedRequirement.id)
+    : false;
+  const selectedDocumentsLoading = Boolean(
+    selectedRequirement
+      && loadingDocumentsRequirementId === selectedRequirement.id
+      && !selectedRequirementDocumentsLoaded,
+  );
+  const selectedRequirementDocuments = selectedRequirement
+    ? documentsByRequirement.get(selectedRequirement.id) || []
     : [];
   const selectedWorkItems = useMemo(
     () => sortWorkItemsByDependencies(rawSelectedWorkItems, dependencyMaps.workItemPrerequisites),
@@ -329,6 +401,17 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     : [];
   const selectedRequirementChildren = selectedRequirement
     ? requirementChildrenMap.get(selectedRequirement.id) || []
+    : [];
+  const selectedExecutionScopeIds = useMemo(
+    () => buildDownstreamRequirementScope({
+      dependencyMaps,
+      requirements,
+      rootId: selectedRequirementId,
+    }),
+    [dependencyMaps, requirements, selectedRequirementId],
+  );
+  const selectedExecutionScopeRelatedIds = selectedRequirement
+    ? selectedExecutionScopeIds.filter((id) => id !== selectedRequirement.id)
     : [];
   const workItemCounts = planWorkItemCounts(plan);
   const totalWorkItemCount = typeof workItemCounts?.total === 'number'
@@ -395,7 +478,8 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                     <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
                       {column.items.map((requirement) => {
                         const tasks = workItemsByRequirement.get(requirement.id);
-                        const prerequisiteCount = dependencyMaps.requirementPrerequisites.get(requirement.id)?.length || 0;
+                        const prerequisiteIds = dependencyMaps.requirementPrerequisites.get(requirement.id) || [];
+                        const dependentIds = dependencyMaps.requirementDependents.get(requirement.id) || [];
                         const children = requirementChildrenMap.get(requirement.id) || [];
                         const active = requirement.id === selectedRequirementId;
                         const inPath = requirementPath.includes(requirement.id);
@@ -438,9 +522,14 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                               <span className="rounded-full border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
                                 {priorityLabel(requirement.priority)}
                               </span>
-                              {prerequisiteCount > 0 ? (
+                              {prerequisiteIds.length > 0 ? (
                                 <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                                  前置 {prerequisiteCount}
+                                  前置 {prerequisiteIds.length}
+                                </span>
+                              ) : null}
+                              {dependentIds.length > 0 ? (
+                                <span className="rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
+                                  后续 {dependentIds.length}
                                 </span>
                               ) : null}
                               {children.length > 0 ? (
@@ -449,6 +538,22 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                                 </span>
                               ) : null}
                             </div>
+                            {prerequisiteIds.length > 0 ? (
+                              <div className="mt-1.5 min-w-0 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+                                <span className="font-medium">前置：</span>
+                                <span className="break-words">
+                                  {relationPreviewText(prerequisiteIds, resolveRequirementTitle)}
+                                </span>
+                              </div>
+                            ) : null}
+                            {dependentIds.length > 0 ? (
+                              <div className="mt-1 min-w-0 text-[11px] leading-4 text-blue-700 dark:text-blue-300">
+                                <span className="font-medium">后续：</span>
+                                <span className="break-words">
+                                  {relationPreviewText(dependentIds, resolveRequirementTitle)}
+                                </span>
+                              </div>
+                            ) : null}
                             {readText(requirement.summary) ? (
                               <div className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
                                 {requirement.summary}
@@ -491,137 +596,220 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
                       更新于 {formatDateTime(getUpdatedAt(selectedRequirement))}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className={cn(
-                      'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none',
-                      selectedRequirementIsExecuting
-                        ? 'border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                        : 'border-primary/40 bg-primary text-primary-foreground hover:bg-primary/90',
-                    )}
-                    disabled={!!executingRequirementId || selectedWorkItemsLoading || selectedWorkItems.length === 0}
-                    onClick={() => {
-                      if (selectedRequirementIsExecuting) {
-                        void stopRequirementExecution(selectedRequirement);
-                      } else {
-                        void executeRequirement(selectedRequirement);
-                      }
-                    }}
-                  >
-                    {selectedRequirementIsExecuting ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                    {selectedRequirementActionBusy
-                      ? (selectedRequirementIsExecuting ? '停止中' : '执行中')
-                      : (selectedRequirementIsExecuting ? '停止' : '执行')}
-                  </button>
+                  {selectedRequirementCanShowAction ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none',
+                        selectedRequirementIsExecuting
+                          ? 'border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                          : 'border-primary/40 bg-primary text-primary-foreground hover:bg-primary/90',
+                      )}
+                      disabled={!!executingRequirementId}
+                      onClick={() => {
+                        if (selectedRequirementIsExecuting) {
+                          void stopRequirementExecution(selectedRequirement);
+                        } else {
+                          void executeRequirement(selectedRequirement);
+                        }
+                      }}
+                    >
+                      {selectedRequirementIsExecuting ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                      {selectedRequirementActionBusy
+                        ? (selectedRequirementIsExecuting ? '停止中' : '执行中')
+                        : (selectedRequirementIsExecuting ? '停止' : '执行关联任务')}
+                    </button>
+                  ) : null}
                 </div>
 
-                <div className="mt-4 rounded-md border border-border bg-muted/10 px-3 py-3">
-                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
-                    <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
-                    需求前置关系
-                  </div>
-                  <div className="space-y-1.5">
-                    <DependencyLine
-                      ids={selectedRequirementPrerequisites}
-                      label="前置需求"
-                      resolveLabel={resolveRequirementTitle}
-                    />
-                    {selectedRequirementDependents.length > 0 ? (
-                      <DependencyLine
-                        ids={selectedRequirementDependents}
-                        label="后续需求"
-                        resolveLabel={resolveRequirementTitle}
-                        tone="dependent"
-                      />
-                    ) : null}
-                    {selectedRequirementChildren.length > 0 ? (
-                      <DependencyLine
-                        ids={selectedRequirementChildren.map((requirement) => requirement.id)}
-                        label="子需求"
-                        resolveLabel={resolveRequirementTitle}
-                        tone="dependent"
-                      />
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="mt-4">
-                  <RequirementContentSection title="摘要" content={selectedRequirement.summary} />
-                  <RequirementContentSection title="详细说明" content={selectedRequirement.detail} />
-                  <RequirementContentSection title="业务价值" content={selectedRequirement.business_value || selectedRequirement.businessValue} />
-                  <RequirementContentSection title="验收标准" content={selectedRequirement.acceptance_criteria || selectedRequirement.acceptanceCriteria} />
-                  {!readText(selectedRequirement.summary)
-                    && !readText(selectedRequirement.detail)
-                    && !readText(selectedRequirement.business_value || selectedRequirement.businessValue)
-                    && !readText(selectedRequirement.acceptance_criteria || selectedRequirement.acceptanceCriteria) ? (
-                      <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
-                        这个需求还没有补充内容。
-                      </div>
-                    ) : null}
-                </div>
-
-                <section className="mt-5 border-t border-border pt-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h4 className="text-sm font-semibold text-foreground">项目任务</h4>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        {selectedWorkItemsLoading
-                          ? '正在加载项目任务...'
-                          : `${selectedWorkItems.length} 个项目任务 · ${countOpenItems(selectedWorkItems)} 个未完成`}
-                      </div>
-                    </div>
-                    {selectedWorkItems.length > 0 && countOpenItems(selectedWorkItems) === 0 ? (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        已全部完成
+                <div className="mt-4 border-b border-border">
+                  <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="需求详情">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDetailTab === 'requirement'}
+                      className={cn(
+                        'inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-xs font-medium transition-colors',
+                        activeDetailTab === 'requirement'
+                          ? 'border-primary text-foreground'
+                          : 'border-transparent text-muted-foreground hover:text-foreground',
+                      )}
+                      onClick={() => setActiveDetailTab('requirement')}
+                    >
+                      <ClipboardList className="h-3.5 w-3.5" />
+                      需求
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDetailTab === 'documents'}
+                      className={cn(
+                        'inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-xs font-medium transition-colors',
+                        activeDetailTab === 'documents'
+                          ? 'border-primary text-foreground'
+                          : 'border-transparent text-muted-foreground hover:text-foreground',
+                      )}
+                      onClick={() => setActiveDetailTab('documents')}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      技术文档
+                      <span className="rounded-full border border-border bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {selectedDocumentsLoading ? '...' : selectedRequirementDocuments.length}
                       </span>
-                    ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDetailTab === 'tasks'}
+                      className={cn(
+                        'inline-flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-xs font-medium transition-colors',
+                        activeDetailTab === 'tasks'
+                          ? 'border-primary text-foreground'
+                          : 'border-transparent text-muted-foreground hover:text-foreground',
+                      )}
+                      onClick={() => setActiveDetailTab('tasks')}
+                    >
+                      <ListChecks className="h-3.5 w-3.5" />
+                      任务
+                      <span className="rounded-full border border-border bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {selectedWorkItemsLoading ? '...' : selectedWorkItems.length}
+                      </span>
+                    </button>
                   </div>
-                  {selectedWorkItems.length > 0 ? (
-                    <div className="mb-3 flex items-start gap-2 rounded-md border border-border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
-                      <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>项目任务已按前置关系尽量排序；“前置项目任务”是当前项目任务开始前需要先完成的任务。</span>
+                </div>
+
+                <div className="pt-4">
+                  {activeDetailTab === 'requirement' ? (
+                    <div role="tabpanel">
+                      <div className="rounded-md border border-border bg-muted/10 px-3 py-3">
+                        <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
+                          <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          需求关系
+                        </div>
+                        <div className="space-y-1.5">
+                          <DependencyLine
+                            ids={selectedRequirementPrerequisites}
+                            label="前置需求"
+                            resolveLabel={resolveRequirementTitle}
+                          />
+                          {selectedRequirementDependents.length > 0 ? (
+                            <DependencyLine
+                              ids={selectedRequirementDependents}
+                              label="后续需求"
+                              resolveLabel={resolveRequirementTitle}
+                              tone="dependent"
+                            />
+                          ) : null}
+                          {selectedRequirementChildren.length > 0 ? (
+                            <DependencyLine
+                              ids={selectedRequirementChildren.map((requirement) => requirement.id)}
+                              label="子需求"
+                              resolveLabel={resolveRequirementTitle}
+                              tone="dependent"
+                            />
+                          ) : null}
+                          <DependencyLine
+                            emptyLabel="仅当前需求"
+                            ids={selectedExecutionScopeRelatedIds}
+                            label="执行会包含"
+                            resolveLabel={resolveRequirementTitle}
+                            tone="dependent"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <RequirementContentSection title="摘要" content={selectedRequirement.summary} />
+                        <RequirementContentSection title="详细说明" content={selectedRequirement.detail} />
+                        <RequirementContentSection title="业务价值" content={selectedRequirement.business_value || selectedRequirement.businessValue} />
+                        <RequirementContentSection title="验收标准" content={selectedRequirement.acceptance_criteria || selectedRequirement.acceptanceCriteria} />
+                        {!readText(selectedRequirement.summary)
+                          && !readText(selectedRequirement.detail)
+                          && !readText(selectedRequirement.business_value || selectedRequirement.businessValue)
+                          && !readText(selectedRequirement.acceptance_criteria || selectedRequirement.acceptanceCriteria) ? (
+                            <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+                              这个需求还没有补充内容。
+                            </div>
+                          ) : null}
+                      </div>
                     </div>
                   ) : null}
-                  {selectedWorkItemsLoading ? (
-                    <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
-                      正在加载项目任务...
+
+                  {activeDetailTab === 'documents' ? (
+                    <div role="tabpanel">
+                      <TechnicalDocumentsSection
+                        className="mt-0 border-t-0 pt-0"
+                        documents={selectedRequirementDocuments}
+                        loading={selectedDocumentsLoading}
+                      />
                     </div>
-                  ) : selectedWorkItems.length === 0 ? (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                      <div className="flex items-center gap-2 font-medium">
-                        <AlertCircle className="h-4 w-4" />
-                        这个需求下面还没有任务
+                  ) : null}
+
+                  {activeDetailTab === 'tasks' ? (
+                    <section role="tabpanel">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h4 className="text-sm font-semibold text-foreground">项目任务</h4>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            {selectedWorkItemsLoading
+                              ? '正在加载项目任务...'
+                              : `${selectedWorkItems.length} 个项目任务 · ${countOpenItems(selectedWorkItems)} 个未完成`}
+                          </div>
+                        </div>
+                        {selectedWorkItems.length > 0 && countOpenItems(selectedWorkItems) === 0 ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            已全部完成
+                          </span>
+                        ) : null}
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {visibleSelectedWorkItems.items.map((item) => (
-                        <WorkItemRow
-                          key={item.id}
-                          item={item}
-                          prerequisites={dependencyMaps.workItemPrerequisites.get(item.id) || []}
-                          dependents={dependencyMaps.workItemDependents.get(item.id) || []}
-                          resolveWorkItemTitle={resolveWorkItemTitle}
-                        />
-                      ))}
-                      {visibleSelectedWorkItems.hasMore ? (
-                        <button
-                          type="button"
-                          className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-                          onClick={() => {
-                            setVisibleWorkItemLimit((value) => value + SELECTED_WORK_ITEM_RENDER_INCREMENT);
-                          }}
-                        >
-                          加载更多 {Math.min(
-                            SELECTED_WORK_ITEM_RENDER_INCREMENT,
-                            visibleSelectedWorkItems.hiddenCount,
-                          )} / {visibleSelectedWorkItems.hiddenCount}
-                        </button>
+                      {selectedWorkItems.length > 0 ? (
+                        <div className="mb-3 flex items-start gap-2 rounded-md border border-border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+                          <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>项目任务已按前置关系尽量排序；“前置项目任务”是当前项目任务开始前需要先完成的任务。</span>
+                        </div>
                       ) : null}
-                    </div>
-                  )}
-                </section>
+                      {selectedWorkItemsLoading ? (
+                        <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+                          正在加载项目任务...
+                        </div>
+                      ) : selectedWorkItems.length === 0 ? (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                          <div className="flex items-center gap-2 font-medium">
+                            <AlertCircle className="h-4 w-4" />
+                            这个需求下面还没有任务
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {visibleSelectedWorkItems.items.map((item) => (
+                            <WorkItemRow
+                              key={item.id}
+                              item={item}
+                              prerequisites={dependencyMaps.workItemPrerequisites.get(item.id) || []}
+                              dependents={dependencyMaps.workItemDependents.get(item.id) || []}
+                              resolveWorkItemTitle={resolveWorkItemTitle}
+                            />
+                          ))}
+                          {visibleSelectedWorkItems.hasMore ? (
+                            <button
+                              type="button"
+                              className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                              onClick={() => {
+                                setVisibleWorkItemLimit((value) => value + SELECTED_WORK_ITEM_RENDER_INCREMENT);
+                              }}
+                            >
+                              加载更多 {Math.min(
+                                SELECTED_WORK_ITEM_RENDER_INCREMENT,
+                                visibleSelectedWorkItems.hiddenCount,
+                              )} / {visibleSelectedWorkItems.hiddenCount}
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </section>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </main>

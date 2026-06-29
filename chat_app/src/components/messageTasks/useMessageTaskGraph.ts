@@ -33,7 +33,29 @@ const EMPTY_GRAPH: MessageTaskRunnerGraphResponse = {
   source_user_message_id: null,
 };
 
+const RUN_EVENT_PAGE_SIZE = 40;
+
 const isTemporaryMessageId = (value: string): boolean => value.startsWith('temp_');
+
+const mergeRunEventPage = (
+  current: MessageTaskRunnerRunDetailResponse,
+  next: MessageTaskRunnerRunDetailResponse,
+): MessageTaskRunnerRunDetailResponse => {
+  const seen = new Set<string>();
+  const events = [...current.events, ...next.events].filter((event) => {
+    const key = readString(event.id) || `${event.run_id}:${event.created_at}:${event.event_type}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+  return {
+    ...next,
+    events,
+    events_offset: current.events_offset ?? 0,
+  };
+};
 
 export const buildTaskSourceLookup = ({
   task,
@@ -183,7 +205,11 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
         apiClient.getRequestFn(),
         detailSource.messageId,
         runId,
-        detailSource.lookup,
+        {
+          ...detailSource.lookup,
+          eventLimit: RUN_EVENT_PAGE_SIZE,
+          eventOffset: 0,
+        },
       );
       setRunDetail(detail);
     } catch (err) {
@@ -192,6 +218,42 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
       setLoadingRunId(null);
     }
   }, [apiClient, graph, lookup, messageId]);
+
+  const loadMoreRunEvents = useCallback(async () => {
+    if (!runDetail?.events_has_more) {
+      return;
+    }
+    const runId = readString(runDetail.run?.id);
+    if (!runId || loadingRunId === runId) {
+      return;
+    }
+    setLoadingRunId(runId);
+    setError(null);
+    try {
+      const detailSource = buildTaskSourceLookup({
+        task: runDetail.task,
+        graph,
+        fallbackMessageId: messageId,
+        fallbackLookup: lookup,
+      });
+      const offset = (runDetail.events_offset ?? 0) + runDetail.events.length;
+      const detail = await getMessageTaskRunnerGraphRun(
+        apiClient.getRequestFn(),
+        detailSource.messageId,
+        runId,
+        {
+          ...detailSource.lookup,
+          eventLimit: RUN_EVENT_PAGE_SIZE,
+          eventOffset: offset,
+        },
+      );
+      setRunDetail((current) => (current ? mergeRunEventPage(current, detail) : detail));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '读取更多运行事件失败');
+    } finally {
+      setLoadingRunId(null);
+    }
+  }, [apiClient, graph, loadingRunId, lookup, messageId, runDetail]);
 
   useEffect(() => {
     if (!open) {
@@ -225,6 +287,7 @@ export function useMessageTaskGraph({ open, messageId, lookup }: UseMessageTaskG
     openDetail,
     openProcessLog,
     openRun,
+    loadMoreRunEvents,
     closeDetail: () => setDetailTask(null),
     closeProcessLog: () => setProcessTask(null),
     closeRun: () => setRunDetail(null),

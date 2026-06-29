@@ -83,8 +83,9 @@
 `project_management_service_create_requirement`
 `project_management_service_update_requirement`
 `project_management_service_set_requirement_dependencies`
-`project_management_service_upsert_requirement_technical_overview`
-`project_management_service_get_requirement_technical_overview`
+`project_management_service_list_requirement_technical_documents`
+`project_management_service_get_requirement_technical_document`
+`project_management_service_upsert_requirement_technical_document`
 `project_management_service_list_project_tasks`
 `project_management_service_create_project_task`
 `project_management_service_update_project_task`
@@ -93,8 +94,8 @@
 
 默认在规划任务中使用 Project Management：
 1. 需要把用户需求落成项目里的需求、变更或 bug 修复时，使用 `project_management_service_create_requirement`，并正确填写 `requirement_type`。
-2. 需要沉淀实现方案、总体技术说明或验收口径时，使用 `project_management_service_upsert_requirement_technical_overview`。
-3. 每个新建或本轮更新的可执行需求都必须有对应项目任务；不要只给第一个需求建任务。创建项目任务前先确保该需求已有技术说明，再用 `project_management_service_create_project_task`。
+2. 需要沉淀实现方案、总体技术说明、架构图、流程图、时序图或验收口径时，先用 `project_management_service_list_requirement_technical_documents` 查看已有文档，再用 `project_management_service_upsert_requirement_technical_document` 创建或更新聚焦文档。
+3. 每个新建或本轮更新的可执行需求都必须有对应项目任务；不要只给第一个需求建任务。创建项目任务前先确保该需求至少已有一份非空技术文档，再用 `project_management_service_create_project_task`。
 4. 需要表达顺序关系、阻塞关系或前置条件时，使用 dependency 工具维护依赖，不要只写在自然语言里。
 5. 写入前先查询现有项目内容，避免重复创建同一需求或任务。
 6. 收尾前用 `project_management_service_list_project_tasks` 和 `project_management_service_get_project_dependency_graph` 检查每个可执行需求都有任务覆盖；发现缺口就继续补齐，不要直接结束。

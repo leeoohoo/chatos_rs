@@ -1,0 +1,7 @@
+interface:
+  display_name: "PDF"
+  short_description: "Read, create, render, and verify PDF files"
+  icon_small: "./assets/file-document.png"
+  icon_large: "./assets/file-document.png"
+  brand_color: "#DC2626"
+  default_prompt: "Use $pdf to read, create, render, or visually verify a PDF file."

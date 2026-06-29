@@ -110,9 +110,14 @@ CREATE TABLE IF NOT EXISTS requirement_documents (
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(requirement_id, doc_type),
   FOREIGN KEY(requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_requirement_documents_requirement_id
+ON requirement_documents(requirement_id);
+
+CREATE INDEX IF NOT EXISTS idx_requirement_documents_requirement_type_sort
+ON requirement_documents(requirement_id, doc_type, updated_at DESC, id);
 
 CREATE TABLE IF NOT EXISTS project_work_items (
   id TEXT PRIMARY KEY,
@@ -122,6 +127,7 @@ CREATE TABLE IF NOT EXISTS project_work_items (
   description TEXT,
   task_runner_default_model_config_id TEXT NOT NULL,
   task_runner_enabled_tool_ids_json TEXT NOT NULL DEFAULT '[]',
+  task_runner_skill_ids_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'todo',
   priority INTEGER NOT NULL DEFAULT 0,
   assignee_user_id TEXT,

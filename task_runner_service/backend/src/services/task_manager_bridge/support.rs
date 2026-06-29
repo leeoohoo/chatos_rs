@@ -5,6 +5,8 @@ pub(super) fn task_belongs_to_context(task: &TaskRecord, root_task_id: &str) -> 
 }
 
 pub(super) fn task_to_manager_value(task: &TaskRecord) -> Value {
+    let manager_status = task_manager_status_from_task_status(task.status);
+    let is_done = manager_status == "done";
     json!({
         "id": task.id.clone(),
         "title": task.title.clone(),
@@ -13,16 +15,16 @@ pub(super) fn task_to_manager_value(task: &TaskRecord) -> Value {
             .clone()
             .or_else(|| normalized_optional(Some(task.objective.clone()))),
         "priority": task_priority_to_manager_label(task.priority),
-        "status": task_manager_status_from_task_status(task.status),
+        "status": manager_status,
         "tags": task.tags.clone(),
         "prerequisite_task_ids": task.prerequisite_task_ids.clone(),
         "due_at": task.task_tool_state.due_at.clone(),
         "outcome_summary": task.result_summary.clone(),
         "outcome_items": tool_state_outcomes_into_shared(&task.task_tool_state.outcome_items),
         "resume_hint": task.task_tool_state.resume_hint.clone(),
-        "blocker_reason": task.task_tool_state.blocker_reason.clone(),
-        "blocker_needs": task.task_tool_state.blocker_needs.clone(),
-        "blocker_kind": task.task_tool_state.blocker_kind.clone(),
+        "blocker_reason": if is_done { None } else { task.task_tool_state.blocker_reason.clone() },
+        "blocker_needs": if is_done { Vec::new() } else { task.task_tool_state.blocker_needs.clone() },
+        "blocker_kind": if is_done { None } else { task.task_tool_state.blocker_kind.clone() },
         "completed_at": task.task_tool_state.completed_at.clone(),
         "last_outcome_at": task.task_tool_state.last_outcome_at.clone(),
         "created_at": task.created_at.clone(),
@@ -92,6 +94,9 @@ pub(super) fn apply_manager_patch(
     }
     if mark_complete || matches!(task.status, TaskStatus::Succeeded) {
         task.status = TaskStatus::Succeeded;
+        task.task_tool_state.blocker_reason = None;
+        task.task_tool_state.blocker_needs.clear();
+        task.task_tool_state.blocker_kind = None;
         if task.task_tool_state.completed_at.is_none() {
             task.task_tool_state.completed_at = Some(now.to_string());
         }

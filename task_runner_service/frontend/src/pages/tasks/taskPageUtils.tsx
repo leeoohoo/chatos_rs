@@ -42,6 +42,7 @@ export type TaskFormValues = {
   workspaceDir?: string;
   defaultRemoteServerId?: string;
   externalMcpConfigIds?: string[];
+  skillIds?: string[];
   scheduleMode: TaskScheduleMode;
   scheduleRunAt?: string;
   scheduleIntervalSeconds?: number;
@@ -71,6 +72,7 @@ export function buildCreateTaskFormValues(locale: string): TaskFormValues {
     workspaceDir: '',
     defaultRemoteServerId: undefined,
     externalMcpConfigIds: [],
+    skillIds: [],
     scheduleMode: 'manual',
     scheduleRunAt: undefined,
     scheduleIntervalSeconds: undefined,
@@ -95,6 +97,7 @@ export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
     workspaceDir: task.mcp_config.workspace_dir || '',
     defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
     externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
+    skillIds: task.mcp_config.skill_ids || [],
     scheduleMode: task.schedule.mode,
     scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
     scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
@@ -141,6 +144,7 @@ export function buildTaskPayload(
       workspace_dir: values.workspaceDir?.trim() || undefined,
       default_remote_server_id: values.defaultRemoteServerId,
       external_mcp_config_ids: values.externalMcpConfigIds || [],
+      skill_ids: values.skillIds || [],
     },
   };
 }

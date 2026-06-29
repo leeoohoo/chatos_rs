@@ -146,6 +146,9 @@ impl TaskService {
         if let Some(external_mcp_config_ids) = patch.external_mcp_config_ids {
             task.mcp_config.external_mcp_config_ids = external_mcp_config_ids;
         }
+        if let Some(skill_ids) = patch.skill_ids {
+            task.mcp_config.skill_ids = skill_ids;
+        }
         task.mcp_config = sanitize_task_mcp_config(task.mcp_config);
         let task_owner_user_id = task_owner_or_creator(&task);
         self.validate_task_mcp_config(&task.mcp_config, current_user, task_owner_user_id)

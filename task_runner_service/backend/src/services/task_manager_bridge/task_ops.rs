@@ -59,6 +59,9 @@ impl TaskService {
             task_tool_state.last_outcome_at = Some(now.clone());
         }
         if task_manager_status_from_task_status(status) == "done" {
+            task_tool_state.blocker_reason = None;
+            task_tool_state.blocker_needs.clear();
+            task_tool_state.blocker_kind = None;
             task_tool_state.completed_at = Some(now.clone());
         }
 
@@ -169,6 +172,16 @@ impl TaskService {
         let now = now_rfc3339();
         let previous_status = task.status;
         apply_manager_patch(&mut task, patch, false, now.as_str())?;
+        if task.parent_task_id.is_none()
+            && previous_status == TaskStatus::Succeeded
+            && task.status != TaskStatus::Succeeded
+        {
+            return Err(format!(
+                "任务「{}」已经成功，不能再改为 {}。",
+                task.title.trim(),
+                task.status.status_string()
+            ));
+        }
         if task.status != previous_status {
             ensure_subtask_can_be_marked_unfinished(&self.store, &task, task.status).await?;
         }
@@ -201,6 +214,9 @@ impl TaskService {
             apply_manager_patch(&mut task, patch, true, now.as_str())?;
         } else {
             task.status = TaskStatus::Succeeded;
+            task.task_tool_state.blocker_reason = None;
+            task.task_tool_state.blocker_needs.clear();
+            task.task_tool_state.blocker_kind = None;
             task.task_tool_state.completed_at = Some(now.clone());
             task.task_tool_state.last_outcome_at = Some(now.clone());
         }
@@ -399,6 +415,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn done_followup_task_clears_blocker_metadata() {
+        let service = test_service().await;
+        let parent = create_task(&service, "parent", TaskStatus::Ready).await;
+        let mut draft = task_draft("child", "done");
+        draft.blocker_reason = "waiting".to_string();
+        draft.blocker_needs = vec!["input".to_string()];
+        draft.blocker_kind = "unknown".to_string();
+
+        let child = service
+            .create_followup_task_for_tool(parent.id.as_str(), "run-1", draft)
+            .await
+            .expect("create done child");
+
+        assert_eq!(child.status, TaskStatus::Succeeded);
+        assert_eq!(child.task_tool_state.blocker_reason, None);
+        assert!(child.task_tool_state.blocker_needs.is_empty());
+        assert_eq!(child.task_tool_state.blocker_kind, None);
+    }
+
+    #[tokio::test]
+    async fn completing_task_clears_blocker_metadata() {
+        let service = test_service().await;
+        let parent = create_task(&service, "parent", TaskStatus::Ready).await;
+        let mut draft = task_draft("child", "blocked");
+        draft.blocker_reason = "waiting".to_string();
+        draft.blocker_needs = vec!["input".to_string()];
+        draft.blocker_kind = "unknown".to_string();
+        let child = service
+            .create_followup_task_for_tool(parent.id.as_str(), "run-1", draft)
+            .await
+            .expect("create blocked child");
+
+        let completed = service
+            .complete_task_from_tool(parent.id.as_str(), child.id.as_str(), None)
+            .await
+            .expect("complete child");
+
+        assert_eq!(completed.status, TaskStatus::Succeeded);
+        assert_eq!(completed.task_tool_state.blocker_reason, None);
+        assert!(completed.task_tool_state.blocker_needs.is_empty());
+        assert_eq!(completed.task_tool_state.blocker_kind, None);
+    }
+
+    #[tokio::test]
     async fn update_task_from_tool_rejects_reopening_subtask_after_parent_success() {
         let service = test_service().await;
         let parent = create_task(&service, "parent", TaskStatus::Ready).await;
@@ -437,5 +497,31 @@ mod tests {
             .expect("get child")
             .expect("child");
         assert_eq!(child_after.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn update_task_from_tool_rejects_reopening_succeeded_root_task() {
+        let service = test_service().await;
+        let parent = create_task(&service, "parent", TaskStatus::Succeeded).await;
+
+        let err = service
+            .update_task_from_tool(
+                parent.id.as_str(),
+                parent.id.as_str(),
+                SharedTaskUpdatePatch {
+                    status: Some("doing".to_string()),
+                    ..SharedTaskUpdatePatch::default()
+                },
+            )
+            .await
+            .expect_err("root task should not reopen");
+
+        assert!(err.contains("已经成功"));
+        let parent_after = service
+            .get_task(parent.id.as_str())
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent_after.status, TaskStatus::Succeeded);
     }
 }

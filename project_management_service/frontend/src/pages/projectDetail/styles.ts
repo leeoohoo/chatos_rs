@@ -86,6 +86,31 @@ export const technicalOverviewModalBodyStyle: CSSProperties = {
   paddingTop: 20,
 };
 
+export const technicalDocumentsLayoutStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(240px, 320px) minmax(0, 1fr)',
+  gap: 16,
+  minHeight: 620,
+};
+
+export const technicalDocumentsListPaneStyle: CSSProperties = {
+  border: '1px solid #e5e7eb',
+  borderRadius: 8,
+  background: '#fff',
+  overflow: 'hidden',
+};
+
+export const technicalDocumentsListHeaderStyle: CSSProperties = {
+  padding: '11px 16px',
+  borderBottom: '1px solid #eef0f3',
+  background: '#fafafa',
+};
+
+export const technicalDocumentsListBodyStyle: CSSProperties = {
+  maxHeight: 590,
+  overflowY: 'auto',
+};
+
 export const technicalOverviewPreviewPaneStyle: CSSProperties = {
   minHeight: 620,
   border: '1px solid #e5e7eb',

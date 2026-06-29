@@ -1,4 +1,20 @@
-import { Button, Col, Drawer, Form, Input, InputNumber, Modal, Row, Select, Tag, Typography } from 'antd';
+import { useEffect, useState } from 'react';
+import {
+  Button,
+  Col,
+  Drawer,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  List,
+  Modal,
+  Row,
+  Select,
+  Space,
+  Tag,
+  Typography,
+} from 'antd';
 import type { FormInstance } from 'antd/es/form';
 
 import { api } from '../../api/client';
@@ -6,11 +22,21 @@ import { MarkdownPreview } from '../../components/MarkdownPreview';
 import type {
   CreateRequirementPayload,
   ProjectWorkItemRecord,
+  RequirementDocumentRecord,
   RequirementRecord,
 } from '../../types';
-import { requirementStatusOptions, requirementTypeOptions, workItemStatusOptions } from './options';
+import {
+  requirementDocumentTypeLabel,
+  requirementStatusOptions,
+  requirementTypeOptions,
+  workItemStatusOptions,
+} from './options';
 import { RequirementDetailPreview, WorkItemDetailPreview } from './renderers';
 import {
+  technicalDocumentsLayoutStyle,
+  technicalDocumentsListBodyStyle,
+  technicalDocumentsListHeaderStyle,
+  technicalDocumentsListPaneStyle,
   technicalOverviewModalBodyStyle,
   technicalOverviewPreviewBodyStyle,
   technicalOverviewPreviewHeaderStyle,
@@ -22,6 +48,8 @@ interface SelectOption {
   value: string;
   label: string;
 }
+
+const emptyRequirementDocuments: RequirementDocumentRecord[] = [];
 
 interface ProjectDetailOverlaysProps {
   requirementModalOpen: boolean;
@@ -40,8 +68,7 @@ interface ProjectDetailOverlaysProps {
   docTarget: RequirementRecord | null;
   onCloseDoc: () => void;
   docLoading: boolean;
-  docTitle?: string;
-  docContent?: string | null;
+  docDocuments?: RequirementDocumentRecord[];
   workItemModalOpen: boolean;
   onCloseWorkItemModal: () => void;
   workItemForm: FormInstance<WorkItemFormValues>;
@@ -49,6 +76,7 @@ interface ProjectDetailOverlaysProps {
   onCreateWorkItem: (values: WorkItemFormValues) => void;
   taskRunnerModelOptions: SelectOption[];
   taskRunnerToolOptions: SelectOption[];
+  taskRunnerSkillOptions: SelectOption[];
   executionOptionsLoading: boolean;
   executionOptionsErrorMessage?: string;
   workItemDepTarget: ProjectWorkItemRecord | null;
@@ -65,6 +93,7 @@ interface ProjectDetailOverlaysProps {
   onCloseWorkItemDetail: () => void;
   taskRunnerModelLabelMap: ExecutionOptionLabelMap;
   taskRunnerToolLabelMap: ExecutionOptionLabelMap;
+  taskRunnerSkillLabelMap: ExecutionOptionLabelMap;
   requirements: RequirementRecord[];
 }
 
@@ -85,8 +114,7 @@ export function ProjectDetailOverlays({
   docTarget,
   onCloseDoc,
   docLoading,
-  docTitle,
-  docContent,
+  docDocuments,
   workItemModalOpen,
   onCloseWorkItemModal,
   workItemForm,
@@ -94,6 +122,7 @@ export function ProjectDetailOverlays({
   onCreateWorkItem,
   taskRunnerModelOptions,
   taskRunnerToolOptions,
+  taskRunnerSkillOptions,
   executionOptionsLoading,
   executionOptionsErrorMessage,
   workItemDepTarget,
@@ -110,8 +139,27 @@ export function ProjectDetailOverlays({
   onCloseWorkItemDetail,
   taskRunnerModelLabelMap,
   taskRunnerToolLabelMap,
+  taskRunnerSkillLabelMap,
   requirements,
 }: ProjectDetailOverlaysProps) {
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | undefined>();
+  const documents = docDocuments || emptyRequirementDocuments;
+  const selectedDocument =
+    documents.find((item) => item.id === selectedDocumentId) || documents[0];
+
+  useEffect(() => {
+    if (!docTarget) {
+      setSelectedDocumentId(undefined);
+      return;
+    }
+    setSelectedDocumentId((current) => {
+      if (current && documents.some((item) => item.id === current)) {
+        return current;
+      }
+      return documents[0]?.id;
+    });
+  }, [docTarget, documents]);
+
   return (
     <>
       <Modal
@@ -174,7 +222,7 @@ export function ProjectDetailOverlays({
       </Modal>
 
       <Modal
-        title="实现技术总体文档"
+        title="需求技术文档"
         open={Boolean(docTarget)}
         onCancel={onCloseDoc}
         width="min(1280px, calc(100vw - 48px))"
@@ -183,15 +231,69 @@ export function ProjectDetailOverlays({
         footer={<Button onClick={onCloseDoc}>关闭</Button>}
         destroyOnClose
       >
-        <section style={technicalOverviewPreviewPaneStyle}>
-          <div style={technicalOverviewPreviewHeaderStyle}>
-            <Typography.Text strong>{docTitle || '实现技术总体文档'}</Typography.Text>
-            <Tag color="blue">Markdown</Tag>
-          </div>
-          <div style={technicalOverviewPreviewBodyStyle}>
-            <MarkdownPreview value={docLoading ? '加载中...' : docContent} />
-          </div>
-        </section>
+        <div style={technicalDocumentsLayoutStyle}>
+          <section style={technicalDocumentsListPaneStyle}>
+            <div style={technicalDocumentsListHeaderStyle}>
+              <Typography.Text strong>文档列表</Typography.Text>
+            </div>
+            <div style={technicalDocumentsListBodyStyle}>
+              <List
+                loading={docLoading}
+                dataSource={documents}
+                locale={{ emptyText: '暂无技术文档' }}
+                renderItem={(item) => {
+                  const selected = item.id === selectedDocument?.id;
+                  return (
+                    <List.Item
+                      key={item.id}
+                      onClick={() => setSelectedDocumentId(item.id)}
+                      style={{
+                        cursor: 'pointer',
+                        padding: '12px 16px',
+                        background: selected ? '#eef4ff' : undefined,
+                      }}
+                    >
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <Typography.Text strong ellipsis>
+                          {item.title || '技术文档'}
+                        </Typography.Text>
+                        <Space size={6} wrap>
+                          <Tag color={selected ? 'blue' : 'default'}>
+                            {requirementDocumentTypeLabel(item.doc_type)}
+                          </Tag>
+                          <Typography.Text type="secondary">
+                            v{item.version}
+                          </Typography.Text>
+                        </Space>
+                      </Space>
+                    </List.Item>
+                  );
+                }}
+              />
+            </div>
+          </section>
+          <section style={technicalOverviewPreviewPaneStyle}>
+            {selectedDocument ? (
+              <>
+                <div style={technicalOverviewPreviewHeaderStyle}>
+                  <Typography.Text strong>{selectedDocument.title || '技术文档'}</Typography.Text>
+                  <Space size={6} wrap>
+                    <Tag>{requirementDocumentTypeLabel(selectedDocument.doc_type)}</Tag>
+                    <Tag color="blue">{selectedDocument.format || 'markdown'}</Tag>
+                  </Space>
+                </div>
+                <div style={technicalOverviewPreviewBodyStyle}>
+                  <MarkdownPreview value={docLoading ? '加载中...' : selectedDocument.content} />
+                </div>
+              </>
+            ) : (
+              <Empty
+                style={{ paddingTop: 120 }}
+                description={docLoading ? '加载中...' : '暂无技术文档'}
+              />
+            )}
+          </section>
+        </div>
       </Modal>
 
       <Modal
@@ -210,6 +312,7 @@ export function ProjectDetailOverlays({
             priority: 0,
             sort_order: 0,
             task_runner_enabled_tool_ids: [],
+            task_runner_skill_ids: [],
           }}
           onFinish={onCreateWorkItem}
         >
@@ -223,9 +326,9 @@ export function ProjectDetailOverlays({
                   if (!value) {
                     return;
                   }
-                  const doc = await api.getRequirementTechnicalOverview(value);
-                  if (!doc.content?.trim()) {
-                    throw new Error('创建项目任务前，请先填写该需求的实现技术总体文档内容');
+                  const docs = await api.listRequirementDocuments(value);
+                  if (!docs.some((doc) => doc.content?.trim())) {
+                    throw new Error('创建项目任务前，请先填写该需求的技术文档内容');
                   }
                 },
               },
@@ -274,6 +377,15 @@ export function ProjectDetailOverlays({
               loading={executionOptionsLoading}
               options={taskRunnerToolOptions}
               placeholder="选择可用工具"
+            />
+          </Form.Item>
+          <Form.Item name="task_runner_skill_ids" label="Skills">
+            <Select
+              mode="multiple"
+              showSearch
+              loading={executionOptionsLoading}
+              options={taskRunnerSkillOptions}
+              placeholder="选择执行时加载的 Skill"
             />
           </Form.Item>
           <Form.Item name="status" label="状态">
@@ -342,6 +454,7 @@ export function ProjectDetailOverlays({
             workItem={workItemDetailTarget}
             modelLabelMap={taskRunnerModelLabelMap}
             toolLabelMap={taskRunnerToolLabelMap}
+            skillLabelMap={taskRunnerSkillLabelMap}
             requirementTitle={
               requirements.find((item) => item.id === workItemDetailTarget.requirement_id)?.title ||
               workItemDetailTarget.requirement_id

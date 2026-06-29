@@ -332,6 +332,8 @@ async fn get_message_task_runner_graph_run(
         context.source_session_id.as_str(),
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
+        query.event_limit(),
+        query.event_offset(),
     )
     .await
     {
@@ -367,6 +369,8 @@ async fn get_message_task_runner_run(
         context.source_session_id.as_str(),
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
+        query.event_limit(),
+        query.event_offset(),
     )
     .await
     {

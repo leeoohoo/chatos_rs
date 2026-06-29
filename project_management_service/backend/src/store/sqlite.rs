@@ -45,6 +45,7 @@ impl SqliteStore {
                 .map_err(|err| format!("migration failed: {err}; sql={statement}"))?;
         }
         self.ensure_actor_columns().await?;
+        self.ensure_requirement_documents_multiple_rows().await?;
         Ok(())
     }
 
@@ -79,6 +80,8 @@ impl SqliteStore {
             .await?;
         self.ensure_text_column("project_work_items", "task_runner_enabled_tool_ids_json")
             .await?;
+        self.ensure_text_column("project_work_items", "task_runner_skill_ids_json")
+            .await?;
         for column in [
             "source_session_id",
             "source_user_message_id",
@@ -111,6 +114,83 @@ impl SqliteStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_project_work_item_task_runner_links_task_id
              ON project_work_item_task_runner_links(task_runner_task_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn ensure_requirement_documents_multiple_rows(&self) -> Result<(), String> {
+        let indexes = sqlx::query("PRAGMA index_list(requirement_documents)")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|err| err.to_string())?;
+        let has_legacy_unique = indexes.iter().any(|row| {
+            row.get::<i64, _>("unique") == 1 && row.get::<String, _>("origin").as_str() == "u"
+        });
+        if has_legacy_unique {
+            let mut tx = self.pool.begin().await.map_err(|err| err.to_string())?;
+            sqlx::query("ALTER TABLE requirement_documents RENAME TO requirement_documents_legacy")
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+            sqlx::query(
+                "CREATE TABLE requirement_documents (
+                  id TEXT PRIMARY KEY,
+                  requirement_id TEXT NOT NULL,
+                  doc_type TEXT NOT NULL DEFAULT 'technical_overview',
+                  creator_user_id TEXT,
+                  creator_username TEXT,
+                  creator_display_name TEXT,
+                  owner_user_id TEXT,
+                  owner_username TEXT,
+                  owner_display_name TEXT,
+                  title TEXT NOT NULL,
+                  format TEXT NOT NULL DEFAULT 'markdown',
+                  content TEXT NOT NULL DEFAULT '',
+                  version INTEGER NOT NULL DEFAULT 1,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  FOREIGN KEY(requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
+                )",
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO requirement_documents (
+                    id, requirement_id, doc_type,
+                    creator_user_id, creator_username, creator_display_name,
+                    owner_user_id, owner_username, owner_display_name,
+                    title, format, content, version, created_at, updated_at
+                 )
+                 SELECT
+                    id, requirement_id, doc_type,
+                    creator_user_id, creator_username, creator_display_name,
+                    owner_user_id, owner_username, owner_display_name,
+                    title, format, content, version, created_at, updated_at
+                 FROM requirement_documents_legacy",
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| err.to_string())?;
+            sqlx::query("DROP TABLE requirement_documents_legacy")
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| err.to_string())?;
+            tx.commit().await.map_err(|err| err.to_string())?;
+        }
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_requirement_documents_requirement_id
+             ON requirement_documents(requirement_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_requirement_documents_requirement_type_sort
+             ON requirement_documents(requirement_id, doc_type, updated_at DESC, id)",
         )
         .execute(&self.pool)
         .await

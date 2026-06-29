@@ -184,6 +184,7 @@ mod tests {
             description: None,
             task_runner_default_model_config_id: "model-1".to_string(),
             task_runner_enabled_tool_ids: vec!["tool-1".to_string()],
+            task_runner_skill_ids: Vec::new(),
             status: ProjectWorkItemStatus::Todo,
             priority: 0,
             assignee_user_id: None,

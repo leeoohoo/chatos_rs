@@ -61,39 +61,71 @@ export const formatDateTime = (value: string): string => {
 export const statusLabel = (status?: string): string => {
   switch (status) {
     case 'reviewing':
-      return '璇勫涓?';
+      return '评审中';
     case 'approved':
-      return '宸茬‘璁?';
+      return '已确认';
     case 'in_progress':
-      return '杩涜涓?';
+      return '进行中';
     case 'ready':
-      return '灏辩华';
+      return '就绪';
     case 'blocked':
-      return '闃诲';
+      return '阻塞';
     case 'done':
-      return '瀹屾垚';
+      return '完成';
     case 'cancelled':
-      return '鍙栨秷';
+      return '取消';
     case 'archived':
-      return '褰掓。';
+      return '归档';
     case 'todo':
-      return '寰呭姙';
+      return '待办';
     case 'draft':
     default:
-      return '鑽夌';
+      return '草稿';
   }
 };
 
 export const requirementTypeLabel = (type?: string): string => {
   switch (type) {
     case 'change':
-      return '鍙樻洿';
+      return '变更';
     case 'bug_fix':
-      return '缂洪櫡淇';
+      return '缺陷修复';
     case 'requirement':
     default:
-      return '闇€姹?';
+      return '需求';
   }
+};
+
+export const requirementDocumentTypeLabel = (type?: string): string => {
+  switch (type) {
+    case 'technical_overview':
+      return '技术概要';
+    case 'implementation_plan':
+      return '实现方案';
+    case 'ui_svg_preview':
+      return '前端 SVG 预览图';
+    case 'architecture_diagram':
+      return '架构图';
+    case 'flowchart':
+      return '流程图';
+    case 'sequence_diagram':
+      return '时序图';
+    case 'api_design':
+      return '接口设计';
+    case 'data_model':
+      return '数据模型';
+    case 'risk_notes':
+      return '风险说明';
+    case 'other':
+      return '其他';
+    default:
+      return readText(type) || '技术文档';
+  }
+};
+
+export const canShowRequirementExecutionAction = (status?: string): boolean => {
+  const normalizedStatus = readText(status);
+  return !['done', 'cancelled', 'archived'].includes(normalizedStatus);
 };
 
 export const statusClassName = (status?: string): string => {
@@ -221,6 +253,50 @@ export const buildRequirementChildrenMap = (
   });
 
   return byParent;
+};
+
+export const buildDownstreamRequirementScope = ({
+  dependencyMaps,
+  requirements,
+  rootId,
+}: {
+  dependencyMaps: DependencyMaps;
+  requirements: ProjectRequirementResponse[];
+  rootId: string | null;
+}): string[] => {
+  const normalizedRootId = readText(rootId);
+  if (!normalizedRootId) {
+    return [];
+  }
+
+  const scope = new Set<string>([normalizedRootId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    requirements.forEach((requirement) => {
+      const parentId = requirementParentId(requirement);
+      if (parentId && scope.has(parentId) && !scope.has(requirement.id)) {
+        scope.add(requirement.id);
+        changed = true;
+      }
+    });
+    Array.from(scope).forEach((requirementId) => {
+      const dependents = dependencyMaps.requirementDependents.get(requirementId) || [];
+      dependents.forEach((dependentId) => {
+        if (!scope.has(dependentId)) {
+          scope.add(dependentId);
+          changed = true;
+        }
+      });
+    });
+  }
+
+  return [
+    normalizedRootId,
+    ...requirements
+      .map((requirement) => requirement.id)
+      .filter((requirementId) => requirementId !== normalizedRootId && scope.has(requirementId)),
+  ];
 };
 
 export const buildRequirementPath = (

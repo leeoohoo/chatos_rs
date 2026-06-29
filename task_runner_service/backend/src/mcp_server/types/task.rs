@@ -46,6 +46,8 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
     #[serde(default)]
+    pub(in crate::mcp_server) skill_ids: Option<Vec<String>>,
+    #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) mcp_config: Option<TaskMcpConfig>,
@@ -65,6 +67,11 @@ impl CreateTaskArgs {
             config.enabled = true;
             config.external_mcp_config_ids =
                 normalize_external_mcp_config_ids(external_mcp_config_ids);
+        }
+        if let Some(skill_ids) = self.skill_ids {
+            let config = mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
+            config.enabled = true;
+            config.skill_ids = normalize_skill_ids(skill_ids);
         }
         Ok(CreateTaskRequest {
             title: self.title,
@@ -152,12 +159,22 @@ pub(in crate::mcp_server) struct CreateTaskWithPrerequisitesItem {
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
     #[serde(default)]
+    pub(in crate::mcp_server) skill_ids: Option<Vec<String>>,
+    #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Vec<String>,
 }
 
 pub(in crate::mcp_server) fn normalize_external_mcp_config_ids(values: Vec<String>) -> Vec<String> {
+    normalize_unique_ids(values)
+}
+
+pub(in crate::mcp_server) fn normalize_skill_ids(values: Vec<String>) -> Vec<String> {
+    normalize_unique_ids(values)
+}
+
+fn normalize_unique_ids(values: Vec<String>) -> Vec<String> {
     let mut out = Vec::new();
     for value in values {
         let trimmed = value.trim();
@@ -167,6 +184,19 @@ pub(in crate::mcp_server) fn normalize_external_mcp_config_ids(values: Vec<Strin
         out.push(trimmed.to_string());
     }
     out
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(in crate::mcp_server) struct SearchInstalledSkillsArgs {
+    #[serde(default)]
+    pub(in crate::mcp_server) keyword: Option<String>,
+    #[serde(default)]
+    pub(in crate::mcp_server) limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(in crate::mcp_server) struct SkillIdArgs {
+    pub(in crate::mcp_server) skill_id: String,
 }
 
 #[derive(Debug, Deserialize)]

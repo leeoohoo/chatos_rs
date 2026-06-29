@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
+use crate::models::{SkillInstallStatus, SkillScope};
+
 use super::*;
 
 #[derive(Debug, Serialize)]
@@ -9,6 +11,7 @@ pub(super) struct InternalExecutionOptionsResponse {
     pub model_config_ids: Vec<String>,
     pub builtin_tool_ids: Vec<String>,
     pub external_tool_ids: Vec<String>,
+    pub skill_ids: Vec<String>,
 }
 
 pub(super) async fn get_user_execution_options(
@@ -60,10 +63,31 @@ pub(super) async fn get_user_execution_options(
         .map(|config| config.id)
         .collect::<BTreeSet<_>>();
 
+    let skill_ids = state
+        .skill_service
+        .list_skills(SkillListFilters::default())
+        .await
+        .map_err(ApiError::bad_request)?
+        .into_iter()
+        .filter(|skill| skill.enabled && skill.install_status == SkillInstallStatus::Installed)
+        .filter(|skill| {
+            skill.scope == SkillScope::AdminGlobal
+                || owns_resource(
+                    resource_owner_or_creator(
+                        skill.owner_user_id.as_deref(),
+                        skill.creator_user_id.as_deref(),
+                    ),
+                    owner_user_id,
+                )
+        })
+        .map(|skill| skill.id)
+        .collect::<BTreeSet<_>>();
+
     Ok(Json(InternalExecutionOptionsResponse {
         model_config_ids: model_config_ids.into_iter().collect(),
         builtin_tool_ids: builtin_tool_ids.into_iter().collect(),
         external_tool_ids: external_tool_ids.into_iter().collect(),
+        skill_ids: skill_ids.into_iter().collect(),
     }))
 }
 
@@ -131,7 +155,7 @@ mod tests {
     use crate::models::{ExternalMcpConfigRecord, ModelConfigRecord};
     use crate::services::{
         ExternalMcpConfigService, McpCatalogService, ModelConfigService, RemoteServerService,
-        RunService, TaskProjectService, TaskService, ToolingStateService,
+        RunService, SkillService, TaskProjectService, TaskService, ToolingStateService,
     };
     use crate::store::AppStore;
 
@@ -227,6 +251,7 @@ mod tests {
         let model_config_service = ModelConfigService::new(store.clone());
         let remote_server_service = RemoteServerService::new(store.clone());
         let external_mcp_config_service = ExternalMcpConfigService::new(store.clone());
+        let skill_service = SkillService::new(&config, store.clone());
         let task_project_service = TaskProjectService::new(store.clone());
         let ask_user_prompt_service = AskUserPromptService::new(store.clone());
         let run_service = RunService::new(
@@ -241,6 +266,7 @@ mod tests {
             task_service.clone(),
             model_config_service.clone(),
             external_mcp_config_service.clone(),
+            skill_service.clone(),
             run_service.clone(),
             ask_user_prompt_service.clone(),
             mcp_catalog_service.clone(),
@@ -252,6 +278,7 @@ mod tests {
             model_config_service,
             remote_server_service,
             external_mcp_config_service,
+            skill_service,
             task_project_service,
             run_service,
             ask_user_prompt_service,

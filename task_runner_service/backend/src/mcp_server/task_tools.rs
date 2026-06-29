@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::models::{
-    BatchTaskDeleteRequest, BatchTaskStatusUpdateRequest, CreateTaskRequest, TaskListFilters,
-    TASK_PROFILE_CHATOS_PLAN,
+    BatchTaskDeleteRequest, BatchTaskStatusUpdateRequest, CreateTaskRequest, SkillRecord,
+    TaskListFilters, TASK_PROFILE_CHATOS_PLAN,
 };
 
 use super::chatos_async_planner::{
@@ -17,7 +17,8 @@ use super::support::{
 use super::{
     decode_args, text_result, BatchTaskDeleteArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
     CreateTaskArgs, CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile,
-    SetTaskPrerequisitesArgs, TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
+    SearchInstalledSkillsArgs, SetTaskPrerequisitesArgs, SkillIdArgs, TaskIdArgs,
+    TaskRunnerMcpService, UpdateTaskArgs,
 };
 
 impl TaskRunnerMcpService {
@@ -142,6 +143,23 @@ impl TaskRunnerMcpService {
                     configs,
                     current_user
                 ))))
+            }
+            "search_installed_skills" => {
+                let args: SearchInstalledSkillsArgs = decode_args(args)?;
+                let skills = self
+                    .skill_service
+                    .search_installed_skills_for_user(args.keyword, args.limit, current_user)
+                    .await?;
+                Ok(text_result(skills_for_external_mcp(skills)))
+            }
+            "get_skill_detail" => {
+                let args: SkillIdArgs = decode_args(args)?;
+                let skill = self
+                    .skill_service
+                    .get_skill_for_user(args.skill_id.as_str(), current_user)
+                    .await?
+                    .ok_or_else(|| format!("Skill 不存在或无权访问: {}", args.skill_id))?;
+                Ok(text_result(skill_detail_for_external_mcp(skill)))
             }
             "create_tasks_with_prerequisites" => {
                 let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;
@@ -285,3 +303,69 @@ impl TaskRunnerMcpService {
 }
 
 type CreateListTasksArgsAlias = super::ListTasksArgs;
+
+fn skills_for_external_mcp(skills: Vec<SkillRecord>) -> Value {
+    Value::Array(
+        skills
+            .into_iter()
+            .map(skill_summary_for_external_mcp)
+            .collect(),
+    )
+}
+
+fn skill_summary_for_external_mcp(skill: SkillRecord) -> Value {
+    json!({
+        "id": skill.id,
+        "name": skill.name,
+        "display_name": skill.display_name,
+        "description": skill.description,
+        "locale": skill.locale,
+        "tags": skill.tags,
+        "source": skill.source,
+        "scope": skill.scope,
+        "enabled": skill.enabled,
+        "auto_inject": skill.auto_inject,
+        "package_file_count": skill.package_file_count,
+        "package_total_bytes": skill.package_total_bytes,
+        "source_repo": skill.source_repo,
+        "source_ref": skill.source_ref,
+        "source_path": skill.source_path,
+        "content_preview": preview_skill_content(skill.content.as_str()),
+    })
+}
+
+fn skill_detail_for_external_mcp(skill: SkillRecord) -> Value {
+    json!({
+        "id": skill.id,
+        "name": skill.name,
+        "display_name": skill.display_name,
+        "description": skill.description,
+        "content": skill.content,
+        "locale": skill.locale,
+        "tags": skill.tags,
+        "source": skill.source,
+        "scope": skill.scope,
+        "enabled": skill.enabled,
+        "auto_inject": skill.auto_inject,
+        "install_status": skill.install_status,
+        "package_file_count": skill.package_file_count,
+        "package_total_bytes": skill.package_total_bytes,
+        "package_manifest": skill.package_manifest,
+        "source_repo": skill.source_repo,
+        "source_ref": skill.source_ref,
+        "source_path": skill.source_path,
+        "source_url": skill.source_url,
+    })
+}
+
+fn preview_skill_content(content: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 1200;
+    let content = content.trim();
+    if content.chars().count() <= MAX_PREVIEW_CHARS {
+        return content.to_string();
+    }
+    format!(
+        "{}\n...",
+        content.chars().take(MAX_PREVIEW_CHARS).collect::<String>()
+    )
+}

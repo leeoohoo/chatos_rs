@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::DbStatus;
+use super::{normalized_optional, DbStatus};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -178,9 +178,59 @@ pub struct RequirementDocumentRecord {
     pub updated_at: String,
 }
 
+pub const REQUIREMENT_TECHNICAL_OVERVIEW_DOC_TYPE: &str = "technical_overview";
+
+pub fn normalize_requirement_document_type(value: Option<String>) -> Result<String, String> {
+    let raw = normalized_optional(value)
+        .unwrap_or_else(|| REQUIREMENT_TECHNICAL_OVERVIEW_DOC_TYPE.to_string());
+    let doc_type = raw
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if matches!(ch, '-' | ' ') { '_' } else { ch })
+        .collect::<String>();
+    if doc_type.len() > 64 {
+        return Err("文档类型长度不能超过 64 个字符".to_string());
+    }
+    if !doc_type
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return Err("文档类型只能包含英文字母、数字、下划线、短横线或空格".to_string());
+    }
+    Ok(doc_type)
+}
+
+pub fn default_requirement_document_title(doc_type: &str) -> String {
+    match doc_type {
+        "technical_overview" => "实现技术总体文档",
+        "implementation_plan" => "实现方案",
+        "ui_svg_preview" => "前端 SVG 预览图",
+        "architecture_diagram" => "架构图",
+        "flowchart" => "流程图",
+        "sequence_diagram" => "时序图",
+        "api_design" => "接口设计",
+        "data_model" => "数据模型",
+        "risk_notes" => "风险说明",
+        _ => "技术文档",
+    }
+    .to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpsertRequirementDocumentRequest {
+    #[serde(default)]
+    pub doc_type: Option<String>,
     pub title: Option<String>,
     pub format: Option<String>,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateRequirementDocumentRequest {
+    #[serde(default)]
+    pub doc_type: Option<String>,
+    pub title: Option<String>,
+    pub format: Option<String>,
+    pub content: Option<String>,
 }

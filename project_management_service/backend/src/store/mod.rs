@@ -209,6 +209,44 @@ impl AppStore {
         }
     }
 
+    pub async fn list_requirement_documents(
+        &self,
+        requirement_id: &str,
+        doc_type: Option<String>,
+    ) -> Result<Vec<RequirementDocumentRecord>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .list_requirement_documents(requirement_id, doc_type)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .list_requirement_documents(requirement_id, doc_type)
+                    .await
+            }
+        }
+    }
+
+    pub async fn get_requirement_document_by_id(
+        &self,
+        requirement_id: &str,
+        document_id: &str,
+    ) -> Result<Option<RequirementDocumentRecord>, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .get_requirement_document_by_id(requirement_id, document_id)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .get_requirement_document_by_id(requirement_id, document_id)
+                    .await
+            }
+        }
+    }
+
     pub async fn upsert_requirement_document(
         &self,
         requirement_id: &str,
@@ -224,6 +262,46 @@ impl AppStore {
             Self::Sqlite(store) => {
                 store
                     .upsert_requirement_document(requirement_id, input, user)
+                    .await
+            }
+        }
+    }
+
+    pub async fn create_requirement_document(
+        &self,
+        requirement_id: &str,
+        input: UpsertRequirementDocumentRequest,
+        user: &CurrentUser,
+    ) -> Result<RequirementDocumentRecord, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .create_requirement_document(requirement_id, input, user)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .create_requirement_document(requirement_id, input, user)
+                    .await
+            }
+        }
+    }
+
+    pub async fn update_requirement_document(
+        &self,
+        requirement_id: &str,
+        document_id: &str,
+        input: UpdateRequirementDocumentRequest,
+    ) -> Result<RequirementDocumentRecord, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .update_requirement_document(requirement_id, document_id, input)
+                    .await
+            }
+            Self::Sqlite(store) => {
+                store
+                    .update_requirement_document(requirement_id, document_id, input)
                     .await
             }
         }

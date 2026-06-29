@@ -148,6 +148,20 @@ export interface RequirementDocumentRecord {
   updated_at: string;
 }
 
+export interface UpsertRequirementDocumentPayload {
+  doc_type?: string;
+  title?: string;
+  format?: string;
+  content: string;
+}
+
+export interface UpdateRequirementDocumentPayload {
+  doc_type?: string;
+  title?: string;
+  format?: string;
+  content?: string;
+}
+
 export interface ProjectWorkItemRecord {
   id: string;
   project_id: string;
@@ -156,6 +170,7 @@ export interface ProjectWorkItemRecord {
   description?: string | null;
   task_runner_default_model_config_id: string;
   task_runner_enabled_tool_ids: string[];
+  task_runner_skill_ids: string[];
   status: ProjectWorkItemStatus;
   priority: number;
   assignee_user_id?: string | null;
@@ -173,6 +188,7 @@ export interface CreateWorkItemPayload {
   description?: string;
   task_runner_default_model_config_id: string;
   task_runner_enabled_tool_ids: string[];
+  task_runner_skill_ids?: string[];
   status?: ProjectWorkItemStatus;
   priority?: number;
   assignee_user_id?: string;
@@ -265,4 +281,5 @@ export interface TaskRunnerExecutionOptionRecord {
 export interface TaskRunnerExecutionOptionsResponse {
   model_configs: TaskRunnerExecutionOptionRecord[];
   tools: TaskRunnerExecutionOptionRecord[];
+  skills: TaskRunnerExecutionOptionRecord[];
 }

@@ -53,6 +53,9 @@ export const statusTone = (status?: string | null): string => {
   if (normalized === 'running' || normalized === 'processing') {
     return 'border-sky-200 bg-sky-50 text-sky-700';
   }
+  if (normalized === 'waiting_prerequisite') {
+    return 'border-amber-200 bg-amber-50 text-amber-700';
+  }
   if (normalized === 'queued') {
     return 'border-amber-200 bg-amber-50 text-amber-700';
   }

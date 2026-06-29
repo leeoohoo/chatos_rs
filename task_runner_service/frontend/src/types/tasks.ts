@@ -25,6 +25,7 @@ export interface TaskMcpConfig {
   workspace_dir?: string | null;
   default_remote_server_id?: string | null;
   external_mcp_config_ids: string[];
+  skill_ids: string[];
 }
 
 export interface TaskScheduleConfig {

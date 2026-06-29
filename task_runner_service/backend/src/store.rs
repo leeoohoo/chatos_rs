@@ -24,14 +24,15 @@ use crate::models::{
     now_rfc3339, AskUserPromptRecord, AskUserPromptStatus, AskUserPromptTaskCountRecord,
     ExternalMcpConfigRecord, ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse,
     PromptListFilters, RemoteServerRecord, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
-    TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, UserRecord,
+    SkillRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatsResponse,
+    TaskStatus, TaskSummaryRecord, UserRecord,
 };
 
 mod app_models;
 mod app_prompts;
 mod app_runs;
+mod app_skills;
 mod app_tasks;
 mod app_users;
 mod codec;
@@ -54,9 +55,9 @@ use self::mongo_support::{
 };
 use self::sqlite_rows::{
     ask_user_prompt_from_row, external_mcp_config_from_row, model_config_from_row,
-    remote_server_from_row, run_summary_from_row, runtime_settings_from_row, task_from_row,
-    task_project_from_row, task_run_event_from_row, task_run_from_row, task_summary_from_row,
-    user_from_row,
+    remote_server_from_row, run_summary_from_row, runtime_settings_from_row, skill_from_row,
+    task_from_row, task_project_from_row, task_run_event_from_row, task_run_from_row,
+    task_summary_from_row, user_from_row,
 };
 use self::sqlite_support::ensure_sqlite_parent_dir;
 use self::task_support::{
@@ -75,6 +76,7 @@ struct StoreData {
     runtime_settings: Option<RuntimeSettingsRecord>,
     remote_servers: BTreeMap<String, RemoteServerRecord>,
     external_mcp_configs: BTreeMap<String, ExternalMcpConfigRecord>,
+    skills: BTreeMap<String, SkillRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
     ask_user_prompts: BTreeMap<String, AskUserPromptRecord>,
@@ -104,6 +106,7 @@ pub(crate) struct MongoStore {
     runtime_settings: Collection<RuntimeSettingsRecord>,
     remote_servers: Collection<RemoteServerRecord>,
     external_mcp_configs: Collection<ExternalMcpConfigRecord>,
+    skills: Collection<SkillRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
     ask_user_prompts: Collection<AskUserPromptRecord>,

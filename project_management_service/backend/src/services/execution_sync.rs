@@ -85,7 +85,7 @@ pub async fn sync_task_runner_work_item_status(
     };
 
     if work_item.status == ProjectWorkItemStatus::Done {
-        complete_related_in_progress_requirements_if_work_items_done(store, &work_item).await?;
+        complete_related_requirements_if_work_items_done(store, &work_item).await?;
     }
 
     Ok(SyncTaskRunnerWorkItemStatusResponse { work_item, link })
@@ -192,7 +192,7 @@ fn project_work_item_status_from_task_runner_status(status: &str) -> Option<Proj
     }
 }
 
-async fn complete_related_in_progress_requirements_if_work_items_done(
+async fn complete_related_requirements_if_work_items_done(
     store: &AppStore,
     work_item: &ProjectWorkItemRecord,
 ) -> Result<Vec<RequirementRecord>, ExecutionSyncError> {
@@ -235,7 +235,7 @@ async fn complete_related_in_progress_requirements_if_work_items_done(
         let Some(requirement) = requirement_by_id.get(requirement_id.as_str()) else {
             continue;
         };
-        if requirement.status != RequirementStatus::InProgress {
+        if !requirement_status_can_complete_from_work_items(requirement.status) {
             continue;
         }
 
@@ -272,6 +272,13 @@ async fn complete_related_in_progress_requirements_if_work_items_done(
     }
 
     Ok(updated_requirements)
+}
+
+fn requirement_status_can_complete_from_work_items(status: RequirementStatus) -> bool {
+    matches!(
+        status,
+        RequirementStatus::Approved | RequirementStatus::InProgress
+    )
 }
 
 fn collect_requirement_subtree_ids_from_list(
@@ -386,6 +393,7 @@ mod tests {
             .upsert_requirement_document(
                 &requirement.id,
                 UpsertRequirementDocumentRequest {
+                    doc_type: None,
                     title: None,
                     format: None,
                     content: "Technical overview".to_string(),
@@ -402,6 +410,7 @@ mod tests {
                     description: None,
                     task_runner_default_model_config_id: "model-config-test".to_string(),
                     task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                    task_runner_skill_ids: Vec::new(),
                     status: None,
                     priority: None,
                     assignee_user_id: None,
@@ -448,7 +457,7 @@ mod tests {
             .expect("mark first done")
             .expect("first item");
 
-        complete_related_in_progress_requirements_if_work_items_done(&store, &first_done)
+        complete_related_requirements_if_work_items_done(&store, &first_done)
             .await
             .expect("complete related requirements");
         let parent_before_last_item = store
@@ -473,7 +482,7 @@ mod tests {
             .expect("mark second done")
             .expect("second item");
         let updated_requirements =
-            complete_related_in_progress_requirements_if_work_items_done(&store, &second_done)
+            complete_related_requirements_if_work_items_done(&store, &second_done)
                 .await
                 .expect("complete related requirements");
 
@@ -486,5 +495,82 @@ mod tests {
             .expect("get parent")
             .expect("parent");
         assert_eq!(parent_after_last_item.status, RequirementStatus::Done);
+    }
+
+    #[tokio::test]
+    async fn completed_downstream_approved_requirement_work_items_complete_requirement() {
+        let store = test_store().await;
+        let project = create_test_project(&store).await;
+        let prerequisite = create_test_requirement(&store, &project.id, None, "Prerequisite").await;
+        let downstream = create_test_requirement(&store, &project.id, None, "Downstream").await;
+        store
+            .set_requirement_dependencies(&downstream.id, vec![prerequisite.id.clone()])
+            .await
+            .expect("save requirement dependency");
+        let first = create_test_work_item(&store, &downstream, "First").await;
+        let second = create_test_work_item(&store, &downstream, "Second").await;
+
+        store
+            .update_requirement(
+                &downstream.id,
+                UpdateRequirementRequest {
+                    status: Some(RequirementStatus::Approved),
+                    ..UpdateRequirementRequest::default()
+                },
+            )
+            .await
+            .expect("mark downstream approved");
+        let first_done = store
+            .update_work_item(
+                &first.id,
+                UpdateProjectWorkItemRequest {
+                    status: Some(ProjectWorkItemStatus::Done),
+                    ..UpdateProjectWorkItemRequest::default()
+                },
+            )
+            .await
+            .expect("mark first done")
+            .expect("first item");
+
+        let updated_before_last_item =
+            complete_related_requirements_if_work_items_done(&store, &first_done)
+                .await
+                .expect("complete related requirements");
+        assert!(updated_before_last_item.is_empty());
+        let downstream_before_last_item = store
+            .get_requirement(&downstream.id)
+            .await
+            .expect("get downstream")
+            .expect("downstream");
+        assert_eq!(
+            downstream_before_last_item.status,
+            RequirementStatus::Approved
+        );
+
+        let second_done = store
+            .update_work_item(
+                &second.id,
+                UpdateProjectWorkItemRequest {
+                    status: Some(ProjectWorkItemStatus::Done),
+                    ..UpdateProjectWorkItemRequest::default()
+                },
+            )
+            .await
+            .expect("mark second done")
+            .expect("second item");
+        let updated_requirements =
+            complete_related_requirements_if_work_items_done(&store, &second_done)
+                .await
+                .expect("complete related requirements");
+
+        assert_eq!(updated_requirements.len(), 1);
+        assert_eq!(updated_requirements[0].id, downstream.id);
+        assert_eq!(updated_requirements[0].status, RequirementStatus::Done);
+        let downstream_after_last_item = store
+            .get_requirement(&downstream.id)
+            .await
+            .expect("get downstream")
+            .expect("downstream");
+        assert_eq!(downstream_after_last_item.status, RequirementStatus::Done);
     }
 }

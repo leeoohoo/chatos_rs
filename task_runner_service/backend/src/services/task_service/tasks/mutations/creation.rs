@@ -86,6 +86,8 @@ impl TaskService {
                 task_owner_user_id.as_deref(),
             )
             .await?;
+            self.validate_task_skill_ids(&mcp_config, creator, task_owner_user_id.as_deref())
+                .await?;
         }
         let tenant_id = resolve_task_tenant_id(
             input.tenant_id,
@@ -137,6 +139,7 @@ impl TaskService {
             task_title = task.title.as_str(),
             builtin_mcp_kinds = %task.mcp_config.enabled_builtin_kinds.join(","),
             external_mcp_config_ids = %task.mcp_config.external_mcp_config_ids.join(","),
+            skill_ids = %task.mcp_config.skill_ids.join(","),
             "task runner created task with MCP selection"
         );
         self.ensure_task_thread(&task).await?;

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildDownstreamRequirementScope,
   buildDependencyMaps,
   buildVisiblePlanItems,
+  canShowRequirementExecutionAction,
   mergeDependencyMaps,
 } from './model';
 
@@ -43,5 +45,49 @@ describe('projectPlanPane model', () => {
 
     expect(merged.requirementPrerequisites.get('req-b')).toEqual(['req-a']);
     expect(merged.workItemPrerequisites.get('item-b')).toEqual(['item-a']);
+  });
+
+  it('builds downstream requirement scope without walking to parents or prerequisites', () => {
+    const requirements = [
+      { id: 'parent', title: 'Parent' },
+      { id: 'child', title: 'Child', parent_requirement_id: 'parent' },
+      { id: 'grandchild', title: 'Grandchild', parent_requirement_id: 'child' },
+      { id: 'dependent', title: 'Dependent' },
+      { id: 'dependent-child', title: 'Dependent Child', parent_requirement_id: 'dependent' },
+      { id: 'after-dependent', title: 'After Dependent' },
+      { id: 'sibling', title: 'Sibling', parent_requirement_id: 'parent' },
+      { id: 'prerequisite', title: 'Prerequisite' },
+    ];
+    const dependencyMaps = buildDependencyMaps({
+      dependencyGraph: {
+        edges: [
+          { from: 'requirement:prerequisite', to: 'requirement:child', edge_type: 'blocks' },
+          { from: 'requirement:child', to: 'requirement:dependent', edge_type: 'blocks' },
+          { from: 'requirement:dependent', to: 'requirement:after-dependent', edge_type: 'blocks' },
+        ],
+      },
+    });
+
+    const scope = buildDownstreamRequirementScope({
+      dependencyMaps,
+      requirements,
+      rootId: 'child',
+    });
+
+    expect(scope).toEqual([
+      'child',
+      'grandchild',
+      'dependent',
+      'dependent-child',
+      'after-dependent',
+    ]);
+  });
+
+  it('hides requirement execution action for terminal statuses', () => {
+    expect(canShowRequirementExecutionAction('done')).toBe(false);
+    expect(canShowRequirementExecutionAction('cancelled')).toBe(false);
+    expect(canShowRequirementExecutionAction('archived')).toBe(false);
+    expect(canShowRequirementExecutionAction('in_progress')).toBe(true);
+    expect(canShowRequirementExecutionAction('approved')).toBe(true);
   });
 });

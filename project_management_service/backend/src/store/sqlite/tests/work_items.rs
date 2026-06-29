@@ -2,7 +2,7 @@ use super::support::{create_project, create_requirement, create_work_item, test_
 use crate::models::*;
 
 #[tokio::test]
-async fn work_item_creation_requires_requirement_technical_overview_content() {
+async fn work_item_creation_requires_requirement_technical_document_content() {
     let store = test_store().await;
     let project = create_project(&store).await;
     let requirement = create_requirement(&store, &project.id, "Needs a plan").await;
@@ -15,6 +15,7 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
                 description: None,
                 task_runner_default_model_config_id: "model-config-test".to_string(),
                 task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,
@@ -26,16 +27,17 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
             &test_user(),
         )
         .await
-        .expect_err("missing technical overview rejected");
+        .expect_err("missing technical document rejected");
     assert_eq!(
         missing_doc_error,
-        work_item_requires_technical_overview_message()
+        work_item_requires_technical_document_message()
     );
 
     store
         .upsert_requirement_document(
             &requirement.id,
             UpsertRequirementDocumentRequest {
+                doc_type: None,
                 title: None,
                 format: None,
                 content: " \n ".to_string(),
@@ -43,7 +45,7 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
             &test_user(),
         )
         .await
-        .expect("upsert blank technical overview");
+        .expect("upsert blank technical document");
     let blank_doc_error = store
         .create_work_item(
             &requirement,
@@ -52,6 +54,7 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
                 description: None,
                 task_runner_default_model_config_id: "model-config-test".to_string(),
                 task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,
@@ -63,16 +66,17 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
             &test_user(),
         )
         .await
-        .expect_err("blank technical overview rejected");
+        .expect_err("blank technical document rejected");
     assert_eq!(
         blank_doc_error,
-        work_item_requires_technical_overview_message()
+        work_item_requires_technical_document_message()
     );
 
     store
         .upsert_requirement_document(
             &requirement.id,
             UpsertRequirementDocumentRequest {
+                doc_type: None,
                 title: None,
                 format: None,
                 content: "Implementation approach".to_string(),
@@ -80,7 +84,7 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
             &test_user(),
         )
         .await
-        .expect("upsert technical overview");
+        .expect("upsert technical document");
     let item = store
         .create_work_item(
             &requirement,
@@ -89,6 +93,7 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
                 description: None,
                 task_runner_default_model_config_id: "model-config-test".to_string(),
                 task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                task_runner_skill_ids: Vec::new(),
                 status: None,
                 priority: None,
                 assignee_user_id: None,
@@ -100,7 +105,51 @@ async fn work_item_creation_requires_requirement_technical_overview_content() {
             &test_user(),
         )
         .await
-        .expect("create work item after technical overview");
+        .expect("create work item after technical document");
+    assert_eq!(item.requirement_id, requirement.id);
+}
+
+#[tokio::test]
+async fn work_item_creation_accepts_any_non_empty_requirement_document() {
+    let store = test_store().await;
+    let project = create_project(&store).await;
+    let requirement = create_requirement(&store, &project.id, "Needs sequence doc").await;
+
+    store
+        .create_requirement_document(
+            &requirement.id,
+            UpsertRequirementDocumentRequest {
+                doc_type: Some("sequence_diagram".to_string()),
+                title: Some("调用时序图".to_string()),
+                format: None,
+                content: "sequenceDiagram\n  UI->>API: submit".to_string(),
+            },
+            &test_user(),
+        )
+        .await
+        .expect("create sequence document");
+
+    let item = store
+        .create_work_item(
+            &requirement,
+            CreateProjectWorkItemRequest {
+                title: "Implementation".to_string(),
+                description: None,
+                task_runner_default_model_config_id: "model-config-test".to_string(),
+                task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                task_runner_skill_ids: Vec::new(),
+                status: None,
+                priority: None,
+                assignee_user_id: None,
+                estimate_points: None,
+                due_at: None,
+                sort_order: None,
+                tags: None,
+            },
+            &test_user(),
+        )
+        .await
+        .expect("create work item with sequence document");
     assert_eq!(item.requirement_id, requirement.id);
 }
 

@@ -75,6 +75,9 @@ pub(in crate::api::projects) async fn create_and_start_execution_tasks(
         let mut mcp_config = execution_options
             .mcp_config_for_tool_ids(&work_item.task_runner_enabled_tool_ids)
             .map_err(HandlerError::bad_request)?;
+        mcp_config.skill_ids = execution_options
+            .validate_skill_ids(work_item.task_runner_skill_ids.clone())
+            .map_err(HandlerError::bad_request)?;
         if let Some(workspace_dir) = normalize_non_empty(Some(project_root.to_string())) {
             mcp_config.workspace_dir = Some(workspace_dir);
         }

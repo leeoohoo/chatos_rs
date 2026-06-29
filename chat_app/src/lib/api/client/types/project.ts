@@ -286,6 +286,22 @@ export interface ProjectRequirementResponse {
   archivedAt?: string | null;
 }
 
+export interface ProjectRequirementDocumentResponse {
+  id: string;
+  requirement_id?: string;
+  requirementId?: string;
+  doc_type?: string;
+  docType?: string;
+  title?: string;
+  format?: string;
+  content?: string;
+  version?: number;
+  created_at?: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+}
+
 export interface ProjectWorkItemResponse {
   id: string;
   project_id?: string;

@@ -22,8 +22,10 @@ use super::projects::{
     update_project, upsert_project_profile,
 };
 use super::requirements::{
-    create_requirement, delete_requirement, get_requirement, get_requirement_technical_overview,
-    list_project_requirements, update_requirement, upsert_requirement_technical_overview,
+    create_requirement, create_requirement_document, delete_requirement, get_requirement,
+    get_requirement_document, get_requirement_technical_overview, list_project_requirements,
+    list_requirement_documents, update_requirement, update_requirement_document,
+    upsert_requirement_technical_overview,
 };
 use super::sync::{
     sync_get_project, sync_import_project, sync_list_projects, sync_requirement_execution_state,
@@ -96,6 +98,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/requirements/:requirement_id/technical-overview",
             get(get_requirement_technical_overview).put(upsert_requirement_technical_overview),
+        )
+        .route(
+            "/api/requirements/:requirement_id/documents",
+            get(list_requirement_documents).post(create_requirement_document),
+        )
+        .route(
+            "/api/requirements/:requirement_id/documents/:document_id",
+            get(get_requirement_document).put(update_requirement_document),
         )
         .route(
             "/api/requirements/:requirement_id/work-items",

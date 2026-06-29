@@ -104,7 +104,8 @@ impl SqliteStore {
         if task_runner_enabled_tool_ids.is_empty() {
             return Err("task_runner_enabled_tool_ids is required".to_string());
         }
-        self.ensure_requirement_technical_overview_ready(&requirement.id)
+        let task_runner_skill_ids = normalize_tags(input.task_runner_skill_ids);
+        self.ensure_requirement_technical_document_ready(&requirement.id)
             .await?;
         let now = now_rfc3339();
         let item = ProjectWorkItemRecord {
@@ -118,6 +119,7 @@ impl SqliteStore {
                 .trim()
                 .to_string(),
             task_runner_enabled_tool_ids,
+            task_runner_skill_ids,
             status: input.status.unwrap_or_default(),
             priority: input.priority.unwrap_or_default(),
             assignee_user_id: normalized_optional(input.assignee_user_id),
@@ -142,15 +144,18 @@ impl SqliteStore {
         Ok(item)
     }
 
-    async fn ensure_requirement_technical_overview_ready(
+    async fn ensure_requirement_technical_document_ready(
         &self,
         requirement_id: &str,
     ) -> Result<(), String> {
-        let Some(document) = self.get_requirement_document(requirement_id).await? else {
-            return Err(work_item_requires_technical_overview_message());
-        };
-        if document.content.trim().is_empty() {
-            return Err(work_item_requires_technical_overview_message());
+        let documents = self
+            .list_requirement_documents(requirement_id, None)
+            .await?;
+        if !documents
+            .iter()
+            .any(|document| !document.content.trim().is_empty())
+        {
+            return Err(work_item_requires_technical_document_message());
         }
         Ok(())
     }
@@ -305,21 +310,25 @@ impl SqliteStore {
         let task_runner_enabled_tool_ids_json =
             serde_json::to_string(&item.task_runner_enabled_tool_ids)
                 .map_err(|err| err.to_string())?;
+        let task_runner_skill_ids_json =
+            serde_json::to_string(&item.task_runner_skill_ids).map_err(|err| err.to_string())?;
         sqlx::query(
             "INSERT INTO project_work_items (
                 id, project_id, requirement_id, title, description,
                 task_runner_default_model_config_id, task_runner_enabled_tool_ids_json,
+                task_runner_skill_ids_json,
                 status, priority, assignee_user_id, estimate_points, due_at, sort_order, tags_json,
                 creator_user_id, creator_username, creator_display_name,
                 owner_user_id, owner_username, owner_display_name,
                 created_at, updated_at, archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
              ON CONFLICT(id) DO UPDATE SET
                 requirement_id = excluded.requirement_id,
                 title = excluded.title,
                 description = excluded.description,
                 task_runner_default_model_config_id = excluded.task_runner_default_model_config_id,
                 task_runner_enabled_tool_ids_json = excluded.task_runner_enabled_tool_ids_json,
+                task_runner_skill_ids_json = excluded.task_runner_skill_ids_json,
                 status = excluded.status,
                 priority = excluded.priority,
                 assignee_user_id = excluded.assignee_user_id,
@@ -343,6 +352,7 @@ impl SqliteStore {
         .bind(&item.description)
         .bind(&item.task_runner_default_model_config_id)
         .bind(task_runner_enabled_tool_ids_json)
+        .bind(task_runner_skill_ids_json)
         .bind(item.status.as_str())
         .bind(item.priority)
         .bind(&item.assignee_user_id)

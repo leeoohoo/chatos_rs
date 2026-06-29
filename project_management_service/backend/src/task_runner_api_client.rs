@@ -29,6 +29,7 @@ struct CreateTaskRunnerTaskRequest<'a> {
 struct TaskRunnerMcpConfig {
     enabled_builtin_kinds: Vec<String>,
     external_mcp_config_ids: Vec<String>,
+    skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -39,6 +40,8 @@ struct TaskRunnerInternalExecutionOptions {
     builtin_tool_ids: Vec<String>,
     #[serde(default)]
     external_tool_ids: Vec<String>,
+    #[serde(default)]
+    skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -46,6 +49,7 @@ pub struct TaskRunnerExecutionOptions {
     model_config_ids: BTreeSet<String>,
     builtin_tool_ids: BTreeSet<String>,
     external_tool_ids: BTreeSet<String>,
+    skill_ids: BTreeSet<String>,
 }
 
 impl TaskRunnerExecutionOptions {
@@ -54,11 +58,13 @@ impl TaskRunnerExecutionOptions {
         model_config_ids: impl IntoIterator<Item = impl Into<String>>,
         builtin_tool_ids: impl IntoIterator<Item = impl Into<String>>,
         external_tool_ids: impl IntoIterator<Item = impl Into<String>>,
+        skill_ids: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self {
             model_config_ids: model_config_ids.into_iter().map(Into::into).collect(),
             builtin_tool_ids: builtin_tool_ids.into_iter().map(Into::into).collect(),
             external_tool_ids: external_tool_ids.into_iter().map(Into::into).collect(),
+            skill_ids: skill_ids.into_iter().map(Into::into).collect(),
         }
     }
 
@@ -72,6 +78,10 @@ impl TaskRunnerExecutionOptions {
             .chain(self.external_tool_ids.iter())
             .cloned()
             .collect()
+    }
+
+    pub fn skill_ids(&self) -> Vec<String> {
+        self.skill_ids.iter().cloned().collect()
     }
 
     pub fn validate_model_config_id(&self, value: &str) -> Result<String, String> {
@@ -99,7 +109,18 @@ impl TaskRunnerExecutionOptions {
         Ok(json!({
             "enabled_builtin_kinds": enabled_builtin_kinds,
             "external_mcp_config_ids": external_mcp_config_ids,
+            "skill_ids": [],
         }))
+    }
+
+    pub fn validate_skill_ids(&self, values: Vec<String>) -> Result<Vec<String>, String> {
+        let values = normalize_id_list(values);
+        for value in &values {
+            if !self.skill_ids.contains(value.as_str()) {
+                return Err(format!("Task Runner Skill 不可用或无权限访问: {value}"));
+            }
+        }
+        Ok(values)
     }
 }
 
@@ -126,9 +147,11 @@ pub async fn create_task_from_work_item(
         .unwrap_or_else(|| work_item.task_runner_default_model_config_id.clone());
     let default_model_config_id =
         Some(execution_options.validate_model_config_id(default_model_config_id.as_str())?);
-    let mcp_config = task_runner_mcp_config_from_value(
+    let mut mcp_config = task_runner_mcp_config_from_value(
         execution_options.mcp_config_for_tool_ids(&work_item.task_runner_enabled_tool_ids)?,
     )?;
+    mcp_config.skill_ids =
+        execution_options.validate_skill_ids(work_item.task_runner_skill_ids.clone())?;
     let source_session_id = normalized_optional(input.source_session_id);
     let source_user_message_id = normalized_optional(input.source_user_message_id);
     let payload = CreateTaskRunnerTaskRequest {
@@ -227,10 +250,16 @@ pub async fn fetch_execution_options(
         .into_iter()
         .filter_map(|item| normalized_optional(Some(item)))
         .collect::<BTreeSet<_>>();
+    let skill_ids = options
+        .skill_ids
+        .into_iter()
+        .filter_map(|item| normalized_optional(Some(item)))
+        .collect::<BTreeSet<_>>();
     Ok(TaskRunnerExecutionOptions {
         model_config_ids,
         builtin_tool_ids,
         external_tool_ids,
+        skill_ids,
     })
 }
 
@@ -307,20 +336,36 @@ fn task_runner_mcp_config_from_value(value: Value) -> Result<TaskRunnerMcpConfig
                     .collect()
             })
             .unwrap_or_default(),
+        skill_ids: value
+            .get("skill_ids")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
 pub fn normalize_tool_ids(values: Vec<String>) -> Result<Vec<String>, String> {
+    let out = normalize_id_list(values);
+    if out.is_empty() {
+        return Err("task_runner_enabled_tool_ids is required".to_string());
+    }
+    Ok(out)
+}
+
+pub fn normalize_id_list(values: Vec<String>) -> Vec<String> {
     let mut out = values
         .into_iter()
         .filter_map(|value| normalized_optional(Some(value)))
         .collect::<Vec<_>>();
     out.sort();
     out.dedup();
-    if out.is_empty() {
-        return Err("task_runner_enabled_tool_ids is required".to_string());
-    }
-    Ok(out)
+    out
 }
 
 pub fn normalized_required(field: &str, value: &str) -> Result<String, String> {

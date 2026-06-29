@@ -6,6 +6,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::{
     services::{
@@ -15,6 +16,12 @@ use crate::{
     },
     state::AppState,
 };
+
+const DEFAULT_RUN_EVENT_LIMIT: usize = 40;
+const MAX_RUN_EVENT_LIMIT: usize = 100;
+const RUN_SNAPSHOT_PREVIEW_LIMIT_BYTES: usize = 256 * 1024;
+const RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES: usize = 32 * 1024;
+const RUN_EVENT_MESSAGE_PREVIEW_LIMIT_BYTES: usize = 16 * 1024;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -49,6 +56,14 @@ struct ChatosMessageTaskQuery {
     source_session_id: String,
     source_user_message_id: Option<String>,
     source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatosMessageRunQuery {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+    event_limit: Option<usize>,
+    event_offset: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -151,6 +166,97 @@ fn validate_chatos_message_query(
     Ok((source_session_id, source_user_message_id, source_turn_id))
 }
 
+fn run_event_page(query: &ChatosMessageRunQuery) -> (usize, usize) {
+    (
+        query
+            .event_limit
+            .unwrap_or(DEFAULT_RUN_EVENT_LIMIT)
+            .clamp(1, MAX_RUN_EVENT_LIMIT),
+        query.event_offset.unwrap_or(0),
+    )
+}
+
+fn truncate_text_bytes(value: &str, max_bytes: usize) -> Option<String> {
+    if value.len() <= max_bytes {
+        return None;
+    }
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(format!(
+        "{}\n\n...（内容已截断，原始大小 {} bytes）",
+        &value[..end],
+        value.len()
+    ))
+}
+
+fn preview_json_value(value: &Value, max_bytes: usize) -> String {
+    let text = value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| serde_json::to_string_pretty(value).ok())
+        .unwrap_or_else(|| value.to_string());
+    truncate_text_bytes(text.as_str(), max_bytes).unwrap_or(text)
+}
+
+fn truncate_json_value(value: Value, max_bytes: usize) -> Value {
+    let Ok(bytes) = serde_json::to_vec(&value) else {
+        return value;
+    };
+    if bytes.len() <= max_bytes {
+        return value;
+    }
+    json!({
+        "truncated": true,
+        "original_bytes": bytes.len(),
+        "preview": preview_json_value(&value, max_bytes),
+    })
+}
+
+fn trim_run_for_chatos_detail(
+    mut run: crate::models::TaskRunRecord,
+) -> crate::models::TaskRunRecord {
+    run.input_snapshot = truncate_json_value(run.input_snapshot, RUN_SNAPSHOT_PREVIEW_LIMIT_BYTES);
+    run.context_snapshot = run
+        .context_snapshot
+        .map(|value| truncate_json_value(value, RUN_SNAPSHOT_PREVIEW_LIMIT_BYTES));
+    run.report = run
+        .report
+        .map(|value| truncate_json_value(value, RUN_SNAPSHOT_PREVIEW_LIMIT_BYTES));
+    run
+}
+
+fn trim_event_for_chatos_detail(
+    mut event: crate::models::TaskRunEventRecord,
+) -> crate::models::TaskRunEventRecord {
+    event.message = event.message.map(|message| {
+        truncate_text_bytes(message.as_str(), RUN_EVENT_MESSAGE_PREVIEW_LIMIT_BYTES)
+            .unwrap_or(message)
+    });
+    event.payload = event
+        .payload
+        .map(|value| truncate_json_value(value, RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES));
+    event
+}
+
+fn paginate_run_events(
+    events: Vec<crate::models::TaskRunEventRecord>,
+    limit: usize,
+    offset: usize,
+) -> (Vec<ChatosMessageTaskRunEvent>, usize, bool) {
+    let total = events.len();
+    let items = events
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(trim_event_for_chatos_detail)
+        .map(ChatosMessageTaskRunEvent::from)
+        .collect::<Vec<_>>();
+    let has_more = offset.saturating_add(items.len()) < total;
+    (items, total, has_more)
+}
+
 async fn list_chatos_message_tasks(
     State(state): State<AppState>,
     Query(query): Query<ChatosMessageTaskQuery>,
@@ -250,10 +356,11 @@ async fn get_chatos_message_graph(
 async fn get_chatos_message_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
-    Query(query): Query<ChatosMessageTaskQuery>,
+    Query(query): Query<ChatosMessageRunQuery>,
 ) -> Result<Json<ChatosMessageRunDetail>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
-        validate_chatos_message_query(&query)?;
+        validate_chatos_message_query(&query.source)?;
+    let (event_limit, event_offset) = run_event_page(&query);
     let run = state
         .run_service
         .get_run(run_id.trim())
@@ -276,6 +383,8 @@ async fn get_chatos_message_run(
         .list_run_events(run.id.as_str())
         .await
         .map_err(InternalApiError::internal)?;
+    let (events, events_total, events_has_more) =
+        paginate_run_events(events, event_limit, event_offset);
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())
@@ -284,22 +393,24 @@ async fn get_chatos_message_run(
         .map(ChatosMessageModelConfigSummary::from);
     Ok(Json(ChatosMessageRunDetail {
         task,
-        run: ChatosMessageTaskRun::from(run),
+        run: ChatosMessageTaskRun::from(trim_run_for_chatos_detail(run)),
         model_config,
-        events: events
-            .into_iter()
-            .map(ChatosMessageTaskRunEvent::from)
-            .collect(),
+        events,
+        events_total,
+        events_limit: event_limit,
+        events_offset: event_offset,
+        events_has_more,
     }))
 }
 
 async fn get_chatos_message_graph_run(
     Path(run_id): Path<String>,
     State(state): State<AppState>,
-    Query(query): Query<ChatosMessageTaskQuery>,
+    Query(query): Query<ChatosMessageRunQuery>,
 ) -> Result<Json<ChatosMessageRunDetail>, InternalApiError> {
     let (source_session_id, source_user_message_id, source_turn_id) =
-        validate_chatos_message_query(&query)?;
+        validate_chatos_message_query(&query.source)?;
+    let (event_limit, event_offset) = run_event_page(&query);
     let run = state
         .run_service
         .get_run(run_id.trim())
@@ -326,6 +437,8 @@ async fn get_chatos_message_graph_run(
         .list_run_events(run.id.as_str())
         .await
         .map_err(InternalApiError::internal)?;
+    let (events, events_total, events_has_more) =
+        paginate_run_events(events, event_limit, event_offset);
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())
@@ -334,11 +447,12 @@ async fn get_chatos_message_graph_run(
         .map(ChatosMessageModelConfigSummary::from);
     Ok(Json(ChatosMessageRunDetail {
         task,
-        run: ChatosMessageTaskRun::from(run),
+        run: ChatosMessageTaskRun::from(trim_run_for_chatos_detail(run)),
         model_config,
-        events: events
-            .into_iter()
-            .map(ChatosMessageTaskRunEvent::from)
-            .collect(),
+        events,
+        events_total,
+        events_limit: event_limit,
+        events_offset: event_offset,
+        events_has_more,
     }))
 }

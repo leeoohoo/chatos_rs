@@ -109,6 +109,13 @@ pub(super) fn work_item_from_row(row: &SqliteRow) -> ProjectWorkItemRecord {
         .unwrap_or_else(|| "[]".to_string());
     let task_runner_enabled_tool_ids =
         serde_json::from_str::<Vec<String>>(&task_runner_enabled_tool_ids_json).unwrap_or_default();
+    let task_runner_skill_ids_json = row
+        .try_get::<Option<String>, _>("task_runner_skill_ids_json")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "[]".to_string());
+    let task_runner_skill_ids =
+        serde_json::from_str::<Vec<String>>(&task_runner_skill_ids_json).unwrap_or_default();
     ProjectWorkItemRecord {
         id: row.get("id"),
         project_id: row.get("project_id"),
@@ -121,6 +128,7 @@ pub(super) fn work_item_from_row(row: &SqliteRow) -> ProjectWorkItemRecord {
             .flatten()
             .unwrap_or_default(),
         task_runner_enabled_tool_ids,
+        task_runner_skill_ids,
         status: ProjectWorkItemStatus::from_db(row.get::<String, _>("status").as_str()),
         priority: row.get("priority"),
         assignee_user_id: row.get("assignee_user_id"),

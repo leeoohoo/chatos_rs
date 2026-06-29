@@ -39,6 +39,10 @@ use super::runs::{
     cancel_run, get_run, list_run_events, list_run_index, list_run_summaries, list_runs,
     list_runs_page, list_task_runs, retry_run, start_task_run, stream_run_events,
 };
+use super::skills::{
+    create_skill, delete_skill, get_skill, install_skill_from_marketplace, list_bundled_skills,
+    list_skills, search_skill_marketplace, update_skill,
+};
 use super::tasks::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
     delete_task, get_task, get_task_dependency_graph, get_task_index, get_task_memory_context,
@@ -156,6 +160,16 @@ pub fn build_router(state: AppState) -> Router {
             get(get_external_mcp_config)
                 .patch(update_external_mcp_config)
                 .delete(delete_external_mcp_config),
+        )
+        .route("/api/skills", get(list_skills).post(create_skill))
+        .route("/api/skills/bundled", get(list_bundled_skills))
+        .route(
+            "/api/skills/marketplace",
+            get(search_skill_marketplace).post(install_skill_from_marketplace),
+        )
+        .route(
+            "/api/skills/:id",
+            get(get_skill).patch(update_skill).delete(delete_skill),
         )
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))

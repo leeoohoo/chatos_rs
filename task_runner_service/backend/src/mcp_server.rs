@@ -1,6 +1,7 @@
 use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::services::{
-    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService, TaskService,
+    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService, SkillService,
+    TaskService,
 };
 
 mod access;
@@ -40,6 +41,7 @@ pub struct TaskRunnerMcpService {
     task_service: TaskService,
     model_config_service: ModelConfigService,
     external_mcp_config_service: ExternalMcpConfigService,
+    skill_service: SkillService,
     run_service: RunService,
     ask_user_prompt_service: AskUserPromptService,
     mcp_catalog_service: McpCatalogService,
@@ -50,6 +52,7 @@ impl TaskRunnerMcpService {
         task_service: TaskService,
         model_config_service: ModelConfigService,
         external_mcp_config_service: ExternalMcpConfigService,
+        skill_service: SkillService,
         run_service: RunService,
         ask_user_prompt_service: AskUserPromptService,
         mcp_catalog_service: McpCatalogService,
@@ -58,6 +61,7 @@ impl TaskRunnerMcpService {
             task_service,
             model_config_service,
             external_mcp_config_service,
+            skill_service,
             run_service,
             ask_user_prompt_service,
             mcp_catalog_service,

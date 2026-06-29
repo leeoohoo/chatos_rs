@@ -164,3 +164,82 @@ pub(super) fn project_management_skill_prefixed_input_item(
         }]
     }))
 }
+
+pub(super) async fn user_skill_prefixed_input_items(
+    service: &RunService,
+    task: &TaskRecord,
+    locale: BuiltinMcpPromptLocale,
+    workspace_dir: &str,
+) -> Vec<Value> {
+    let skill_contexts = match service
+        .runtime_skill_contexts_for_task(task, workspace_dir)
+        .await
+    {
+        Ok(skill_contexts) => skill_contexts,
+        Err(err) => {
+            warn!(
+                task_id = task.id.as_str(),
+                "failed to load user skills for task run: {err}"
+            );
+            return Vec::new();
+        }
+    };
+    user_skill_prefixed_input_item(skill_contexts.as_slice(), locale)
+        .into_iter()
+        .collect()
+}
+
+fn user_skill_prefixed_input_item(
+    skill_contexts: &[crate::services::RuntimeSkillContext],
+    locale: BuiltinMcpPromptLocale,
+) -> Option<Value> {
+    if skill_contexts.is_empty() {
+        return None;
+    }
+    let body = skill_contexts
+        .iter()
+        .filter_map(|context| {
+            let skill = &context.skill;
+            let content = skill.content.trim();
+            if content.is_empty() {
+                return None;
+            }
+            let asset_note = context
+                .package_runtime_path
+                .as_deref()
+                .map(|path| {
+                    format!(
+                        "\n\nAssets path: `{path}`\nPackage files: {} files, {} bytes.\nScripts and supporting files are available there, but Task Runner did not execute them during installation. Inspect scripts before running them.",
+                        skill.package_file_count, skill.package_total_bytes
+                    )
+                })
+                .unwrap_or_default();
+            Some(format!(
+                "## {} ({}, id: {}, locale: {}){}\n\n{}",
+                skill.display_name, skill.name, skill.id, skill.locale, asset_note, content
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    if body.trim().is_empty() {
+        return None;
+    }
+    let text = if locale.is_english() {
+        format!(
+            "[Task Runner Skills]\nTask Runner has loaded these skills for this run because they were explicitly selected on the task or are enabled with auto injection. Follow them when they are relevant to the task objective.\n\n{body}"
+        )
+    } else {
+        format!(
+            "[Task Runner Skills]\nTask Runner 已为本次运行加载以下 skills，因为它们被任务显式选择，或处于启用状态并开启了自动注入。当它们和任务目标相关时，请遵循这些说明。\n\n{body}"
+        )
+    };
+
+    Some(json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": text
+        }]
+    }))
+}

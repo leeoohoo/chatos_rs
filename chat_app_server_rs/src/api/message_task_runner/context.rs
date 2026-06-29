@@ -38,6 +38,8 @@ pub(super) struct MessageTaskRunnerLookupQuery {
     conversation_turn_id: Option<String>,
     source_turn_id: Option<String>,
     source_user_message_id: Option<String>,
+    event_limit: Option<usize>,
+    event_offset: Option<usize>,
 }
 
 impl MessageTaskRunnerLookupQuery {
@@ -61,6 +63,14 @@ impl MessageTaskRunnerLookupQuery {
     fn has_fallback_hints(&self) -> bool {
         self.session_hint().is_some()
             && (self.turn_hint().is_some() || self.source_user_message_hint().is_some())
+    }
+
+    pub(super) fn event_limit(&self) -> Option<usize> {
+        self.event_limit
+    }
+
+    pub(super) fn event_offset(&self) -> Option<usize> {
+        self.event_offset
     }
 }
 

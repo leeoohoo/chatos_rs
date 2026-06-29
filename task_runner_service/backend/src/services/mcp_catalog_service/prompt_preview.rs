@@ -59,6 +59,7 @@ impl McpCatalogService {
             workspace_dir: normalized_optional(request.workspace_dir),
             default_remote_server_id: normalized_optional(request.default_remote_server_id),
             external_mcp_config_ids: Vec::new(),
+            skill_ids: Vec::new(),
         };
         let selected_builtin_kinds = if enabled {
             selected_builtin_kinds(&mcp_config)

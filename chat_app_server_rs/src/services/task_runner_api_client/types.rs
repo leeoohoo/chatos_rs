@@ -35,6 +35,8 @@ pub struct TaskRunnerMcpConfigRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_dir: Option<String>,
     pub external_mcp_config_ids: Vec<String>,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -79,10 +81,20 @@ pub(super) struct TaskRunnerExternalMcpConfig {
     pub(super) enabled: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct TaskRunnerSkillListItem {
+    pub(super) id: String,
+    #[serde(default)]
+    pub(super) enabled: bool,
+    #[serde(default)]
+    pub(super) install_status: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TaskRunnerExecutionOptions {
     pub(super) builtin_tool_ids: BTreeSet<String>,
     pub(super) external_tool_ids: BTreeSet<String>,
+    pub(super) skill_ids: BTreeSet<String>,
 }
 
 impl TaskRunnerExecutionOptions {
@@ -110,7 +122,18 @@ impl TaskRunnerExecutionOptions {
             builtin_prompt_locale: None,
             workspace_dir: None,
             external_mcp_config_ids,
+            skill_ids: Vec::new(),
         })
+    }
+
+    pub fn validate_skill_ids(&self, values: Vec<String>) -> Result<Vec<String>, String> {
+        let values = normalize_id_list(values);
+        for value in &values {
+            if !self.skill_ids.contains(value.as_str()) {
+                return Err(format!("Task Runner Skill 不可用或无权限访问: {value}"));
+            }
+        }
+        Ok(values)
     }
 }
 
@@ -127,9 +150,13 @@ pub struct CancelTaskRunnerPromptRequest {
 }
 
 pub(super) fn normalize_tool_ids(values: &[String]) -> Vec<String> {
+    normalize_id_list(values.to_vec())
+}
+
+fn normalize_id_list(values: Vec<String>) -> Vec<String> {
     let mut out = values
-        .iter()
-        .filter_map(|value| normalize_optional(Some(value.clone())))
+        .into_iter()
+        .filter_map(|value| normalize_optional(Some(value)))
         .collect::<Vec<_>>();
     out.sort();
     out.dedup();

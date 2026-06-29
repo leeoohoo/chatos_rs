@@ -1,9 +1,10 @@
 use sqlx::{sqlite::SqliteRow, Row};
 
 use crate::models::{
+    skill_install_status_from_str, skill_scope_from_str, skill_source_from_str,
     task_project_status_from_str, AskUserPromptRecord, ExternalMcpConfigRecord, ModelConfigRecord,
-    RemoteServerRecord, RunSummaryRecord, RuntimeSettingsRecord, TaskProjectRecord, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord, UserRecord,
+    RemoteServerRecord, RunSummaryRecord, RuntimeSettingsRecord, SkillRecord, TaskProjectRecord,
+    TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord, UserRecord,
 };
 
 use super::codec::{
@@ -197,6 +198,46 @@ pub(super) fn external_mcp_config_from_row(
         owner_display_name: row.get("owner_display_name"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+    })
+}
+
+pub(super) fn skill_from_row(row: &SqliteRow) -> Result<SkillRecord, String> {
+    Ok(SkillRecord {
+        id: row.get("id"),
+        name: row.get("name"),
+        display_name: row.get("display_name"),
+        description: row.get("description"),
+        content: row.get("content"),
+        locale: row.get("locale"),
+        tags: decode_json(row.get("tags_json"))?,
+        source: skill_source_from_str(row.get::<String, _>("source").as_str()),
+        source_url: row.get("source_url"),
+        source_registry: row.get("source_registry"),
+        source_package_id: row.get("source_package_id"),
+        version: row.get("version"),
+        checksum: row.get("checksum"),
+        package_root: row.get("package_root"),
+        package_manifest: decode_json(row.get("package_manifest_json"))?,
+        package_file_count: row.get::<i64, _>("package_file_count") as usize,
+        package_total_bytes: row.get::<i64, _>("package_total_bytes") as u64,
+        source_repo: row.get("source_repo"),
+        source_ref: row.get("source_ref"),
+        source_path: row.get("source_path"),
+        install_status: skill_install_status_from_str(
+            row.get::<String, _>("install_status").as_str(),
+        ),
+        enabled: int_to_bool(row.get::<i64, _>("enabled")),
+        auto_inject: int_to_bool(row.get::<i64, _>("auto_inject")),
+        scope: skill_scope_from_str(row.get::<String, _>("scope").as_str()),
+        creator_user_id: row.get("creator_user_id"),
+        creator_username: row.get("creator_username"),
+        creator_display_name: row.get("creator_display_name"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+        installed_at: row.get("installed_at"),
     })
 }
 

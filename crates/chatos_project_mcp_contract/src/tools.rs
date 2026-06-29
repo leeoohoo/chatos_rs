@@ -5,8 +5,9 @@ pub const CREATE_REQUIREMENT: &str = "create_requirement";
 pub const UPDATE_REQUIREMENT: &str = "update_requirement";
 pub const DELETE_REQUIREMENT: &str = "delete_requirement";
 pub const SET_REQUIREMENT_DEPENDENCIES: &str = "set_requirement_dependencies";
-pub const UPSERT_REQUIREMENT_TECHNICAL_OVERVIEW: &str = "upsert_requirement_technical_overview";
-pub const GET_REQUIREMENT_TECHNICAL_OVERVIEW: &str = "get_requirement_technical_overview";
+pub const LIST_REQUIREMENT_TECHNICAL_DOCUMENTS: &str = "list_requirement_technical_documents";
+pub const GET_REQUIREMENT_TECHNICAL_DOCUMENT: &str = "get_requirement_technical_document";
+pub const UPSERT_REQUIREMENT_TECHNICAL_DOCUMENT: &str = "upsert_requirement_technical_document";
 pub const LIST_PROJECT_TASKS: &str = "list_project_tasks";
 pub const CREATE_PROJECT_TASK: &str = "create_project_task";
 pub const UPDATE_PROJECT_TASK: &str = "update_project_task";
@@ -22,8 +23,9 @@ pub const PROJECT_MANAGEMENT_SERVER_TOOL_NAMES: &[&str] = &[
     UPDATE_REQUIREMENT,
     DELETE_REQUIREMENT,
     SET_REQUIREMENT_DEPENDENCIES,
-    UPSERT_REQUIREMENT_TECHNICAL_OVERVIEW,
-    GET_REQUIREMENT_TECHNICAL_OVERVIEW,
+    LIST_REQUIREMENT_TECHNICAL_DOCUMENTS,
+    GET_REQUIREMENT_TECHNICAL_DOCUMENT,
+    UPSERT_REQUIREMENT_TECHNICAL_DOCUMENT,
     LIST_PROJECT_TASKS,
     CREATE_PROJECT_TASK,
     UPDATE_PROJECT_TASK,
@@ -39,8 +41,9 @@ pub const TASK_RUNNER_BUILTIN_TOOL_NAMES: &[&str] = &[
     CREATE_REQUIREMENT,
     UPDATE_REQUIREMENT,
     SET_REQUIREMENT_DEPENDENCIES,
-    UPSERT_REQUIREMENT_TECHNICAL_OVERVIEW,
-    GET_REQUIREMENT_TECHNICAL_OVERVIEW,
+    LIST_REQUIREMENT_TECHNICAL_DOCUMENTS,
+    GET_REQUIREMENT_TECHNICAL_DOCUMENT,
+    UPSERT_REQUIREMENT_TECHNICAL_DOCUMENT,
     LIST_PROJECT_TASKS,
     CREATE_PROJECT_TASK,
     UPDATE_PROJECT_TASK,

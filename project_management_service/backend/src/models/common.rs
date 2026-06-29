@@ -20,8 +20,8 @@ pub fn validate_required(field: &str, value: &str) -> Result<(), String> {
     }
 }
 
-pub fn work_item_requires_technical_overview_message() -> String {
-    "创建项目任务前，请先填写该需求的实现技术总体文档内容".to_string()
+pub fn work_item_requires_technical_document_message() -> String {
+    "创建项目任务前，请先填写该需求的技术文档内容".to_string()
 }
 
 pub trait DbStatus: Sized {

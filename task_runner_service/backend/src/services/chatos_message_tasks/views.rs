@@ -117,6 +117,10 @@ pub struct ChatosMessageRunDetail {
     pub run: ChatosMessageTaskRun,
     pub model_config: Option<ChatosMessageModelConfigSummary>,
     pub events: Vec<ChatosMessageTaskRunEvent>,
+    pub events_total: usize,
+    pub events_limit: usize,
+    pub events_offset: usize,
+    pub events_has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

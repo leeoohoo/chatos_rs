@@ -10,6 +10,7 @@ import type {
   CreateUserPayload,
   CurrentUserResponse,
   HealthResponse,
+  InstallSkillPayload,
   LoginPayload,
   LoginResponse,
   ExternalMcpConfigRecord,
@@ -29,10 +30,15 @@ import type {
   RemoteServerRecord,
   RemoteServerTestResponse,
   StartTaskRunPayload,
+  CreateSkillPayload,
   SubmitAskUserPromptPayload,
   RunSummaryRecord,
   RunListFilters,
   TaskStatsResponse,
+  SkillListFilters,
+  SkillMarketplaceEntry,
+  SkillMarketplaceQuery,
+  SkillRecord,
   TaskIndexResponse,
   TaskRunnerInternalPromptPreviewResponse,
   TaskRunnerSkillResponse,
@@ -64,6 +70,7 @@ import type {
   UpdateExternalMcpConfigPayload,
   UpdateRemoteServerPayload,
   UpdateRuntimeSettingsPayload,
+  UpdateSkillPayload,
   UpdateTaskPayload,
   UpdateUserPayload,
   SystemConfigResponse,
@@ -301,6 +308,48 @@ export const api = {
   deleteExternalMcpConfig: (id: string) =>
     request<void>(`/api/external-mcp-configs/${id}`, {
       method: 'DELETE',
+    }),
+  listSkills: (filters?: SkillListFilters) =>
+    request<SkillRecord[]>(
+      withQuery('/api/skills', {
+        keyword: filters?.keyword,
+        enabled: filters?.enabled === undefined ? undefined : String(filters.enabled),
+        auto_inject:
+          filters?.auto_inject === undefined ? undefined : String(filters.auto_inject),
+        source: filters?.source,
+        locale: filters?.locale,
+      }),
+    ),
+  listBundledSkills: () => request<SkillRecord[]>('/api/skills/bundled'),
+  getSkill: (id: string) => request<SkillRecord>(`/api/skills/${id}`),
+  createSkill: (payload: CreateSkillPayload) =>
+    request<SkillRecord>('/api/skills', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateSkill: (id: string, payload: UpdateSkillPayload) =>
+    request<SkillRecord>(`/api/skills/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteSkill: (id: string) =>
+    request<void>(`/api/skills/${id}`, {
+      method: 'DELETE',
+    }),
+  searchSkillMarketplace: (query?: SkillMarketplaceQuery) =>
+    request<PaginatedResponse<SkillMarketplaceEntry>>(
+      withQuery('/api/skills/marketplace', {
+        keyword: query?.keyword,
+        locale: query?.locale,
+        tag: query?.tag,
+        limit: query?.limit === undefined ? undefined : String(query.limit),
+        offset: query?.offset === undefined ? undefined : String(query.offset),
+      }),
+    ),
+  installSkillFromMarketplace: (payload: InstallSkillPayload) =>
+    request<SkillRecord>('/api/skills/marketplace', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
   listRuns: (filters?: RunListFilters) =>
     request<TaskRunRecord[]>(

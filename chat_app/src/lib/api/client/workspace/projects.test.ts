@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   getProjectContactLock,
   getProjectPlan,
+  listProjectRequirementDocuments,
   listProjectRequirementWorkItems,
 } from './projects';
 
@@ -33,6 +34,16 @@ describe('workspace project api helpers', () => {
 
     expect(request).toHaveBeenCalledWith(
       '/projects/project%201/requirements/req%2F1/work-items?include_dependency_graph=true',
+    );
+  });
+
+  it('loads requirement documents through the project-scoped endpoint', async () => {
+    const request = vi.fn().mockResolvedValue([]);
+
+    await listProjectRequirementDocuments(request as never, 'project 1', 'req/1');
+
+    expect(request).toHaveBeenCalledWith(
+      '/projects/project%201/requirements/req%2F1/documents',
     );
   });
 });

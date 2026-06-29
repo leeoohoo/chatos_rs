@@ -9,7 +9,11 @@ impl RunService {
         effective_workspace_dir: &str,
     ) {
         let report_json = serde_json::to_value(&report).ok();
-        let result_summary = summarized_report_content(&report.content);
+        let existing_task = self.store.get_task(&task.id).await.ok().flatten();
+        let task_already_succeeded = existing_task
+            .as_ref()
+            .is_some_and(|task| task.status == TaskStatus::Succeeded);
+        let mut result_summary = summarized_report_content(&report.content);
         run.updated_at = now_rfc3339();
         run.finished_at = Some(report.completed_at.clone());
         run.result_summary = result_summary.clone();
@@ -22,6 +26,15 @@ impl RunService {
             chatos_ai_runtime::AiTurnStatus::Failed => TaskRunStatus::Failed,
             chatos_ai_runtime::AiTurnStatus::Aborted => TaskRunStatus::Cancelled,
         };
+        if task_already_succeeded && run.status != TaskRunStatus::Succeeded {
+            run.status = TaskRunStatus::Succeeded;
+            run.error_message = None;
+            result_summary = existing_task
+                .as_ref()
+                .and_then(|task| task.result_summary.clone())
+                .or_else(|| Some("任务已通过 TaskManager 标记为成功。".to_string()));
+            run.result_summary = result_summary.clone();
+        }
         if let Err(err) = self.store.save_run(run.clone()).await {
             warn!("failed to persist completed task run {}: {}", run.id, err);
         }
@@ -50,7 +63,7 @@ impl RunService {
         }
 
         let mut task_already_cancelled = false;
-        if let Ok(Some(mut task_record)) = self.store.get_task(&task.id).await {
+        if let Some(mut task_record) = existing_task {
             task_already_cancelled = task_record.status == TaskStatus::Cancelled;
             if !task_already_cancelled {
                 task_record.status = match run.status {
@@ -74,7 +87,48 @@ impl RunService {
         self.cleanup_task_terminals(task, run, effective_workspace_dir)
             .await;
         self.maybe_trigger_auto_memory_summary(task, run).await;
+        self.spawn_chatos_async_followup_dispatch(task, run);
         self.store.clear_cancel_requested(&run.id);
+    }
+
+    fn spawn_chatos_async_followup_dispatch(&self, task: &TaskRecord, run: &TaskRunRecord) {
+        if run.status != TaskRunStatus::Succeeded {
+            return;
+        }
+        let service = self.clone();
+        let task = task.clone();
+        let run_id = run.id.clone();
+        crate::auth::spawn_with_current_access_token(async move {
+            service
+                .dispatch_chatos_async_followup_tasks(task, run_id)
+                .await;
+        });
+    }
+
+    async fn dispatch_chatos_async_followup_tasks(&self, task: TaskRecord, run_id: String) {
+        match self
+            .dispatch_ready_chatos_async_tasks_for_source_task(&task)
+            .await
+        {
+            Ok(runs) => {
+                if !runs.is_empty() {
+                    info!(
+                        task_id = task.id.as_str(),
+                        run_id = run_id.as_str(),
+                        dispatched_count = runs.len(),
+                        "task runner dispatched ready Chatos async follow-up tasks"
+                    );
+                }
+            }
+            Err(err) => {
+                warn!(
+                    task_id = task.id.as_str(),
+                    run_id = run_id.as_str(),
+                    error = err.as_str(),
+                    "task runner failed to dispatch Chatos async follow-up tasks"
+                );
+            }
+        }
     }
 
     async fn maybe_trigger_auto_memory_summary(&self, task: &TaskRecord, run: &mut TaskRunRecord) {
@@ -259,6 +313,63 @@ mod tests {
             .expect("get run")
             .expect("run");
         assert_eq!(saved_run.status, TaskRunStatus::Succeeded);
+
+        let saved_parent = task_service
+            .get_task(parent.id.as_str())
+            .await
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn aborted_report_does_not_downgrade_already_succeeded_task() {
+        let (task_service, run_service) = test_services().await;
+        let mut parent = create_task(&task_service, "parent", TaskStatus::Succeeded).await;
+        parent.result_summary = Some("completed by task manager".to_string());
+        run_service
+            .store
+            .save_task(parent.clone())
+            .await
+            .expect("save succeeded parent");
+
+        let mut run = run_record(&parent);
+        run_service
+            .store
+            .save_run(run.clone())
+            .await
+            .expect("save run");
+        let report = TaskRunReport {
+            task_id: parent.id.clone(),
+            run_id: run.id.clone(),
+            model_config_id: Some(run.model_config_id.clone()),
+            status: AiTurnStatus::Aborted,
+            content: None,
+            reasoning: None,
+            error: Some("aborted".to_string()),
+            tool_calls: None,
+            finish_reason: None,
+            usage: None,
+            response_id: None,
+            completed_at: now_rfc3339(),
+        };
+
+        run_service
+            .finalize_model_phase(&parent, &mut run, report, ".")
+            .await;
+
+        let saved_run = run_service
+            .store
+            .get_run(run.id.as_str())
+            .await
+            .expect("get run")
+            .expect("run");
+        assert_eq!(saved_run.status, TaskRunStatus::Succeeded);
+        assert_eq!(
+            saved_run.result_summary.as_deref(),
+            Some("completed by task manager")
+        );
+        assert_eq!(saved_run.error_message, None);
 
         let saved_parent = task_service
             .get_task(parent.id.as_str())

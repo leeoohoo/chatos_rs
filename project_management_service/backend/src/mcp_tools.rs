@@ -1,12 +1,13 @@
 use chatos_project_mcp_contract::{
     args::{
         CreateProjectTaskArgs, CreateRequirementArgs, InitProjectArgs, ListProjectTasksArgs,
-        ListRequirementsArgs, ProjectTaskIdArgs, ProjectTaskStatus as McpProjectTaskStatus,
-        RequirementIdArgs, RequirementStatus as McpRequirementStatus,
+        ListRequirementTechnicalDocumentsArgs, ListRequirementsArgs, ProjectTaskIdArgs,
+        ProjectTaskStatus as McpProjectTaskStatus, RequirementIdArgs,
+        RequirementStatus as McpRequirementStatus, RequirementTechnicalDocumentIdArgs,
         RequirementType as McpRequirementType, SetProjectTaskDependenciesArgs,
         SetRequirementDependenciesArgs, ToolCallParams, UpdateProjectTaskArgs,
         UpdateProjectTaskPatch, UpdateRequirementArgs, UpdateRequirementPatch,
-        UpsertTechnicalOverviewArgs,
+        UpsertRequirementTechnicalDocumentArgs,
     },
     tools,
 };
@@ -231,8 +232,29 @@ async fn call_tool(
                 .await?;
             Ok(tool_text_result(json!(dependencies)))
         }
-        tools::UPSERT_REQUIREMENT_TECHNICAL_OVERVIEW => {
-            let args: UpsertTechnicalOverviewArgs = decode_value(params.arguments)?;
+        tools::LIST_REQUIREMENT_TECHNICAL_DOCUMENTS => {
+            let args: ListRequirementTechnicalDocumentsArgs = decode_value(params.arguments)?;
+            require_requirement_in_project(state, &args.requirement_id, project_id, current_user)
+                .await?;
+            let docs = state
+                .store
+                .list_requirement_documents(&args.requirement_id, args.doc_type)
+                .await?;
+            Ok(tool_text_result(json!(docs)))
+        }
+        tools::GET_REQUIREMENT_TECHNICAL_DOCUMENT => {
+            let args: RequirementTechnicalDocumentIdArgs = decode_value(params.arguments)?;
+            require_requirement_in_project(state, &args.requirement_id, project_id, current_user)
+                .await?;
+            let doc = state
+                .store
+                .get_requirement_document_by_id(&args.requirement_id, &args.document_id)
+                .await?
+                .ok_or_else(|| format!("需求技术文档不存在: {}", args.document_id))?;
+            Ok(tool_text_result(json!(doc)))
+        }
+        tools::UPSERT_REQUIREMENT_TECHNICAL_DOCUMENT => {
+            let args: UpsertRequirementTechnicalDocumentArgs = decode_value(params.arguments)?;
             let requirement = require_requirement_in_project(
                 state,
                 &args.requirement_id,
@@ -243,28 +265,35 @@ async fn call_tool(
             let project =
                 require_project_access(state, &requirement.project_id, current_user).await?;
             ensure_project_writable(&project)?;
-            let doc = state
-                .store
-                .upsert_requirement_document(
-                    &args.requirement_id,
-                    UpsertRequirementDocumentRequest {
-                        title: args.title,
-                        format: args.format,
-                        content: args.content,
-                    },
-                    current_user,
-                )
-                .await?;
-            Ok(tool_text_result(json!(doc)))
-        }
-        tools::GET_REQUIREMENT_TECHNICAL_OVERVIEW => {
-            let args: RequirementIdArgs = decode_value(params.arguments)?;
-            require_requirement_in_project(state, &args.requirement_id, project_id, current_user)
-                .await?;
-            let doc = state
-                .store
-                .get_requirement_document(&args.requirement_id)
-                .await?;
+            let doc = if let Some(document_id) = normalized_optional(args.document_id) {
+                state
+                    .store
+                    .update_requirement_document(
+                        &args.requirement_id,
+                        &document_id,
+                        UpdateRequirementDocumentRequest {
+                            doc_type: args.doc_type,
+                            title: args.title,
+                            format: args.format,
+                            content: Some(args.content),
+                        },
+                    )
+                    .await?
+            } else {
+                state
+                    .store
+                    .create_requirement_document(
+                        &args.requirement_id,
+                        UpsertRequirementDocumentRequest {
+                            doc_type: args.doc_type,
+                            title: args.title,
+                            format: args.format,
+                            content: args.content,
+                        },
+                        current_user,
+                    )
+                    .await?
+            };
             Ok(tool_text_result(json!(doc)))
         }
         tools::LIST_PROJECT_TASKS => {
@@ -309,6 +338,8 @@ async fn call_tool(
             let task_runner_enabled_tool_ids =
                 task_runner_api_client::normalize_tool_ids(args.task_runner_enabled_tool_ids)?;
             let _ = execution_options.mcp_config_for_tool_ids(&task_runner_enabled_tool_ids)?;
+            let task_runner_skill_ids =
+                execution_options.validate_skill_ids(args.task_runner_skill_ids)?;
             let item = state
                 .store
                 .create_work_item(
@@ -318,6 +349,7 @@ async fn call_tool(
                         description: args.description,
                         task_runner_default_model_config_id,
                         task_runner_enabled_tool_ids,
+                        task_runner_skill_ids,
                         status,
                         priority: args.priority,
                         assignee_user_id: args.assignee_user_id,

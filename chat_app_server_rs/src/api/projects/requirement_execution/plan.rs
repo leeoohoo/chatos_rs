@@ -69,6 +69,9 @@ pub(in crate::api::projects) fn parse_work_items(values: Vec<Value>) -> Vec<Work
                 )
                 .or_else(|| value_string_vec(&value, "taskRunnerEnabledToolIds"))
                 .unwrap_or_default(),
+                task_runner_skill_ids: value_string_vec(&value, "task_runner_skill_ids")
+                    .or_else(|| value_string_vec(&value, "taskRunnerSkillIds"))
+                    .unwrap_or_default(),
                 status: value_string(&value, "status")
                     .unwrap_or_default()
                     .to_ascii_lowercase(),
@@ -81,9 +84,10 @@ pub(in crate::api::projects) fn parse_work_items(values: Vec<Value>) -> Vec<Work
         .collect()
 }
 
-pub(in crate::api::projects) fn collect_requirement_scope(
+pub(in crate::api::projects) fn collect_downstream_requirement_scope(
     items: &[RequirementPlanItem],
     root_id: &str,
+    dependency_map: &BTreeMap<String, Vec<String>>,
 ) -> BTreeSet<String> {
     let mut scope = BTreeSet::from([root_id.to_string()]);
     loop {
@@ -97,11 +101,49 @@ pub(in crate::api::projects) fn collect_requirement_scope(
                 scope.insert(item.id.clone());
             }
         }
+        for (requirement_id, prerequisite_ids) in dependency_map {
+            if prerequisite_ids
+                .iter()
+                .any(|prerequisite_id| scope.contains(prerequisite_id))
+            {
+                scope.insert(requirement_id.clone());
+            }
+        }
         if scope.len() == before {
             break;
         }
     }
     scope
+}
+
+pub(in crate::api::projects) fn add_requirement_work_item_dependencies(
+    dependency_map: &mut BTreeMap<String, Vec<String>>,
+    work_items: &[WorkItemPlanItem],
+    requirement_dependency_map: &BTreeMap<String, Vec<String>>,
+    requirement_scope: &BTreeSet<String>,
+) {
+    for work_item in work_items {
+        for prerequisite_requirement_id in requirement_dependency_map
+            .get(work_item.requirement_id.as_str())
+            .into_iter()
+            .flatten()
+            .filter(|requirement_id| requirement_scope.contains(requirement_id.as_str()))
+        {
+            for prerequisite_item in work_items.iter().filter(|candidate| {
+                candidate.requirement_id == *prerequisite_requirement_id
+                    && candidate.id != work_item.id
+            }) {
+                dependency_map
+                    .entry(work_item.id.clone())
+                    .or_default()
+                    .push(prerequisite_item.id.clone());
+            }
+        }
+    }
+    for deps in dependency_map.values_mut() {
+        deps.sort();
+        deps.dedup();
+    }
 }
 
 pub(in crate::api::projects) fn validate_requirement_prerequisites(
@@ -147,36 +189,6 @@ pub(in crate::api::projects) fn validate_requirement_prerequisites(
         "存在未完成的前置需求，无法执行：{}",
         blockers.join("；")
     )))
-}
-
-pub(in crate::api::projects) fn add_requirement_work_item_dependencies(
-    dependency_map: &mut BTreeMap<String, Vec<String>>,
-    work_items: &[WorkItemPlanItem],
-    requirement_dependency_map: &BTreeMap<String, Vec<String>>,
-    requirement_scope: &BTreeSet<String>,
-) {
-    for work_item in work_items {
-        for prerequisite_requirement_id in requirement_dependency_map
-            .get(work_item.requirement_id.as_str())
-            .into_iter()
-            .flatten()
-            .filter(|requirement_id| requirement_scope.contains(requirement_id.as_str()))
-        {
-            for prerequisite_item in work_items.iter().filter(|candidate| {
-                candidate.requirement_id == *prerequisite_requirement_id
-                    && candidate.id != work_item.id
-            }) {
-                dependency_map
-                    .entry(work_item.id.clone())
-                    .or_default()
-                    .push(prerequisite_item.id.clone());
-            }
-        }
-    }
-    for deps in dependency_map.values_mut() {
-        deps.sort();
-        deps.dedup();
-    }
 }
 
 pub(in crate::api::projects) fn topological_work_item_order(
@@ -248,6 +260,50 @@ pub(in crate::api::projects) fn requirement_dependency_map(
         deps.dedup();
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn requirement(id: &str, parent_requirement_id: Option<&str>) -> RequirementPlanItem {
+        RequirementPlanItem {
+            id: id.to_string(),
+            title: id.to_string(),
+            status: "approved".to_string(),
+            parent_requirement_id: parent_requirement_id.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn downstream_scope_includes_children_and_dependents_without_parents() {
+        let requirements = vec![
+            requirement("parent", None),
+            requirement("child", Some("parent")),
+            requirement("grandchild", Some("child")),
+            requirement("dependent", None),
+            requirement("dependent-child", Some("dependent")),
+            requirement("after-dependent", None),
+            requirement("sibling", Some("parent")),
+            requirement("prerequisite", None),
+        ];
+        let dependency_map = BTreeMap::from([
+            ("child".to_string(), vec!["prerequisite".to_string()]),
+            ("dependent".to_string(), vec!["child".to_string()]),
+            ("after-dependent".to_string(), vec!["dependent".to_string()]),
+        ]);
+
+        let scope = collect_downstream_requirement_scope(&requirements, "child", &dependency_map);
+
+        assert!(scope.contains("child"));
+        assert!(scope.contains("grandchild"));
+        assert!(scope.contains("dependent"));
+        assert!(scope.contains("dependent-child"));
+        assert!(scope.contains("after-dependent"));
+        assert!(!scope.contains("parent"));
+        assert!(!scope.contains("sibling"));
+        assert!(!scope.contains("prerequisite"));
+    }
 }
 
 pub(in crate::api::projects) fn work_item_dependency_map(

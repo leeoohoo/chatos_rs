@@ -1,6 +1,7 @@
 use axum::{extract::Path, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::Config;
 use crate::core::auth::AuthUser;
@@ -8,9 +9,9 @@ use crate::core::project_access::ensure_owned_project;
 use crate::services::{access_token_scope, project_management_api_client, task_runner_api_client};
 
 use super::requirement_execution::{
-    add_requirement_work_item_dependencies, collect_requirement_scope,
+    add_requirement_work_item_dependencies, collect_downstream_requirement_scope,
     create_and_start_execution_tasks, create_execution_message,
-    ensure_requirement_execution_not_active, load_execution_links_for_work_items,
+    ensure_requirement_execution_not_active, is_done_status, load_execution_links_for_work_items,
     load_external_prerequisite_task_ids, load_task_runner_builtin_prompt_locale,
     mark_execution_messages_for_stop, parse_requirements, parse_work_items,
     persist_execution_message_links, project_plan_array, project_plan_value,
@@ -114,10 +115,14 @@ async fn execute_requirement_inner(
     else {
         return Err(HandlerError::not_found("需求不存在"));
     };
-    let requirement_scope = collect_requirement_scope(&requirement_items, requirement_id.as_str());
     let all_work_items = parse_work_items(project_plan_array(&plan, "work_items", "workItems"));
     let dependency_graph = project_plan_value(&plan, "dependency_graph", "dependencyGraph");
     let requirement_dependency_map = requirement_dependency_map(&dependency_graph);
+    let requirement_scope = collect_downstream_requirement_scope(
+        &requirement_items,
+        requirement_id.as_str(),
+        &requirement_dependency_map,
+    );
     validate_requirement_prerequisites(
         &requirement_items,
         &requirement_scope,
@@ -129,6 +134,7 @@ async fn execute_requirement_inner(
         .cloned()
         .filter(|item| requirement_scope.contains(item.requirement_id.as_str()))
         .filter(|item| item.status != "archived")
+        .filter(|item| !is_done_status(item.status.as_str()))
         .collect::<Vec<_>>();
     add_requirement_work_item_dependencies(
         &mut dependency_map,
@@ -145,7 +151,9 @@ async fn execute_requirement_inner(
             .then_with(|| left.id.cmp(&right.id))
     });
     if selected_work_items.is_empty() {
-        return Err(HandlerError::bad_request("该需求下没有可执行的项目任务"));
+        return Err(HandlerError::bad_request(
+            "该需求及其向下关联范围内没有需要执行的未完成项目任务",
+        ));
     }
     let contact_runtime = select_contact_runtime(
         &auth,
@@ -214,16 +222,22 @@ async fn execute_requirement_inner(
     let builtin_prompt_locale =
         load_task_runner_builtin_prompt_locale(auth.user_id.as_str()).await?;
 
-    sync_requirement_execution_state(
-        cfg.project_service_base_url.as_str(),
-        project_sync_secret.as_str(),
-        root_requirement.id.as_str(),
-        Some("in_progress"),
-        Vec::new(),
-        None,
-        false,
-    )
-    .await?;
+    let mut executing_requirement_ids = BTreeSet::from([root_requirement.id.clone()]);
+    for item in &selected_work_items {
+        executing_requirement_ids.insert(item.requirement_id.clone());
+    }
+    for executing_requirement_id in &executing_requirement_ids {
+        sync_requirement_execution_state(
+            cfg.project_service_base_url.as_str(),
+            project_sync_secret.as_str(),
+            executing_requirement_id.as_str(),
+            Some("in_progress"),
+            Vec::new(),
+            None,
+            false,
+        )
+        .await?;
+    }
 
     let created_tasks = create_and_start_execution_tasks(
         cfg,
@@ -325,7 +339,13 @@ async fn stop_requirement_execution_inner(
     else {
         return Err(HandlerError::not_found("需求不存在"));
     };
-    let requirement_scope = collect_requirement_scope(&requirement_items, requirement_id.as_str());
+    let dependency_graph = project_plan_value(&plan, "dependency_graph", "dependencyGraph");
+    let requirement_dependency_map = requirement_dependency_map(&dependency_graph);
+    let requirement_scope = collect_downstream_requirement_scope(
+        &requirement_items,
+        requirement_id.as_str(),
+        &requirement_dependency_map,
+    );
     let selected_work_items =
         parse_work_items(project_plan_array(&plan, "work_items", "workItems"))
             .into_iter()
@@ -429,20 +449,48 @@ async fn stop_requirement_execution_inner(
         ));
     }
 
-    let work_item_ids = selected_work_items
-        .iter()
-        .map(|item| item.id.clone())
+    let mut work_item_ids_by_requirement = BTreeMap::<String, Vec<String>>::new();
+    for item in &selected_work_items {
+        work_item_ids_by_requirement
+            .entry(item.requirement_id.clone())
+            .or_default()
+            .push(item.id.clone());
+    }
+    let work_item_ids = work_item_ids_by_requirement
+        .values()
+        .flat_map(|ids| ids.iter().cloned())
         .collect::<Vec<_>>();
-    sync_requirement_execution_state(
-        cfg.project_service_base_url.as_str(),
-        project_sync_secret.as_str(),
-        root_requirement.id.as_str(),
-        Some("approved"),
-        work_item_ids.clone(),
-        Some("ready"),
-        true,
-    )
-    .await?;
+    let requirement_status_by_id = requirement_items
+        .iter()
+        .map(|item| (item.id.as_str(), item.status.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut reset_requirement_ids = BTreeSet::new();
+    if root_requirement.status == "in_progress" {
+        reset_requirement_ids.insert(root_requirement.id.clone());
+    }
+    for item in &selected_work_items {
+        if requirement_status_by_id
+            .get(item.requirement_id.as_str())
+            .is_some_and(|status| *status == "in_progress")
+        {
+            reset_requirement_ids.insert(item.requirement_id.clone());
+        }
+    }
+    for reset_requirement_id in &reset_requirement_ids {
+        let requirement_work_item_ids = work_item_ids_by_requirement
+            .remove(reset_requirement_id.as_str())
+            .unwrap_or_default();
+        sync_requirement_execution_state(
+            cfg.project_service_base_url.as_str(),
+            project_sync_secret.as_str(),
+            reset_requirement_id.as_str(),
+            Some("approved"),
+            requirement_work_item_ids,
+            Some("ready"),
+            true,
+        )
+        .await?;
+    }
     mark_execution_messages_for_stop(&active_links, "stopped").await;
 
     Ok(json!({

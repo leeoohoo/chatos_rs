@@ -44,6 +44,17 @@ const relationshipTone = (graphNode: PositionedTaskNode['data']['graphNode']): s
   return 'border-border bg-muted/60 text-muted-foreground';
 };
 
+const displayStatusForTask = (
+  task: PositionedTaskNode['data']['graphNode']['task'],
+  prerequisiteCount: number,
+): string | null | undefined => {
+  const status = readString(task.status)?.toLowerCase();
+  if (prerequisiteCount > 0 && (status === 'ready' || status === 'queued')) {
+    return 'waiting_prerequisite';
+  }
+  return task.status;
+};
+
 const cardTone = (graphNode: PositionedTaskNode['data']['graphNode']): string => {
   if (graphNode.is_current_message) {
     return 'border-primary/35 bg-[linear-gradient(180deg,rgba(239,246,255,0.98),rgba(255,255,255,0.96))] shadow-[0_14px_38px_-28px_rgba(37,99,235,0.95)] dark:bg-[linear-gradient(180deg,rgba(30,41,59,0.98),rgba(15,23,42,0.94))]';
@@ -74,6 +85,7 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
   const prerequisiteCount = Array.isArray(task.prerequisite_task_ids)
     ? task.prerequisite_task_ids.length
     : 0;
+  const displayStatus = displayStatusForTask(task, prerequisiteCount);
   const sourceUserMessageId = readString(task.source_user_message_id);
   const showSourceHint = sourceUserMessageId && sourceUserMessageId !== currentSourceUserMessageId;
 
@@ -107,7 +119,7 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
           <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
             深度 {graphNode.depth}
           </span>
-          <StatusBadge status={task.status} />
+          <StatusBadge status={displayStatus} />
         </div>
 
         <div className="mt-3 min-h-0 flex-1 overflow-hidden">

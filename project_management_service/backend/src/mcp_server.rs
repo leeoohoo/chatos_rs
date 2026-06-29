@@ -72,6 +72,7 @@ pub fn tool_definitions_with_execution_options(
             model_config_ids: options.model_config_ids(),
             default_model_config_id: None,
             tool_ids: options.tool_ids(),
+            skill_ids: options.skill_ids(),
         });
     schemas::project_management_server_tool_definitions(execution_options.as_ref())
 }
@@ -260,6 +261,7 @@ mod tests {
             ["model-1"],
             ["CodeMaintainerRead", "TerminalController"],
             ["external-tool-1"],
+            ["skill-1"],
         );
         let tools = tool_definitions_with_execution_options(Some(&execution_options));
         let create_task = tools
@@ -301,6 +303,16 @@ mod tests {
                 .and_then(Value::as_i64),
             Some(1)
         );
+        let skill_items = properties
+            .get("task_runner_skill_ids")
+            .and_then(|schema| schema.get("items"))
+            .expect("skill items schema");
+        let skill_enum = skill_items
+            .get("enum")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(skill_enum.contains(&json!("skill-1")));
     }
 
     #[test]
@@ -392,6 +404,7 @@ mod tests {
             description: None,
             task_runner_default_model_config_id: "model-config-test".to_string(),
             task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+            task_runner_skill_ids: Vec::new(),
             status,
             priority: 0,
             assignee_user_id: None,

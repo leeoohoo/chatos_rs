@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 static TASK_RUNNER_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 const TASK_RUNNER_DEFAULT_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
-const TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const TASK_RUNNER_INTERNAL_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const TASK_RUNNER_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
 mod types;
@@ -25,8 +25,8 @@ pub use types::{
 };
 
 use types::{
-    TaskRunnerExternalMcpConfig, TaskRunnerMcpCatalogEntry, TaskRunnerSkillResponse,
-    UserServiceTaskRunnerTokenResponse,
+    TaskRunnerExternalMcpConfig, TaskRunnerMcpCatalogEntry, TaskRunnerSkillListItem,
+    TaskRunnerSkillResponse, UserServiceTaskRunnerTokenResponse,
 };
 
 pub async fn exchange_task_runner_token_via_user_service(
@@ -126,11 +126,48 @@ pub async fn fetch_task_runner_execution_options(
         .filter(|item| item.enabled)
         .filter_map(|item| normalize_optional(Some(item.id)))
         .collect::<BTreeSet<_>>();
+    let skill_ids = fetch_task_runner_skill_ids(base_url, access_token).await;
 
     Ok(TaskRunnerExecutionOptions {
         builtin_tool_ids,
         external_tool_ids,
+        skill_ids,
     })
+}
+
+async fn fetch_task_runner_skill_ids(base_url: &str, access_token: &str) -> BTreeSet<String> {
+    let mut skills = task_runner_json::<Vec<TaskRunnerSkillListItem>, ()>(
+        base_url,
+        access_token,
+        reqwest::Method::GET,
+        "/api/skills",
+        None::<&()>,
+    )
+    .await
+    .unwrap_or_default();
+    skills.extend(
+        task_runner_json::<Vec<TaskRunnerSkillListItem>, ()>(
+            base_url,
+            access_token,
+            reqwest::Method::GET,
+            "/api/skills/bundled",
+            None::<&()>,
+        )
+        .await
+        .unwrap_or_default(),
+    );
+    skills
+        .into_iter()
+        .filter(|skill| skill.enabled)
+        .filter(|skill| {
+            skill
+                .install_status
+                .as_deref()
+                .map(|value| value.trim().eq_ignore_ascii_case("installed"))
+                .unwrap_or(true)
+        })
+        .filter_map(|skill| normalize_optional(Some(skill.id)))
+        .collect()
 }
 
 pub async fn create_task_runner_task(
@@ -451,6 +488,8 @@ pub async fn get_message_run(
     source_session_id: &str,
     source_user_message_id: Option<&str>,
     source_turn_id: Option<&str>,
+    event_limit: Option<usize>,
+    event_offset: Option<usize>,
 ) -> Result<Value, String> {
     let path = format!(
         "/internal/chatos/message-runs/{}",
@@ -463,6 +502,14 @@ pub async fn get_message_run(
     if let Some(source_turn_id) = source_turn_id {
         query.push(("source_turn_id", source_turn_id));
     }
+    let event_limit = event_limit.map(|value| value.to_string());
+    let event_offset = event_offset.map(|value| value.to_string());
+    if let Some(value) = event_limit.as_deref() {
+        query.push(("event_limit", value));
+    }
+    if let Some(value) = event_offset.as_deref() {
+        query.push(("event_offset", value));
+    }
     get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }
 
@@ -472,6 +519,8 @@ pub async fn get_message_graph_run(
     source_session_id: &str,
     source_user_message_id: Option<&str>,
     source_turn_id: Option<&str>,
+    event_limit: Option<usize>,
+    event_offset: Option<usize>,
 ) -> Result<Value, String> {
     let path = format!(
         "/internal/chatos/message-graph/runs/{}",
@@ -483,6 +532,14 @@ pub async fn get_message_graph_run(
     }
     if let Some(source_turn_id) = source_turn_id {
         query.push(("source_turn_id", source_turn_id));
+    }
+    let event_limit = event_limit.map(|value| value.to_string());
+    let event_offset = event_offset.map(|value| value.to_string());
+    if let Some(value) = event_limit.as_deref() {
+        query.push(("event_limit", value));
+    }
+    if let Some(value) = event_offset.as_deref() {
+        query.push(("event_offset", value));
     }
     get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spreadsheets"
+  short_description: "Create and edit spreadsheet or Google Sheets-ready files"
+  icon_small: "./assets/file-spreadsheet.png"
+  icon_large: "./assets/file-spreadsheet.png"
+  brand_color: "#107C41"
+  default_prompt: "Use $Spreadsheets to build or update a spreadsheet artifact with formulas, formatting, and verification."

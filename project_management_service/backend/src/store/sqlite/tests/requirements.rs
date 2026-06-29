@@ -2,6 +2,61 @@ use super::support::{create_project, create_requirement, create_work_item, test_
 use crate::models::*;
 
 #[tokio::test]
+async fn requirement_documents_support_multiple_docs_per_requirement() {
+    let store = test_store().await;
+    let project = create_project(&store).await;
+    let requirement = create_requirement(&store, &project.id, "Documented requirement").await;
+
+    let first = store
+        .create_requirement_document(
+            &requirement.id,
+            UpsertRequirementDocumentRequest {
+                doc_type: Some("sequence_diagram".to_string()),
+                title: Some("登录时序图".to_string()),
+                format: None,
+                content: "sequenceDiagram\n  A->>B: login".to_string(),
+            },
+            &test_user(),
+        )
+        .await
+        .expect("create first document");
+    let second = store
+        .create_requirement_document(
+            &requirement.id,
+            UpsertRequirementDocumentRequest {
+                doc_type: Some("sequence_diagram".to_string()),
+                title: Some("支付时序图".to_string()),
+                format: None,
+                content: "sequenceDiagram\n  A->>B: pay".to_string(),
+            },
+            &test_user(),
+        )
+        .await
+        .expect("create second document");
+
+    let docs = store
+        .list_requirement_documents(&requirement.id, Some("sequence_diagram".to_string()))
+        .await
+        .expect("list documents");
+    assert_eq!(docs.len(), 2);
+
+    let updated = store
+        .update_requirement_document(
+            &requirement.id,
+            &second.id,
+            UpdateRequirementDocumentRequest {
+                title: Some("支付链路时序图".to_string()),
+                content: Some("sequenceDiagram\n  A->>B: pay updated".to_string()),
+                ..UpdateRequirementDocumentRequest::default()
+            },
+        )
+        .await
+        .expect("update document");
+    assert_eq!(updated.version, second.version + 1);
+    assert_ne!(first.id, updated.id);
+}
+
+#[tokio::test]
 async fn archiving_requirement_archives_its_work_items() {
     let store = test_store().await;
     let project = create_project(&store).await;

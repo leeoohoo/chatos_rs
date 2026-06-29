@@ -13,6 +13,8 @@ const statusLabel = (status?: string | null): string => {
       return '草稿';
     case 'ready':
       return '就绪';
+    case 'waiting_prerequisite':
+      return '等待前置';
     case 'queued':
       return '排队中';
     case 'running':

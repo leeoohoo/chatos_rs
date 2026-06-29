@@ -8,7 +8,7 @@ use mcp_builder::build_mcp_builder_parts;
 use mcp_inputs::project_management_skill_prefixed_input_item;
 use mcp_inputs::{
     external_mcp_prefixed_input_items, load_external_mcp_servers, load_system_http_mcp_servers,
-    project_management_skill_prefixed_input_items,
+    project_management_skill_prefixed_input_items, user_skill_prefixed_input_items,
 };
 
 pub(super) async fn prepare_model_execution(
@@ -31,6 +31,15 @@ pub(super) async fn prepare_model_execution(
     let mut prefixed_input_items =
         project_management_skill_prefixed_input_items(service, task, task.mcp_config.locale())
             .await;
+    prefixed_input_items.extend(
+        user_skill_prefixed_input_items(
+            service,
+            task,
+            task.mcp_config.locale(),
+            effective_workspace_dir,
+        )
+        .await,
+    );
     prefixed_input_items.extend(external_mcp_prefixed_input_items(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),

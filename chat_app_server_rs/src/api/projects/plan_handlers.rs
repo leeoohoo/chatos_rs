@@ -109,3 +109,42 @@ pub(super) async fn list_requirement_work_items(
     };
     (StatusCode::OK, Json(response))
 }
+
+pub(super) async fn list_requirement_documents(
+    auth: AuthUser,
+    Path((id, requirement_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    let _project = match ensure_owned_project(&id, &auth).await {
+        Ok(project) => project,
+        Err(err) => return map_project_access_error(err),
+    };
+    let cfg = match Config::try_get() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err })),
+            );
+        }
+    };
+    let Some(access_token) = access_token_scope::get_current_access_token() else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "current user access token is required" })),
+        );
+    };
+
+    let response = match project_management_api_client::list_project_service_requirement_documents(
+        cfg.project_service_base_url.as_str(),
+        access_token.as_str(),
+        requirement_id.as_str(),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            return (StatusCode::BAD_GATEWAY, Json(json!({ "error": err })));
+        }
+    };
+    (StatusCode::OK, Json(response))
+}

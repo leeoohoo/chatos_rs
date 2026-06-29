@@ -6,6 +6,7 @@ use serde_json::Value;
 const PROJECT_SERVICE_DEFAULT_RESPONSE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const PROJECT_SERVICE_PLAN_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const PROJECT_SERVICE_WORK_ITEMS_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const PROJECT_SERVICE_DOCUMENTS_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const PROJECT_SERVICE_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,6 +190,25 @@ pub async fn list_project_service_requirement_work_items(
             ("include_dependency_graph", include_dependency_graph),
         ]);
     send_json_with_limit(request, PROJECT_SERVICE_WORK_ITEMS_RESPONSE_LIMIT_BYTES).await
+}
+
+pub async fn list_project_service_requirement_documents(
+    base_url: &str,
+    access_token: &str,
+    requirement_id: &str,
+) -> Result<Value, String> {
+    let endpoint = format!(
+        "{}/api/requirements/{}/documents",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(requirement_id.trim())
+    );
+    send_json_with_limit(
+        reqwest::Client::new()
+            .get(endpoint)
+            .bearer_auth(access_token.trim()),
+        PROJECT_SERVICE_DOCUMENTS_RESPONSE_LIMIT_BYTES,
+    )
+    .await
 }
 
 pub async fn list_work_item_task_runner_links(

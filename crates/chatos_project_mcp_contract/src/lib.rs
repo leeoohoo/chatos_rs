@@ -54,6 +54,7 @@ mod tests {
                 model_config_ids: vec!["model-1".to_string(), "model-2".to_string()],
                 default_model_config_id: Some("model-2".to_string()),
                 tool_ids: vec!["tool-a".to_string(), "tool-b".to_string()],
+                skill_ids: vec!["skill-a".to_string(), "skill-b".to_string()],
             },
         ));
         let create_task = definitions
@@ -89,6 +90,14 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(tool_enum, vec![json!("tool-a"), json!("tool-b")]);
+        let skill_enum = properties
+            .get("task_runner_skill_ids")
+            .and_then(|schema| schema.get("items"))
+            .and_then(|items| items.get("enum"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(skill_enum, vec![json!("skill-a"), json!("skill-b")]);
     }
 
     #[test]
@@ -147,7 +156,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "project_management_server_tools",
             schemas::project_management_server_tool_definitions(None),
-            0x478797220bd487d3,
+            0x369c11f56bc8956a,
         );
     }
 
@@ -156,7 +165,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
             schemas::task_runner_builtin_tool_definitions(None),
-            0xd6a8c02e4985e731,
+            0x8923106e27760691,
         );
     }
 

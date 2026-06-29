@@ -89,7 +89,8 @@ impl MongoStore {
         if task_runner_enabled_tool_ids.is_empty() {
             return Err("task_runner_enabled_tool_ids is required".to_string());
         }
-        self.ensure_requirement_technical_overview_ready(&requirement.id)
+        let task_runner_skill_ids = normalize_id_list(input.task_runner_skill_ids);
+        self.ensure_requirement_technical_document_ready(&requirement.id)
             .await?;
         let now = now_rfc3339();
         let item = ProjectWorkItemRecord {
@@ -103,6 +104,7 @@ impl MongoStore {
                 .trim()
                 .to_string(),
             task_runner_enabled_tool_ids,
+            task_runner_skill_ids,
             status: input.status.unwrap_or_default(),
             priority: input.priority.unwrap_or_default(),
             assignee_user_id: normalized_optional(input.assignee_user_id),
@@ -127,15 +129,18 @@ impl MongoStore {
         Ok(item)
     }
 
-    async fn ensure_requirement_technical_overview_ready(
+    async fn ensure_requirement_technical_document_ready(
         &self,
         requirement_id: &str,
     ) -> Result<(), String> {
-        let Some(document) = self.get_requirement_document(requirement_id).await? else {
-            return Err(work_item_requires_technical_overview_message());
-        };
-        if document.content.trim().is_empty() {
-            return Err(work_item_requires_technical_overview_message());
+        let documents = self
+            .list_requirement_documents(requirement_id, None)
+            .await?;
+        if !documents
+            .iter()
+            .any(|document| !document.content.trim().is_empty())
+        {
+            return Err(work_item_requires_technical_document_message());
         }
         Ok(())
     }

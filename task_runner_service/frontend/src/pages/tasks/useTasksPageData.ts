@@ -6,9 +6,11 @@ import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   ExternalMcpConfigRecord,
   RemoteServerRecord,
+  SkillRecord,
   TaskProjectRecord,
   TaskRecord,
   TaskRunEventRecord,
+  TaskRunStatus,
   TaskScheduleMode,
   TaskStatus,
 } from '../../types';
@@ -50,6 +52,26 @@ type UseTasksPageDataParams = {
 function normalizeProjectId(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed && trimmed !== '0' ? trimmed : '-1';
+}
+
+const ACTIVE_TASK_REFRESH_INTERVAL_MS = 2500;
+const activeTaskStatuses = new Set<TaskStatus>(['queued', 'running']);
+const activeRunStatuses = new Set<TaskRunStatus>(['queued', 'running']);
+
+function activeRefreshInterval(active: boolean) {
+  return active ? ACTIVE_TASK_REFRESH_INTERVAL_MS : false;
+}
+
+function isActiveTaskStatus(status?: TaskStatus | null) {
+  return Boolean(status && activeTaskStatuses.has(status));
+}
+
+function isActiveRunStatus(status?: TaskRunStatus | null) {
+  return Boolean(status && activeRunStatuses.has(status));
+}
+
+function taskPageHasActiveItems(data?: { items?: TaskRecord[] } | null) {
+  return Boolean(data?.items?.some((task) => isActiveTaskStatus(task.status)));
 }
 
 export function useTasksPageData({
@@ -115,10 +137,15 @@ export function useTasksPageData({
         limit: taskPageSize,
         offset: (taskPage - 1) * taskPageSize,
       }),
+    refetchInterval: (query) => activeRefreshInterval(taskPageHasActiveItems(query.state.data)),
   });
   const taskStatsQuery = useQuery({
     queryKey: ['task-stats'],
     queryFn: api.getTaskStats,
+    refetchInterval: (query) =>
+      activeRefreshInterval(
+        Boolean((query.state.data?.queued || 0) + (query.state.data?.running || 0)),
+      ),
   });
   const taskIndexQuery = useQuery({
     queryKey: ['task-index'],
@@ -128,22 +155,26 @@ export function useTasksPageData({
     queryKey: ['task', detailTaskId],
     queryFn: () => api.getTask(detailTaskId!),
     enabled: Boolean(detailTaskId),
+    refetchInterval: (query) => activeRefreshInterval(isActiveTaskStatus(query.state.data?.status)),
   });
   const taskRecentRunsQuery = useQuery({
     queryKey: ['task-recent-runs', detailTaskId],
     queryFn: () => api.listTaskRuns(detailTaskId!, { limit: 5 }),
     enabled: Boolean(detailTaskId),
+    refetchInterval: activeRefreshInterval(isActiveTaskStatus(selectedTaskQuery.data?.status)),
   });
   const detailLastRunId = selectedTaskQuery.data?.last_run_id ?? detailTaskPreview?.last_run_id;
   const detailLastRunQuery = useQuery({
     queryKey: ['task-detail-last-run', detailLastRunId],
     queryFn: () => api.getRun(detailLastRunId!),
     enabled: Boolean(detailLastRunId),
+    refetchInterval: (query) => activeRefreshInterval(isActiveRunStatus(query.state.data?.status)),
   });
   const detailLastRunEventsQuery = useQuery({
     queryKey: ['task-detail-last-run-events', detailLastRunId],
     queryFn: () => api.getRunEvents(detailLastRunId!),
     enabled: Boolean(detailLastRunId),
+    refetchInterval: activeRefreshInterval(isActiveRunStatus(detailLastRunQuery.data?.status)),
   });
   const taskFollowUpQuery = useQuery({
     queryKey: ['task-follow-ups', detailTaskId],
@@ -193,6 +224,14 @@ export function useTasksPageData({
   const externalMcpConfigsQuery = useQuery({
     queryKey: ['external-mcp-configs'],
     queryFn: api.listExternalMcpConfigs,
+  });
+  const skillsQuery = useQuery({
+    queryKey: ['skills', 'task-editor'],
+    queryFn: () => api.listSkills(),
+  });
+  const bundledSkillsQuery = useQuery({
+    queryKey: ['skills', 'bundled', 'task-editor'],
+    queryFn: api.listBundledSkills,
   });
   const pendingPromptTaskCountsQuery = useQuery({
     queryKey: ['prompt-task-counts', 'pending'],
@@ -244,11 +283,22 @@ export function useTasksPageData({
       ),
     [tasksQuery.data?.items],
   );
+  const activeVisibleTaskLastRunIds = useMemo(
+    () =>
+      new Set(
+        (tasksQuery.data?.items || [])
+          .filter((task) => isActiveTaskStatus(task.status))
+          .map((task) => task.last_run_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [tasksQuery.data?.items],
+  );
   const taskListLastRunEventQueries = useQueries({
     queries: visibleTaskLastRunIds.map((runId) => ({
       queryKey: ['task-list-last-run-events', runId],
       queryFn: () => api.getRunEvents(runId),
       enabled: Boolean(runId),
+      refetchInterval: activeRefreshInterval(activeVisibleTaskLastRunIds.has(runId)),
     })),
   });
 
@@ -344,6 +394,22 @@ export function useTasksPageData({
     });
     return map;
   }, [externalMcpConfigsQuery.data]);
+  const taskEditorSkills = useMemo(() => {
+    const map = new Map<string, SkillRecord>();
+    [...(bundledSkillsQuery.data || []), ...(skillsQuery.data || [])].forEach((skill) => {
+      map.set(skill.id, skill);
+    });
+    return Array.from(map.values()).sort((left, right) =>
+      (left.display_name || left.name).localeCompare(right.display_name || right.name),
+    );
+  }, [bundledSkillsQuery.data, skillsQuery.data]);
+  const skillLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    taskEditorSkills.forEach((skill) => {
+      map.set(skill.id, skill.display_name || skill.name || skill.id);
+    });
+    return map;
+  }, [taskEditorSkills]);
   const selectedTask = useMemo(
     () => selectedTaskQuery.data || detailTaskPreview,
     [detailTaskPreview, selectedTaskQuery.data],
@@ -424,6 +490,8 @@ export function useTasksPageData({
     mcpCatalogQuery,
     remoteServersQuery,
     externalMcpConfigsQuery,
+    skillsQuery,
+    bundledSkillsQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
@@ -440,6 +508,8 @@ export function useTasksPageData({
     tagOptions,
     remoteServerMap,
     externalMcpConfigMap,
+    taskEditorSkills,
+    skillLabelMap,
     selectedTask,
     detailResultSummary,
     detailRemoteOperations,

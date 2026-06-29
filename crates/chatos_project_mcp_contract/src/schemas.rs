@@ -25,6 +25,7 @@ pub struct TaskRunnerExecutionSchemaOptions {
     pub model_config_ids: Vec<String>,
     pub default_model_config_id: Option<String>,
     pub tool_ids: Vec<String>,
+    pub skill_ids: Vec<String>,
 }
 
 pub fn project_management_server_tool_definitions(
@@ -131,7 +132,7 @@ fn tool_definitions(
     if include_delete_tools {
         definitions.push(tool_definition(
             tools::DELETE_REQUIREMENT,
-            "Delete a requirement and its child requirements, technical overview documents, project tasks, and dependency edges when none of the affected project tasks are linked to Task Runner execution tasks. Use this during planning to remove incorrectly created requirements instead of archiving or cancelling them.",
+            "Delete a requirement and its child requirements, technical documents, project tasks, and dependency edges when none of the affected project tasks have been executed. Use this during planning to remove incorrectly created requirements instead of archiving or cancelling them.",
             object_schema(
                 vec![string_field("requirement_id", "Requirement id to delete.")],
                 vec!["requirement_id"],
@@ -155,24 +156,46 @@ fn tool_definitions(
             ),
         ),
         tool_definition(
-            tools::UPSERT_REQUIREMENT_TECHNICAL_OVERVIEW,
-            "Create or update the implementation technical overview document for a requirement.",
+            tools::LIST_REQUIREMENT_TECHNICAL_DOCUMENTS,
+            "List all technical documents for a requirement. Use this before reading or updating docs so long content can stay split across focused documents.",
             object_schema(
                 vec![
                     string_field("requirement_id", "Requirement id."),
+                    optional_string_field(
+                        "doc_type",
+                        "Optional document type filter. Recommended values include technical_overview, implementation_plan, ui_svg_preview, architecture_diagram, flowchart, sequence_diagram, api_design, data_model, risk_notes, and other.",
+                    ),
+                ],
+                vec!["requirement_id"],
+            ),
+        ),
+        tool_definition(
+            tools::GET_REQUIREMENT_TECHNICAL_DOCUMENT,
+            "Get one technical document by document_id for a requirement.",
+            object_schema(
+                vec![
+                    string_field("requirement_id", "Requirement id."),
+                    string_field("document_id", "Technical document id from list_requirement_technical_documents."),
+                ],
+                vec!["requirement_id", "document_id"],
+            ),
+        ),
+        tool_definition(
+            tools::UPSERT_REQUIREMENT_TECHNICAL_DOCUMENT,
+            "Create a new typed technical document for a requirement, or update an existing one when document_id is provided. Keep each document focused and split long content by doc_type or title.",
+            object_schema(
+                vec![
+                    string_field("requirement_id", "Requirement id."),
+                    optional_string_field("document_id", "Existing document id to update; omit to create a new document."),
+                    optional_string_field(
+                        "doc_type",
+                        "Document type. Recommended values include technical_overview, implementation_plan, ui_svg_preview, architecture_diagram, flowchart, sequence_diagram, api_design, data_model, risk_notes, and other.",
+                    ),
                     optional_string_field("title", "Document title."),
                     optional_string_field("format", "Document format, usually markdown."),
                     string_field("content", "Document content."),
                 ],
                 vec!["requirement_id", "content"],
-            ),
-        ),
-        tool_definition(
-            tools::GET_REQUIREMENT_TECHNICAL_OVERVIEW,
-            "Get the implementation technical overview document for a requirement.",
-            object_schema(
-                vec![string_field("requirement_id", "Requirement id.")],
-                vec!["requirement_id"],
             ),
         ),
         tool_definition(
@@ -192,7 +215,7 @@ fn tool_definitions(
         ),
         tool_definition(
             tools::CREATE_PROJECT_TASK,
-            "Create a project-management task/work item under a requirement. The requirement must already have non-empty technical overview content.",
+            "Create a project-management task/work item under a requirement. The requirement must already have at least one non-empty technical document.",
             object_schema(
                 vec![
                     string_field("requirement_id", "Requirement id this project task belongs to."),
@@ -200,6 +223,7 @@ fn tool_definitions(
                     optional_string_field("description", "Project task description."),
                     task_runner_model_config_field(execution_options),
                     task_runner_tool_ids_field(execution_options),
+                    task_runner_skill_ids_field(execution_options),
                     enum_field(
                         "status",
                         "Optional project task status.",
@@ -244,7 +268,7 @@ fn tool_definitions(
     if include_delete_tools {
         definitions.push(tool_definition(
             tools::DELETE_PROJECT_TASK,
-            "Delete a project-management task/work item that has not been linked to a Task Runner execution task. Use this during planning to remove incorrectly created project tasks instead of cancelling them.",
+            "Delete a project-management task/work item that has not been executed. Use this during planning to remove incorrectly created project tasks instead of cancelling them.",
             object_schema(
                 vec![string_field(
                     "project_task_id",
@@ -365,7 +389,7 @@ fn task_runner_model_config_field(
     let mut schema = json!({
         "type": "string",
         "minLength": 1,
-        "description": "Required Task Runner model config id. Use one of the enum values when present; if multiple are available, choose the model best suited for the project task instead of asking the user for an internal id."
+        "description": "Required execution model config id. Use one of the enum values when present; if multiple are available, choose the model best suited for the project task instead of asking the user for an internal id."
     });
     if let Some(options) = execution_options {
         if !options.model_config_ids.is_empty() {
@@ -382,7 +406,7 @@ fn task_runner_tool_ids_field(
     execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
 ) -> (&'static str, Value) {
     let mut item_schema = json!({ "type": "string" });
-    let mut description = "Required Task Runner tool id multi-select. Use only visible tool ids. Choose tools according to the work item's execution needs; for code implementation tasks, include appropriate code reading and terminal tools when available."
+    let mut description = "Required execution tool id multi-select. Use only visible tool ids. Choose tools according to the work item's execution needs; for code implementation tasks, include appropriate code reading and terminal tools when available."
         .to_string();
     if let Some(options) = execution_options {
         if !options.tool_ids.is_empty() {
@@ -396,6 +420,29 @@ fn task_runner_tool_ids_field(
             "type": "array",
             "items": item_schema,
             "minItems": 1,
+            "uniqueItems": true,
+            "description": description
+        }),
+    )
+}
+
+fn task_runner_skill_ids_field(
+    execution_options: Option<&TaskRunnerExecutionSchemaOptions>,
+) -> (&'static str, Value) {
+    let mut item_schema = json!({ "type": "string" });
+    let mut description = "Optional execution skill id multi-select. Use only visible skill ids. Choose skills that match the project task's execution workflow, such as document/PDF/spreadsheet/browser/image/review skills. Omit when no relevant skill is needed."
+        .to_string();
+    if let Some(options) = execution_options {
+        if !options.skill_ids.is_empty() {
+            description.push_str(" Available skill ids are exposed in the item enum.");
+            item_schema["enum"] = json!(&options.skill_ids);
+        }
+    }
+    (
+        "task_runner_skill_ids",
+        json!({
+            "type": "array",
+            "items": item_schema,
             "uniqueItems": true,
             "description": description
         }),

@@ -95,6 +95,27 @@ Good fits:
 - collecting logs, config, or runtime information
 - producing analysis without changing files
 
+### Case 1.5: Uploaded Files, Complex Documents, Or Binary Materials
+
+When the user uploads a PDF, Word/DOCX file, spreadsheet, presentation, image, archive, or other complex file and asks you to "look at this", summarize it, read what it says, or analyze the attachment, do not rely only on the fragments automatically extracted into the current conversation.
+
+Create a background reading/analysis task whenever any of these are true:
+
+- the current conversation only shows the filename, MIME type, size, or a small incomplete snippet
+- the extracted text mentions mojibake, encoding issues, Identity-H, unresolved fonts, extraction failure, or unreadable content
+- the user asks about the body text, table data, page layout, stamps/signatures, images, page ranges, attachment details, or anything that requires page-by-page checking
+- the file type needs specialized parsing, rendering, OCR, or visual inspection to answer reliably
+
+Task creation requirements:
+
+1. Search for the matching skill by file type, such as `pdf` for PDFs, `docx` / `word` / `documents` for Word files, `spreadsheet` / `excel` for spreadsheets, `presentation` / `ppt` for slides, and `image` or `computer use` for images.
+2. Call `get_skill_detail` when needed to confirm that the skill fits the file-reading, rendering, or verification workflow.
+3. Use `create_task` for a read-only analysis task and put the selected real skill id values into `skill_ids`.
+4. Preserve visible attachment context in `description` or `input_payload`, such as filename, MIME type, size, the user's wording, and any attachment metadata visible in the current message.
+5. Make the objective require the executor to answer from the real file contents, and to report the concrete failure reason plus next step if the file cannot be read instead of guessing from the filename.
+
+Minimum PDF rule: search for and attach the PDF skill. If automatic text extraction in the current chat failed, do not simply tell the user you cannot read it or guess from the title; arrange a read task that uses the PDF-specific workflow.
+
 ### Case 2: New feature work, code changes, file edits, or configuration changes
 
 For execution-heavy work, the default should be an implementation task plus a review task.
@@ -188,6 +209,39 @@ Recommended combinations:
 - frontend change: `CodeMaintainerRead` + `CodeMaintainerWrite` + `TerminalController` + `BrowserTools`
 - frontend review: `CodeMaintainerRead` + `TerminalController` + `BrowserTools`
 - remote troubleshooting: `RemoteConnectionController` + `TerminalController`
+
+## Choosing Task Runner Skills
+
+Task Runner Skills are specialized instructions, scripts, and reference files loaded into the task execution phase. They include:
+
+- built-in global skills, available to all users
+- skills installed or created by the current user, available only to tasks owned by that user
+
+When the user's request clearly maps to a specialized workflow, file type, or tool scenario, such as Word/DOCX, PDF, spreadsheets, presentations, browser validation, image generation, code review, or a domain-specific workflow:
+
+1. Call `search_installed_skills` first with a keyword for the needed capability.
+2. If multiple results could match, or if fit is uncertain, call `get_skill_detail` to inspect the full instructions.
+3. When creating the task, put the selected real `id` values into `skill_ids`.
+4. `skill_ids` can be combined with `enabled_builtin_kinds` and `external_mcp_config_ids`. Skills guide how the task should be done; builtin/external MCP selections define which tools are available.
+
+Hard rules:
+
+- When the user uploads or names a complex file type, do not skip skill search; PDF, DOCX, spreadsheet, presentation, and image tasks should default to attaching the matching skill.
+- If the current conversation's extracted file text is failed, garbled, or incomplete, do not answer from that failed snippet; create a reading task with the matching skill attached.
+- Only use real `id` values returned by `search_installed_skills` or `get_skill_detail`; never invent IDs from names, display names, or memory.
+- If no relevant skill exists, omit `skill_ids`.
+- A task may include multiple `skill_ids` when it genuinely needs multiple specialized workflows, but keep the selection relevant to the task objective.
+- User-installed skills are user-isolated; do not try to attach one user's skill to another user's task.
+
+Useful keyword examples:
+
+- document work: `docx`, `word`, `documents`
+- PDF: `pdf`
+- spreadsheets: `spreadsheet`, `excel`
+- presentations: `presentation`, `ppt`
+- browser validation: `browser`
+- image generation: `image`
+- local UI operation: `computer use`
 
 ## Choosing External MCP Configs
 

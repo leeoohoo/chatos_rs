@@ -52,6 +52,8 @@ pub struct TaskMcpConfig {
     pub default_remote_server_id: Option<String>,
     #[serde(default)]
     pub external_mcp_config_ids: Vec<String>,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
 }
 
 impl Default for TaskMcpConfig {
@@ -65,6 +67,7 @@ impl Default for TaskMcpConfig {
             workspace_dir: None,
             default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
+            skill_ids: Vec::new(),
         }
     }
 }

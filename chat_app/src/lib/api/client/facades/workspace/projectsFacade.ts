@@ -6,6 +6,7 @@ import type {
   ProjectContactLinkResponse,
   ProjectPlanOptions,
   ProjectPlanResponse,
+  ProjectRequirementDocumentResponse,
   ProjectRequirementWorkItemsOptions,
   ProjectRequirementWorkItemsResponse,
   ProjectRequirementExecuteResponse,
@@ -30,6 +31,10 @@ export interface WorkspaceProjectFacade {
     requirementId: string,
     options?: ProjectRequirementWorkItemsOptions,
   ): Promise<ProjectRequirementWorkItemsResponse>;
+  listProjectRequirementDocuments(
+    projectId: string,
+    requirementId: string,
+  ): Promise<ProjectRequirementDocumentResponse[]>;
   executeProjectRequirement(
     projectId: string,
     requirementId: string,
@@ -95,6 +100,13 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
       projectId,
       requirementId,
       options,
+    );
+  },
+  async listProjectRequirementDocuments(projectId, requirementId) {
+    return workspaceApi.listProjectRequirementDocuments(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
     );
   },
   async executeProjectRequirement(projectId, requirementId, data) {

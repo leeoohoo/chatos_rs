@@ -17,6 +17,7 @@ interface ProjectDetailColumnsArgs {
   requirements: RequirementRecord[];
   taskRunnerModelLabelMap: ExecutionOptionLabelMap;
   taskRunnerToolLabelMap: ExecutionOptionLabelMap;
+  taskRunnerSkillLabelMap: ExecutionOptionLabelMap;
   onShowRequirementDetail: (record: RequirementRecord) => void;
   onShowRequirementDeps: (record: RequirementRecord) => void;
   onShowRequirementDoc: (record: RequirementRecord) => void;
@@ -30,6 +31,7 @@ export function buildProjectDetailColumns({
   requirements,
   taskRunnerModelLabelMap,
   taskRunnerToolLabelMap,
+  taskRunnerSkillLabelMap,
   onShowRequirementDetail,
   onShowRequirementDeps,
   onShowRequirementDoc,
@@ -138,6 +140,12 @@ export function buildProjectDetailColumns({
       dataIndex: 'task_runner_enabled_tool_ids',
       width: 240,
       render: (toolIds: string[]) => renderExecutionToolTags(toolIds, taskRunnerToolLabelMap),
+    },
+    {
+      title: 'Skills',
+      dataIndex: 'task_runner_skill_ids',
+      width: 220,
+      render: (skillIds: string[]) => renderExecutionToolTags(skillIds, taskRunnerSkillLabelMap),
     },
     {
       title: '标签',

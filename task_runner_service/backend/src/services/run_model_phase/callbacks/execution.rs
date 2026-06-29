@@ -12,6 +12,7 @@ impl RunService {
         prepared_execution: PreparedModelExecution,
     ) -> TaskRunReport {
         let runtime_execution = self.build_runtime_execution_state(
+            task.id.as_str(),
             run,
             model_config,
             &prepared_execution.run_spec,
@@ -32,7 +33,7 @@ impl RunService {
         let runtime_config = prepared_execution.runtime_config;
         let mcp_builder = prepared_execution.mcp_builder;
         let runtime_options = runtime_execution.runtime_options;
-        let report = match tokio::time::timeout(execution_timeout, async {
+        let mut report = match tokio::time::timeout(execution_timeout, async {
             let runtime_init_started_at = Instant::now();
             let runtime = match runtime_config
                 .build_runtime_with_mcp_builder(mcp_builder)
@@ -165,7 +166,34 @@ impl RunService {
             run.id.as_str(),
             &runtime_execution.pending_stream_event,
         );
+        if report.is_aborted()
+            && (runtime_execution
+                .task_completed_abort
+                .load(Ordering::Relaxed)
+                || self.task_is_already_succeeded(task.id.as_str()).await)
+        {
+            let content = self
+                .store
+                .get_task(&task.id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|task| task.result_summary)
+                .unwrap_or_else(|| "任务已通过 TaskManager 标记为成功。".to_string());
+            report.status = chatos_ai_runtime::AiTurnStatus::Completed;
+            report.content = Some(content);
+            report.error = None;
+        }
         report
+    }
+
+    async fn task_is_already_succeeded(&self, task_id: &str) -> bool {
+        self.store
+            .get_task(task_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|task| task.status == TaskStatus::Succeeded)
     }
 
     fn completion_gate_feedback_item(message: &str, attempt: usize) -> Value {

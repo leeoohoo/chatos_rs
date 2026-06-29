@@ -36,4 +36,5 @@ pub struct TaskRunnerExecutionOptionRecord {
 pub struct TaskRunnerExecutionOptionsResponse {
     pub model_configs: Vec<TaskRunnerExecutionOptionRecord>,
     pub tools: Vec<TaskRunnerExecutionOptionRecord>,
+    pub skills: Vec<TaskRunnerExecutionOptionRecord>,
 }

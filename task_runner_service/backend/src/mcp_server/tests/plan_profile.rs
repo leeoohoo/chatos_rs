@@ -510,12 +510,12 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
         })
         .collect::<Vec<_>>();
     assert_eq!(task_ids.len(), 2);
-    let child_task_id = created_tasks
+    let root_task_id = created_tasks
         .iter()
-        .find(|task| task.get("client_ref").and_then(|value| value.as_str()) == Some("child"))
+        .find(|task| task.get("client_ref").and_then(|value| value.as_str()) == Some("root"))
         .and_then(|task| task.get("task_id"))
         .and_then(|value| value.as_str())
-        .expect("child task id");
+        .expect("root task id");
     let auto_started_runs = result
         .get("_structured_result")
         .and_then(|value| value.get("auto_started_runs"))
@@ -526,7 +526,7 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
         auto_started_runs[0]
             .get("task_id")
             .and_then(|value| value.as_str()),
-        Some(child_task_id)
+        Some(root_task_id)
     );
 
     for task_id in task_ids {

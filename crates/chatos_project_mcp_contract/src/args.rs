@@ -116,6 +116,8 @@ pub struct CreateProjectTaskArgs {
     pub description: Option<String>,
     pub task_runner_default_model_config_id: String,
     pub task_runner_enabled_tool_ids: Vec<String>,
+    #[serde(default)]
+    pub task_runner_skill_ids: Vec<String>,
     pub status: Option<ProjectTaskStatus>,
     pub priority: Option<i64>,
     pub assignee_user_id: Option<String>,
@@ -160,8 +162,22 @@ pub struct SetProjectTaskDependenciesArgs {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpsertTechnicalOverviewArgs {
+pub struct ListRequirementTechnicalDocumentsArgs {
     pub requirement_id: String,
+    pub doc_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RequirementTechnicalDocumentIdArgs {
+    pub requirement_id: String,
+    pub document_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertRequirementTechnicalDocumentArgs {
+    pub requirement_id: String,
+    pub document_id: Option<String>,
+    pub doc_type: Option<String>,
     pub title: Option<String>,
     pub format: Option<String>,
     pub content: String,

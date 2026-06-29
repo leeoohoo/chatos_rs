@@ -7,6 +7,7 @@ import type {
   ProjectPlanResponse,
   ProjectRequirementWorkItemsOptions,
   ProjectRequirementWorkItemsResponse,
+  ProjectRequirementDocumentResponse,
   ProjectRequirementExecuteResponse,
   ProjectRequirementStopResponse,
   ProjectRunEnvironmentResponse,
@@ -77,6 +78,16 @@ export const listProjectRequirementWorkItems = (
   });
   return request<ProjectRequirementWorkItemsResponse>(
     `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/work-items${query}`,
+  );
+};
+
+export const listProjectRequirementDocuments = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+): Promise<ProjectRequirementDocumentResponse[]> => {
+  return request<ProjectRequirementDocumentResponse[]>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/documents`,
   );
 };
 

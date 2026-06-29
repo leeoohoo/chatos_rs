@@ -96,10 +96,18 @@ impl MongoStore {
         .await?;
 
         ensure_index(&self.requirement_documents, doc! { "id": 1 }, true).await?;
+        drop_index_if_exists(&self.requirement_documents, "requirement_id_1_doc_type_1").await?;
         ensure_index(
             &self.requirement_documents,
-            doc! { "requirement_id": 1, "doc_type": 1 },
-            true,
+            doc! { "requirement_id": 1 },
+            false,
+        )
+        .await?;
+        ensure_named_index(
+            &self.requirement_documents,
+            doc! { "requirement_id": 1, "doc_type": 1, "updated_at": -1, "id": 1 },
+            false,
+            "idx_requirement_documents_requirement_type_sort",
         )
         .await?;
 

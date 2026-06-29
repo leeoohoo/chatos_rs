@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,18 +18,22 @@ use crate::models::{
     BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
     CancelTaskRequest, CancelTaskResponse, ChatosProjectImportRequest,
     CreateExternalMcpConfigRequest, CreateTaskProjectRequest, CreateTaskRequest,
-    ExternalMcpConfigRecord, HealthResponse, PaginatedResponse, RecordTaskProcessRequest,
-    RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, StartTaskRunRequest,
+    ExternalMcpConfigRecord, HealthResponse, InstallSkillRequest, PaginatedResponse,
+    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
+    SkillInstallStatus, SkillListFilters, SkillMarketplaceEntry, SkillMarketplaceQuery,
+    SkillPackageFile, SkillRecord, SkillScope, SkillSource, StartTaskRunRequest,
     SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskProjectRecord,
     TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskSourceContext, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest,
-    UpdateTaskMcpRequest, UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
+    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest,
+    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskProjectRequest,
+    UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
 use crate::store::AppStore;
 
 mod batch_ops;
 mod builtin_providers;
+mod chatos_async_dispatch;
 mod chatos_callbacks;
 mod chatos_message_tasks;
 mod external_mcp_config_service;
@@ -50,6 +55,7 @@ mod run_prerequisites;
 mod run_recovery;
 mod run_service;
 mod schedule_helpers;
+mod skill_service;
 mod status_display;
 mod stream_events;
 mod task_dependencies;
@@ -69,7 +75,7 @@ use self::batch_ops::{
 };
 use self::builtin_providers::{
     build_builtin_registry_with_project_management_options, DisabledBuiltinProvider,
-    ProjectManagementExecutionOptions,
+    ProjectManagementExecutionOptions, TaskRunnerSkillLookupProvider,
 };
 pub use self::chatos_message_tasks::{
     ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
@@ -82,6 +88,7 @@ use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filter
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::build_remote_server_record;
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
+pub(crate) use self::skill_service::RuntimeSkillContext;
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
 use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
@@ -119,6 +126,12 @@ pub struct RemoteServerService {
 #[derive(Clone)]
 pub struct ExternalMcpConfigService {
     store: AppStore,
+}
+
+#[derive(Clone)]
+pub struct SkillService {
+    store: AppStore,
+    package_root: PathBuf,
 }
 
 #[derive(Clone)]

@@ -107,6 +107,8 @@ pub struct ProjectWorkItemRecord {
     pub task_runner_default_model_config_id: String,
     #[serde(default)]
     pub task_runner_enabled_tool_ids: Vec<String>,
+    #[serde(default)]
+    pub task_runner_skill_ids: Vec<String>,
     pub status: ProjectWorkItemStatus,
     pub priority: i64,
     pub assignee_user_id: Option<String>,
@@ -137,6 +139,8 @@ pub struct CreateProjectWorkItemRequest {
     pub description: Option<String>,
     pub task_runner_default_model_config_id: String,
     pub task_runner_enabled_tool_ids: Vec<String>,
+    #[serde(default)]
+    pub task_runner_skill_ids: Vec<String>,
     pub status: Option<ProjectWorkItemStatus>,
     pub priority: Option<i64>,
     pub assignee_user_id: Option<String>,

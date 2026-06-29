@@ -1,12 +1,7 @@
-use std::collections::HashSet;
-
-use chrono::Utc;
-
 use crate::auth::CurrentUser;
 use crate::models::{
-    normalize_project_id, AskUserPromptRecord, CreateTaskRequest, StartTaskRunRequest,
-    TaskListFilters, TaskRecord, TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus,
-    TASK_PROFILE_CHATOS_PLAN,
+    normalize_project_id, AskUserPromptRecord, CreateTaskRequest, TaskListFilters, TaskRecord,
+    TaskRunRecord, TaskScheduleMode, TaskStatsResponse, TaskStatus, TASK_PROFILE_CHATOS_PLAN,
 };
 
 use super::chatos_async_planner::require_chatos_async_source_context;
@@ -206,80 +201,18 @@ impl TaskRunnerMcpService {
                 tasks.push(task);
             }
         }
-        self.dispatch_chatos_async_tasks(tasks.as_slice()).await
+        self.run_service
+            .dispatch_ready_chatos_async_tasks(tasks.as_slice())
+            .await
     }
 
     pub(super) async fn dispatch_chatos_async_tasks(
         &self,
         tasks: &[TaskRecord],
     ) -> Result<Vec<TaskRunRecord>, String> {
-        let task_ids = tasks
-            .iter()
-            .map(|task| task.id.clone())
-            .collect::<HashSet<_>>();
-        let prerequisite_ids = tasks
-            .iter()
-            .flat_map(|task| task.prerequisite_task_ids.iter())
-            .filter(|task_id| task_ids.contains(*task_id))
-            .cloned()
-            .collect::<HashSet<_>>();
-
-        for task_id in &prerequisite_ids {
-            self.consume_chatos_async_schedule_slot(task_id).await?;
-        }
-
-        let mut runs = Vec::new();
-        for task in tasks {
-            if prerequisite_ids.contains(&task.id) {
-                continue;
-            }
-            if let Some(run) = self.dispatch_chatos_async_task(task.id.as_str()).await? {
-                runs.push(run);
-            }
-        }
-        Ok(runs)
-    }
-
-    async fn dispatch_chatos_async_task(
-        &self,
-        task_id: &str,
-    ) -> Result<Option<TaskRunRecord>, String> {
-        if self.run_service.has_active_run_for_task(task_id).await? {
-            self.consume_chatos_async_schedule_slot(task_id).await?;
-            return Ok(None);
-        }
-
-        let now = Utc::now();
-        match self
-            .run_service
-            .start_scheduled_run(task_id, StartTaskRunRequest::default())
+        self.run_service
+            .dispatch_ready_chatos_async_tasks(tasks)
             .await
-        {
-            Ok(run) => {
-                self.task_service
-                    .mark_scheduled_run_started(task_id, now)
-                    .await?;
-                Ok(Some(run))
-            }
-            Err(err) if is_active_run_conflict_error(err.as_str()) => {
-                self.consume_chatos_async_schedule_slot(task_id).await?;
-                Ok(None)
-            }
-            Err(err) => {
-                let _ = self
-                    .task_service
-                    .mark_scheduled_run_failed(task_id, &err)
-                    .await;
-                Err(err)
-            }
-        }
-    }
-
-    async fn consume_chatos_async_schedule_slot(&self, task_id: &str) -> Result<(), String> {
-        self.task_service
-            .mark_scheduled_run_started(task_id, Utc::now())
-            .await?;
-        Ok(())
     }
 
     pub(super) async fn require_task_for_user(
@@ -406,10 +339,6 @@ fn ensure_task_profile_scope(
     } else {
         Err("当前 agent 无权访问该任务".to_string())
     }
-}
-
-fn is_active_run_conflict_error(error: &str) -> bool {
-    error.contains("active run already exists") || error.contains("已有正在执行")
 }
 
 fn task_stats_from_tasks(tasks: Vec<TaskRecord>) -> TaskStatsResponse {

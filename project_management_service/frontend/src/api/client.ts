@@ -21,9 +21,11 @@ import type {
   RequirementRecord,
   RequirementStatus,
   TaskRunnerExecutionOptionsResponse,
+  UpdateRequirementDocumentPayload,
   UpdateProjectPayload,
   UpdateRequirementPayload,
   UpdateWorkItemPayload,
+  UpsertRequirementDocumentPayload,
   UpsertProjectProfilePayload,
   WorkItemDependencyRecord,
   ProjectWorkItemStatus,
@@ -191,6 +193,31 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  listRequirementDocuments: (id: string, filters?: { doc_type?: string }) =>
+    request<RequirementDocumentRecord[]>(
+      withQuery(`/api/requirements/${id}/documents`, { doc_type: filters?.doc_type }),
+    ),
+  createRequirementDocument: (id: string, payload: UpsertRequirementDocumentPayload) =>
+    request<RequirementDocumentRecord>(`/api/requirements/${id}/documents`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getRequirementDocument: (requirementId: string, documentId: string) =>
+    request<RequirementDocumentRecord>(
+      `/api/requirements/${requirementId}/documents/${documentId}`,
+    ),
+  updateRequirementDocument: (
+    requirementId: string,
+    documentId: string,
+    payload: UpdateRequirementDocumentPayload,
+  ) =>
+    request<RequirementDocumentRecord>(
+      `/api/requirements/${requirementId}/documents/${documentId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    ),
   listProjectWorkItems: (
     projectId: string,
     filters?: { status?: ProjectWorkItemStatus; keyword?: string; include_archived?: boolean },

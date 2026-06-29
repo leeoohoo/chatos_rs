@@ -39,7 +39,7 @@ pub(in crate::api::projects) fn task_runner_callback_event_for_status(
     }
 }
 
-pub(super) fn is_done_status(status: &str) -> bool {
+pub(in crate::api::projects) fn is_done_status(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
         "done" | "succeeded" | "success" | "completed"
