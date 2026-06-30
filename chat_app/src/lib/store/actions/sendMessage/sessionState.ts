@@ -37,8 +37,8 @@ export const applySessionRuntimeMetadata = (
       ...state.sessions[sessionIndex],
       metadata: runtimeMetadata,
     });
-    state.sessions[sessionIndex].projectId = nextProjectId === '0' ? '0' : nextProjectId || null;
-    state.sessions[sessionIndex].project_id = nextProjectId === '0' ? '0' : nextProjectId || null;
+    state.sessions[sessionIndex].projectId = nextProjectId || null;
+    state.sessions[sessionIndex].project_id = nextProjectId || null;
     if (state.currentSession?.id === sessionId) {
       syncCurrentProjectFromSession(state, state.sessions[sessionIndex]);
     }
@@ -50,8 +50,8 @@ export const applySessionRuntimeMetadata = (
       ...state.currentSession,
       metadata: runtimeMetadata,
     });
-    state.currentSession.projectId = nextProjectId === '0' ? '0' : nextProjectId || null;
-    state.currentSession.project_id = nextProjectId === '0' ? '0' : nextProjectId || null;
+    state.currentSession.projectId = nextProjectId || null;
+    state.currentSession.project_id = nextProjectId || null;
     syncCurrentProjectFromSession(state, state.currentSession);
   }
 };

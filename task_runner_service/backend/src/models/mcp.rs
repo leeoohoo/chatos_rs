@@ -54,6 +54,16 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             use_cases: &["拆分复杂任务", "跟踪待办", "记录任务进度"],
             capabilities: &["创建子任务", "更新任务状态", "查询任务列表"],
         },
+        BuiltinMcpKind::ProjectManagement => McpBuiltinKindGuide {
+            description: "项目管理工具，适合把规划结果写入项目空间，维护需求、技术说明、项目任务和依赖关系。",
+            use_cases: &["写入需求、变更或 bug 修复", "维护项目任务", "整理依赖和验收标准"],
+            capabilities: &[
+                "创建/查询/更新需求",
+                "创建/查询/更新项目任务",
+                "设置依赖",
+                "获取依赖图",
+            ],
+        },
         BuiltinMcpKind::Notepad => McpBuiltinKindGuide {
             description: "临时笔记工具，适合在长任务中记录计划、观察结果、中间结论和待确认事项。",
             use_cases: &["保存中间结论", "记录计划", "整理上下文", "跨步骤保留笔记"],
@@ -64,7 +74,7 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             use_cases: &["创建 agent 配置", "维护 agent 能力", "调整 agent 构建材料"],
             capabilities: &["读取 agent 配置", "生成配置草案", "更新 agent 相关文件"],
         },
-        BuiltinMcpKind::UiPrompter => McpBuiltinKindGuide {
+        BuiltinMcpKind::AskUser => McpBuiltinKindGuide {
             description: "人工确认工具，适合任务执行时需要向用户请求选择、输入或确认的场景。",
             use_cases: &["请求用户确认", "让用户选择方案", "补充缺失参数"],
             capabilities: &["发起 UI 提问", "等待用户提交", "读取用户选择"],

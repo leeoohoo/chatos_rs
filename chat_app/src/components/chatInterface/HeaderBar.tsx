@@ -10,6 +10,11 @@ interface HeaderBarProps {
   onOpenNotepad: () => void;
   onOpenApplications: () => void;
   onOpenAiModelManager: () => void;
+  onOpenMemoryModelSettings: () => void;
+  onOpenTaskModelSettings: () => void;
+  onOpenTaskRunnerExternalMcpManager: () => void;
+  memoryModelAttention?: boolean;
+  taskModelAttention?: boolean;
   onOpenAgentManager: () => void;
   onOpenSystemContextEditor: () => void;
   onOpenUserSettings: () => void;
@@ -24,6 +29,11 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenNotepad,
   onOpenApplications,
   onOpenAiModelManager,
+  onOpenMemoryModelSettings,
+  onOpenTaskModelSettings,
+  onOpenTaskRunnerExternalMcpManager,
+  memoryModelAttention = false,
+  taskModelAttention = false,
   onOpenAgentManager,
   onOpenSystemContextEditor,
   onOpenUserSettings,
@@ -146,6 +156,39 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
                 {t('header.aiModelManager')}
+              </button>
+              <button
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onOpenMemoryModelSettings();
+                }}
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent"
+              >
+                <span>{t('header.memoryModelSettings')}</span>
+                {memoryModelAttention ? (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                ) : null}
+              </button>
+              <button
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onOpenTaskModelSettings();
+                }}
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent"
+              >
+                <span>{t('header.taskModelSettings')}</span>
+                {taskModelAttention ? (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                ) : null}
+              </button>
+              <button
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onOpenTaskRunnerExternalMcpManager();
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-accent"
+              >
+                {t('header.taskRunnerExternalMcpManager')}
               </button>
               <button
                 onClick={() => {

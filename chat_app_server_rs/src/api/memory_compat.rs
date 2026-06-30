@@ -4,98 +4,26 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
-use crate::core::user_scope::resolve_user_id;
 use crate::models::memory_runtime_types::SyncTurnRuntimeSnapshotRequestDto;
 use crate::modules::conversation_runtime::memory_compat as compat_runtime;
 
-#[derive(Debug, Deserialize)]
-struct CompatSessionQuery {
-    user_id: Option<String>,
-    project_id: Option<String>,
-    status: Option<String>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-}
+mod contracts;
+mod support;
 
-#[derive(Debug, Deserialize)]
-struct CompatListMessagesQuery {
-    limit: Option<i64>,
-    offset: Option<i64>,
-    order: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatListSummariesQuery {
-    limit: Option<i64>,
-    offset: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatComposeContextRequest {
-    session_id: String,
-    mode: Option<String>,
-    include_raw_messages: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatCreateSessionRequest {
-    user_id: String,
-    project_id: Option<String>,
-    title: Option<String>,
-    metadata: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatPatchSessionRequest {
-    title: Option<String>,
-    status: Option<String>,
-    metadata: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatCreateMessageRequest {
-    role: String,
-    content: String,
-    message_mode: Option<String>,
-    message_source: Option<String>,
-    tool_calls: Option<Value>,
-    tool_call_id: Option<String>,
-    reasoning: Option<String>,
-    metadata: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatBatchCreateMessagesRequest {
-    messages: Vec<CompatCreateMessageRequest>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatSyncMessageRequest {
-    role: String,
-    content: String,
-    message_mode: Option<String>,
-    message_source: Option<String>,
-    tool_calls: Option<Value>,
-    tool_call_id: Option<String>,
-    reasoning: Option<String>,
-    metadata: Option<Value>,
-    created_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompatSyncSessionRequest {
-    user_id: String,
-    project_id: Option<String>,
-    title: Option<String>,
-    metadata: Option<Value>,
-    status: Option<String>,
-    created_at: Option<String>,
-    updated_at: Option<String>,
-}
+use self::contracts::{
+    CompatBatchCreateMessagesRequest, CompatComposeContextRequest, CompatCreateMessageRequest,
+    CompatCreateSessionRequest, CompatListMessagesQuery, CompatListSummariesQuery,
+    CompatPatchSessionRequest, CompatSessionQuery, CompatSyncMessageRequest,
+    CompatSyncSessionRequest,
+};
+use self::support::{
+    compat_internal_error, compat_message_input_from_create, compat_message_input_from_sync,
+    compat_message_result, compat_scoped_result, compat_session_access_error,
+    resolve_scope_user_id,
+};
 
 pub fn router() -> Router {
     Router::new()
@@ -527,112 +455,4 @@ async fn compose_context(
     };
     let _ignored_mode = req.mode;
     (StatusCode::OK, Json(json!(payload)))
-}
-
-fn compat_message_input_from_create(
-    req: CompatCreateMessageRequest,
-) -> compat_runtime::CompatMessageInput {
-    compat_message_input(
-        req.role,
-        req.content,
-        req.message_mode,
-        req.message_source,
-        req.tool_calls,
-        req.tool_call_id,
-        req.reasoning,
-        req.metadata,
-    )
-}
-
-fn compat_message_input_from_sync(
-    req: CompatSyncMessageRequest,
-) -> compat_runtime::CompatMessageInput {
-    compat_message_input(
-        req.role,
-        req.content,
-        req.message_mode,
-        req.message_source,
-        req.tool_calls,
-        req.tool_call_id,
-        req.reasoning,
-        req.metadata,
-    )
-}
-
-fn compat_message_input(
-    role: String,
-    content: String,
-    message_mode: Option<String>,
-    message_source: Option<String>,
-    tool_calls: Option<Value>,
-    tool_call_id: Option<String>,
-    reasoning: Option<String>,
-    metadata: Option<Value>,
-) -> compat_runtime::CompatMessageInput {
-    compat_runtime::CompatMessageInput {
-        role,
-        content,
-        message_mode,
-        message_source,
-        tool_calls,
-        tool_call_id,
-        reasoning,
-        metadata,
-    }
-}
-
-fn compat_scoped_result<T>(
-    result: Result<T, compat_runtime::CompatScopedOperationError>,
-    context: &str,
-) -> Result<T, (StatusCode, Json<Value>)> {
-    match result {
-        Ok(value) => Ok(value),
-        Err(compat_runtime::CompatScopedOperationError::SessionAccess(err)) => {
-            Err(compat_session_access_error(err))
-        }
-        Err(compat_runtime::CompatScopedOperationError::Internal(err)) => {
-            Err(compat_internal_error(context, err))
-        }
-    }
-}
-
-fn compat_message_result<T>(
-    result: Result<T, compat_runtime::CompatMessageOperationError>,
-    context: &str,
-) -> Result<T, (StatusCode, Json<Value>)> {
-    match result {
-        Ok(value) => Ok(value),
-        Err(compat_runtime::CompatMessageOperationError::NotFound) => Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "message not found"})),
-        )),
-        Err(compat_runtime::CompatMessageOperationError::SessionAccess(err)) => {
-            Err(compat_session_access_error(err))
-        }
-        Err(compat_runtime::CompatMessageOperationError::Internal(err)) => {
-            Err(compat_internal_error(context, err))
-        }
-    }
-}
-fn resolve_scope_user_id(
-    requested_user_id: Option<String>,
-    auth: &AuthUser,
-) -> Result<String, (StatusCode, Json<Value>)> {
-    resolve_user_id(requested_user_id, auth)
-}
-
-fn compat_session_access_error(
-    err: crate::core::session_access::SessionAccessError,
-) -> (StatusCode, Json<Value>) {
-    crate::core::session_access::map_session_access_error_compat(err)
-}
-
-fn compat_internal_error(context: &str, detail: String) -> (StatusCode, Json<Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({
-            "error": context,
-            "detail": detail,
-        })),
-    )
 }

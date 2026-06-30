@@ -28,6 +28,9 @@ const TasksPage = lazy(async () => ({
 const ModelsPage = lazy(async () => ({
   default: (await import('./pages/ModelsPage')).ModelsPage,
 }));
+const ProjectsPage = lazy(async () => ({
+  default: (await import('./pages/ProjectsPage')).ProjectsPage,
+}));
 const ServersPage = lazy(async () => ({
   default: (await import('./pages/ServersPage')).ServersPage,
 }));
@@ -39,6 +42,9 @@ const PromptsPage = lazy(async () => ({
 }));
 const McpCatalogPage = lazy(async () => ({
   default: (await import('./pages/McpCatalogPage')).McpCatalogPage,
+}));
+const SkillsPage = lazy(async () => ({
+  default: (await import('./pages/SkillsPage')).SkillsPage,
 }));
 const SettingsPage = lazy(async () => ({
   default: (await import('./pages/SettingsPage')).SettingsPage,
@@ -170,6 +176,9 @@ function AuthGate() {
     return <LoginPage loading={loginLoading} onLogin={handleLogin} />;
   }
 
+  const requireAdmin = (element: React.ReactElement) =>
+    currentUser.role === 'admin' ? element : <Navigate to="/tasks" replace />;
+
   return (
     <Suspense
       fallback={
@@ -190,14 +199,16 @@ function AuthGate() {
         >
           <Route path="/" element={<Navigate to="/tasks" replace />} />
           <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/servers" element={<ServersPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/prompts" element={<PromptsPage />} />
           <Route path="/mcp" element={<McpCatalogPage />} />
+          <Route path="/skills" element={<SkillsPage />} />
           <Route path="/tooling" element={<ToolingPage />} />
-          <Route path="/users" element={<UsersPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/users" element={requireAdmin(<UsersPage />)} />
+          <Route path="/settings" element={requireAdmin(<SettingsPage />)} />
         </Route>
       </Routes>
     </Suspense>

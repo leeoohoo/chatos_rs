@@ -34,22 +34,25 @@ const AiModelList = ({
               </h4>
               <p
                 className="text-xs sm:text-sm text-muted-foreground truncate"
-                title={`${config.base_url} - ${config.model_name}`}
+                title={config.base_url}
               >
-                {config.base_url} - {config.model_name}
+                {config.base_url}
               </p>
               {(config.provider
-                || config.thinking_level
                 || config.supports_images
                 || config.supports_reasoning
-                || config.supports_responses) && (
+                || config.supports_responses
+                || config.last_sync_status) && (
                 <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                   {config.provider && (
                     <span className="rounded bg-accent px-1.5 py-0.5">{config.provider}</span>
                   )}
-                  {config.provider === 'gpt' && config.thinking_level && (
+                  <span className="rounded bg-accent px-1.5 py-0.5">
+                    {t('aiModelManager.badge.importedModels', { count: config.imported_model_count })}
+                  </span>
+                  {config.last_sync_status && (
                     <span className="rounded bg-accent px-1.5 py-0.5">
-                      {t('aiModelManager.badge.thinking', { value: config.thinking_level })}
+                      {t('aiModelManager.badge.syncStatus', { value: config.last_sync_status })}
                     </span>
                   )}
                   {config.supports_images && (
@@ -62,6 +65,14 @@ const AiModelList = ({
                     <span className="rounded bg-accent px-1.5 py-0.5">{t('aiModelManager.badge.responses')}</span>
                   )}
                 </div>
+              )}
+              {config.last_sync_error && (
+                <p
+                  className="mt-1 text-xs text-red-600 dark:text-red-400 truncate"
+                  title={config.last_sync_error}
+                >
+                  {config.last_sync_error}
+                </p>
               )}
             </div>
           </div>

@@ -5,8 +5,12 @@ build/
 coverage/
 target/
 target-shared/
+target-*-run/
+target-*-test/
 
 data/
+!memory_engine/frontend/src/app/sections/data/
+!memory_engine/frontend/src/app/sections/data/**
 logs/
 *.log
 .env

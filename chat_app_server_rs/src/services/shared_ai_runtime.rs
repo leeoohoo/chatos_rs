@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::config::Config;
 use crate::core::ai_model_config::ResolvedChatModelConfig;
+use crate::services::access_token_scope;
 use crate::services::agent_runtime::mcp_tool_execute::McpToolExecute;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::chatos_memory_engine::CHATOS_COMPAT_SOURCE_ID;
@@ -35,11 +36,17 @@ pub fn build_shared_contextual_turn_runner(
 ) -> Result<chatos_ai_runtime::ContextualTurnRunner, String> {
     let cfg = Config::try_get()?;
     let runtime = build_shared_ai_runtime_with_chatos_records(tool_executor, message_manager);
-    let composer = chatos_ai_runtime::MemoryContextComposer::new_direct(
+    let mut memory_client = memory_engine_sdk::MemoryEngineClient::new_direct(
         cfg.memory_engine_base_url.clone(),
         Duration::from_millis(cfg.memory_engine_request_timeout_ms.max(300) as u64),
         CHATOS_COMPAT_SOURCE_ID.to_string(),
     )?;
+    if let Some(access_token) = access_token_scope::get_current_access_token() {
+        memory_client = memory_client.with_bearer_token(access_token);
+    } else if let Some(operator_token) = cfg.memory_engine_operator_token.as_deref() {
+        memory_client = memory_client.with_operator_token(operator_token);
+    }
+    let composer = chatos_ai_runtime::MemoryContextComposer::from_client(memory_client);
     Ok(chatos_ai_runtime::ContextualTurnRunner::new(
         runtime,
         Some(composer),

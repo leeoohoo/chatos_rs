@@ -9,7 +9,8 @@ pub(in crate::services) fn normalize_model_provider_input(
     }
     let normalized = normalize_provider(raw);
     let provider = match normalized.as_str() {
-        "gpt" | "openai_compatible" => "openai",
+        "gpt" => "openai",
+        "openai_compatible" => "openai_compatible",
         "deepseek" => "deepseek",
         "kimi" => "kimik2",
         "custom_gateway" => "openai",
@@ -17,8 +18,8 @@ pub(in crate::services) fn normalize_model_provider_input(
         other => other,
     };
     match provider {
-        "openai" | "deepseek" | "kimik2" => Ok(provider.to_string()),
-        _ => Err("provider 仅支持 openai / deepseek / kimik2".to_string()),
+        "openai" | "openai_compatible" | "deepseek" | "kimik2" => Ok(provider.to_string()),
+        _ => Err("provider 仅支持 openai / openai_compatible / deepseek / kimik2".to_string()),
     }
 }
 
@@ -55,6 +56,8 @@ pub(in crate::services) fn normalize_model_config_record(
     record.thinking_level =
         normalize_model_thinking_level_input(provider.as_str(), record.thinking_level.clone())?;
     record.owner_user_id = normalized_optional(record.owner_user_id);
+    record.owner_username = normalized_optional(record.owner_username);
+    record.owner_display_name = normalized_optional(record.owner_display_name);
     record.base_url = normalize_model_base_url_input(provider.as_str(), Some(record.base_url));
     record.provider = provider;
     record.usage_scenario = normalized_optional(record.usage_scenario);

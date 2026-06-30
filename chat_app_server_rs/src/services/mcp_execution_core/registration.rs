@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use chatos_mcp_runtime::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
+
 use serde_json::{json, Value};
 use tracing::warn;
 
@@ -9,52 +11,10 @@ use crate::core::mcp_tools::{
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
-pub(crate) async fn register_tools_from_http(
-    tools: &mut Vec<Value>,
-    tool_metadata: &mut HashMap<String, ToolInfo>,
-    server: &McpHttpServer,
-) -> Result<(), String> {
-    let discovered_tools =
-        crate::core::mcp_tools::list_tools_http(&server.url, server.headers.as_ref()).await?;
-    for tool in discovered_tools {
-        register_tool(
-            tools,
-            tool_metadata,
-            &server.name,
-            "http",
-            Some(server.url.clone()),
-            server.headers.clone(),
-            None,
-            tool,
-        );
-    }
-    Ok(())
-}
-
-pub(crate) async fn register_tools_from_stdio(
-    tools: &mut Vec<Value>,
-    tool_metadata: &mut HashMap<String, ToolInfo>,
-    server: &McpStdioServer,
-) -> Result<(), String> {
-    let discovered_tools = crate::core::mcp_tools::list_tools_stdio(server).await?;
-    for tool in discovered_tools {
-        register_tool(
-            tools,
-            tool_metadata,
-            &server.name,
-            "stdio",
-            None,
-            None,
-            Some(server.clone()),
-            tool,
-        );
-    }
-    Ok(())
-}
-
 pub(crate) fn register_tools_from_builtin(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,
+    tool_aliases: &mut HashMap<String, String>,
     unavailable_tools: &mut Vec<Value>,
     builtin_services: &mut HashMap<String, BuiltinToolService>,
     server: &McpBuiltinServer,
@@ -81,6 +41,7 @@ pub(crate) fn register_tools_from_builtin(
         register_tool(
             tools,
             tool_metadata,
+            tool_aliases,
             &server.name,
             "builtin",
             None,
@@ -158,6 +119,7 @@ pub(crate) fn codex_gateway_request_tools(
 fn register_tool(
     tools: &mut Vec<Value>,
     tool_metadata: &mut HashMap<String, ToolInfo>,
+    tool_aliases: &mut HashMap<String, String>,
     server_name: &str,
     server_type: &str,
     server_url: Option<String>,
@@ -169,7 +131,14 @@ fn register_tool(
         return;
     };
 
-    let prefixed_name = format!("{}_{}", server_name, definition.name);
+    let original_name = definition.name;
+    let prefixed_name = reserve_tool_name(tool_metadata, server_name, original_name.as_str());
+    register_tool_aliases(
+        tool_aliases,
+        server_name,
+        original_name.as_str(),
+        prefixed_name.as_str(),
+    );
     tools.push(build_function_tool_schema(
         &prefixed_name,
         &definition.description,
@@ -179,7 +148,7 @@ fn register_tool(
     tool_metadata.insert(
         prefixed_name,
         ToolInfo {
-            original_name: definition.name,
+            original_name,
             server_name: server_name.to_string(),
             server_type: server_type.to_string(),
             server_url,
@@ -188,4 +157,65 @@ fn register_tool(
             tool_info: tool,
         },
     );
+}
+
+fn reserve_tool_name(
+    tool_metadata: &HashMap<String, ToolInfo>,
+    server_name: &str,
+    tool_name: &str,
+) -> String {
+    let canonical = canonical_prefixed_tool_name(server_name, tool_name);
+    if !tool_metadata.contains_key(canonical.as_str()) {
+        return canonical;
+    }
+
+    let hashed = format!(
+        "{}_{:08x}",
+        canonical,
+        stable_tool_name_hash(server_name, tool_name)
+    );
+    if !tool_metadata.contains_key(hashed.as_str()) {
+        return hashed;
+    }
+
+    let mut counter = 2usize;
+    loop {
+        let candidate = format!("{hashed}_{counter}");
+        if !tool_metadata.contains_key(candidate.as_str()) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
+fn register_tool_aliases(
+    tool_aliases: &mut HashMap<String, String>,
+    server_name: &str,
+    tool_name: &str,
+    public_name: &str,
+) {
+    let legacy = legacy_prefixed_tool_name(server_name, tool_name);
+    if legacy != public_name {
+        tool_aliases
+            .entry(legacy)
+            .or_insert_with(|| public_name.to_string());
+    }
+}
+
+fn stable_tool_name_hash(server_name: &str, tool_name: &str) -> u32 {
+    const OFFSET: u32 = 0x811c9dc5;
+    const PRIME: u32 = 0x01000193;
+
+    let mut hash = OFFSET;
+    for byte in server_name
+        .as_bytes()
+        .iter()
+        .copied()
+        .chain(std::iter::once(0xff))
+        .chain(tool_name.as_bytes().iter().copied())
+    {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }

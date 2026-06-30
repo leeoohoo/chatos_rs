@@ -11,7 +11,6 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
                     "status": { "type": "string", "enum": task_status_values() },
                     "keyword": { "type": "string" },
                     "tag": { "type": "string" },
-                    "model_config_id": { "type": "string" },
                     "scheduled_only": { "type": "boolean" },
                     "parent_task_id": { "type": "string" },
                     "source_run_id": { "type": "string" },
@@ -44,6 +43,21 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
             "list_mcp_builtin_catalog",
             "List builtin MCP capabilities that can be enabled for newly created Task Runner tasks, including use cases, capabilities, and current tool names.",
             empty_object_schema(),
+        ),
+        tool_definition(
+            "list_external_mcp_configs",
+            "List enabled external MCP configs visible to the current authenticated user. Use the returned id values as external_mcp_config_ids when a new task needs those external tools.",
+            empty_object_schema(),
+        ),
+        tool_definition(
+            "search_installed_skills",
+            "Search installed Task Runner skills visible to the current authenticated user, including bundled global skills and that user's installed skills. Use returned id values as skill_ids when creating tasks.",
+            search_installed_skills_schema(),
+        ),
+        tool_definition(
+            "get_skill_detail",
+            "Get full details for one installed Task Runner skill visible to the current authenticated user, including instructions and package file metadata.",
+            get_skill_detail_schema(),
         ),
         tool_definition(
             "create_tasks_with_prerequisites",

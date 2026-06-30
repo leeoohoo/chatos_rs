@@ -69,6 +69,9 @@ export interface InputAreaProps {
   reasoningSupported?: boolean;
   reasoningEnabled?: boolean;
   onReasoningToggle?: (enabled: boolean) => void;
+  planModeAvailable?: boolean;
+  planModeEnabled?: boolean;
+  onPlanModeToggle?: (enabled: boolean) => void;
   showModelSelector?: boolean;
   selectedModelId?: string | null;
   selectedModelName?: string | null;

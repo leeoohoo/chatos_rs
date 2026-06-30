@@ -3,11 +3,11 @@ use super::*;
 impl McpCatalogService {
     pub fn new(
         task_service: TaskService,
-        ui_prompt_service: crate::ui_prompt_service::UiPromptService,
+        ask_user_prompt_service: crate::ask_user_prompt_service::AskUserPromptService,
     ) -> Self {
         Self {
             task_service,
-            ui_prompt_service,
+            ask_user_prompt_service,
         }
     }
 
@@ -38,7 +38,7 @@ impl McpCatalogService {
                 match build_task_runner_builtin_provider(
                     &server,
                     self.task_service.clone(),
-                    self.ui_prompt_service.clone(),
+                    self.ask_user_prompt_service.clone(),
                 ) {
                     Ok(Some(provider)) => {
                         let available_tool_names = provider
@@ -73,6 +73,9 @@ impl McpCatalogService {
                             message: match kind {
                                 chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
                                     Some("服务器列表来自 Task Runner 的“服务器”页面".to_string())
+                                }
+                                chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
+                                    Some("规划任务运行时会自动启用；普通任务不可选择。".to_string())
                                 }
                                 _ => None,
                             },

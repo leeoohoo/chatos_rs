@@ -188,7 +188,7 @@ impl RemoteConnectionControllerService {
     ) {
         self.register_tool(
             "list_connections",
-            "List current user's available remote SSH/SFTP connections (sensitive fields are masked). Use this tool family for remote hosts, not local terminal execution.",
+            "List current user's available remote SSH/SFTP connections (sensitive fields are masked). Use this tool family for remote hosts, not local terminal execution. If no suitable connection or credentials are available, ask the user to choose/create/update a Task Runner remote-server connection before treating the remote task as complete.",
             json!({
                 "type": "object",
                 "properties": {},
@@ -214,9 +214,9 @@ impl RemoteConnectionControllerService {
             json!([])
         };
         let description = if require_connection_id {
-            "Test SSH connectivity for a remote connection. connection_id is required because no default connection is bound."
+            "Test SSH connectivity for a remote connection. connection_id is required because no default connection is bound. If authentication fails or credentials are missing, ask the user for the needed connection/config update instead of downgrading to public probing."
         } else {
-            "Test SSH connectivity for a remote connection. If connection_id is omitted, use default bound connection from chat runtime."
+            "Test SSH connectivity for a remote connection. If connection_id is omitted, use default bound connection from chat runtime. If authentication fails or credentials are missing, ask the user for the needed connection/config update instead of downgrading to public probing."
         };
         self.register_tool(
             "test_connection",
@@ -250,9 +250,9 @@ impl RemoteConnectionControllerService {
             json!(["command"])
         };
         let description = if require_connection_id {
-            "Run one SSH command on a remote host. connection_id is required because no default connection is bound. Returns exit_code/stdout/stderr/truncated flags. Dangerous commands are blocked by default unless allow_dangerous=true."
+            "Run one SSH command on a remote host. connection_id is required because no default connection is bound. Returns exit_code/stdout/stderr/truncated flags. Dangerous commands are blocked by default unless allow_dangerous=true. If remote authentication or connection details are missing, ask the user to supply/update them before claiming the remote inspection is complete."
         } else {
-            "Run one SSH command on a remote host (preferred for all server-side checks/ops). Returns structured result including exit_code/stdout/stderr/truncated flags. Dangerous commands are blocked by default unless allow_dangerous=true."
+            "Run one SSH command on a remote host (preferred for all server-side checks/ops). Returns structured result including exit_code/stdout/stderr/truncated flags. Dangerous commands are blocked by default unless allow_dangerous=true. If remote authentication or connection details are missing, ask the user to supply/update them before claiming the remote inspection is complete."
         };
         self.register_tool(
             "run_command",

@@ -2,7 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
@@ -10,8 +10,12 @@ use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
 use crate::services::terminal_manager::{get_terminal_manager, TerminalEvent};
+use crate::utils::ws_outbound;
 
 use super::{WsInput, WsOutput, WS_DEFAULT_SNAPSHOT_LINES, WS_MAX_SNAPSHOT_LINES};
+
+const TERMINAL_WS_OUTBOUND_QUEUE_CAPACITY: usize = 512;
+const TERMINAL_WS_CHANNEL: &str = "terminal";
 
 pub(super) async fn terminal_ws(
     auth: AuthUser,
@@ -97,21 +101,46 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
 
     let mut rx = session.subscribe();
     let (ws_sender, mut ws_receiver) = socket.split();
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+    let (out_tx, mut out_rx) = ws_outbound::channel(TERMINAL_WS_OUTBOUND_QUEUE_CAPACITY);
+    let shutdown = CancellationToken::new();
 
-    let send_task = tokio::spawn(async move {
-        let mut sender = ws_sender;
-        while let Some(msg) = out_rx.recv().await {
-            if sender.send(msg).await.is_err() {
-                break;
+    let send_task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let mut sender = ws_sender;
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    maybe_msg = out_rx.recv() => {
+                        let Some(msg) = maybe_msg else {
+                            break;
+                        };
+                        tokio::select! {
+                            _ = shutdown.cancelled() => break,
+                            result = sender.send(msg) => {
+                                if result.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     });
 
     let output_task = tokio::spawn({
         let out_tx = out_tx.clone();
+        let shutdown = shutdown.clone();
         async move {
-            while let Ok(evt) = rx.recv().await {
+            loop {
+                let evt = tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    evt = rx.recv() => evt,
+                };
+                let Ok(evt) = evt else {
+                    break;
+                };
                 let payload = match evt {
                     TerminalEvent::Output(data) => WsOutput::Output { data },
                     TerminalEvent::Exit(code) => WsOutput::Exit { code },
@@ -121,16 +150,26 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                     },
                 };
                 let text = serde_json::to_string(&payload).unwrap_or_default();
-                if out_tx.send(Message::Text(text)).is_err() {
+                if !ws_outbound::try_send_or_close(
+                    &out_tx,
+                    Message::Text(text),
+                    TERMINAL_WS_CHANNEL,
+                    &shutdown,
+                ) {
                     break;
                 }
             }
         }
     });
 
-    while let Some(msg) = ws_receiver.next().await {
+    loop {
+        let msg = tokio::select! {
+            _ = shutdown.cancelled() => break,
+            msg = ws_receiver.next() => msg,
+        };
         match msg {
-            Ok(Message::Text(text)) => {
+            None => break,
+            Some(Ok(Message::Text(text))) => {
                 let parsed = serde_json::from_str::<WsInput>(&text);
                 match parsed {
                     Ok(WsInput::Input { data }) => {
@@ -149,18 +188,32 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                         let requested = lines.unwrap_or(WS_DEFAULT_SNAPSHOT_LINES);
                         let normalized = requested.clamp(1, WS_MAX_SNAPSHOT_LINES);
                         let snapshot = session.output_snapshot_tail_lines(normalized);
-                        let _ = out_tx.send(Message::Text(
-                            serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
-                                .unwrap_or_default(),
-                        ));
+                        if !ws_outbound::try_send_or_close(
+                            &out_tx,
+                            Message::Text(
+                                serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
+                                    .unwrap_or_default(),
+                            ),
+                            TERMINAL_WS_CHANNEL,
+                            &shutdown,
+                        ) {
+                            break;
+                        }
                     }
                     Ok(WsInput::Ping) => {
-                        let _ = out_tx.send(Message::Text(
-                            serde_json::to_string(&WsOutput::Pong {
-                                timestamp: crate::core::time::now_rfc3339(),
-                            })
-                            .unwrap_or_default(),
-                        ));
+                        if !ws_outbound::try_send_or_close(
+                            &out_tx,
+                            Message::Text(
+                                serde_json::to_string(&WsOutput::Pong {
+                                    timestamp: crate::core::time::now_rfc3339(),
+                                })
+                                .unwrap_or_default(),
+                            ),
+                            TERMINAL_WS_CHANNEL,
+                            &shutdown,
+                        ) {
+                            break;
+                        }
                     }
                     Err(_) => {
                         let trimmed = text.trim();
@@ -174,21 +227,30 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                     }
                 }
             }
-            Ok(Message::Binary(bytes)) => {
+            Some(Ok(Message::Binary(bytes))) => {
                 if !bytes.is_empty() {
                     let data = String::from_utf8_lossy(&bytes).to_string();
                     persist_terminal_input(&id, &data).await;
                     let _ = session.write_input(&data);
                 }
             }
-            Ok(Message::Close(_)) => break,
-            Ok(Message::Ping(_)) => {
-                let _ = out_tx.send(Message::Pong(vec![]));
+            Some(Ok(Message::Close(_))) => break,
+            Some(Ok(Message::Ping(_))) => {
+                if !ws_outbound::try_send_or_close(
+                    &out_tx,
+                    Message::Pong(vec![]),
+                    TERMINAL_WS_CHANNEL,
+                    &shutdown,
+                ) {
+                    break;
+                }
             }
-            _ => {}
+            Some(Ok(_)) => {}
+            Some(Err(_)) => break,
         }
     }
 
+    shutdown.cancel();
     output_task.abort();
     send_task.abort();
 }

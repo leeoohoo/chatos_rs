@@ -1,6 +1,7 @@
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::diff::{
@@ -8,10 +9,11 @@ use super::diff::{
 };
 use super::edit::{apply_edit_text, EditRequest};
 use super::fs_ops::FsOps;
-use super::patch::apply_patch;
+use super::patch::apply_patch_limited;
 use super::service::{CodeMaintainerHooksRef, CodeMaintainerService};
 use super::storage::ChangeLogStore;
-use super::utils::{format_bytes, sha256_bytes};
+use super::utils::format_bytes;
+use sha2::{Digest, Sha256};
 
 use crate::tool_registry::text_result;
 
@@ -70,6 +72,7 @@ pub(super) fn register_write_tools(
         root,
         allow_writes,
         max_file_bytes,
+        max_write_bytes,
         writes_note,
         workspace_note,
         hooks,
@@ -411,6 +414,7 @@ fn register_apply_patch_tool(
     root: PathBuf,
     allow_writes: bool,
     max_file_bytes: i64,
+    max_write_bytes: i64,
     writes_note: &str,
     workspace_note: &str,
     hooks: Option<CodeMaintainerHooksRef>,
@@ -443,7 +447,7 @@ fn register_apply_patch_tool(
                     read_text_for_diff(&before_path, max_file_bytes).unwrap_or_else(DiffInput::omitted);
                 before_snapshots.insert(target.after_path, before_snapshot);
             }
-            let result = apply_patch(&root, patch_text, allow_writes).map_err(|err| {
+            let result = apply_patch_limited(&root, patch_text, allow_writes, max_write_bytes).map_err(|err| {
                 if err.contains("Patch context not found in file.") {
                     let hint = json!({
                         "error": err,
@@ -468,8 +472,7 @@ fn register_apply_patch_tool(
                     .map_err(|_| "change log unavailable".to_string())?;
                 for path in &result.updated {
                     let full_path = fs_ops.resolve_path(path)?;
-                    let content = std::fs::read(&full_path).map_err(|err| err.to_string())?;
-                    let hash = sha256_bytes(&content);
+                    let (hash, size) = file_hash_and_size(&full_path)?;
                     let before_snapshot = before_snapshots.remove(path).unwrap_or(DiffInput {
                         text: None,
                         reason: None,
@@ -489,7 +492,7 @@ fn register_apply_patch_tool(
                         path,
                         "write",
                         change_kind,
-                        content.len() as i64,
+                        size,
                         &hash,
                         ctx.conversation_id,
                         ctx.run_id,
@@ -502,8 +505,7 @@ fn register_apply_patch_tool(
 
                 for path in &result.added {
                     let full_path = fs_ops.resolve_path(path)?;
-                    let content = std::fs::read(&full_path).map_err(|err| err.to_string())?;
-                    let hash = sha256_bytes(&content);
+                    let (hash, size) = file_hash_and_size(&full_path)?;
                     let before_snapshot = before_snapshots.remove(path).unwrap_or(DiffInput {
                         text: None,
                         reason: None,
@@ -516,7 +518,7 @@ fn register_apply_patch_tool(
                         path,
                         "write",
                         "create",
-                        content.len() as i64,
+                        size,
                         &hash,
                         ctx.conversation_id,
                         ctx.run_id,
@@ -553,6 +555,22 @@ fn register_apply_patch_tool(
             Ok(text_result(json!({ "result": result, "files": hashes })))
         }),
     );
+}
+
+fn file_hash_and_size(path: &Path) -> Result<(String, i64), String> {
+    let mut file = std::fs::File::open(path).map_err(|err| err.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut total = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|err| err.to_string())?;
+        if read == 0 {
+            let size = i64::try_from(total).map_err(|_| "file too large to log".to_string())?;
+            return Ok((hex::encode(hasher.finalize()), size));
+        }
+        total = total.saturating_add(read as u64);
+        hasher.update(&buffer[..read]);
+    }
 }
 
 fn note_workspace_path_changed(hooks: Option<&CodeMaintainerHooksRef>, path: &str) {

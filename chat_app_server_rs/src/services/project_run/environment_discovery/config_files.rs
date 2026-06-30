@@ -1,13 +1,13 @@
-use std::fs;
 use std::path::Path;
 
 use crate::models::project_run::ProjectRunTarget;
 use crate::models::project_run_environment::ProjectRunConfigFileSummary;
 
 use super::super::environment_support::{home_dir, normalize_path};
+use super::super::file_limits::{read_to_string_limited, MAX_CONFIG_PREVIEW_BYTES};
 
 fn read_preview_lines(path: &Path, max_lines: usize) -> Option<String> {
-    let content = fs::read_to_string(path).ok()?;
+    let content = read_to_string_limited(path, MAX_CONFIG_PREVIEW_BYTES)?;
     let lines = content
         .lines()
         .map(|line| line.trim())

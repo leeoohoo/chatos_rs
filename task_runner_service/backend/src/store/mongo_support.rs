@@ -3,9 +3,9 @@ use mongodb::{
     options::FindOptions,
 };
 
-use crate::models::{RunListFilters, TaskListFilters, UiPromptStatus};
+use crate::models::{AskUserPromptStatus, RunListFilters, TaskListFilters, PUBLIC_PROJECT_ID};
 
-use super::codec::{task_run_status_to_str, task_status_to_str, ui_prompt_status_to_str};
+use super::codec::{ask_user_prompt_status_to_str, task_run_status_to_str, task_status_to_str};
 
 pub(super) fn is_mongo_active_run_index_conflict(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
@@ -48,14 +48,57 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     if let Some(model_config_id) = filters.model_config_id.as_deref() {
         filter.insert("default_model_config_id", model_config_id);
     }
-    if let Some(creator_user_id) = filters.creator_user_id.as_deref() {
-        filter.insert("creator_user_id", creator_user_id);
+    if let Some(project_id) = filters.project_id.as_deref() {
+        if project_id == PUBLIC_PROJECT_ID {
+            and_clauses.push(doc! {
+                "$or": [
+                    { "project_id": PUBLIC_PROJECT_ID },
+                    { "project_id": "0" },
+                    { "project_id": "" },
+                    { "project_id": null },
+                    { "project_id": { "$exists": false } }
+                ]
+            });
+        } else {
+            filter.insert("project_id", project_id);
+        }
+    }
+    if let Some(task_profile) = filters.task_profile.as_deref() {
+        filter.insert("task_profile", task_profile);
+    }
+    if let Some(owner_user_id) = filters.creator_user_id.as_deref() {
+        filter.insert(
+            "$or",
+            vec![
+                doc! { "owner_user_id": owner_user_id },
+                doc! {
+                    "$and": [
+                        {
+                            "$or": [
+                                { "owner_user_id": { "$exists": false } },
+                                { "owner_user_id": null },
+                                { "owner_user_id": "" }
+                            ]
+                        },
+                        { "creator_user_id": owner_user_id }
+                    ]
+                },
+            ],
+        );
     }
     if filters.scheduled_only.unwrap_or(false) {
         filter.insert("schedule.mode", doc! { "$ne": "manual" });
     }
     if let Some(parent_task_id) = filters.parent_task_id.as_deref() {
         filter.insert("parent_task_id", parent_task_id);
+    } else if filters.include_subtasks == Some(false) {
+        and_clauses.push(doc! {
+            "$or": [
+                { "parent_task_id": { "$exists": false } },
+                { "parent_task_id": null },
+                { "parent_task_id": "" }
+            ]
+        });
     }
     if let Some(source_run_id) = filters.source_run_id.as_deref() {
         filter.insert("source_run_id", source_run_id);
@@ -130,7 +173,7 @@ pub(super) fn build_mongo_run_filter(filters: &RunListFilters) -> Document {
 pub(super) fn build_mongo_prompt_filter(
     task_id: Option<&str>,
     run_id: Option<&str>,
-    status: Option<UiPromptStatus>,
+    status: Option<AskUserPromptStatus>,
 ) -> Document {
     let mut filter = Document::new();
     if let Some(task_id) = task_id {
@@ -140,7 +183,7 @@ pub(super) fn build_mongo_prompt_filter(
         filter.insert("run_id", run_id);
     }
     if let Some(status) = status {
-        filter.insert("status", ui_prompt_status_to_str(status));
+        filter.insert("status", ask_user_prompt_status_to_str(status));
     }
     filter
 }

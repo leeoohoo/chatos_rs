@@ -208,9 +208,13 @@ fn java_references(
         )
     })?;
     let mut classification_cache = HashMap::new();
+    let reference_request = NavPositionRequest {
+        column: 0,
+        ..req.clone()
+    };
     Ok(select_reference_locations(
         ctx,
-        req,
+        &reference_request,
         &token,
         matches,
         MAX_REFERENCE_RESULTS,

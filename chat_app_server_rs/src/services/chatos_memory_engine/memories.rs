@@ -5,6 +5,7 @@ use serde_json::json;
 
 use crate::core::chat_runtime::{contact_agent_id_from_metadata, contact_id_from_metadata};
 use crate::models::memory_mapping_types::{MemoryAgentRecallDto, MemoryProjectMemoryDto};
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 
 use super::client::build_client;
@@ -21,8 +22,15 @@ pub async fn list_contact_project_memories(
     limit: Option<i64>,
     offset: i64,
 ) -> Result<Vec<MemoryProjectMemoryDto>, String> {
-    let normalized_project_id =
-        normalize_non_empty(Some(project_id)).unwrap_or_else(|| "0".to_string());
+    let normalized_project_id = normalize_non_empty(Some(project_id))
+        .map(|value| {
+            if value == "0" {
+                PUBLIC_PROJECT_ID.to_string()
+            } else {
+                value
+            }
+        })
+        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
     let subject_id = format!("contact_project:{contact_id}:{normalized_project_id}");
     let items = query_project_memories(
         user_id,

@@ -18,14 +18,17 @@ type TaskListToolbarProps = {
   keywordFilter: string;
   tagFilter?: string;
   modelConfigId?: string;
+  projectId?: string;
   statusFilter: 'all' | TaskStatus;
   scheduledOnly: boolean;
   tagOptions: SelectProps['options'];
   modelOptions: SelectProps['options'];
+  projectOptions: SelectProps['options'];
   statusFilterOptions: SegmentedProps['options'];
   onKeywordFilterChange: (value: string) => void;
   onTagFilterChange: (value?: string) => void;
   onModelFilterChange: (value?: string) => void;
+  onProjectFilterChange: (value?: string) => void;
   onStatusFilterChange: (value: 'all' | TaskStatus) => void;
   onScheduledOnlyChange: (value: boolean) => void;
   onRefresh: () => void;
@@ -37,14 +40,17 @@ export function TaskListToolbar({
   keywordFilter,
   tagFilter,
   modelConfigId,
+  projectId,
   statusFilter,
   scheduledOnly,
   tagOptions,
   modelOptions,
+  projectOptions,
   statusFilterOptions,
   onKeywordFilterChange,
   onTagFilterChange,
   onModelFilterChange,
+  onProjectFilterChange,
   onStatusFilterChange,
   onScheduledOnlyChange,
   onRefresh,
@@ -83,6 +89,16 @@ export function TaskListToolbar({
           value={modelConfigId}
           options={modelOptions}
           onChange={onModelFilterChange}
+        />
+        <Select
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          placeholder={t('tasks.projectFilter')}
+          style={{ width: 200 }}
+          value={projectId}
+          options={projectOptions}
+          onChange={onProjectFilterChange}
         />
         <Segmented
           value={statusFilter}

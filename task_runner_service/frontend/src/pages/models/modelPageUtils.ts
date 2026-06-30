@@ -20,13 +20,14 @@ export type ModelFormValues = {
   enabled: boolean;
 };
 
-export type SupportedProvider = 'openai' | 'deepseek' | 'kimik2';
+export type SupportedProvider = 'openai' | 'openai_compatible' | 'deepseek' | 'kimik2';
 
 export const SUPPORTED_PROVIDER_OPTIONS: Array<{
   label: SupportedProvider;
   value: SupportedProvider;
 }> = [
   { label: 'openai', value: 'openai' },
+  { label: 'openai_compatible', value: 'openai_compatible' },
   { label: 'deepseek', value: 'deepseek' },
   { label: 'kimik2', value: 'kimik2' },
 ];
@@ -38,6 +39,13 @@ export const THINKING_LEVEL_OPTIONS: Record<
   openai: [
     { label: 'none', value: 'none' },
     { label: 'minimal', value: 'minimal' },
+    { label: 'low', value: 'low' },
+    { label: 'medium', value: 'medium' },
+    { label: 'high', value: 'high' },
+    { label: 'xhigh', value: 'xhigh' },
+  ],
+  openai_compatible: [
+    { label: 'none', value: 'none' },
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
     { label: 'high', value: 'high' },
@@ -66,6 +74,8 @@ export function defaultBaseUrlForProvider(provider?: string): string {
       return 'https://api.deepseek.com';
     case 'kimik2':
       return 'https://api.moonshot.ai/v1';
+    case 'openai_compatible':
+      return 'https://api.openai.com/v1';
     case 'openai':
     default:
       return 'https://api.openai.com/v1';
@@ -76,6 +86,9 @@ export function normalizeSupportedProvider(provider?: string): SupportedProvider
   const value = (provider || '').trim().toLowerCase();
   if (value === 'deepseek') {
     return 'deepseek';
+  }
+  if (value === 'openai_compatible' || value === 'openai-compatible' || value === 'compatible') {
+    return 'openai_compatible';
   }
   if (value === 'kimi' || value === 'kimik2' || value === 'kiminik2' || value === 'moonshot') {
     return 'kimik2';

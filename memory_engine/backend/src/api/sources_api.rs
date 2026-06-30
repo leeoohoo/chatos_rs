@@ -7,6 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
+use super::memory_auth::MemoryAuthContext;
 use super::source_guard;
 use crate::models::{EngineSource, RotateSourceSecretResponse, UpsertSourceRequest};
 use crate::repositories::sources;
@@ -39,13 +40,15 @@ pub async fn upsert_source(
         .map_err(internal_error)
 }
 
-pub async fn list_sources(
+pub async fn admin_list_sources(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Query(query): Query<ListSourcesQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let items = sources::list_sources(
         &state.pool,
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_type.as_deref(),
         query.status.as_deref(),
         query.sdk_enabled,
@@ -55,6 +58,16 @@ pub async fn list_sources(
     .await
     .map_err(internal_error)?;
     Ok(Json(json!({ "items": items })))
+}
+
+pub async fn admin_upsert_source(
+    State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
+    Path(source_id): Path<String>,
+    Json(req): Json<UpsertSourceRequest>,
+) -> Result<Json<EngineSource>, (axum::http::StatusCode, String)> {
+    auth.require_super_admin_or_operator()?;
+    upsert_source(State(state), Path(source_id), Json(req)).await
 }
 
 pub async fn rotate_source_secret(
@@ -72,6 +85,16 @@ pub async fn rotate_source_secret(
             "source not found".to_string(),
         )),
     }
+}
+
+pub async fn admin_rotate_source_secret(
+    State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
+    Path(source_id): Path<String>,
+    Query(query): Query<RotateSourceSecretQuery>,
+) -> Result<Json<RotateSourceSecretResponse>, (axum::http::StatusCode, String)> {
+    auth.require_super_admin_or_operator()?;
+    rotate_source_secret(State(state), Path(source_id), Query(query)).await
 }
 
 fn internal_error(message: String) -> (axum::http::StatusCode, String) {

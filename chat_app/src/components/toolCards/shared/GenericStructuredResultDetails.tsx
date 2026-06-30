@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
+import { stringifyJsonPreview } from '../../toolDetails/textPreview';
 import { asRecord, asString } from './value';
 import { RowsCard, StringListCard, TextBlockCard, formatToolCardCount, renderCardHeader } from './primitives';
 
@@ -111,7 +112,7 @@ const buildObjectItemBody = (record: Record<string, unknown>): string => {
   );
 
   try {
-    const serialized = JSON.stringify(compactRecord, null, 2);
+    const serialized = stringifyJsonPreview(compactRecord, 640).content;
     return serialized === '{}' ? '' : truncateText(serialized, 320);
   } catch {
     return '';
@@ -180,7 +181,8 @@ const ObjectCard: React.FC<{ title: string; value: Record<string, unknown> }> = 
     return <RowsCard title={title} rows={primitiveRows} fullWidth />;
   }
 
-  return <TextBlockCard title={title} content={JSON.stringify(value, null, 2)} />;
+  const preview = stringifyJsonPreview(value);
+  return <TextBlockCard title={title} content={preview.content} meta={preview.meta} />;
 };
 
 interface GenericStructuredResultDetailsProps {

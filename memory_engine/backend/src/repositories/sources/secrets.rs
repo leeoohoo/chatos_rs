@@ -1,7 +1,7 @@
 use mongodb::bson::doc;
 
 use crate::db::Db;
-use crate::models::{RotateSourceSecretResponse, now_rfc3339};
+use crate::models::{now_rfc3339, RotateSourceSecretResponse};
 
 use super::common::{
     build_secret_key_hint, generate_secret_key, hash_secret, source_collection, source_filter,

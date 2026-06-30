@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use chatos_builtin_tools::path_with_bundled_tools;
 use portable_pty::{CommandBuilder, SlavePty};
 
 use crate::models::terminal_log::TerminalLog;
@@ -18,14 +19,18 @@ const DEFAULT_POSIX_PATH_SEGMENTS: &[&str] = &[
     "/sbin",
 ];
 
-fn build_default_posix_path(home: &str) -> String {
+fn build_default_posix_path(home: &str) -> std::ffi::OsString {
     let mut segments: Vec<String> = Vec::new();
     if !home.is_empty() {
         segments.push(format!("{home}/.cargo/bin"));
         segments.push(format!("{home}/.local/bin"));
     }
     segments.extend(DEFAULT_POSIX_PATH_SEGMENTS.iter().map(|s| s.to_string()));
-    segments.join(":")
+    std::ffi::OsString::from(segments.join(":"))
+}
+
+fn path_env_with_bundled_tools(base_path: Option<std::ffi::OsString>) -> Option<String> {
+    path_with_bundled_tools(base_path).map(|path| path.to_string_lossy().into_owned())
 }
 
 pub(super) fn spawn_terminal_touch(handle: tokio::runtime::Handle, terminal_id: String) {
@@ -77,7 +82,7 @@ pub(super) fn spawn_shell(
                 cmd.env("COMSPEC", comspec);
             }
         }
-        if let Ok(path) = std::env::var("PATH") {
+        if let Some(path) = path_env_with_bundled_tools(std::env::var_os("PATH")) {
             if !path.trim().is_empty() {
                 cmd.env("PATH", path);
             }
@@ -87,7 +92,12 @@ pub(super) fn spawn_shell(
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| cwd.to_string_lossy().to_string());
-        let path = build_default_posix_path(home.as_str());
+        let path = path_env_with_bundled_tools(Some(build_default_posix_path(home.as_str())))
+            .unwrap_or_else(|| {
+                build_default_posix_path(home.as_str())
+                    .to_string_lossy()
+                    .into_owned()
+            });
 
         cmd.env("HOME", home.as_str());
         cmd.env("SHELL", shell.as_str());

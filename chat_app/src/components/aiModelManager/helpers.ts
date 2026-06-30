@@ -1,19 +1,9 @@
-import type { AiModelConfig } from '../../types';
+import type { AiModelConfig, AiModelProvider } from '../../types';
 import { generateId } from '../../lib/utils';
 
 import type { AiModelFormData } from './types';
 
-export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimik2', 'minimax'] as const;
-
-export const AI_MODEL_THINKING_LEVELS = [
-  '',
-  'none',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-] as const;
+export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimi', 'minimax', 'openai_compatible'] as const;
 
 const DEFAULT_FORM_DATA: AiModelFormData = {
   name: '',
@@ -43,15 +33,15 @@ export const applyProviderChange = (
   thinking_level: provider === 'gpt' ? current.thinking_level : '',
 });
 
-export const toAiModelFormData = (config: AiModelConfig): AiModelFormData => ({
+export const toAiModelFormData = (config: AiModelConfig | AiModelProvider): AiModelFormData => ({
   name: config.name,
   provider: config.provider || 'gpt',
   base_url: config.base_url,
   api_key: '',
   has_stored_api_key: config.has_api_key || Boolean(config.api_key.trim()),
   clear_api_key: false,
-  model_name: config.model_name,
-  thinking_level: config.thinking_level || '',
+  model_name: 'model_name' in config ? config.model_name : '',
+  thinking_level: 'thinking_level' in config ? config.thinking_level || '' : '',
   enabled: config.enabled,
   supports_images: config.supports_images ?? false,
   supports_reasoning: config.supports_reasoning ?? false,
@@ -62,9 +52,6 @@ export const buildAiModelConfig = (
   formData: AiModelFormData,
   current?: AiModelConfig | null,
 ): AiModelConfig => {
-  const normalizedThinking = formData.provider === 'gpt' && formData.thinking_level.trim()
-    ? formData.thinking_level.trim()
-    : undefined;
   const apiKey = formData.clear_api_key ? '' : formData.api_key.trim();
   const hasApiKey = formData.clear_api_key
     ? false
@@ -78,7 +65,9 @@ export const buildAiModelConfig = (
     api_key: apiKey,
     has_api_key: hasApiKey,
     model_name: formData.model_name.trim(),
-    thinking_level: normalizedThinking,
+    thinking_level: current?.thinking_level,
+    task_usage_scenario: current?.task_usage_scenario ?? null,
+    task_thinking_level: current?.task_thinking_level ?? null,
     enabled: formData.enabled,
     supports_images: formData.supports_images,
     supports_reasoning: formData.supports_reasoning,

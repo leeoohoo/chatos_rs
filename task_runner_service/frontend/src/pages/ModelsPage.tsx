@@ -2,23 +2,11 @@ import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Button,
-  Descriptions,
-  Drawer,
-  Empty,
   Form,
-  Input,
-  InputNumber,
-  List,
   Modal,
-  Select,
   Space,
-  Switch,
-  Tag,
-  Typography,
   message,
 } from 'antd';
-import dayjs from 'dayjs';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
@@ -33,13 +21,15 @@ import {
   type ModelEnabledFilter,
   type ModelFormValues,
   normalizeSupportedProvider,
-  SUPPORTED_PROVIDER_OPTIONS,
   type SupportedProvider,
   THINKING_LEVEL_OPTIONS,
 } from './models/modelPageUtils';
+import { ModelDetailDrawer } from './models/ModelDetailDrawer';
+import { ModelEditorDrawer } from './models/ModelEditorDrawer';
 import { ModelListTable } from './models/ModelListTable';
 import { ModelListToolbar } from './models/ModelListToolbar';
 import { ModelStatsBar } from './models/ModelStatsBar';
+import { ModelTestResultModal } from './models/ModelTestResultModal';
 import { useModelMutations } from './models/useModelMutations';
 import { useModelsPageData } from './models/useModelsPageData';
 
@@ -333,369 +323,60 @@ export function ModelsPage() {
         />
       </Space>
 
-      <Drawer
-        title={editingModel ? t('models.drawer.edit') : t('models.drawer.create')}
+      <ModelEditorDrawer
+        t={t}
         open={drawerOpen}
-        width={560}
-        destroyOnClose
+        editingModel={editingModel}
+        form={form}
+        saving={createModelMutation.isPending || updateModelMutation.isPending}
+        modelOptions={modelOptions}
+        thinkingLevelOptions={thinkingLevelOptions}
+        modelCatalog={modelCatalog}
+        watchedApiKey={watchedApiKey}
+        catalogLoading={previewModelCatalogMutation.isPending}
         onClose={resetModelDrawerState}
-        extra={
-          <Space>
-            <Button onClick={resetModelDrawerState}>{t('common.cancel')}</Button>
-            <Button
-              type="primary"
-              loading={createModelMutation.isPending || updateModelMutation.isPending}
-              onClick={() => form.submit()}
-            >
-              {t('common.save')}
-            </Button>
-          </Space>
-        }
-      >
-        <Form<ModelFormValues>
-          layout="vertical"
-          form={form}
-          onFinish={handleSubmit}
-          onValuesChange={handleModelFormChange}
-        >
-          <Form.Item name="name" label={t('models.column.name')} rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="usage_scenario"
-            label={t('models.column.usageScenario')}
-            extra={t('models.form.usageScenarioHint')}
-          >
-            <Input.TextArea
-              rows={3}
-              placeholder={t('models.form.usageScenarioPlaceholder')}
-            />
-          </Form.Item>
-          <Space size="middle" style={{ width: '100%' }} align="start">
-            <Form.Item name="provider" label="Provider" style={{ flex: 1 }} rules={[{ required: true }]}>
-              <Select options={SUPPORTED_PROVIDER_OPTIONS} />
-            </Form.Item>
-          </Space>
-          <Form.Item name="base_url" label="Base URL" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="api_key" label="API Key">
-            <Input.Password />
-          </Form.Item>
-          <Form.Item label="Model" required>
-            <Space.Compact style={{ width: '100%' }}>
-              <Form.Item name="model" noStyle rules={[{ required: true, message: t('models.form.modelRequired') }]}>
-                <Select
-                  showSearch
-                  allowClear
-                  placeholder={t('models.form.modelPlaceholder')}
-                  options={modelOptions}
-                  optionFilterProp="label"
-                  notFoundContent={
-                    previewModelCatalogMutation.isPending
-                      ? t('models.form.loadingModels')
-                      : t('models.form.noModels')
-                  }
-                />
-              </Form.Item>
-              <Button
-                loading={previewModelCatalogMutation.isPending}
-                onClick={fetchModelCatalog}
-                disabled={!watchedApiKey?.trim()}
-              >
-                {t('models.form.fetchModels')}
-              </Button>
-            </Space.Compact>
-            <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-              {modelCatalog
-                ? modelCatalog.source === 'live'
-                  ? t('models.form.catalogLoaded', {
-                      baseUrl: modelCatalog.base_url,
-                      count: modelCatalog.models.length,
-                    })
-                  : modelCatalog.error || t('models.form.catalogEmpty')
-                : t('models.form.catalogHint')}
-            </Typography.Text>
-          </Form.Item>
-          <Space size="middle" style={{ width: '100%' }} align="start">
-            <Form.Item name="temperature" label="Temperature" style={{ width: 160 }}>
-              <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="max_output_tokens" label="Max Output Tokens" style={{ width: 180 }}>
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="thinking_level" label="Thinking Level" style={{ flex: 1 }}>
-              <Select
-                allowClear
-                placeholder={t('models.form.thinkingPlaceholder')}
-                options={thinkingLevelOptions}
-              />
-            </Form.Item>
-          </Space>
-          <Form.Item name="instructions" label="Instructions">
-            <Input.TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="request_cwd" label="Request CWD">
-            <Input />
-          </Form.Item>
-          <Space size="middle" style={{ width: '100%' }} align="start">
-            <Form.Item name="request_body_limit_bytes" label="Request Body Limit" style={{ flex: 1 }}>
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="supports_responses" label="Supports Responses" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Switch />
-            </Form.Item>
-            <Form.Item
-              name="include_prompt_cache_retention"
-              label="Prompt Cache Retention"
-              valuePropName="checked"
-              style={{ marginBottom: 0 }}
-            >
-              <Switch />
-            </Form.Item>
-            <Form.Item name="enabled" label="Enabled" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Switch />
-            </Form.Item>
-          </Space>
-        </Form>
-      </Drawer>
+        onSubmit={handleSubmit}
+        onValuesChange={handleModelFormChange}
+        onFetchCatalog={fetchModelCatalog}
+      />
 
-      <Drawer
-        title={selectedModel
-          ? t('models.detail.titleWithName', { name: selectedModel.name })
-          : t('models.detail.title')}
+      <ModelDetailDrawer
+        t={t}
         open={Boolean(routeModelId)}
-        width={760}
+        selectedModel={selectedModel}
+        loading={selectedModelQuery.isLoading}
+        taskCount={selectedModel ? taskCountByModelId.get(selectedModel.id) || 0 : 0}
+        runCount={selectedModel ? runCountByModelId.get(selectedModel.id) || 0 : 0}
+        boundTasks={modelTasksQuery.data}
+        boundTasksLoading={modelTasksQuery.isLoading}
+        recentRuns={modelRunsQuery.data}
+        recentRunsLoading={modelRunsQuery.isLoading}
+        testing={testModelMutation.isPending}
         onClose={closeDetailDrawer}
-      >
-        {selectedModel ? (
-          <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            <Space wrap>
-              <Button onClick={() => navigate(`/tasks?model_config_id=${encodeURIComponent(selectedModel.id)}`)}>
-                {t('models.detail.viewTasks')}
-              </Button>
-              <Button onClick={() => navigate(`/runs?model_config_id=${encodeURIComponent(selectedModel.id)}`)}>
-                {t('models.detail.viewRuns')}
-              </Button>
-              <Button
-                loading={testModelMutation.isPending}
-                onClick={() => testModelMutation.mutate(selectedModel.id)}
-              >
-                {t('models.detail.testConnection')}
-              </Button>
-              <Button
-                onClick={() => {
-                  closeDetailDrawer();
-                  openEditDrawer(selectedModel);
-                }}
-              >
-                {t('models.detail.editConfig')}
-              </Button>
-            </Space>
+        onViewTasks={(modelId) =>
+          navigate(`/tasks?model_config_id=${encodeURIComponent(modelId)}`)
+        }
+        onViewRuns={(modelId) =>
+          navigate(`/runs?model_config_id=${encodeURIComponent(modelId)}`)
+        }
+        onTest={(modelId) => testModelMutation.mutate(modelId)}
+        onEdit={(model) => {
+          closeDetailDrawer();
+          openEditDrawer(model);
+        }}
+        onOpenTask={(taskId) =>
+          navigate(`/tasks?task_id=${encodeURIComponent(taskId)}`)
+        }
+        onOpenRun={(runId) =>
+          navigate(`/runs?run_id=${encodeURIComponent(runId)}`)
+        }
+      />
 
-            <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label={t('models.detail.modelId')}>{selectedModel.id}</Descriptions.Item>
-              <Descriptions.Item label="Provider">{selectedModel.provider}</Descriptions.Item>
-              <Descriptions.Item label="Model">{selectedModel.model}</Descriptions.Item>
-              <Descriptions.Item label={t('models.column.usageScenario')}>
-                {selectedModel.usage_scenario || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Base URL">{selectedModel.base_url}</Descriptions.Item>
-              <Descriptions.Item label={t('common.status')}>
-                <Tag color={selectedModel.enabled ? 'success' : 'default'}>
-                  {selectedModel.enabled ? t('common.enabled') : t('common.disabled')}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Supports Responses">
-                {selectedModel.supports_responses ? t('common.yes') : t('common.no')}
-              </Descriptions.Item>
-              <Descriptions.Item label="Temperature">
-                {selectedModel.temperature ?? '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Max Output Tokens">
-                {selectedModel.max_output_tokens ?? '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Thinking Level">
-                {selectedModel.thinking_level || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Request CWD">
-                {selectedModel.request_cwd || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Prompt Cache Retention">
-                {selectedModel.include_prompt_cache_retention
-                  ? t('common.enabled')
-                  : t('common.disabled')}
-              </Descriptions.Item>
-              <Descriptions.Item label="Request Body Limit">
-                {selectedModel.request_body_limit_bytes ?? '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label={t('models.column.boundTasks')}>
-                {taskCountByModelId.get(selectedModel.id) || 0}
-              </Descriptions.Item>
-              <Descriptions.Item label={t('models.column.runCount')}>
-                {runCountByModelId.get(selectedModel.id) || 0}
-              </Descriptions.Item>
-              <Descriptions.Item label={t('models.detail.createdAt')}>
-                {dayjs(selectedModel.created_at).format('YYYY-MM-DD HH:mm:ss')}
-              </Descriptions.Item>
-              <Descriptions.Item label={t('common.updatedAt')}>
-                {dayjs(selectedModel.updated_at).format('YYYY-MM-DD HH:mm:ss')}
-              </Descriptions.Item>
-            </Descriptions>
-
-            {selectedModel.instructions ? (
-              <div>
-                <Typography.Title level={5}>Instructions</Typography.Title>
-                <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
-                  {selectedModel.instructions}
-                </Typography.Paragraph>
-              </div>
-            ) : null}
-
-            <div>
-              <Typography.Title level={5}>{t('models.detail.boundTasks')}</Typography.Title>
-              {modelTasksQuery.data?.length ? (
-                <List
-                  bordered
-                  dataSource={modelTasksQuery.data}
-                  renderItem={(task) => (
-                    <List.Item
-                      actions={[
-                        <Button
-                          key="task"
-                          size="small"
-                          onClick={() => navigate(`/tasks?task_id=${encodeURIComponent(task.id)}`)}
-                        >
-                          {t('common.open')}
-                        </Button>,
-                      ]}
-                    >
-                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                        <Space wrap>
-                          <Typography.Text strong>{task.title}</Typography.Text>
-                          <Tag>{task.status}</Tag>
-                        </Space>
-                        <Typography.Paragraph
-                          type="secondary"
-                          ellipsis={{ rows: 2 }}
-                          style={{ marginBottom: 0 }}
-                        >
-                          {task.objective}
-                        </Typography.Paragraph>
-                      </Space>
-                    </List.Item>
-                  )}
-                />
-              ) : modelTasksQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('models.detail.noBoundTasks')} />
-              )}
-            </div>
-
-            <div>
-              <Typography.Title level={5}>{t('models.detail.recentRuns')}</Typography.Title>
-              {modelRunsQuery.data?.length ? (
-                <List
-                  bordered
-                  dataSource={modelRunsQuery.data}
-                  renderItem={(run) => (
-                    <List.Item
-                      actions={[
-                        <Button
-                          key="run"
-                          size="small"
-                          onClick={() => navigate(`/runs?run_id=${encodeURIComponent(run.id)}`)}
-                        >
-                          {t('common.open')}
-                        </Button>,
-                      ]}
-                    >
-                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                        <Space wrap>
-                          <Typography.Text code>{run.id.slice(0, 12)}</Typography.Text>
-                          <Tag>{run.status}</Tag>
-                          <Typography.Text type="secondary">
-                            {dayjs(run.updated_at).format('YYYY-MM-DD HH:mm:ss')}
-                          </Typography.Text>
-                        </Space>
-                        {run.result_summary ? (
-                          <Typography.Paragraph
-                            type="secondary"
-                            ellipsis={{ rows: 2 }}
-                            style={{ marginBottom: 0 }}
-                          >
-                            {run.result_summary}
-                          </Typography.Paragraph>
-                        ) : (
-                          <Typography.Text type="secondary">{t('models.detail.noSummary')}</Typography.Text>
-                        )}
-                      </Space>
-                    </List.Item>
-                  )}
-                />
-              ) : modelRunsQuery.isLoading ? null : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('models.detail.noRuns')} />
-              )}
-            </div>
-          </Space>
-        ) : selectedModelQuery.isLoading ? null : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        )}
-      </Drawer>
-
-      <Modal
-        title={t('models.testResult.title')}
-        open={Boolean(testResult)}
-        width={680}
-        footer={[
-          <Button key="close" onClick={() => setTestResult(null)}>
-            {t('common.close')}
-          </Button>,
-        ]}
-        onCancel={() => setTestResult(null)}
-      >
-        {testResult ? (
-          <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label={t('models.testResult.result')}>
-                <Tag color={testResult.ok ? 'success' : 'error'}>
-                  {testResult.ok ? t('common.success') : t('common.failed')}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Provider">{testResult.provider}</Descriptions.Item>
-              <Descriptions.Item label="Model">{testResult.model}</Descriptions.Item>
-              <Descriptions.Item label={t('models.testResult.testedAt')}>
-                {dayjs(testResult.tested_at).format('YYYY-MM-DD HH:mm:ss')}
-              </Descriptions.Item>
-              <Descriptions.Item label="Response ID">
-                {testResult.response_id || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label={t('models.testResult.output')}>
-                {testResult.content || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Reasoning">
-                {testResult.reasoning || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label={t('models.testResult.error')}>
-                {testResult.error || '-'}
-              </Descriptions.Item>
-            </Descriptions>
-            {testResult.usage ? (
-              <Typography.Paragraph
-                style={{
-                  background: '#fafafa',
-                  padding: 12,
-                  borderRadius: 6,
-                  marginBottom: 0,
-                  whiteSpace: 'pre-wrap',
-                  fontFamily: 'monospace',
-                }}
-              >
-                {JSON.stringify(testResult.usage, null, 2)}
-              </Typography.Paragraph>
-            ) : null}
-          </Space>
-        ) : null}
-      </Modal>
+      <ModelTestResultModal
+        t={t}
+        result={testResult}
+        onClose={() => setTestResult(null)}
+      />
     </>
   );
 }

@@ -1,9 +1,8 @@
 import React from 'react';
-import { useI18n, type TranslateFn } from '../../i18n/I18nProvider';
+import { useI18n } from '../../i18n/I18nProvider';
 import { cn, formatFileSize } from '../../lib/utils';
 import type { AiModelConfig } from '../../types';
-import { useApiClient } from '../../lib/api/ApiClientContext';
-import type { AiProviderModelOptionResponse } from '../../lib/api/client/types';
+import { thinkingOptionsForProvider } from '../../lib/modelThinkingOptions';
 
 interface InputAreaAttachmentsPreviewProps {
   attachments: File[];
@@ -92,34 +91,6 @@ interface InputAreaFloatingModelPickerProps {
   }) => void;
 }
 
-const thinkingOptionsForProvider = (provider: string | undefined, t: TranslateFn) => {
-  const normalized = (provider || 'gpt').trim().toLowerCase();
-  if (normalized === 'deepseek') {
-    return [
-      { value: '', label: t('inputArea.model.thinking.default') },
-      { value: 'none', label: t('inputArea.model.thinking.off') },
-      { value: 'high', label: t('inputArea.model.thinking.value', { value: 'high' }) },
-      { value: 'max', label: t('inputArea.model.thinking.value', { value: 'max' }) },
-    ];
-  }
-  if (normalized === 'kimi' || normalized === 'kimik2' || normalized === 'moonshot') {
-    return [
-      { value: '', label: t('inputArea.model.thinking.default') },
-      { value: 'auto', label: t('inputArea.model.thinking.auto') },
-      { value: 'none', label: t('inputArea.model.thinking.off') },
-    ];
-  }
-  return [
-    { value: '', label: t('inputArea.model.thinking.default') },
-    { value: 'none', label: t('inputArea.model.thinking.value', { value: 'none' }) },
-    { value: 'minimal', label: t('inputArea.model.thinking.value', { value: 'minimal' }) },
-    { value: 'low', label: t('inputArea.model.thinking.value', { value: 'low' }) },
-    { value: 'medium', label: t('inputArea.model.thinking.value', { value: 'medium' }) },
-    { value: 'high', label: t('inputArea.model.thinking.value', { value: 'high' }) },
-    { value: 'xhigh', label: t('inputArea.model.thinking.value', { value: 'xhigh' }) },
-  ];
-};
-
 export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPickerProps> = ({
   showModelSelector,
   hasAiOptions,
@@ -140,46 +111,12 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
   onModelRuntimeChange,
 }) => {
   const { t } = useI18n();
-  const client = useApiClient();
   const selectedModel = React.useMemo(
     () => (selectedModelId
       ? enabledModels.find((model) => model.id === selectedModelId) || null
       : null),
     [enabledModels, selectedModelId],
   );
-  const [modelOptions, setModelOptions] = React.useState<AiProviderModelOptionResponse[]>([]);
-  const [modelOptionsConfigId, setModelOptionsConfigId] = React.useState<string | null>(null);
-  const [modelOptionsLoading, setModelOptionsLoading] = React.useState(false);
-  const [modelOptionsError, setModelOptionsError] = React.useState<string | null>(null);
-
-  const loadModelOptions = React.useCallback(async (refresh = false) => {
-    if (!selectedModelId) {
-      setModelOptions([]);
-      setModelOptionsConfigId(null);
-      setModelOptionsError(null);
-      return;
-    }
-    setModelOptionsLoading(true);
-    try {
-      const response = await client.getAiProviderModels(selectedModelId, { refresh });
-      setModelOptions(Array.isArray(response.models) ? response.models : []);
-      setModelOptionsConfigId(selectedModelId);
-      setModelOptionsError(response.error || null);
-    } catch (error) {
-      setModelOptions([]);
-      setModelOptionsConfigId(selectedModelId);
-      setModelOptionsError(error instanceof Error ? error.message : t('inputArea.model.loadFailed'));
-    } finally {
-      setModelOptionsLoading(false);
-    }
-  }, [client, selectedModelId, t]);
-
-  React.useEffect(() => {
-    if (!pickerOpen || !selectedModelId || modelOptionsConfigId === selectedModelId) {
-      return;
-    }
-    void loadModelOptions(false);
-  }, [loadModelOptions, modelOptionsConfigId, pickerOpen, selectedModelId]);
 
   if (!showModelSelector || !hasAiOptions) {
     return null;
@@ -200,23 +137,9 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
       onModelNameChange?.(nextModelName);
       onThinkingLevelChange?.(nextThinkingLevel);
     }
-    setModelOptions([]);
-    setModelOptionsConfigId(null);
-    setModelOptionsError(null);
   };
 
-  const handleModelNameChange = (modelName: string | null) => {
-    const nextValue = modelName || '';
-    if (onModelRuntimeChange) {
-      onModelRuntimeChange({
-        selectedModelId: selectedModelId || null,
-        selectedModelName: nextValue || null,
-        selectedThinkingLevel: currentThinkingLevel || null,
-      });
-    } else {
-      onModelNameChange?.(nextValue || null);
-    }
-  };
+  const currentModelName = selectedModelName || effectiveModelName || selectedModel?.model_name || '';
 
   const handleThinkingLevelChange = (level: string | null) => {
     const nextValue = level || '';
@@ -231,7 +154,6 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
     }
   };
 
-  const currentModelName = selectedModelName || effectiveModelName || selectedModel?.model_name || '';
   const currentThinkingLevel = selectedThinkingLevel || effectiveThinkingLevel || selectedModel?.thinking_level || '';
   const thinkingOptions = thinkingOptionsForProvider(selectedModel?.provider, t);
 
@@ -269,54 +191,6 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <label className="block text-[11px] text-muted-foreground">{t('inputArea.model.modelName')}</label>
-                <button
-                  type="button"
-                  onClick={() => { void loadModelOptions(true); }}
-                  disabled={disabled || !selectedModelId || modelOptionsLoading}
-                  className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
-                >
-                  {modelOptionsLoading ? t('inputArea.model.refreshing') : t('inputArea.model.refresh')}
-                </button>
-              </div>
-              <input
-                type="text"
-                value={currentModelName}
-                disabled={disabled || !selectedModelId}
-                onChange={(event) => handleModelNameChange(event.target.value || null)}
-                placeholder={selectedModel ? selectedModel.model_name : t('inputArea.model.selectProviderFirst')}
-                className="w-full rounded-md border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-              />
-              {modelOptionsError ? (
-                <div className="mt-1 text-[11px] text-amber-600">{modelOptionsError}</div>
-              ) : null}
-              {modelOptions.length > 0 ? (
-                <div className="mt-2 max-h-36 overflow-auto rounded-md border bg-background">
-                  {modelOptions.slice(0, 80).map((model) => (
-                    <button
-                      key={model.id}
-                      type="button"
-                      className={cn(
-                        'flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent',
-                        currentModelName === model.id && 'bg-accent/50',
-                      )}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => handleModelNameChange(model.id)}
-                    >
-                      <span className="truncate">{model.id}</span>
-                      {model.supports_reasoning ? (
-                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                          reasoning
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
             </div>
 
             <div className="grid grid-cols-[1fr_auto] items-center gap-2">

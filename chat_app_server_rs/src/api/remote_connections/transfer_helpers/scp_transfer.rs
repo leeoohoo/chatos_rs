@@ -1,8 +1,8 @@
 use std::path::Path as FsPath;
-use std::process::Stdio;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 
 use crate::models::remote_connection::RemoteConnection;
+use crate::utils::process_output::{run_command_limited, BoundedCommandError};
 
 use super::super::{
     build_scp_args, build_scp_process_command, connect_ssh2_session_with_verification,
@@ -11,6 +11,9 @@ use super::super::{
 };
 use super::errors::TransferJobError;
 use ssh2::{OpenFlags, OpenType};
+
+const SCP_STDOUT_LIMIT_BYTES: usize = 1024 * 1024;
+const SCP_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
 
 pub(crate) async fn run_scp_upload_typed(
     connection: &RemoteConnection,
@@ -65,21 +68,24 @@ pub(crate) async fn run_scp_upload_typed(
         connection.host,
         shell_quote(remote_path)
     ));
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
 
-    let output = timeout(Duration::from_secs(60), cmd.output())
-        .await
-        .map_err(|_| TransferJobError::timeout("上传超时"))?
-        .map_err(|e| {
-            TransferJobError::remote(map_command_spawn_error("上传失败", e, password_auth))
-        })?;
+    let output = run_command_limited(
+        cmd,
+        Duration::from_secs(60),
+        SCP_STDOUT_LIMIT_BYTES,
+        SCP_STDERR_LIMIT_BYTES,
+        "scp upload",
+    )
+    .await
+    .map_err(|err| map_scp_process_error("上传失败", "上传超时", err, password_auth))?;
 
     if output.status.success() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stderr = String::from_utf8_lossy(output.stderr.as_slice())
+        .trim()
+        .to_string();
     if password_auth && verification_code.map(str::trim).unwrap_or("").is_empty() {
         let stderr_lower = stderr.to_lowercase();
         if stderr_lower.contains("verification code")
@@ -96,6 +102,21 @@ pub(crate) async fn run_scp_upload_typed(
     }
 
     Err(TransferJobError::remote(stderr))
+}
+
+fn map_scp_process_error(
+    failure_prefix: &str,
+    timeout_message: &str,
+    err: BoundedCommandError,
+    password_auth: bool,
+) -> TransferJobError {
+    match err {
+        BoundedCommandError::Spawn(err) => {
+            TransferJobError::remote(map_command_spawn_error(failure_prefix, err, password_auth))
+        }
+        BoundedCommandError::Timeout => TransferJobError::timeout(timeout_message),
+        other => TransferJobError::remote(format!("{failure_prefix}: {other}")),
+    }
 }
 
 pub(crate) async fn run_scp_download_typed(
@@ -146,21 +167,24 @@ pub(crate) async fn run_scp_download_typed(
         shell_quote(remote_path)
     ));
     cmd.arg(local_path);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
 
-    let output = timeout(Duration::from_secs(60), cmd.output())
-        .await
-        .map_err(|_| TransferJobError::timeout("下载超时"))?
-        .map_err(|e| {
-            TransferJobError::remote(map_command_spawn_error("下载失败", e, password_auth))
-        })?;
+    let output = run_command_limited(
+        cmd,
+        Duration::from_secs(60),
+        SCP_STDOUT_LIMIT_BYTES,
+        SCP_STDERR_LIMIT_BYTES,
+        "scp download",
+    )
+    .await
+    .map_err(|err| map_scp_process_error("下载失败", "下载超时", err, password_auth))?;
 
     if output.status.success() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stderr = String::from_utf8_lossy(output.stderr.as_slice())
+        .trim()
+        .to_string();
     if password_auth && verification_code.map(str::trim).unwrap_or("").is_empty() {
         let stderr_lower = stderr.to_lowercase();
         if stderr_lower.contains("verification code")

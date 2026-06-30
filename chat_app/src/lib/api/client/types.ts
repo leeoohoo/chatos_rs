@@ -12,4 +12,5 @@ export * from './types/remoteSftp';
 export * from './types/runtime';
 export * from './types/session';
 export * from './types/terminal';
+export * from './types/askUserPrompt';
 export * from './types/workspace';

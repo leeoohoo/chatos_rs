@@ -10,6 +10,7 @@ interface ConversationUserMessageItemProps {
   item: UserMessageTurn;
   active: boolean;
   onSelect: () => void;
+  onOpenProcessTimeline: (item: UserMessageTurn) => void;
   onOpenTasks: (message: Message) => void;
 }
 
@@ -29,6 +30,7 @@ export const ConversationUserMessageItem: React.FC<ConversationUserMessageItemPr
   item,
   active,
   onSelect,
+  onOpenProcessTimeline,
   onOpenTasks,
 }) => {
   const { t } = useI18n();
@@ -63,11 +65,22 @@ export const ConversationUserMessageItem: React.FC<ConversationUserMessageItemPr
                 {t('projectUserMessages.running')}
               </span>
             ) : null}
-            <span className="truncate">
-              {item.hasProcess
-                ? t('projectUserMessages.processCount', { count: item.processMessageCount })
-                : t('projectUserMessages.noProcess')}
-            </span>
+            {item.hasProcess ? (
+              <button
+                type="button"
+                className="truncate rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenProcessTimeline(item);
+                }}
+              >
+                {t('projectUserMessages.processCount', { count: item.processMessageCount })}
+              </button>
+            ) : (
+              <span className="truncate">
+                {t('projectUserMessages.noProcess')}
+              </span>
+            )}
             <span className="shrink-0 text-border">/</span>
             <span className="shrink-0">
               {formatTime(userMessage.createdAt)}

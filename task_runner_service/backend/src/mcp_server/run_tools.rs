@@ -8,7 +8,8 @@ use crate::models::{
 
 use super::{
     decode_args, text_result, BatchTaskRunArgs, GetTaskMemoryContextArgs, ListRunsArgs,
-    ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs, TaskIdArgs, TaskRunnerMcpService,
+    ListTaskMemoryRecordsArgs, McpRequestContext, RunIdArgs, StartTaskRunArgs, TaskIdArgs,
+    TaskRunnerMcpService,
 };
 
 impl TaskRunnerMcpService {
@@ -17,12 +18,14 @@ impl TaskRunnerMcpService {
         name: &str,
         args: Value,
         current_user: &CurrentUser,
+        request_context: &McpRequestContext,
     ) -> Result<Value, String> {
         match name {
             "list_runs" => {
                 let args: ListRunsArgs = decode_args(args)?;
                 if let Some(task_id) = args.task_id.as_deref() {
-                    self.require_task_for_user(task_id, current_user).await?;
+                    self.require_task_for_user_in_context(task_id, current_user, request_context)
+                        .await?;
                 }
                 let runs = self
                     .run_service
@@ -35,20 +38,30 @@ impl TaskRunnerMcpService {
                         offset: None,
                     })
                     .await?;
-                let runs = self.filter_runs_for_user(runs, current_user).await?;
+                let runs = self
+                    .filter_runs_for_user_in_context(runs, current_user, request_context)
+                    .await?;
                 Ok(text_result(json!(runs)))
             }
             "get_run" => {
                 let args: RunIdArgs = decode_args(args)?;
                 let run = self
-                    .require_run_for_user(args.run_id.as_str(), current_user)
+                    .require_run_for_user_in_context(
+                        args.run_id.as_str(),
+                        current_user,
+                        request_context,
+                    )
                     .await?;
                 Ok(text_result(json!(run)))
             }
             "start_task_run" => {
                 let args: StartTaskRunArgs = decode_args(args)?;
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let run = self
                     .run_service
                     .start_run_for_user(
@@ -64,8 +77,12 @@ impl TaskRunnerMcpService {
             }
             "batch_start_task_runs" => {
                 let args: BatchTaskRunArgs = decode_args(args)?;
-                self.require_tasks_for_user(args.task_ids.as_slice(), current_user)
-                    .await?;
+                self.require_tasks_for_user_in_context(
+                    args.task_ids.as_slice(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let result = self
                     .run_service
                     .batch_start_runs_for_user(
@@ -81,8 +98,12 @@ impl TaskRunnerMcpService {
             }
             "get_task_memory_context" => {
                 let args: GetTaskMemoryContextArgs = decode_args(args)?;
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let response = self
                     .task_service
                     .get_task_memory_context(
@@ -101,8 +122,12 @@ impl TaskRunnerMcpService {
             }
             "list_task_memory_records" => {
                 let args: ListTaskMemoryRecordsArgs = decode_args(args)?;
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let response = self
                     .task_service
                     .get_task_memory_records(
@@ -122,8 +147,12 @@ impl TaskRunnerMcpService {
             }
             "summarize_task_memory" => {
                 let args: TaskIdArgs = decode_args(args)?;
-                self.require_task_for_user(args.task_id.as_str(), current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    args.task_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let response = self
                     .task_service
                     .summarize_task_memory(args.task_id.as_str())
@@ -133,8 +162,12 @@ impl TaskRunnerMcpService {
             }
             "cancel_run" => {
                 let args: RunIdArgs = decode_args(args)?;
-                self.require_run_for_user(args.run_id.as_str(), current_user)
-                    .await?;
+                self.require_run_for_user_in_context(
+                    args.run_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let run = self
                     .run_service
                     .cancel_run(args.run_id.as_str())
@@ -144,8 +177,12 @@ impl TaskRunnerMcpService {
             }
             "retry_run" => {
                 let args: RunIdArgs = decode_args(args)?;
-                self.require_run_for_user(args.run_id.as_str(), current_user)
-                    .await?;
+                self.require_run_for_user_in_context(
+                    args.run_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let run = self
                     .run_service
                     .retry_run_for_user(args.run_id.as_str(), current_user)
@@ -155,8 +192,12 @@ impl TaskRunnerMcpService {
             }
             "list_run_events" => {
                 let args: RunIdArgs = decode_args(args)?;
-                self.require_run_for_user(args.run_id.as_str(), current_user)
-                    .await?;
+                self.require_run_for_user_in_context(
+                    args.run_id.as_str(),
+                    current_user,
+                    request_context,
+                )
+                .await?;
                 let events = self
                     .run_service
                     .list_run_events(args.run_id.as_str())

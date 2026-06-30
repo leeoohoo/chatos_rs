@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Form,
@@ -9,9 +10,10 @@ import {
 
 import { useI18n } from '../i18n/I18nProvider';
 import {
-  buildSchedulePayload,
+  buildCreateTaskFormValues,
+  buildEditTaskFormValues,
+  buildTaskPayload,
   completeEnabledBuiltinKindDependencies,
-  formatScheduleInput,
   type TaskFormValues,
   type RunTaskFormValues,
 } from './tasks/taskPageUtils';
@@ -29,10 +31,11 @@ import { TaskBatchActionsBar } from './tasks/TaskBatchActionsBar';
 import { TaskListToolbar } from './tasks/TaskListToolbar';
 import { TaskListTable } from './tasks/TaskListTable';
 import { TaskMcpPromptPreviewModal } from './tasks/TaskMcpPromptPreviewModal';
+import { TaskSubtasksDrawer } from './tasks/TaskSubtasksDrawer';
 import { useTaskMutations } from './tasks/useTaskMutations';
 import { useTasksPageData } from './tasks/useTasksPageData';
+import { api } from '../api/client';
 import type {
-  CreateTaskPayload,
   StartTaskRunPayload,
   TaskRecord,
   TaskStatus,
@@ -51,6 +54,7 @@ export function TasksPage() {
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const [detailTaskPreview, setDetailTaskPreview] = useState<TaskRecord | null>(null);
   const [memoryTask, setMemoryTask] = useState<TaskRecord | null>(null);
+  const [subtasksParentTask, setSubtasksParentTask] = useState<TaskRecord | null>(null);
   const [draftMcpPreviewOpen, setDraftMcpPreviewOpen] = useState(false);
   const [mcpPreviewTask, setMcpPreviewTask] = useState<TaskRecord | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -69,6 +73,7 @@ export function TasksPage() {
   const [batchRunForm] = Form.useForm<RunTaskFormValues>();
   const routeTaskId = searchParams.get('task_id');
   const routeModelConfigId = searchParams.get('model_config_id') || undefined;
+  const routeProjectId = searchParams.get('project_id') || undefined;
 
   const {
     tasksQuery,
@@ -93,11 +98,15 @@ export function TasksPage() {
     modelOptions,
     modelNameMap,
     modelLabelMap,
+    projectNameMap,
+    projectOptions,
     taskSummaryMap,
     prerequisiteTaskOptions,
     tagOptions,
     remoteServerMap,
     externalMcpConfigMap,
+    taskEditorSkills,
+    skillLabelMap,
     selectedTask,
     detailResultSummary,
     detailRemoteOperations,
@@ -113,6 +122,7 @@ export function TasksPage() {
     keywordFilter,
     tagFilter,
     routeModelConfigId,
+    routeProjectId,
     scheduledOnly,
     taskPage,
     taskPageSize,
@@ -127,6 +137,16 @@ export function TasksPage() {
     editingTaskId: editingTask?.id,
   });
 
+  const taskSubtasksQuery = useQuery({
+    queryKey: ['task-subtasks', subtasksParentTask?.id],
+    queryFn: () =>
+      api.listTasks({
+        parent_task_id: subtasksParentTask!.id,
+        limit: 100,
+      }),
+    enabled: Boolean(subtasksParentTask),
+  });
+
   useEffect(() => {
     if (!tasksQuery.data) {
       return;
@@ -137,7 +157,7 @@ export function TasksPage() {
 
   useEffect(() => {
     setTaskPage(1);
-  }, [statusFilter, keywordFilter, tagFilter, routeModelConfigId, scheduledOnly]);
+  }, [statusFilter, keywordFilter, tagFilter, routeModelConfigId, routeProjectId, scheduledOnly]);
 
   useEffect(() => {
     if (routeTaskId) {
@@ -183,12 +203,16 @@ export function TasksPage() {
     t,
     navigate,
     modelNameMap,
+    projectNameMap,
+    externalMcpConfigMap,
+    skillLabelMap,
     pendingPromptCountByTaskId,
     scheduleModeLabels,
     taskRowRemoteActivityByTaskId,
     onOpenDetail: openDetailDrawer,
     onOpenEdit: openEditDrawer,
     onOpenMemory: openMemoryDrawer,
+    onOpenSubtasks: openSubtasksDrawer,
     onOpenRun: openRunModal,
     onConfirmDelete: confirmDelete,
   });
@@ -220,6 +244,10 @@ export function TasksPage() {
     setMemoryTask(null);
   }
 
+  function closeSubtasksDrawer() {
+    setSubtasksParentTask(null);
+  }
+
   function closeTaskMcpPreviewModal() {
     setMcpPreviewTask(null);
   }
@@ -230,53 +258,13 @@ export function TasksPage() {
 
   function openCreateDrawer() {
     setEditingTask(null);
-    form.setFieldsValue({
-      title: '',
-      objective: '',
-      description: '',
-      priority: 0,
-      status: 'draft',
-      default_model_config_id: undefined,
-      prerequisite_task_ids: [],
-      tagsText: '',
-      mcpEnabled: true,
-      mcpInitMode: 'builtin_only',
-      builtinPromptMode: 'effective',
-      builtinPromptLocale: locale,
-      enabledBuiltinKinds: (mcpCatalogQuery.data || []).map((entry) => entry.kind),
-      workspaceDir: '',
-      defaultRemoteServerId: undefined,
-      externalMcpConfigIds: [],
-      scheduleMode: 'manual',
-      scheduleRunAt: undefined,
-      scheduleIntervalSeconds: undefined,
-    });
+    form.setFieldsValue(buildCreateTaskFormValues(locale));
     setDrawerOpen(true);
   }
 
   function openEditDrawer(task: TaskRecord) {
     setEditingTask(task);
-    form.setFieldsValue({
-      title: task.title,
-      objective: task.objective,
-      description: task.description || '',
-      priority: task.priority,
-      status: task.status,
-      default_model_config_id: task.default_model_config_id || undefined,
-      prerequisite_task_ids: task.prerequisite_task_ids || [],
-      tagsText: task.tags.join(', '),
-      mcpEnabled: task.mcp_config.enabled,
-      mcpInitMode: task.mcp_config.init_mode,
-      builtinPromptMode: task.mcp_config.builtin_prompt_mode,
-      builtinPromptLocale: task.mcp_config.builtin_prompt_locale,
-      enabledBuiltinKinds: task.mcp_config.enabled_builtin_kinds,
-      workspaceDir: task.mcp_config.workspace_dir || '',
-      defaultRemoteServerId: task.mcp_config.default_remote_server_id || undefined,
-      externalMcpConfigIds: task.mcp_config.external_mcp_config_ids || [],
-      scheduleMode: task.schedule.mode,
-      scheduleRunAt: formatScheduleInput(task.schedule.run_at ?? task.schedule.next_run_at),
-      scheduleIntervalSeconds: task.schedule.interval_seconds || undefined,
-    });
+    form.setFieldsValue(buildEditTaskFormValues(task));
     setDrawerOpen(true);
   }
 
@@ -314,6 +302,10 @@ export function TasksPage() {
     setMemoryLimit(50);
   }
 
+  function openSubtasksDrawer(task: TaskRecord) {
+    setSubtasksParentTask(task);
+  }
+
   function openTaskMcpPreviewModal(task: TaskRecord) {
     setMcpPreviewTask(task);
   }
@@ -321,7 +313,6 @@ export function TasksPage() {
   function openDraftMcpPreviewModal() {
     const values = form.getFieldsValue([
       'mcpEnabled',
-      'mcpInitMode',
       'builtinPromptMode',
       'builtinPromptLocale',
       'enabledBuiltinKinds',
@@ -331,7 +322,7 @@ export function TasksPage() {
     setDraftMcpPreviewOpen(true);
     draftMcpPreviewMutation.mutate({
       enabled: values.mcpEnabled ?? true,
-      init_mode: values.mcpInitMode ?? 'builtin_only',
+      init_mode: 'full',
       builtin_prompt_mode: values.builtinPromptMode ?? 'effective',
       builtin_prompt_locale: values.builtinPromptLocale || locale,
       enabled_builtin_kinds: completeEnabledBuiltinKindDependencies(values.enabledBuiltinKinds),
@@ -370,46 +361,10 @@ export function TasksPage() {
     });
   }
 
-  function buildTaskPayload(values: TaskFormValues): CreateTaskPayload | null {
-    const schedule = buildSchedulePayload(values);
-    if (!schedule) {
-      messageApi.error(t('tasks.scheduleInvalid'));
-      return null;
-    }
-
-    const enabledBuiltinKinds = completeEnabledBuiltinKindDependencies(
-      values.enabledBuiltinKinds,
-    );
-
-    return {
-      title: values.title,
-      objective: values.objective,
-      description: values.description?.trim() || undefined,
-      priority: values.priority,
-      status: values.status,
-      default_model_config_id: values.default_model_config_id,
-      prerequisite_task_ids: values.prerequisite_task_ids || [],
-      tags: values.tagsText
-        ?.split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-      schedule,
-      mcp_config: {
-        enabled: values.mcpEnabled,
-        init_mode: values.mcpInitMode,
-        builtin_prompt_mode: values.builtinPromptMode,
-        builtin_prompt_locale: values.builtinPromptLocale,
-        enabled_builtin_kinds: enabledBuiltinKinds,
-        workspace_dir: values.workspaceDir?.trim() || undefined,
-        default_remote_server_id: values.defaultRemoteServerId,
-        external_mcp_config_ids: values.externalMcpConfigIds || [],
-      },
-    };
-  }
-
   function handleSubmit(values: TaskFormValues) {
-    const payload = buildTaskPayload(values);
+    const payload = buildTaskPayload(values, { editingTask, routeProjectId });
     if (!payload) {
+      messageApi.error(t('tasks.scheduleInvalid'));
       return;
     }
 
@@ -451,10 +406,12 @@ export function TasksPage() {
           keywordFilter={keywordFilter}
           tagFilter={tagFilter}
           modelConfigId={routeModelConfigId}
+          projectId={routeProjectId}
           statusFilter={statusFilter}
           scheduledOnly={scheduledOnly}
           tagOptions={tagOptions}
           modelOptions={modelOptions}
+          projectOptions={projectOptions}
           statusFilterOptions={statusFilterOptions}
           onKeywordFilterChange={setKeywordFilter}
           onTagFilterChange={setTagFilter}
@@ -464,6 +421,15 @@ export function TasksPage() {
               next.set('model_config_id', value);
             } else {
               next.delete('model_config_id');
+            }
+            setSearchParams(next);
+          }}
+          onProjectFilterChange={(value) => {
+            const next = new URLSearchParams(searchParams);
+            if (value) {
+              next.set('project_id', value);
+            } else {
+              next.delete('project_id');
             }
             setSearchParams(next);
           }}
@@ -546,6 +512,7 @@ export function TasksPage() {
         taskSummaryMap={taskSummaryMap}
         remoteServerMap={remoteServerMap}
         externalMcpConfigMap={externalMcpConfigMap}
+        skillLabelMap={skillLabelMap}
         taskStatusLabel={taskStatusLabel}
         onClose={closeDetailDrawer}
         onEditTask={openEditDrawer}
@@ -585,6 +552,7 @@ export function TasksPage() {
         mcpCatalogEntries={mcpCatalogQuery.data}
         remoteServers={remoteServersQuery.data}
         externalMcpConfigs={externalMcpConfigsQuery.data}
+        skills={taskEditorSkills}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
         onPreviewPrompt={openDraftMcpPreviewModal}
@@ -634,6 +602,18 @@ export function TasksPage() {
           ]);
         }}
         onSummarize={(taskId) => summarizeTaskMemoryMutation.mutate(taskId)}
+      />
+
+      <TaskSubtasksDrawer
+        t={t}
+        open={Boolean(subtasksParentTask)}
+        parentTask={subtasksParentTask}
+        tasks={taskSubtasksQuery.data}
+        loading={taskSubtasksQuery.isLoading}
+        taskStatusLabel={taskStatusLabel}
+        onClose={closeSubtasksDrawer}
+        onOpenDetail={openDetailDrawer}
+        onOpenRunHistory={jumpToRunHistory}
       />
 
       <TaskRunModal

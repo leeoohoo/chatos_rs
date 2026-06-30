@@ -13,6 +13,8 @@ export interface MessageTaskRunnerLookupOptions {
   sessionId?: string | null;
   turnId?: string | null;
   sourceUserMessageId?: string | null;
+  eventLimit?: number | null;
+  eventOffset?: number | null;
 }
 
 const messageTaskRunnerLookupQuery = (
@@ -21,6 +23,8 @@ const messageTaskRunnerLookupQuery = (
   session_id: options?.sessionId || undefined,
   turn_id: options?.turnId || undefined,
   source_user_message_id: options?.sourceUserMessageId || undefined,
+  event_limit: typeof options?.eventLimit === 'number' ? options.eventLimit : undefined,
+  event_offset: typeof options?.eventOffset === 'number' ? options.eventOffset : undefined,
 });
 
 export const createMessage = (

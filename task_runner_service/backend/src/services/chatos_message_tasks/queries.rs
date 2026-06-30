@@ -1,9 +1,14 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use super::matching::{
     normalize_source_id, normalized_chatos_source, task_matches_source_user_message,
 };
 use super::*;
+
+mod graph;
+
+#[cfg(test)]
+mod tests;
 
 impl TaskService {
     pub async fn list_tasks_for_source_user_message(
@@ -15,7 +20,9 @@ impl TaskService {
             return Ok(Vec::new());
         };
         let filters = sanitize_task_list_filters(TaskListFilters {
-            creator_user_id: creator.map(|user| user.id.clone()),
+            creator_user_id: creator
+                .and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned)),
+            include_subtasks: Some(false),
             ..TaskListFilters::default()
         });
         let tasks = self.store.list_tasks_filtered(&filters).await?;
@@ -48,7 +55,10 @@ impl TaskService {
         };
         let mut tasks = self
             .store
-            .list_tasks_filtered(&TaskListFilters::default())
+            .list_tasks_filtered(&TaskListFilters {
+                include_subtasks: Some(false),
+                ..TaskListFilters::default()
+            })
             .await?
             .into_iter()
             .filter(|task| source.matches_task(task))
@@ -117,6 +127,7 @@ impl TaskService {
                     source_session_id: Some(source_session_id.clone()),
                     source_user_message_ids: source_user_message_ids.clone(),
                     source_turn_ids: source_turn_ids.clone(),
+                    include_subtasks: Some(false),
                     ..TaskListFilters::default()
                 })
                 .await?;
@@ -245,140 +256,6 @@ impl TaskService {
         self.build_chatos_message_task_detail(task).await.map(Some)
     }
 
-    pub async fn get_message_task_graph_for_chatos_message(
-        &self,
-        source_session_id: &str,
-        source_user_message_id: &str,
-    ) -> Result<ChatosMessageTaskGraph, String> {
-        self.get_message_task_graph_for_chatos_source(
-            source_session_id,
-            Some(source_user_message_id),
-            None,
-        )
-        .await
-    }
-
-    pub async fn get_message_task_graph_for_chatos_source(
-        &self,
-        source_session_id: &str,
-        source_user_message_id: Option<&str>,
-        source_turn_id: Option<&str>,
-    ) -> Result<ChatosMessageTaskGraph, String> {
-        let root_tasks = self
-            .list_tasks_for_chatos_source(source_session_id, source_user_message_id, source_turn_id)
-            .await?;
-        let root_task_ids = root_tasks
-            .iter()
-            .filter_map(|task| non_empty_chatos_id(task.id.as_str()))
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        let root_task_id_set = root_task_ids.iter().cloned().collect::<HashSet<_>>();
-
-        let mut ordered_ids = Vec::new();
-        let mut depth_by_id = HashMap::<String, usize>::new();
-        let mut tasks_by_id = HashMap::<String, TaskRecord>::new();
-        let mut queue = VecDeque::<TaskRecord>::new();
-
-        for task in root_tasks {
-            let Some(task_id) = non_empty_chatos_id(task.id.as_str()).map(str::to_string) else {
-                continue;
-            };
-            if !tasks_by_id.contains_key(task_id.as_str()) {
-                ordered_ids.push(task_id.clone());
-            }
-            depth_by_id.entry(task_id.clone()).or_insert(0);
-            tasks_by_id.insert(task_id, task.clone());
-            queue.push_back(task);
-        }
-
-        while let Some(task) = queue.pop_front() {
-            let Some(task_id) = non_empty_chatos_id(task.id.as_str()) else {
-                continue;
-            };
-            let current_depth = depth_by_id.get(task_id).copied().unwrap_or(0);
-            for prerequisite_task_id in task.prerequisite_task_ids.iter() {
-                let Some(prerequisite_task_id) =
-                    non_empty_chatos_id(prerequisite_task_id.as_str()).map(str::to_string)
-                else {
-                    continue;
-                };
-                depth_by_id
-                    .entry(prerequisite_task_id.clone())
-                    .and_modify(|depth| {
-                        if current_depth + 1 < *depth {
-                            *depth = current_depth + 1;
-                        }
-                    })
-                    .or_insert(current_depth + 1);
-                if tasks_by_id.contains_key(prerequisite_task_id.as_str()) {
-                    continue;
-                }
-                let Some(prerequisite_task) = self.get_task(prerequisite_task_id.as_str()).await?
-                else {
-                    continue;
-                };
-                if !task_belongs_to_source_session(&prerequisite_task, source_session_id) {
-                    continue;
-                }
-                ordered_ids.push(prerequisite_task_id.clone());
-                tasks_by_id.insert(prerequisite_task_id, prerequisite_task.clone());
-                queue.push_back(prerequisite_task);
-            }
-        }
-
-        let mut edges = Vec::new();
-        let mut edge_ids = HashSet::new();
-        let graph_task_ids = tasks_by_id.keys().cloned().collect::<HashSet<_>>();
-        for task_id in &ordered_ids {
-            let Some(task) = tasks_by_id.get(task_id.as_str()) else {
-                continue;
-            };
-            for prerequisite_task_id in task.prerequisite_task_ids.iter() {
-                let Some(prerequisite_task_id) =
-                    non_empty_chatos_id(prerequisite_task_id.as_str()).map(str::to_string)
-                else {
-                    continue;
-                };
-                if !graph_task_ids.contains(prerequisite_task_id.as_str()) {
-                    continue;
-                }
-                let edge_id = format!("{prerequisite_task_id}->{task_id}");
-                if !edge_ids.insert(edge_id.clone()) {
-                    continue;
-                }
-                edges.push(ChatosMessageTaskGraphEdge {
-                    id: edge_id,
-                    source: prerequisite_task_id,
-                    target: task_id.clone(),
-                    kind: "prerequisite".to_string(),
-                });
-            }
-        }
-
-        let mut nodes = Vec::with_capacity(ordered_ids.len());
-        for task_id in &ordered_ids {
-            let Some(task) = tasks_by_id.get(task_id.as_str()).cloned() else {
-                continue;
-            };
-            let detail = self.build_chatos_message_task_detail(task).await?;
-            nodes.push(ChatosMessageTaskGraphNode {
-                task: detail,
-                depth: depth_by_id.get(task_id.as_str()).copied().unwrap_or(0),
-                is_root: root_task_id_set.contains(task_id.as_str()),
-                is_current_message: root_task_id_set.contains(task_id.as_str()),
-            });
-        }
-
-        Ok(ChatosMessageTaskGraph {
-            root_task_ids,
-            nodes,
-            edges,
-            source_session_id: source_session_id.to_string(),
-            source_turn_id: source_turn_id.map(str::to_string),
-            source_user_message_id: source_user_message_id.map(str::to_string),
-        })
-    }
-
     async fn build_chatos_message_task_detail(
         &self,
         task: TaskRecord,
@@ -491,8 +368,4 @@ fn non_empty_chatos_id(value: &str) -> Option<&str> {
     } else {
         Some(value)
     }
-}
-
-fn task_belongs_to_source_session(task: &TaskRecord, source_session_id: &str) -> bool {
-    task.source_session_id.as_deref().map(str::trim) == Some(source_session_id.trim())
 }

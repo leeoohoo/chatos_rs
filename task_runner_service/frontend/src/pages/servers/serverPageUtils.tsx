@@ -39,6 +39,15 @@ export function serverCreatorLabel(server: RemoteServerRecord): string {
   return server.creator_display_name || server.creator_username || server.creator_user_id || '-';
 }
 
+export function serverOwnerLabel(server: RemoteServerRecord): string {
+  return (
+    server.owner_display_name ||
+    server.owner_username ||
+    server.owner_user_id ||
+    serverCreatorLabel(server)
+  );
+}
+
 export function getAuthTypeLabel(value: string, t: TranslateFn): string {
   return value in authTypeLabelKeys
     ? t(authTypeLabelKeys[value as RemoteServerAuthType])

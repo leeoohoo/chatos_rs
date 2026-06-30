@@ -30,6 +30,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
   reasoningSupported = false,
   reasoningEnabled = false,
   onReasoningToggle,
+  planModeAvailable = false,
+  planModeEnabled = false,
+  onPlanModeToggle,
   showModelSelector = false,
   selectedModelId = null,
   selectedModelName = null,
@@ -129,6 +132,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
     onThinkingLevelChange,
     onModelRuntimeChange,
     availableModels,
+    planModeAvailable,
+    planModeEnabled,
     availableProjects,
     selectedProjectId,
     showProjectFileButton,
@@ -173,6 +178,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
           reasoningSupported={reasoningSupported}
           reasoningEnabled={reasoningEnabled}
           onReasoningToggle={onReasoningToggle}
+          planModeAvailable={planModeAvailable}
+          planModeEnabled={planModeEnabled}
+          onPlanModeToggle={onPlanModeToggle}
           placeholder={placeholder}
           maxLength={maxLength}
           supportedFileTypes={supportedFileTypes}

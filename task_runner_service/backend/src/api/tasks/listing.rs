@@ -2,11 +2,12 @@ use super::*;
 
 pub(in crate::api) async fn list_tasks(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<TaskListQuery>,
 ) -> Result<Json<Vec<TaskRecord>>, ApiError> {
     let tasks = state
         .task_service
-        .list_tasks_filtered(query.into_filters())
+        .list_tasks_filtered(task_filters_for_user(query.into_filters(), &current_user)?)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(tasks))
@@ -14,11 +15,12 @@ pub(in crate::api) async fn list_tasks(
 
 pub(in crate::api) async fn list_tasks_page(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<TaskListQuery>,
 ) -> Result<Json<PaginatedResponse<TaskRecord>>, ApiError> {
     let page = state
         .task_service
-        .list_tasks_page(query.into_filters())
+        .list_tasks_page(task_filters_for_user(query.into_filters(), &current_user)?)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(page))
@@ -26,23 +28,47 @@ pub(in crate::api) async fn list_tasks_page(
 
 pub(in crate::api) async fn list_task_summaries(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<TaskSummaryQuery>,
 ) -> Result<Json<Vec<TaskSummaryRecord>>, ApiError> {
+    let project_id = query
+        .project_id
+        .map(|value| normalize_project_id(Some(value)));
     let summaries = if let Some(ids) = query.ids {
+        let project_id_filter = project_id.as_deref();
         state
             .task_service
             .get_task_summaries_by_ids(parse_csv_ids(&ids))
             .await
+            .map(|items| {
+                items
+                    .into_iter()
+                    .filter(|item| {
+                        owned_resource_visible_to_user(
+                            item.creator_user_id.as_deref(),
+                            &current_user,
+                        )
+                        .unwrap_or(false)
+                    })
+                    .filter(|item| {
+                        project_id_filter.is_none_or(|project_id| item.project_id == project_id)
+                    })
+                    .collect::<Vec<_>>()
+            })
     } else {
         state
             .task_service
-            .list_task_summaries_filtered(TaskListFilters {
-                status: query.status,
-                keyword: query.keyword,
-                creator_user_id: None,
-                limit: query.limit,
-                ..TaskListFilters::default()
-            })
+            .list_task_summaries_filtered(task_filters_for_user(
+                TaskListFilters {
+                    status: query.status,
+                    keyword: query.keyword,
+                    project_id,
+                    limit: query.limit,
+                    include_subtasks: Some(false),
+                    ..TaskListFilters::default()
+                },
+                &current_user,
+            )?)
             .await
     }
     .map_err(ApiError::bad_request)?;
@@ -51,22 +77,56 @@ pub(in crate::api) async fn list_task_summaries(
 
 pub(in crate::api) async fn get_task_index(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
 ) -> Result<Json<TaskIndexResponse>, ApiError> {
-    let index = state
+    if current_user.is_admin() {
+        let index = state
+            .task_service
+            .task_index()
+            .await
+            .map_err(ApiError::bad_request)?;
+        return Ok(Json(index));
+    }
+    let tasks = state
         .task_service
-        .task_index()
+        .list_tasks_filtered(task_filters_for_user(
+            TaskListFilters::default(),
+            &current_user,
+        )?)
         .await
         .map_err(ApiError::bad_request)?;
+    let mut tags = tasks
+        .iter()
+        .flat_map(|task| task.tags.iter().cloned())
+        .collect::<Vec<_>>();
+    tags.sort();
+    tags.dedup();
+    let index = TaskIndexResponse {
+        tasks: tasks.iter().map(TaskSummaryRecord::from).collect(),
+        tags,
+    };
     Ok(Json(index))
 }
 
 pub(in crate::api) async fn get_task_stats(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
 ) -> Result<Json<TaskStatsResponse>, ApiError> {
-    let stats = state
+    if current_user.is_admin() {
+        let stats = state
+            .task_service
+            .task_stats()
+            .await
+            .map_err(ApiError::bad_request)?;
+        return Ok(Json(stats));
+    }
+    let tasks = state
         .task_service
-        .task_stats()
+        .list_tasks_filtered(task_filters_for_user(
+            TaskListFilters::default(),
+            &current_user,
+        )?)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(stats))
+    Ok(Json(task_stats_from_tasks(&tasks)))
 }

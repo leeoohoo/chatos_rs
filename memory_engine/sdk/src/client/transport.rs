@@ -83,6 +83,11 @@ impl MemoryEngineClient {
         } else {
             req
         };
+        let req = if let Some(access_token) = self.access_token.as_deref() {
+            req.bearer_auth(access_token)
+        } else {
+            req
+        };
 
         match &self.auth {
             AuthMode::Direct { .. } => req,
@@ -249,6 +254,27 @@ mod tests {
                 .get("x-memory-operator-token")
                 .and_then(|value| value.to_str().ok()),
             Some("token-1")
+        );
+    }
+
+    #[test]
+    fn with_bearer_token_stores_authorization_header_value() {
+        let client =
+            MemoryEngineClient::new_platform("http://localhost:3000", Duration::from_secs(5))
+                .expect("client")
+                .with_bearer_token(" user-token-1 ");
+
+        let request = client
+            .apply_auth(client.http.get("http://localhost:3000/test"))
+            .build()
+            .expect("request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer user-token-1")
         );
     }
 }

@@ -31,6 +31,7 @@ export interface TeamMemberWorkspaceProps {
   aiModelConfigs: AiModelConfig[];
   supportsReasoning: boolean;
   reasoningEnabled: boolean;
+  planModeEnabled: boolean;
   availableRemoteConnections: RemoteConnection[];
   currentRemoteConnectionId: string | null;
   onRemoteConnectionChange: (connectionId: string | null) => void;
@@ -53,4 +54,5 @@ export interface TeamMemberWorkspaceProps {
     selectedThinkingLevel?: string | null;
   }) => void;
   onReasoningToggle: (enabled: boolean) => void;
+  onPlanModeToggle: (enabled: boolean) => void;
 }

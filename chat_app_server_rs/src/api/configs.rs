@@ -45,6 +45,8 @@ struct AiModelConfigRequest {
     provider: Option<String>,
     model: Option<String>,
     thinking_level: Option<String>,
+    task_usage_scenario: Option<String>,
+    task_thinking_level: Option<String>,
     api_key: Option<String>,
     clear_api_key: Option<bool>,
     base_url: Option<String>,
@@ -52,6 +54,13 @@ struct AiModelConfigRequest {
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,
     supports_responses: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct AiModelSettingsRequest {
+    user_id: Option<String>,
+    memory_summary_model_config_id: Option<String>,
+    memory_summary_thinking_level: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,12 +96,36 @@ pub fn router() -> Router {
             get(ai_model::list_ai_model_configs).post(ai_model::create_ai_model_config),
         )
         .route(
+            "/api/ai-model-providers",
+            get(ai_model::list_ai_model_providers).post(ai_model::create_ai_model_provider),
+        )
+        .route(
+            "/api/ai-model-providers/:provider_id",
+            get(ai_model::get_ai_model_provider)
+                .put(ai_model::update_ai_model_provider)
+                .delete(ai_model::delete_ai_model_provider),
+        )
+        .route(
+            "/api/ai-model-providers/:provider_id/refresh",
+            post(ai_model::refresh_ai_model_provider),
+        )
+        .route(
+            "/api/ai-model-settings",
+            get(ai_model::get_ai_model_settings).put(ai_model::put_ai_model_settings),
+        )
+        .route(
             "/api/ai-model-configs/:config_id/models",
             get(ai_model::list_ai_provider_models),
         )
         .route(
             "/api/ai-model-configs/:config_id",
-            put(ai_model::update_ai_model_config).delete(ai_model::delete_ai_model_config),
+            get(ai_model::get_ai_model_config)
+                .put(ai_model::update_ai_model_config)
+                .delete(ai_model::delete_ai_model_config),
+        )
+        .route(
+            "/api/ai-model-configs/:config_id/refresh",
+            post(ai_model::refresh_ai_model_config),
         )
 }
 

@@ -27,6 +27,10 @@ pub const TASK_MANAGER_MCP_ID: &str = "builtin_task_manager";
 pub const TASK_MANAGER_SERVER_NAME: &str = "task_manager";
 pub const TASK_MANAGER_COMMAND: &str = "builtin:task_manager";
 
+pub const PROJECT_MANAGEMENT_MCP_ID: &str = "builtin_project_management";
+pub const PROJECT_MANAGEMENT_SERVER_NAME: &str = "project_management_service";
+pub const PROJECT_MANAGEMENT_COMMAND: &str = "builtin:project_management";
+
 pub const NOTEPAD_MCP_ID: &str = "builtin_notepad";
 pub const NOTEPAD_SERVER_NAME: &str = "notepad";
 pub const NOTEPAD_COMMAND: &str = "builtin:notepad";
@@ -35,9 +39,9 @@ pub const AGENT_BUILDER_MCP_ID: &str = "builtin_agent_builder";
 pub const AGENT_BUILDER_SERVER_NAME: &str = "agent_builder";
 pub const AGENT_BUILDER_COMMAND: &str = "builtin:agent_builder";
 
-pub const UI_PROMPTER_MCP_ID: &str = "builtin_ui_prompter";
-pub const UI_PROMPTER_SERVER_NAME: &str = "ui_prompter";
-pub const UI_PROMPTER_COMMAND: &str = "builtin:ui_prompter";
+pub const ASK_USER_MCP_ID: &str = "builtin_ask_user";
+pub const ASK_USER_SERVER_NAME: &str = "ask_user";
+pub const ASK_USER_COMMAND: &str = "builtin:ask_user";
 
 pub const REMOTE_CONNECTION_CONTROLLER_MCP_ID: &str = "builtin_remote_connection_controller";
 pub const REMOTE_CONNECTION_CONTROLLER_SERVER_NAME: &str = "remote_connection_controller";
@@ -134,9 +138,10 @@ pub enum BuiltinMcpKind {
     CodeMaintainerWrite,
     TerminalController,
     TaskManager,
+    ProjectManagement,
     Notepad,
     AgentBuilder,
-    UiPrompter,
+    AskUser,
     RemoteConnectionController,
     WebTools,
     BrowserTools,
@@ -152,9 +157,10 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerWrite => "CodeMaintainerWrite",
             Self::TerminalController => "TerminalController",
             Self::TaskManager => "TaskManager",
+            Self::ProjectManagement => "ProjectManagement",
             Self::Notepad => "Notepad",
             Self::AgentBuilder => "AgentBuilder",
-            Self::UiPrompter => "UiPrompter",
+            Self::AskUser => "AskUser",
             Self::RemoteConnectionController => "RemoteConnectionController",
             Self::WebTools => "WebTools",
             Self::BrowserTools => "BrowserTools",
@@ -170,9 +176,10 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerWrite => CODE_MAINTAINER_WRITE_SERVER_NAME,
             Self::TerminalController => TERMINAL_CONTROLLER_SERVER_NAME,
             Self::TaskManager => TASK_MANAGER_SERVER_NAME,
+            Self::ProjectManagement => PROJECT_MANAGEMENT_SERVER_NAME,
             Self::Notepad => NOTEPAD_SERVER_NAME,
             Self::AgentBuilder => AGENT_BUILDER_SERVER_NAME,
-            Self::UiPrompter => UI_PROMPTER_SERVER_NAME,
+            Self::AskUser => ASK_USER_SERVER_NAME,
             Self::RemoteConnectionController => REMOTE_CONNECTION_CONTROLLER_SERVER_NAME,
             Self::WebTools => WEB_TOOLS_SERVER_NAME,
             Self::BrowserTools => BROWSER_TOOLS_SERVER_NAME,
@@ -188,9 +195,10 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerWrite => Some(CODE_MAINTAINER_WRITE_MCP_ID),
             Self::TerminalController => Some(TERMINAL_CONTROLLER_MCP_ID),
             Self::TaskManager => Some(TASK_MANAGER_MCP_ID),
+            Self::ProjectManagement => Some(PROJECT_MANAGEMENT_MCP_ID),
             Self::Notepad => Some(NOTEPAD_MCP_ID),
             Self::AgentBuilder => Some(AGENT_BUILDER_MCP_ID),
-            Self::UiPrompter => Some(UI_PROMPTER_MCP_ID),
+            Self::AskUser => Some(ASK_USER_MCP_ID),
             Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_MCP_ID),
             Self::WebTools => Some(WEB_TOOLS_MCP_ID),
             Self::BrowserTools => Some(BROWSER_TOOLS_MCP_ID),
@@ -204,9 +212,10 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerWrite => Some(CODE_MAINTAINER_WRITE_COMMAND),
             Self::TerminalController => Some(TERMINAL_CONTROLLER_COMMAND),
             Self::TaskManager => Some(TASK_MANAGER_COMMAND),
+            Self::ProjectManagement => Some(PROJECT_MANAGEMENT_COMMAND),
             Self::Notepad => Some(NOTEPAD_COMMAND),
             Self::AgentBuilder => Some(AGENT_BUILDER_COMMAND),
-            Self::UiPrompter => Some(UI_PROMPTER_COMMAND),
+            Self::AskUser => Some(ASK_USER_COMMAND),
             Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_COMMAND),
             Self::WebTools => Some(WEB_TOOLS_COMMAND),
             Self::BrowserTools => Some(BROWSER_TOOLS_COMMAND),
@@ -263,9 +272,10 @@ pub fn builtin_kind_by_kind_name(value: &str) -> Option<BuiltinMcpKind> {
         "CodeMaintainerWrite" => Some(BuiltinMcpKind::CodeMaintainerWrite),
         "TerminalController" => Some(BuiltinMcpKind::TerminalController),
         "TaskManager" => Some(BuiltinMcpKind::TaskManager),
+        "ProjectManagement" => Some(BuiltinMcpKind::ProjectManagement),
         "Notepad" => Some(BuiltinMcpKind::Notepad),
         "AgentBuilder" => Some(BuiltinMcpKind::AgentBuilder),
-        "UiPrompter" => Some(BuiltinMcpKind::UiPrompter),
+        "AskUser" => Some(BuiltinMcpKind::AskUser),
         "RemoteConnectionController" => Some(BuiltinMcpKind::RemoteConnectionController),
         "WebTools" => Some(BuiltinMcpKind::WebTools),
         "BrowserTools" => Some(BuiltinMcpKind::BrowserTools),
@@ -282,9 +292,10 @@ pub fn builtin_kind_by_server_name(value: &str) -> Option<BuiltinMcpKind> {
         CODE_MAINTAINER_WRITE_SERVER_NAME => Some(BuiltinMcpKind::CodeMaintainerWrite),
         TERMINAL_CONTROLLER_SERVER_NAME => Some(BuiltinMcpKind::TerminalController),
         TASK_MANAGER_SERVER_NAME => Some(BuiltinMcpKind::TaskManager),
+        PROJECT_MANAGEMENT_SERVER_NAME => Some(BuiltinMcpKind::ProjectManagement),
         NOTEPAD_SERVER_NAME => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_SERVER_NAME => Some(BuiltinMcpKind::AgentBuilder),
-        UI_PROMPTER_SERVER_NAME => Some(BuiltinMcpKind::UiPrompter),
+        ASK_USER_SERVER_NAME => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_SERVER_NAME => {
             Some(BuiltinMcpKind::RemoteConnectionController)
         }
@@ -305,9 +316,10 @@ pub fn builtin_kind_by_config_id(value: &str) -> Option<BuiltinMcpKind> {
         }
         TERMINAL_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::TerminalController),
         TASK_MANAGER_MCP_ID => Some(BuiltinMcpKind::TaskManager),
+        PROJECT_MANAGEMENT_MCP_ID => Some(BuiltinMcpKind::ProjectManagement),
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
-        UI_PROMPTER_MCP_ID => Some(BuiltinMcpKind::UiPrompter),
+        ASK_USER_MCP_ID => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::RemoteConnectionController),
         WEB_TOOLS_MCP_ID => Some(BuiltinMcpKind::WebTools),
         BROWSER_TOOLS_MCP_ID => Some(BuiltinMcpKind::BrowserTools),
@@ -323,9 +335,10 @@ pub fn builtin_kind_by_command(value: &str) -> Option<BuiltinMcpKind> {
         }
         TERMINAL_CONTROLLER_COMMAND => Some(BuiltinMcpKind::TerminalController),
         TASK_MANAGER_COMMAND => Some(BuiltinMcpKind::TaskManager),
+        PROJECT_MANAGEMENT_COMMAND => Some(BuiltinMcpKind::ProjectManagement),
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
-        UI_PROMPTER_COMMAND => Some(BuiltinMcpKind::UiPrompter),
+        ASK_USER_COMMAND => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_COMMAND => Some(BuiltinMcpKind::RemoteConnectionController),
         WEB_TOOLS_COMMAND => Some(BuiltinMcpKind::WebTools),
         BROWSER_TOOLS_COMMAND => Some(BuiltinMcpKind::BrowserTools),
@@ -339,9 +352,10 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
         BuiltinMcpKind::CodeMaintainerWrite,
         BuiltinMcpKind::TerminalController,
         BuiltinMcpKind::TaskManager,
+        BuiltinMcpKind::ProjectManagement,
         BuiltinMcpKind::Notepad,
         BuiltinMcpKind::AgentBuilder,
-        BuiltinMcpKind::UiPrompter,
+        BuiltinMcpKind::AskUser,
         BuiltinMcpKind::RemoteConnectionController,
         BuiltinMcpKind::WebTools,
         BuiltinMcpKind::BrowserTools,
@@ -351,7 +365,12 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
 pub fn default_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
     configurable_builtin_kinds()
         .into_iter()
-        .filter(|kind| !matches!(kind, BuiltinMcpKind::AgentBuilder))
+        .filter(|kind| {
+            !matches!(
+                kind,
+                BuiltinMcpKind::AgentBuilder | BuiltinMcpKind::ProjectManagement
+            )
+        })
         .collect()
 }
 
@@ -399,7 +418,8 @@ mod tests {
         configurable_builtin_kinds, default_runtime_builtin_kinds, BuiltinMcpKind,
         BuiltinMcpServerOptions, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_WRITE_BYTES,
         DEFAULT_SEARCH_LIMIT, LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID,
-        MEMORY_SKILL_READER_SERVER_NAME, TASK_MANAGER_COMMAND, TASK_MANAGER_MCP_ID,
+        MEMORY_SKILL_READER_SERVER_NAME, PROJECT_MANAGEMENT_COMMAND, PROJECT_MANAGEMENT_MCP_ID,
+        PROJECT_MANAGEMENT_SERVER_NAME, TASK_MANAGER_COMMAND, TASK_MANAGER_MCP_ID,
     };
 
     #[test]
@@ -419,6 +439,18 @@ mod tests {
         assert_eq!(
             builtin_kind_by_any(MEMORY_SKILL_READER_SERVER_NAME),
             Some(BuiltinMcpKind::MemorySkillReader)
+        );
+        assert_eq!(
+            builtin_kind_by_any(PROJECT_MANAGEMENT_MCP_ID),
+            Some(BuiltinMcpKind::ProjectManagement)
+        );
+        assert_eq!(
+            builtin_kind_by_any(PROJECT_MANAGEMENT_SERVER_NAME),
+            Some(BuiltinMcpKind::ProjectManagement)
+        );
+        assert_eq!(
+            builtin_kind_by_any(PROJECT_MANAGEMENT_COMMAND),
+            Some(BuiltinMcpKind::ProjectManagement)
         );
         assert_eq!(
             builtin_kind_by_any(LEGACY_CODE_MAINTAINER_MCP_ID),
@@ -470,11 +502,13 @@ mod tests {
     fn default_runtime_builtin_kinds_match_chat_loading_rules() {
         let configurable = configurable_builtin_kinds();
         assert!(configurable.contains(&BuiltinMcpKind::AgentBuilder));
+        assert!(configurable.contains(&BuiltinMcpKind::ProjectManagement));
 
         let runtime = default_runtime_builtin_kinds();
         assert!(runtime.contains(&BuiltinMcpKind::TaskManager));
         assert!(runtime.contains(&BuiltinMcpKind::BrowserTools));
         assert!(!runtime.contains(&BuiltinMcpKind::AgentBuilder));
+        assert!(!runtime.contains(&BuiltinMcpKind::ProjectManagement));
         assert!(!runtime.contains(&BuiltinMcpKind::MemorySkillReader));
     }
 

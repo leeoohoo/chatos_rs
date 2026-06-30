@@ -2,13 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import { MessageSquareText, RefreshCw } from 'lucide-react';
 
 import { useI18n } from '../../i18n/I18nProvider';
+import { useApiClient } from '../../lib/api/ApiClientContext';
+import { normalizeRawMessages } from '../../lib/domain/messages';
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
 import { ConversationUserMessageItem } from './ConversationUserMessageItem';
+import { ConversationProcessTimelineModal } from './ConversationProcessTimelineModal';
 import { useConversationUserMessages } from './useConversationUserMessages';
+import type { UserMessageTurn } from './types';
 
 interface ConversationUserMessagesSidebarProps {
   sessionId: string | null | undefined;
+  hasProjectContact?: boolean;
+  refreshKey?: string | number | null;
   className?: string;
   summaryActive?: boolean;
   runtimeContextActive?: boolean;
@@ -43,6 +49,8 @@ const selectOldestLoadedMessage = (loadedItems: Array<{ userMessage: Message }>)
 
 const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarProps> = ({
   sessionId,
+  hasProjectContact = Boolean(sessionId),
+  refreshKey,
   className,
   summaryActive = false,
   runtimeContextActive = false,
@@ -57,6 +65,7 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
   onOpenTasks,
 }) => {
   const { t } = useI18n();
+  const apiClient = useApiClient();
   const {
     items,
     loading,
@@ -65,14 +74,21 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
     hasMore,
     reload,
     loadMore,
-  } = useConversationUserMessages(sessionId);
+  } = useConversationUserMessages(sessionId, { refreshKey });
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [processTimelineItem, setProcessTimelineItem] = useState<UserMessageTurn | null>(null);
+  const [processTimelineMessages, setProcessTimelineMessages] = useState<Message[]>([]);
+  const [processTimelineLoading, setProcessTimelineLoading] = useState(false);
+  const [processTimelineError, setProcessTimelineError] = useState<string | null>(null);
   const [syncingHistory, setSyncingHistory] = useState(false);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const loadingOlderRef = useRef(false);
 
   useEffect(() => {
     setSelectedMessageId(null);
+    setProcessTimelineItem(null);
+    setProcessTimelineMessages([]);
+    setProcessTimelineError(null);
   }, [sessionId]);
 
   useEffect(() => {
@@ -108,6 +124,26 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
 
   const isSummaryDisabled = summaryDisabled ?? !sessionId;
   const isRuntimeContextDisabled = runtimeContextDisabled ?? !sessionId;
+
+  const openProcessTimeline = async (item: UserMessageTurn) => {
+    if (!sessionId) {
+      return;
+    }
+    setProcessTimelineItem(item);
+    setProcessTimelineMessages([]);
+    setProcessTimelineError(null);
+    setProcessTimelineLoading(true);
+    try {
+      const rawMessages = item.turnId
+        ? await apiClient.getConversationTurnMessagesByTurn(sessionId, item.turnId)
+        : await apiClient.getConversationTurnMessages(sessionId, item.userMessage.id);
+      setProcessTimelineMessages(normalizeRawMessages(rawMessages, sessionId));
+    } catch (err) {
+      setProcessTimelineError(err instanceof Error ? err.message : '加载执行过程失败');
+    } finally {
+      setProcessTimelineLoading(false);
+    }
+  };
 
   return (
     <aside className={cn('flex shrink-0 flex-col border-r border-border bg-background', className)}>
@@ -165,7 +201,7 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
       </div>
 
       <div ref={listScrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        {!sessionId ? (
+        {!hasProjectContact ? (
           <div className="px-2 py-8 text-center">
             <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
               <MessageSquareText className="h-5 w-5" />
@@ -175,6 +211,18 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
             </div>
             <div className="mt-1 text-xs leading-5 text-muted-foreground">
               {t('projectUserMessages.noContactDescription')}
+            </div>
+          </div>
+        ) : !sessionId ? (
+          <div className="px-2 py-8 text-center">
+            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <MessageSquareText className="h-5 w-5" />
+            </div>
+            <div className="mt-3 text-sm font-medium text-foreground">
+              {t('projectUserMessages.emptyTitle')}
+            </div>
+            <div className="mt-1 text-xs leading-5 text-muted-foreground">
+              {t('projectUserMessages.emptyDescription')}
             </div>
           </div>
         ) : loading && items.length === 0 ? (
@@ -228,12 +276,26 @@ const ConversationUserMessagesSidebar: React.FC<ConversationUserMessagesSidebarP
                   setSelectedMessageId(item.userMessage.id);
                   onSelectMessage?.(item.userMessage);
                 }}
+                onOpenProcessTimeline={(target) => {
+                  void openProcessTimeline(target);
+                }}
                 onOpenTasks={onOpenTasks}
               />
             ))}
           </div>
         )}
       </div>
+      <ConversationProcessTimelineModal
+        item={processTimelineItem}
+        messages={processTimelineMessages}
+        loading={processTimelineLoading}
+        error={processTimelineError}
+        onClose={() => {
+          setProcessTimelineItem(null);
+          setProcessTimelineMessages([]);
+          setProcessTimelineError(null);
+        }}
+      />
     </aside>
   );
 };

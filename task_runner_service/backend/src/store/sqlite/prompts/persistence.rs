@@ -1,24 +1,24 @@
 use super::*;
 
 impl SqliteStore {
-    pub(in crate::store) async fn get_ui_prompt(
+    pub(in crate::store) async fn get_ask_user_prompt(
         &self,
         id: &str,
-    ) -> Result<Option<UiPromptRecord>, String> {
-        let row = sqlx::query("SELECT * FROM ui_prompts WHERE id = ?")
+    ) -> Result<Option<AskUserPromptRecord>, String> {
+        let row = sqlx::query("SELECT * FROM ask_user_prompts WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|err| err.to_string())?;
-        row.as_ref().map(ui_prompt_from_row).transpose()
+        row.as_ref().map(ask_user_prompt_from_row).transpose()
     }
 
-    pub(in crate::store) async fn save_ui_prompt(
+    pub(in crate::store) async fn save_ask_user_prompt(
         &self,
-        prompt: UiPromptRecord,
-    ) -> Result<UiPromptRecord, String> {
+        prompt: AskUserPromptRecord,
+    ) -> Result<AskUserPromptRecord, String> {
         sqlx::query(
-            "INSERT INTO ui_prompts (
+            "INSERT INTO ask_user_prompts (
                 id, task_id, run_id, conversation_id, conversation_turn_id, tool_call_id, kind,
                 title, message, allow_cancel, timeout_ms, payload_json, response_json, status,
                 created_at, updated_at, expires_at
@@ -54,7 +54,7 @@ impl SqliteStore {
         .bind(prompt.timeout_ms as i64)
         .bind(encode_json(&prompt.payload)?)
         .bind(encode_json_optional(prompt.response.as_ref())?)
-        .bind(ui_prompt_status_to_str(prompt.status))
+        .bind(ask_user_prompt_status_to_str(prompt.status))
         .bind(&prompt.created_at)
         .bind(&prompt.updated_at)
         .bind(prompt.expires_at.clone())

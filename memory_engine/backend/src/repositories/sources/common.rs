@@ -1,4 +1,4 @@
-use mongodb::bson::{Bson, Document, doc};
+use mongodb::bson::{doc, Bson, Document};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 

@@ -6,6 +6,8 @@ import {
   matchSessionContactProjectScope,
   normalizeContactSessions,
   normalizeMemoryContact,
+  normalizeProjectScopeId,
+  PUBLIC_PROJECT_ID,
   resolveSessionProjectScopeId,
   splitSessionsByMappedContacts,
 } from './contactSessions';
@@ -24,6 +26,13 @@ const buildSession = (overrides: Partial<Session>): Session => ({
 });
 
 describe('domain/contactSessions', () => {
+  it('normalizes empty and legacy public project ids to the public project scope', () => {
+    expect(normalizeProjectScopeId(null)).toBe(PUBLIC_PROJECT_ID);
+    expect(normalizeProjectScopeId('')).toBe(PUBLIC_PROJECT_ID);
+    expect(normalizeProjectScopeId(' 0 ')).toBe(PUBLIC_PROJECT_ID);
+    expect(normalizeProjectScopeId(' project_1 ')).toBe('project_1');
+  });
+
   it('resolves project scope and contact identity from runtime metadata', () => {
     const session = buildSession({
       metadata: {

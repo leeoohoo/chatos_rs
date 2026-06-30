@@ -1,7 +1,8 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde_json::{json, Value};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
 use crate::traits::ModelRequest;
@@ -54,7 +55,8 @@ pub(super) async fn dispatch_model_request(
             }) as Arc<dyn Fn(Value) + Send + Sync>
         });
 
-    request_handler
+    let started_at = Instant::now();
+    let result = request_handler
         .handle_request_with_options(
             request.base_url.as_str(),
             request.api_key.as_str(),
@@ -81,5 +83,41 @@ pub(super) async fn dispatch_model_request(
                 force_identity_encoding: false,
             },
         )
-        .await
+        .await;
+    let model_request_ms = started_at.elapsed().as_millis();
+    match &result {
+        Ok(response) => {
+            info!(
+                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
+                iteration,
+                reason = iteration_reason,
+                model = request.model.as_str(),
+                provider = request.provider.as_str(),
+                model_request_ms,
+                response_id = response.response_id.as_deref().unwrap_or(""),
+                tool_call_count = response
+                    .tool_calls
+                    .as_ref()
+                    .and_then(|value| value.as_array())
+                    .map(Vec::len)
+                    .unwrap_or_default(),
+                "ai runtime model request completed"
+            );
+        }
+        Err(err) => {
+            warn!(
+                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
+                iteration,
+                reason = iteration_reason,
+                model = request.model.as_str(),
+                provider = request.provider.as_str(),
+                model_request_ms,
+                error = err.as_str(),
+                "ai runtime model request failed"
+            );
+        }
+    }
+    result
 }

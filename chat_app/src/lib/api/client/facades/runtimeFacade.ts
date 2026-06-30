@@ -3,6 +3,7 @@ import * as notepadApi from '../notepad';
 import * as streamApi from '../stream';
 import * as summaryApi from '../summary';
 import * as tasksApi from '../tasks';
+import * as askUserPromptsApi from '../askUserPrompts';
 import { buildQuery } from '../shared';
 import type {
   AuthResponse,
@@ -20,6 +21,7 @@ import type {
   NotepadUpdatePayload,
   RegisterPayload,
   AgentToolsResponse,
+  CreateTaskRunnerExternalMcpConfigPayload,
   ReviewRepairResponse,
   ReviewRepairStatusResponse,
   SessionSummariesListResponse,
@@ -27,9 +29,14 @@ import type {
   StreamChatCommandResponse,
   StreamChatModelConfigPayload,
   StreamChatOptions,
+  TaskRunnerExternalMcpConfig,
   TaskManagerTaskResponse,
   TaskRunnerAgentAccountResponse,
   TaskManagerUpdatePayload,
+  AskUserPromptListResponse,
+  AskUserPromptMutationPayload,
+  AskUserPromptMutationResponse,
+  UpdateTaskRunnerExternalMcpConfigPayload,
   UserSettingsResponse,
 } from '../types';
 import type ApiClient from '../../client';
@@ -69,6 +76,18 @@ export interface RuntimeFacade {
     payload?: Partial<TaskManagerUpdatePayload>,
   ): Promise<TaskManagerTaskResponse>;
   deleteTaskManagerTask(conversationId: string, taskId: string): Promise<{ success?: boolean }>;
+  listAskUserPrompts(
+    conversationId: string,
+    options?: { includePending?: boolean; limit?: number },
+  ): Promise<AskUserPromptListResponse>;
+  submitAskUserPrompt(
+    promptId: string,
+    payload: AskUserPromptMutationPayload,
+  ): Promise<AskUserPromptMutationResponse>;
+  cancelAskUserPrompt(
+    promptId: string,
+    payload: Pick<AskUserPromptMutationPayload, 'conversation_id' | 'conversationId' | 'reason'>,
+  ): Promise<AskUserPromptMutationResponse>;
   notepadInit(): Promise<NotepadInitResponse>;
   listNotepadFolders(): Promise<NotepadFoldersResponse>;
   createNotepadFolder(payload: { folder: string }): Promise<NotepadFolderMutationResponse>;
@@ -93,6 +112,15 @@ export interface RuntimeFacade {
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
   listTaskRunnerAgentAccounts(): Promise<TaskRunnerAgentAccountResponse[]>;
+  listTaskRunnerExternalMcpConfigs(): Promise<TaskRunnerExternalMcpConfig[]>;
+  createTaskRunnerExternalMcpConfig(
+    payload: CreateTaskRunnerExternalMcpConfigPayload,
+  ): Promise<TaskRunnerExternalMcpConfig>;
+  updateTaskRunnerExternalMcpConfig(
+    id: string,
+    payload: UpdateTaskRunnerExternalMcpConfigPayload,
+  ): Promise<TaskRunnerExternalMcpConfig>;
+  deleteTaskRunnerExternalMcpConfig(id: string): Promise<Record<string, never>>;
   getUserSettings(userId?: string): Promise<UserSettingsResponse>;
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<UserSettingsResponse>;
 }
@@ -138,6 +166,15 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async deleteTaskManagerTask(conversationId, taskId) {
     return tasksApi.deleteTaskManagerTask(this.getRequestFn(), conversationId, taskId);
+  },
+  async listAskUserPrompts(conversationId, options) {
+    return askUserPromptsApi.listAskUserPrompts(this.getRequestFn(), conversationId, options);
+  },
+  async submitAskUserPrompt(promptId, payload) {
+    return askUserPromptsApi.submitAskUserPrompt(this.getRequestFn(), promptId, payload);
+  },
+  async cancelAskUserPrompt(promptId, payload) {
+    return askUserPromptsApi.cancelAskUserPrompt(this.getRequestFn(), promptId, payload);
   },
   async notepadInit() {
     return notepadApi.notepadInit(this.getRequestFn());
@@ -201,6 +238,32 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async listTaskRunnerAgentAccounts() {
     return accountApi.listTaskRunnerAgentAccounts(this.getRequestFn());
+  },
+  async listTaskRunnerExternalMcpConfigs() {
+    return this.getRequestFn()<TaskRunnerExternalMcpConfig[]>('/task-runner/external-mcp-configs');
+  },
+  async createTaskRunnerExternalMcpConfig(payload) {
+    return this.getRequestFn()<TaskRunnerExternalMcpConfig>('/task-runner/external-mcp-configs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  async updateTaskRunnerExternalMcpConfig(id, payload) {
+    return this.getRequestFn()<TaskRunnerExternalMcpConfig>(
+      `/task-runner/external-mcp-configs/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+  async deleteTaskRunnerExternalMcpConfig(id) {
+    return this.getRequestFn()<Record<string, never>>(
+      `/task-runner/external-mcp-configs/${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+      },
+    );
   },
   async getUserSettings(userId) {
     return accountApi.getUserSettings(this.getRequestFn(), userId);

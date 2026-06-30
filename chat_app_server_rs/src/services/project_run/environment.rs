@@ -108,7 +108,12 @@ pub(crate) async fn refresh_environment_snapshot(
                 updated_at: now_rfc3339(),
             }),
         };
-    let snapshot = build_environment_snapshot(project, selection, analyzed)?;
+    let project_for_snapshot = project.clone();
+    let snapshot = tokio::task::spawn_blocking(move || {
+        build_environment_snapshot(&project_for_snapshot, selection, analyzed)
+    })
+    .await
+    .map_err(|err| format!("project run environment snapshot task failed: {err}"))??;
     let _ = write_cached_environment_snapshot(project.root_path.as_str(), &snapshot);
     Ok(snapshot)
 }

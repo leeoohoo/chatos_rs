@@ -7,7 +7,8 @@ use crate::auth::{
     CurrentPrincipal,
 };
 use crate::models::{
-    CurrentUserResponse, LoginRequest, LoginResponse, RegisterRequest, UserRecord, USER_ROLE_USER,
+    CurrentUserResponse, LoginRequest, LoginResponse, RegisterRequest, TokenVerifyResponse,
+    UserRecord, VerifiedPrincipal, USER_ROLE_USER,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
@@ -140,6 +141,28 @@ pub async fn me(
     }))
 }
 
+pub async fn verify(
+    Extension(principal): Extension<CurrentPrincipal>,
+) -> ApiResult<TokenVerifyResponse> {
+    Ok(Json(TokenVerifyResponse {
+        principal: VerifiedPrincipal {
+            sub: principal.sub,
+            jti: principal.jti,
+            exp: principal.exp,
+            principal_type: principal.principal_type,
+            user_id: principal.user_id,
+            username: principal.username,
+            display_name: principal.display_name,
+            role: principal.role,
+            agent_account_id: principal.agent_account_id,
+            owner_user_id: principal.owner_user_id,
+            owner_username: principal.owner_username,
+            owner_display_name: principal.owner_display_name,
+            scopes: principal.scopes,
+        },
+    }))
+}
+
 pub async fn logout(
     State(state): State<AppState>,
     Extension(principal): Extension<CurrentPrincipal>,
@@ -183,6 +206,7 @@ fn current_auth_user(
         agent_account_id: None,
         owner_user_id: None,
         owner_username: None,
+        owner_display_name: None,
         scopes: vec!["user_service".to_string()],
     }
     .auth_user()

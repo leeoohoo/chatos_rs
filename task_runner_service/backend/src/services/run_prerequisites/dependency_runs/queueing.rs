@@ -6,6 +6,7 @@ impl RunService {
         task: TaskRecord,
         input: StartTaskRunRequest,
     ) -> Result<TaskRunRecord, String> {
+        let task = save_task_if_tenant_aligned(&self.store, task).await?;
         if task.status == TaskStatus::Cancelled {
             return Err(format!("前置任务已取消，不能执行: {}", task.id));
         }
@@ -92,7 +93,7 @@ impl RunService {
         let service = self.clone();
         let run_for_spawn = run.clone();
         let input_for_spawn = input.clone();
-        tokio::spawn(async move {
+        crate::auth::spawn_with_current_access_token(async move {
             service
                 .execute_run_model_phase(
                     task,

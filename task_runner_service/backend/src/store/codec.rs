@@ -2,7 +2,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::models::{TaskRunStatus, TaskStatus, UiPromptStatus, UserRole};
+use crate::models::{AskUserPromptStatus, TaskRunStatus, TaskStatus, UserRole};
 
 pub(super) fn encode_json<T: Serialize>(value: &T) -> Result<String, String> {
     serde_json::to_string(value).map_err(|err| err.to_string())
@@ -128,22 +128,22 @@ pub(super) fn task_run_status_from_str(value: &str) -> TaskRunStatus {
     }
 }
 
-pub(super) fn ui_prompt_status_to_str(status: UiPromptStatus) -> &'static str {
+pub(super) fn ask_user_prompt_status_to_str(status: AskUserPromptStatus) -> &'static str {
     match status {
-        UiPromptStatus::Pending => "pending",
-        UiPromptStatus::Submitted => "submitted",
-        UiPromptStatus::Cancelled => "cancelled",
-        UiPromptStatus::TimedOut => "timed_out",
-        UiPromptStatus::Failed => "failed",
+        AskUserPromptStatus::Pending => "pending",
+        AskUserPromptStatus::Submitted => "submitted",
+        AskUserPromptStatus::Cancelled => "cancelled",
+        AskUserPromptStatus::TimedOut => "timed_out",
+        AskUserPromptStatus::Failed => "failed",
     }
 }
 
-pub(super) fn ui_prompt_status_from_str(value: &str) -> UiPromptStatus {
+pub(super) fn ask_user_prompt_status_from_str(value: &str) -> AskUserPromptStatus {
     match value {
-        "submitted" => UiPromptStatus::Submitted,
-        "cancelled" => UiPromptStatus::Cancelled,
-        "timed_out" => UiPromptStatus::TimedOut,
-        "failed" => UiPromptStatus::Failed,
-        _ => UiPromptStatus::Pending,
+        "submitted" => AskUserPromptStatus::Submitted,
+        "cancelled" => AskUserPromptStatus::Cancelled,
+        "timed_out" => AskUserPromptStatus::TimedOut,
+        "failed" => AskUserPromptStatus::Failed,
+        _ => AskUserPromptStatus::Pending,
     }
 }

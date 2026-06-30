@@ -6,6 +6,7 @@ import {
   hasSessionMessages,
   isSessionMatchedContactAndProject,
   normalizeProjectScopeId,
+  PUBLIC_PROJECT_ID,
   resolveContactAgentIdFromSession,
   resolveContactIdFromSession,
   resolveSessionProjectScopeId,
@@ -88,7 +89,7 @@ export const useContactSessionResolver = ({
   currentSession,
   createSession,
   apiClient,
-  defaultProjectId = '0',
+  defaultProjectId = PUBLIC_PROJECT_ID,
   includeApiLookup = true,
 }: UseContactSessionResolverOptions) => {
   const sessionCacheRef = useRef<Record<string, string>>({});

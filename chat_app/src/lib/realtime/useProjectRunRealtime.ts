@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import { useRealtimeEvent, useRealtimeTopic } from './RealtimeProvider';
+import { useRealtimeInvalidationQueue } from './invalidationQueue';
 import type {
   RealtimeEventEnvelope,
   RealtimeProjectMembersUpdatedPayloadWrapper,
@@ -71,6 +72,21 @@ export const useProjectRunRealtime = ({
     onMembersUpdatedRef.current = onMembersUpdated;
   }, [onMembersUpdated]);
 
+  const runStateQueue = useRealtimeInvalidationQueue<RealtimeProjectRunStatePayloadWrapper>({
+    delayMs: 150,
+    onExecute: (payload) => onRunStateChangedRef.current?.(payload),
+  });
+
+  const catalogQueue = useRealtimeInvalidationQueue<RealtimeProjectRunCatalogPayloadWrapper>({
+    delayMs: 150,
+    onExecute: (payload) => onCatalogUpdatedRef.current?.(payload),
+  });
+
+  const membersQueue = useRealtimeInvalidationQueue<RealtimeProjectMembersUpdatedPayloadWrapper>({
+    delayMs: 150,
+    onExecute: (payload) => onMembersUpdatedRef.current?.(payload),
+  });
+
   useRealtimeTopic(
     projectId ? { scope: 'project', id: projectId } : null,
     enabled && Boolean(projectId),
@@ -88,7 +104,7 @@ export const useProjectRunRealtime = ({
         || '',
       ).trim();
       if (payloadProjectId === projectId) {
-        void onRunStateChangedRef.current?.(event.payload);
+        runStateQueue.run(event.payload);
       }
       return;
     }
@@ -112,7 +128,7 @@ export const useProjectRunRealtime = ({
         || '',
       ).trim();
       if (payloadProjectId === projectId) {
-        void onCatalogUpdatedRef.current?.(event.payload);
+        catalogQueue.run(event.payload);
       }
       return;
     }
@@ -124,7 +140,7 @@ export const useProjectRunRealtime = ({
         || '',
       ).trim();
       if (payloadProjectId === projectId) {
-        void onMembersUpdatedRef.current?.(event.payload);
+        membersQueue.run(event.payload);
       }
     }
   });

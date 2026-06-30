@@ -1,4 +1,4 @@
-use chatos_builtin_tools::{UiPromptPayload, UiPromptResponseSubmission};
+use chatos_builtin_tools::{AskUserPromptPayload, AskUserResponseSubmission};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -24,7 +24,7 @@ impl Default for TaskRunStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum UiPromptStatus {
+pub enum AskUserPromptStatus {
     Pending,
     Submitted,
     Cancelled,
@@ -32,7 +32,7 @@ pub enum UiPromptStatus {
     Failed,
 }
 
-impl Default for UiPromptStatus {
+impl Default for AskUserPromptStatus {
     fn default() -> Self {
         Self::Pending
     }
@@ -70,7 +70,7 @@ pub struct TaskRunEventRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiPromptRecord {
+pub struct AskUserPromptRecord {
     pub id: String,
     #[serde(default)]
     pub task_id: Option<String>,
@@ -90,17 +90,17 @@ pub struct UiPromptRecord {
     pub timeout_ms: u64,
     pub payload: Value,
     #[serde(default)]
-    pub response: Option<UiPromptResponseSubmission>,
-    pub status: UiPromptStatus,
+    pub response: Option<AskUserResponseSubmission>,
+    pub status: AskUserPromptStatus,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
     pub expires_at: Option<String>,
 }
 
-impl UiPromptRecord {
+impl AskUserPromptRecord {
     pub fn from_payload(
-        payload: UiPromptPayload,
+        payload: AskUserPromptPayload,
         task_id: Option<String>,
         run_id: Option<String>,
         created_at: String,
@@ -120,7 +120,7 @@ impl UiPromptRecord {
             timeout_ms: payload.timeout_ms,
             payload: payload.payload,
             response: None,
-            status: UiPromptStatus::Pending,
+            status: AskUserPromptStatus::Pending,
             created_at: created_at.clone(),
             updated_at: created_at,
             expires_at,
@@ -160,7 +160,7 @@ pub struct RunListFilters {
 pub struct PromptListFilters {
     pub task_id: Option<String>,
     pub run_id: Option<String>,
-    pub status: Option<UiPromptStatus>,
+    pub status: Option<AskUserPromptStatus>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -187,7 +187,7 @@ impl From<&TaskRunRecord> for RunSummaryRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiPromptTaskCountRecord {
+pub struct AskUserPromptTaskCountRecord {
     pub task_id: String,
     pub count: usize,
 }
@@ -199,13 +199,13 @@ pub struct StartTaskRunRequest {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SubmitUiPromptRequest {
+pub struct SubmitAskUserPromptRequest {
     pub values: Option<Value>,
     pub selection: Option<Value>,
     pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CancelUiPromptRequest {
+pub struct CancelAskUserPromptRequest {
     pub reason: Option<String>,
 }

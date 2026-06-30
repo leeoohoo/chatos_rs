@@ -1,4 +1,4 @@
-use chatos_ai_runtime::{MemoryContextComposer, MemoryScope, TaskRuntimeConfig};
+use chatos_ai_runtime::{MemoryContextComposer, MemoryScope, TaskMcpInitMode, TaskRuntimeConfig};
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
@@ -15,15 +15,10 @@ impl RunService {
         memory_scope: Option<&MemoryScope>,
     ) -> Option<Value> {
         let scope = memory_scope?;
-        let Some(base_url) = self.config.memory_engine_base_url.clone() else {
+        let Some(client) = self.config.memory_client().ok().flatten() else {
             return None;
         };
-        let composer = MemoryContextComposer::new_direct(
-            base_url,
-            self.config.memory_timeout,
-            self.config.memory_engine_source_id.clone(),
-        )
-        .ok()?;
+        let composer = MemoryContextComposer::from_client(client);
         match composer.compose(scope).await {
             Ok(response) => serde_json::to_value(response).ok(),
             Err(err) => {
@@ -142,14 +137,65 @@ impl RunService {
         runtime_config = runtime_config
             .with_builtin_prompt_locale(mcp_config.locale())
             .with_builtin_prompt_mode(mcp_config.builtin_prompt_mode);
-        if !mcp_config.enabled {
-            runtime_config.with_mcp_init_mode(chatos_ai_runtime::TaskMcpInitMode::Disabled)
-        } else if !mcp_config.external_mcp_config_ids.is_empty()
-            && mcp_config.init_mode == chatos_ai_runtime::TaskMcpInitMode::BuiltinOnly
-        {
-            runtime_config.with_mcp_init_mode(chatos_ai_runtime::TaskMcpInitMode::Full)
-        } else {
-            runtime_config.with_mcp_init_mode(mcp_config.init_mode)
-        }
+        runtime_config.with_mcp_init_mode(effective_task_mcp_init_mode(mcp_config))
+    }
+}
+
+fn effective_task_mcp_init_mode(mcp_config: &TaskMcpConfig) -> TaskMcpInitMode {
+    if !mcp_config.enabled {
+        return TaskMcpInitMode::Disabled;
+    }
+    TaskMcpInitMode::Full
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enabled_mcp_always_uses_full_runtime_mode() {
+        let config = TaskMcpConfig {
+            init_mode: TaskMcpInitMode::BuiltinOnly,
+            external_mcp_config_ids: vec!["external-1".to_string()],
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(effective_task_mcp_init_mode(&config), TaskMcpInitMode::Full);
+    }
+
+    #[test]
+    fn builtin_only_without_external_mcp_is_normalized_to_full() {
+        let config = TaskMcpConfig {
+            init_mode: TaskMcpInitMode::BuiltinOnly,
+            external_mcp_config_ids: Vec::new(),
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(effective_task_mcp_init_mode(&config), TaskMcpInitMode::Full);
+    }
+
+    #[test]
+    fn init_mode_disabled_is_ignored_when_mcp_is_enabled() {
+        let config = TaskMcpConfig {
+            enabled: true,
+            init_mode: TaskMcpInitMode::Disabled,
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(effective_task_mcp_init_mode(&config), TaskMcpInitMode::Full);
+    }
+
+    #[test]
+    fn disabled_mcp_stays_disabled() {
+        let config = TaskMcpConfig {
+            enabled: false,
+            init_mode: TaskMcpInitMode::BuiltinOnly,
+            ..TaskMcpConfig::default()
+        };
+
+        assert_eq!(
+            effective_task_mcp_init_mode(&config),
+            TaskMcpInitMode::Disabled
+        );
     }
 }

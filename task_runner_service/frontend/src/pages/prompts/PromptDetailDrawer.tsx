@@ -18,8 +18,8 @@ import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   RunSummaryRecord,
   TaskSummaryRecord,
-  UiPromptRecord,
-  UiPromptStatus,
+  AskUserPromptRecord,
+  AskUserPromptStatus,
 } from '../../types';
 import {
   extractChoice,
@@ -30,14 +30,14 @@ import { promptColorMap } from './promptPageUtils';
 type PromptDetailDrawerProps = {
   t: TranslateFn;
   open: boolean;
-  prompt: UiPromptRecord | null;
+  prompt: AskUserPromptRecord | null;
   selectedTask: TaskSummaryRecord | null;
   selectedRun: RunSummaryRecord | null;
   modelMap: Map<string, string>;
   form: FormInstance<Record<string, unknown>>;
   submitting: boolean;
   canceling: boolean;
-  promptStatusLabel: (status: UiPromptStatus) => string;
+  promptStatusLabel: (status: AskUserPromptStatus) => string;
   onClose: () => void;
   onOpenTask: (taskId: string) => void;
   onOpenRun: (runId: string) => void;

@@ -11,6 +11,8 @@ pub(crate) struct ChatStreamRequest {
     pub user_id: Option<String>,
     pub attachments: Option<Vec<Value>>,
     pub reasoning_enabled: Option<bool>,
+    #[serde(default, alias = "planMode")]
+    pub plan_mode: bool,
     pub turn_id: Option<String>,
     pub contact_agent_id: Option<String>,
     pub project_id: Option<String>,

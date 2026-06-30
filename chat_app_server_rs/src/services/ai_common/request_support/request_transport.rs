@@ -1,7 +1,6 @@
 #[cfg(test)]
 use std::future::Future;
 
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::utils::abort_registry;
@@ -31,27 +30,6 @@ pub(crate) fn build_abort_token(
 #[cfg(test)]
 pub(crate) fn format_error_response(status: reqwest::StatusCode, raw: &str) -> String {
     format!("status {}: {}", status, truncate_log(raw, 2000))
-}
-
-pub(crate) fn validate_request_payload_size(payload: &Value, env_key: &str) -> Result<(), String> {
-    let bytes = serde_json::to_vec(payload).map_err(|err| err.to_string())?;
-    let max_bytes = request_payload_max_bytes(env_key);
-    if bytes.len() > max_bytes {
-        return Err(format!(
-            "request body too large (precheck): payload_bytes={}, limit_bytes={}",
-            bytes.len(),
-            max_bytes
-        ));
-    }
-    Ok(())
-}
-
-fn request_payload_max_bytes(env_key: &str) -> usize {
-    std::env::var(env_key)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(1_500_000)
 }
 
 #[cfg(test)]

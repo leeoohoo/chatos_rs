@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 
 use crate::auth::CurrentUser;
-use crate::models::{now_rfc3339, TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord};
+use crate::models::{
+    normalize_project_id, now_rfc3339, TaskDependencyGraph, TaskRecord, TaskStatus,
+    TaskSummaryRecord,
+};
 
 use super::batch_ops::normalize_prerequisite_task_ids;
 use super::TaskService;
@@ -105,9 +108,33 @@ impl TaskService {
         prerequisite_task_ids: &[String],
         current_user: Option<&CurrentUser>,
     ) -> Result<(), String> {
+        self.validate_task_prerequisites_for_project(
+            task_id,
+            prerequisite_task_ids,
+            current_user,
+            None,
+        )
+        .await
+    }
+
+    pub(super) async fn validate_task_prerequisites_for_project(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: &[String],
+        current_user: Option<&CurrentUser>,
+        expected_project_id: Option<&str>,
+    ) -> Result<(), String> {
         if prerequisite_task_ids.len() > 50 {
             return Err("前置任务数量不能超过 50 个".to_string());
         }
+        let target_project_id = match expected_project_id {
+            Some(project_id) => Some(normalize_project_id(Some(project_id.to_string()))),
+            None => self
+                .store
+                .get_task(task_id)
+                .await?
+                .map(|task| normalize_project_id(Some(task.project_id))),
+        };
         for prerequisite_task_id in prerequisite_task_ids {
             if prerequisite_task_id == task_id {
                 return Err("任务不能依赖自身".to_string());
@@ -122,9 +149,22 @@ impl TaskService {
                     "已取消任务不能作为前置任务: {prerequisite_task_id}"
                 ));
             }
+            if let Some(target_project_id) = target_project_id.as_deref() {
+                let prerequisite_project_id =
+                    normalize_project_id(Some(prerequisite.project_id.clone()));
+                if prerequisite_project_id != target_project_id {
+                    return Err(format!("前置任务必须属于同一项目: {prerequisite_task_id}"));
+                }
+            }
             if let Some(user) = current_user {
                 if !user.is_admin()
-                    && prerequisite.creator_user_id.as_deref() != Some(user.id.as_str())
+                    && prerequisite
+                        .owner_user_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .or_else(|| prerequisite.creator_user_id.as_deref())
+                        != user.effective_owner_user_id()
                 {
                     return Err(format!("无权引用前置任务: {prerequisite_task_id}"));
                 }

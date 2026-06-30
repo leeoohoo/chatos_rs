@@ -1,12 +1,12 @@
 import type { FormEvent } from 'react';
 
-import type { AiModelConfig } from '../../types';
+import type { AiModelConfig, AiModelProvider } from '../../types';
 
 export interface AiModelManagerProps {
   onClose: () => void;
   store?: () => {
     aiModelConfigs: AiModelConfig[];
-    loadAiModelConfigs: () => Promise<void>;
+    loadAiModelConfigs: (options?: { force?: boolean }) => Promise<void>;
     updateAiModelConfig: (
       config: AiModelConfig,
       options?: { clearApiKey?: boolean },
@@ -31,17 +31,22 @@ export interface AiModelFormData {
 }
 
 export interface AiModelManagerFormProps {
-  editingConfig: AiModelConfig | null;
+  editingConfig: AiModelProvider | null;
   formData: AiModelFormData;
   showTitle?: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCancel: () => void;
   onFormDataChange: (patch: Partial<AiModelFormData>) => void;
+  apiKeyVisible?: boolean;
+  apiKeyLoading?: boolean;
+  refreshingModels?: boolean;
+  onToggleApiKeyVisible?: () => void;
+  onRefreshModels?: () => void;
 }
 
 export interface AiModelListProps {
-  aiModelConfigs: AiModelConfig[];
-  onToggleEnabled: (config: AiModelConfig) => Promise<void>;
-  onEdit: (config: AiModelConfig) => void;
+  aiModelConfigs: AiModelProvider[];
+  onToggleEnabled: (config: AiModelProvider) => Promise<void>;
+  onEdit: (config: AiModelProvider) => void;
   onDelete: (id: string) => Promise<void>;
 }

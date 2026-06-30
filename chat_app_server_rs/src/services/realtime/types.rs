@@ -160,9 +160,10 @@ pub struct TaskBoardRealtimePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct UiPromptRealtimePayload {
+pub struct AskUserPromptRealtimePayload {
     pub conversation_id: String,
     pub conversation_turn_id: Option<String>,
+    pub project_id: Option<String>,
     pub prompt_id: String,
     pub action: String,
     pub status: Option<String>,
@@ -219,7 +220,7 @@ pub enum RealtimeEventPayload {
     ProjectRunCatalog(ProjectRunCatalogRealtimePayload),
     ProjectMembersUpdated(ProjectMembersUpdatedRealtimePayload),
     TaskBoard(TaskBoardRealtimePayload),
-    UiPrompt(UiPromptRealtimePayload),
+    AskUserPrompt(AskUserPromptRealtimePayload),
     ChatStream(ChatStreamRealtimePayload),
     RemoteSftpTransfer(RemoteSftpTransferRealtimePayload),
 }

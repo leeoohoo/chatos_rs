@@ -6,7 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use super::source_guard;
+use super::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{
     EngineThreadSnapshot, ThreadSnapshotLookupResponse, UpsertThreadSnapshotRequest,
 };
@@ -21,9 +21,11 @@ pub struct SnapshotLookupQuery {
 
 pub async fn upsert_thread_snapshot(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path((thread_id, snapshot_type, turn_id)): Path<(String, String, String)>,
     Json(req): Json<UpsertThreadSnapshotRequest>,
 ) -> Result<Json<EngineThreadSnapshot>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     thread_snapshots::upsert_thread_snapshot(
         &state.pool,
@@ -39,9 +41,11 @@ pub async fn upsert_thread_snapshot(
 
 pub async fn get_latest_thread_snapshot(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path((thread_id, snapshot_type)): Path<(String, String)>,
     Query(query): Query<SnapshotLookupQuery>,
 ) -> Result<Json<ThreadSnapshotLookupResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     thread_snapshots::get_latest_thread_snapshot(
         &state.pool,
         thread_id.as_str(),
@@ -56,9 +60,11 @@ pub async fn get_latest_thread_snapshot(
 
 pub async fn get_thread_snapshot_by_turn(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path((thread_id, snapshot_type, turn_id)): Path<(String, String, String)>,
     Query(query): Query<SnapshotLookupQuery>,
 ) -> Result<Json<ThreadSnapshotLookupResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     thread_snapshots::get_thread_snapshot_by_turn(
         &state.pool,
         thread_id.as_str(),

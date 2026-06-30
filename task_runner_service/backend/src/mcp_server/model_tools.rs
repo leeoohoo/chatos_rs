@@ -34,7 +34,7 @@ impl TaskRunnerMcpService {
                     .get_model_config(args.model_config_id.as_str())
                     .await?
                     .ok_or_else(|| format!("模型配置不存在: {}", args.model_config_id))?;
-                if !model_visible_to_user(&model, current_user) {
+                if !model.enabled || !model_visible_to_user(&model, current_user) {
                     return Err(format!("模型配置不存在: {}", args.model_config_id));
                 }
                 Ok(text_result(model_config_for_user(model, current_user)))

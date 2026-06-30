@@ -28,11 +28,12 @@ pub struct Config {
     pub auth_access_token_ttl_seconds: i64,
     pub user_service_base_url: Option<String>,
     pub user_service_request_timeout_ms: i64,
-    pub user_service_jwt_secret: Option<String>,
-    pub user_service_jwt_issuer: String,
-    pub user_service_user_audience: String,
+    pub project_service_base_url: String,
+    pub project_service_sync_secret: Option<String>,
     pub task_runner_base_url: String,
+    pub task_runner_request_timeout_ms: i64,
     pub memory_engine_base_url: String,
+    pub memory_engine_operator_token: Option<String>,
     pub memory_engine_request_timeout_ms: i64,
     pub memory_engine_active_summary_trigger_timeout_ms: i64,
     pub memory_engine_active_summary_poll_interval_ms: i64,
@@ -141,20 +142,23 @@ impl Config {
             .or_else(|| Some(default_user_service_base_url()));
         let user_service_request_timeout_ms =
             read_int("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
-        let user_service_jwt_secret = read_optional_env("CHATOS_USER_SERVICE_JWT_SECRET")
-            .or_else(|| read_optional_env("USER_SERVICE_JWT_SECRET"))
-            .or_else(|| Some("change_me_user_service_secret".to_string()));
-        let user_service_jwt_issuer = read_optional_env("CHATOS_USER_SERVICE_JWT_ISSUER")
-            .or_else(|| read_optional_env("USER_SERVICE_JWT_ISSUER"))
-            .unwrap_or_else(|| "user_service".to_string());
-        let user_service_user_audience = read_optional_env("CHATOS_USER_SERVICE_USER_AUDIENCE")
-            .or_else(|| read_optional_env("USER_SERVICE_USER_AUDIENCE"))
-            .unwrap_or_else(|| "user_service".to_string());
+        let project_service_base_url = read_optional_env("CHATOS_PROJECT_SERVICE_BASE_URL")
+            .or_else(|| read_optional_env("PROJECT_SERVICE_BASE_URL"))
+            .unwrap_or_else(default_project_service_base_url);
+        let project_service_sync_secret = read_optional_env("CHATOS_PROJECT_SERVICE_SYNC_SECRET")
+            .or_else(|| read_optional_env("PROJECT_SERVICE_SYNC_SECRET"));
         let task_runner_base_url = read_optional_env("CHATOS_TASK_RUNNER_BASE_URL")
             .or_else(|| read_optional_env("TASK_RUNNER_BASE_URL"))
             .unwrap_or_else(default_task_runner_base_url);
+        let task_runner_request_timeout_ms =
+            read_optional_env("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS")
+                .or_else(|| read_optional_env("TASK_RUNNER_REQUEST_TIMEOUT_MS"))
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(30_000)
+                .max(300);
         let memory_engine_base_url = std::env::var("MEMORY_ENGINE_BASE_URL")
             .unwrap_or_else(|_| default_memory_engine_base_url());
+        let memory_engine_operator_token = read_optional_env("MEMORY_ENGINE_OPERATOR_TOKEN");
         let memory_engine_request_timeout_ms =
             read_int("MEMORY_ENGINE_REQUEST_TIMEOUT_MS", 5000).max(300);
         let memory_engine_active_summary_trigger_timeout_ms =
@@ -199,11 +203,12 @@ impl Config {
             auth_access_token_ttl_seconds,
             user_service_base_url,
             user_service_request_timeout_ms,
-            user_service_jwt_secret,
-            user_service_jwt_issuer,
-            user_service_user_audience,
+            project_service_base_url,
+            project_service_sync_secret,
             task_runner_base_url,
+            task_runner_request_timeout_ms,
             memory_engine_base_url,
+            memory_engine_operator_token,
             memory_engine_request_timeout_ms,
             memory_engine_active_summary_trigger_timeout_ms,
             memory_engine_active_summary_poll_interval_ms,
@@ -213,105 +218,59 @@ impl Config {
     }
 
     pub fn print(&self) {
-        println!("当前配置:");
-        println!("  - NODE_ENV: {}", self.node_env);
-        println!("  - BACKEND_PORT: {}", self.port);
-        println!("  - HOST: {}", self.host);
-        println!("  - OPENAI_BASE_URL: {}", self.openai_base_url);
-        println!(
-            "  - OPENAI_API_KEY: {}",
-            if self.openai_api_key.is_empty() {
-                "未设置"
-            } else {
-                "已设置"
-            }
-        );
-        println!("  - LOG_LEVEL: {}", self.log_level);
-        println!("  - 摘要配置:");
-        println!("    • SUMMARY_ENABLED: {}", self.summary_enabled);
-        println!(
-            "    • DYNAMIC_SUMMARY_ENABLED: {}",
-            self.dynamic_summary_enabled
-        );
-        println!(
-            "    • SUMMARY_MESSAGE_LIMIT: {}",
-            self.summary_message_limit
-        );
-        println!(
-            "    • SUMMARY_MAX_CONTEXT_TOKENS: {}",
-            self.summary_max_context_tokens
-        );
-        println!("    • SUMMARY_KEEP_LAST_N: {}", self.summary_keep_last_n);
-        println!(
-            "    • SUMMARY_TARGET_TOKENS: {}",
-            self.summary_target_tokens
-        );
-        println!(
-            "    • SUMMARY_MERGE_TARGET_TOKENS: {}",
-            self.summary_merge_target_tokens
-        );
-        println!("    • SUMMARY_TEMPERATURE: {}", self.summary_temperature);
-        println!(
-            "    • SUMMARY_COOLDOWN_SECONDS: {}",
-            self.summary_cooldown_seconds
-        );
-        println!(
-            "    • SUMMARY_BISECT_ENABLED: {}",
-            self.summary_bisect_enabled
-        );
-        println!(
-            "    • SUMMARY_BISECT_MAX_DEPTH: {}",
-            self.summary_bisect_max_depth
-        );
-        println!(
-            "    • SUMMARY_BISECT_MIN_MESSAGES: {}",
-            self.summary_bisect_min_messages
-        );
-        println!(
-            "    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}",
-            self.summary_retry_on_context_overflow
-        );
-        println!("  - 认证配置:");
-        println!(
-            "    • AUTH_JWT_SECRET: {}",
-            if self.auth_jwt_secret.is_empty() {
-                "未设置"
-            } else {
-                "已设置"
-            }
-        );
-        println!(
-            "    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}",
-            self.auth_access_token_ttl_seconds
-        );
-        println!(
-            "    • AUTH_COMPAT_SECRET: {}",
-            if self.auth_compat_secret.is_some() {
-                "已设置"
-            } else {
-                "未设置"
-            }
-        );
-        println!("  - Memory Engine 配置:");
-        println!("    • TASK_RUNNER_BASE_URL: {}", self.task_runner_base_url);
-        println!(
-            "    • MEMORY_ENGINE_BASE_URL: {}",
-            self.memory_engine_base_url
-        );
-        println!(
-            "    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}",
-            self.memory_engine_request_timeout_ms
-        );
-        println!(
-            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}",
-            self.memory_engine_active_summary_trigger_timeout_ms
-        );
-        println!(
-            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}",
-            self.memory_engine_active_summary_poll_interval_ms
-        );
-        println!(
-            "    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+        let openai_api_key_status = if self.openai_api_key.is_empty() {
+            "未设置"
+        } else {
+            "已设置"
+        };
+        let auth_jwt_secret_status = if self.auth_jwt_secret.is_empty() {
+            "未设置"
+        } else {
+            "已设置"
+        };
+        let auth_compat_secret_status = if self.auth_compat_secret.is_some() {
+            "已设置"
+        } else {
+            "未设置"
+        };
+        let memory_engine_operator_token_status = if self.memory_engine_operator_token.is_some() {
+            "已设置"
+        } else {
+            "未设置"
+        };
+
+        tracing::info!(
+            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Memory Engine 配置:\n    • PROJECT_SERVICE_BASE_URL: {}\n    • TASK_RUNNER_BASE_URL: {}\n    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+            self.node_env,
+            self.port,
+            self.host,
+            self.openai_base_url,
+            openai_api_key_status,
+            self.log_level,
+            self.summary_enabled,
+            self.dynamic_summary_enabled,
+            self.summary_message_limit,
+            self.summary_max_context_tokens,
+            self.summary_keep_last_n,
+            self.summary_target_tokens,
+            self.summary_merge_target_tokens,
+            self.summary_temperature,
+            self.summary_cooldown_seconds,
+            self.summary_bisect_enabled,
+            self.summary_bisect_max_depth,
+            self.summary_bisect_min_messages,
+            self.summary_retry_on_context_overflow,
+            auth_jwt_secret_status,
+            self.auth_access_token_ttl_seconds,
+            auth_compat_secret_status,
+            self.project_service_base_url,
+            self.task_runner_base_url,
+            self.task_runner_request_timeout_ms,
+            self.memory_engine_base_url,
+            memory_engine_operator_token_status,
+            self.memory_engine_request_timeout_ms,
+            self.memory_engine_active_summary_trigger_timeout_ms,
+            self.memory_engine_active_summary_poll_interval_ms,
             self.memory_engine_active_summary_poll_timeout_ms
         );
     }
@@ -355,6 +314,12 @@ fn default_task_runner_base_url() -> String {
     build_task_runner_base_url(host.as_str(), port)
 }
 
+fn default_project_service_base_url() -> String {
+    let host = client_accessible_host(read_optional_env("PROJECT_SERVICE_HOST"));
+    let port = read_optional_u16_env("PROJECT_SERVICE_PORT").unwrap_or(39210);
+    build_project_service_base_url(host.as_str(), port)
+}
+
 fn build_memory_engine_base_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}/api/memory-engine/v1")
 }
@@ -364,6 +329,10 @@ fn build_user_service_base_url(host: &str, port: u16) -> String {
 }
 
 fn build_task_runner_base_url(host: &str, port: u16) -> String {
+    format!("http://{host}:{port}")
+}
+
+fn build_project_service_base_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}")
 }
 

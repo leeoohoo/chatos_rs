@@ -1,5 +1,5 @@
-use axum::middleware;
 use axum::http::HeaderMap;
+use axum::middleware;
 use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -16,11 +16,16 @@ use super::external_mcp_configs::{
     create_external_mcp_config, delete_external_mcp_config, get_external_mcp_config,
     list_external_mcp_configs, update_external_mcp_config,
 };
+use super::internal::get_user_execution_options;
 use super::mcp::{get_mcp_server_info, list_mcp_catalog, mcp_entrypoint, preview_mcp_prompt};
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
     list_model_config_usage, list_model_configs, preview_model_catalog, test_model_config,
     update_model_config,
+};
+use super::projects::{
+    create_project, delete_project, get_project, import_chatos_project, list_project_tasks,
+    list_projects, sync_get_project, sync_list_projects, update_project,
 };
 use super::prompts::{
     cancel_prompt, get_prompt, list_prompt_task_counts, list_prompts, list_prompts_page,
@@ -33,6 +38,10 @@ use super::remote_servers::{
 use super::runs::{
     cancel_run, get_run, list_run_events, list_run_index, list_run_summaries, list_runs,
     list_runs_page, list_task_runs, retry_run, start_task_run, stream_run_events,
+};
+use super::skills::{
+    create_skill, delete_skill, get_skill, install_skill_from_marketplace, list_bundled_skills,
+    list_skills, search_skill_marketplace, update_skill,
 };
 use super::tasks::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
@@ -59,6 +68,14 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/:id", patch(update_user).delete(delete_user))
+        .route("/api/projects", get(list_projects).post(create_project))
+        .route(
+            "/api/projects/:id",
+            get(get_project)
+                .patch(update_project)
+                .delete(delete_project),
+        )
+        .route("/api/projects/:id/tasks", get(list_project_tasks))
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/summaries", get(list_task_summaries))
         .route("/api/tasks/page", get(list_tasks_page))
@@ -144,6 +161,16 @@ pub fn build_router(state: AppState) -> Router {
                 .patch(update_external_mcp_config)
                 .delete(delete_external_mcp_config),
         )
+        .route("/api/skills", get(list_skills).post(create_skill))
+        .route("/api/skills/bundled", get(list_bundled_skills))
+        .route(
+            "/api/skills/marketplace",
+            get(search_skill_marketplace).post(install_skill_from_marketplace),
+        )
+        .route(
+            "/api/skills/:id",
+            get(get_skill).patch(update_skill).delete(delete_skill),
+        )
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))
         .route("/api/runs/page", get(list_runs_page))
@@ -196,8 +223,17 @@ pub fn build_router(state: AppState) -> Router {
             post(chatos_sync_upsert_model_config),
         )
         .route(
+            "/api/chatos-sync/projects",
+            get(sync_list_projects).post(import_chatos_project),
+        )
+        .route("/api/chatos-sync/projects/:id", get(sync_get_project))
+        .route(
             "/api/chatos-sync/model-configs/:id",
             delete(chatos_sync_delete_model_config),
+        )
+        .route(
+            "/internal/users/:owner_user_id/execution-options",
+            get(get_user_execution_options),
         )
         .merge(chatos_internal::router())
         .merge(protected_api)
@@ -205,9 +241,9 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                .on_request(DefaultOnRequest::new().level(Level::INFO))
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+                .on_request(DefaultOnRequest::new().level(Level::DEBUG))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
         )
         .layer(
             CorsLayer::new()
@@ -217,7 +253,10 @@ pub fn build_router(state: AppState) -> Router {
         )
 }
 
-fn require_chatos_sync_secret(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(super) fn require_chatos_sync_secret(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
     let Some(expected) = state
         .config
         .chatos_callback_secret

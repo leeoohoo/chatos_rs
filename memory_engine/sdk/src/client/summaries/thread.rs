@@ -19,7 +19,11 @@ impl MemoryEngineClient {
             AuthMode::Direct { source_id } => {
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", Some(req.tenant_id.as_str()));
-                append_optional_query(&mut query, "source_id", optional_direct_source_id(source_id));
+                append_optional_query(
+                    &mut query,
+                    "source_id",
+                    optional_direct_source_id(source_id),
+                );
                 append_optional_query(&mut query, "summary_type", req.summary_type.as_deref());
                 append_optional_query(&mut query, "status", req.status.as_deref());
                 append_optional_i64_query(&mut query, "level", req.level);
@@ -33,7 +37,10 @@ impl MemoryEngineClient {
                 let resp: ListResponse<EngineSummary> = self
                     .send_json(
                         Method::GET,
-                        &format!("/threads/{}/summaries{suffix}", urlencoding::encode(thread_id)),
+                        &format!(
+                            "/threads/{}/summaries{suffix}",
+                            urlencoding::encode(thread_id)
+                        ),
                         Option::<&()>::None,
                     )
                     .await?;
@@ -60,8 +67,7 @@ impl MemoryEngineClient {
     ) -> Result<usize, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id =
-                    require_direct_source_id(source_id, "delete_thread_summary")?;
+                let source_id = require_direct_source_id(source_id, "delete_thread_summary")?;
                 #[derive(serde::Deserialize)]
                 struct DeleteSummaryResponse {
                     reset_records: usize,

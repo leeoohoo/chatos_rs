@@ -1,0 +1,149 @@
+.tool-call-renderer {
+  --tool-bg: #ffffff;
+  --tool-surface: #f8fafc;
+  --tool-surface-strong: #f1f5f9;
+  --tool-border: #dbe4f0;
+  --tool-border-strong: #c7d3e3;
+  --tool-text: #152033;
+  --tool-text-secondary: #5f6c82;
+  --tool-name-color: #2563eb;
+  --tool-accent-rgb: 37, 99, 235;
+  --tool-success-bg: #dcfce7;
+  --tool-success-border: #22c55e;
+  --tool-success-text: #166534;
+  --tool-error-bg: #fff1f2;
+  --tool-error-border: #f43f5e;
+  --tool-error-text: #be123c;
+  --tool-pending-bg: #fff7ed;
+  --tool-pending-border: #f59e0b;
+  --tool-pending-text: #b45309;
+  --tool-button-bg: rgba(255, 255, 255, 0.9);
+  --tool-button-hover: #ffffff;
+  --tool-params-bg: #f8fafc;
+  --tool-details-bg: #ffffff;
+  --tool-chip-bg: #ffffff;
+  --tool-chip-shadow: none;
+  --tool-card-shadow: none;
+}
+
+.dark .tool-call-renderer {
+  --tool-bg: #0f172a;
+  --tool-surface: #111c31;
+  --tool-surface-strong: #162136;
+  --tool-border: #25324a;
+  --tool-border-strong: #31415f;
+  --tool-text: #edf2ff;
+  --tool-text-secondary: #97a5bf;
+  --tool-success-bg: rgba(22, 101, 52, 0.28);
+  --tool-success-border: rgba(34, 197, 94, 0.65);
+  --tool-success-text: #86efac;
+  --tool-error-bg: rgba(136, 19, 55, 0.34);
+  --tool-error-border: rgba(244, 63, 94, 0.7);
+  --tool-error-text: #fda4af;
+  --tool-pending-bg: rgba(146, 64, 14, 0.3);
+  --tool-pending-border: rgba(245, 158, 11, 0.7);
+  --tool-pending-text: #fbbf24;
+  --tool-button-bg: rgba(15, 23, 42, 0.82);
+  --tool-button-hover: rgba(30, 41, 59, 0.95);
+  --tool-params-bg: #0b1220;
+  --tool-details-bg: #0d1629;
+  --tool-chip-bg: #101a2f;
+  --tool-chip-shadow: none;
+  --tool-card-shadow: none;
+}
+
+.tool-call-container {
+  color: var(--tool-text);
+  margin: 0.12rem 0;
+}
+
+.tool-call-container--code {
+  --tool-name-color: #2563eb;
+  --tool-accent-rgb: 37, 99, 235;
+}
+
+.tool-call-container--browser {
+  --tool-name-color: #e11d48;
+  --tool-accent-rgb: 225, 29, 72;
+}
+
+.tool-call-container--web {
+  --tool-name-color: #0f766e;
+  --tool-accent-rgb: 15, 118, 110;
+}
+
+.tool-call-container--process {
+  --tool-name-color: #c2410c;
+  --tool-accent-rgb: 194, 65, 12;
+}
+
+.tool-call-container--remote {
+  --tool-name-color: #0284c7;
+  --tool-accent-rgb: 2, 132, 199;
+}
+
+.tool-call-container--notepad {
+  --tool-name-color: #ca8a04;
+  --tool-accent-rgb: 202, 138, 4;
+}
+
+.tool-call-container--task {
+  --tool-name-color: #16a34a;
+  --tool-accent-rgb: 22, 163, 74;
+}
+
+.tool-call-container--ui {
+  --tool-name-color: #db2777;
+  --tool-accent-rgb: 219, 39, 119;
+}
+
+.tool-call-container--agent {
+  --tool-name-color: #7c3aed;
+  --tool-accent-rgb: 124, 58, 237;
+}
+
+.tool-call-container--memory {
+  --tool-name-color: #475569;
+  --tool-accent-rgb: 71, 85, 105;
+}
+
+.tool-call-container--generic {
+  --tool-name-color: #475569;
+  --tool-accent-rgb: 71, 85, 105;
+}
+
+.dark .tool-call-container--browser {
+  --tool-name-color: #fb7185;
+}
+
+.dark .tool-call-container--web {
+  --tool-name-color: #2dd4bf;
+}
+
+.dark .tool-call-container--process {
+  --tool-name-color: #fb923c;
+}
+
+.dark .tool-call-container--remote {
+  --tool-name-color: #38bdf8;
+}
+
+.dark .tool-call-container--notepad {
+  --tool-name-color: #facc15;
+}
+
+.dark .tool-call-container--task {
+  --tool-name-color: #4ade80;
+}
+
+.dark .tool-call-container--ui {
+  --tool-name-color: #f472b6;
+}
+
+.dark .tool-call-container--agent {
+  --tool-name-color: #a78bfa;
+}
+
+.dark .tool-call-container--memory {
+  --tool-name-color: #cbd5e1;
+}

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::models::project::ProjectService;
+use crate::models::project::{normalize_project_id, ProjectService, PUBLIC_PROJECT_ID};
 
 use super::BoundContext;
 
@@ -8,7 +8,12 @@ pub(super) async fn resolve_project_root(
     ctx: &BoundContext,
 ) -> Result<(Option<String>, PathBuf), String> {
     if let Some(project_id) = ctx.project_id.as_deref() {
-        let project = ProjectService::get_by_id(project_id)
+        let project_id = normalize_project_id(project_id);
+        if project_id == PUBLIC_PROJECT_ID {
+            let root = canonicalize_path(ctx.root.as_path())?;
+            return Ok((Some(PUBLIC_PROJECT_ID.to_string()), root));
+        }
+        let project = ProjectService::get_by_id(project_id.as_str())
             .await?
             .ok_or_else(|| format!("project not found: {}", project_id))?;
         let root = canonicalize_path(Path::new(project.root_path.as_str()))?;

@@ -16,10 +16,6 @@ const TASK_PROCESS_LOG_INTERNAL_TOOL_NAME: &str = "record_process";
 
 pub(super) fn task_process_logging_enabled(mcp_config: &TaskMcpConfig) -> bool {
     mcp_config.enabled
-        && !matches!(
-            mcp_config.init_mode,
-            chatos_ai_runtime::TaskMcpInitMode::Disabled
-        )
 }
 
 pub(super) fn task_process_log_builtin_server() -> McpBuiltinServer {
@@ -66,11 +62,11 @@ pub(super) fn task_process_log_preview_text(locale: BuiltinMcpPromptLocale) -> S
 fn task_process_log_prompt_text(locale: BuiltinMcpPromptLocale, tool_name: &str) -> String {
     if locale.is_english() {
         format!(
-            "[Task Execution Process]\nA private internal tool `{tool_name}` is available during this task run. Use it to append visible progress notes, observations, verification results, blockers, and next steps for the current task only. Do not record hidden chain-of-thought, credentials, secrets, or unrelated drafts. This tool is internal to Task Runner execution and is not part of the external Task Runner MCP API."
+            "[Task Execution Process]\nA private internal tool `{tool_name}` is available during this task run. Use it for short visible breadcrumbs only: selected approach, reused existing code or platform capability, root-cause finding, verification result, blocker, or next step. Prefer concise entries that help a later reviewer understand what changed and why. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts. This tool is internal to Task Runner execution and is not part of the external Task Runner MCP API."
         )
     } else {
         format!(
-            "[任务执行过程]\n本次任务执行期间提供内部专用工具 `{tool_name}`。仅用它为当前任务追加可展示的进展、观察、验证结果、阻塞和下一步；不要记录隐藏思维链、凭证、密钥或无关草稿。这个工具只属于 Task Runner 内部执行，不属于对外 Task Runner MCP API。"
+            "[任务执行过程]\n本次任务执行期间提供内部专用工具 `{tool_name}`。只记录简短、可展示的执行路标：选择的方案、复用的已有代码或平台能力、根因发现、验证结果、阻塞和下一步。记录要能帮助后续 review 看懂改了什么、为什么这样改。不要记录隐藏思维链、凭证、密钥、原始大段输出或无关草稿。这个工具只属于 Task Runner 内部执行，不属于对外 Task Runner MCP API。"
         )
     }
 }
@@ -128,7 +124,7 @@ impl BuiltinToolProvider for TaskProcessLogBuiltinProvider {
     fn list_tools(&self) -> Vec<Value> {
         vec![json!({
             "name": TASK_PROCESS_LOG_INTERNAL_TOOL_NAME,
-            "description": "Record visible execution process notes for the current Task Runner task only. Use append for progress, observations, verification results, blockers, and next steps. Do not record hidden chain-of-thought, credentials, secrets, or unrelated drafts.",
+            "description": "Record short visible execution breadcrumbs for the current Task Runner task only. Use append for selected approach, root-cause findings, reuse decisions, verification results, blockers, and next steps. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

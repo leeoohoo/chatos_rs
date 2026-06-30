@@ -89,6 +89,13 @@ pub async fn get_message_by_id(message_id: &str) -> Result<Option<Message>, Stri
     chatos_sessions::get_message_by_id(message_id).await
 }
 
+pub async fn get_message_by_id_for_user(
+    message_id: &str,
+    user_id: &str,
+) -> Result<Option<Message>, String> {
+    chatos_sessions::get_message_by_id_for_user(message_id, user_id).await
+}
+
 pub async fn get_message_by_id_in_session(
     session: &Session,
     message_id: &str,
@@ -150,6 +157,13 @@ pub async fn batch_upsert_compat_messages(
 
 pub async fn delete_message_by_id(message_id: &str) -> Result<bool, String> {
     chatos_sessions::delete_message(message_id).await
+}
+
+pub async fn delete_message_by_id_for_user(
+    message_id: &str,
+    user_id: &str,
+) -> Result<bool, String> {
+    chatos_sessions::delete_message_for_user(message_id, user_id).await
 }
 
 pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String> {

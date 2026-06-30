@@ -530,6 +530,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_project_mcp_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2532,6 +2540,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "project_management_service_backend"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chatos_project_mcp_contract",
+ "chrono",
+ "dotenvy",
+ "futures-util",
+ "mongodb",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3768,6 +3797,7 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_builtin_tools",
  "chatos_mcp_runtime",
+ "chatos_project_mcp_contract",
  "chrono",
  "dotenvy",
  "futures-util",
@@ -3786,6 +3816,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
 ]
 

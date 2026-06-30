@@ -25,6 +25,12 @@ pub struct RemoteServerRecord {
     #[serde(default)]
     pub creator_display_name: Option<String>,
     #[serde(default)]
+    pub owner_user_id: Option<String>,
+    #[serde(default)]
+    pub owner_username: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
     pub task_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,

@@ -1,15 +1,15 @@
 use super::*;
 
 impl InMemoryStore {
-    pub(in crate::store) fn list_ui_prompts(
+    pub(in crate::store) fn list_ask_user_prompts(
         &self,
         task_id: Option<&str>,
         run_id: Option<&str>,
-        status: Option<UiPromptStatus>,
-    ) -> Vec<UiPromptRecord> {
+        status: Option<AskUserPromptStatus>,
+    ) -> Vec<AskUserPromptRecord> {
         let data = self.inner.read();
         let mut items = data
-            .ui_prompts
+            .ask_user_prompts
             .values()
             .filter(|prompt| task_id.is_none_or(|value| prompt.task_id.as_deref() == Some(value)))
             .filter(|prompt| run_id.is_none_or(|value| prompt.run_id.as_deref() == Some(value)))
@@ -20,11 +20,11 @@ impl InMemoryStore {
         items
     }
 
-    pub(in crate::store) fn list_ui_prompts_page(
+    pub(in crate::store) fn list_ask_user_prompts_page(
         &self,
         filters: &PromptListFilters,
-    ) -> PaginatedResponse<UiPromptRecord> {
-        let items = self.list_ui_prompts(
+    ) -> PaginatedResponse<AskUserPromptRecord> {
+        let items = self.list_ask_user_prompts(
             filters.task_id.as_deref(),
             filters.run_id.as_deref(),
             filters.status,
@@ -42,24 +42,28 @@ impl InMemoryStore {
         )
     }
 
-    pub(in crate::store) fn get_ui_prompt(&self, id: &str) -> Option<UiPromptRecord> {
-        self.inner.read().ui_prompts.get(id).cloned()
+    pub(in crate::store) fn get_ask_user_prompt(&self, id: &str) -> Option<AskUserPromptRecord> {
+        self.inner.read().ask_user_prompts.get(id).cloned()
     }
 
-    pub(in crate::store) fn save_ui_prompt(&self, prompt: UiPromptRecord) -> UiPromptRecord {
+    pub(in crate::store) fn save_ask_user_prompt(
+        &self,
+        prompt: AskUserPromptRecord,
+    ) -> AskUserPromptRecord {
         let mut data = self.inner.write();
-        data.ui_prompts.insert(prompt.id.clone(), prompt.clone());
+        data.ask_user_prompts
+            .insert(prompt.id.clone(), prompt.clone());
         prompt
     }
 
-    pub(in crate::store) fn list_ui_prompt_task_counts(
+    pub(in crate::store) fn list_ask_user_prompt_task_counts(
         &self,
-        status: Option<UiPromptStatus>,
-    ) -> Vec<UiPromptTaskCountRecord> {
+        status: Option<AskUserPromptStatus>,
+    ) -> Vec<AskUserPromptTaskCountRecord> {
         let data = self.inner.read();
         let mut counts = BTreeMap::<String, usize>::new();
 
-        for prompt in data.ui_prompts.values() {
+        for prompt in data.ask_user_prompts.values() {
             if status.is_some_and(|value| prompt.status != value) {
                 continue;
             }
@@ -71,7 +75,7 @@ impl InMemoryStore {
 
         let mut items = counts
             .into_iter()
-            .map(|(task_id, count)| UiPromptTaskCountRecord { task_id, count })
+            .map(|(task_id, count)| AskUserPromptTaskCountRecord { task_id, count })
             .collect::<Vec<_>>();
         items.sort_by(|left, right| {
             right

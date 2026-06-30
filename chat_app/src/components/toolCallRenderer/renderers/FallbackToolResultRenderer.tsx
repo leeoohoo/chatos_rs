@@ -1,4 +1,5 @@
 import { LazyMarkdownRenderer } from '../../LazyMarkdownRenderer';
+import { stringifyJsonPreview } from '../../toolDetails/textPreview';
 import { getToolRendererSourceLabel } from '../../../i18n/toolText';
 import type { ToolResultRenderer } from './types';
 
@@ -6,11 +7,7 @@ const stringifyResult = (value: unknown): string => {
   if (typeof value === 'string') {
     return value;
   }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '';
-  }
+  return stringifyJsonPreview(value).content;
 };
 
 export const fallbackToolResultRenderer: ToolResultRenderer = {

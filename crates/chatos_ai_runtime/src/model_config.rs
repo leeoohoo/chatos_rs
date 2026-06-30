@@ -55,8 +55,11 @@ pub fn normalize_thinking_level(
         "gpt" => ["none", "minimal", "low", "medium", "high", "xhigh"].as_slice(),
         "deepseek" => ["none", "low", "medium", "high", "max"].as_slice(),
         "kimi" => ["none", "auto", "low", "medium", "high", "xhigh"].as_slice(),
-        _ => ["none", "minimal", "low", "medium", "high", "xhigh", "max"].as_slice(),
+        _ => ["none", "low", "medium", "high", "xhigh"].as_slice(),
     };
+    if provider == "openai_compatible" && normalized == "minimal" {
+        return Ok(Some("low".to_string()));
+    }
     if !allowed.contains(&normalized) {
         return Err("invalid thinking_level".to_string());
     }
@@ -175,6 +178,18 @@ mod tests {
         assert_eq!(
             thinking_mode_for_provider(Some("kimi"), Some("none")),
             Some("disabled")
+        );
+    }
+
+    #[test]
+    fn maps_openai_compatible_minimal_to_low() {
+        assert_eq!(
+            normalize_thinking_level("openai_compatible", Some("minimal")).unwrap(),
+            Some("low".to_string())
+        );
+        assert_eq!(
+            reasoning_effort_for_provider(Some("openai_compatible"), Some("minimal")).as_deref(),
+            Some("low")
         );
     }
 }

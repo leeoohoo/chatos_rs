@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,26 +7,33 @@ use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tracing::info;
 use uuid::Uuid;
 
+use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
-    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
-    CreateExternalMcpConfigRequest, CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse,
-    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse,
-    TaskListFilters, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskSourceContext, TaskStatsResponse, TaskStatus,
-    TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest,
-    UpdateTaskMcpRequest, UpdateTaskRequest,
+    normalize_project_id, now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem,
+    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
+    CancelTaskRequest, CancelTaskResponse, ChatosProjectImportRequest,
+    CreateExternalMcpConfigRequest, CreateTaskProjectRequest, CreateTaskRequest,
+    ExternalMcpConfigRecord, HealthResponse, InstallSkillRequest, PaginatedResponse,
+    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
+    SkillInstallStatus, SkillListFilters, SkillMarketplaceEntry, SkillMarketplaceQuery,
+    SkillPackageFile, SkillRecord, SkillScope, SkillSource, StartTaskRunRequest,
+    SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskProjectRecord,
+    TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest,
+    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskProjectRequest,
+    UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
 use crate::store::AppStore;
-use crate::ui_prompt_service::UiPromptService;
 
 mod batch_ops;
 mod builtin_providers;
+mod chatos_async_dispatch;
 mod chatos_callbacks;
 mod chatos_message_tasks;
 mod external_mcp_config_service;
@@ -36,6 +44,8 @@ mod model_catalog;
 mod model_config_service;
 mod prerequisite_context;
 mod process_log_text;
+mod project_management_api_client;
+mod project_service;
 mod remote_server_service;
 mod remote_servers;
 mod run_control;
@@ -45,6 +55,7 @@ mod run_prerequisites;
 mod run_recovery;
 mod run_service;
 mod schedule_helpers;
+mod skill_service;
 mod status_display;
 mod stream_events;
 mod task_dependencies;
@@ -52,6 +63,7 @@ mod task_manager_bridge;
 mod task_memory;
 mod task_process_log;
 mod task_service;
+mod task_tenant_scope;
 mod task_threads;
 mod terminal_lifecycle;
 mod tooling_state;
@@ -61,7 +73,10 @@ use self::batch_ops::{
     normalize_batch_task_ids, normalize_prerequisite_task_ids, normalize_tags, sanitize_id_list,
     summarize_batch_results,
 };
-use self::builtin_providers::build_builtin_registry;
+use self::builtin_providers::{
+    build_builtin_registry_with_project_management_options, DisabledBuiltinProvider,
+    ProjectManagementExecutionOptions, TaskRunnerSkillLookupProvider,
+};
 pub use self::chatos_message_tasks::{
     ChatosActiveMessageTaskSource, ChatosMessageModelConfigSummary, ChatosMessageRunDetail,
     ChatosMessageTaskDetail, ChatosMessageTaskGraph, ChatosMessageTaskGraphEdge,
@@ -73,7 +88,11 @@ use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filter
 use self::process_log_text::apply_task_process_log_update;
 use self::remote_servers::build_remote_server_record;
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
+pub(crate) use self::skill_service::RuntimeSkillContext;
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
+use self::task_tenant_scope::{
+    align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,
+};
 use self::workspace_mcp::{
     ensure_workspace_dir_available, normalize_builtin_kind_names, sanitize_task_mcp_config,
 };
@@ -110,17 +129,29 @@ pub struct ExternalMcpConfigService {
 }
 
 #[derive(Clone)]
+pub struct SkillService {
+    store: AppStore,
+    package_root: PathBuf,
+}
+
+#[derive(Clone)]
+pub struct TaskProjectService {
+    config: Option<AppConfig>,
+    store: AppStore,
+}
+
+#[derive(Clone)]
 pub struct RunService {
     config: AppConfig,
     store: AppStore,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
     start_locks: Arc<parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
 }
 
 #[derive(Clone)]
 pub struct McpCatalogService {
     task_service: TaskService,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
 }
 
 #[derive(Clone)]
@@ -168,6 +199,89 @@ pub fn system_config(
     }
 }
 
+async fn unfinished_subtasks_for_task(
+    store: &AppStore,
+    task: &TaskRecord,
+) -> Result<Vec<TaskRecord>, String> {
+    let mut subtasks = store
+        .list_tasks_filtered(&TaskListFilters {
+            parent_task_id: Some(task.id.clone()),
+            ..TaskListFilters::default()
+        })
+        .await?
+        .into_iter()
+        .filter(|subtask| subtask.status != TaskStatus::Succeeded)
+        .collect::<Vec<_>>();
+    subtasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(subtasks)
+}
+
+fn unfinished_subtasks_error(task: &TaskRecord, subtasks: &[TaskRecord]) -> String {
+    let examples = subtasks
+        .iter()
+        .take(5)
+        .map(|subtask| {
+            format!(
+                "{}({})",
+                subtask.title.trim(),
+                subtask.status.status_string()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("、");
+    let suffix = if subtasks.len() > 5 {
+        format!(" 等 {} 个", subtasks.len())
+    } else {
+        format!(" {} 个", subtasks.len())
+    };
+    format!(
+        "父任务「{}」还有未完成子任务{suffix}：{examples}。请先完成所有子任务，再将父任务标记为成功。",
+        task.title.trim()
+    )
+}
+
+async fn ensure_task_has_no_unfinished_subtasks(
+    store: &AppStore,
+    task: &TaskRecord,
+) -> Result<(), String> {
+    let unfinished = unfinished_subtasks_for_task(store, task).await?;
+    if unfinished.is_empty() {
+        Ok(())
+    } else {
+        Err(unfinished_subtasks_error(task, &unfinished))
+    }
+}
+
+async fn ensure_subtask_can_be_marked_unfinished(
+    store: &AppStore,
+    subtask: &TaskRecord,
+    status: TaskStatus,
+) -> Result<(), String> {
+    if status == TaskStatus::Succeeded {
+        return Ok(());
+    }
+    let Some(parent_task_id) = subtask
+        .parent_task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(parent) = store.get_task(parent_task_id).await? else {
+        return Ok(());
+    };
+    if parent.status != TaskStatus::Succeeded {
+        return Ok(());
+    }
+    Err(format!(
+        "父任务「{}」已经成功，不能再将子任务「{}」改为 {}。",
+        parent.title.trim(),
+        subtask.title.trim(),
+        status.status_string()
+    ))
+}
+
 pub fn task_runner_internal_prompt_preview(
     locale: BuiltinMcpPromptLocale,
 ) -> TaskRunnerInternalPromptPreviewResponse {
@@ -180,6 +294,8 @@ pub fn task_runner_internal_prompt_preview(
         vec![
             "The prerequisite-task section is injected only when the task declares prerequisite tasks.".to_string(),
             "Task description and input-data sections appear only when the current task has those values.".to_string(),
+            "The main task prompt asks the runner to understand the real flow, reuse existing code or platform capabilities, and leave the smallest useful verification evidence.".to_string(),
+            "The global execution prompt is appended to the current task prompt during execution and is shown separately here for clarity.".to_string(),
             "The process-log system message is injected only when MCP stays enabled for the task run.".to_string(),
             "Builtin MCP system prompt content is shown separately and follows the same prompt-language setting.".to_string(),
         ]
@@ -187,6 +303,8 @@ pub fn task_runner_internal_prompt_preview(
         vec![
             "前置任务结果段只会在任务配置了前置任务时注入。".to_string(),
             "任务说明和输入数据两段只有当前任务存在对应值时才会出现。".to_string(),
+            "任务主 prompt 会要求执行方先理解真实链路、优先复用已有代码或平台能力，并留下最小但有用的验证证据。".to_string(),
+            "全局执行 prompt 会在运行时追加到当前任务 prompt 后面，这里单独展示以便核对。".to_string(),
             "过程日志系统提示只会在该次任务运行保持启用 MCP 时注入。".to_string(),
             "Builtin MCP system prompt 会单独展示，并跟随同一个 prompt 语言设置。".to_string(),
         ]
@@ -194,6 +312,7 @@ pub fn task_runner_internal_prompt_preview(
     TaskRunnerInternalPromptPreviewResponse {
         locale: locale_key.to_string(),
         task_prompt_template: prerequisite_context::build_task_prompt_template(locale),
+        global_execution_prompt: prerequisite_context::build_global_execution_prompt(locale),
         process_log_system_prompt: task_process_log::task_process_log_preview_text(locale),
         notes,
     }

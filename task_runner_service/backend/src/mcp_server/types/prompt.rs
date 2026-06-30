@@ -12,7 +12,7 @@ pub(in crate::mcp_server) struct ListPromptsArgs {
     #[serde(default)]
     pub(in crate::mcp_server) run_id: Option<String>,
     #[serde(default)]
-    pub(in crate::mcp_server) status: Option<UiPromptStatus>,
+    pub(in crate::mcp_server) status: Option<AskUserPromptStatus>,
 }
 
 #[derive(Debug, Deserialize)]

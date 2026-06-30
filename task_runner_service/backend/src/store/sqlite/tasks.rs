@@ -1,6 +1,7 @@
 use sqlx::{query::Query, sqlite::SqliteArguments, Sqlite};
 
 use super::*;
+use crate::models::PUBLIC_PROJECT_ID;
 
 mod listing;
 mod mutations;
@@ -42,14 +43,32 @@ impl SqliteStore {
         if filters.model_config_id.is_some() {
             clauses.push("default_model_config_id = ?".to_string());
         }
+        if let Some(project_id) = filters.project_id.as_deref() {
+            if project_id == PUBLIC_PROJECT_ID {
+                clauses.push(
+                    "(project_id = ? OR project_id = '0' OR TRIM(COALESCE(project_id, '')) = '')"
+                        .to_string(),
+                );
+            } else {
+                clauses.push("project_id = ?".to_string());
+            }
+        }
+        if filters.task_profile.is_some() {
+            clauses.push("task_profile = ?".to_string());
+        }
         if filters.creator_user_id.is_some() {
-            clauses.push("creator_user_id = ?".to_string());
+            clauses.push(
+                "(owner_user_id = ? OR ((owner_user_id IS NULL OR owner_user_id = '') AND creator_user_id = ?))"
+                    .to_string(),
+            );
         }
         if filters.scheduled_only.unwrap_or(false) {
             clauses.push("json_extract(schedule_json, '$.mode') <> 'manual'".to_string());
         }
         if filters.parent_task_id.is_some() {
             clauses.push("parent_task_id = ?".to_string());
+        } else if filters.include_subtasks == Some(false) {
+            clauses.push("(parent_task_id IS NULL OR TRIM(parent_task_id) = '')".to_string());
         }
         if filters.source_run_id.is_some() {
             clauses.push("source_run_id = ?".to_string());
@@ -116,8 +135,14 @@ impl SqliteStore {
         if let Some(model_config_id) = filters.model_config_id.as_deref() {
             query = query.bind(model_config_id);
         }
+        if let Some(project_id) = filters.project_id.as_deref() {
+            query = query.bind(project_id);
+        }
+        if let Some(task_profile) = filters.task_profile.as_deref() {
+            query = query.bind(task_profile);
+        }
         if let Some(creator_user_id) = filters.creator_user_id.as_deref() {
-            query = query.bind(creator_user_id);
+            query = query.bind(creator_user_id).bind(creator_user_id);
         }
         if let Some(parent_task_id) = filters.parent_task_id.as_deref() {
             query = query.bind(parent_task_id);
@@ -143,5 +168,28 @@ impl SqliteStore {
             }
         }
         query
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_project_filter_matches_legacy_public_values() {
+        let sql = SqliteStore::filtered_task_sql(
+            "SELECT * FROM tasks",
+            &TaskListFilters {
+                project_id: Some(PUBLIC_PROJECT_ID.to_string()),
+                ..TaskListFilters::default()
+            },
+            false,
+            false,
+        );
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM tasks WHERE (project_id = ? OR project_id = '0' OR TRIM(COALESCE(project_id, '')) = '')"
+        );
     }
 }

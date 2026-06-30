@@ -13,6 +13,10 @@ use super::TaskRuntimeBuilder;
 pub struct TaskMemoryRuntimeConfig {
     pub base_url: String,
     pub source_id: String,
+    #[serde(default, skip_serializing)]
+    pub access_token: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub operator_token: Option<String>,
     #[serde(default = "default_memory_timeout_ms")]
     pub timeout_ms: u64,
     #[serde(default = "default_memory_compose_context")]
@@ -32,6 +36,8 @@ impl TaskMemoryRuntimeConfig {
         Self {
             base_url: base_url.into(),
             source_id: source_id.into(),
+            access_token: None,
+            operator_token: None,
             timeout_ms: default_memory_timeout_ms(),
             compose_context: default_memory_compose_context(),
             retry_on_context_overflow: default_retry_on_context_overflow(),
@@ -53,6 +59,16 @@ impl TaskMemoryRuntimeConfig {
 
     pub fn with_record_scope(mut self, record_scope: Option<MemoryRecordScope>) -> Self {
         self.record_scope = record_scope;
+        self
+    }
+
+    pub fn with_access_token(mut self, access_token: Option<String>) -> Self {
+        self.access_token = normalize_optional_token(access_token);
+        self
+    }
+
+    pub fn with_operator_token(mut self, operator_token: Option<String>) -> Self {
+        self.operator_token = normalize_optional_token(operator_token);
         self
     }
 
@@ -85,20 +101,14 @@ impl TaskMemoryRuntimeConfig {
         &self,
         mut builder: TaskRuntimeBuilder,
     ) -> Result<TaskRuntimeBuilder, String> {
+        let client = self.build_client()?;
         if self.compose_context {
-            builder = builder.with_memory_composer_direct(
-                self.base_url.clone(),
-                self.timeout(),
-                self.source_id.clone(),
-            )?;
+            builder = builder.with_memory_composer(
+                crate::memory_context::MemoryContextComposer::from_client(client.clone()),
+            );
         }
         if let Some(record_scope) = self.record_scope.clone() {
-            let writer = MemoryEngineRecordWriter::new_direct(
-                self.base_url.clone(),
-                self.timeout(),
-                self.source_id.clone(),
-                record_scope,
-            )?;
+            let writer = MemoryEngineRecordWriter::from_client(client.clone(), record_scope);
             builder = builder.with_record_writer(BestEffortMemoryRecordWriter::new(writer));
         }
         if self.retry_on_context_overflow {
@@ -114,6 +124,20 @@ impl TaskMemoryRuntimeConfig {
             ));
         }
         Ok(builder)
+    }
+
+    fn build_client(&self) -> Result<memory_engine_sdk::MemoryEngineClient, String> {
+        let mut client = memory_engine_sdk::MemoryEngineClient::new_direct(
+            self.base_url.clone(),
+            self.timeout(),
+            self.source_id.clone(),
+        )?;
+        if let Some(access_token) = self.access_token.as_deref() {
+            client = client.with_bearer_token(access_token);
+        } else if let Some(operator_token) = self.operator_token.as_deref() {
+            client = client.with_operator_token(operator_token);
+        }
+        Ok(client)
     }
 }
 
@@ -135,4 +159,15 @@ fn default_active_summary_poll_interval_ms() -> u64 {
 
 fn default_active_summary_poll_timeout_ms() -> u64 {
     120_000
+}
+
+fn normalize_optional_token(token: Option<String>) -> Option<String> {
+    token.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
 }

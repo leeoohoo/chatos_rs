@@ -17,6 +17,7 @@ use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotSelectedCommandDto;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 use crate::services::mcp_loader::McpHttpServer;
 use crate::services::{
@@ -25,7 +26,6 @@ use crate::services::{
 };
 
 const TASK_RUNNER_CONTACT_MCP_SERVER_NAME: &str = "task_runner_service";
-
 #[derive(Debug, Clone)]
 pub struct ConversationRuntimeRequest {
     pub effective_user_id: Option<String>,
@@ -34,6 +34,7 @@ pub struct ConversationRuntimeRequest {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
+    pub plan_mode: bool,
     pub conversation_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
 }
@@ -164,35 +165,51 @@ pub async fn resolve_runtime_context(
     let workspace_root = normalize_id(req.workspace_root.clone())
         .or_else(|| runtime_metadata.workspace_root.clone());
 
-    let mut task_runner_skill_prompt = None;
-    let task_runner_runtime = build_contact_task_runner_runtime(
-        effective_user_id.as_deref(),
-        runtime_metadata.contact_id.as_deref(),
-        contact_agent_id.as_deref(),
-        Some(session_id),
-        workspace_root
-            .as_deref()
-            .or(resolved_project_root.as_deref()),
-        default_remote_connection_id.as_deref(),
-        req.conversation_turn_id.as_deref(),
-        req.source_user_message_id.as_deref(),
-        internal_context_locale,
-    )
-    .await;
-
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
-    let runtime_error = if task_runner_runtime.is_none() {
-        Some("当前联系人未配置 Task Runner，无法创建任务。".to_string())
-    } else {
-        None
-    };
+    let mut task_runner_skill_prompt = None;
+    let mut runtime_error = None;
 
-    if let Some(runtime) = task_runner_runtime {
-        task_runner_skill_prompt = runtime.skill_prompt;
-        http_servers.push(runtime.server);
+    let task_runner_project_id = if req.plan_mode {
+        resolved_project_id
+            .as_deref()
+            .filter(|project_id| is_concrete_project_id(project_id))
+    } else {
+        resolved_project_id.as_deref().or(Some(PUBLIC_PROJECT_ID))
+    };
+    if req.plan_mode && task_runner_project_id.is_none() {
+        runtime_error = Some("Plan 模式需要先选择一个有效项目。".to_string());
+    } else {
+        match build_contact_task_runner_runtime(
+            effective_user_id.as_deref(),
+            runtime_metadata.contact_id.as_deref(),
+            contact_agent_id.as_deref(),
+            Some(session_id),
+            task_runner_project_id,
+            workspace_root
+                .as_deref()
+                .or(resolved_project_root.as_deref()),
+            default_remote_connection_id.as_deref(),
+            req.conversation_turn_id.as_deref(),
+            req.source_user_message_id.as_deref(),
+            internal_context_locale,
+            req.plan_mode,
+        )
+        .await
+        {
+            Some(runtime) => {
+                task_runner_skill_prompt = runtime.skill_prompt;
+                http_servers.push(runtime.server);
+            }
+            None => {
+                runtime_error = Some("当前联系人未配置 Task Runner，无法创建任务。".to_string());
+            }
+        }
     }
 
-    let enabled_mcp_ids_for_snapshot = vec![TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string()];
+    let enabled_mcp_ids_for_snapshot = http_servers
+        .iter()
+        .map(|server| server.name.clone())
+        .collect::<Vec<_>>();
     let builtin_mcp_system_prompt =
         compose_builtin_mcp_system_prompt(builtin_servers.as_slice(), internal_context_locale);
     let use_tools =
@@ -238,11 +255,13 @@ async fn build_contact_task_runner_runtime(
     contact_id: Option<&str>,
     contact_agent_id: Option<&str>,
     source_session_id: Option<&str>,
+    project_id: Option<&str>,
     workspace_dir: Option<&str>,
     remote_connection_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     source_user_message_id: Option<&str>,
     locale: InternalContextLocale,
+    plan_mode: bool,
 ) -> Option<ContactTaskRunnerRuntime> {
     let config = match chatos_memory_mappings::get_contact_task_runner_runtime_config(
         effective_user_id,
@@ -258,7 +277,9 @@ async fn build_contact_task_runner_runtime(
         }
     };
 
-    let token = if let Some(agent_account_id) = config.agent_account_id.as_deref() {
+    let (token, user_access_token) = if let Some(agent_account_id) =
+        config.agent_account_id.as_deref()
+    {
         let Some(user_service_base_url) = Config::try_get()
             .ok()
             .and_then(|cfg| cfg.user_service_base_url.clone())
@@ -276,10 +297,10 @@ async fn build_contact_task_runner_runtime(
             );
             return None;
         };
-        match task_runner_api_client::exchange_task_runner_token_via_user_service(
+        let agent_token = match task_runner_api_client::exchange_task_runner_token_via_user_service(
             &task_runner_api_client::UserServiceTaskRunnerExchange {
                 base_url: user_service_base_url,
-                access_token,
+                access_token: access_token.clone(),
                 task_runner_agent_account_id: agent_account_id.to_string(),
                 contact_id: Some(config.contact_id.clone()),
             },
@@ -294,35 +315,40 @@ async fn build_contact_task_runner_runtime(
                 );
                 return None;
             }
-        }
+        };
+        (agent_token, access_token)
     } else {
-        match task_runner_api_client::exchange_agent_token(
-            &task_runner_api_client::TaskRunnerAgentCredentials {
-                base_url: config.base_url.clone(),
-                username: config.username.clone(),
-                password: config.password.clone(),
-                contact_id: Some(config.contact_id.clone()),
-            },
-        )
-        .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    "exchange task runner agent token failed: contact_id={} detail={}",
-                    config.contact_id, err
-                );
-                return None;
-            }
-        }
+        warn!(
+            "task runner runtime skipped: contact_id={} missing user_service agent account mapping",
+            config.contact_id
+        );
+        return None;
     };
 
     let mut headers = HashMap::new();
     headers.insert("Authorization".to_string(), format!("Bearer {token}"));
     headers.insert(
+        "X-Chatos-User-Authorization".to_string(),
+        format!("Bearer {user_access_token}"),
+    );
+    headers.insert(
         "X-Task-Runner-Tool-Profile".to_string(),
         "chatos_async_planner".to_string(),
     );
+    headers.insert(
+        "X-Task-Runner-Builtin-Prompt-Locale".to_string(),
+        task_runner_skill_lang(locale).to_string(),
+    );
+    if plan_mode {
+        headers.insert(
+            "X-Task-Runner-Task-Profile".to_string(),
+            "chatos_plan".to_string(),
+        );
+        headers.insert("X-Chatos-Plan-Mode".to_string(), "true".to_string());
+    }
+    let project_id =
+        normalize_optional_text(project_id).unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
+    headers.insert("X-Chatos-Project-Id".to_string(), project_id);
     if let Some(session_id) = normalize_optional_text(source_session_id) {
         headers.insert("X-Chatos-Session-Id".to_string(), session_id);
     }
@@ -344,7 +370,7 @@ async fn build_contact_task_runner_runtime(
         );
     }
     let skill_prompt =
-        fetch_contact_task_runner_skill_prompt(config.base_url.as_str(), locale).await;
+        fetch_contact_task_runner_skill_prompt(config.base_url.as_str(), locale, plan_mode).await;
     Some(ContactTaskRunnerRuntime {
         server: McpHttpServer {
             name: TASK_RUNNER_CONTACT_MCP_SERVER_NAME.to_string(),
@@ -358,9 +384,14 @@ async fn build_contact_task_runner_runtime(
 async fn fetch_contact_task_runner_skill_prompt(
     base_url: &str,
     locale: InternalContextLocale,
+    plan_mode: bool,
 ) -> Option<String> {
-    match task_runner_api_client::fetch_task_runner_skill(base_url, task_runner_skill_lang(locale))
-        .await
+    match task_runner_api_client::fetch_task_runner_skill(
+        base_url,
+        task_runner_skill_lang(locale),
+        plan_mode.then_some("chatos_plan"),
+    )
+    .await
     {
         Ok(content) => Some(format_task_runner_skill_prompt(content.as_str(), locale)),
         Err(err) => {
@@ -475,4 +506,9 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn is_concrete_project_id(project_id: &str) -> bool {
+    let normalized = project_id.trim();
+    !normalized.is_empty() && normalized != "0" && normalized != PUBLIC_PROJECT_ID
 }

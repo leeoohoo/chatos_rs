@@ -38,6 +38,8 @@ pub(super) struct MessageTaskRunnerLookupQuery {
     conversation_turn_id: Option<String>,
     source_turn_id: Option<String>,
     source_user_message_id: Option<String>,
+    event_limit: Option<usize>,
+    event_offset: Option<usize>,
 }
 
 impl MessageTaskRunnerLookupQuery {
@@ -61,6 +63,14 @@ impl MessageTaskRunnerLookupQuery {
     fn has_fallback_hints(&self) -> bool {
         self.session_hint().is_some()
             && (self.turn_hint().is_some() || self.source_user_message_hint().is_some())
+    }
+
+    pub(super) fn event_limit(&self) -> Option<usize> {
+        self.event_limit
+    }
+
+    pub(super) fn event_offset(&self) -> Option<usize> {
+        self.event_offset
     }
 }
 
@@ -202,7 +212,9 @@ pub(super) async fn resolve_message_task_runner_context(
     let direct_message = if is_temporary_message_id(message_id) && query.has_fallback_hints() {
         None
     } else {
-        match conversation_messages::get_message_by_id(message_id).await {
+        match conversation_messages::get_message_by_id_for_user(message_id, auth.user_id.as_str())
+            .await
+        {
             Ok(Some(message)) => Some(message),
             Ok(None) => None,
             Err(err) => {

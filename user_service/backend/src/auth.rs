@@ -34,6 +34,8 @@ pub struct AuthClaims {
     pub owner_user_id: Option<String>,
     pub owner_username: Option<String>,
     #[serde(default)]
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
     pub scopes: Vec<String>,
 }
 
@@ -50,16 +52,13 @@ pub struct CurrentPrincipal {
     pub agent_account_id: Option<String>,
     pub owner_user_id: Option<String>,
     pub owner_username: Option<String>,
+    pub owner_display_name: Option<String>,
     pub scopes: Vec<String>,
 }
 
 impl CurrentPrincipal {
     pub fn is_super_admin(&self) -> bool {
         self.role.as_deref() == Some(USER_ROLE_SUPER_ADMIN)
-    }
-
-    pub fn is_human_user(&self) -> bool {
-        self.principal_type == PRINCIPAL_TYPE_HUMAN_USER
     }
 
     pub fn auth_user(&self) -> AuthUser {
@@ -94,6 +93,7 @@ impl From<AuthClaims> for CurrentPrincipal {
             agent_account_id: value.agent_account_id,
             owner_user_id: value.owner_user_id,
             owner_username: value.owner_username,
+            owner_display_name: value.owner_display_name,
             scopes: value.scopes,
         }
     }
@@ -172,6 +172,7 @@ pub fn encode_user_token(config: &AppConfig, user: &UserRecord) -> Result<String
             agent_account_id: None,
             owner_user_id: None,
             owner_username: None,
+            owner_display_name: None,
             scopes: vec!["user_service".to_string()],
         },
     )
@@ -199,13 +200,21 @@ pub fn encode_agent_token(
             agent_account_id: Some(agent.id.clone()),
             owner_user_id: Some(owner.id.clone()),
             owner_username: Some(owner.username.clone()),
+            owner_display_name: Some(owner.display_name.clone()),
             scopes: vec!["task_runner".to_string()],
         },
     )
 }
 
-pub fn decode_user_service_token(token: &str, config: &AppConfig) -> Result<AuthClaims, String> {
-    decode_token(token, config, config.user_service_audience.as_str())
+pub fn decode_any_user_service_token(
+    token: &str,
+    config: &AppConfig,
+) -> Result<AuthClaims, String> {
+    match decode_token(token, config, config.user_service_audience.as_str()) {
+        Ok(claims) => Ok(claims),
+        Err(user_err) => decode_token(token, config, config.task_runner_audience.as_str())
+            .map_err(|task_err| format!("{user_err}; {task_err}")),
+    }
 }
 
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<String, String> {

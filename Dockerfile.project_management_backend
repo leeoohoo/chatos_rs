@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.93-bookworm AS builder
+
+WORKDIR /workspace/project_management_service/backend
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev clang \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY project_management_service/backend/Cargo.toml ./
+COPY project_management_service/backend/migrations ./migrations
+COPY project_management_service/backend/src ./src
+
+RUN cargo build --release
+
+FROM debian:bookworm-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libsqlite3-0 libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/project_management_service/backend/target/release/project_management_service_backend /app/project_management_service_backend
+
+RUN mkdir -p /app/data
+
+ENV PROJECT_SERVICE_HOST=0.0.0.0 \
+    PROJECT_SERVICE_PORT=39210 \
+    PROJECT_SERVICE_DATABASE_URL=mongodb://admin:admin@mongo:27017/project_management_service?authSource=admin \
+    PROJECT_SERVICE_USER_SERVICE_BASE_URL=http://user-service-backend:39190
+
+EXPOSE 39210
+
+CMD ["/app/project_management_service_backend"]

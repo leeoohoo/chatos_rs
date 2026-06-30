@@ -5,6 +5,7 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
+use crate::core::ai_settings::attachment_total_max_bytes_from_settings;
 use crate::core::chat_stream::{
     build_chat_stream_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
     send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
@@ -13,6 +14,7 @@ use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::agent_runtime::ai_server::AiServer as AgentAiServer;
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::utils::abort_registry;
+use crate::utils::attachments::Attachment;
 use crate::utils::log_helpers::log_chat_begin;
 use crate::utils::sse::SseSender;
 
@@ -89,6 +91,37 @@ pub fn build_chat_event_sink(
     )
 }
 
+fn format_bytes(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    const KB: f64 = 1024.0;
+    if bytes >= 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / MB)
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn validate_attachment_total_size(
+    attachments: &[Attachment],
+    effective_settings: &Value,
+) -> Result<(), String> {
+    let total_bytes = attachments.iter().fold(0u64, |total, attachment| {
+        total.saturating_add(attachment.size.unwrap_or(0))
+    });
+    let max_bytes = attachment_total_max_bytes_from_settings(effective_settings).max(1) as u64;
+    if total_bytes <= max_bytes {
+        return Ok(());
+    }
+
+    Err(format!(
+        "附件总大小为 {}，超过 {} 限制，请减少文件数量或换更小的文件重试。",
+        format_bytes(total_bytes),
+        format_bytes(max_bytes)
+    ))
+}
+
 pub fn prepare_chat_execution(
     sink: ChatEventSink,
     unavailable_tools: &[Value],
@@ -102,16 +135,20 @@ pub fn prepare_chat_execution(
 ) -> PreparedChatExecution {
     send_tools_unavailable_event(&sink, unavailable_tools);
     let live_request_snapshot_for_context = live_request_snapshot.clone();
-    callbacks.on_before_model_request = Some(Arc::new(
-        move |request_input, _, override_context| {
+    callbacks.on_before_model_request =
+        Some(Arc::new(move |request_input, _, override_context| {
             let snapshot_context =
                 override_context.unwrap_or_else(|| live_request_snapshot_for_context.clone());
             let mode = actual_context_mode.to_string();
+            let items =
+                crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(
+                    request_input,
+                );
             tokio::spawn(async move {
                 let actual_request =
                     crate::modules::conversation_runtime::snapshot::ActualTurnRequestContext {
                         context_mode: Some(mode.clone()),
-                        items: crate::modules::conversation_runtime::snapshot::actual_context_items_from_v3_input(&request_input),
+                        items,
                         model_request_payload: None,
                     };
                 let _ = crate::modules::conversation_runtime::snapshot::sync_live_request_snapshot(
@@ -120,8 +157,7 @@ pub fn prepare_chat_execution(
                 )
                 .await;
             });
-        },
-    ));
+        }));
     let live_request_snapshot_for_payload = live_request_snapshot.clone();
     callbacks.on_before_send_model_request = Some(Arc::new(move |payload| {
         let snapshot_context = live_request_snapshot_for_payload.clone();
@@ -196,6 +232,28 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             &empty_chunk_sent,
             &empty_streamed_content,
             Err(runtime_error),
+            true,
+            || crate::utils::log_helpers::log_chat_cancelled(session_id),
+            |err| crate::utils::log_helpers::log_chat_error(err),
+        )
+        .await;
+        return;
+    }
+
+    if let Err(attachment_error) =
+        validate_attachment_total_size(attachments.as_slice(), &effective_settings)
+    {
+        let empty_chunk_sent = Arc::new(AtomicBool::new(false));
+        let empty_streamed_content = Arc::new(Mutex::new(String::new()));
+        finalize_chat_result(
+            &sink,
+            session_id,
+            resolved_turn_id.as_str(),
+            user_message_id.as_str(),
+            false,
+            &empty_chunk_sent,
+            &empty_streamed_content,
+            Err(attachment_error),
             true,
             || crate::utils::log_helpers::log_chat_cancelled(session_id),
             |err| crate::utils::log_helpers::log_chat_error(err),

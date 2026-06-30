@@ -190,6 +190,22 @@ export const getProjectRunnerContactRowsSnapshot = (
   return getProjectRunnerContactRowsScopedCache(client)?.get(normalizedProjectId)?.rows || null;
 };
 
+export const syncProjectRunnerContactRows = (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+  rows: ProjectContactLinkResponse[] | null | undefined,
+): ProjectContactLinkResponse[] | null => {
+  const normalizedProjectId = readTrimmedString(projectId);
+  if (!normalizedProjectId) {
+    return null;
+  }
+
+  return setProjectRunnerContactRowsCacheEntry(client, normalizedProjectId, {
+    rows: Array.isArray(rows) ? [...rows] : [],
+    stale: false,
+  });
+};
+
 export const upsertProjectRunnerContactRow = (
   client: RunnerProjectContactsClient,
   projectId: string,

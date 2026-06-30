@@ -22,6 +22,8 @@ use super::register_subject_memory_scopes;
 use super::types::ComposedChatHistoryContext;
 use memory_engine_sdk::{SdkBatchSyncRecordsRequest, UpsertRecordInput};
 
+const CHATOS_CONTEXT_RECENT_RECORD_LIMIT: usize = 200;
+
 async fn count_chatos_message_records(
     client: &MemoryEngineClient,
     thread_id: &str,
@@ -90,7 +92,7 @@ pub async fn compose_chatos_context(
                 include_recent_records: Some(include_raw_messages),
                 include_thread_summary: Some(true),
                 include_subject_memory: Some(true),
-                recent_record_limit: None,
+                recent_record_limit: Some(CHATOS_CONTEXT_RECENT_RECORD_LIMIT),
                 summary_limit: None,
             }),
         })
@@ -167,11 +169,7 @@ pub async fn create_chatos_session(
         return Ok(existing);
     }
 
-    let normalized_project_id = if effective_project_id == "0" {
-        None
-    } else {
-        Some(effective_project_id)
-    };
+    let normalized_project_id = Some(effective_project_id);
     let session = Session::new(title, None, metadata, Some(user_id), normalized_project_id);
     sync_chatos_session(&session).await?;
     Ok(session)
@@ -408,6 +406,18 @@ pub async fn get_chatos_message_by_id(message_id: &str) -> Result<Option<Message
     Ok(message.filter(|message| !message_is_hidden(message)))
 }
 
+pub async fn get_chatos_message_by_id_for_tenant(
+    message_id: &str,
+    tenant_id: &str,
+) -> Result<Option<Message>, String> {
+    let client = build_client()?;
+    let message = client
+        .get_record(message_id, Some(tenant_id), None)
+        .await?
+        .map(engine_record_to_message);
+    Ok(message.filter(|message| !message_is_hidden(message)))
+}
+
 pub async fn get_chatos_message_by_id_in_session(
     session: &Session,
     message_id: &str,
@@ -459,6 +469,16 @@ pub async fn upsert_chatos_message(
 pub async fn delete_chatos_message_by_id(message_id: &str) -> Result<bool, String> {
     let client = build_client()?;
     client.delete_record(message_id, None, None).await
+}
+
+pub async fn delete_chatos_message_by_id_for_tenant(
+    message_id: &str,
+    tenant_id: &str,
+) -> Result<bool, String> {
+    let client = build_client()?;
+    client
+        .delete_record(message_id, Some(tenant_id), None)
+        .await
 }
 
 pub async fn delete_all_chatos_messages(session: &Session) -> Result<i64, String> {

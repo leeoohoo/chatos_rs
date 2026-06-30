@@ -3,6 +3,7 @@ import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
 import {
   AppstoreOutlined,
   BellOutlined,
+  BookOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   FolderOpenOutlined,
@@ -11,6 +12,7 @@ import {
   TeamOutlined,
   ToolOutlined,
   PlayCircleOutlined,
+  ProjectOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 
@@ -29,11 +31,17 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
   const { locale, setLocale, t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
-  const items = [
+  const isAdmin = currentUser.role === 'admin';
+  const navItems = [
     {
       key: '/tasks',
       label: t('nav.tasks'),
       icon: <AppstoreOutlined />,
+    },
+    {
+      key: '/projects',
+      label: t('nav.projects'),
+      icon: <ProjectOutlined />,
     },
     {
       key: '/models',
@@ -61,6 +69,11 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
       icon: <ToolOutlined />,
     },
     {
+      key: '/skills',
+      label: t('nav.skills'),
+      icon: <BookOutlined />,
+    },
+    {
       key: '/tooling',
       label: t('nav.tooling'),
       icon: <FolderOpenOutlined />,
@@ -69,13 +82,18 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
       key: '/users',
       label: t('nav.users'),
       icon: <TeamOutlined />,
+      adminOnly: true,
     },
     {
       key: '/settings',
       label: t('nav.settings'),
       icon: <SettingOutlined />,
+      adminOnly: true,
     },
   ];
+  const items = navItems
+    .filter((item) => isAdmin || !item.adminOnly)
+    .map(({ adminOnly: _adminOnly, ...item }) => item);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>

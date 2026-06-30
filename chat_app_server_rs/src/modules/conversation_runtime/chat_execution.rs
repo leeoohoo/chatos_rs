@@ -1,4 +1,7 @@
+use std::time::Instant;
+
 use serde_json::{json, Value};
+use tracing::info;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
@@ -45,7 +48,11 @@ pub async fn prepare_mcp_execution(
     runtime_context: &mut ResolvedConversationRuntimeContext,
     use_codex_gateway_mcp_passthrough: bool,
 ) -> PreparedMcpExecution {
+    let started_at = Instant::now();
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
+    let http_server_count = http_servers.len();
+    let stdio_server_count = stdio_servers.len();
+    let builtin_server_count = builtin_servers.len();
     let mut executor =
         AgentMcpToolExecute::new(http_servers, stdio_servers, builtin_servers.clone());
     if runtime_context.use_tools {
@@ -57,13 +64,28 @@ pub async fn prepare_mcp_execution(
     }
 
     let unavailable_tools = executor.get_unavailable_tools();
+    let available_tool_count = executor.get_available_tools().len();
+    let tool_metadata_count = executor.tool_metadata().len();
+    info!(
+        session_id,
+        turn_id,
+        use_tools = runtime_context.use_tools,
+        use_codex_gateway_mcp_passthrough,
+        http_server_count,
+        stdio_server_count,
+        builtin_server_count,
+        available_tool_count,
+        unavailable_tool_count = unavailable_tools.len(),
+        tool_metadata_count,
+        mcp_prepare_ms = started_at.elapsed().as_millis(),
+        "prepared chat MCP execution"
+    );
     runtime_context.builtin_mcp_system_prompt = compose_effective_builtin_mcp_system_prompt(
         builtin_servers.as_slice(),
         executor.tool_metadata(),
         unavailable_tools.as_slice(),
         runtime_context.internal_context_locale,
     );
-    let _ = (session_id, turn_id);
     let mut prefixed_input_items = Vec::new();
     push_optional_system_prompt(
         &mut prefixed_input_items,

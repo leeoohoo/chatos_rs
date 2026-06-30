@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useSessionRuntimeSettings } from '../../features/sessionRuntime/useSessionRuntimeSettings';
 import type { ChatInterfaceProps } from '../../types';
@@ -26,6 +26,8 @@ export const useChatInterfaceModel = ({
 }: UseChatInterfaceModelParams) => {
   const store = useChatInterfaceStoreBridge();
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
+  const [memoryModelConfigId, setMemoryModelConfigId] = useState<string | null>(null);
+  const [memoryModelSettingsLoaded, setMemoryModelSettingsLoaded] = useState(false);
 
   useChatStreamRealtimeBridge();
 
@@ -79,6 +81,57 @@ export const useChatInterfaceModel = ({
     cancelPendingMemoryLoad: resources.cancelPendingMemoryLoad,
   });
 
+  useEffect(() => {
+    let cancelled = false;
+    setMemoryModelSettingsLoaded(false);
+    store.apiClient
+      .getAiModelSettings()
+      .then((settings) => {
+        if (cancelled) {
+          return;
+        }
+        setMemoryModelConfigId(settings.memory_summary_model_config_id?.trim() || null);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error('Failed to load memory model settings:', error);
+          setMemoryModelConfigId(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setMemoryModelSettingsLoaded(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    store.apiClient,
+    store.aiModelConfigs,
+    controller.showMemoryModelSettings,
+  ]);
+
+  const enabledConcreteModelIds = useMemo(() => new Set(
+    store.aiModelConfigs
+      .filter((item) => item.enabled && item.model_name.trim())
+      .map((item) => item.id),
+  ), [store.aiModelConfigs]);
+
+  const memoryModelAttention = useMemo(() => {
+    if (!memoryModelSettingsLoaded || enabledConcreteModelIds.size === 0) {
+      return false;
+    }
+    return !memoryModelConfigId || !enabledConcreteModelIds.has(memoryModelConfigId);
+  }, [enabledConcreteModelIds, memoryModelConfigId, memoryModelSettingsLoaded]);
+
+  const taskModelAttention = useMemo(() => store.aiModelConfigs.some((item) => (
+    item.enabled
+    && Boolean(item.model_name.trim())
+    && (!item.task_usage_scenario?.trim() || !item.task_thinking_level?.trim())
+  )), [store.aiModelConfigs]);
+
   const conversation: ChatInterfaceConversationState = {
     currentSession: store.currentSession,
     sessionSummaryPaneVisible: controller.sessionSummaryPaneVisible,
@@ -96,6 +149,7 @@ export const useChatInterfaceModel = ({
     supportedFileTypes: derived.supportedFileTypes,
     supportsReasoning: derived.supportsReasoning,
     reasoningEnabled: store.chatConfig?.reasoningEnabled === true,
+    planModeEnabled: store.chatConfig?.planModeEnabled === true,
     selectedModelId: effectiveSelectedModelId,
     selectedModelName: runtimeSettings.selectedModelName,
     selectedThinkingLevel: runtimeSettings.selectedThinkingLevel,
@@ -114,6 +168,7 @@ export const useChatInterfaceModel = ({
     toggleSidebar: store.toggleSidebar,
     handleMessageSend: controller.handleMessageSend,
     updateReasoningEnabled: (enabled: boolean) => store.updateChatConfig({ reasoningEnabled: enabled }),
+    updatePlanModeEnabled: (enabled: boolean) => store.updateChatConfig({ planModeEnabled: enabled }),
     setSelectedModel: runtimeSettings.setSelectedModelId,
     setSelectedModelName: runtimeSettings.setSelectedModelName,
     setSelectedThinkingLevel: runtimeSettings.setSelectedThinkingLevel,
@@ -169,6 +224,14 @@ export const useChatInterfaceModel = ({
     setShowSystemContextEditor: controller.setShowSystemContextEditor,
     showAiModelManager: controller.showAiModelManager,
     setShowAiModelManager: controller.setShowAiModelManager,
+    showMemoryModelSettings: controller.showMemoryModelSettings,
+    setShowMemoryModelSettings: controller.setShowMemoryModelSettings,
+    showTaskModelSettings: controller.showTaskModelSettings,
+    setShowTaskModelSettings: controller.setShowTaskModelSettings,
+    showTaskRunnerExternalMcpManager: controller.showTaskRunnerExternalMcpManager,
+    setShowTaskRunnerExternalMcpManager: controller.setShowTaskRunnerExternalMcpManager,
+    memoryModelAttention,
+    taskModelAttention,
     showAgentManager: controller.showAgentManager,
     setShowAgentManager: controller.setShowAgentManager,
     showNotepadPanel: controller.showNotepadPanel,

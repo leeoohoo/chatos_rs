@@ -15,6 +15,7 @@ export function DataSection(props: DataSectionProps) {
       />
       <ThreadWorkspace
         threads={props.threads}
+        tenantLabelsById={props.tenantLabelsById}
         threadsLoading={props.threadsLoading}
         selectedThread={props.selectedThread}
         onSelectThread={props.onSelectThread}

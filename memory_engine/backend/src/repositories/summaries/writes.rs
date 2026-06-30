@@ -1,7 +1,7 @@
-use mongodb::bson::{Bson, doc};
+use mongodb::bson::{doc, Bson};
 
 use crate::db::Db;
-use crate::models::{EngineSummary, UpsertThreadSummaryRequest, now_rfc3339};
+use crate::models::{now_rfc3339, EngineSummary, UpsertThreadSummaryRequest};
 
 use super::common::{new_summary, summary_collection};
 

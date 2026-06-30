@@ -6,6 +6,7 @@ export {
   isSessionActive,
   isSessionMatchedContactAndProject,
   normalizeProjectScopeId,
+  PUBLIC_PROJECT_ID,
   resolveContactAgentIdFromSession,
   resolveContactIdFromSession,
   resolveSessionMessageCount,

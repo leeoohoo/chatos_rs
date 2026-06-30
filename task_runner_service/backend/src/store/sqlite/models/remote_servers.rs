@@ -33,9 +33,10 @@ impl SqliteStore {
                 id, name, host, port, username, auth_type, password, private_key_path,
                 certificate_path, default_remote_path, host_key_policy, enabled,
                 last_tested_at, last_test_status, last_test_message, last_active_at,
-                creator_user_id, creator_username, creator_display_name, task_id,
+                creator_user_id, creator_username, creator_display_name,
+                owner_user_id, owner_username, owner_display_name, task_id,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 host = excluded.host,
@@ -55,6 +56,9 @@ impl SqliteStore {
                 creator_user_id = excluded.creator_user_id,
                 creator_username = excluded.creator_username,
                 creator_display_name = excluded.creator_display_name,
+                owner_user_id = excluded.owner_user_id,
+                owner_username = excluded.owner_username,
+                owner_display_name = excluded.owner_display_name,
                 task_id = excluded.task_id,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at",
@@ -78,6 +82,9 @@ impl SqliteStore {
         .bind(server.creator_user_id.clone())
         .bind(server.creator_username.clone())
         .bind(server.creator_display_name.clone())
+        .bind(server.owner_user_id.clone())
+        .bind(server.owner_username.clone())
+        .bind(server.owner_display_name.clone())
         .bind(server.task_id.clone())
         .bind(&server.created_at)
         .bind(&server.updated_at)

@@ -34,8 +34,10 @@ pub(in crate::api) async fn system_config_handler(
 
 pub(in crate::api) async fn update_system_config_handler(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Json(input): Json<UpdateRuntimeSettingsRequest>,
 ) -> Result<Json<SystemConfigResponse>, ApiError> {
+    require_admin_user(&current_user)?;
     let settings = state
         .task_service
         .update_runtime_settings(input)
@@ -59,6 +61,7 @@ pub(in crate::api) async fn update_system_config_handler(
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct TaskRunnerLocaleQuery {
     lang: Option<String>,
+    profile: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -72,18 +75,32 @@ pub(in crate::api) async fn task_runner_skill_handler(
     Query(query): Query<TaskRunnerLocaleQuery>,
 ) -> Json<TaskRunnerSkillResponse> {
     let locale = requested_task_runner_locale(query.lang.as_deref());
-    Json(if locale.is_english() {
-        TaskRunnerSkillResponse {
+    let is_plan_profile = query
+        .profile
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("chatos_plan"));
+    Json(match (locale.is_english(), is_plan_profile) {
+        (true, true) => TaskRunnerSkillResponse {
+            name: "task-runner-plan-task-en-us",
+            locale: "en-US",
+            content: TASK_RUNNER_PLAN_SKILL_EN_US,
+        },
+        (false, true) => TaskRunnerSkillResponse {
+            name: "task-runner-plan-task-zh-cn",
+            locale: "zh-CN",
+            content: TASK_RUNNER_PLAN_SKILL_ZH_CN,
+        },
+        (true, false) => TaskRunnerSkillResponse {
             name: "task-runner-ai-agent-en-us",
             locale: "en-US",
             content: TASK_RUNNER_SKILL_EN_US,
-        }
-    } else {
-        TaskRunnerSkillResponse {
+        },
+        (false, false) => TaskRunnerSkillResponse {
             name: "task-runner-ai-agent-zh-cn",
             locale: "zh-CN",
             content: TASK_RUNNER_SKILL_ZH_CN,
-        }
+        },
     })
 }
 

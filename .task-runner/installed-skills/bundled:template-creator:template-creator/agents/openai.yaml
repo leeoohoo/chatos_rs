@@ -1,0 +1,6 @@
+interface:
+  display_name: "Template Creator"
+  short_description: "Create or update personal artifact templates"
+  default_prompt: "Use $template-creator to create a template from my Office file or update the artifact template skill I pass."
+policy:
+  allow_implicit_invocation: true

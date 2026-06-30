@@ -6,6 +6,7 @@ import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   RemoteServerRecord,
   TaskSummaryRecord,
+  TaskRunStatus,
 } from '../../types';
 import {
   collectRemoteToolOperations,
@@ -31,6 +32,23 @@ type UseRunsPageDataParams = {
   runPromptPageSize: number;
   taskSearchTerm: string;
 };
+
+const ACTIVE_RUN_REFRESH_INTERVAL_MS = 2500;
+const activeRunStatuses = new Set<TaskRunStatus>(['queued', 'running']);
+
+function activeRefreshInterval(active: boolean) {
+  return active ? ACTIVE_RUN_REFRESH_INTERVAL_MS : false;
+}
+
+function isActiveRunStatus(status?: TaskRunStatus | null) {
+  return Boolean(status && activeRunStatuses.has(status));
+}
+
+function runPageHasActiveItems(
+  data?: { items?: Array<{ status?: TaskRunStatus | null }> } | null,
+) {
+  return Boolean(data?.items?.some((run) => isActiveRunStatus(run.status)));
+}
 
 export function useRunsPageData({
   t,
@@ -62,6 +80,7 @@ export function useRunsPageData({
         limit: runPageSize,
         offset: (runPage - 1) * runPageSize,
       }),
+    refetchInterval: (query) => activeRefreshInterval(runPageHasActiveItems(query.state.data)),
   });
   const modelsQuery = useQuery({
     queryKey: ['model-configs'],
@@ -75,11 +94,14 @@ export function useRunsPageData({
     queryKey: ['run', selectedRunId],
     queryFn: () => api.getRun(selectedRunId!),
     enabled: Boolean(selectedRunId),
+    refetchInterval: (query) =>
+      activeRefreshInterval(isActiveRunStatus(query.state.data?.status)),
   });
   const runEventsQuery = useQuery({
     queryKey: ['run-events', selectedRunId],
     queryFn: () => api.getRunEvents(selectedRunId!),
     enabled: Boolean(selectedRunId),
+    refetchInterval: activeRefreshInterval(isActiveRunStatus(selectedRunQuery.data?.status)),
   });
   const runPromptsQuery = useQuery({
     queryKey: ['run-prompts', selectedRunId, runPromptPage, runPromptPageSize],

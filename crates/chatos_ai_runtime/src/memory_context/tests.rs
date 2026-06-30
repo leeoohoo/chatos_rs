@@ -7,7 +7,7 @@ use memory_engine_sdk::{
 use serde_json::json;
 
 use super::{
-    MemoryContextComposer, MemoryRecordScope, MemoryScope, compose_response_to_input_items,
+    compose_response_to_input_items, MemoryContextComposer, MemoryRecordScope, MemoryScope,
 };
 
 #[test]
@@ -149,11 +149,9 @@ fn compose_response_to_input_items_rebuilds_tool_exchange_in_responses_shape() {
         item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
             && item.get("call_id").and_then(|value| value.as_str()) == Some("call_1")
     }));
-    assert!(
-        !items
-            .iter()
-            .any(|item| { item.get("role").and_then(|value| value.as_str()) == Some("tool") })
-    );
+    assert!(!items
+        .iter()
+        .any(|item| { item.get("role").and_then(|value| value.as_str()) == Some("tool") }));
 }
 
 #[test]

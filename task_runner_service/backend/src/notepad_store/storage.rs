@@ -5,7 +5,10 @@ use serde_json::{json, Value};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use super::support::{folder_segments, normalize_required, normalize_user_segment, write_atomic};
+use super::support::{
+    folder_segments, normalize_required, normalize_user_segment, read_bytes_limited, write_atomic,
+    write_atomic_limited, MAX_NOTEPAD_INDEX_BYTES,
+};
 use super::{NoteMeta, NotesIndex, TaskRunnerNotepadStore};
 
 impl TaskRunnerNotepadStore {
@@ -44,9 +47,7 @@ impl TaskRunnerNotepadStore {
 
     pub(super) async fn load_index(&self) -> Result<NotesIndex, String> {
         self.ensure_initialized().await?;
-        let bytes = fs::read(&self.index_path)
-            .await
-            .map_err(|err| err.to_string())?;
+        let bytes = read_bytes_limited(&self.index_path, MAX_NOTEPAD_INDEX_BYTES).await?;
         if bytes.is_empty() {
             return Ok(NotesIndex::default());
         }
@@ -56,7 +57,7 @@ impl TaskRunnerNotepadStore {
     pub(super) async fn save_index(&self, index: &NotesIndex) -> Result<(), String> {
         self.ensure_initialized().await?;
         let text = serde_json::to_string_pretty(index).map_err(|err| err.to_string())?;
-        write_atomic(&self.index_path, text.as_bytes()).await
+        write_atomic_limited(&self.index_path, text.as_bytes(), MAX_NOTEPAD_INDEX_BYTES).await
     }
 
     pub(super) fn note_path(&self, folder: &str, id: &str) -> PathBuf {

@@ -4,15 +4,15 @@ use crate::models::mcp_config::McpConfig;
 
 pub use chatos_mcp_runtime::{
     BuiltinMcpKind, AGENT_BUILDER_COMMAND, AGENT_BUILDER_MCP_ID, AGENT_BUILDER_SERVER_NAME,
-    BROWSER_TOOLS_COMMAND, BROWSER_TOOLS_MCP_ID, BROWSER_TOOLS_SERVER_NAME,
-    CODE_MAINTAINER_READ_COMMAND, CODE_MAINTAINER_READ_MCP_ID, CODE_MAINTAINER_READ_SERVER_NAME,
-    CODE_MAINTAINER_WRITE_COMMAND, CODE_MAINTAINER_WRITE_MCP_ID, CODE_MAINTAINER_WRITE_SERVER_NAME,
+    ASK_USER_COMMAND, ASK_USER_MCP_ID, ASK_USER_SERVER_NAME, BROWSER_TOOLS_COMMAND,
+    BROWSER_TOOLS_MCP_ID, BROWSER_TOOLS_SERVER_NAME, CODE_MAINTAINER_READ_COMMAND,
+    CODE_MAINTAINER_READ_MCP_ID, CODE_MAINTAINER_READ_SERVER_NAME, CODE_MAINTAINER_WRITE_COMMAND,
+    CODE_MAINTAINER_WRITE_MCP_ID, CODE_MAINTAINER_WRITE_SERVER_NAME,
     LEGACY_CODE_MAINTAINER_COMMAND, LEGACY_CODE_MAINTAINER_MCP_ID, NOTEPAD_COMMAND, NOTEPAD_MCP_ID,
     NOTEPAD_SERVER_NAME, REMOTE_CONNECTION_CONTROLLER_COMMAND, REMOTE_CONNECTION_CONTROLLER_MCP_ID,
     REMOTE_CONNECTION_CONTROLLER_SERVER_NAME, TASK_MANAGER_COMMAND, TASK_MANAGER_MCP_ID,
     TASK_MANAGER_SERVER_NAME, TERMINAL_CONTROLLER_COMMAND, TERMINAL_CONTROLLER_MCP_ID,
-    TERMINAL_CONTROLLER_SERVER_NAME, UI_PROMPTER_COMMAND, UI_PROMPTER_MCP_ID,
-    UI_PROMPTER_SERVER_NAME, WEB_TOOLS_COMMAND, WEB_TOOLS_MCP_ID, WEB_TOOLS_SERVER_NAME,
+    TERMINAL_CONTROLLER_SERVER_NAME, WEB_TOOLS_COMMAND, WEB_TOOLS_MCP_ID, WEB_TOOLS_SERVER_NAME,
 };
 
 pub const CODE_MAINTAINER_READ_DISPLAY_NAME: &str = "Code Maintainer Read (Builtin)";
@@ -21,7 +21,7 @@ pub const TERMINAL_CONTROLLER_DISPLAY_NAME: &str = "Terminal Controller (Builtin
 pub const TASK_MANAGER_DISPLAY_NAME: &str = "Task Manager (Builtin)";
 pub const NOTEPAD_DISPLAY_NAME: &str = "Notepad (Builtin)";
 pub const AGENT_BUILDER_DISPLAY_NAME: &str = "Agent Builder (Builtin)";
-pub const UI_PROMPTER_DISPLAY_NAME: &str = "UI Prompter (Builtin)";
+pub const ASK_USER_DISPLAY_NAME: &str = "Ask User (Builtin)";
 pub const REMOTE_CONNECTION_CONTROLLER_DISPLAY_NAME: &str =
     "Remote Connection Controller (Builtin)";
 pub const WEB_TOOLS_DISPLAY_NAME: &str = "Web Tools (Builtin)";
@@ -52,7 +52,7 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
             Some(BuiltinMcpKind::TaskManager) => Some(task_manager_config()),
             Some(BuiltinMcpKind::Notepad) => Some(notepad_config()),
             Some(BuiltinMcpKind::AgentBuilder) => Some(agent_builder_config()),
-            Some(BuiltinMcpKind::UiPrompter) => Some(ui_prompter_config()),
+            Some(BuiltinMcpKind::AskUser) => Some(ask_user_config()),
             Some(BuiltinMcpKind::RemoteConnectionController) => {
                 Some(remote_connection_controller_config())
             }
@@ -71,7 +71,7 @@ pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
         task_manager_config(),
         notepad_config(),
         agent_builder_config(),
-        ui_prompter_config(),
+        ask_user_config(),
         remote_connection_controller_config(),
         web_tools_config(),
         browser_tools_config(),
@@ -88,7 +88,7 @@ pub fn builtin_display_name(id: &str) -> Option<&'static str> {
         TASK_MANAGER_MCP_ID => Some(TASK_MANAGER_DISPLAY_NAME),
         NOTEPAD_MCP_ID => Some(NOTEPAD_DISPLAY_NAME),
         AGENT_BUILDER_MCP_ID => Some(AGENT_BUILDER_DISPLAY_NAME),
-        UI_PROMPTER_MCP_ID => Some(UI_PROMPTER_DISPLAY_NAME),
+        ASK_USER_MCP_ID => Some(ASK_USER_DISPLAY_NAME),
         REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(REMOTE_CONNECTION_CONTROLLER_DISPLAY_NAME),
         WEB_TOOLS_MCP_ID => Some(WEB_TOOLS_DISPLAY_NAME),
         BROWSER_TOOLS_MCP_ID => Some(BROWSER_TOOLS_DISPLAY_NAME),
@@ -215,14 +215,14 @@ fn agent_builder_config() -> McpConfig {
     }
 }
 
-fn ui_prompter_config() -> McpConfig {
+fn ask_user_config() -> McpConfig {
     let now = crate::core::time::now_rfc3339();
     McpConfig {
-        id: UI_PROMPTER_MCP_ID.to_string(),
-        name: UI_PROMPTER_SERVER_NAME.to_string(),
-        command: UI_PROMPTER_COMMAND.to_string(),
+        id: ASK_USER_MCP_ID.to_string(),
+        name: ASK_USER_SERVER_NAME.to_string(),
+        command: ASK_USER_COMMAND.to_string(),
         r#type: "stdio".to_string(),
-        args: Some(json!(["--name", UI_PROMPTER_SERVER_NAME])),
+        args: Some(json!(["--name", ASK_USER_SERVER_NAME])),
         env: None,
         cwd: None,
         user_id: None,

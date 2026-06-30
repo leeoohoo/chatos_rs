@@ -4,6 +4,7 @@ import dayjs from 'dayjs';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
+  ExternalMcpConfigRecord,
   TaskMcpConfig,
   TaskRecord,
   TaskScheduleConfig,
@@ -13,7 +14,11 @@ import type {
 import {
   isSchedulerOnlyTask,
   statusColorMap,
+  systemInjectedMcpServerNames,
   taskCreatorLabel,
+  taskOwnerLabel,
+  taskProfileColorMap,
+  taskProfileLabel,
   type TaskRemoteOperationStats,
   type TaskRemoteOperationView,
 } from './taskPageUtils';
@@ -26,12 +31,16 @@ type BuildTaskTableColumnsParams = {
   t: TranslateFn;
   navigate: (to: string) => void;
   modelNameMap: Map<string, string>;
+  projectNameMap: Map<string, string>;
+  externalMcpConfigMap: Map<string, ExternalMcpConfigRecord>;
+  skillLabelMap: Map<string, string>;
   pendingPromptCountByTaskId: Map<string, number>;
   scheduleModeLabels: Record<TaskScheduleMode, string>;
   taskRowRemoteActivityByTaskId: Map<string, TaskRowRemoteActivity>;
   onOpenDetail: (task: TaskRecord) => void;
   onOpenEdit: (task: TaskRecord) => void;
   onOpenMemory: (task: TaskRecord) => void;
+  onOpenSubtasks: (task: TaskRecord) => void;
   onOpenRun: (task: TaskRecord) => void;
   onConfirmDelete: (task: TaskRecord) => void;
 };
@@ -40,12 +49,16 @@ export function buildTaskTableColumns({
   t,
   navigate,
   modelNameMap,
+  projectNameMap,
+  externalMcpConfigMap,
+  skillLabelMap,
   pendingPromptCountByTaskId,
   scheduleModeLabels,
   taskRowRemoteActivityByTaskId,
   onOpenDetail,
   onOpenEdit,
   onOpenMemory,
+  onOpenSubtasks,
   onOpenRun,
   onConfirmDelete,
 }: BuildTaskTableColumnsParams): ColumnsType<TaskRecord> {
@@ -65,6 +78,9 @@ export function buildTaskTableColumns({
               <Typography.Text type="secondary">{record.objective}</Typography.Text>
             </Space>
             <Space size={[4, 4]} wrap>
+              <Tag color={taskProfileColorMap[record.task_profile] || 'default'}>
+                {taskProfileLabel(record.task_profile, t)}
+              </Tag>
               {record.parent_task_id ? (
                 <Tag color="purple">{t('tasks.followUp')}</Tag>
               ) : (
@@ -133,6 +149,33 @@ export function buildTaskTableColumns({
       render: (_, record) => taskCreatorLabel(record),
     },
     {
+      title: t('tasks.column.owner'),
+      dataIndex: 'owner_display_name',
+      width: 170,
+      render: (_, record) => taskOwnerLabel(record),
+    },
+    {
+      title: t('tasks.column.project'),
+      dataIndex: 'project_id',
+      width: 180,
+      render: (value?: string | null) => {
+        const projectId = (value || '-1').trim() || '-1';
+        const label = projectId === '-1'
+          ? t('projects.public')
+          : projectNameMap.get(projectId) || projectId;
+        return (
+          <Button
+            type="link"
+            size="small"
+            style={{ paddingInline: 0 }}
+            onClick={() => navigate(`/tasks?project_id=${encodeURIComponent(projectId)}`)}
+          >
+            {label}
+          </Button>
+        );
+      },
+    },
+    {
       title: t('tasks.column.model'),
       dataIndex: 'default_model_config_id',
       width: 220,
@@ -156,15 +199,53 @@ export function buildTaskTableColumns({
       title: t('tasks.column.mcp'),
       dataIndex: 'mcp_config',
       width: 220,
-      render: (mcpConfig: TaskMcpConfig) => (
-        <Space size={[4, 4]} wrap>
-          <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
-            {mcpConfig.enabled ? t('common.enabled') : t('common.disabled')}
-          </Tag>
-          <Tag>{mcpConfig.init_mode}</Tag>
-          <Tag>{t('tasks.mcpTools', { count: mcpConfig.enabled_builtin_kinds.length })}</Tag>
-        </Space>
-      ),
+      render: (mcpConfig: TaskMcpConfig, record) => {
+        const builtinCount = mcpConfig.enabled_builtin_kinds.length;
+        const externalConfigIds = mcpConfig.external_mcp_config_ids || [];
+        const skillIds = mcpConfig.skill_ids || [];
+        const systemMcpServers = systemInjectedMcpServerNames(record);
+        const visibleExternalConfigs = externalConfigIds.slice(0, 2);
+        const visibleSkillIds = skillIds.slice(0, 2);
+        const hiddenExternalCount = Math.max(
+          externalConfigIds.length - visibleExternalConfigs.length,
+          0,
+        );
+        const hiddenSkillCount = Math.max(skillIds.length - visibleSkillIds.length, 0);
+        return (
+          <Space size={[4, 4]} wrap>
+            <Tag color={mcpConfig.enabled ? 'processing' : 'default'}>
+              {mcpConfig.enabled ? t('common.enabled') : t('common.disabled')}
+            </Tag>
+            <Tag>{t('tasks.mcpBuiltinCount', { count: builtinCount })}</Tag>
+            <Tag color={externalConfigIds.length ? 'blue' : undefined}>
+              {t('tasks.mcpExternalCount', { count: externalConfigIds.length })}
+            </Tag>
+            <Tag color={skillIds.length ? 'purple' : undefined}>
+              {t('tasks.mcpSkillCount', { count: skillIds.length })}
+            </Tag>
+            {systemMcpServers.map((serverName) => (
+              <Tag key={serverName} color="geekblue">
+                {t('tasks.mcpSystemServer', { name: serverName })}
+              </Tag>
+            ))}
+            {visibleExternalConfigs.map((configId) => {
+              const config = externalMcpConfigMap.get(configId);
+              return (
+                <Tag key={configId} color={config?.enabled === false ? 'default' : 'cyan'}>
+                  {config?.name || configId}
+                </Tag>
+              );
+            })}
+            {hiddenExternalCount > 0 ? <Tag>+{hiddenExternalCount}</Tag> : null}
+            {visibleSkillIds.map((skillId) => (
+              <Tag key={skillId} color="purple">
+                {skillLabelMap.get(skillId) || skillId}
+              </Tag>
+            ))}
+            {hiddenSkillCount > 0 ? <Tag color="purple">+{hiddenSkillCount}</Tag> : null}
+          </Space>
+        );
+      },
     },
     {
       title: t('tasks.column.schedule'),
@@ -220,7 +301,7 @@ export function buildTaskTableColumns({
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 430,
+      width: 500,
       render: (_, record) => (
         <Space wrap>
           <Button size="small" onClick={() => onOpenDetail(record)}>
@@ -243,6 +324,9 @@ export function buildTaskTableColumns({
           </Button>
           <Button size="small" onClick={() => onOpenMemory(record)}>
             Memory
+          </Button>
+          <Button size="small" onClick={() => onOpenSubtasks(record)}>
+            {t('tasks.action.subtasks')}
           </Button>
           <Button
             size="small"

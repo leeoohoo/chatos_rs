@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
-use crate::core::time::now_rfc3339;
 use crate::models::project_run::ProjectRunCatalog;
 use crate::models::project_run_environment::ProjectRunCustomToolchain;
 use crate::models::terminal::TerminalService;
@@ -65,27 +64,26 @@ fn normalize_custom_toolchains(
 
 async fn load_or_analyze_catalog(
     project: &crate::models::project::Project,
-) -> Result<crate::models::project_run::ProjectRunCatalog, String> {
+) -> Result<ProjectRunCatalog, String> {
     if let Some(cached) =
         project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await?
     {
-        let _ = write_cached_catalog(project.root_path.as_str(), &cached);
-        return Ok(cached);
+        if cached.analyzed_at.is_some() {
+            let _ = write_cached_catalog(project.root_path.as_str(), &cached);
+            return Ok(cached);
+        }
     }
     if let Some(cached) = read_cached_catalog(project.root_path.as_str())? {
-        let _ = project_run_catalogs::upsert_catalog(&cached).await;
-        return Ok(cached);
+        if cached.analyzed_at.is_some() {
+            let _ = project_run_catalogs::upsert_catalog(&cached).await;
+            return Ok(cached);
+        }
     }
-    Ok(ProjectRunCatalog {
-        project_id: project.id.clone(),
-        user_id: project.user_id.clone(),
-        status: "empty".to_string(),
-        default_target_id: None,
-        targets: vec![],
-        error_message: None,
-        analyzed_at: None,
-        updated_at: now_rfc3339(),
-    })
+
+    let analyzed = analyze_project(project).await;
+    let _ = project_run_catalogs::upsert_catalog(&analyzed).await;
+    let _ = write_cached_catalog(project.root_path.as_str(), &analyzed);
+    Ok(analyzed)
 }
 
 pub(super) async fn analyze_project_run(

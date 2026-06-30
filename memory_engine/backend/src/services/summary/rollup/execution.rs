@@ -12,9 +12,7 @@ use super::super::selectors::select_rollup_batch;
 use super::super::{
     PreparedThreadRollup, RollupSettings, ThreadRollupDrainError, ThreadRollupResult,
 };
-use super::job::{
-    create_rollup_job_run, done_metadata, failed_metadata, finish_rollup_job_run,
-};
+use super::job::{create_rollup_job_run, done_metadata, failed_metadata, finish_rollup_job_run};
 
 fn empty_rollup_result() -> ThreadRollupResult {
     ThreadRollupResult {
@@ -49,7 +47,14 @@ pub(crate) async fn run_thread_rollups_until_drained(
         };
 
         match run_prepared_thread_rollup(
-            config, db, tenant_id, source_id, thread_id, prepared, settings, trigger_type,
+            config,
+            db,
+            tenant_id,
+            source_id,
+            thread_id,
+            prepared,
+            settings,
+            trigger_type,
         )
         .await
         {

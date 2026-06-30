@@ -61,6 +61,7 @@ pub struct RealtimeSubscriptionSet {
 #[derive(Debug, Clone, Default)]
 pub struct ConversationRealtimeScope {
     pub user_id: Option<String>,
+    pub project_id: Option<String>,
 }
 
 pub async fn resolve_conversation_scope(
@@ -85,6 +86,8 @@ pub async fn resolve_conversation_scope(
                 Ok(row.map(|value| ConversationRealtimeScope {
                     user_id: normalize_non_empty_str(&value.user_id.unwrap_or_default())
                         .map(|value| value.to_string()),
+                    project_id: normalize_non_empty_str(&value.project_id.unwrap_or_default())
+                        .map(|value| value.to_string()),
                 }))
             })
         },
@@ -108,6 +111,11 @@ pub async fn resolve_conversation_scope(
         user_id: session
             .as_ref()
             .and_then(|value| value.user_id.as_deref())
+            .and_then(normalize_non_empty_str)
+            .map(|value| value.to_string()),
+        project_id: session
+            .as_ref()
+            .and_then(|value| value.project_id.as_deref())
             .and_then(normalize_non_empty_str)
             .map(|value| value.to_string()),
     })
@@ -268,4 +276,5 @@ fn extract_string_path(envelope: &RealtimeEventEnvelope, path: &[&str]) -> Optio
 #[derive(sqlx::FromRow)]
 struct SessionScopeRow {
     user_id: Option<String>,
+    project_id: Option<String>,
 }

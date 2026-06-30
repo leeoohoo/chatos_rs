@@ -19,7 +19,7 @@ pub async fn sync_model_config_upsert(
             error = err.as_str(),
             "sync model config to memory_engine failed"
         );
-        warnings.push(format!("memory_engine sync failed: {err}"));
+        warnings.push(format!("memory_engine model update failed: {err}"));
     }
 
     if let Err(err) = sync_task_runner_model_config(state, config).await {
@@ -29,7 +29,7 @@ pub async fn sync_model_config_upsert(
             error = err.as_str(),
             "sync model config to task_runner failed"
         );
-        warnings.push(format!("task_runner sync failed: {err}"));
+        warnings.push(format!("task_runner model update failed: {err}"));
     }
 
     warnings
@@ -89,9 +89,9 @@ pub async fn sync_model_settings(
             warn!(
                 owner_user_id,
                 error = err.as_str(),
-                "load memory_engine model profiles for settings sync failed"
+                "load memory_engine model profiles for settings update failed"
             );
-            return vec![format!("memory_engine settings sync failed: {err}")];
+            return vec![format!("memory_engine settings update failed: {err}")];
         }
     };
 
@@ -112,7 +112,19 @@ pub async fn sync_model_settings(
             .get("is_default")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        if current_default == desired_default {
+        let current_thinking_level = profile
+            .get("thinking_level")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let desired_thinking_level = if desired_default {
+            normalized_text(settings.memory_summary_thinking_level.as_deref())
+        } else {
+            current_thinking_level.map(ToOwned::to_owned)
+        };
+        if current_default == desired_default
+            && current_thinking_level == desired_thinking_level.as_deref()
+        {
             continue;
         }
 
@@ -127,7 +139,7 @@ pub async fn sync_model_settings(
             "supports_reasoning": profile.get("supports_reasoning"),
             "supports_responses": profile.get("supports_responses"),
             "temperature": profile.get("temperature"),
-            "thinking_level": profile.get("thinking_level"),
+            "thinking_level": desired_thinking_level,
             "is_default": desired_default,
             "enabled": profile.get("enabled"),
         });
@@ -151,7 +163,7 @@ pub async fn sync_model_settings(
                 "update memory_engine profile default flag failed"
             );
             warnings.push(format!(
-                "memory_engine default sync failed for {}: {err}",
+                "memory_engine default model update failed for {}: {err}",
                 profile_id
             ));
         }
@@ -176,12 +188,21 @@ async fn sync_memory_engine_model_profile(
         return Err("MEMORY_ENGINE_OPERATOR_TOKEN is not configured".to_string());
     };
 
-    let is_default = state
+    let settings = state
         .store
         .get_user_model_settings(config.owner_user_id.as_str())
-        .await?
-        .and_then(|settings| settings.memory_summary_model_config_id)
+        .await?;
+    let is_default = settings
+        .as_ref()
+        .and_then(|settings| settings.memory_summary_model_config_id.as_deref())
         .is_some_and(|value| value == config.id);
+    let thinking_level = if is_default {
+        settings
+            .as_ref()
+            .and_then(|settings| settings.memory_summary_thinking_level.clone())
+    } else {
+        config.thinking_level.clone()
+    };
 
     let payload = serde_json::json!({
         "id": config.id,
@@ -194,7 +215,7 @@ async fn sync_memory_engine_model_profile(
         "supports_reasoning": config.supports_reasoning,
         "supports_responses": config.supports_responses,
         "temperature": Value::Null,
-        "thinking_level": config.thinking_level,
+        "thinking_level": thinking_level,
         "is_default": is_default,
         "enabled": config.enabled,
     });
@@ -314,7 +335,8 @@ async fn sync_task_runner_model_config(
         "base_url": config.base_url,
         "api_key": config.api_key,
         "model": config.model,
-        "thinking_level": config.thinking_level,
+        "usage_scenario": config.task_usage_scenario,
+        "thinking_level": config.task_thinking_level,
         "supports_responses": config.supports_responses,
         "enabled": config.enabled,
     });
@@ -446,6 +468,7 @@ fn task_runner_provider(provider: &str) -> &'static str {
     match provider.trim() {
         "deepseek" => "deepseek",
         "kimi" => "kimik2",
+        "openai_compatible" | "minimax" => "openai_compatible",
         _ => "openai",
     }
 }

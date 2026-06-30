@@ -15,12 +15,32 @@ pub fn public_routes() -> Router<Arc<AppState>> {
     Router::new().route("/health", get(health_api::health))
 }
 
-pub fn protected_routes() -> Router<Arc<AppState>> {
+pub fn operator_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/api/memory-engine/v1/sources/:source_id",
             put(sources_api::upsert_source),
         )
+        .route(
+            "/api/memory-engine/v1/jobs/summaries/run-once",
+            post(jobs_api::run_pending_summaries_once),
+        )
+        .route(
+            "/api/memory-engine/v1/jobs/rollups/run-once",
+            post(jobs_api::run_pending_rollups_once),
+        )
+        .route(
+            "/api/memory-engine/v1/jobs/subject-memories/run-once",
+            post(jobs_api::run_subject_memory_job_once),
+        )
+        .route(
+            "/api/memory-engine/v1/jobs/subject-memory-scopes/run-once",
+            post(jobs_api::run_subject_memory_scopes_once),
+        )
+}
+
+pub fn data_routes() -> Router<Arc<AppState>> {
+    Router::new()
         .route(
             "/api/memory-engine/v1/subjects/:subject_id",
             put(subjects_api::upsert_subject),
@@ -127,22 +147,6 @@ pub fn protected_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/memory-engine/v1/threads/:thread_id/repair-summaries/run",
             post(summaries_api::run_thread_repair_summary),
-        )
-        .route(
-            "/api/memory-engine/v1/jobs/summaries/run-once",
-            post(jobs_api::run_pending_summaries_once),
-        )
-        .route(
-            "/api/memory-engine/v1/jobs/rollups/run-once",
-            post(jobs_api::run_pending_rollups_once),
-        )
-        .route(
-            "/api/memory-engine/v1/jobs/subject-memories/run-once",
-            post(jobs_api::run_subject_memory_job_once),
-        )
-        .route(
-            "/api/memory-engine/v1/jobs/subject-memory-scopes/run-once",
-            post(jobs_api::run_subject_memory_scopes_once),
         )
         .route(
             "/api/memory-engine/v1/context/compose",

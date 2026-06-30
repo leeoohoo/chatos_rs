@@ -4,7 +4,7 @@ pub(super) fn model_tool_definitions() -> Vec<Value> {
     vec![
         tool_definition(
             "list_model_configs",
-            "List enabled and disabled model configs that Task Runner can use.",
+            "Administrative model config listing. Normal task creation binds a current-user model automatically and does not require model config ids.",
             empty_object_schema(),
         ),
         tool_definition(

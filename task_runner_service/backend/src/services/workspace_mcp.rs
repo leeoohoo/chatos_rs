@@ -1,31 +1,80 @@
 use std::path::PathBuf;
 
-use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies};
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
 use crate::config::AppConfig;
-use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord};
+use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskRecord, TASK_PROFILE_CHATOS_PLAN};
 
 use super::normalize_strings;
 use super::normalized_optional;
 
-pub(super) fn selected_builtin_kinds(
-    mcp_config: &TaskMcpConfig,
-) -> Vec<chatos_mcp_runtime::BuiltinMcpKind> {
-    let mut kinds = mcp_config
+pub(super) fn selected_builtin_kinds(mcp_config: &TaskMcpConfig) -> Vec<BuiltinMcpKind> {
+    let kinds = mcp_config
         .enabled_builtin_kinds
         .iter()
         .filter_map(|value| builtin_kind_by_any(value))
         .collect::<Vec<_>>();
-    if kinds.is_empty() && mcp_config.enabled {
-        kinds = chatos_mcp_runtime::configurable_builtin_kinds();
+    complete_builtin_kind_dependencies(kinds)
+}
+
+pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
+    if is_chatos_plan_task(task) {
+        return plan_task_runtime_builtin_kinds();
+    }
+    let mut kinds = selected_builtin_kinds(&task.mcp_config);
+    kinds.retain(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement));
+    if is_chatos_async_task(task) {
+        ensure_system_injected_builtin_kinds(&mut kinds);
     }
     complete_builtin_kind_dependencies(kinds)
+}
+
+fn plan_task_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
+    vec![
+        BuiltinMcpKind::CodeMaintainerRead,
+        BuiltinMcpKind::TerminalController,
+        BuiltinMcpKind::TaskManager,
+        BuiltinMcpKind::ProjectManagement,
+        BuiltinMcpKind::Notepad,
+        BuiltinMcpKind::AskUser,
+        BuiltinMcpKind::RemoteConnectionController,
+        BuiltinMcpKind::WebTools,
+        BuiltinMcpKind::BrowserTools,
+        BuiltinMcpKind::MemorySkillReader,
+        BuiltinMcpKind::MemoryCommandReader,
+        BuiltinMcpKind::MemoryPluginReader,
+    ]
+}
+
+fn ensure_system_injected_builtin_kinds(kinds: &mut Vec<BuiltinMcpKind>) {
+    for kind in [BuiltinMcpKind::TaskManager, BuiltinMcpKind::AskUser] {
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+}
+
+fn is_chatos_async_task(task: &TaskRecord) -> bool {
+    task.schedule.mode == crate::models::TaskScheduleMode::ContactAsync
+        || (has_non_empty_text(task.source_session_id.as_deref())
+            && has_non_empty_text(task.source_user_message_id.as_deref()))
+}
+
+fn is_chatos_plan_task(task: &TaskRecord) -> bool {
+    task.task_profile
+        .trim()
+        .eq_ignore_ascii_case(TASK_PROFILE_CHATOS_PLAN)
+}
+
+fn has_non_empty_text(value: Option<&str>) -> bool {
+    value.map(str::trim).is_some_and(|value| !value.is_empty())
 }
 
 pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {
     let kinds = values
         .into_iter()
         .filter_map(|value| builtin_kind_by_any(&value))
+        .filter(|kind| !matches!(kind, BuiltinMcpKind::ProjectManagement))
         .collect::<Vec<_>>();
     complete_builtin_kind_dependencies(kinds)
         .into_iter()
@@ -34,12 +83,14 @@ pub(super) fn normalize_builtin_kind_names(values: Vec<String>) -> Vec<String> {
 }
 
 pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConfig {
+    config.init_mode = chatos_ai_runtime::TaskMcpInitMode::Full;
     config.builtin_prompt_locale = normalized_optional(Some(config.builtin_prompt_locale))
         .unwrap_or_else(|| chatos_mcp_runtime::BuiltinMcpPromptLocale::DEFAULT_KEY.to_string());
     config.enabled_builtin_kinds = normalize_builtin_kind_names(config.enabled_builtin_kinds);
     config.workspace_dir = normalized_optional(config.workspace_dir);
     config.default_remote_server_id = normalized_optional(config.default_remote_server_id);
     config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
+    config.skill_ids = normalize_strings(config.skill_ids);
     config
 }
 
@@ -110,4 +161,132 @@ pub(super) fn ensure_workspace_dir_available(
         .unwrap_or(path)
         .to_string_lossy()
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::{
+        now_rfc3339, TaskMcpConfig, TaskRecord, TaskScheduleConfig, TaskStatus,
+        TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    };
+
+    use super::{runtime_selected_builtin_kinds, selected_builtin_kinds};
+    use chatos_mcp_runtime::BuiltinMcpKind;
+
+    #[test]
+    fn empty_builtin_selection_stays_empty() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: Vec::new(),
+            ..TaskMcpConfig::default()
+        };
+
+        assert!(selected_builtin_kinds(&config).is_empty());
+    }
+
+    #[test]
+    fn default_config_still_selects_builtin_kinds() {
+        let config = TaskMcpConfig::default();
+
+        assert!(!selected_builtin_kinds(&config).is_empty());
+    }
+
+    #[test]
+    fn plan_task_builtin_selection_uses_fixed_allowlist() {
+        let task = sample_task(
+            TASK_PROFILE_CHATOS_PLAN,
+            vec![
+                "CodeMaintainerWrite".to_string(),
+                "AgentBuilder".to_string(),
+            ],
+        );
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+        assert!(selected.contains(&BuiltinMcpKind::TaskManager));
+        assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
+        assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
+        assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(!selected.contains(&BuiltinMcpKind::AgentBuilder));
+    }
+
+    #[test]
+    fn default_task_builtin_selection_keeps_requested_kinds() {
+        let task = sample_task(
+            TASK_PROFILE_DEFAULT,
+            vec!["CodeMaintainerWrite".to_string()],
+        );
+
+        let selected = runtime_selected_builtin_kinds(&task);
+
+        assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
+        assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
+    }
+
+    #[test]
+    fn normalized_config_removes_project_management_selection() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec![
+                "ProjectManagement".to_string(),
+                "CodeMaintainerWrite".to_string(),
+            ],
+            ..TaskMcpConfig::default()
+        };
+
+        let sanitized = super::sanitize_task_mcp_config(config);
+
+        assert!(!sanitized
+            .enabled_builtin_kinds
+            .contains(&"ProjectManagement".to_string()));
+        assert!(sanitized
+            .enabled_builtin_kinds
+            .contains(&"CodeMaintainerWrite".to_string()));
+        assert!(sanitized
+            .enabled_builtin_kinds
+            .contains(&"CodeMaintainerRead".to_string()));
+    }
+
+    fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRecord {
+        let now = now_rfc3339();
+        TaskRecord {
+            id: "task-1".to_string(),
+            title: "task".to_string(),
+            description: None,
+            objective: "objective".to_string(),
+            input_payload: None,
+            status: TaskStatus::Ready,
+            priority: 0,
+            tags: Vec::new(),
+            default_model_config_id: None,
+            memory_thread_id: "memory-1".to_string(),
+            tenant_id: "tenant".to_string(),
+            subject_id: "subject".to_string(),
+            project_id: "project-1".to_string(),
+            task_profile: task_profile.to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("owner-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+            result_summary: None,
+            process_log: None,
+            last_run_id: None,
+            schedule: TaskScheduleConfig::default(),
+            parent_task_id: None,
+            source_run_id: None,
+            source_session_id: None,
+            source_turn_id: None,
+            source_user_message_id: None,
+            prerequisite_task_ids: Vec::new(),
+            task_tool_state: Default::default(),
+            mcp_config: TaskMcpConfig {
+                enabled_builtin_kinds,
+                ..TaskMcpConfig::default()
+            },
+            created_at: now.clone(),
+            updated_at: now,
+            deleted_at: None,
+        }
+    }
 }

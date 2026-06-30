@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 
+import ConversationAskUserPromptPanel from '../../chatInterface/ConversationAskUserPromptPanel';
 import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/viewHelpers';
 import { TeamMemberWorkspaceComposer } from './TeamMemberWorkspaceComposer';
 import { TeamMemberWorkspaceContent } from './TeamMemberWorkspaceContent';
@@ -27,6 +28,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   aiModelConfigs,
   supportsReasoning,
   reasoningEnabled,
+  planModeEnabled,
   availableRemoteConnections,
   currentRemoteConnectionId,
   onRemoteConnectionChange,
@@ -41,6 +43,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onThinkingLevelChange,
   onModelRuntimeChange,
   onReasoningToggle,
+  onPlanModeToggle,
 }) => {
   const { supportsImages } = useMemo(
     () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
@@ -78,6 +81,15 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         />
       </div>
 
+      <ConversationAskUserPromptPanel
+        sessionId={
+          selectedContact && selectedProjectSession && isSelectedSessionActive
+            ? selectedProjectSession.id
+            : null
+        }
+        projectId={project.id || null}
+      />
+
       <TeamMemberWorkspaceComposer
         project={project}
         selectedContact={selectedContact}
@@ -89,6 +101,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         aiModelConfigs={aiModelConfigs}
         supportsReasoning={supportsReasoning}
         reasoningEnabled={reasoningEnabled}
+        planModeEnabled={planModeEnabled}
         availableRemoteConnections={availableRemoteConnections}
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
@@ -98,6 +111,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         onThinkingLevelChange={onThinkingLevelChange}
         onModelRuntimeChange={onModelRuntimeChange}
         onReasoningToggle={onReasoningToggle}
+        onPlanModeToggle={onPlanModeToggle}
         supportedFileTypes={supportedFileTypes}
       />
     </div>

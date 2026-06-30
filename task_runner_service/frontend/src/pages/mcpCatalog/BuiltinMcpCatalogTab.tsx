@@ -21,18 +21,13 @@ import type { ColumnsType } from 'antd/es/table';
 import { api } from '../../api/client';
 import { McpPromptPreviewCard } from '../../components/McpPromptPreviewCard';
 import { useI18n } from '../../i18n/I18nProvider';
-import type {
-  McpCatalogEntry,
-  TaskBuiltinPromptMode,
-  TaskMcpInitMode,
-} from '../../types';
+import type { McpCatalogEntry, TaskBuiltinPromptMode } from '../../types';
 import { MCP_CARD_STYLE } from './mcpCatalogPageUtils';
 
 export function BuiltinMcpCatalogTab() {
   const { locale, t } = useI18n();
   const navigate = useNavigate();
   const [mcpEnabled, setMcpEnabled] = useState(true);
-  const [initMode, setInitMode] = useState<TaskMcpInitMode>('builtin_only');
   const [promptMode, setPromptMode] = useState<TaskBuiltinPromptMode>('effective');
   const [promptLocale, setPromptLocale] = useState(locale);
   const [selectedKinds, setSelectedKinds] = useState<string[]>([]);
@@ -45,11 +40,11 @@ export function BuiltinMcpCatalogTab() {
     queryFn: api.listRemoteServers,
   });
   const promptPreviewQuery = useQuery({
-    queryKey: ['mcp-prompt-preview', mcpEnabled, initMode, promptMode, promptLocale, selectedKinds],
+    queryKey: ['mcp-prompt-preview', mcpEnabled, promptMode, promptLocale, selectedKinds],
     queryFn: () =>
       api.previewMcpPrompt({
         enabled: mcpEnabled,
-        init_mode: initMode,
+        init_mode: 'full',
         builtin_prompt_mode: promptMode,
         builtin_prompt_locale: promptLocale,
         enabled_builtin_kinds: selectedKinds.length ? selectedKinds : undefined,
@@ -212,16 +207,6 @@ export function BuiltinMcpCatalogTab() {
             <Typography.Text type="secondary">{t('mcpCatalog.enableMcp')}</Typography.Text>
             <Switch checked={mcpEnabled} onChange={setMcpEnabled} />
           </Space>
-          <Select
-            style={{ width: 160 }}
-            value={initMode}
-            onChange={(value) => setInitMode(value)}
-            options={[
-              { label: 'builtin_only', value: 'builtin_only' },
-              { label: 'full', value: 'full' },
-              { label: 'disabled', value: 'disabled' },
-            ]}
-          />
           <Segmented
             value={promptMode}
             onChange={(value) => setPromptMode(value as TaskBuiltinPromptMode)}

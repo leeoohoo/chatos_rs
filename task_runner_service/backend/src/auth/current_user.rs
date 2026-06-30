@@ -7,6 +7,8 @@ pub struct CurrentUser {
     pub display_name: String,
     pub role: UserRole,
     pub owner_user_id: Option<String>,
+    pub owner_username: Option<String>,
+    pub owner_display_name: Option<String>,
 }
 
 impl CurrentUser {
@@ -34,6 +36,20 @@ impl CurrentUser {
             .filter(|value| !value.is_empty())
     }
 
+    pub fn effective_owner_username(&self) -> Option<&str> {
+        self.owner_username
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn effective_owner_display_name(&self) -> Option<&str> {
+        self.owner_display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
     pub fn can_access_owned_resource(&self, owner_user_id: Option<&str>) -> bool {
         if self.is_admin() {
             return true;
@@ -43,7 +59,7 @@ impl CurrentUser {
             .filter(|value| !value.is_empty());
         match owner_user_id {
             Some(owner_user_id) => self.effective_owner_user_id() == Some(owner_user_id),
-            None => true,
+            None => false,
         }
     }
 }
@@ -56,6 +72,8 @@ impl From<&UserRecord> for CurrentUser {
             display_name: value.display_name.clone(),
             role: value.role,
             owner_user_id: None,
+            owner_username: None,
+            owner_display_name: None,
         }
     }
 }

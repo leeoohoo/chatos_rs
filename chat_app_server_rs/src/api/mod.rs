@@ -14,10 +14,12 @@ use std::time::Instant;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{info, info_span};
+use tracing::{debug, debug_span};
 
 use crate::config::Config;
-use crate::core::auth::{access_token_from_headers, resolve_auth_user_from_token, AuthHeaderError};
+use crate::core::auth::{
+    access_token_from_headers, resolve_auth_user_via_user_service, AuthHeaderError,
+};
 use crate::core::websocket_ticket::{consume_websocket_ticket, WebSocketTicketRecord};
 use crate::modules;
 use crate::services::access_token_scope;
@@ -28,6 +30,7 @@ static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 pub mod agent_chat;
 pub mod agents;
 pub mod applications;
+pub mod ask_user_prompts;
 pub mod auth;
 pub(crate) mod chat_stream_common;
 pub mod code_nav;
@@ -47,6 +50,7 @@ pub mod remote_connections;
 pub mod sessions;
 pub mod system_contexts;
 pub mod task_manager;
+pub mod task_runner_external_mcp;
 pub mod terminals;
 pub mod user_settings;
 
@@ -95,7 +99,7 @@ pub fn router() -> Result<Router, String> {
             let user_id = header_value(req, &HeaderName::from_static("x-user-id"));
             let project_id = header_value(req, &HeaderName::from_static("x-project-id"));
             let conversation_id = header_value(req, &HeaderName::from_static("x-conversation-id"));
-            info_span!(
+            debug_span!(
                 "http.request",
                 method = %req.method(),
                 uri = %sanitize_request_uri(req.uri()),
@@ -107,11 +111,11 @@ pub fn router() -> Result<Router, String> {
             )
         })
         .on_request(|_req: &Request<Body>, _span: &tracing::Span| {
-            info!("request.start");
+            debug!("request.start");
         })
         .on_response(
             |res: &Response, latency: std::time::Duration, _span: &tracing::Span| {
-                info!(status = %res.status(), latency_ms = %latency.as_millis(), "request.end");
+                debug!(status = %res.status(), latency_ms = %latency.as_millis(), "request.end");
             },
         )
         .on_failure(|err, latency: std::time::Duration, _span: &tracing::Span| {
@@ -249,8 +253,9 @@ async fn require_auth(
     // 在中间件只解析一次 token，并把登录用户注入 request extensions。
     let (access_token, auth_user) = match access_token_from_headers(req.headers()) {
         Ok(token) => {
-            let auth_user =
-                resolve_auth_user_from_token(token.as_str()).map_err(|err| err.into_response())?;
+            let auth_user = resolve_auth_user_via_user_service(token.as_str())
+                .await
+                .map_err(|err| err.into_response())?;
             (token, auth_user)
         }
         // Browser WebSocket cannot set Authorization headers directly.

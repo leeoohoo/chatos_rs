@@ -104,7 +104,7 @@ fn emits_internal_error_payload_with_code() {
 
 #[tokio::test]
 async fn startup_error_shutdown_flushes_error_message_before_exit() {
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let (tx, mut rx) = mpsc::channel::<Message>(4);
     let (done_tx, done_rx) = oneshot::channel::<Vec<Message>>();
     let forward_task = tokio::spawn(async move {
         let mut messages = Vec::new();

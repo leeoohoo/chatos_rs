@@ -1,14 +1,15 @@
 use sqlx::{sqlite::SqliteRow, Row};
 
 use crate::models::{
-    ExternalMcpConfigRecord, ModelConfigRecord, RemoteServerRecord, RunSummaryRecord,
-    RuntimeSettingsRecord, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord,
-    UiPromptRecord, UserRecord,
+    skill_install_status_from_str, skill_scope_from_str, skill_source_from_str,
+    task_project_status_from_str, AskUserPromptRecord, ExternalMcpConfigRecord, ModelConfigRecord,
+    RemoteServerRecord, RunSummaryRecord, RuntimeSettingsRecord, SkillRecord, TaskProjectRecord,
+    TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskSummaryRecord, UserRecord,
 };
 
 use super::codec::{
-    decode_json, decode_json_option, decode_json_optional_typed, int_to_bool,
-    task_run_status_from_str, task_status_from_str, ui_prompt_status_from_str, user_role_from_str,
+    ask_user_prompt_status_from_str, decode_json, decode_json_option, decode_json_optional_typed,
+    int_to_bool, task_run_status_from_str, task_status_from_str, user_role_from_str,
 };
 
 pub(super) fn task_from_row(row: &SqliteRow) -> Result<TaskRecord, String> {
@@ -25,9 +26,14 @@ pub(super) fn task_from_row(row: &SqliteRow) -> Result<TaskRecord, String> {
         memory_thread_id: row.get("memory_thread_id"),
         tenant_id: row.get("tenant_id"),
         subject_id: row.get("subject_id"),
+        project_id: row.get("project_id"),
+        task_profile: row.get("task_profile"),
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
         result_summary: row.get("result_summary"),
         process_log: row.get("process_log"),
         last_run_id: row.get("last_run_id"),
@@ -52,11 +58,32 @@ pub(super) fn task_summary_from_row(row: &SqliteRow) -> Result<TaskSummaryRecord
         title: row.get("title"),
         status: task_status_from_str(row.get::<String, _>("status").as_str()),
         default_model_config_id: row.get("default_model_config_id"),
+        project_id: row.get("project_id"),
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
         last_run_id: row.get("last_run_id"),
         updated_at: row.get("updated_at"),
+    })
+}
+
+pub(super) fn task_project_from_row(row: &SqliteRow) -> Result<TaskProjectRecord, String> {
+    Ok(TaskProjectRecord {
+        id: row.get("id"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
+        name: row.get("name"),
+        root_path: row.get("root_path"),
+        git_url: row.get("git_url"),
+        description: row.get("description"),
+        status: task_project_status_from_str(row.get::<String, _>("status").as_str()),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+        archived_at: row.get("archived_at"),
     })
 }
 
@@ -78,6 +105,8 @@ pub(super) fn model_config_from_row(row: &SqliteRow) -> Result<ModelConfigRecord
     Ok(ModelConfigRecord {
         id: row.get("id"),
         owner_user_id: row.get("owner_user_id"),
+        owner_username: None,
+        owner_display_name: None,
         name: row.get("name"),
         provider: row.get("provider"),
         base_url: row.get("base_url"),
@@ -138,6 +167,9 @@ pub(super) fn remote_server_from_row(row: &SqliteRow) -> Result<RemoteServerReco
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
         task_id: row.get("task_id"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -161,8 +193,51 @@ pub(super) fn external_mcp_config_from_row(
         creator_user_id: row.get("creator_user_id"),
         creator_username: row.get("creator_username"),
         creator_display_name: row.get("creator_display_name"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+    })
+}
+
+pub(super) fn skill_from_row(row: &SqliteRow) -> Result<SkillRecord, String> {
+    Ok(SkillRecord {
+        id: row.get("id"),
+        name: row.get("name"),
+        display_name: row.get("display_name"),
+        description: row.get("description"),
+        content: row.get("content"),
+        locale: row.get("locale"),
+        tags: decode_json(row.get("tags_json"))?,
+        source: skill_source_from_str(row.get::<String, _>("source").as_str()),
+        source_url: row.get("source_url"),
+        source_registry: row.get("source_registry"),
+        source_package_id: row.get("source_package_id"),
+        version: row.get("version"),
+        checksum: row.get("checksum"),
+        package_root: row.get("package_root"),
+        package_manifest: decode_json(row.get("package_manifest_json"))?,
+        package_file_count: row.get::<i64, _>("package_file_count") as usize,
+        package_total_bytes: row.get::<i64, _>("package_total_bytes") as u64,
+        source_repo: row.get("source_repo"),
+        source_ref: row.get("source_ref"),
+        source_path: row.get("source_path"),
+        install_status: skill_install_status_from_str(
+            row.get::<String, _>("install_status").as_str(),
+        ),
+        enabled: int_to_bool(row.get::<i64, _>("enabled")),
+        auto_inject: int_to_bool(row.get::<i64, _>("auto_inject")),
+        scope: skill_scope_from_str(row.get::<String, _>("scope").as_str()),
+        creator_user_id: row.get("creator_user_id"),
+        creator_username: row.get("creator_username"),
+        creator_display_name: row.get("creator_display_name"),
+        owner_user_id: row.get("owner_user_id"),
+        owner_username: row.get("owner_username"),
+        owner_display_name: row.get("owner_display_name"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+        installed_at: row.get("installed_at"),
     })
 }
 
@@ -209,8 +284,8 @@ pub(super) fn task_run_event_from_row(row: &SqliteRow) -> Result<TaskRunEventRec
     })
 }
 
-pub(super) fn ui_prompt_from_row(row: &SqliteRow) -> Result<UiPromptRecord, String> {
-    Ok(UiPromptRecord {
+pub(super) fn ask_user_prompt_from_row(row: &SqliteRow) -> Result<AskUserPromptRecord, String> {
+    Ok(AskUserPromptRecord {
         id: row.get("id"),
         task_id: row.get("task_id"),
         run_id: row.get("run_id"),
@@ -224,7 +299,7 @@ pub(super) fn ui_prompt_from_row(row: &SqliteRow) -> Result<UiPromptRecord, Stri
         timeout_ms: row.get::<i64, _>("timeout_ms") as u64,
         payload: decode_json(row.get("payload_json"))?,
         response: decode_json_optional_typed(row.get("response_json"))?,
-        status: ui_prompt_status_from_str(row.get::<String, _>("status").as_str()),
+        status: ask_user_prompt_status_from_str(row.get::<String, _>("status").as_str()),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         expires_at: row.get("expires_at"),

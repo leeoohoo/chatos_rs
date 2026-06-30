@@ -252,7 +252,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       <AgentAiCreateDialog
         open={showAiCreate}
         formData={aiCreateForm}
-        modelOptions={aiModelConfigs || []}
+        modelOptions={(aiModelConfigs || []).filter((item) => item.enabled)}
         onChange={(patch) => {
           setAiCreateForm((current) => ({ ...current, ...patch }));
         }}

@@ -55,6 +55,33 @@ impl AppStore {
         }
     }
 
+    pub async fn list_task_projects(&self) -> Result<Vec<TaskProjectRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_task_projects()),
+            Self::Sqlite(store) => store.list_task_projects().await,
+            Self::Mongo(store) => store.list_task_projects().await,
+        }
+    }
+
+    pub async fn get_task_project(&self, id: &str) -> Result<Option<TaskProjectRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.get_task_project(id)),
+            Self::Sqlite(store) => store.get_task_project(id).await,
+            Self::Mongo(store) => store.get_task_project(id).await,
+        }
+    }
+
+    pub async fn save_task_project(
+        &self,
+        project: TaskProjectRecord,
+    ) -> Result<TaskProjectRecord, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.save_task_project(project)),
+            Self::Sqlite(store) => store.save_task_project(project).await,
+            Self::Mongo(store) => store.save_task_project(project).await,
+        }
+    }
+
     pub async fn list_remote_servers(&self) -> Result<Vec<RemoteServerRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_remote_servers()),

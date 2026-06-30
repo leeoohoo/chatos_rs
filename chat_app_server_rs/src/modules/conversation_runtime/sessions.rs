@@ -1,10 +1,11 @@
 use serde_json::Value;
+use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{is_owned_session, SessionAccessError};
 use crate::models::memory_mapping_types::SyncMemoryProjectRequestDto;
+use crate::models::project::{ProjectService, PUBLIC_PROJECT_ID};
 use crate::models::session::Session;
-use crate::repositories::projects as projects_repo;
 use crate::services::chatos_memory_engine;
 use crate::services::chatos_memory_mappings;
 use crate::services::chatos_sessions;
@@ -257,8 +258,8 @@ pub fn normalize_compat_session_title(title: Option<String>) -> Option<String> {
 async fn sync_session_memory_projections(session: &Session, user_id: &str) {
     let project_scope = normalize_project_scope(session.project_id.as_deref());
 
-    if project_scope != "0" {
-        if let Ok(Some(project)) = projects_repo::get_project_by_id(project_scope.as_str()).await {
+    if project_scope != PUBLIC_PROJECT_ID {
+        if let Ok(Some(project)) = ProjectService::get_by_id(project_scope.as_str()).await {
             let same_owner = project
                 .user_id
                 .as_deref()
@@ -277,9 +278,10 @@ async fn sync_session_memory_projections(session: &Session, user_id: &str) {
                     })
                     .await
                 {
-                    eprintln!(
-                        "[SESSIONS] sync memory project failed while creating session: project_id={} err={}",
-                        project.id, err
+                    warn!(
+                        project_id = project.id.as_str(),
+                        error = err.as_str(),
+                        "sync memory project failed while creating session"
                     );
                 }
             }
@@ -287,7 +289,7 @@ async fn sync_session_memory_projections(session: &Session, user_id: &str) {
     } else if let Err(err) =
         chatos_memory_mappings::sync_memory_project(&SyncMemoryProjectRequestDto {
             user_id: Some(user_id.to_string()),
-            project_id: Some("0".to_string()),
+            project_id: Some(PUBLIC_PROJECT_ID.to_string()),
             name: Some("未指定项目".to_string()),
             root_path: None,
             description: None,
@@ -296,9 +298,9 @@ async fn sync_session_memory_projections(session: &Session, user_id: &str) {
         })
         .await
     {
-        eprintln!(
-            "[SESSIONS] sync virtual memory project failed while creating session: err={}",
-            err
+        warn!(
+            error = err.as_str(),
+            "sync virtual memory project failed while creating session"
         );
     }
 }

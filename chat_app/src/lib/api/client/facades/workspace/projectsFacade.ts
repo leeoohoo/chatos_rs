@@ -4,6 +4,13 @@ import type {
   PagingOptions,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectPlanOptions,
+  ProjectPlanResponse,
+  ProjectRequirementDocumentResponse,
+  ProjectRequirementWorkItemsOptions,
+  ProjectRequirementWorkItemsResponse,
+  ProjectRequirementExecuteResponse,
+  ProjectRequirementStopResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
@@ -14,10 +21,30 @@ import type ApiClient from '../../../client';
 
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
-  createProject(data: { name: string; root_path: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
-  updateProject(id: string, data: { name?: string; root_path?: string; description?: string }): Promise<ProjectResponse>;
+  createProject(data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string }): Promise<ProjectResponse>;
+  updateProject(id: string, data: { name?: string; root_path?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
+  getProjectPlan(projectId: string, options?: ProjectPlanOptions): Promise<ProjectPlanResponse>;
+  listProjectRequirementWorkItems(
+    projectId: string,
+    requirementId: string,
+    options?: ProjectRequirementWorkItemsOptions,
+  ): Promise<ProjectRequirementWorkItemsResponse>;
+  listProjectRequirementDocuments(
+    projectId: string,
+    requirementId: string,
+  ): Promise<ProjectRequirementDocumentResponse[]>;
+  executeProjectRequirement(
+    projectId: string,
+    requirementId: string,
+    data?: { contact_id?: string },
+  ): Promise<ProjectRequirementExecuteResponse>;
+  stopProjectRequirementExecution(
+    projectId: string,
+    requirementId: string,
+    data?: { contact_id?: string },
+  ): Promise<ProjectRequirementStopResponse>;
   analyzeProjectRun(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunCatalog(projectId: string): Promise<ProjectRunCatalogResponse>;
   getProjectRunState(projectId: string): Promise<ProjectRunStateResponse>;
@@ -63,6 +90,30 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async getProject(id) {
     return workspaceApi.getProject(this.getRequestFn(), id);
+  },
+  async getProjectPlan(projectId, options) {
+    return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);
+  },
+  async listProjectRequirementWorkItems(projectId, requirementId, options) {
+    return workspaceApi.listProjectRequirementWorkItems(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+      options,
+    );
+  },
+  async listProjectRequirementDocuments(projectId, requirementId) {
+    return workspaceApi.listProjectRequirementDocuments(
+      this.getRequestFn(),
+      projectId,
+      requirementId,
+    );
+  },
+  async executeProjectRequirement(projectId, requirementId, data) {
+    return workspaceApi.executeProjectRequirement(this.getRequestFn(), projectId, requirementId, data);
+  },
+  async stopProjectRequirementExecution(projectId, requirementId, data) {
+    return workspaceApi.stopProjectRequirementExecution(this.getRequestFn(), projectId, requirementId, data);
   },
   async analyzeProjectRun(projectId) {
     return workspaceApi.analyzeProjectRun(this.getRequestFn(), projectId);

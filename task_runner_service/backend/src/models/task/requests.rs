@@ -10,6 +10,10 @@ pub struct CreateTaskRequest {
     pub priority: Option<i32>,
     pub tags: Option<Vec<String>>,
     pub default_model_config_id: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub task_profile: Option<String>,
     pub tenant_id: Option<String>,
     pub subject_id: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
@@ -20,6 +24,7 @@ pub struct CreateTaskRequest {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskSourceContext {
+    pub project_id: Option<String>,
     pub parent_task_id: Option<String>,
     pub source_run_id: Option<String>,
     pub source_session_id: Option<String>,
@@ -39,6 +44,8 @@ pub struct UpdateTaskRequest {
     pub priority: Option<i32>,
     pub tags: Option<Vec<String>>,
     pub default_model_config_id: Option<String>,
+    #[serde(default)]
+    pub task_profile: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,
     pub mcp_config: Option<TaskMcpConfig>,
     #[serde(default)]
@@ -92,6 +99,7 @@ pub struct UpdateTaskMcpRequest {
     pub workspace_dir: Option<String>,
     pub default_remote_server_id: Option<String>,
     pub external_mcp_config_ids: Option<Vec<String>>,
+    pub skill_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -100,13 +108,16 @@ pub struct TaskListFilters {
     pub keyword: Option<String>,
     pub tag: Option<String>,
     pub model_config_id: Option<String>,
+    pub project_id: Option<String>,
     pub creator_user_id: Option<String>,
     pub scheduled_only: Option<bool>,
     pub parent_task_id: Option<String>,
+    pub include_subtasks: Option<bool>,
     pub source_run_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_ids: Vec<String>,
     pub source_turn_ids: Vec<String>,
+    pub task_profile: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }

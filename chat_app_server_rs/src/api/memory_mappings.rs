@@ -12,7 +12,7 @@ use crate::core::user_scope::resolve_user_id;
 use crate::models::memory_mapping_types::{
     SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
 };
-use crate::repositories::projects::get_project_by_id;
+use crate::models::project::ProjectService;
 use crate::services::chatos_memory_mappings;
 
 #[derive(Debug, Deserialize)]
@@ -137,7 +137,7 @@ async fn sync_project_agent_link(
 }
 
 async fn load_project_owner_user_id(project_id: &str) -> Result<String, (StatusCode, Json<Value>)> {
-    match get_project_by_id(project_id).await {
+    match ProjectService::get_by_id(project_id).await {
         Ok(Some(project)) => project
             .user_id
             .as_deref()

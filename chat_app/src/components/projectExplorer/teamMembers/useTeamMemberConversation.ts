@@ -406,6 +406,7 @@ export const useTeamMemberConversation = ({
         projectId,
         projectRoot: projectRootPath || null,
         workspaceRoot: null,
+        planMode: runtimeOptions?.planMode === true,
       });
     } catch (error) {
       console.error('Failed to send message in team pane:', error);

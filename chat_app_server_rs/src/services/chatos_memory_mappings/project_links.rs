@@ -1,8 +1,8 @@
 use crate::models::memory_mapping_types::{
     MemoryProjectAgentLinkDto, MemoryProjectContactDto, SyncProjectAgentLinkRequestDto,
 };
+use crate::models::project::{normalize_project_id, ProjectService, PUBLIC_PROJECT_ID};
 use crate::repositories::chatos_memory_mappings as mappings_repo;
-use crate::repositories::projects;
 
 use super::support::{max_timestamp, project_agent_link_to_dto};
 
@@ -16,13 +16,8 @@ pub async fn sync_project_agent_link(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "user_id is required".to_string())?
         .to_string();
-    let project_id = payload
-        .project_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("0")
-        .to_string();
+    let project_id =
+        normalize_project_id(payload.project_id.as_deref().unwrap_or(PUBLIC_PROJECT_ID));
     let agent_id = payload
         .agent_id
         .as_deref()
@@ -58,7 +53,11 @@ pub async fn sync_project_agent_link(
             root_path: None,
             description: None,
             status: Some("active".to_string()),
-            is_virtual: Some(if project_id == "0" { 1 } else { 0 }),
+            is_virtual: Some(if project_id == PUBLIC_PROJECT_ID {
+                1
+            } else {
+                0
+            }),
         })
         .await?;
     }
@@ -102,17 +101,12 @@ pub async fn touch_current_project_contact_session(
     if session_id.is_empty() {
         return Ok(false);
     }
-    let project_id = project_id.trim();
-    let project_id = if project_id.is_empty() {
-        "0"
-    } else {
-        project_id
-    };
+    let project_id = normalize_project_id(project_id);
 
     let updated = mappings_repo::touch_project_agent_link_session(
         mappings_repo::TouchProjectAgentLinkSessionInput {
             user_id: user_id.to_string(),
-            project_id: project_id.to_string(),
+            project_id,
             agent_id: agent_id.to_string(),
             contact_id: contact_id.to_string(),
             latest_session_id: session_id.to_string(),
@@ -133,13 +127,8 @@ pub async fn delete_project_contact_link(
     if user_id.is_empty() || contact_id.is_empty() {
         return Ok(false);
     }
-    let project_id = project_id.trim();
-    let project_id = if project_id.is_empty() {
-        "0"
-    } else {
-        project_id
-    };
-    mappings_repo::delete_project_agent_link(user_id, project_id, Some(contact_id)).await
+    let project_id = normalize_project_id(project_id);
+    mappings_repo::delete_project_agent_link(user_id, project_id.as_str(), Some(contact_id)).await
 }
 
 pub async fn list_project_contacts(
@@ -147,7 +136,7 @@ pub async fn list_project_contacts(
     limit: Option<i64>,
     offset: i64,
 ) -> Result<Vec<MemoryProjectContactDto>, String> {
-    let owner = projects::get_project_by_id(project_id)
+    let owner = ProjectService::get_by_id(project_id)
         .await?
         .ok_or_else(|| "project not found".to_string())?;
     let owner_user_id = owner

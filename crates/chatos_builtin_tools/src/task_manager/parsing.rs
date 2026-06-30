@@ -123,6 +123,9 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
             .map(|value| parse_tags(value, "task.tags"))
             .transpose()?
             .unwrap_or_default(),
+        prerequisite_task_id: optional_string(map, "prerequisite_task_id")
+            .or_else(|| optional_string(map, "prerequisiteTaskId")),
+        prerequisite_task_ids: parse_prerequisite_task_ids(map)?,
         due_at: optional_string(map, "due_at").or_else(|| optional_string(map, "dueAt")),
         outcome_summary: optional_string(map, "outcome_summary")
             .or_else(|| optional_string(map, "outcomeSummary"))
@@ -145,6 +148,22 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
             .or_else(|| optional_string(map, "blockerKind"))
             .unwrap_or_default(),
     })
+}
+
+fn parse_prerequisite_task_ids(map: &Map<String, Value>) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for key in [
+        "prerequisite_task_ids",
+        "prerequisiteTaskIds",
+        "prerequisite_tasks",
+        "prerequisiteTasks",
+    ] {
+        let Some(value) = map.get(key) else {
+            continue;
+        };
+        out.extend(parse_tags(value, key)?);
+    }
+    Ok(out)
 }
 
 fn parse_tags(value: &Value, field: &str) -> Result<Vec<String>, String> {

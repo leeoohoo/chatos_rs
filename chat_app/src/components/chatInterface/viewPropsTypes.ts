@@ -21,6 +21,7 @@ export interface ChatInterfaceConversationState {
   supportedFileTypes: string[];
   supportsReasoning: boolean;
   reasoningEnabled: boolean;
+  planModeEnabled: boolean;
   selectedModelId: string | null;
   selectedModelName: string | null;
   selectedThinkingLevel: string | null;
@@ -39,6 +40,7 @@ export interface ChatInterfaceConversationActions {
   toggleSidebar: () => void;
   handleMessageSend: ComponentProps<typeof ChatConversationPane>['onSend'];
   updateReasoningEnabled: (enabled: boolean) => void;
+  updatePlanModeEnabled: (enabled: boolean) => void;
   setSelectedModel: (modelId: string | null) => void;
   setSelectedModelName: (modelName: string | null) => void;
   setSelectedThinkingLevel: (level: string | null) => void;

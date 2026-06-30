@@ -1,12 +1,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
+
+use tokio::process::Command;
 
 use super::chatos_skills_helpers::{
     ensure_dir, has_parent_path_component, normalize_plugin_source, sanitize_repo_name,
 };
+use crate::utils::process_output::run_command_limited;
 
-pub fn ensure_git_repo(
+const SKILL_GIT_STDOUT_LIMIT_BYTES: usize = 1024 * 1024;
+const SKILL_GIT_STDERR_LIMIT_BYTES: usize = 1024 * 1024;
+const SKILL_GIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+pub async fn ensure_git_repo(
     repo_url: &str,
     branch: Option<&str>,
     cache_root: &Path,
@@ -16,13 +23,17 @@ pub fn ensure_git_repo(
     let repo_path = cache_root.join(safe_name);
 
     if repo_path.exists() {
-        fs::remove_dir_all(repo_path.as_path()).map_err(|err| {
-            format!(
-                "remove old repo failed ({}): {}",
-                repo_path.to_string_lossy(),
-                err
-            )
-        })?;
+        let path = repo_path.clone();
+        tokio::task::spawn_blocking(move || fs::remove_dir_all(path.as_path()))
+            .await
+            .map_err(|err| format!("remove old repo task failed: {err}"))?
+            .map_err(|err| {
+                format!(
+                    "remove old repo failed ({}): {}",
+                    repo_path.to_string_lossy(),
+                    err
+                )
+            })?;
     }
 
     let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
@@ -32,7 +43,7 @@ pub fn ensure_git_repo(
     }
     args.push(repo_url.to_string());
     args.push(repo_path.to_string_lossy().to_string());
-    run_git(args.as_slice())?;
+    run_git(args.as_slice()).await?;
     Ok(repo_path)
 }
 
@@ -64,17 +75,31 @@ pub fn copy_plugin_source_from_repo(
     Ok(dest_rel)
 }
 
-fn run_git(args: &[String]) -> Result<(), String> {
-    let output = Command::new("git")
+async fn run_git(args: &[String]) -> Result<(), String> {
+    let mut command = Command::new("git");
+    command
         .args(args)
-        .output()
-        .map_err(|err| format!("git execution failed: {}", err))?;
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_MERGE_AUTOEDIT", "no");
+    let output = run_command_limited(
+        command,
+        SKILL_GIT_TIMEOUT,
+        SKILL_GIT_STDOUT_LIMIT_BYTES,
+        SKILL_GIT_STDERR_LIMIT_BYTES,
+        "plugin git",
+    )
+    .await
+    .map_err(|err| format!("git execution failed: {err}"))?;
 
     if output.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(output.stderr.as_slice())
+        .trim()
+        .to_string();
+    let stdout = String::from_utf8_lossy(output.stdout.as_slice())
+        .trim()
+        .to_string();
     let detail = if !stderr.is_empty() { stderr } else { stdout };
     Err(format!(
         "git command failed (exit={}): {}",

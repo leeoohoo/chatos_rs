@@ -37,6 +37,7 @@ mod tests {
                 description: Some("负责前端排障".to_string()),
                 category: Some("frontend".to_string()),
                 role_definition: "专注组件与状态问题".to_string(),
+                task_runner_agent_account_id: None,
                 plugin_sources: vec!["frontend_toolkit".to_string()],
                 runtime_plugins: vec![ChatosAgentRuntimePluginSummaryDto {
                     source: "frontend_toolkit".to_string(),
@@ -98,6 +99,7 @@ mod tests {
             description: None,
             category: None,
             role_definition: "专注问题排查".to_string(),
+            task_runner_agent_account_id: None,
             plugin_sources: vec!["frontend_toolkit".to_string()],
             runtime_plugins: vec![],
             skills: vec![],
@@ -142,6 +144,7 @@ mod tests {
                 description: Some("Handles frontend debugging".to_string()),
                 category: Some("frontend".to_string()),
                 role_definition: "Focus on components and state bugs".to_string(),
+                task_runner_agent_account_id: None,
                 plugin_sources: vec![],
                 runtime_plugins: vec![],
                 skills: Vec::new(),

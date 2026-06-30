@@ -125,7 +125,8 @@ async fn create_message(
 }
 
 async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    let result = conversation_messages::get_message_by_id(&id).await;
+    let result =
+        conversation_messages::get_message_by_id_for_user(&id, auth.user_id.as_str()).await;
 
     match result {
         Ok(Some(msg)) => {
@@ -149,7 +150,8 @@ async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Jso
 }
 
 async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    let load_result = conversation_messages::get_message_by_id(&id).await;
+    let load_result =
+        conversation_messages::get_message_by_id_for_user(&id, auth.user_id.as_str()).await;
 
     let message = match load_result {
         Ok(Some(msg)) => msg,
@@ -169,7 +171,12 @@ async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, 
     if let Err(err) = ensure_owned_session(&message.session_id, &auth).await {
         return map_session_access_error(err);
     }
-    let delete_result = match conversation_messages::delete_message_by_id(&id).await {
+    let delete_result = match conversation_messages::delete_message_by_id_for_user(
+        &id,
+        auth.user_id.as_str(),
+    )
+    .await
+    {
         Ok(true) => Ok(()),
         Ok(false) => Err("消息不存在".to_string()),
         Err(err) => Err(err),

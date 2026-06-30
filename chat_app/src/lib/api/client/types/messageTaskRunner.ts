@@ -139,4 +139,8 @@ export interface MessageTaskRunnerRunDetailResponse {
   run: MessageTaskRunnerRun;
   model_config?: MessageTaskRunnerModelConfigSummary | null;
   events: MessageTaskRunnerRunEvent[];
+  events_total?: number;
+  events_limit?: number;
+  events_offset?: number;
+  events_has_more?: boolean;
 }

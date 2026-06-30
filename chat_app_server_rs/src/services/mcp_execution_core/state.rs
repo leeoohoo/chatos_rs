@@ -3,14 +3,15 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::core::mcp_tools::{BuiltinToolService, ToolInfo};
-use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
+use crate::services::mcp_loader::McpBuiltinServer;
 
-use super::{build_builtin_tool_state, build_tool_state};
+use super::build_builtin_tool_state;
 
 #[derive(Clone, Default)]
 pub(crate) struct McpToolState {
     tools: Vec<Value>,
     tool_metadata: HashMap<String, ToolInfo>,
+    tool_aliases: HashMap<String, String>,
     unavailable_tools: Vec<Value>,
     builtin_services: HashMap<String, BuiltinToolService>,
 }
@@ -20,24 +21,6 @@ impl McpToolState {
         Self::default()
     }
 
-    pub(crate) async fn build_all(
-        &mut self,
-        http_servers: &[McpHttpServer],
-        stdio_servers: &[McpStdioServer],
-        builtin_servers: &[McpBuiltinServer],
-    ) -> Result<(), String> {
-        build_tool_state(
-            &mut self.tools,
-            &mut self.tool_metadata,
-            &mut self.unavailable_tools,
-            &mut self.builtin_services,
-            http_servers,
-            stdio_servers,
-            builtin_servers,
-        )
-        .await
-    }
-
     pub(crate) fn build_builtin_only(
         &mut self,
         builtin_servers: &[McpBuiltinServer],
@@ -45,6 +28,7 @@ impl McpToolState {
         build_builtin_tool_state(
             &mut self.tools,
             &mut self.tool_metadata,
+            &mut self.tool_aliases,
             &mut self.unavailable_tools,
             &mut self.builtin_services,
             builtin_servers,
@@ -59,9 +43,18 @@ impl McpToolState {
         &self.tool_metadata
     }
 
+    pub(crate) fn tool_aliases(&self) -> &HashMap<String, String> {
+        &self.tool_aliases
+    }
+
     #[cfg(test)]
     pub(crate) fn tool_metadata_mut(&mut self) -> &mut HashMap<String, ToolInfo> {
         &mut self.tool_metadata
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tool_aliases_mut(&mut self) -> &mut HashMap<String, String> {
+        &mut self.tool_aliases
     }
 
     pub(crate) fn unavailable_tools(&self) -> Vec<Value> {

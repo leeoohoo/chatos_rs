@@ -1,12 +1,14 @@
 use regex::RegexBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 pub const DEFAULT_MAX_RESULTS: usize = 100;
 pub const MAX_RESULTS: usize = 500;
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const DEFAULT_MAX_VISITS: usize = 20_000;
+pub const DEFAULT_SEARCH_DEADLINE: Duration = Duration::from_secs(3);
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &[
     ".git",
@@ -30,6 +32,7 @@ pub struct TextSearchRequest {
     pub max_visits: usize,
     pub case_sensitive: bool,
     pub whole_word: bool,
+    pub deadline: Option<Duration>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -56,6 +59,8 @@ fn truncate_snippet(value: &str, max_chars: usize) -> String {
 }
 
 pub fn search_text(request: &TextSearchRequest) -> Result<TextSearchResponse, String> {
+    let started_at = Instant::now();
+    let deadline = request.deadline.unwrap_or(DEFAULT_SEARCH_DEADLINE);
     let root = request.root.clone();
     if !root.exists() {
         return Err("路径不存在".to_string());
@@ -91,6 +96,11 @@ pub fn search_text(request: &TextSearchRequest) -> Result<TextSearchResponse, St
     let mut truncated = false;
 
     for item in walker {
+        if search_deadline_exceeded(started_at, deadline) {
+            truncated = true;
+            break;
+        }
+
         let entry = match item {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -136,6 +146,11 @@ pub fn search_text(request: &TextSearchRequest) -> Result<TextSearchResponse, St
         };
 
         for (index, line) in content.split('\n').enumerate() {
+            if index % 128 == 0 && search_deadline_exceeded(started_at, deadline) {
+                truncated = true;
+                break;
+            }
+
             let normalized = line.trim_end_matches('\r');
             let snippet = truncate_snippet(normalized, 400);
             let path = entry.path().to_string_lossy().to_string();
@@ -177,6 +192,10 @@ pub fn search_text(request: &TextSearchRequest) -> Result<TextSearchResponse, St
         truncated,
         visited_dirs,
     })
+}
+
+fn search_deadline_exceeded(started_at: Instant, deadline: Duration) -> bool {
+    started_at.elapsed() >= deadline
 }
 
 fn should_visit(path: &Path, depth: usize) -> bool {
@@ -281,6 +300,7 @@ mod tests {
     use super::{search_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_VISITS};
     use std::fs;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     fn make_temp_root() -> PathBuf {
         let root =
@@ -302,6 +322,7 @@ mod tests {
             max_visits: DEFAULT_MAX_VISITS,
             case_sensitive: true,
             whole_word: false,
+            deadline: None,
         })
         .expect("search text");
 
@@ -331,6 +352,7 @@ mod tests {
             max_visits: DEFAULT_MAX_VISITS,
             case_sensitive: true,
             whole_word: true,
+            deadline: None,
         })
         .expect("search text");
 
@@ -353,6 +375,7 @@ mod tests {
             max_visits: DEFAULT_MAX_VISITS,
             case_sensitive: true,
             whole_word: false,
+            deadline: None,
         })
         .expect("search text");
 
@@ -378,6 +401,7 @@ mod tests {
             max_visits: DEFAULT_MAX_VISITS,
             case_sensitive: true,
             whole_word: false,
+            deadline: None,
         })
         .expect("search text");
 
@@ -387,6 +411,29 @@ mod tests {
         assert_eq!(hit.column, 451);
         assert_eq!(hit.text.chars().count(), 400);
         assert!(hit.text.chars().all(|ch| ch == '页'));
+
+        fs::remove_dir_all(root).expect("cleanup root");
+    }
+
+    #[test]
+    fn search_text_marks_truncated_when_deadline_is_exceeded() {
+        let root = make_temp_root();
+        fs::write(root.join("sample.txt"), "needle\n").expect("write file");
+
+        let response = search_text(&TextSearchRequest {
+            root: root.clone(),
+            query: "needle".to_string(),
+            max_results: 50,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_visits: DEFAULT_MAX_VISITS,
+            case_sensitive: true,
+            whole_word: false,
+            deadline: Some(Duration::ZERO),
+        })
+        .expect("search text");
+
+        assert!(response.truncated);
+        assert!(response.entries.is_empty());
 
         fs::remove_dir_all(root).expect("cleanup root");
     }

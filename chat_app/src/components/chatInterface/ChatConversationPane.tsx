@@ -1,11 +1,14 @@
-import React, { useState, type ComponentProps } from 'react';
+import React, { useMemo, useState, type ComponentProps } from 'react';
 
 import { MessageList } from '../MessageList';
 import { MessageTaskDrawer } from '../messageTasks/MessageTaskDrawer';
 import ConversationUserMessagesSidebar from '../userMessages/ConversationUserMessagesSidebar';
+import { getLatestUserMessageRefreshKey } from '../userMessages/userMessageRefreshKey';
 import { useUserMessageHistoryAnchor } from '../userMessages/useUserMessageHistoryAnchor';
 import ChatComposerPanel from './ChatComposerPanel';
+import ConversationAskUserPromptPanel from './ConversationAskUserPromptPanel';
 import SummaryPane from './SummaryPane';
+import { PUBLIC_PROJECT_ID } from '../../features/contactSession/sessionResolver';
 import type {
   ChatInterfaceProps,
   Message,
@@ -18,6 +21,11 @@ import { useI18n } from '../../i18n/I18nProvider';
 
 type SummaryPaneProps = ComponentProps<typeof SummaryPane>;
 type ChatComposerPanelProps = ComponentProps<typeof ChatComposerPanel>;
+
+const hasConcreteProjectContext = (projectId: string | null | undefined): boolean => {
+  const normalized = typeof projectId === 'string' ? projectId.trim() : '';
+  return normalized.length > 0 && normalized !== '0' && normalized !== PUBLIC_PROJECT_ID;
+};
 
 interface ChatConversationPaneProps {
   currentSession: Session | null;
@@ -47,6 +55,8 @@ interface ChatConversationPaneProps {
   supportsReasoning: boolean;
   reasoningEnabled: boolean;
   onReasoningToggle: (enabled: boolean) => void;
+  planModeEnabled: boolean;
+  onPlanModeToggle: (enabled: boolean) => void;
   selectedModelId: string | null;
   selectedModelName?: string | null;
   selectedThinkingLevel?: string | null;
@@ -211,6 +221,8 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   supportsReasoning,
   reasoningEnabled,
   onReasoningToggle,
+  planModeEnabled,
+  onPlanModeToggle,
   selectedModelId,
   selectedModelName,
   selectedThinkingLevel,
@@ -230,6 +242,15 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
 }) => {
   const [taskMessage, setTaskMessage] = useState<Message | null>(null);
   const userMessageSidebarVisible = Boolean(currentSession?.id && currentContactId);
+  const planModeAvailable = hasConcreteProjectContext(currentProjectIdForMemory);
+  const askUserPromptProjectId = currentSession?.project_id
+    || currentSession?.projectId
+    || currentProjectIdForMemory
+    || null;
+  const userMessagesRefreshKey = useMemo(
+    () => getLatestUserMessageRefreshKey(messages, currentSession?.id || null),
+    [currentSession?.id, messages],
+  );
   const {
     anchorMessageId,
     anchorRequestKey,
@@ -248,6 +269,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
       {userMessageSidebarVisible ? (
         <ConversationUserMessagesSidebar
           sessionId={currentSession?.id || null}
+          refreshKey={userMessagesRefreshKey}
           className="w-[360px]"
           summaryActive={sessionSummaryPaneVisible}
           runtimeContextActive={Boolean(
@@ -293,34 +315,43 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
         </div>
 
         {currentSession && (
-          <ChatComposerPanel
-            onSend={onSend}
-            inputDisabled={inputDisabled}
-            supportedFileTypes={supportedFileTypes}
-            reasoningSupported={supportsReasoning}
-            reasoningEnabled={reasoningEnabled}
-            onReasoningToggle={onReasoningToggle}
-            selectedModelId={selectedModelId}
-            selectedModelName={selectedModelName}
-            selectedThinkingLevel={selectedThinkingLevel}
-            availableModels={availableModels}
-            onModelChange={onModelChange}
-            onModelNameChange={onModelNameChange}
-            onThinkingLevelChange={onThinkingLevelChange}
-            onModelRuntimeChange={onModelRuntimeChange}
-            availableProjects={availableProjects}
-            currentProject={currentProject}
-            selectedProjectId={null}
-            onProjectChange={onProjectChange}
-            showProjectSelector={false}
-            showProjectFileButton={false}
-            workspaceRoot={workspaceRoot}
-            onWorkspaceRootChange={onWorkspaceRootChange}
-            currentRemoteConnectionId={currentRemoteConnectionId}
-            availableRemoteConnections={availableRemoteConnections}
-            onRemoteConnectionChange={onRemoteConnectionChange}
-            showWorkspaceRootPicker={true}
-          />
+          <>
+            <ConversationAskUserPromptPanel
+              sessionId={currentSession.id}
+              projectId={askUserPromptProjectId}
+            />
+            <ChatComposerPanel
+              onSend={onSend}
+              inputDisabled={inputDisabled}
+              supportedFileTypes={supportedFileTypes}
+              reasoningSupported={supportsReasoning}
+              reasoningEnabled={reasoningEnabled}
+              onReasoningToggle={onReasoningToggle}
+              planModeAvailable={planModeAvailable}
+              planModeEnabled={planModeEnabled}
+              onPlanModeToggle={onPlanModeToggle}
+              selectedModelId={selectedModelId}
+              selectedModelName={selectedModelName}
+              selectedThinkingLevel={selectedThinkingLevel}
+              availableModels={availableModels}
+              onModelChange={onModelChange}
+              onModelNameChange={onModelNameChange}
+              onThinkingLevelChange={onThinkingLevelChange}
+              onModelRuntimeChange={onModelRuntimeChange}
+              availableProjects={availableProjects}
+              currentProject={currentProject}
+              selectedProjectId={planModeAvailable ? currentProjectIdForMemory : null}
+              onProjectChange={onProjectChange}
+              showProjectSelector={false}
+              showProjectFileButton={false}
+              workspaceRoot={workspaceRoot}
+              onWorkspaceRootChange={onWorkspaceRootChange}
+              currentRemoteConnectionId={currentRemoteConnectionId}
+              availableRemoteConnections={availableRemoteConnections}
+              onRemoteConnectionChange={onRemoteConnectionChange}
+              showWorkspaceRootPicker={true}
+            />
+          </>
         )}
       </div>
 

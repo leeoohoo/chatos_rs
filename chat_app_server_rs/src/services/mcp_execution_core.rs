@@ -15,17 +15,14 @@ pub(crate) use self::execution::{
     execute_tools_stream_with_registry, parse_tool_args, response_tool_name, tool_call_name,
 };
 pub(crate) use self::executor::McpExecutorCore;
-pub(crate) use self::lifecycle::{build_builtin_tool_state, build_tool_state};
+pub(crate) use self::lifecycle::build_builtin_tool_state;
 #[cfg(test)]
 pub(crate) use self::parallelism::should_parallelize_tool_batch;
-pub(crate) use self::registration::{
-    codex_gateway_request_tools, register_tools_from_builtin, register_tools_from_http,
-    register_tools_from_stdio,
-};
+pub(crate) use self::registration::{codex_gateway_request_tools, register_tools_from_builtin};
 pub(crate) use self::state::McpToolState;
 
 #[cfg(test)]
-use self::execution::execute_tools_stream_parallel;
+use self::execution::{execute_tools_stream_parallel, is_heavy_io_tool_name};
 #[cfg(test)]
 use self::parallelism::{
     has_conflicting_tool_profiles, paths_overlap, ToolAccessKind, ToolAccessProfile, ToolScope,
@@ -41,8 +38,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        execute_tools_stream_parallel, has_conflicting_tool_profiles, paths_overlap,
-        ToolAccessKind, ToolAccessProfile, ToolScope,
+        execute_tools_stream_parallel, has_conflicting_tool_profiles, is_heavy_io_tool_name,
+        paths_overlap, ToolAccessKind, ToolAccessProfile, ToolScope,
     };
 
     #[test]
@@ -111,6 +108,24 @@ mod tests {
     #[test]
     fn path_overlap_treats_root_as_overlapping_everything() {
         assert!(paths_overlap(".", "src"));
+    }
+
+    #[test]
+    fn heavy_io_tool_policy_covers_workspace_file_operations() {
+        for name in [
+            "read_file",
+            "read_file_range",
+            "read_file_raw",
+            "search_text",
+            "list_dir",
+            "write_file",
+            "edit_file",
+            "apply_patch",
+        ] {
+            assert!(is_heavy_io_tool_name(name), "{name} should be IO limited");
+        }
+        assert!(!is_heavy_io_tool_name("get_recent_logs"));
+        assert!(!is_heavy_io_tool_name("web_search"));
     }
 
     #[tokio::test]

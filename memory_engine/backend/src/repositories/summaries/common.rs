@@ -1,12 +1,12 @@
 use futures_util::TryStreamExt;
 use mongodb::{
+    bson::{doc, Document},
     Cursor,
-    bson::{Document, doc},
 };
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::{EngineSummary, now_rfc3339};
+use crate::models::{now_rfc3339, EngineSummary};
 
 pub(crate) fn summary_collection(db: &Db) -> mongodb::Collection<EngineSummary> {
     db.collection::<EngineSummary>("engine_summaries")

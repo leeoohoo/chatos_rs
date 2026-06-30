@@ -1,5 +1,8 @@
-use crate::services::{McpCatalogService, ModelConfigService, RunService, TaskService};
-use crate::ui_prompt_service::UiPromptService;
+use crate::ask_user_prompt_service::AskUserPromptService;
+use crate::services::{
+    ExternalMcpConfigService, McpCatalogService, ModelConfigService, RunService, SkillService,
+    TaskService,
+};
 
 mod access;
 mod chatos_async_planner;
@@ -37,8 +40,10 @@ const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
 pub struct TaskRunnerMcpService {
     task_service: TaskService,
     model_config_service: ModelConfigService,
+    external_mcp_config_service: ExternalMcpConfigService,
+    skill_service: SkillService,
     run_service: RunService,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
     mcp_catalog_service: McpCatalogService,
 }
 
@@ -46,15 +51,19 @@ impl TaskRunnerMcpService {
     pub(crate) fn new(
         task_service: TaskService,
         model_config_service: ModelConfigService,
+        external_mcp_config_service: ExternalMcpConfigService,
+        skill_service: SkillService,
         run_service: RunService,
-        ui_prompt_service: UiPromptService,
+        ask_user_prompt_service: AskUserPromptService,
         mcp_catalog_service: McpCatalogService,
     ) -> Self {
         Self {
             task_service,
             model_config_service,
+            external_mcp_config_service,
+            skill_service,
             run_service,
-            ui_prompt_service,
+            ask_user_prompt_service,
             mcp_catalog_service,
         }
     }

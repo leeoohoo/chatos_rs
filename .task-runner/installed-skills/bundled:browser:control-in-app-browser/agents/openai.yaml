@@ -1,0 +1,4 @@
+interface:
+  display_name: "Browser"
+  short_description: "Browser lets Codex open and control the in-app browser, mainly for local development pages and files. Use it to navigate, inspect, click, type, and take screenshots while testing pages inside Codex."
+  default_prompt: "Inspect the current in-app browser tab or open a local app in the in-app browser and verify it."

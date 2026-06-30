@@ -4,7 +4,21 @@ use super::*;
 pub(in crate::services) fn build_task_runner_builtin_provider(
     server: &McpBuiltinServer,
     task_service: TaskService,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
+) -> Result<Option<TaskRunnerBuiltinProvider>, String> {
+    build_task_runner_builtin_provider_with_project_management_options(
+        server,
+        task_service,
+        ask_user_prompt_service,
+        None,
+    )
+}
+
+pub(in crate::services) fn build_task_runner_builtin_provider_with_project_management_options(
+    server: &McpBuiltinServer,
+    task_service: TaskService,
+    ask_user_prompt_service: AskUserPromptService,
+    project_management_execution_options: Option<ProjectManagementExecutionOptions>,
 ) -> Result<Option<TaskRunnerBuiltinProvider>, String> {
     let Some(kind) = builtin_kind_by_any(server.kind.as_str()) else {
         return Ok(None);
@@ -22,9 +36,14 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
         chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
             build_remote_connection_controller_provider(server, task_service)?
         }
-        chatos_mcp_runtime::BuiltinMcpKind::UiPrompter => {
-            build_ui_prompter_provider(server, ui_prompt_service)?
+        chatos_mcp_runtime::BuiltinMcpKind::AskUser => {
+            build_ask_user_provider(server, ask_user_prompt_service)?
         }
+        chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => build_project_management_provider(
+            server,
+            task_service,
+            project_management_execution_options,
+        )?,
         _ => return Ok(build_shared_provider(server)?),
     };
     Ok(Some(provider))
@@ -38,7 +57,11 @@ fn build_task_manager_provider(
         server_name: server.name.clone(),
         review_timeout_ms: REVIEW_TIMEOUT_MS_DEFAULT,
         auto_create_task: true,
-        store: TaskManagerStoreRef::new(Arc::new(TaskRunnerTaskManagerStore::new(task_service))),
+        expose_context_ids: false,
+        store: TaskManagerStoreRef::new(Arc::new(TaskRunnerTaskManagerStore::new(
+            task_service,
+            server.project_id.clone(),
+        ))),
     })?;
     Ok(TaskRunnerBuiltinProvider::new(
         server.name.clone(),
@@ -115,18 +138,37 @@ fn build_remote_connection_controller_provider(
     ))
 }
 
-fn build_ui_prompter_provider(
+fn build_ask_user_provider(
     server: &McpBuiltinServer,
-    ui_prompt_service: UiPromptService,
+    ask_user_prompt_service: AskUserPromptService,
 ) -> Result<TaskRunnerBuiltinProvider, String> {
-    let service = UiPrompterService::new(UiPrompterOptions {
+    let service = AskUserService::new(AskUserOptions {
         server_name: server.name.clone(),
-        prompt_timeout_ms: UI_PROMPT_TIMEOUT_MS_DEFAULT,
-        store: UiPrompterStoreRef::new(Arc::new(ui_prompt_service)),
+        prompt_timeout_ms: ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+        store: AskUserStoreRef::new(Arc::new(ask_user_prompt_service)),
     })?;
     Ok(TaskRunnerBuiltinProvider::new(
         server.name.clone(),
-        TaskRunnerBuiltinToolService::UiPrompter(service),
+        TaskRunnerBuiltinToolService::AskUser(service),
+    ))
+}
+
+fn build_project_management_provider(
+    server: &McpBuiltinServer,
+    task_service: TaskService,
+    execution_options: Option<ProjectManagementExecutionOptions>,
+) -> Result<TaskRunnerBuiltinProvider, String> {
+    let service = ProjectManagementBuiltinService::new(ProjectManagementOptions {
+        server_name: server.name.clone(),
+        base_url: task_service.config.project_service_base_url.clone(),
+        sync_secret: task_service.config.project_service_sync_secret.clone(),
+        owner_user_id: server.user_id.clone(),
+        project_id: server.project_id.clone(),
+        execution_options,
+    });
+    Ok(TaskRunnerBuiltinProvider::new(
+        server.name.clone(),
+        TaskRunnerBuiltinToolService::ProjectManagement(service),
     ))
 }
 

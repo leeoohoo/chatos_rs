@@ -52,6 +52,11 @@ export function RunListTable({
   onCancel,
   onRetry,
 }: RunListTableProps) {
+  function taskOwnerLabel(taskId: string): string {
+    const task = taskMap.get(taskId);
+    return task?.creator_display_name || task?.creator_username || task?.creator_user_id || '-';
+  }
+
   const columns: ColumnsType<TaskRunRecord> = [
     {
       title: t('runs.column.runId'),
@@ -67,6 +72,12 @@ export function RunListTable({
           {taskMap.get(value)?.title || value}
         </Button>
       ),
+    },
+    {
+      title: t('runs.column.owner'),
+      dataIndex: 'task_id',
+      width: 160,
+      render: (value: string) => taskOwnerLabel(value),
     },
     {
       title: t('common.status'),

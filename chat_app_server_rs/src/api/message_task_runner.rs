@@ -72,6 +72,10 @@ fn normalize_text_items(values: Option<Vec<String>>) -> Vec<String> {
         .collect()
 }
 
+fn task_value_is_top_level(value: &Value) -> bool {
+    normalize_text(value.get("parent_task_id").and_then(Value::as_str)).is_none()
+}
+
 async fn list_message_task_runner_tasks(
     auth: AuthUser,
     Path(message_id): Path<String>,
@@ -115,12 +119,13 @@ async fn list_message_task_runner_tasks(
             items
                 .iter()
                 .filter(|item| {
-                    task_matches_message_source(
-                        item,
-                        context.source_session_id.as_str(),
-                        context.source_user_message_id.as_deref(),
-                        context.source_turn_id.as_deref(),
-                    )
+                    task_value_is_top_level(item)
+                        && task_matches_message_source(
+                            item,
+                            context.source_session_id.as_str(),
+                            context.source_user_message_id.as_deref(),
+                            context.source_turn_id.as_deref(),
+                        )
                 })
                 .cloned()
                 .collect::<Vec<_>>()
@@ -231,12 +236,13 @@ async fn get_message_task_runner_graph(
                 items
                     .iter()
                     .filter(|item| {
-                        task_matches_message_source(
-                            item,
-                            context.source_session_id.as_str(),
-                            context.source_user_message_id.as_deref(),
-                            context.source_turn_id.as_deref(),
-                        )
+                        task_value_is_top_level(item)
+                            && task_matches_message_source(
+                                item,
+                                context.source_session_id.as_str(),
+                                context.source_user_message_id.as_deref(),
+                                context.source_turn_id.as_deref(),
+                            )
                     })
                     .cloned()
                     .collect::<Vec<_>>()
@@ -326,6 +332,8 @@ async fn get_message_task_runner_graph_run(
         context.source_session_id.as_str(),
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
+        query.event_limit(),
+        query.event_offset(),
     )
     .await
     {
@@ -361,6 +369,8 @@ async fn get_message_task_runner_run(
         context.source_session_id.as_str(),
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
+        query.event_limit(),
+        query.event_offset(),
     )
     .await
     {

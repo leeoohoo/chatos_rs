@@ -34,7 +34,7 @@ interface SessionListActionsParams {
   setTerminalModalOpen: (value: boolean) => void;
   setKeyFilePickerOpen: (value: boolean) => void;
   openRemoteModalBase: () => void;
-  createProject: (name: string, rootPath: string) => Promise<Project>;
+  createProject: (name: string, rootPath: string, description?: string, gitUrl?: string) => Promise<Project>;
   createTerminal: (cwd: string, name: string) => Promise<Terminal>;
   selectProject: (projectId: string) => Promise<void>;
   selectTerminal: (terminalId: string) => Promise<void>;

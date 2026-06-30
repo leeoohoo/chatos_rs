@@ -2,13 +2,12 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::config::Config;
-use crate::core::auth::{access_token_from_headers, build_auth_token, AuthUser};
-use crate::core::time::now_rfc3339;
+use crate::core::auth::{access_token_from_headers, AuthUser};
 use crate::core::websocket_ticket::issue_websocket_ticket;
-use crate::repositories::auth_users;
-use crate::services::user_service_api_client;
+use crate::services::{new_user_bootstrap, user_service_api_client};
 
 #[derive(Debug, Deserialize)]
 struct LoginRequest {
@@ -36,161 +35,54 @@ pub fn router() -> Router {
 pub fn protected_router() -> Router {
     Router::new()
         .route("/api/auth/ws-ticket", post(issue_ws_ticket))
+        .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
         .route("/api/auth/agent-accounts", get(list_agent_accounts))
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {
-    if let Some(base_url) = configured_user_service_base_url() {
-        return register_via_user_service(base_url.as_str(), req).await;
-    }
-
-    let username = req
-        .username
-        .or(req.email)
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    let password = req
-        .password
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-
-    let Some(username) = username else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "username 为必填项"})),
-        );
-    };
-    let Some(password) = password else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "password 为必填项"})),
-        );
-    };
-
-    if username.chars().count() < 3 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "用户名至少需要 3 个字符"})),
-        );
-    }
-
-    if password.chars().count() < 6 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "密码至少需要 6 个字符"})),
-        );
-    }
-
-    let now = now_rfc3339();
-    let user = auth_users::AuthUserRecord {
-        user_id: username,
-        password_hash: auth_users::hash_password(password.as_str()),
-        role: "user".to_string(),
-        created_at: now.clone(),
-        updated_at: now,
-    };
-
-    match auth_users::create_user(&user).await {
-        Ok(auth_users::CreateUserResult::Created) => build_login_success_response(&user),
-        Ok(auth_users::CreateUserResult::AlreadyExists) => {
-            (StatusCode::CONFLICT, Json(json!({"error": "用户名已存在"})))
-        }
-        Err(err) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({
-                "error": "注册失败",
-                "detail": err
-            })),
-        ),
+    match required_user_service_base_url() {
+        Ok(base_url) => register_via_user_service(base_url.as_str(), req).await,
+        Err(response) => response,
     }
 }
 
 async fn login(Json(req): Json<LoginRequest>) -> (StatusCode, Json<Value>) {
-    if let Some(base_url) = configured_user_service_base_url() {
-        return login_via_user_service(base_url.as_str(), req).await;
+    match required_user_service_base_url() {
+        Ok(base_url) => login_via_user_service(base_url.as_str(), req).await,
+        Err(response) => response,
     }
-    login_inner(req.username, req.email, req.password).await
 }
 
-async fn login_inner(
-    username: Option<String>,
-    email: Option<String>,
-    password: Option<String>,
-) -> (StatusCode, Json<Value>) {
-    let username = username
-        .or(email)
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    let password = password
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-
-    let Some(username) = username else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "username 为必填项"})),
-        );
+async fn me(headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    let base_url = match required_user_service_base_url() {
+        Ok(value) => value,
+        Err(response) => return response,
     };
-    let Some(password) = password else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "password 为必填项"})),
-        );
+    let access_token = match access_token_from_headers(&headers) {
+        Ok(token) => token,
+        Err(err) => return err.into_response(),
     };
-
-    match auth_users::verify_user_password(username.as_str(), password.as_str()).await {
-        Ok(Some(user)) => build_login_success_response(&user),
-        Ok(None) => (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "用户名或密码错误"})),
+    match user_service_api_client::get_me(
+        base_url.as_str(),
+        access_token.as_str(),
+        Config::get().user_service_request_timeout_ms,
+    )
+    .await
+    {
+        Ok(payload) => (
+            StatusCode::OK,
+            Json(json!({
+                "user": user_public_value_from_user_service(payload.user)
+            })),
         ),
         Err(err) => (
-            StatusCode::BAD_GATEWAY,
+            proxy_status_from_user_service_error(err.as_str()),
             Json(json!({
-                "error": "登录失败",
-                "detail": err
+                "error": "fetch user profile via user_service failed",
+                "detail": err,
             })),
         ),
     }
-}
-
-async fn me(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
-    if let Some(base_url) = configured_user_service_base_url() {
-        if let Ok(access_token) = access_token_from_headers(&headers) {
-            match user_service_api_client::get_me(
-                base_url.as_str(),
-                access_token.as_str(),
-                Config::get().user_service_request_timeout_ms,
-            )
-            .await
-            {
-                Ok(payload) => {
-                    return (
-                        StatusCode::OK,
-                        Json(json!({
-                            "user": user_public_value_from_user_service(payload.user)
-                        })),
-                    );
-                }
-                Err(err) => {
-                    return (
-                        StatusCode::BAD_GATEWAY,
-                        Json(json!({
-                            "error": "fetch user profile via user_service failed",
-                            "detail": err,
-                        })),
-                    );
-                }
-            }
-        }
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "user": user_public_value(auth.user_id.as_str(), auth.role.as_str())
-        })),
-    )
 }
 
 async fn issue_ws_ticket(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
@@ -212,11 +104,9 @@ async fn issue_ws_ticket(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Jso
 }
 
 async fn list_agent_accounts(_auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
-    let Some(base_url) = configured_user_service_base_url() else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "user_service is not configured"})),
-        );
+    let base_url = match required_user_service_base_url() {
+        Ok(value) => value,
+        Err(response) => return response,
     };
     let access_token = match access_token_from_headers(&headers) {
         Ok(token) => token,
@@ -240,18 +130,36 @@ async fn list_agent_accounts(_auth: AuthUser, headers: HeaderMap) -> (StatusCode
     }
 }
 
-fn user_public_value(user_id: &str, role: &str) -> Value {
-    json!({
-        "id": user_id,
-        "username": user_id,
-        "email": user_id,
-        "display_name": Value::Null,
-        "role": role,
-        "status": "active",
-        "last_login_at": Value::Null,
-        "created_at": Value::Null,
-        "updated_at": Value::Null,
-    })
+async fn bootstrap_defaults(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    let access_token = match access_token_from_headers(&headers) {
+        Ok(token) => token,
+        Err(err) => return err.into_response(),
+    };
+    match new_user_bootstrap::bootstrap_new_user_defaults(
+        new_user_bootstrap::NewUserBootstrapInput {
+            access_token,
+            user_id: auth.user_id,
+            username: None,
+            display_name: None,
+        },
+    )
+    .await
+    {
+        Ok(report) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "report": report,
+            })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "bootstrap default workspace failed",
+                "detail": err,
+            })),
+        ),
+    }
 }
 
 fn user_public_value_from_user_service(
@@ -284,42 +192,21 @@ fn user_public_value_from_user_service(
     })
 }
 
-fn build_login_success_response(user: &auth_users::AuthUserRecord) -> (StatusCode, Json<Value>) {
-    match Config::try_get() {
-        Ok(cfg) => match build_auth_token(user.user_id.as_str(), user.role.as_str()) {
-            Ok(token) => (
-                StatusCode::OK,
-                Json(json!({
-                    "access_token": token,
-                    "token_type": "Bearer",
-                    "expires_in": cfg.auth_access_token_ttl_seconds,
-                    "user": user_public_value(user.user_id.as_str(), user.role.as_str()),
-                })),
-            ),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "生成登录令牌失败",
-                    "detail": err
-                })),
-            ),
-        },
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": "服务配置未初始化",
-                "detail": err
-            })),
-        ),
-    }
-}
-
 fn configured_user_service_base_url() -> Option<String> {
     Config::try_get()
         .ok()
         .and_then(|cfg| cfg.user_service_base_url.clone())
         .map(|value| value.trim().trim_end_matches('/').to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn required_user_service_base_url() -> Result<String, (StatusCode, Json<Value>)> {
+    configured_user_service_base_url().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "CHATOS_USER_SERVICE_BASE_URL is required"})),
+        )
+    })
 }
 
 async fn register_via_user_service(
@@ -355,7 +242,26 @@ async fn register_via_user_service(
     )
     .await
     {
-        Ok(payload) => proxy_login_success_response(payload),
+        Ok(payload) => {
+            if let Err(err) = new_user_bootstrap::bootstrap_new_user_defaults(
+                new_user_bootstrap::NewUserBootstrapInput {
+                    access_token: payload.token.clone(),
+                    user_id: payload.user.id.clone(),
+                    username: payload.user.username.clone(),
+                    display_name: payload.user.display_name.clone(),
+                },
+            )
+            .await
+            {
+                warn!(
+                    user_id = payload.user.id.as_str(),
+                    username = payload.user.username.as_deref().unwrap_or_default(),
+                    error = err.as_str(),
+                    "bootstrap new user defaults failed"
+                );
+            }
+            proxy_login_success_response(payload)
+        }
         Err(err) => (
             proxy_status_from_user_service_error(err.as_str()),
             Json(json!({

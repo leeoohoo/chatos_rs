@@ -6,7 +6,7 @@ use crate::core::values::optional_string_bson;
 use crate::models::memory_mapping::{ChatosProjectAgentLink, ChatosProjectAgentLinkRow};
 use crate::repositories::db::with_db;
 
-use super::support::normalize_optional_text;
+use super::support::{normalize_optional_text, normalize_project_id};
 
 #[derive(Debug, Clone)]
 pub struct UpsertProjectAgentLinkInput {
@@ -23,8 +23,7 @@ pub async fn upsert_project_agent_link(
     input: UpsertProjectAgentLinkInput,
 ) -> Result<Option<ChatosProjectAgentLink>, String> {
     let now = crate::core::time::now_rfc3339();
-    let project_id =
-        normalize_optional_text(Some(input.project_id.as_str())).unwrap_or_else(|| "0".to_string());
+    let project_id = normalize_project_id(input.project_id.as_str());
     let status =
         normalize_optional_text(input.status.as_deref()).unwrap_or_else(|| "active".to_string());
 
@@ -225,8 +224,7 @@ pub async fn touch_project_agent_link_session(
     input: TouchProjectAgentLinkSessionInput,
 ) -> Result<Option<ChatosProjectAgentLink>, String> {
     let now = crate::core::time::now_rfc3339();
-    let project_id =
-        normalize_optional_text(Some(input.project_id.as_str())).unwrap_or_else(|| "0".to_string());
+    let project_id = normalize_project_id(input.project_id.as_str());
     with_db(
         |db| {
             let input = input.clone();
@@ -306,7 +304,7 @@ pub async fn delete_project_agent_link(
     contact_id: Option<&str>,
 ) -> Result<bool, String> {
     let user_id = user_id.to_string();
-    let project_id = normalize_optional_text(Some(project_id)).unwrap_or_else(|| "0".to_string());
+    let project_id = normalize_project_id(project_id);
     let contact_id = contact_id.and_then(|value| normalize_optional_text(Some(value)));
     with_db(
         |db| {
@@ -435,10 +433,11 @@ pub async fn list_project_agent_links_by_project(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<ChatosProjectAgentLink>, String> {
+    let project_id = normalize_project_id(project_id);
     with_db(
         |db| {
             let user_id = user_id.to_string();
-            let project_id = project_id.to_string();
+            let project_id = project_id.clone();
             let status = normalize_optional_text(status);
             Box::pin(async move {
                 let mut filter = doc! {

@@ -22,6 +22,9 @@ use super::{
 };
 
 const REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES: usize = 512 * 1024;
+const REMOTE_TERMINAL_SNAPSHOT_MAX_LINES: usize = 10_000;
+const REMOTE_TERMINAL_STORED_CHUNK_LIMIT_BYTES: usize = 64 * 1024;
+const REMOTE_TERMINAL_STORED_CHUNK_MAX_LINES: usize = 1_024;
 const REMOTE_TERMINAL_IDLE_TIMEOUT: StdDuration = StdDuration::from_secs(20 * 60);
 const REMOTE_TERMINAL_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -58,22 +61,65 @@ enum NativeTerminalControl {
 struct OutputHistory {
     chunks: VecDeque<String>,
     total_bytes: usize,
+    total_lines: usize,
 }
 
 impl OutputHistory {
+    fn chunk_line_count(chunk: &str) -> usize {
+        chunk.as_bytes().iter().filter(|b| **b == b'\n').count()
+    }
+
     fn push(&mut self, chunk: String) {
         if chunk.is_empty() {
             return;
         }
+        let mut start = 0usize;
+        let mut segment_lines = 0usize;
+
+        for (idx, ch) in chunk.char_indices() {
+            let next = idx + ch.len_utf8();
+            if next.saturating_sub(start) > REMOTE_TERMINAL_STORED_CHUNK_LIMIT_BYTES && idx > start
+            {
+                self.push_segment(chunk[start..idx].to_string());
+                start = idx;
+                segment_lines = 0;
+            }
+            if ch == '\n' {
+                segment_lines += 1;
+                if segment_lines >= REMOTE_TERMINAL_STORED_CHUNK_MAX_LINES {
+                    self.push_segment(chunk[start..next].to_string());
+                    start = next;
+                    segment_lines = 0;
+                }
+            }
+        }
+
+        if start < chunk.len() {
+            self.push_segment(chunk[start..].to_string());
+        }
+    }
+
+    fn push_segment(&mut self, chunk: String) {
+        if chunk.is_empty() {
+            return;
+        }
+        let chunk_lines = Self::chunk_line_count(chunk.as_str());
         self.total_bytes += chunk.len();
+        self.total_lines += chunk_lines;
         self.chunks.push_back(chunk);
 
-        while self.total_bytes > REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES {
+        while self.total_bytes > REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES
+            || self.total_lines > REMOTE_TERMINAL_SNAPSHOT_MAX_LINES
+        {
             let Some(removed) = self.chunks.pop_front() else {
                 self.total_bytes = 0;
+                self.total_lines = 0;
                 break;
             };
             self.total_bytes = self.total_bytes.saturating_sub(removed.len());
+            self.total_lines = self
+                .total_lines
+                .saturating_sub(Self::chunk_line_count(removed.as_str()));
         }
     }
 
@@ -560,4 +606,42 @@ pub(super) fn get_remote_terminal_manager() -> Arc<RemoteTerminalManager> {
             manager
         })
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        OutputHistory, REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES, REMOTE_TERMINAL_SNAPSHOT_MAX_LINES,
+        REMOTE_TERMINAL_STORED_CHUNK_LIMIT_BYTES, REMOTE_TERMINAL_STORED_CHUNK_MAX_LINES,
+    };
+
+    #[test]
+    fn output_history_splits_large_chunks_before_storing() {
+        let mut history = OutputHistory::default();
+        history.push("x".repeat(
+            REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES + REMOTE_TERMINAL_STORED_CHUNK_LIMIT_BYTES,
+        ));
+
+        assert!(history.total_bytes <= REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES);
+        assert!(history
+            .chunks
+            .iter()
+            .all(|chunk| chunk.len() <= REMOTE_TERMINAL_STORED_CHUNK_LIMIT_BYTES));
+    }
+
+    #[test]
+    fn output_history_limits_total_lines() {
+        let mut history = OutputHistory::default();
+        history.push(
+            "line\n".repeat(
+                REMOTE_TERMINAL_SNAPSHOT_MAX_LINES + REMOTE_TERMINAL_STORED_CHUNK_MAX_LINES,
+            ),
+        );
+
+        assert!(history.total_lines <= REMOTE_TERMINAL_SNAPSHOT_MAX_LINES);
+        assert!(!history.chunks.is_empty());
+        assert!(history.chunks.iter().all(|chunk| {
+            OutputHistory::chunk_line_count(chunk) <= REMOTE_TERMINAL_STORED_CHUNK_MAX_LINES
+        }));
+    }
 }

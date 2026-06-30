@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::models::{CreateTaskRequest, TaskMcpConfig};
+use crate::models::{CreateTaskRequest, TaskRunRecord, TASK_PROFILE_CHATOS_PLAN};
 
 use super::chatos_async_planner::{
     planner_prerequisite_create_request, planner_root_create_request,
@@ -11,7 +11,9 @@ use super::chatos_async_planner::{
 };
 use super::support::{ensure_client_ref_graph_acyclic, normalize_mcp_builtin_kind_names};
 use super::{
-    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService,
+    normalize_external_mcp_config_ids, normalize_skill_ids,
+    task_mcp_config_for_explicit_tool_selection, CreateTasksWithPrerequisitesArgs,
+    McpRequestContext, McpToolProfile, TaskRunnerMcpService,
 };
 
 impl TaskRunnerMcpService {
@@ -27,6 +29,9 @@ impl TaskRunnerMcpService {
                 .existing_chatos_async_tasks(current_user, request_context)
                 .await?;
             if !existing.is_empty() {
+                let auto_started_runs = self
+                    .dispatch_chatos_async_tasks(existing.as_slice())
+                    .await?;
                 return Ok(json!({
                     "idempotent_reused": true,
                     "created_tasks": existing.into_iter().map(|task| {
@@ -37,6 +42,7 @@ impl TaskRunnerMcpService {
                         })
                     }).collect::<Vec<_>>(),
                     "dependency_edges": [],
+                    "auto_started_runs": auto_started_runs_for_mcp(auto_started_runs),
                 }));
             }
         }
@@ -70,8 +76,12 @@ impl TaskRunnerMcpService {
                 }
             }
             for prerequisite_task_id in &task.prerequisite_task_ids {
-                self.require_task_for_user(prerequisite_task_id, current_user)
-                    .await?;
+                self.require_task_for_user_in_context(
+                    prerequisite_task_id,
+                    current_user,
+                    request_context,
+                )
+                .await?;
             }
         }
         ensure_client_ref_graph_acyclic(&args.tasks)?;
@@ -96,9 +106,23 @@ impl TaskRunnerMcpService {
             let mut mcp_config = None;
             if let Some(enabled_builtin_kinds) = item.enabled_builtin_kinds {
                 let normalized = normalize_mcp_builtin_kind_names(enabled_builtin_kinds)?;
-                let config = mcp_config.get_or_insert_with(TaskMcpConfig::default);
+                let config =
+                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
                 config.enabled = true;
                 config.enabled_builtin_kinds = normalized;
+            }
+            if let Some(external_mcp_config_ids) = item.external_mcp_config_ids {
+                let config =
+                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
+                config.enabled = true;
+                config.external_mcp_config_ids =
+                    normalize_external_mcp_config_ids(external_mcp_config_ids);
+            }
+            if let Some(skill_ids) = item.skill_ids {
+                let config =
+                    mcp_config.get_or_insert_with(task_mcp_config_for_explicit_tool_selection);
+                config.enabled = true;
+                config.skill_ids = normalize_skill_ids(skill_ids);
             }
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
             let mut request = CreateTaskRequest {
@@ -110,18 +134,25 @@ impl TaskRunnerMcpService {
                 priority: item.priority,
                 tags: item.tags,
                 default_model_config_id: item.default_model_config_id,
+                project_id: None,
+                task_profile: None,
                 tenant_id: None,
                 subject_id: None,
                 schedule: item.schedule,
                 mcp_config,
                 prerequisite_task_ids: Some(item.prerequisite_task_ids.clone()),
             };
+            self.ensure_mcp_default_model_config(&mut request, current_user)
+                .await?;
             if tool_profile == McpToolProfile::ChatosAsyncPlanner {
                 request = if is_prerequisite_node {
-                    planner_prerequisite_create_request(request)?
+                    planner_prerequisite_create_request(request, request_context)?
                 } else {
-                    planner_root_create_request(request)?
+                    planner_root_create_request(request, request_context)?
                 };
+            }
+            if request_context.is_chatos_plan_task_profile() {
+                request.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
             }
             let task = self
                 .task_service
@@ -167,9 +198,30 @@ impl TaskRunnerMcpService {
             }
         }
 
+        let auto_started_runs = if tool_profile == McpToolProfile::ChatosAsyncPlanner {
+            let task_ids = ref_to_task_id.values().cloned().collect::<Vec<_>>();
+            self.dispatch_chatos_async_task_graph_roots(task_ids.as_slice())
+                .await?
+        } else {
+            Vec::new()
+        };
+
         Ok(json!({
             "created_tasks": created_tasks,
             "dependency_edges": dependency_edges,
+            "auto_started_runs": auto_started_runs_for_mcp(auto_started_runs),
         }))
     }
+}
+
+fn auto_started_runs_for_mcp(runs: Vec<TaskRunRecord>) -> Vec<Value> {
+    runs.into_iter()
+        .map(|run| {
+            json!({
+                "run_id": run.id,
+                "task_id": run.task_id,
+                "status": run.status,
+            })
+        })
+        .collect()
 }

@@ -1,12 +1,17 @@
 use std::env;
 use std::path::{Path, PathBuf};
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
-use tokio::time::timeout;
+use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
 pub(super) const DEFAULT_GIT_TIMEOUT: Duration = Duration::from_secs(20);
 pub(super) const REMOTE_GIT_TIMEOUT: Duration = Duration::from_secs(120);
+const GIT_STDOUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+const GIT_STDERR_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub(super) struct GitCommandOutput {
@@ -91,15 +96,12 @@ where
         .env("GIT_MERGE_AUTOEDIT", "no")
         .args(args);
     add_git_bin_dir_to_path(&mut command, git_bin.path.as_path());
-    let output = match timeout(duration, command.output()).await {
-        Ok(result) => result.map_err(|err| git_launch_error(git_bin.path.as_path(), err))?,
-        Err(_) => return Err("执行 git 命令超时".to_string()),
-    };
+    let output = run_git_command_limited(command, duration, git_bin.path.as_path()).await?;
     Ok(GitCommandStatusOutput {
-        success: output.status.success(),
-        status: output.status.to_string(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        success: output.success,
+        status: output.status,
+        stdout: String::from_utf8_lossy(output.stdout.as_slice()).to_string(),
+        stderr: String::from_utf8_lossy(output.stderr.as_slice()).to_string(),
     })
 }
 
@@ -107,13 +109,21 @@ pub(super) async fn git_version(git_bin: &GitBinaryResolution) -> Result<String,
     let mut command = Command::new(git_bin.path.as_os_str());
     command.arg("--version").env("GIT_TERMINAL_PROMPT", "0");
     add_git_bin_dir_to_path(&mut command, git_bin.path.as_path());
-    let output = match timeout(DEFAULT_GIT_TIMEOUT, command.output()).await {
-        Ok(result) => result.map_err(|err| git_launch_error(git_bin.path.as_path(), err))?,
-        Err(_) => return Err("执行 git --version 超时".to_string()),
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if output.status.success() {
+    let output =
+        match run_git_command_limited(command, DEFAULT_GIT_TIMEOUT, git_bin.path.as_path()).await {
+            Ok(output) => output,
+            Err(err) if err == "执行 git 命令超时" => {
+                return Err("执行 git --version 超时".to_string())
+            }
+            Err(err) => return Err(err),
+        };
+    let stdout = String::from_utf8_lossy(output.stdout.as_slice())
+        .trim()
+        .to_string();
+    let stderr = String::from_utf8_lossy(output.stderr.as_slice())
+        .trim()
+        .to_string();
+    if output.success {
         return Ok(if stdout.is_empty() {
             "git version unknown".to_string()
         } else {
@@ -125,6 +135,149 @@ pub(super) async fn git_version(git_bin: &GitBinaryResolution) -> Result<String,
     } else {
         stderr.chars().take(1200).collect()
     })
+}
+
+struct RawGitCommandOutput {
+    success: bool,
+    status: String,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+async fn run_git_command_limited(
+    mut command: Command,
+    duration: Duration,
+    git_bin: &Path,
+) -> Result<RawGitCommandOutput, String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let mut child = command
+        .spawn()
+        .map_err(|err| git_launch_error(git_bin, err))?;
+    let stdout = child.stdout.take().ok_or("missing git stdout")?;
+    let stderr = child.stderr.take().ok_or("missing git stderr")?;
+    let mut stdout_task = tokio::spawn(read_git_output_limited(
+        stdout,
+        "stdout",
+        GIT_STDOUT_LIMIT_BYTES,
+    ));
+    let mut stderr_task = tokio::spawn(read_git_output_limited(
+        stderr,
+        "stderr",
+        GIT_STDERR_LIMIT_BYTES,
+    ));
+    let timeout_sleep = sleep(duration);
+    tokio::pin!(timeout_sleep);
+
+    let mut status: Option<ExitStatus> = None;
+    let mut stdout_result: Option<Vec<u8>> = None;
+    let mut stderr_result: Option<Vec<u8>> = None;
+
+    loop {
+        if status.is_some() && stdout_result.is_some() && stderr_result.is_some() {
+            break;
+        }
+
+        tokio::select! {
+            result = &mut stdout_task, if stdout_result.is_none() => {
+                match join_git_output_task("stdout", result) {
+                    Ok(output) => stdout_result = Some(output),
+                    Err(err) => {
+                        abort_git_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                        return Err(err);
+                    }
+                }
+            }
+            result = &mut stderr_task, if stderr_result.is_none() => {
+                match join_git_output_task("stderr", result) {
+                    Ok(output) => stderr_result = Some(output),
+                    Err(err) => {
+                        abort_git_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                        return Err(err);
+                    }
+                }
+            }
+            wait_result = child.wait(), if status.is_none() => {
+                match wait_result {
+                    Ok(value) => status = Some(value),
+                    Err(err) => {
+                        abort_git_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                        return Err(err.to_string());
+                    }
+                }
+            }
+            _ = &mut timeout_sleep => {
+                abort_git_child(&mut child, &mut stdout_task, &mut stderr_task).await;
+                return Err("执行 git 命令超时".to_string());
+            }
+        }
+    }
+
+    let status = status.ok_or("missing git exit status")?;
+    Ok(RawGitCommandOutput {
+        success: status.success(),
+        status: status.to_string(),
+        stdout: stdout_result.unwrap_or_default(),
+        stderr: stderr_result.unwrap_or_default(),
+    })
+}
+
+async fn abort_git_child(
+    child: &mut tokio::process::Child,
+    stdout_task: &mut JoinHandle<Result<Vec<u8>, String>>,
+    stderr_task: &mut JoinHandle<Result<Vec<u8>, String>>,
+) {
+    let _ = child.kill().await;
+    stdout_task.abort();
+    stderr_task.abort();
+}
+
+async fn read_git_output_limited<R>(
+    mut reader: R,
+    stream_label: &'static str,
+    limit_bytes: usize,
+) -> Result<Vec<u8>, String>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|err| err.to_string())?;
+        if read == 0 {
+            return Ok(output);
+        }
+        let next_len = output.len().saturating_add(read);
+        ensure_git_output_within_limit(stream_label, next_len, limit_bytes)?;
+        output.extend_from_slice(&buffer[..read]);
+    }
+}
+
+fn join_git_output_task(
+    stream_label: &str,
+    result: Result<Result<Vec<u8>, String>, tokio::task::JoinError>,
+) -> Result<Vec<u8>, String> {
+    result.map_err(|err| format!("git {stream_label} reader failed: {err}"))?
+}
+
+fn ensure_git_output_within_limit(
+    stream_label: &str,
+    actual_bytes: usize,
+    limit_bytes: usize,
+) -> Result<(), String> {
+    if actual_bytes > limit_bytes {
+        return Err(format!(
+            "git {stream_label} exceeded output limit: {actual_bytes} bytes > {limit_bytes} bytes"
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn resolve_git_binary() -> GitBinaryResolution {
@@ -256,4 +409,23 @@ fn git_launch_error(git_bin: &Path, err: std::io::Error) -> String {
         err,
         git_bin.to_string_lossy()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_git_output_within_limit;
+
+    #[test]
+    fn git_output_limit_accepts_boundary_size() {
+        assert!(ensure_git_output_within_limit("stdout", 1024, 1024).is_ok());
+    }
+
+    #[test]
+    fn git_output_limit_rejects_oversized_output() {
+        let err = ensure_git_output_within_limit("stderr", 1025, 1024)
+            .expect_err("oversized output should fail");
+
+        assert!(err.contains("exceeded output limit"));
+        assert!(err.contains("1025 bytes > 1024 bytes"));
+    }
 }

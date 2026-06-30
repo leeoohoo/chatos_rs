@@ -60,6 +60,8 @@ fn local_stdio_admin() -> CurrentUser {
         display_name: "stdio".to_string(),
         role: UserRole::Admin,
         owner_user_id: None,
+        owner_username: None,
+        owner_display_name: None,
     }
 }
 

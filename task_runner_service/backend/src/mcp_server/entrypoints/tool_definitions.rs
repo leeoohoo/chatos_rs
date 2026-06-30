@@ -68,7 +68,7 @@ impl TaskRunnerMcpService {
         } else if tool_profile == McpToolProfile::ChatosAsyncPlanner {
             enrich_tool_schemas_for_async_planner(&mut tools, &[]);
         }
-        if current_user.is_admin() {
+        if current_user.is_admin() && tool_profile == McpToolProfile::Default {
             return tools;
         }
         tools

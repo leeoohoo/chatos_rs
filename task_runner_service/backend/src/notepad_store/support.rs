@@ -7,6 +7,9 @@ use uuid::Uuid;
 
 use super::NoteMeta;
 
+pub(super) const MAX_NOTE_CONTENT_BYTES: u64 = 1024 * 1024;
+pub(super) const MAX_NOTEPAD_INDEX_BYTES: u64 = 4 * 1024 * 1024;
+
 pub(super) fn normalize_user_segment(user_id: &str) -> String {
     let raw = user_id.trim();
     if raw.is_empty() {
@@ -182,6 +185,41 @@ pub(super) async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String
         .await
         .map_err(|err| err.to_string())?;
     fs::rename(&tmp, path).await.map_err(|err| err.to_string())
+}
+
+pub(super) async fn write_atomic_limited(
+    path: &Path,
+    bytes: &[u8],
+    max_bytes: u64,
+) -> Result<(), String> {
+    ensure_bytes_within_limit(path, bytes.len() as u64, max_bytes)?;
+    write_atomic(path, bytes).await
+}
+
+pub(super) async fn read_text_limited(path: &Path, max_bytes: u64) -> Result<String, String> {
+    let metadata = fs::metadata(path).await.map_err(|err| err.to_string())?;
+    ensure_bytes_within_limit(path, metadata.len(), max_bytes)?;
+    fs::read_to_string(path)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+pub(super) async fn read_bytes_limited(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
+    let metadata = fs::metadata(path).await.map_err(|err| err.to_string())?;
+    ensure_bytes_within_limit(path, metadata.len(), max_bytes)?;
+    fs::read(path).await.map_err(|err| err.to_string())
+}
+
+fn ensure_bytes_within_limit(path: &Path, actual_bytes: u64, max_bytes: u64) -> Result<(), String> {
+    if actual_bytes > max_bytes {
+        return Err(format!(
+            "notepad file exceeds limit: {} bytes > {} bytes ({})",
+            actual_bytes,
+            max_bytes,
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn now_iso() -> String {

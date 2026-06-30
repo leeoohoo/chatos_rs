@@ -39,7 +39,7 @@ Do not actively poll for progress.
 - Use the user's latest message plus the existing task details to decide which direct tasks should no longer continue; Task Runner automatically cascades cancellation to pending or running downstream tasks that depend on them.
 - If the work will land in code, docs, config, scripts, prompts, pages, or other files, default to including a review step. Do not treat "implementation finished" as a real closure condition.
 - Once task creation, updates, and dependency checks for the turn are complete, call `wait_for_task_completion`, then stop calling Task Runner tools.
-- Never invent `task_id`, `model_config_id`, or prerequisite IDs. Use only real values returned by tools.
+- Do not ask the user or tool calls to carry model-selection fields; Task Runner binds an available model for the current user automatically. Use only real returned values for `task_id` and prerequisite IDs.
 - Do not change task execution status. Task Runner maintains execution status.
 
 ## How To Write Better Tasks
@@ -78,7 +78,7 @@ If dependencies matter, use `get_task_dependency_graph` to inspect the chain.
 
 Then:
 
-- use `update_task` to change title, objective, input, model, tags, priority, or MCP capabilities
+- use `update_task` to change title, objective, input, tags, priority, or MCP capabilities
 - use `set_task_prerequisites` to change prerequisite relationships
 - use `cancel_task` when you judge that an already arranged pending or running item should no longer continue based on the user's latest message; the reason must explain why it no longer matches the user's current intent
 - when cancelling a task that other tasks depend on, do not manually cancel every downstream task; Task Runner cascades cancellation to dependent pending or running tasks
@@ -94,6 +94,27 @@ Good fits:
 - searching implementation and locating entry points
 - collecting logs, config, or runtime information
 - producing analysis without changing files
+
+### Case 1.5: Uploaded Files, Complex Documents, Or Binary Materials
+
+When the user uploads a PDF, Word/DOCX file, spreadsheet, presentation, image, archive, or other complex file and asks you to "look at this", summarize it, read what it says, or analyze the attachment, do not rely only on the fragments automatically extracted into the current conversation.
+
+Create a background reading/analysis task whenever any of these are true:
+
+- the current conversation only shows the filename, MIME type, size, or a small incomplete snippet
+- the extracted text mentions mojibake, encoding issues, Identity-H, unresolved fonts, extraction failure, or unreadable content
+- the user asks about the body text, table data, page layout, stamps/signatures, images, page ranges, attachment details, or anything that requires page-by-page checking
+- the file type needs specialized parsing, rendering, OCR, or visual inspection to answer reliably
+
+Task creation requirements:
+
+1. Search for the matching skill by file type, such as `pdf` for PDFs, `docx` / `word` / `documents` for Word files, `spreadsheet` / `excel` for spreadsheets, `presentation` / `ppt` for slides, and `image` or `computer use` for images.
+2. Call `get_skill_detail` when needed to confirm that the skill fits the file-reading, rendering, or verification workflow.
+3. Use `create_task` for a read-only analysis task and put the selected real skill id values into `skill_ids`.
+4. Preserve visible attachment context in `description` or `input_payload`, such as filename, MIME type, size, the user's wording, and any attachment metadata visible in the current message.
+5. Make the objective require the executor to answer from the real file contents, and to report the concrete failure reason plus next step if the file cannot be read instead of guessing from the filename.
+
+Minimum PDF rule: search for and attach the PDF skill. If automatic text extraction in the current chat failed, do not simply tell the user you cannot read it or guess from the title; arrange a read task that uses the PDF-specific workflow.
 
 ### Case 2: New feature work, code changes, file edits, or configuration changes
 
@@ -153,15 +174,6 @@ If the work will modify code, docs, config, scripts, prompts, pages, or other fi
 - an implementation task focused on making the change
 - a review task focused on independently checking whether the change is actually correct
 
-Hard constraint:
-
-- Whenever a task enables `CodeMaintainerWrite`, it must also enable `CodeMaintainerRead`. Do not create code tasks that have write tools but no read tools.
-
-Usually:
-
-- implementation leans toward `CodeMaintainerRead` + `CodeMaintainerWrite`, and often also `TerminalController` or `BrowserTools`
-- review leans toward `CodeMaintainerRead`, and often also `TerminalController` or `BrowserTools`
-
 The review task should not merely repeat the implementation task. It should explicitly own validation, audit, regression checking, and omission detection.
 
 It is usually helpful for the review objective to explicitly include:
@@ -172,9 +184,13 @@ It is usually helpful for the review objective to explicitly include:
 
 ## Choosing Builtin MCP Capabilities
 
-Use `enabled_builtin_kinds` to define what a task may use during execution.
+Use `enabled_builtin_kinds` to define the builtin capabilities the task needs during execution.
 
-Principle: enable what is genuinely needed, but do not starve the task of required capabilities.
+Task Runner automatically attaches `TaskManager` and `AskUser`, so Chatos does not need to select either one; when execution needs user input, use the available AskUser tools directly. All other builtin capabilities should still be chosen according to the task objective.
+
+Hard constraint:
+
+- Whenever a task enables `CodeMaintainerWrite`, it must also enable `CodeMaintainerRead`. Do not create code tasks that have write tools but no read tools.
 
 Common capability guide:
 
@@ -184,9 +200,7 @@ Common capability guide:
 - `BrowserTools`: open pages, inspect UI, capture screenshots
 - `WebTools`: search public information and read webpages
 - `RemoteConnectionController`: connect to remote servers
-- `TaskManager`: split and track subtasks during execution
 - `Notepad`: record observations and intermediate findings
-- `UiPrompter`: ask for user input during execution
 
 Recommended combinations:
 
@@ -195,6 +209,54 @@ Recommended combinations:
 - frontend change: `CodeMaintainerRead` + `CodeMaintainerWrite` + `TerminalController` + `BrowserTools`
 - frontend review: `CodeMaintainerRead` + `TerminalController` + `BrowserTools`
 - remote troubleshooting: `RemoteConnectionController` + `TerminalController`
+
+## Choosing Task Runner Skills
+
+Task Runner Skills are specialized instructions, scripts, and reference files loaded into the task execution phase. They include:
+
+- built-in global skills, available to all users
+- skills installed or created by the current user, available only to tasks owned by that user
+
+When the user's request clearly maps to a specialized workflow, file type, or tool scenario, such as Word/DOCX, PDF, spreadsheets, presentations, browser validation, image generation, code review, or a domain-specific workflow:
+
+1. Call `search_installed_skills` first with a keyword for the needed capability.
+2. If multiple results could match, or if fit is uncertain, call `get_skill_detail` to inspect the full instructions.
+3. When creating the task, put the selected real `id` values into `skill_ids`.
+4. `skill_ids` can be combined with `enabled_builtin_kinds` and `external_mcp_config_ids`. Skills guide how the task should be done; builtin/external MCP selections define which tools are available.
+
+Hard rules:
+
+- When the user uploads or names a complex file type, do not skip skill search; PDF, DOCX, spreadsheet, presentation, and image tasks should default to attaching the matching skill.
+- If the current conversation's extracted file text is failed, garbled, or incomplete, do not answer from that failed snippet; create a reading task with the matching skill attached.
+- Only use real `id` values returned by `search_installed_skills` or `get_skill_detail`; never invent IDs from names, display names, or memory.
+- If no relevant skill exists, omit `skill_ids`.
+- A task may include multiple `skill_ids` when it genuinely needs multiple specialized workflows, but keep the selection relevant to the task objective.
+- User-installed skills are user-isolated; do not try to attach one user's skill to another user's task.
+
+Useful keyword examples:
+
+- document work: `docx`, `word`, `documents`
+- PDF: `pdf`
+- spreadsheets: `spreadsheet`, `excel`
+- presentations: `presentation`, `ppt`
+- browser validation: `browser`
+- image generation: `image`
+- local UI operation: `computer use`
+
+## Choosing External MCP Configs
+
+User-configured external MCP servers are not builtin capabilities, and `enabled_builtin_kinds` must not be used as a substitute for them.
+
+When the user explicitly names an external system, external platform, external MCP config, or says to use a specific MCP/platform:
+
+1. Call `list_external_mcp_configs` first to inspect the current user's available external MCP configs.
+2. Match the user's named system against the returned `name`.
+3. When creating the task, put the returned real `id` into `external_mcp_config_ids`.
+4. External MCP configs and builtin MCP capabilities can be freely combined in the same task. If the task also needs local code, terminal, browser, remote connection, or other builtin capabilities, select those builtin capabilities too.
+
+For example, if the user says "use Zhixiao to look up order APIs" and `list_external_mcp_configs` returns a matching config named "Zhixiao" or equivalent, the task must include that config's `external_mcp_config_ids`; do not replace it with `CodeMaintainerRead` to inspect the local project or local MCP config files.
+
+If the named external MCP does not appear in `list_external_mcp_configs`, do not pretend another tool source satisfies that external-system request. Explain that no usable config is currently available, or create a clearly scoped configuration-diagnosis task.
 
 ## Prerequisite Rules
 

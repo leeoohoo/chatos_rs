@@ -1,7 +1,9 @@
 pub mod agent_builder;
+pub mod ask_user;
 pub mod browser_command_support;
 pub mod browser_runtime;
 pub mod browser_tools;
+pub mod bundled_tools;
 pub mod code_maintainer;
 pub mod memory_readers;
 pub mod notepad;
@@ -9,7 +11,6 @@ pub mod provider;
 pub mod remote_connection_controller;
 pub mod task_manager;
 pub mod terminal_controller;
-pub mod ui_prompter;
 pub mod web_tools;
 
 pub(crate) mod browser_page_insights;
@@ -25,9 +26,18 @@ pub use agent_builder::{
     AgentBuilderAgentSnapshot, AgentBuilderOptions, AgentBuilderService, AgentBuilderSkill,
     AgentBuilderStore, AgentBuilderStoreRef,
 };
+pub use ask_user::{
+    AskUserDecision, AskUserOptions, AskUserPromptPayload, AskUserResponseSubmission,
+    AskUserService, AskUserStore, AskUserStoreRef, AskUserStreamChunkCallback,
+    ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+};
 pub use browser_tools::{
     BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapter,
     BrowserVisionAdapterRef, BrowserVisionFailure, BrowserVisionRequest, BrowserVisionResponse,
+};
+pub use bundled_tools::{
+    bundled_tool_path, discover_bundled_tool_dirs, path_with_bundled_tools,
+    CHATOS_BUNDLED_TOOLS_DIR_ENV, CHATOS_BUNDLED_TOOLS_PATH_ENV,
 };
 pub use code_maintainer::{
     CodeMaintainerHooks, CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
@@ -60,10 +70,5 @@ pub use terminal_controller::{
     TerminalControllerStoreRef, PROCESS_LIST_MAX_LIMIT, PROCESS_POLL_MAX_LIMIT,
     PROCESS_WAIT_MAX_TIMEOUT_MS, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT,
     RECENT_LOGS_MAX_TERMINAL_LIMIT,
-};
-pub use ui_prompter::{
-    UiPromptDecision, UiPromptPayload, UiPromptResponseSubmission, UiPromptStreamChunkCallback,
-    UiPrompterOptions, UiPrompterService, UiPrompterStore, UiPrompterStoreRef,
-    UI_PROMPT_TIMEOUT_MS_DEFAULT,
 };
 pub use web_tools::{WebToolsOptions, WebToolsService};

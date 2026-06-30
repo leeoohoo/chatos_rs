@@ -25,8 +25,8 @@ pub async fn generate_job_policy_prompt(
         return Err("empty user_input".to_string());
     }
 
-    let policy = crate::repositories::control_plane::get_effective_job_policy(&state.pool, job_type)
-        .await?;
+    let policy =
+        crate::repositories::control_plane::get_effective_job_policy(&state.pool, job_type).await?;
     let ai_client =
         control_plane::build_ai_client_for_job(&state.config, &state.pool, job_type, None).await?;
     let guidance = build_prompt_generation_input(&policy, prompt_field, user_input);
@@ -99,7 +99,10 @@ fn strip_markdown_code_fence(raw: &str) -> &str {
         .strip_prefix("json")
         .map(str::trim_start)
         .unwrap_or(stripped);
-    stripped.strip_suffix("```").map(str::trim_end).unwrap_or(stripped)
+    stripped
+        .strip_suffix("```")
+        .map(str::trim_end)
+        .unwrap_or(stripped)
 }
 
 #[cfg(test)]

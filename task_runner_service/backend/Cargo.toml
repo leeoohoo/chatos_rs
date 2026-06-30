@@ -11,6 +11,7 @@ base64 = "0.22"
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_builtin_tools = { path = "../../crates/chatos_builtin_tools" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
+chatos_project_mcp_contract = { path = "../../crates/chatos_project_mcp_contract" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 dotenvy = "0.15"
 futures-util = "0.3"
@@ -29,4 +30,5 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }

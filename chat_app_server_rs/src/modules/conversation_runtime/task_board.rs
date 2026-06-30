@@ -1,22 +1,23 @@
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::models::memory_runtime_types::{
-    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotLookupResponseDto,
-    TurnRuntimeSnapshotSystemMessageDto,
-};
-use crate::services::chatos_sessions;
 use crate::services::task_board_prompt::{
     build_runtime_prefixed_input_items, format_task_board_prompt,
 };
-use crate::services::task_manager::list_tasks_for_context;
-use crate::services::text_normalization::normalize_optional_text_ref;
+use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
 use crate::utils::events::Events;
 
+#[path = "task_board/snapshot.rs"]
+mod snapshot;
+
+use self::snapshot::sync_task_board_turn_snapshot;
 use super::guidance;
 use super::user_context::load_runtime_user_context;
 
-const TASK_BOARD_LIMIT: usize = 200;
+const TASK_BOARD_ACTIVE_LIMIT: usize = 200;
+const TASK_BOARD_DONE_HISTORY_LIMIT: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskTurnFollowUpMode {
@@ -54,18 +55,6 @@ pub struct RefreshedTaskBoardRuntime {
     pub updated_event: Value,
 }
 
-#[derive(Debug, Clone)]
-struct TaskBoardSnapshotPatch {
-    user_message_id: Option<String>,
-    status: String,
-    snapshot_source: String,
-    snapshot_version: i64,
-    captured_at: Option<String>,
-    tools: Option<Vec<crate::models::memory_runtime_types::TurnRuntimeSnapshotToolDto>>,
-    runtime: Option<crate::models::memory_runtime_types::TurnRuntimeSnapshotRuntimeDto>,
-    system_messages: Vec<TurnRuntimeSnapshotSystemMessageDto>,
-}
-
 pub async fn build_task_board_prompt(
     session_id: &str,
     turn_id: Option<&str>,
@@ -76,9 +65,7 @@ pub async fn build_task_board_prompt(
         return None;
     }
 
-    let tasks = list_tasks_for_context(session_id, turn_id, true, TASK_BOARD_LIMIT)
-        .await
-        .unwrap_or_default();
+    let tasks = load_task_board_context_tasks(session_id, turn_id).await;
     Some(format_task_board_prompt(tasks.as_slice(), locale))
         .filter(|content| !content.trim().is_empty())
 }
@@ -94,10 +81,40 @@ pub async fn build_task_turn_follow_up_directive(
     }
 
     let locale = load_runtime_user_context(None, session_id).await.locale;
-    let tasks = list_tasks_for_context(session_id, Some(turn_id), true, TASK_BOARD_LIMIT)
+    let tasks = load_task_board_context_tasks(session_id, Some(turn_id)).await;
+    classify_task_turn_follow_up(tasks.as_slice(), locale)
+}
+
+async fn load_task_board_context_tasks(session_id: &str, turn_id: Option<&str>) -> Vec<TaskRecord> {
+    let active_tasks = list_tasks_for_context(session_id, turn_id, false, TASK_BOARD_ACTIVE_LIMIT)
         .await
         .unwrap_or_default();
-    classify_task_turn_follow_up(tasks.as_slice(), locale)
+    let done_candidates =
+        list_tasks_for_context(session_id, turn_id, true, TASK_BOARD_DONE_HISTORY_LIMIT)
+            .await
+            .unwrap_or_default();
+    merge_task_board_context_tasks(active_tasks, done_candidates)
+}
+
+fn merge_task_board_context_tasks(
+    mut active_tasks: Vec<TaskRecord>,
+    done_candidates: Vec<TaskRecord>,
+) -> Vec<TaskRecord> {
+    let mut seen = active_tasks
+        .iter()
+        .map(|task| task.id.clone())
+        .collect::<HashSet<_>>();
+
+    for task in done_candidates {
+        if !is_done_status(task.status.as_str()) {
+            continue;
+        }
+        if seen.insert(task.id.clone()) {
+            active_tasks.push(task);
+        }
+    }
+
+    active_tasks
 }
 
 pub fn classify_task_turn_follow_up(
@@ -323,111 +340,6 @@ pub fn build_task_board_runtime_guidance(
     })
 }
 
-async fn sync_task_board_turn_snapshot(
-    session_id: &str,
-    turn_id: &str,
-    task_board_prompt: &str,
-) -> Result<(), String> {
-    let lookup = chatos_sessions::get_turn_runtime_snapshot_by_turn(session_id, turn_id).await?;
-    let payload = build_task_board_snapshot_payload(build_task_board_snapshot_patch(
-        lookup,
-        task_board_prompt,
-    ));
-    chatos_sessions::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
-        .await
-        .map(|_| ())
-}
-
-fn build_task_board_snapshot_patch(
-    lookup: TurnRuntimeSnapshotLookupResponseDto,
-    task_board_prompt: &str,
-) -> TaskBoardSnapshotPatch {
-    if let Some(snapshot) = lookup.snapshot {
-        TaskBoardSnapshotPatch {
-            user_message_id: snapshot.user_message_id,
-            status: snapshot.status,
-            snapshot_source: snapshot.snapshot_source,
-            snapshot_version: snapshot.snapshot_version.max(1),
-            captured_at: Some(snapshot.captured_at),
-            system_messages: upsert_task_board_system_messages(
-                snapshot.system_messages.as_slice(),
-                task_board_prompt,
-            ),
-            tools: Some(snapshot.tools),
-            runtime: snapshot.runtime,
-        }
-    } else {
-        TaskBoardSnapshotPatch {
-            user_message_id: None,
-            status: match lookup.status.trim() {
-                "completed" => "completed".to_string(),
-                "failed" => "failed".to_string(),
-                _ => "running".to_string(),
-            },
-            snapshot_source: "captured".to_string(),
-            snapshot_version: 1,
-            captured_at: None,
-            system_messages: upsert_task_board_system_messages(&[], task_board_prompt),
-            tools: None,
-            runtime: None,
-        }
-    }
-}
-
-fn build_task_board_snapshot_payload(
-    patch: TaskBoardSnapshotPatch,
-) -> SyncTurnRuntimeSnapshotRequestDto {
-    SyncTurnRuntimeSnapshotRequestDto {
-        user_message_id: patch.user_message_id,
-        status: Some(patch.status),
-        snapshot_source: Some(patch.snapshot_source),
-        snapshot_version: Some(patch.snapshot_version),
-        captured_at: patch.captured_at,
-        system_messages: Some(patch.system_messages),
-        tools: patch.tools,
-        runtime: patch.runtime,
-    }
-}
-
-fn upsert_task_board_system_messages(
-    messages: &[TurnRuntimeSnapshotSystemMessageDto],
-    task_board_prompt: &str,
-) -> Vec<TurnRuntimeSnapshotSystemMessageDto> {
-    let Some(content) = normalize_optional_text(Some(task_board_prompt)) else {
-        return messages
-            .iter()
-            .filter(|item| item.id.trim() != "task_board")
-            .cloned()
-            .collect();
-    };
-
-    let mut next_messages = messages
-        .iter()
-        .filter(|item| item.id.trim() != "task_board")
-        .cloned()
-        .collect::<Vec<_>>();
-    let insert_at = next_messages
-        .iter()
-        .position(|item| {
-            let id = item.id.trim();
-            id != "base_system" && id != "contact_system"
-        })
-        .unwrap_or(next_messages.len());
-    next_messages.insert(
-        insert_at,
-        TurnRuntimeSnapshotSystemMessageDto {
-            id: "task_board".to_string(),
-            source: "task_runtime_board".to_string(),
-            content,
-        },
-    );
-    next_messages
-}
-
-fn normalize_optional_text(value: Option<&str>) -> Option<String> {
-    normalize_optional_text_ref(value)
-}
-
 fn build_task_turn_follow_up_guidance(
     locale: InternalContextLocale,
     mode: TaskTurnFollowUpMode,
@@ -486,70 +398,55 @@ mod tests {
     use super::{
         build_hidden_task_turn_review_metadata, build_runtime_context,
         classify_task_turn_follow_up, parse_task_turn_review_outcome,
-        strip_task_turn_review_marker, upsert_task_board_system_messages, TaskTurnFollowUpMode,
-        TaskTurnReviewOutcome,
+        strip_task_turn_review_marker, TaskTurnFollowUpMode, TaskTurnReviewOutcome,
     };
     use crate::core::internal_context_locale::InternalContextLocale;
-    use crate::models::memory_runtime_types::TurnRuntimeSnapshotSystemMessageDto;
     use crate::services::task_manager::TaskRecord;
     use serde_json::Value;
 
-    #[test]
-    fn upsert_task_board_system_messages_inserts_after_contact_prompts() {
-        let messages = vec![
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "base_system".to_string(),
-                source: "active_system_context".to_string(),
-                content: "base".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "contact_system".to_string(),
-                source: "contact_runtime_context".to_string(),
-                content: "contact".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "builtin_mcp".to_string(),
-                source: "builtin_mcp_policy".to_string(),
-                content: "builtin".to_string(),
-            },
-        ];
-
-        let updated =
-            upsert_task_board_system_messages(messages.as_slice(), "[Task Board]\nlatest");
-
-        assert_eq!(updated.len(), 4);
-        assert_eq!(updated[2].id, "task_board");
-        assert_eq!(updated[2].source, "task_runtime_board");
-        assert_eq!(updated[2].content, "[Task Board]\nlatest");
-        assert_eq!(updated[3].id, "builtin_mcp");
+    fn build_task_record(id: &str, status: &str) -> TaskRecord {
+        TaskRecord {
+            id: id.to_string(),
+            conversation_id: "session-1".to_string(),
+            conversation_turn_id: "turn-1".to_string(),
+            title: id.to_string(),
+            details: String::new(),
+            priority: "medium".to_string(),
+            status: status.to_string(),
+            tags: Vec::new(),
+            due_at: None,
+            outcome_summary: String::new(),
+            outcome_items: Vec::new(),
+            resume_hint: String::new(),
+            blocker_reason: String::new(),
+            blocker_needs: Vec::new(),
+            blocker_kind: String::new(),
+            completed_at: None,
+            last_outcome_at: None,
+            created_at: "2026-05-21T00:00:00Z".to_string(),
+            updated_at: "2026-05-21T00:00:00Z".to_string(),
+        }
     }
 
     #[test]
-    fn upsert_task_board_system_messages_replaces_existing_entry() {
-        let messages = vec![
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "contact_system".to_string(),
-                source: "contact_runtime_context".to_string(),
-                content: "contact".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "task_board".to_string(),
-                source: "task_runtime_board".to_string(),
-                content: "stale".to_string(),
-            },
-            TurnRuntimeSnapshotSystemMessageDto {
-                id: "memory_summary".to_string(),
-                source: "memory_context_summary".to_string(),
-                content: "summary".to_string(),
-            },
-        ];
+    fn merge_task_board_context_keeps_active_tasks_and_unique_done_history() {
+        let merged = super::merge_task_board_context_tasks(
+            vec![
+                build_task_record("todo-1", "todo"),
+                build_task_record("done-duplicate", "done"),
+            ],
+            vec![
+                build_task_record("todo-from-done-query", "todo"),
+                build_task_record("done-duplicate", "done"),
+                build_task_record("done-2", "done"),
+            ],
+        );
 
-        let updated = upsert_task_board_system_messages(messages.as_slice(), "fresh");
-
-        assert_eq!(updated.len(), 3);
-        assert_eq!(updated[1].id, "task_board");
-        assert_eq!(updated[1].content, "fresh");
-        assert_eq!(updated[2].id, "memory_summary");
+        let ids = merged
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["todo-1", "done-duplicate", "done-2"]);
     }
 
     #[test]

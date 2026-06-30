@@ -4,6 +4,7 @@ import { useI18n } from '../i18n/I18nProvider';
 import type { Project } from '../types';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
+import ProjectPlanPane from './projectExplorer/ProjectPlanPane';
 import ProjectContactSettingsCard from './projectExplorer/ProjectContactSettingsCard';
 import ProjectRunSettingsPanel from './projectExplorer/ProjectRunSettingsPanel';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
@@ -84,6 +85,11 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       <div className="flex-1 min-h-0 overflow-hidden">
         {workspaceTab === 'team' ? (
           <TeamMembersPane
+            project={project}
+            className="h-full"
+          />
+        ) : workspaceTab === 'plan' ? (
+          <ProjectPlanPane
             project={project}
             className="h-full"
           />

@@ -100,7 +100,7 @@ impl NotepadStore {
                     .await
                     .map_err(|err| err.to_string())?;
             }
-            Self::atomic_write_text(abs.as_path(), content.as_str()).await?;
+            Self::atomic_write_note_content(abs.as_path(), content.as_str()).await?;
 
             let mut index = self.load_index_locked().await?;
             let now = now_iso();
@@ -138,9 +138,8 @@ impl NotepadStore {
             .ok_or_else(|| format!("Note not found: {note_id}"))?;
 
         let abs = self.note_abs_path(note.folder.as_str(), note_id.as_str());
-        let content = fs::read_to_string(abs)
-            .await
-            .map_err(|err| err.to_string())?;
+        let content =
+            Self::read_text_file_limited(abs.as_path(), super::MAX_NOTE_CONTENT_BYTES).await?;
 
         Ok(json!({
             "ok": true,
@@ -198,7 +197,7 @@ impl NotepadStore {
             }
 
             if let Some(content) = params.content.as_ref() {
-                Self::atomic_write_text(new_abs.as_path(), content.as_str()).await?;
+                Self::atomic_write_note_content(new_abs.as_path(), content.as_str()).await?;
             }
 
             note.folder = next_folder;
@@ -297,7 +296,9 @@ impl NotepadStore {
             }
 
             let abs = self.note_abs_path(folder, id);
-            if let Ok(content) = fs::read_to_string(abs).await {
+            if let Ok(content) =
+                Self::read_text_file_limited(abs.as_path(), super::MAX_NOTE_CONTENT_BYTES).await
+            {
                 if content.to_lowercase().contains(lower.as_str()) {
                     results.push(note);
                 }

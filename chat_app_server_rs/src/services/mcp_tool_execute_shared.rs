@@ -45,7 +45,6 @@ impl SharedMcpToolExecute {
     }
 
     pub(crate) async fn build_tools(&mut self) -> Result<(), String> {
-        self.core.build_tools().await?;
         let mut shared = build_shared_mcp_executor(
             self.mcp_servers.clone(),
             self.stdio_mcp_servers.clone(),
@@ -59,8 +58,11 @@ impl SharedMcpToolExecute {
 
     pub(crate) fn build_builtin_only(&mut self) -> Result<(), String> {
         self.core.build_builtin_only()?;
-        let mut shared =
-            build_shared_mcp_executor(Vec::new(), Vec::new(), self.builtin_mcp_servers.clone());
+        let mut shared = build_shared_mcp_executor(
+            self.mcp_servers.clone(),
+            self.stdio_mcp_servers.clone(),
+            self.builtin_mcp_servers.clone(),
+        );
         shared.init_builtin_only()?;
         self.shared_tool_metadata = Some(chatos_tool_metadata(&shared));
         self.shared_core = Some(shared);

@@ -39,7 +39,12 @@ pub fn start(state: Arc<AppState>) {
             let rollup_task = run_rollup_tick(&state);
             let subject_memory_task = run_subject_memory_tick(&state);
             let reconcile_task = run_pending_queue_reconcile_tick(&state);
-            let _ = join!(summary_task, rollup_task, subject_memory_task, reconcile_task);
+            let _ = join!(
+                summary_task,
+                rollup_task,
+                subject_memory_task,
+                reconcile_task
+            );
         }
     });
 }
@@ -83,8 +88,7 @@ async fn run_summary_tick(state: &Arc<AppState>) {
 }
 
 async fn run_rollup_tick(state: &Arc<AppState>) {
-    let rollup_policy = match control_plane::get_effective_job_policy(&state.pool, "rollup").await
-    {
+    let rollup_policy = match control_plane::get_effective_job_policy(&state.pool, "rollup").await {
         Ok(policy) => policy,
         Err(err) => {
             warn!("[MEMORY-ENGINE-WORKER] load rollup policy failed: {}", err);
@@ -248,8 +252,7 @@ async fn run_pending_queue_reconcile_tick(state: &Arc<AppState>) {
         if let Err(err) = result {
             warn!(
                 "[MEMORY-ENGINE-WORKER] pending queue reconcile failed thread_id={} error={}",
-                thread_id,
-                err
+                thread_id, err
             );
         }
     }

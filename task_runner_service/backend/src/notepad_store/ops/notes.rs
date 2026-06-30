@@ -66,7 +66,12 @@ impl TaskRunnerNotepadStore {
             updated_at: now,
         };
         let note_path = self.note_path(note.folder.as_str(), id.as_str());
-        write_atomic(&note_path, stored_content.as_bytes()).await?;
+        write_atomic_limited(
+            &note_path,
+            stored_content.as_bytes(),
+            MAX_NOTE_CONTENT_BYTES,
+        )
+        .await?;
         index.notes.insert(0, note.clone());
         self.save_index(&index).await?;
         Ok(json!({
@@ -77,9 +82,8 @@ impl TaskRunnerNotepadStore {
 
     pub(super) async fn read_note_value(&self, id: &str) -> Result<Value, String> {
         let note = self.find_note(id).await?;
-        let content = fs::read_to_string(self.note_path(note.folder.as_str(), note.id.as_str()))
-            .await
-            .map_err(|err| err.to_string())?;
+        let note_path = self.note_path(note.folder.as_str(), note.id.as_str());
+        let content = read_text_limited(note_path.as_path(), MAX_NOTE_CONTENT_BYTES).await?;
         Ok(json!({
             "ok": true,
             "note": self.note_output(&note),
@@ -137,7 +141,7 @@ impl TaskRunnerNotepadStore {
                 .map_err(|err| err.to_string())?;
         }
         if let Some(content) = content_patch {
-            write_atomic(&new_path, content.as_bytes()).await?;
+            write_atomic_limited(&new_path, content.as_bytes(), MAX_NOTE_CONTENT_BYTES).await?;
             if value_string(&params, "title").trim().is_empty() {
                 note.title = derive_title(note.title.as_str(), content.as_str());
             }

@@ -4,11 +4,20 @@ use task_runner_service_backend::{
     build_router, load_task_runner_dotenv, scheduler::spawn_task_scheduler, AppConfig, AppState,
 };
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_task_runner_dotenv();
     init_tracing();
 
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(TASK_RUNNER_TOKIO_THREAD_STACK_SIZE)
+        .build()?;
+    runtime.block_on(run())
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::from_env()?;
     let bind_addr = config.bind_addr();
     let app_state = AppState::new(config.clone()).await?;

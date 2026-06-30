@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::config::Config;
+use crate::core::ai_settings::DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES;
 use crate::core::pagination::parse_js_int_value;
 use crate::repositories::user_settings as repo;
 
@@ -10,6 +11,7 @@ pub const USER_SETTING_KEYS: &[&str] = &[
     "LOG_LEVEL",
     "HISTORY_LIMIT",
     "CHAT_MAX_TOKENS",
+    "ATTACHMENT_TOTAL_MAX_BYTES",
     "INTERNAL_CONTEXT_LOCALE",
     "UI_LOCALE",
     "TERMINAL_UI_ENABLED",
@@ -20,11 +22,13 @@ fn coerce(value: &Value, key: &str) -> Value {
         return Value::Null;
     }
     match key {
-        "MAX_ITERATIONS" | "TASK_FOLLOW_UP_MAX_ROUNDS" | "HISTORY_LIMIT" | "CHAT_MAX_TOKENS" => {
-            parse_js_int_value(value)
-                .map(|n| Value::Number(serde_json::Number::from(n)))
-                .unwrap_or(Value::Null)
-        }
+        "MAX_ITERATIONS"
+        | "TASK_FOLLOW_UP_MAX_ROUNDS"
+        | "HISTORY_LIMIT"
+        | "CHAT_MAX_TOKENS"
+        | "ATTACHMENT_TOTAL_MAX_BYTES" => parse_js_int_value(value)
+            .map(|n| Value::Number(serde_json::Number::from(n)))
+            .unwrap_or(Value::Null),
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
         "INTERNAL_CONTEXT_LOCALE" => Value::String(
             value
@@ -75,6 +79,11 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         .map(serde_json::Number::from)
         .map(Value::Number)
         .unwrap_or(Value::Null);
+    let attachment_total_max_bytes = std::env::var("ATTACHMENT_TOTAL_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES);
 
     Ok(json!({
         "MAX_ITERATIONS": max_iterations,
@@ -82,6 +91,7 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,
         "CHAT_MAX_TOKENS": chat_max_tokens,
+        "ATTACHMENT_TOTAL_MAX_BYTES": attachment_total_max_bytes,
         "INTERNAL_CONTEXT_LOCALE": "zh-CN",
         "UI_LOCALE": "zh-CN",
         "TERMINAL_UI_ENABLED": true,

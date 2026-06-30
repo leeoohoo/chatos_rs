@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::models::{
-    CancelTaskRequest, CreateRemoteServerRequest, CreateTaskRequest, TaskMcpConfig, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskStatus,
-    UiPromptRecord, UiPromptStatus, UpdateModelConfigRequest, UpdateTaskRequest,
+    AskUserPromptRecord, AskUserPromptStatus, CancelTaskRequest, CreateRemoteServerRequest,
+    CreateTaskRequest, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskScheduleConfig, TaskStatus, UpdateModelConfigRequest, UpdateTaskRequest,
 };
 
 use super::support::normalize_mcp_builtin_kind_names;
@@ -27,9 +27,11 @@ pub(super) use self::run::{
     GetTaskMemoryContextArgs, ListRunsArgs, ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs,
 };
 pub(super) use self::task::{
-    BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs, CancelTaskArgs,
-    CreateTaskArgs, CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs,
-    ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
+    normalize_external_mcp_config_ids, normalize_skill_ids,
+    task_mcp_config_for_explicit_tool_selection, BatchTaskDeleteArgs, BatchTaskRunArgs,
+    BatchTaskStatusUpdateArgs, CancelTaskArgs, CreateTaskArgs, CreateTaskWithPrerequisitesItem,
+    CreateTasksWithPrerequisitesArgs, ListTasksArgs, SearchInstalledSkillsArgs,
+    SetTaskPrerequisitesArgs, SkillIdArgs, TaskIdArgs, UpdateTaskArgs,
 };
 
 #[allow(dead_code)]
@@ -37,6 +39,6 @@ pub(super) fn _assert_types(
     _task: TaskRecord,
     _run: TaskRunRecord,
     _event: TaskRunEventRecord,
-    _prompt: UiPromptRecord,
+    _prompt: AskUserPromptRecord,
 ) {
 }

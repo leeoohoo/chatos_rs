@@ -34,6 +34,7 @@ export const configurationInitialState: ConfigurationSliceState = {
     systemPrompt: '',
     enableMcp: true,
     reasoningEnabled: false,
+    planModeEnabled: false,
   },
   mcpConfigs: [],
   aiModelConfigs: [],

@@ -1,11 +1,12 @@
 SHELL := /bin/bash
 
-.PHONY: help dev restart status stop build test smoke smoke-user-service-flow
+.PHONY: help dev restart status stop build test smoke smoke-user-service-flow code-size-report hotspot-line-warnings
 .PHONY: restart-wsl status-wsl stop-wsl bootstrap-wsl
 .PHONY: restart-user-service-wsl status-user-service-wsl stop-user-service-wsl
 .PHONY: restart-task-runner-wsl status-task-runner-wsl stop-task-runner-wsl
 .PHONY: restart-memory-engine-wsl status-memory-engine-wsl stop-memory-engine-wsl
 .PHONY: restart-all-wsl status-all-wsl stop-all-wsl
+.PHONY: restart-all-win status-all-win stop-all-win
 .PHONY: restart-user-service status-user-service stop-user-service
 .PHONY: restart-task-runner status-task-runner stop-task-runner
 .PHONY: restart-memory-engine status-memory-engine stop-memory-engine
@@ -34,13 +35,15 @@ help:
 	@echo "  make restart-db-hub       # restart db_connection_hub backend + frontend"
 	@echo "  make status-db-hub        # show db_connection_hub status"
 	@echo "  make stop-db-hub          # stop db_connection_hub backend + frontend"
-	@echo "  make restart-all          # restart memory_engine + user_service + db_connection_hub + chatos + task_runner"
+	@echo "  make restart-all          # restart memory_engine + user_service + chatos + task_runner"
 	@echo "  make status-all           # show full stack status"
 	@echo "  make stop-all             # stop full stack"
 	@echo "  make build               # build key subprojects"
 	@echo "  make test                # run repo checks + subproject tests"
 	@echo "  make smoke               # repo governance + lightweight cross-subproject probes"
 	@echo "  make smoke-user-service-flow # call the live user_service API flow end-to-end"
+	@echo "  make code-size-report    # report source-code file size and line-count hotspots"
+	@echo "  make hotspot-line-warnings # warn on planned refactor hotspot line budgets"
 	@echo "  make bootstrap-wsl       # bootstrap Ubuntu/WSL dependencies for Rust + Node dev"
 	@echo "  make restart-wsl         # run root restart_services.sh inside WSL"
 	@echo "  make status-wsl          # show root service status inside WSL"
@@ -57,6 +60,9 @@ help:
 	@echo "  make restart-all-wsl      # restart the full stack inside WSL"
 	@echo "  make status-all-wsl       # show full stack status inside WSL"
 	@echo "  make stop-all-wsl         # stop full stack inside WSL"
+	@echo "  make restart-all-win      # restart the validated Windows local stack"
+	@echo "  make status-all-win       # show Windows local stack status"
+	@echo "  make stop-all-win         # stop the Windows local stack"
 
 dev: restart
 
@@ -160,6 +166,12 @@ smoke-user-service:
 smoke-user-service-flow:
 	@powershell.exe -ExecutionPolicy Bypass -File scripts/smoke-user-service-flow.ps1
 
+code-size-report:
+	@bash scripts/code-size-report.sh
+
+hotspot-line-warnings:
+	@bash scripts/check-hotspot-line-budgets.sh --warn-planned
+
 bootstrap-wsl:
 	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action bootstrap -Target main
 
@@ -207,6 +219,15 @@ status-all-wsl:
 
 stop-all-wsl:
 	@powershell.exe -ExecutionPolicy Bypass -File scripts/chatos-wsl.ps1 -Action stop -Target all
+
+restart-all-win:
+	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action restart
+
+status-all-win:
+	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action status
+
+stop-all-win:
+	@powershell.exe -ExecutionPolicy Bypass -File scripts/local-dev-stack.ps1 -Action stop
 
 test-chat-app-server:
 	@cd chat_app_server_rs && cargo test -q

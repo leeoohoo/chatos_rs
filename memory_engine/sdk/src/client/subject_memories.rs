@@ -38,7 +38,10 @@ impl MemoryEngineClient {
                 };
                 self.send_json(
                     Method::PUT,
-                    &format!("/sdk/subject-memory-scopes/{}", urlencoding::encode(scope_key)),
+                    &format!(
+                        "/sdk/subject-memory-scopes/{}",
+                        urlencoding::encode(scope_key)
+                    ),
                     Some(&direct),
                 )
                 .await
@@ -72,7 +75,10 @@ impl MemoryEngineClient {
             AuthMode::SystemKey { .. } => {
                 self.send_json(
                     Method::PUT,
-                    &format!("/sdk/subject-memory-scopes/{}", urlencoding::encode(scope_key)),
+                    &format!(
+                        "/sdk/subject-memory-scopes/{}",
+                        urlencoding::encode(scope_key)
+                    ),
                     Some(req),
                 )
                 .await

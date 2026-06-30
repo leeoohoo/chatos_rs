@@ -14,12 +14,22 @@ pub struct TaskRecord {
     pub memory_thread_id: String,
     pub tenant_id: String,
     pub subject_id: String,
+    #[serde(default = "default_task_project_id")]
+    pub project_id: String,
+    #[serde(default = "default_task_profile")]
+    pub task_profile: String,
     #[serde(default)]
     pub creator_user_id: Option<String>,
     #[serde(default)]
     pub creator_username: Option<String>,
     #[serde(default)]
     pub creator_display_name: Option<String>,
+    #[serde(default)]
+    pub owner_user_id: Option<String>,
+    #[serde(default)]
+    pub owner_username: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
     pub result_summary: Option<String>,
     #[serde(default)]
     pub process_log: Option<String>,
@@ -46,6 +56,10 @@ pub struct TaskRecord {
     pub deleted_at: Option<String>,
 }
 
+fn default_task_project_id() -> String {
+    crate::models::PUBLIC_PROJECT_ID.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskPrerequisiteRecord {
     pub task_id: String,
@@ -68,9 +82,14 @@ pub struct TaskSummaryRecord {
     pub title: String,
     pub status: TaskStatus,
     pub default_model_config_id: Option<String>,
+    #[serde(default = "default_task_project_id")]
+    pub project_id: String,
     pub creator_user_id: Option<String>,
     pub creator_username: Option<String>,
     pub creator_display_name: Option<String>,
+    pub owner_user_id: Option<String>,
+    pub owner_username: Option<String>,
+    pub owner_display_name: Option<String>,
     pub last_run_id: Option<String>,
     pub updated_at: String,
 }
@@ -82,9 +101,13 @@ impl From<&TaskRecord> for TaskSummaryRecord {
             title: value.title.clone(),
             status: value.status,
             default_model_config_id: value.default_model_config_id.clone(),
+            project_id: value.project_id.clone(),
             creator_user_id: value.creator_user_id.clone(),
             creator_username: value.creator_username.clone(),
             creator_display_name: value.creator_display_name.clone(),
+            owner_user_id: value.owner_user_id.clone(),
+            owner_username: value.owner_username.clone(),
+            owner_display_name: value.owner_display_name.clone(),
             last_run_id: value.last_run_id.clone(),
             updated_at: value.updated_at.clone(),
         }

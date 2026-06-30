@@ -13,14 +13,16 @@ impl MongoStore {
             .ok_or_else(|| "mongodb connection string must include a database name".to_string())?;
         let store = Self {
             tasks: database.collection::<TaskRecord>("tasks"),
+            task_projects: database.collection::<TaskProjectRecord>("task_projects"),
             model_configs: database.collection::<ModelConfigRecord>("model_configs"),
             runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
             remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
             external_mcp_configs: database
                 .collection::<ExternalMcpConfigRecord>("external_mcp_configs"),
+            skills: database.collection::<SkillRecord>("skills"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
-            ui_prompts: database.collection::<UiPromptRecord>("ui_prompts"),
+            ask_user_prompts: database.collection::<AskUserPromptRecord>("ask_user_prompts"),
             users: database.collection::<UserRecord>("users"),
             task_prerequisites: database.collection::<TaskPrerequisiteRecord>("task_prerequisites"),
             cancel_requested_runs: Arc::new(RwLock::new(HashSet::new())),
@@ -52,8 +54,26 @@ impl MongoStore {
             .await?;
         self.ensure_index(&self.tasks, doc! { "source_user_message_id": 1 }, false)
             .await?;
+        self.ensure_index(&self.tasks, doc! { "task_profile": 1 }, false)
+            .await?;
+        self.ensure_index(
+            &self.tasks,
+            doc! { "source_session_id": 1, "source_user_message_id": 1, "task_profile": 1 },
+            false,
+        )
+        .await?;
         self.ensure_index(&self.tasks, doc! { "creator_user_id": 1 }, false)
             .await?;
+        self.ensure_index(&self.tasks, doc! { "owner_user_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.tasks, doc! { "project_id": 1 }, false)
+            .await?;
+        self.ensure_index(
+            &self.tasks,
+            doc! { "owner_user_id": 1, "project_id": 1 },
+            false,
+        )
+        .await?;
         self.ensure_index(&self.tasks, doc! { "schedule.next_run_at": 1 }, false)
             .await?;
         self.ensure_index(
@@ -78,11 +98,20 @@ impl MongoStore {
         self.ensure_index(&self.runtime_settings, doc! { "id": 1 }, true)
             .await?;
 
+        self.ensure_index(&self.task_projects, doc! { "id": 1 }, true)
+            .await?;
+        self.ensure_index(&self.task_projects, doc! { "owner_user_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.task_projects, doc! { "status": 1 }, false)
+            .await?;
+
         self.ensure_index(&self.remote_servers, doc! { "id": 1 }, true)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "enabled": 1 }, false)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "creator_user_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.remote_servers, doc! { "owner_user_id": 1 }, false)
             .await?;
         self.ensure_index(&self.remote_servers, doc! { "task_id": 1 }, false)
             .await?;
@@ -99,8 +128,31 @@ impl MongoStore {
             false,
         )
         .await?;
+        self.ensure_index(
+            &self.external_mcp_configs,
+            doc! { "owner_user_id": 1 },
+            false,
+        )
+        .await?;
         self.ensure_index(&self.external_mcp_configs, doc! { "updated_at": -1 }, false)
             .await?;
+
+        self.ensure_index(&self.skills, doc! { "id": 1 }, true)
+            .await?;
+        self.ensure_index(&self.skills, doc! { "enabled": 1 }, false)
+            .await?;
+        self.ensure_index(&self.skills, doc! { "auto_inject": 1 }, false)
+            .await?;
+        self.ensure_index(&self.skills, doc! { "owner_user_id": 1 }, false)
+            .await?;
+        self.ensure_index(&self.skills, doc! { "updated_at": -1 }, false)
+            .await?;
+        self.ensure_index(
+            &self.skills,
+            doc! { "source_registry": 1, "source_package_id": 1 },
+            false,
+        )
+        .await?;
 
         self.ensure_index(&self.runs, doc! { "id": 1 }, true)
             .await?;
@@ -135,29 +187,33 @@ impl MongoStore {
         )
         .await?;
 
-        self.ensure_index(&self.ui_prompts, doc! { "id": 1 }, true)
+        self.ensure_index(&self.ask_user_prompts, doc! { "id": 1 }, true)
             .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "task_id": 1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "task_id": 1 }, false)
             .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "run_id": 1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "run_id": 1 }, false)
             .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "status": 1 }, false)
-            .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "status": 1, "task_id": 1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "status": 1 }, false)
             .await?;
         self.ensure_index(
-            &self.ui_prompts,
+            &self.ask_user_prompts,
+            doc! { "status": 1, "task_id": 1 },
+            false,
+        )
+        .await?;
+        self.ensure_index(
+            &self.ask_user_prompts,
             doc! { "task_id": 1, "updated_at": -1 },
             false,
         )
         .await?;
         self.ensure_index(
-            &self.ui_prompts,
+            &self.ask_user_prompts,
             doc! { "run_id": 1, "updated_at": -1 },
             false,
         )
         .await?;
-        self.ensure_index(&self.ui_prompts, doc! { "updated_at": -1 }, false)
+        self.ensure_index(&self.ask_user_prompts, doc! { "updated_at": -1 }, false)
             .await?;
 
         self.ensure_index(&self.users, doc! { "id": 1 }, true)

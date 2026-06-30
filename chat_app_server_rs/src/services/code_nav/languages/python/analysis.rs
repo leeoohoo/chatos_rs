@@ -1,15 +1,17 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::services::code_nav::file_limits::{read_code_nav_file_to_string, truncate_preview};
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::languages::shared_nav::{
-    declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind, find_column,
-    is_type_like, nav_location_from_coordinates, normalize_path,
+    declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
+    ensure_code_nav_text_search_budget, find_column, is_type_like, nav_location_from_coordinates,
+    normalize_path,
 };
 use crate::services::code_nav::types::{NavLocation, NavPositionRequest, ProjectContext};
 
@@ -83,7 +85,7 @@ pub(crate) struct ResolvedPythonImport {
 }
 
 pub(crate) fn analyze_python_file(path: &Path) -> Result<PythonFileAnalysis, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(path)?;
     let mut imports = Vec::new();
     let mut symbols = Vec::new();
     let mut class_stack: Vec<PythonClassScope> = Vec::new();
@@ -254,11 +256,16 @@ pub(crate) fn search_python_occurrences(
         .map_err(|err| err.to_string())?;
 
     let mut out = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
 
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| should_visit_python_path(entry))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -269,11 +276,15 @@ pub(crate) fn search_python_occurrences(
         if entry.path().extension().and_then(|value| value.to_str()) != Some("py") {
             continue;
         }
-        let content = match fs::read_to_string(entry.path()) {
+        let content = match read_code_nav_file_to_string(entry.path()) {
             Ok(content) => content,
             Err(_) => continue,
         };
         for (index, line) in content.lines().enumerate() {
+            if index % 128 == 0 {
+                ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+            }
+
             let normalized_line = line.trim_end_matches('\r');
             for found in regex.find_iter(normalized_line) {
                 if out.len() >= max_results {
@@ -289,11 +300,7 @@ pub(crate) fn search_python_occurrences(
                     relative_path,
                     line: index + 1,
                     column,
-                    text: if normalized_line.len() > 400 {
-                        normalized_line[..400].to_string()
-                    } else {
-                        normalized_line.to_string()
-                    },
+                    text: truncate_preview(normalized_line, 400),
                 });
             }
         }
@@ -412,10 +419,15 @@ fn resolve_python_module_paths(root: &Path, module: &str) -> Result<Vec<PathBuf>
     }
 
     let target_name = format!("{}.py", module.rsplit('.').next().unwrap_or(module));
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| should_visit_python_path(entry))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,

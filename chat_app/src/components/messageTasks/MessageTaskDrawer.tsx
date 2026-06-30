@@ -3,7 +3,7 @@ import { RefreshCw, X } from 'lucide-react';
 import type { Message } from '../../types';
 import { useI18n } from '../../i18n/I18nProvider';
 import { cn } from '../../lib/utils';
-import { MessageTaskDetailModal } from './MessageTaskDetailModal';
+import { MessageTaskDetailModal, MessageTaskProcessLogModal } from './MessageTaskDetailModal';
 import { MessageTaskGraphPanel } from './MessageTaskGraphPanel';
 import { MessageTaskRunDetailModal } from './MessageTaskRunDetailModal';
 import { formatDateTime, readString } from './utils';
@@ -79,12 +79,17 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
     loading,
     error,
     detailTask,
+    processTask,
     runDetail,
+    loadingProcessTaskId,
     loadingRunId,
     reloadGraph,
     openDetail,
+    openProcessLog,
     openRun,
+    loadMoreRunEvents,
     closeDetail,
+    closeProcessLog,
     closeRun,
   } = useMessageTaskGraph({
     open,
@@ -220,9 +225,9 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
             </div>
 
             <p className="mb-4 text-xs leading-5 text-muted-foreground">
-              这里会把当前消息直接关联的任务和它们的前置依赖一起展开成 DAG。点击节点右上的
-              <span className="font-medium text-foreground">聚焦链路</span>
-              可高亮整条依赖链，按钮可查看
+              这里会把当前消息直接关联的任务和它们的前置依赖一起展开成 DAG。节点上的
+              <span className="font-medium text-foreground">执行过程</span>
+              可直接查看过程记录，按钮也可查看
               <span className="font-medium text-foreground">详情</span>
               或
               <span className="font-medium text-foreground">运行详情</span>
@@ -235,8 +240,10 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
                 loading={loading}
                 error={error}
                 loadingRunId={loadingRunId}
+                loadingProcessTaskId={loadingProcessTaskId}
                 panelWidth={drawerWidth}
                 onOpenDetail={openDetail}
+                onOpenProcessLog={openProcessLog}
                 onOpenRun={openRun}
               />
             </div>
@@ -245,7 +252,13 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
       </aside>
 
       <MessageTaskDetailModal task={detailTask} relatedTasks={allTasks} onClose={closeDetail} />
-      <MessageTaskRunDetailModal detail={runDetail} onClose={closeRun} />
+      <MessageTaskProcessLogModal task={processTask} onClose={closeProcessLog} />
+      <MessageTaskRunDetailModal
+        detail={runDetail}
+        loadingMoreEvents={Boolean(runDetail && loadingRunId === runDetail.run?.id)}
+        onLoadMoreEvents={loadMoreRunEvents}
+        onClose={closeRun}
+      />
     </>
   );
 };

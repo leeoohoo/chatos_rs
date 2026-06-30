@@ -2,7 +2,6 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Layout, Menu, Space, Typography } from 'antd';
 import {
   CloudServerOutlined,
-  KeyOutlined,
   LogoutOutlined,
   RobotOutlined,
   SettingOutlined,
@@ -38,11 +37,6 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
       key: '/agents',
       label: 'Agent Accounts',
       icon: <RobotOutlined />,
-    },
-    {
-      key: '/exchange',
-      label: 'Token Exchange',
-      icon: <KeyOutlined />,
     },
     {
       key: '/settings',

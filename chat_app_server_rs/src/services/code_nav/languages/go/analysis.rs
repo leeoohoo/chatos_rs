@@ -1,17 +1,27 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::services::code_nav::file_limits::{read_code_nav_file_to_string, truncate_preview};
 use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::languages::shared_nav::{
-    declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind, find_column,
-    is_type_like, nav_location_from_coordinates, normalize_path,
+    declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
+    ensure_code_nav_text_search_budget, find_column, is_type_like, nav_location_from_coordinates,
+    normalize_path,
 };
 use crate::services::code_nav::types::{NavLocation, NavPositionRequest, ProjectContext};
+
+mod syntax;
+
+use syntax::{
+    classify_go_declaration, extract_go_function_name, extract_go_method_name,
+    extract_go_top_level_binding, extract_go_type_declaration, parse_go_import_block_item,
+    parse_go_single_import, strip_go_comments,
+};
 
 pub(crate) const GO_IGNORED_DIRS: &[&str] = &[
     ".git",
@@ -27,24 +37,6 @@ pub(crate) const GO_IGNORED_DIRS: &[&str] = &[
 pub(crate) const GO_EXTENSIONS: &[&str] = &["go"];
 
 static GO_MODULE_RE: Lazy<Regex> = Lazy::new(|| compile_static_regex(r"^\s*module\s+([^\s]+)\s*$"));
-static IMPORT_SINGLE_RE: Lazy<Regex> = Lazy::new(|| {
-    compile_static_regex(r#"^\s*import\s+(?:(?:([A-Za-z_][A-Za-z0-9_]*)|_|\.)\s+)?"([^"]+)""#)
-});
-static IMPORT_BLOCK_ITEM_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r#"^\s*(?:(?:([A-Za-z_][A-Za-z0-9_]*)|_|\.)\s+)?"([^"]+)""#));
-static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    compile_static_regex(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+(struct|interface)\b")
-});
-static TYPE_ALIAS_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
-static METHOD_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r"^\s*func\s*\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\("));
-static FUNCTION_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("));
-static VAR_CONST_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r"^\s*(var|const)\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
-static SHORT_VAR_RE: Lazy<Regex> =
-    Lazy::new(|| compile_static_regex(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:="));
 
 #[derive(Debug, Clone)]
 pub(crate) struct GoImport {
@@ -77,7 +69,7 @@ pub(crate) struct GoSearchMatch {
 }
 
 pub(crate) fn analyze_go_file(path: &Path) -> Result<GoFileAnalysis, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(path)?;
     let mut imports = Vec::new();
     let mut symbols = Vec::new();
     let mut in_block_comment = false;
@@ -227,11 +219,16 @@ pub(crate) fn search_go_occurrences(
         .map_err(|err| err.to_string())?;
 
     let mut out = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
 
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| should_visit_go_path(entry))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -242,12 +239,16 @@ pub(crate) fn search_go_occurrences(
         if entry.path().extension().and_then(|value| value.to_str()) != Some("go") {
             continue;
         }
-        let content = match fs::read_to_string(entry.path()) {
+        let content = match read_code_nav_file_to_string(entry.path()) {
             Ok(content) => content,
             Err(_) => continue,
         };
         let mut in_block_comment = false;
         for (index, raw_line) in content.lines().enumerate() {
+            if index % 128 == 0 {
+                ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+            }
+
             let sanitized = strip_go_comments(raw_line, &mut in_block_comment);
             let normalized = sanitized.trim_end_matches('\r');
             for found in regex.find_iter(normalized) {
@@ -264,7 +265,7 @@ pub(crate) fn search_go_occurrences(
                     relative_path,
                     line: index + 1,
                     column,
-                    text: raw_line.trim_end_matches('\r').chars().take(400).collect(),
+                    text: truncate_preview(raw_line.trim_end_matches('\r'), 400),
                 });
             }
         }
@@ -364,7 +365,7 @@ fn go_module_path(root: &Path) -> Result<Option<String>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let content = read_code_nav_file_to_string(&path)?;
     for line in content.lines() {
         if let Some(capture) = GO_MODULE_RE.captures(line) {
             return Ok(Some(capture[1].to_string()));
@@ -392,11 +393,16 @@ fn resolve_go_import_dir(root: &Path, module_path: &str, import_path: &str) -> O
 
 fn go_package_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
+    let started_at = Instant::now();
+    let mut visited_entries = 0usize;
     for entry in WalkDir::new(dir)
         .max_depth(1)
         .into_iter()
         .filter_entry(|entry| should_visit_go_path(entry))
     {
+        visited_entries = visited_entries.saturating_add(1);
+        ensure_code_nav_text_search_budget(started_at, visited_entries)?;
+
         let entry = match entry {
             Ok(entry) => entry,
             Err(err) => return Err(err.to_string()),
@@ -443,182 +449,6 @@ fn cached_go_analysis<'a>(
 
 fn declaration_kind_from_symbol_kind(kind: &str) -> Option<&'static str> {
     shared_declaration_kind_from_symbol_kind(kind)
-}
-
-fn classify_go_declaration(line: &str, token: &str) -> Option<&'static str> {
-    let trimmed = line.trim();
-    if let Some((name, kind)) = extract_go_type_declaration(trimmed) {
-        if name == token {
-            return Some(match kind.as_str() {
-                "struct" => "struct",
-                "interface" => "interface",
-                _ => "type",
-            });
-        }
-    }
-    if extract_go_method_name(trimmed).as_deref() == Some(token) {
-        return Some("method");
-    }
-    if extract_go_function_name(trimmed).as_deref() == Some(token) {
-        return Some("function");
-    }
-    if let Some((name, kind)) = extract_go_top_level_binding(trimmed) {
-        if name == token {
-            return Some(if kind == "constant" {
-                "constant"
-            } else {
-                "variable"
-            });
-        }
-    }
-    if extract_go_short_var_name(trimmed).as_deref() == Some(token) {
-        return Some("variable");
-    }
-    None
-}
-
-fn parse_go_single_import(line: &str) -> Option<GoImport> {
-    let capture = IMPORT_SINGLE_RE.captures(line)?;
-    Some(GoImport {
-        path: capture.get(2)?.as_str().to_string(),
-    })
-}
-
-fn parse_go_import_block_item(line: &str) -> Option<GoImport> {
-    let capture = IMPORT_BLOCK_ITEM_RE.captures(line)?;
-    Some(GoImport {
-        path: capture.get(2)?.as_str().to_string(),
-    })
-}
-
-fn extract_go_type_declaration(line: &str) -> Option<(String, String)> {
-    if let Some(capture) = TYPE_RE.captures(line) {
-        let name = capture.get(1)?.as_str().to_string();
-        let kind = match capture.get(2).map(|item| item.as_str()) {
-            Some("struct") => "struct",
-            Some("interface") => "interface",
-            _ => "type",
-        };
-        return Some((name, kind.to_string()));
-    }
-    let capture = TYPE_ALIAS_RE.captures(line)?;
-    let name = capture.get(1)?.as_str().to_string();
-    Some((name, "type".to_string()))
-}
-
-fn extract_go_method_name(line: &str) -> Option<String> {
-    METHOD_RE
-        .captures(line)
-        .and_then(|capture| capture.get(1).map(|item| item.as_str().to_string()))
-}
-
-fn extract_go_function_name(line: &str) -> Option<String> {
-    FUNCTION_RE
-        .captures(line)
-        .and_then(|capture| capture.get(1).map(|item| item.as_str().to_string()))
-}
-
-fn extract_go_top_level_binding(line: &str) -> Option<(String, String)> {
-    if matches_go_non_binding_statement(line) {
-        return None;
-    }
-    let capture = VAR_CONST_RE.captures(line)?;
-    let kind = if capture.get(1).map(|item| item.as_str()) == Some("const") {
-        "constant"
-    } else {
-        "variable"
-    };
-    Some((capture.get(2)?.as_str().to_string(), kind.to_string()))
-}
-
-fn extract_go_short_var_name(line: &str) -> Option<String> {
-    if matches_go_non_binding_statement(line) {
-        return None;
-    }
-    SHORT_VAR_RE
-        .captures(line)
-        .and_then(|capture| capture.get(1).map(|item| item.as_str().to_string()))
-}
-
-fn matches_go_non_binding_statement(line: &str) -> bool {
-    [
-        "return ", "go ", "defer ", "if ", "for ", "switch ", "case ", "select ", "package ",
-        "import ", "func ", "type ",
-    ]
-    .iter()
-    .any(|prefix| line.starts_with(prefix))
-}
-
-fn strip_go_comments(line: &str, in_block_comment: &mut bool) -> String {
-    let mut out = String::with_capacity(line.len());
-    let chars: Vec<char> = line.chars().collect();
-    let mut index = 0usize;
-    let mut in_string = false;
-    let mut string_delim = '\0';
-
-    while index < chars.len() {
-        let current = chars[index];
-        let next = chars.get(index + 1).copied();
-
-        if *in_block_comment {
-            if current == '*' && next == Some('/') {
-                *in_block_comment = false;
-                out.push(' ');
-                out.push(' ');
-                index += 2;
-            } else {
-                out.push(' ');
-                index += 1;
-            }
-            continue;
-        }
-
-        if in_string {
-            out.push(current);
-            if current == '\\' && string_delim != '`' {
-                if let Some(next) = next {
-                    out.push(next);
-                    index += 2;
-                    continue;
-                }
-            }
-            if current == string_delim {
-                in_string = false;
-                string_delim = '\0';
-            }
-            index += 1;
-            continue;
-        }
-
-        if matches!(current, '"' | '\'' | '`') {
-            in_string = true;
-            string_delim = current;
-            out.push(current);
-            index += 1;
-            continue;
-        }
-
-        if current == '/' && next == Some('/') {
-            while index < chars.len() {
-                out.push(' ');
-                index += 1;
-            }
-            break;
-        }
-
-        if current == '/' && next == Some('*') {
-            *in_block_comment = true;
-            out.push(' ');
-            out.push(' ');
-            index += 2;
-            continue;
-        }
-
-        out.push(current);
-        index += 1;
-    }
-
-    out
 }
 
 fn is_type_symbol(kind: &str) -> bool {

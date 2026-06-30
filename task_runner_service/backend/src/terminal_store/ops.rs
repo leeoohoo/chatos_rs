@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use chatos_builtin_tools::{TerminalControllerContext, TerminalControllerStore};
+use chatos_builtin_tools::{
+    path_with_bundled_tools, TerminalControllerContext, TerminalControllerStore,
+};
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -17,3 +19,9 @@ use super::TaskRunnerTerminalControllerStore;
 
 mod controller_api;
 mod session_ops;
+
+fn apply_bundled_tools_path(command: &mut Command) {
+    if let Some(path) = path_with_bundled_tools(std::env::var_os("PATH")) {
+        command.env("PATH", path);
+    }
+}

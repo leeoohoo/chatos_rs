@@ -1,8 +1,7 @@
 use reqwest::Method;
 
 use crate::models::{
-    EngineSource, ListResponse, ListSourcesRequest, RotateSourceSecretResponse,
-    UpsertSourceRequest,
+    EngineSource, ListResponse, ListSourcesRequest, RotateSourceSecretResponse, UpsertSourceRequest,
 };
 
 use super::super::transport::{

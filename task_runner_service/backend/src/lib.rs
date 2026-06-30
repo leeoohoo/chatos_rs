@@ -1,6 +1,8 @@
 pub mod api;
+pub mod ask_user_prompt_service;
 pub mod auth;
 pub mod config;
+mod http_body;
 pub mod mcp_server;
 pub mod models;
 pub mod notepad_store;
@@ -10,7 +12,6 @@ pub mod services;
 pub mod state;
 pub mod store;
 pub mod terminal_store;
-pub mod ui_prompt_service;
 
 pub use api::build_router;
 pub use config::{load_task_runner_dotenv, AppConfig};

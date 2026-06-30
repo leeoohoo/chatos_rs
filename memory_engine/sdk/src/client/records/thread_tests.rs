@@ -33,5 +33,8 @@ fn thread_records_page_response_deserializes_items_and_total() {
     assert_eq!(response.items.len(), 1);
     assert_eq!(response.items[0].id, "rec-1");
     assert_eq!(response.items[0].thread_id, "thread-1");
-    assert_eq!(response.items[0].metadata.as_ref().unwrap()["origin"], "sdk-test");
+    assert_eq!(
+        response.items[0].metadata.as_ref().unwrap()["origin"],
+        "sdk-test"
+    );
 }

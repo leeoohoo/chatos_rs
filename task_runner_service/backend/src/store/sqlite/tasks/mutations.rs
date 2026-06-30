@@ -6,11 +6,12 @@ impl SqliteStore {
             "INSERT INTO tasks (
                 id, title, description, objective, input_payload_json, status, priority,
                 tags_json, default_model_config_id, memory_thread_id, tenant_id, subject_id,
-                creator_user_id, creator_username, creator_display_name, result_summary,
+                project_id, task_profile, creator_user_id, creator_username, creator_display_name,
+                owner_user_id, owner_username, owner_display_name, result_summary,
                 process_log, last_run_id, schedule_json, parent_task_id, source_run_id,
                 source_session_id, source_turn_id, source_user_message_id, task_tool_state_json,
                 mcp_config_json, created_at, updated_at, deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 description = excluded.description,
@@ -23,9 +24,14 @@ impl SqliteStore {
                 memory_thread_id = excluded.memory_thread_id,
                 tenant_id = excluded.tenant_id,
                 subject_id = excluded.subject_id,
+                project_id = excluded.project_id,
+                task_profile = excluded.task_profile,
                 creator_user_id = excluded.creator_user_id,
                 creator_username = excluded.creator_username,
                 creator_display_name = excluded.creator_display_name,
+                owner_user_id = excluded.owner_user_id,
+                owner_username = excluded.owner_username,
+                owner_display_name = excluded.owner_display_name,
                 result_summary = excluded.result_summary,
                 process_log = excluded.process_log,
                 last_run_id = excluded.last_run_id,
@@ -53,9 +59,14 @@ impl SqliteStore {
         .bind(&task.memory_thread_id)
         .bind(&task.tenant_id)
         .bind(&task.subject_id)
+        .bind(&task.project_id)
+        .bind(&task.task_profile)
         .bind(task.creator_user_id.clone())
         .bind(task.creator_username.clone())
         .bind(task.creator_display_name.clone())
+        .bind(task.owner_user_id.clone())
+        .bind(task.owner_username.clone())
+        .bind(task.owner_display_name.clone())
         .bind(task.result_summary.clone())
         .bind(task.process_log.clone())
         .bind(task.last_run_id.clone())
@@ -85,7 +96,7 @@ impl SqliteStore {
             .await
             .map_err(|err| err.to_string())?;
         sqlx::query(
-            "DELETE FROM ui_prompts WHERE task_id = ? OR run_id IN (SELECT id FROM task_runs WHERE task_id = ?)",
+            "DELETE FROM ask_user_prompts WHERE task_id = ? OR run_id IN (SELECT id FROM task_runs WHERE task_id = ?)",
         )
         .bind(id)
         .bind(id)

@@ -6,7 +6,7 @@ use crate::models::ai_model_config::AiModelConfig;
 use crate::models::session::Session;
 use crate::repositories::ai_model_configs;
 
-use super::{chatos_sessions, user_service_api_client};
+use super::{access_token_scope, chatos_sessions, user_service_api_client};
 
 fn normalize_optional_id(value: Option<&str>) -> Option<String> {
     value
@@ -41,6 +41,8 @@ fn from_user_service_model_config(
         provider: record.provider,
         model,
         thinking_level: record.thinking_level,
+        task_usage_scenario: record.task_usage_scenario,
+        task_thinking_level: record.task_thinking_level,
         api_key: record.api_key,
         has_api_key: record.has_api_key,
         base_url: record.base_url,
@@ -48,6 +50,7 @@ fn from_user_service_model_config(
         supports_images: record.supports_images,
         supports_reasoning: record.supports_reasoning,
         supports_responses: record.supports_responses,
+        sync_warnings: record.sync_warnings,
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
@@ -60,7 +63,8 @@ async fn get_user_service_model_config_by_id(
 ) -> Result<AiModelConfig, String> {
     let base_url = configured_user_service_base_url(cfg)
         .ok_or_else(|| "user_service is not configured".to_string())?;
-    let access_token = user_service_api_client::build_user_access_token(user_id, Some("user"))?;
+    let access_token = access_token_scope::get_current_access_token()
+        .ok_or_else(|| "current user access token is required".to_string())?;
     let profile = user_service_api_client::get_model_config(
         base_url.as_str(),
         access_token.as_str(),
@@ -81,7 +85,8 @@ async fn list_user_service_model_configs(
 ) -> Result<Vec<AiModelConfig>, String> {
     let base_url = configured_user_service_base_url(cfg)
         .ok_or_else(|| "user_service is not configured".to_string())?;
-    let access_token = user_service_api_client::build_user_access_token(user_id, Some("user"))?;
+    let access_token = access_token_scope::get_current_access_token()
+        .ok_or_else(|| "current user access token is required".to_string())?;
     let items = user_service_api_client::list_model_configs(
         base_url.as_str(),
         access_token.as_str(),
@@ -95,9 +100,7 @@ async fn list_user_service_model_configs(
         .collect())
 }
 
-fn pick_default_engine_profile(
-    profiles: Vec<AiModelConfig>,
-) -> Result<AiModelConfig, String> {
+fn pick_default_engine_profile(profiles: Vec<AiModelConfig>) -> Result<AiModelConfig, String> {
     let enabled = profiles
         .into_iter()
         .filter(|item| item.enabled)
@@ -170,7 +173,10 @@ async fn load_profile_by_id(
     Ok(profile)
 }
 
-async fn load_default_profile(cfg: &Config, user_id: Option<&str>) -> Result<AiModelConfig, String> {
+async fn load_default_profile(
+    cfg: &Config,
+    user_id: Option<&str>,
+) -> Result<AiModelConfig, String> {
     if configured_user_service_base_url(cfg).is_some() {
         if let Some(user_id) = user_id {
             let profiles = list_user_service_model_configs(cfg, user_id).await?;

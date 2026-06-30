@@ -3,6 +3,13 @@ import type {
   DeleteSuccessResponse,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
+  ProjectPlanOptions,
+  ProjectPlanResponse,
+  ProjectRequirementWorkItemsOptions,
+  ProjectRequirementWorkItemsResponse,
+  ProjectRequirementDocumentResponse,
+  ProjectRequirementExecuteResponse,
+  ProjectRequirementStopResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
@@ -18,7 +25,7 @@ export const listProjects = (request: ApiRequestFn, userId?: string): Promise<Pr
 
 export const createProject = (
   request: ApiRequestFn,
-  data: { name: string; root_path: string; description?: string; user_id?: string },
+  data: { name: string; root_path: string; git_url?: string; description?: string; user_id?: string },
 ): Promise<ProjectResponse> => {
   return request<ProjectResponse>('/projects', {
     method: 'POST',
@@ -29,7 +36,7 @@ export const createProject = (
 export const updateProject = (
   request: ApiRequestFn,
   id: string,
-  data: { name?: string; root_path?: string; description?: string },
+  data: { name?: string; root_path?: string; git_url?: string; description?: string },
 ): Promise<ProjectResponse> => {
   return request<ProjectResponse>(`/projects/${id}`, {
     method: 'PUT',
@@ -45,6 +52,73 @@ export const deleteProject = (request: ApiRequestFn, id: string): Promise<Delete
 
 export const getProject = (request: ApiRequestFn, id: string): Promise<ProjectResponse> => {
   return request<ProjectResponse>(`/projects/${id}`);
+};
+
+export const getProjectPlan = (
+  request: ApiRequestFn,
+  projectId: string,
+  options?: ProjectPlanOptions,
+): Promise<ProjectPlanResponse> => {
+  const query = buildQuery({
+    include_archived: options?.includeArchived,
+    include_work_items: options?.includeWorkItems,
+  });
+  return request<ProjectPlanResponse>(`/projects/${encodeURIComponent(projectId)}/plan${query}`);
+};
+
+export const listProjectRequirementWorkItems = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  options?: ProjectRequirementWorkItemsOptions,
+): Promise<ProjectRequirementWorkItemsResponse> => {
+  const query = buildQuery({
+    include_archived: options?.includeArchived,
+    include_dependency_graph: options?.includeDependencyGraph,
+  });
+  return request<ProjectRequirementWorkItemsResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/work-items${query}`,
+  );
+};
+
+export const listProjectRequirementDocuments = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+): Promise<ProjectRequirementDocumentResponse[]> => {
+  return request<ProjectRequirementDocumentResponse[]>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/documents`,
+  );
+};
+
+export const executeProjectRequirement = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data?: { contact_id?: string },
+): Promise<ProjectRequirementExecuteResponse> => {
+  return request<ProjectRequirementExecuteResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/execute`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    },
+  );
+};
+
+export const stopProjectRequirementExecution = (
+  request: ApiRequestFn,
+  projectId: string,
+  requirementId: string,
+  data?: { contact_id?: string },
+): Promise<ProjectRequirementStopResponse> => {
+  return request<ProjectRequirementStopResponse>(
+    `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(requirementId)}/stop`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    },
+  );
 };
 
 export const analyzeProjectRun = (

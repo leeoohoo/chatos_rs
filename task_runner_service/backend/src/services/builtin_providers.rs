@@ -5,32 +5,40 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use chatos_builtin_tools::{
-    build_shared_builtin_tool_service, NotepadBuiltinService, NotepadOptions, NotepadStoreRef,
-    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
-    RemoteConnectionControllerStoreRef, SharedBuiltinToolService, TaskManagerOptions,
-    TaskManagerService, TaskManagerStoreRef, TaskStreamChunkCallback, TerminalControllerOptions,
-    TerminalControllerService, TerminalControllerStoreRef, UiPrompterOptions, UiPrompterService,
-    UiPrompterStoreRef, REVIEW_TIMEOUT_MS_DEFAULT, UI_PROMPT_TIMEOUT_MS_DEFAULT,
+    build_shared_builtin_tool_service, AskUserOptions, AskUserService, AskUserStoreRef,
+    NotepadBuiltinService, NotepadOptions, NotepadStoreRef, RemoteConnectionControllerOptions,
+    RemoteConnectionControllerService, RemoteConnectionControllerStoreRef,
+    SharedBuiltinToolService, TaskManagerOptions, TaskManagerService, TaskManagerStoreRef,
+    TaskStreamChunkCallback, TerminalControllerOptions, TerminalControllerService,
+    TerminalControllerStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT, REVIEW_TIMEOUT_MS_DEFAULT,
 };
 use chatos_mcp_runtime::{
     builtin_kind_by_any, BuiltinToolProvider, BuiltinToolRegistry, McpBuiltinServer,
     ToolCallContext, ToolStreamChunkCallback,
 };
 
+use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::remote_server_runtime::TaskRunnerRemoteConnectionStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
-use crate::ui_prompt_service::UiPromptService;
 
 use super::task_manager_bridge::TaskRunnerTaskManagerStore;
-use super::TaskService;
+use super::{SkillService, TaskService};
 
 mod builders;
+mod project_management;
 mod provider;
 mod registry;
+mod task_runner_skills;
 
 pub(super) use self::builders::build_task_runner_builtin_provider;
-pub(super) use self::registry::build_builtin_registry;
+pub(super) use self::project_management::ProjectManagementExecutionOptions;
+use self::project_management::{ProjectManagementBuiltinService, ProjectManagementOptions};
+pub(super) use self::provider::DisabledBuiltinProvider;
+pub(super) use self::registry::{
+    build_builtin_registry, build_builtin_registry_with_project_management_options,
+};
+pub(super) use self::task_runner_skills::TaskRunnerSkillLookupProvider;
 
 #[cfg(test)]
 mod tests {
@@ -77,13 +85,16 @@ mod tests {
             default_tool_results_model_total_max_chars: 1_000,
             chatos_callback_url: None,
             chatos_callback_secret: None,
+            internal_api_secret: None,
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
             admin_display_name: "Admin".to_string(),
-            user_service_jwt_secret: None,
-            user_service_jwt_issuer: "user_service".to_string(),
-            user_service_task_runner_audience: "task_runner".to_string(),
+            user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_request_timeout: Duration::from_millis(5000),
+            project_service_base_url: None,
+            project_service_sync_secret: None,
+            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 
@@ -97,7 +108,7 @@ mod tests {
         let config = test_config(default_workspace.clone());
         let store = AppStore::new(&config).await.expect("create store");
         let task_service = TaskService::new(config, store.clone());
-        let ui_prompt_service = UiPromptService::new(store);
+        let ask_user_prompt_service = AskUserPromptService::new(store);
         let server = McpBuiltinServer {
             name: "terminal_controller".to_string(),
             kind: "TerminalController".to_string(),
@@ -113,9 +124,10 @@ mod tests {
             search_limit: 10,
         };
 
-        let provider = build_task_runner_builtin_provider(&server, task_service, ui_prompt_service)
-            .expect("build provider")
-            .expect("terminal provider");
+        let provider =
+            build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
+                .expect("build provider")
+                .expect("terminal provider");
         let tools = provider.list_tools();
         let execute = tools
             .iter()
@@ -128,5 +140,45 @@ mod tests {
 
         assert!(description.contains(task_workspace.to_string_lossy().as_ref()));
         assert!(!description.contains(default_workspace.to_string_lossy().as_ref()));
+    }
+
+    #[tokio::test]
+    async fn project_management_provider_exposes_builtin_tools() {
+        let default_workspace = unique_temp_dir("default");
+        std::fs::create_dir_all(&default_workspace).expect("create default workspace");
+
+        let mut config = test_config(default_workspace);
+        config.project_service_base_url = Some("http://127.0.0.1:39210".to_string());
+        config.project_service_sync_secret = Some("sync-secret".to_string());
+        let store = AppStore::new(&config).await.expect("create store");
+        let task_service = TaskService::new(config, store.clone());
+        let ask_user_prompt_service = AskUserPromptService::new(store);
+        let server = McpBuiltinServer {
+            name: chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME.to_string(),
+            kind: chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement
+                .kind_name()
+                .to_string(),
+            workspace_dir: ".".to_string(),
+            user_id: Some("owner-1".to_string()),
+            project_id: Some("project-1".to_string()),
+            remote_connection_id: None,
+            contact_agent_id: None,
+            auto_create_task: true,
+            allow_writes: true,
+            max_file_bytes: 1_000,
+            max_write_bytes: 1_000,
+            search_limit: 10,
+        };
+
+        let provider =
+            build_task_runner_builtin_provider(&server, task_service, ask_user_prompt_service)
+                .expect("build provider")
+                .expect("project management provider");
+        let tools = provider.list_tools();
+
+        assert!(tools.iter().any(|tool| {
+            tool.get("name").and_then(Value::as_str) == Some("create_requirement")
+        }));
+        assert!(provider.unavailable_tools().is_empty());
     }
 }

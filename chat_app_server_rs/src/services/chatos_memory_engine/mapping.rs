@@ -4,6 +4,7 @@ use crate::core::chat_runtime::{
     contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
 };
 use crate::models::message::Message;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 use crate::services::text_normalization::normalize_optional_text_ref;
 
@@ -36,7 +37,14 @@ pub(crate) fn resolve_session_project_scope(
 ) -> String {
     normalize_optional_text(project_id)
         .or_else(|| project_id_from_metadata(metadata))
-        .unwrap_or_else(|| "0".to_string())
+        .map(|value| {
+            if value == "0" {
+                PUBLIC_PROJECT_ID.to_string()
+            } else {
+                value
+            }
+        })
+        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string())
 }
 
 pub(crate) fn build_thread_mapping(session: &Session) -> Result<ChatosThreadMapping, String> {

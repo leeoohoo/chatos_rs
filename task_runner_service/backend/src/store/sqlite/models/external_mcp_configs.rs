@@ -33,8 +33,9 @@ impl SqliteStore {
             "INSERT INTO external_mcp_configs (
                 id, name, transport, command, args_json, url, headers_json, env_json, cwd,
                 enabled, creator_user_id, creator_username, creator_display_name,
+                owner_user_id, owner_username, owner_display_name,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 transport = excluded.transport,
@@ -48,6 +49,9 @@ impl SqliteStore {
                 creator_user_id = excluded.creator_user_id,
                 creator_username = excluded.creator_username,
                 creator_display_name = excluded.creator_display_name,
+                owner_user_id = excluded.owner_user_id,
+                owner_username = excluded.owner_username,
+                owner_display_name = excluded.owner_display_name,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at",
         )
@@ -64,6 +68,9 @@ impl SqliteStore {
         .bind(config.creator_user_id.clone())
         .bind(config.creator_username.clone())
         .bind(config.creator_display_name.clone())
+        .bind(config.owner_user_id.clone())
+        .bind(config.owner_username.clone())
+        .bind(config.owner_display_name.clone())
         .bind(&config.created_at)
         .bind(&config.updated_at)
         .execute(&self.pool)

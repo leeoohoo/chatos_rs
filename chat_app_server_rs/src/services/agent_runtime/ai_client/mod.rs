@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+use crate::core::ai_settings::request_body_limit_bytes_from_settings;
 #[cfg(test)]
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::services::agent_runtime::ai_request_handler::AiRequestHandler;
@@ -13,6 +14,7 @@ use crate::services::user_settings::AiClientSettings;
 
 mod compat;
 mod execution_loop;
+mod execution_loop_follow_up;
 mod execution_loop_guidance;
 mod execution_loop_state;
 mod execution_loop_tool_io;
@@ -54,6 +56,7 @@ pub struct AiClient {
     message_manager: MessageManager,
     max_iterations: i64,
     task_follow_up_max_rounds: usize,
+    request_body_limit_bytes: Option<usize>,
     system_prompt: Option<String>,
     force_text_content_sessions: HashSet<String>,
     no_system_message_sessions: HashSet<String>,
@@ -87,6 +90,7 @@ impl AiClient {
             message_manager,
             max_iterations: 25,
             task_follow_up_max_rounds: 3,
+            request_body_limit_bytes: Some(request_body_limit_bytes_from_settings(&Value::Null)),
             system_prompt: None,
             force_text_content_sessions: HashSet::new(),
             no_system_message_sessions: HashSet::new(),
@@ -142,6 +146,7 @@ impl AiClientSettings for AiClient {
         {
             self.task_follow_up_max_rounds = v.max(0) as usize;
         }
+        self.request_body_limit_bytes = Some(request_body_limit_bytes_from_settings(effective));
     }
 }
 

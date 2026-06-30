@@ -4,13 +4,20 @@ import type {
 } from './types';
 
 const MAX_EMBED_BYTES = 5 * 1024 * 1024; // 5MB 上限，超出不内联内容
-export const DEFAULT_AGENT_REQUEST_BODY_MAX_BYTES = 1_500_000;
+export const DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES = 20 * 1024 * 1024;
+const REQUEST_BODY_BASE64_OVERHEAD_RATIO = 4 / 3;
+const REQUEST_BODY_FIXED_OVERHEAD_BYTES = 1024 * 1024;
+export const DEFAULT_AGENT_REQUEST_BODY_MAX_BYTES = Math.ceil(
+  DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES * REQUEST_BODY_BASE64_OVERHEAD_RATIO
+    + REQUEST_BODY_FIXED_OVERHEAD_BYTES,
+);
 const INLINE_IMAGE_TARGET_BYTES = 850 * 1024;
 const INLINE_IMAGE_MAX_EDGE_STEPS = [1920, 1600, 1280, 1024];
 const INLINE_IMAGE_QUALITY_STEPS = [0.84, 0.72, 0.6, 0.48, 0.36];
 
 interface PrepareAttachmentsOptions {
   dropImagesWhenUnsupported?: boolean;
+  maxTotalBytes?: number;
 }
 
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
@@ -27,7 +34,7 @@ const readFileAsText = (file: File) => new Promise<string>((resolve, reject) => 
   reader.readAsText(file);
 });
 
-const formatPayloadBytes = (bytes: number) => {
+export const formatPayloadBytes = (bytes: number) => {
   if (bytes >= 1024 * 1024) {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   }
@@ -35,6 +42,47 @@ const formatPayloadBytes = (bytes: number) => {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${bytes} B`;
+};
+
+export const resolveAttachmentTotalMaxBytes = (value: unknown): number => {
+  const numeric = typeof value === 'number'
+    ? value
+    : (typeof value === 'string' ? Number(value.trim()) : NaN);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES;
+  }
+  return Math.max(1, Math.round(numeric));
+};
+
+export const estimateAttachmentTotalBytes = (attachments: File[]): number => (
+  (Array.isArray(attachments) ? attachments : []).reduce((total, file) => {
+    const size = typeof file?.size === 'number' && Number.isFinite(file.size)
+      ? file.size
+      : 0;
+    return total + Math.max(0, size);
+  }, 0)
+);
+
+export const requestPayloadMaxBytesForAttachmentTotalLimit = (maxAttachmentBytes: number): number => (
+  Math.ceil(
+    resolveAttachmentTotalMaxBytes(maxAttachmentBytes) * REQUEST_BODY_BASE64_OVERHEAD_RATIO
+      + REQUEST_BODY_FIXED_OVERHEAD_BYTES,
+  )
+);
+
+export const assertAttachmentsWithinTotalBudget = (
+  attachments: File[],
+  maxBytes = DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES,
+) => {
+  const resolvedMaxBytes = resolveAttachmentTotalMaxBytes(maxBytes);
+  const totalBytes = estimateAttachmentTotalBytes(attachments);
+  if (totalBytes <= resolvedMaxBytes) {
+    return;
+  }
+
+  throw new Error(
+    `附件总大小为 ${formatPayloadBytes(totalBytes)}，超过 ${formatPayloadBytes(resolvedMaxBytes)} 限制，请减少文件数量或换更小的文件重试。`,
+  );
 };
 
 const renameFileWithExtension = (name: string, extension: string) => {
@@ -289,6 +337,11 @@ export async function prepareAttachmentsForStreaming(
         : attachments.filter((file) => !file.type.startsWith('image/'))
     )
     : [];
+
+  assertAttachmentsWithinTotalBudget(
+    safeAttachments,
+    options.maxTotalBytes ?? DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES,
+  );
 
   const previewAttachments = await Promise.all((safeAttachments || []).map(makePreviewAttachment));
   const transportAttachments = await Promise.all(

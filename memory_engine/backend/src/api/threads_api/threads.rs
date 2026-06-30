@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::error::internal_error;
 use super::queries::{AdminListThreadsQuery, DeleteThreadQuery, GetThreadQuery};
-use crate::api::source_guard;
+use crate::api::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{
     DeleteThreadResponse, EngineThread, ListThreadsByLabelRequest, UpsertThreadRequest,
 };
@@ -17,9 +17,11 @@ use crate::state::AppState;
 
 pub async fn upsert_thread(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Json(req): Json<UpsertThreadRequest>,
 ) -> Result<Json<EngineThread>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
     threads::upsert_thread(&state.pool, thread_id.as_str(), req)
         .await
@@ -29,12 +31,14 @@ pub async fn upsert_thread(
 
 pub async fn get_thread(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<GetThreadQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let item = threads::get_thread(
         &state.pool,
-        query.tenant_id.as_deref(),
+        tenant_id.as_deref(),
         query.source_id.as_deref(),
         thread_id.as_str(),
     )
@@ -45,9 +49,11 @@ pub async fn get_thread(
 
 pub async fn delete_thread(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
     Query(query): Query<DeleteThreadQuery>,
 ) -> Result<Json<DeleteThreadResponse>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, query.source_id.as_str()).await?;
     threads::delete_thread(
         &state.pool,
@@ -62,12 +68,14 @@ pub async fn delete_thread(
 
 pub async fn list_threads_query(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Query(query): Query<AdminListThreadsQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let items = threads::list_threads(
         &state.pool,
         threads::ListThreadsQuery {
-            tenant_id: query.tenant_id.as_deref(),
+            tenant_id: tenant_id.as_deref(),
             source_id: query.source_id.as_deref(),
             subject_id: query.subject_id.as_deref(),
             external_thread_id: query.external_thread_id.as_deref(),
@@ -90,8 +98,10 @@ pub async fn list_threads_query(
 
 pub async fn list_threads_by_label(
     State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
     Json(req): Json<ListThreadsByLabelRequest>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     let items = threads::list_threads_by_label(
         &state.pool,
         req.tenant_id.as_str(),

@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use chatos_mcp_runtime::ToolCallerModelRuntime;
+use once_cell::sync::Lazy;
 use serde_json::{json, Value};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::{Id, JoinSet};
 use tracing::{error, warn};
 
@@ -20,6 +22,32 @@ use crate::utils::abort_registry;
 use super::parallelism::should_parallelize_tool_batch;
 
 const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
+const HEAVY_IO_TOOL_SESSION_LIMIT: usize = 2;
+const HEAVY_IO_TOOL_GLOBAL_LIMIT: usize = 8;
+const HEAVY_IO_TOOL_NAMES: &[&str] = &[
+    "apply_patch",
+    "delete_file",
+    "delete_path",
+    "edit_file",
+    "list_dir",
+    "list_directory",
+    "read_file",
+    "read_file_range",
+    "read_file_raw",
+    "search_files",
+    "search_text",
+    "write_file",
+];
+
+static HEAVY_IO_TOOL_GLOBAL_LIMITER: Lazy<Arc<Semaphore>> =
+    Lazy::new(|| Arc::new(Semaphore::new(HEAVY_IO_TOOL_GLOBAL_LIMIT)));
+static HEAVY_IO_TOOL_SESSION_LIMITERS: Lazy<Mutex<HashMap<String, Weak<Semaphore>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+struct HeavyIoToolPermits {
+    _session: OwnedSemaphorePermit,
+    _global: OwnedSemaphorePermit,
+}
 
 pub(crate) fn tool_call_name(tool_call: &Value) -> Option<&str> {
     extract_tool_call_name(tool_call)
@@ -45,24 +73,27 @@ pub(crate) async fn execute_tools_stream_with_registry(
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
     builtin_services: &HashMap<String, BuiltinToolService>,
 ) -> Vec<ToolResult> {
-    if should_parallelize_tool_batch(tool_calls, tool_metadata) {
+    let normalized_tool_calls = normalize_tool_calls(tool_calls, tool_metadata, tool_aliases);
+    if should_parallelize_tool_batch(normalized_tool_calls.as_slice(), tool_metadata) {
         return execute_tools_stream_parallel_with_registry(
-            tool_calls,
+            normalized_tool_calls.as_slice(),
             session_id,
             conversation_turn_id,
             caller_model,
             caller_model_runtime,
             on_tool_result,
             tool_metadata,
+            tool_aliases,
             builtin_services,
         )
         .await;
     }
 
     execute_tools_stream_common(
-        tool_calls,
+        normalized_tool_calls.as_slice(),
         session_id,
         conversation_turn_id,
         on_tool_result,
@@ -76,6 +107,7 @@ pub(crate) async fn execute_tools_stream_with_registry(
                 conversation_turn_id,
                 caller_model,
                 caller_model_runtime,
+                tool_aliases,
                 on_stream_chunk,
             )
             .await
@@ -93,11 +125,16 @@ pub(crate) async fn call_tool_once(
     conversation_turn_id: Option<&str>,
     caller_model: Option<&str>,
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
+    tool_aliases: &HashMap<String, String>,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 ) -> Result<(String, Option<Value>), String> {
+    let resolved_tool_name =
+        resolve_tool_name(tool_name, tool_metadata, tool_aliases).unwrap_or(tool_name);
     let info = tool_metadata
-        .get(tool_name)
+        .get(resolved_tool_name)
         .ok_or_else(|| format!("工具未找到: {}", tool_name))?;
+
+    let _io_permits = acquire_heavy_io_tool_permits(info, session_id).await?;
 
     if info.server_type == "http" {
         let url = info.server_url.clone().ok_or("missing server url")?;
@@ -143,6 +180,53 @@ pub(crate) async fn call_tool_once(
     }
 }
 
+async fn acquire_heavy_io_tool_permits(
+    info: &ToolInfo,
+    session_id: Option<&str>,
+) -> Result<Option<HeavyIoToolPermits>, String> {
+    if !is_heavy_io_tool_name(info.original_name.as_str()) {
+        return Ok(None);
+    }
+
+    let session_limiter = heavy_io_session_limiter(session_id);
+    let session_permit = session_limiter
+        .acquire_owned()
+        .await
+        .map_err(|_| "heavy IO tool session limiter closed".to_string())?;
+    let global_permit = Arc::clone(&HEAVY_IO_TOOL_GLOBAL_LIMITER)
+        .acquire_owned()
+        .await
+        .map_err(|_| "heavy IO tool global limiter closed".to_string())?;
+
+    Ok(Some(HeavyIoToolPermits {
+        _session: session_permit,
+        _global: global_permit,
+    }))
+}
+
+pub(crate) fn is_heavy_io_tool_name(tool_name: &str) -> bool {
+    HEAVY_IO_TOOL_NAMES.iter().any(|name| *name == tool_name)
+}
+
+fn heavy_io_session_limiter(session_id: Option<&str>) -> Arc<Semaphore> {
+    let key = session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("anonymous")
+        .to_string();
+    let mut limiters = HEAVY_IO_TOOL_SESSION_LIMITERS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    if let Some(existing) = limiters.get(&key).and_then(Weak::upgrade) {
+        return existing;
+    }
+
+    limiters.retain(|_, limiter| limiter.strong_count() > 0);
+    let limiter = Arc::new(Semaphore::new(HEAVY_IO_TOOL_SESSION_LIMIT));
+    limiters.insert(key, Arc::downgrade(&limiter));
+    limiter
+}
+
 fn http_tool_call_headers(
     info: &ToolInfo,
     session_id: Option<&str>,
@@ -176,9 +260,11 @@ async fn execute_tools_stream_parallel_with_registry(
     caller_model_runtime: Option<&ToolCallerModelRuntime>,
     on_tool_result: Option<ToolResultCallback>,
     tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
     builtin_services: &HashMap<String, BuiltinToolService>,
 ) -> Vec<ToolResult> {
     let tool_metadata = tool_metadata.clone();
+    let tool_aliases = tool_aliases.clone();
     let builtin_services = builtin_services.clone();
 
     execute_tools_stream_parallel(
@@ -196,6 +282,7 @@ async fn execute_tools_stream_parallel_with_registry(
               caller_model_runtime_owned,
               on_stream_chunk| {
             let tool_metadata = tool_metadata.clone();
+            let tool_aliases = tool_aliases.clone();
             let builtin_services = builtin_services.clone();
             async move {
                 call_tool_once(
@@ -207,6 +294,7 @@ async fn execute_tools_stream_parallel_with_registry(
                     turn_id_owned.as_deref(),
                     caller_model_owned.as_deref(),
                     caller_model_runtime_owned.as_ref(),
+                    &tool_aliases,
                     on_stream_chunk,
                 )
                 .await
@@ -214,6 +302,56 @@ async fn execute_tools_stream_parallel_with_registry(
         },
     )
     .await
+}
+
+fn resolve_tool_name<'a>(
+    tool_name: &'a str,
+    tool_metadata: &'a HashMap<String, ToolInfo>,
+    tool_aliases: &'a HashMap<String, String>,
+) -> Option<&'a str> {
+    if tool_metadata.contains_key(tool_name) {
+        Some(tool_name)
+    } else {
+        tool_aliases.get(tool_name).map(String::as_str)
+    }
+}
+
+fn normalize_tool_calls(
+    tool_calls: &[Value],
+    tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
+) -> Vec<Value> {
+    tool_calls
+        .iter()
+        .map(|tool_call| normalize_tool_call(tool_call, tool_metadata, tool_aliases))
+        .collect()
+}
+
+fn normalize_tool_call(
+    tool_call: &Value,
+    tool_metadata: &HashMap<String, ToolInfo>,
+    tool_aliases: &HashMap<String, String>,
+) -> Value {
+    let Some(requested_name) = extract_tool_call_name(tool_call) else {
+        return tool_call.clone();
+    };
+    let Some(resolved_name) = resolve_tool_name(requested_name, tool_metadata, tool_aliases) else {
+        return tool_call.clone();
+    };
+    if resolved_name == requested_name {
+        return tool_call.clone();
+    }
+
+    let mut normalized = tool_call.clone();
+    if let Some(function) = normalized
+        .get_mut("function")
+        .and_then(Value::as_object_mut)
+    {
+        function.insert("name".to_string(), Value::String(resolved_name.to_string()));
+    } else if let Some(object) = normalized.as_object_mut() {
+        object.insert("name".to_string(), Value::String(resolved_name.to_string()));
+    }
+    normalized
 }
 
 pub(crate) async fn execute_tools_stream_parallel<E, Fut>(

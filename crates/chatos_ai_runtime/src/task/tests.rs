@@ -105,14 +105,12 @@ fn task_run_spec_injects_configured_builtin_mcp_prompt_from_executor() {
             .map(|snapshot| &snapshot.mode),
         Some(&TaskBuiltinMcpPromptMode::Configured)
     );
-    assert!(
-        decoded
-            .prefixed_input_items
-            .first()
-            .and_then(|item| item.get("content"))
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|content| content.contains("`task_manager_add_task`"))
-    );
+    assert!(decoded
+        .prefixed_input_items
+        .first()
+        .and_then(|item| item.get("content"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|content| content.contains("`task_manager_add_task`")));
 }
 
 #[test]
@@ -179,13 +177,12 @@ fn task_runtime_builder_prepares_configured_builtin_prompt() {
         runtime.builtin_prompt_mode(),
         TaskBuiltinMcpPromptMode::Configured
     );
-    assert!(
-        spec.prefixed_input_items
-            .first()
-            .and_then(|item| item.get("content"))
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|content| content.contains("`task_manager_add_task`"))
-    );
+    assert!(spec
+        .prefixed_input_items
+        .first()
+        .and_then(|item| item.get("content"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|content| content.contains("`task_manager_add_task`")));
 }
 
 #[test]
@@ -230,17 +227,15 @@ fn task_runtime_builder_accepts_builtin_only_mcp_builder() {
         .build();
 
     assert!(runtime.mcp_executor().is_some());
-    assert!(
-        runtime
-            .mcp_executor()
-            .expect("executor")
-            .unavailable_tools()
-            .iter()
-            .any(
-                |item| item.get("reason").and_then(serde_json::Value::as_str)
-                    == Some("missing builtin provider")
-            )
-    );
+    assert!(runtime
+        .mcp_executor()
+        .expect("executor")
+        .unavailable_tools()
+        .iter()
+        .any(
+            |item| item.get("reason").and_then(serde_json::Value::as_str)
+                == Some("missing builtin provider")
+        ));
 }
 
 #[tokio::test]
@@ -254,13 +249,11 @@ async fn task_runtime_builder_accepts_initialized_mcp_builder() {
         .build();
 
     assert!(runtime.mcp_executor().is_some());
-    assert!(
-        runtime
-            .mcp_executor()
-            .expect("executor")
-            .available_tools()
-            .is_empty()
-    );
+    assert!(runtime
+        .mcp_executor()
+        .expect("executor")
+        .available_tools()
+        .is_empty());
 }
 
 #[test]
@@ -336,17 +329,15 @@ async fn task_runtime_config_builds_builtin_only_runtime() {
     let runtime = config.build_runtime().await.expect("runtime");
 
     assert!(runtime.mcp_executor().is_some());
-    assert!(
-        runtime
-            .mcp_executor()
-            .expect("executor")
-            .unavailable_tools()
-            .iter()
-            .any(
-                |item| item.get("reason").and_then(serde_json::Value::as_str)
-                    == Some("missing builtin provider")
-            )
-    );
+    assert!(runtime
+        .mcp_executor()
+        .expect("executor")
+        .unavailable_tools()
+        .iter()
+        .any(
+            |item| item.get("reason").and_then(serde_json::Value::as_str)
+                == Some("missing builtin provider")
+        ));
 }
 
 #[tokio::test]
@@ -451,12 +442,10 @@ fn task_run_execution_wraps_runtime_init_failure_report() {
     let report = execution.runtime_init_failed_report("boom");
 
     assert_eq!(report.status, AiTurnStatus::Failed);
-    assert!(
-        report
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("runtime init failed"))
-    );
+    assert!(report
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("runtime init failed")));
 }
 
 #[tokio::test]

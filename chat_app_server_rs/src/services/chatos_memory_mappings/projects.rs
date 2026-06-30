@@ -1,4 +1,5 @@
 use crate::models::memory_mapping_types::{MemoryProjectDto, SyncMemoryProjectRequestDto};
+use crate::models::project::{normalize_project_id, PUBLIC_PROJECT_ID};
 use crate::repositories::chatos_memory_mappings as mappings_repo;
 
 use super::support::project_to_dto;
@@ -13,19 +14,15 @@ pub async fn sync_memory_project(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "user_id is required".to_string())?
         .to_string();
-    let project_id = payload
-        .project_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("0")
-        .to_string();
+    let project_id =
+        normalize_project_id(payload.project_id.as_deref().unwrap_or(PUBLIC_PROJECT_ID));
     let project = mappings_repo::upsert_memory_project(mappings_repo::UpsertMemoryProjectInput {
         user_id,
-        project_id,
-        name: payload.name.clone().unwrap_or_else(|| {
-            mappings_repo::default_project_name(payload.project_id.as_deref().unwrap_or("0"))
-        }),
+        project_id: project_id.clone(),
+        name: payload
+            .name
+            .clone()
+            .unwrap_or_else(|| mappings_repo::default_project_name(project_id.as_str())),
         root_path: payload.root_path.clone(),
         description: payload.description.clone(),
         status: payload.status.clone(),

@@ -1,4 +1,4 @@
-use crate::repositories::projects;
+use crate::models::project::{normalize_project_id, ProjectService, PUBLIC_PROJECT_ID};
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
@@ -25,8 +25,14 @@ pub async fn resolve_project_runtime(
     let Some(project_id) = resolved_project_id.clone() else {
         return (resolved_project_id, resolved_project_root);
     };
+    let project_id = normalize_project_id(project_id.as_str());
+    if project_id == PUBLIC_PROJECT_ID {
+        resolved_project_id = Some(PUBLIC_PROJECT_ID.to_string());
+        return (resolved_project_id, resolved_project_root);
+    }
+    resolved_project_id = Some(project_id.clone());
 
-    let project = match projects::get_project_by_id(project_id.as_str()).await {
+    let project = match ProjectService::get_by_id(project_id.as_str()).await {
         Ok(Some(project)) => project,
         _ => {
             resolved_project_id = None;

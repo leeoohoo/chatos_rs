@@ -57,13 +57,31 @@ export const getErrorMessageFromPayload = (
   if (!isJsonRecord(payload)) {
     return fallback;
   }
+  const detailValue = payload.detail;
   const errorValue = payload.error;
   if (typeof errorValue === 'string' && errorValue.trim().length > 0) {
-    return errorValue;
+    const errorMessage = errorValue.trim();
+    if (typeof detailValue === 'string' && detailValue.trim().length > 0) {
+      const detailMessage = detailValue.trim();
+      if (detailMessage !== errorMessage) {
+        return `${errorMessage}: ${detailMessage}`;
+      }
+    }
+    return errorMessage;
   }
   const messageValue = payload.message;
   if (typeof messageValue === 'string' && messageValue.trim().length > 0) {
-    return messageValue;
+    const message = messageValue.trim();
+    if (typeof detailValue === 'string' && detailValue.trim().length > 0) {
+      const detailMessage = detailValue.trim();
+      if (detailMessage !== message) {
+        return `${message}: ${detailMessage}`;
+      }
+    }
+    return message;
+  }
+  if (typeof detailValue === 'string' && detailValue.trim().length > 0) {
+    return detailValue.trim();
   }
   return fallback;
 };

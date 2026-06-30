@@ -18,6 +18,28 @@ interface UseMessageTasksArgs {
   lookup?: MessageTaskRunnerLookupOptions;
 }
 
+const RUN_EVENT_PAGE_SIZE = 40;
+
+const mergeRunEventPage = (
+  current: MessageTaskRunnerRunDetailResponse,
+  next: MessageTaskRunnerRunDetailResponse,
+): MessageTaskRunnerRunDetailResponse => {
+  const seen = new Set<string>();
+  const events = [...current.events, ...next.events].filter((event) => {
+    const key = readString(event.id) || `${event.run_id}:${event.created_at}:${event.event_type}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+  return {
+    ...next,
+    events,
+    events_offset: current.events_offset ?? 0,
+  };
+};
+
 export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs) {
   const apiClient = useApiClient();
   const [tasks, setTasks] = useState<MessageTaskRunnerTask[]>([]);
@@ -76,7 +98,11 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
       const detailLookup = sourceUserMessageId
         ? { ...lookup, sourceUserMessageId }
         : lookup;
-      const detail = await getMessageTaskRunnerRun(apiClient.getRequestFn(), messageId, runId, detailLookup);
+      const detail = await getMessageTaskRunnerRun(apiClient.getRequestFn(), messageId, runId, {
+        ...detailLookup,
+        eventLimit: RUN_EVENT_PAGE_SIZE,
+        eventOffset: 0,
+      });
       setRunDetail(detail);
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取运行详情失败');
@@ -84,6 +110,34 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
       setLoadingRunId(null);
     }
   }, [apiClient, messageId, lookup, sourceUserMessageId]);
+
+  const loadMoreRunEvents = useCallback(async () => {
+    if (!runDetail?.events_has_more) {
+      return;
+    }
+    const runId = readString(runDetail.run?.id);
+    if (!runId || loadingRunId === runId) {
+      return;
+    }
+    setLoadingRunId(runId);
+    setError(null);
+    try {
+      const detailLookup = sourceUserMessageId
+        ? { ...lookup, sourceUserMessageId }
+        : lookup;
+      const offset = (runDetail.events_offset ?? 0) + runDetail.events.length;
+      const detail = await getMessageTaskRunnerRun(apiClient.getRequestFn(), messageId, runId, {
+        ...detailLookup,
+        eventLimit: RUN_EVENT_PAGE_SIZE,
+        eventOffset: offset,
+      });
+      setRunDetail((current) => (current ? mergeRunEventPage(current, detail) : detail));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '读取更多运行事件失败');
+    } finally {
+      setLoadingRunId(null);
+    }
+  }, [apiClient, loadingRunId, messageId, lookup, runDetail, sourceUserMessageId]);
 
   useEffect(() => {
     if (!open) {
@@ -112,6 +166,7 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
     reloadTasks,
     openDetail,
     openRun,
+    loadMoreRunEvents,
     closeDetail: () => setDetailTask(null),
     closeRun: () => setRunDetail(null),
   };

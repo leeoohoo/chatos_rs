@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
-use tracing::info;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::{info, Level};
 
 use crate::config::AppConfig;
 use crate::state::AppState;
@@ -42,12 +42,19 @@ async fn main() -> Result<(), String> {
         jobs::worker::start(state.clone());
     }
 
-    let app = api::router(state).layer(TraceLayer::new_for_http()).layer(
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_headers(Any)
-            .allow_methods(Any),
-    );
+    let app = api::router(state)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+                .on_request(DefaultOnRequest::new().level(Level::DEBUG))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG)),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_headers(Any)
+                .allow_methods(Any),
+        );
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(addr.as_str())

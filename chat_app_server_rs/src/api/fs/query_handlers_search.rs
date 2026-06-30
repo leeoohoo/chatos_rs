@@ -1,4 +1,6 @@
 use std::fs;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::core::auth::AuthUser;
 use axum::http::StatusCode;
@@ -18,6 +20,14 @@ use crate::services::workspace_search::{
 const DEFAULT_SEARCH_LIMIT: usize = 200;
 const MAX_SEARCH_LIMIT: usize = 500;
 const MAX_SEARCH_VISITS: usize = 20_000;
+const DEFAULT_FS_SEARCH_DEADLINE: Duration = Duration::from_secs(3);
+
+#[derive(Debug)]
+struct FsEntrySearchResult {
+    entries: Vec<Value>,
+    truncated: bool,
+    visited_dirs: usize,
+}
 
 pub(in super::super) async fn search_entries(
     auth: AuthUser,
@@ -62,13 +72,54 @@ pub(in super::super) async fn search_entries(
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .clamp(1, MAX_SEARCH_LIMIT);
     let keyword = normalize_search_keyword(&raw_keyword);
+    let root = path.path.clone();
+    let root_display = root.to_string_lossy().to_string();
 
-    let mut stack = vec![path.path.clone()];
+    let result = match tokio::task::spawn_blocking({
+        let root = root.clone();
+        let keyword = keyword.clone();
+        move || search_entries_sync(root, keyword, limit, DEFAULT_FS_SEARCH_DEADLINE)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("search task failed: {err}") })),
+            );
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "path": root_display,
+            "query": keyword,
+            "entries": result.entries,
+            "truncated": result.truncated,
+            "visited_dirs": result.visited_dirs
+        })),
+    )
+}
+
+fn search_entries_sync(
+    root: PathBuf,
+    keyword: String,
+    limit: usize,
+    deadline: Duration,
+) -> FsEntrySearchResult {
+    let started_at = Instant::now();
+    let mut stack = vec![root.clone()];
     let mut entries: Vec<Value> = Vec::new();
     let mut visited_dirs = 0usize;
     let mut truncated = false;
 
     while let Some(dir_path) = stack.pop() {
+        if started_at.elapsed() >= deadline {
+            truncated = true;
+            break;
+        }
         if visited_dirs >= MAX_SEARCH_VISITS {
             truncated = true;
             break;
@@ -81,6 +132,10 @@ pub(in super::super) async fn search_entries(
         };
 
         for entry in iter {
+            if started_at.elapsed() >= deadline {
+                truncated = true;
+                break;
+            }
             if entries.len() >= limit {
                 truncated = true;
                 break;
@@ -110,7 +165,7 @@ pub(in super::super) async fn search_entries(
 
             let name = entry.file_name().to_string_lossy().to_string();
             let relative_path = full_path
-                .strip_prefix(&path.path)
+                .strip_prefix(&root)
                 .ok()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| full_path.to_string_lossy().to_string());
@@ -149,16 +204,11 @@ pub(in super::super) async fn search_entries(
         ap.cmp(&bp)
     });
 
-    (
-        StatusCode::OK,
-        Json(json!({
-            "path": path.path.to_string_lossy(),
-            "query": keyword,
-            "entries": entries,
-            "truncated": truncated,
-            "visited_dirs": visited_dirs
-        })),
-    )
+    FsEntrySearchResult {
+        entries,
+        truncated,
+        visited_dirs,
+    }
 }
 
 pub(in super::super) async fn search_content(
@@ -204,15 +254,36 @@ pub(in super::super) async fn search_content(
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .clamp(1, MAX_SEARCH_LIMIT);
 
-    match search_workspace_text(&TextSearchRequest {
-        root: path.path.clone(),
-        query: query_text.clone(),
-        max_results: limit,
-        max_file_bytes: DEFAULT_MAX_FILE_BYTES,
-        max_visits: DEFAULT_MAX_VISITS,
-        case_sensitive: query.case_sensitive.unwrap_or(false),
-        whole_word: query.whole_word.unwrap_or(false),
-    }) {
+    let search_result = tokio::task::spawn_blocking({
+        let root = path.path.clone();
+        let query_text = query_text.clone();
+        let case_sensitive = query.case_sensitive.unwrap_or(false);
+        let whole_word = query.whole_word.unwrap_or(false);
+        move || {
+            search_workspace_text(&TextSearchRequest {
+                root,
+                query: query_text,
+                max_results: limit,
+                max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+                max_visits: DEFAULT_MAX_VISITS,
+                case_sensitive,
+                whole_word,
+                deadline: None,
+            })
+        }
+    })
+    .await;
+    let result = match search_result {
+        Ok(result) => result,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("search task failed: {err}") })),
+            );
+        }
+    };
+
+    match result {
         Ok(result) => (
             StatusCode::OK,
             Json(json!({

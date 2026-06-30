@@ -41,7 +41,8 @@ pub(crate) async fn build_context_blocks(
     if policy.include_subject_memory {
         let _ = summary_subject_ids;
         blocks.extend(
-            load_subject_memory_blocks(db, tenant_id, source_id, subject_memory_subject_ids).await?,
+            load_subject_memory_blocks(db, tenant_id, source_id, subject_memory_subject_ids)
+                .await?,
         );
     }
 
@@ -90,9 +91,9 @@ pub(crate) fn subject_memory_subject_ids_for_context(
         .unwrap_or(thread_subject_id);
 
     let mut subject_ids = subject_ids_for_context(primary_subject_id, related_subject_ids);
-    if let Some(value) = requested.filter(|value| {
-        *value != thread_subject_id && !value.starts_with("session:")
-    }) {
+    if let Some(value) =
+        requested.filter(|value| *value != thread_subject_id && !value.starts_with("session:"))
+    {
         if !subject_ids.iter().any(|item| item == value) {
             subject_ids.push(value.to_string());
         }
@@ -140,7 +141,8 @@ pub(crate) fn thread_agent_subject_id(thread: &EngineThread) -> Option<String> {
 
     let metadata = thread.metadata.as_ref();
     let legacy_mapping = metadata.and_then(|value| value.get("legacy_session_mapping"));
-    let agent_id = text_value(legacy_mapping, "agent_id").or_else(|| text_value(metadata, "agent_id"));
+    let agent_id =
+        text_value(legacy_mapping, "agent_id").or_else(|| text_value(metadata, "agent_id"));
     agent_id.map(|agent_id| format!("agent:{agent_id}"))
 }
 

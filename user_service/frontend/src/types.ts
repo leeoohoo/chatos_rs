@@ -101,6 +101,27 @@ export interface UserModelConfigRecord {
   sync_warnings?: string[];
 }
 
+export interface UserModelProviderRecord {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  provider: string;
+  api_key?: string;
+  has_api_key: boolean;
+  base_url?: string | null;
+  enabled: boolean;
+  supports_images: boolean;
+  supports_reasoning: boolean;
+  supports_responses: boolean;
+  last_sync_status?: string | null;
+  last_sync_error?: string | null;
+  last_synced_at?: string | null;
+  imported_model_count: number;
+  created_at: string;
+  updated_at: string;
+  sync_warnings?: string[];
+}
+
 export interface CreateUserModelConfigPayload {
   id?: string;
   owner_user_id?: string;
@@ -108,6 +129,19 @@ export interface CreateUserModelConfigPayload {
   provider?: string;
   model?: string;
   thinking_level?: string;
+  api_key?: string;
+  base_url?: string;
+  enabled?: boolean;
+  supports_images?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+}
+
+export interface CreateUserModelProviderPayload {
+  id?: string;
+  owner_user_id?: string;
+  name: string;
+  provider?: string;
   api_key?: string;
   base_url?: string;
   enabled?: boolean;
@@ -130,9 +164,22 @@ export interface UpdateUserModelConfigPayload {
   supports_responses?: boolean;
 }
 
+export interface UpdateUserModelProviderPayload {
+  name?: string;
+  provider?: string;
+  api_key?: string;
+  clear_api_key?: boolean;
+  base_url?: string;
+  enabled?: boolean;
+  supports_images?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+}
+
 export interface UserModelSettingsRecord {
   user_id: string;
   memory_summary_model_config_id?: string | null;
+  memory_summary_thinking_level?: string | null;
   updated_at: string;
   sync_warnings?: string[];
 }
@@ -140,25 +187,7 @@ export interface UserModelSettingsRecord {
 export interface UpdateUserModelSettingsPayload {
   user_id?: string;
   memory_summary_model_config_id?: string | null;
-}
-
-export interface TaskRunnerTokenExchangePayload {
-  task_runner_agent_account_id: string;
-  contact_id?: string;
-}
-
-export interface TokenExchangePrincipalSummary {
-  principal_type: PrincipalType;
-  agent_account_id: string;
-  owner_user_id: string;
-  owner_username: string;
-}
-
-export interface TaskRunnerTokenExchangeResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-  principal: TokenExchangePrincipalSummary;
+  memory_summary_thinking_level?: string | null;
 }
 
 export interface HealthResponse {

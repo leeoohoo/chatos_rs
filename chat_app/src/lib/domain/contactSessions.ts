@@ -2,6 +2,8 @@ import type { Session } from '../../types';
 import { asRecord, readTrimmedString, readValue } from './normalizerUtils';
 import { readSessionRuntimeFromMetadata } from './sessionRuntime';
 
+export const PUBLIC_PROJECT_ID = '-1';
+
 export interface ContactSessionRef {
   id: string;
   agentId: string;
@@ -19,7 +21,10 @@ export type MemoryContact = {
 
 export const normalizeProjectScopeId = (projectId: string | null | undefined): string => {
   const trimmed = typeof projectId === 'string' ? projectId.trim() : '';
-  return trimmed.length > 0 ? trimmed : '0';
+  if (!trimmed || trimmed === '0') {
+    return PUBLIC_PROJECT_ID;
+  }
+  return trimmed;
 };
 
 export const resolveSessionProjectScopeId = (
@@ -27,7 +32,7 @@ export const resolveSessionProjectScopeId = (
 ): string => {
   const record = asRecord(session);
   if (!record) {
-    return '0';
+    return PUBLIC_PROJECT_ID;
   }
   const rawProjectId = readTrimmedString(record, 'projectId')
     || readTrimmedString(record, 'project_id');

@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use serde_json::Value;
+use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
@@ -78,6 +79,7 @@ pub(super) async fn create_project(
     let CreateProjectRequest {
         name,
         root_path,
+        git_url,
         description,
         user_id,
     } = req;
@@ -106,18 +108,24 @@ pub(super) async fn create_project(
         }
     };
 
-    let project = Project::new(name, root_path, description, Some(user_id));
-    if let Err(err) = ProjectService::create(project.clone()).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": err})),
-        );
-    }
-    let saved = ProjectService::get_by_id(&project.id)
+    let project = Project::new(name, root_path, git_url, description, Some(user_id));
+    let saved_id = match ProjectService::create(project.clone()).await {
+        Ok(id) => id,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": err})),
+            );
+        }
+    };
+    let saved = ProjectService::get_by_id(&saved_id)
         .await
         .ok()
         .flatten()
-        .unwrap_or(project);
+        .unwrap_or_else(|| Project {
+            id: saved_id,
+            ..project
+        });
     if let Err(err) = sync_active_project(&saved).await {
         let _ = ProjectService::delete(saved.id.as_str()).await;
         return (
@@ -168,6 +176,7 @@ pub(super) async fn update_project(
     let UpdateProjectRequest {
         name,
         root_path,
+        git_url,
         description,
     } = req;
 
@@ -182,7 +191,7 @@ pub(super) async fn update_project(
         }
     };
 
-    if let Err(err) = ProjectService::update(&id, name, root_path, description).await {
+    if let Err(err) = ProjectService::update(&id, name, root_path, git_url, description).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),
@@ -191,9 +200,10 @@ pub(super) async fn update_project(
     match ProjectService::get_by_id(&id).await {
         Ok(Some(project)) => {
             if let Err(err) = sync_active_project(&project).await {
-                eprintln!(
-                    "[PROJECTS] sync memory project failed after update: project_id={} err={}",
-                    project.id, err
+                warn!(
+                    project_id = project.id.as_str(),
+                    error = err.as_str(),
+                    "sync memory project failed after update"
                 );
             }
             publish_projects_updated(
@@ -233,9 +243,10 @@ pub(super) async fn delete_project(
     match ProjectService::delete(&id).await {
         Ok(_) => {
             if let Err(err) = sync_archived_project(&project).await {
-                eprintln!(
-                    "[PROJECTS] sync memory project failed after delete: project_id={} err={}",
-                    project.id, err
+                warn!(
+                    project_id = project.id.as_str(),
+                    error = err.as_str(),
+                    "sync memory project failed after delete"
                 );
             }
             publish_projects_updated(

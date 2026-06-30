@@ -9,6 +9,7 @@ import {
   readProjectRunnerBoundTerminal,
   readProjectRunnerDispatchTarget,
   removeProjectRunnerContactRow,
+  syncProjectRunnerContactRows,
   upsertProjectRunnerContactRow,
 } from './projectRunner';
 
@@ -148,6 +149,42 @@ describe('domain/projectRunner', () => {
         agent_name_snapshot: 'Agent Two',
       },
     ]);
+  });
+
+  it('syncs project runner member cache from an authoritative row list', async () => {
+    const listProjectContacts = vi.fn(async () => [
+      {
+        contact_id: 'contact_1',
+        agent_id: 'agent_1',
+        agent_name_snapshot: 'Agent One',
+      },
+    ]);
+
+    const client = { listProjectContacts };
+    await loadProjectRunnerContactRows(client, 'project_1');
+
+    expect(syncProjectRunnerContactRows(client, 'project_1', [
+      {
+        contact_id: 'contact_2',
+        agent_id: 'agent_2',
+        agent_name_snapshot: 'Agent Two',
+      },
+    ])).toEqual([
+      {
+        contact_id: 'contact_2',
+        agent_id: 'agent_2',
+        agent_name_snapshot: 'Agent Two',
+      },
+    ]);
+
+    await expect(loadProjectRunnerContactRows(client, 'project_1')).resolves.toEqual([
+      {
+        contact_id: 'contact_2',
+        agent_id: 'agent_2',
+        agent_name_snapshot: 'Agent Two',
+      },
+    ]);
+    expect(listProjectContacts).toHaveBeenCalledTimes(1);
   });
 
   it('normalizes runtime root paths, bound terminal state and dispatch terminal metadata', () => {

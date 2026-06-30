@@ -40,13 +40,16 @@ pub struct AppConfig {
     pub default_tool_results_model_total_max_chars: usize,
     pub chatos_callback_url: Option<String>,
     pub chatos_callback_secret: Option<String>,
+    pub internal_api_secret: Option<String>,
     pub callback_timeout: Duration,
     pub admin_username: String,
     pub admin_password: String,
     pub admin_display_name: String,
-    pub user_service_jwt_secret: Option<String>,
-    pub user_service_jwt_issuer: String,
-    pub user_service_task_runner_audience: String,
+    pub user_service_base_url: String,
+    pub user_service_request_timeout: Duration,
+    pub project_service_base_url: Option<String>,
+    pub project_service_sync_secret: Option<String>,
+    pub project_service_request_timeout: Duration,
 }
 
 impl AppConfig {
@@ -71,7 +74,9 @@ impl AppConfig {
             self.memory_timeout,
             self.memory_engine_source_id.clone(),
         )?;
-        if let Some(token) = self.memory_engine_operator_token.clone() {
+        if let Some(access_token) = crate::auth::get_current_access_token() {
+            client = client.with_bearer_token(access_token);
+        } else if let Some(token) = self.memory_engine_operator_token.clone() {
             client = client.with_operator_token(token);
         }
         Ok(Some(client))

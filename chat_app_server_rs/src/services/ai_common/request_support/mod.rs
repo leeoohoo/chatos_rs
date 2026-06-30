@@ -14,11 +14,11 @@ pub(crate) use self::assistant_response::{
 pub(crate) use self::error_classify::{
     classify_user_facing_ai_error, handle_transient_retry, is_retryable_provider_backpressure_error,
 };
+pub(crate) use self::request_transport::build_abort_token;
 #[cfg(test)]
 pub(crate) use self::request_transport::{
     await_with_optional_abort, format_error_response, truncate_log,
 };
-pub(crate) use self::request_transport::{build_abort_token, validate_request_payload_size};
 pub(crate) use self::user_message::{
     build_user_content_parts, normalize_turn_id, persist_user_message_and_build_content_parts,
 };

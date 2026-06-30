@@ -8,6 +8,7 @@ use crate::models::memory_runtime_types::{
     TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
 };
 use crate::models::message::Message;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 
@@ -82,8 +83,13 @@ pub(super) fn engine_thread_to_session(item: memory_engine_sdk::EngineThread) ->
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .filter(|value| value != "0");
+        .map(|value| {
+            if value == "0" {
+                PUBLIC_PROJECT_ID.to_string()
+            } else {
+                value.to_string()
+            }
+        });
 
     Session {
         id: item.id.clone(),
@@ -130,7 +136,14 @@ pub(super) fn engine_subject_memory_to_project_memory(
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .or_else(|| project_id_from_subject_id(item.subject_id.as_str()))
-        .unwrap_or_else(|| "0".to_string());
+        .map(|value| {
+            if value == "0" {
+                PUBLIC_PROJECT_ID.to_string()
+            } else {
+                value
+            }
+        })
+        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
 
     MemoryProjectMemoryDto {
         id: item.id,

@@ -75,12 +75,14 @@ impl CodeNavManager {
                         });
                     }
                 }
-                return fallback_definition(&ctx, request, provider.provider_id());
+                return fallback_definition_blocking(ctx, request.clone(), provider.provider_id())
+                    .await;
             }
-            return fallback_definition(&ctx, request, provider.provider_id());
+            return fallback_definition_blocking(ctx, request.clone(), provider.provider_id())
+                .await;
         }
 
-        fallback_definition(&ctx, request, "fallback")
+        fallback_definition_blocking(ctx, request.clone(), "fallback").await
     }
 
     pub async fn references(
@@ -104,12 +106,14 @@ impl CodeNavManager {
                         });
                     }
                 }
-                return fallback_references(&ctx, request, provider.provider_id());
+                return fallback_references_blocking(ctx, request.clone(), provider.provider_id())
+                    .await;
             }
-            return fallback_references(&ctx, request, provider.provider_id());
+            return fallback_references_blocking(ctx, request.clone(), provider.provider_id())
+                .await;
         }
 
-        fallback_references(&ctx, request, "fallback")
+        fallback_references_blocking(ctx, request.clone(), "fallback").await
     }
 
     pub async fn document_symbols(
@@ -127,12 +131,22 @@ impl CodeNavManager {
                         return Ok(response);
                     }
                 }
-                return fallback_document_symbols(&ctx, request, provider.provider_id());
+                return fallback_document_symbols_blocking(
+                    ctx,
+                    request.clone(),
+                    provider.provider_id(),
+                )
+                .await;
             }
-            return fallback_document_symbols(&ctx, request, provider.provider_id());
+            return fallback_document_symbols_blocking(
+                ctx,
+                request.clone(),
+                provider.provider_id(),
+            )
+            .await;
         }
 
-        fallback_document_symbols(&ctx, request, "fallback")
+        fallback_document_symbols_blocking(ctx, request.clone(), "fallback").await
     }
 
     fn resolve_provider(&self, ctx: &ProjectContext) -> Option<Arc<dyn CodeNavProvider>> {
@@ -147,4 +161,34 @@ impl CodeNavManager {
                     .cloned()
             })
     }
+}
+
+async fn fallback_definition_blocking(
+    ctx: ProjectContext,
+    request: NavPositionRequest,
+    provider_id: &'static str,
+) -> Result<NavLocationsResponse, String> {
+    tokio::task::spawn_blocking(move || fallback_definition(&ctx, &request, provider_id))
+        .await
+        .map_err(|err| format!("code-nav fallback task failed: {err}"))?
+}
+
+async fn fallback_references_blocking(
+    ctx: ProjectContext,
+    request: NavPositionRequest,
+    provider_id: &'static str,
+) -> Result<NavLocationsResponse, String> {
+    tokio::task::spawn_blocking(move || fallback_references(&ctx, &request, provider_id))
+        .await
+        .map_err(|err| format!("code-nav fallback task failed: {err}"))?
+}
+
+async fn fallback_document_symbols_blocking(
+    ctx: ProjectContext,
+    request: DocumentSymbolsRequest,
+    provider_id: &'static str,
+) -> Result<DocumentSymbolsResponse, String> {
+    tokio::task::spawn_blocking(move || fallback_document_symbols(&ctx, &request, provider_id))
+        .await
+        .map_err(|err| format!("code-nav fallback task failed: {err}"))?
 }

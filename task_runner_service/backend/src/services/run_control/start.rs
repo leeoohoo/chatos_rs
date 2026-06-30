@@ -61,6 +61,7 @@ impl RunService {
             .get_task(task_id)
             .await?
             .ok_or_else(|| format!("task not found: {task_id}"))?;
+        let task = save_task_if_tenant_aligned(&self.store, task).await?;
         info!(
             task_id = task.id.as_str(),
             task_title = task.title.as_str(),
@@ -184,7 +185,7 @@ impl RunService {
         let run_for_spawn = run.clone();
         let input_for_spawn = input.clone();
         let workspace_dir_for_spawn = effective_workspace_dir.clone();
-        tokio::spawn(async move {
+        crate::auth::spawn_with_current_access_token(async move {
             service
                 .execute_run(
                     task,

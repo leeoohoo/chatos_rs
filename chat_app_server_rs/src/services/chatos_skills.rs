@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
@@ -17,16 +15,16 @@ use super::chatos_skills_discovery::{
 };
 use super::chatos_skills_git::{copy_plugin_source_from_repo, ensure_git_repo};
 use super::chatos_skills_helpers::{
-    has_parent_path_component, hash_id, merge_plugins, merge_skills, normalize_optional_text,
-    normalize_plugin_source, normalize_repo_relative_path, paginate_items, path_to_unix_relative,
-    resolve_skill_state_root, resolve_visible_user_ids, sort_plugins_desc, sort_skills_desc,
-    unique_strings,
+    hash_id, merge_plugins, merge_skills, normalize_optional_text, normalize_plugin_source,
+    paginate_items, resolve_skill_state_root, resolve_visible_user_ids, sort_plugins_desc,
+    sort_skills_desc, unique_strings,
 };
+use super::chatos_skills_import::load_plugin_candidates_from_repo;
 use super::chatos_skills_manifest::{
     build_skills_from_plugin, discover_skill_entries, extract_plugin_content,
     read_plugin_description, read_plugin_name, read_plugin_version,
 };
-use super::chatos_skills_types::{ImportSkillsOutcome, SkillPluginCandidate};
+use super::chatos_skills_types::ImportSkillsOutcome;
 
 pub async fn list_skills(
     user_id: &str,
@@ -138,20 +136,12 @@ pub async fn import_skills_from_git(
     super::chatos_skills_helpers::ensure_dir(plugins_root.as_path())?;
     super::chatos_skills_helpers::ensure_dir(git_cache_root.as_path())?;
 
-    let repo_root = tokio::task::spawn_blocking({
-        let repository = repository.clone();
-        let branch = branch.clone();
-        let git_cache_root = git_cache_root.clone();
-        move || {
-            ensure_git_repo(
-                repository.as_str(),
-                branch.as_deref(),
-                git_cache_root.as_path(),
-            )
-        }
-    })
-    .await
-    .map_err(|err| format!("blocking task join failed: {}", err))??;
+    let repo_root = ensure_git_repo(
+        repository.as_str(),
+        branch.as_deref(),
+        git_cache_root.as_path(),
+    )
+    .await?;
 
     let candidates = tokio::task::spawn_blocking({
         let repo_root = repo_root.clone();
@@ -461,183 +451,4 @@ fn plugin_to_dto(plugin: MemorySkillPlugin) -> ChatosSkillPluginDto {
         installed_skill_count: plugin.installed_skill_count,
         updated_at: plugin.updated_at,
     }
-}
-
-fn load_plugin_candidates_from_repo(
-    repo_root: &Path,
-    marketplace_path: Option<&str>,
-    plugins_path: Option<&str>,
-) -> Result<Vec<SkillPluginCandidate>, String> {
-    if let Some(path) = marketplace_path
-        .map(normalize_repo_relative_path)
-        .filter(|value| !value.is_empty())
-    {
-        let file = repo_root.join(path.as_str());
-        if !file.exists() || !file.is_file() {
-            return Err(format!(
-                "marketplace path not found: {}",
-                file.to_string_lossy()
-            ));
-        }
-        let raw = fs::read_to_string(file.as_path()).map_err(|err| err.to_string())?;
-        let parsed = parse_marketplace_candidates(raw.as_str())?;
-        if !parsed.is_empty() {
-            return Ok(parsed);
-        }
-    } else if let Some(file) = find_default_file_recursively(repo_root, &["marketplace.json"]) {
-        if let Ok(raw) = fs::read_to_string(file.as_path()) {
-            let parsed = parse_marketplace_candidates(raw.as_str())?;
-            if !parsed.is_empty() {
-                return Ok(parsed);
-            }
-        }
-    }
-    Ok(fallback_plugin_candidates(repo_root, plugins_path))
-}
-
-fn parse_marketplace_candidates(raw: &str) -> Result<Vec<SkillPluginCandidate>, String> {
-    let value = serde_json::from_str::<serde_json::Value>(raw)
-        .map_err(|err| format!("marketplace json parse failed: {}", err))?;
-    let plugins = value
-        .get("plugins")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    let mut out = Vec::new();
-    for item in plugins {
-        let source = item
-            .get("source")
-            .and_then(serde_json::Value::as_str)
-            .map(normalize_plugin_source)
-            .unwrap_or_default();
-        if source.is_empty() || has_parent_path_component(source.as_str()) {
-            continue;
-        }
-        let name = item
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| source.clone());
-        let category = item
-            .get("category")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
-        let description = item
-            .get("description")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
-        let version = item
-            .get("version")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
-        out.push(SkillPluginCandidate {
-            source,
-            name,
-            category,
-            description,
-            version,
-        });
-    }
-    Ok(unique_plugin_candidates(out))
-}
-
-fn fallback_plugin_candidates(
-    repo_root: &Path,
-    plugins_path: Option<&str>,
-) -> Vec<SkillPluginCandidate> {
-    let root = plugins_path
-        .map(normalize_repo_relative_path)
-        .filter(|value| !value.is_empty())
-        .map(|value| repo_root.join(value))
-        .unwrap_or_else(|| repo_root.join("plugins"));
-    if !root.exists() || !root.is_dir() {
-        return Vec::new();
-    }
-    let entries = match fs::read_dir(root.as_path()) {
-        Ok(value) => value,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let rel = path_to_unix_relative(repo_root, path.as_path());
-        let Some(rel) = rel else {
-            continue;
-        };
-        let source = normalize_plugin_source(rel.as_str());
-        if source.is_empty() || has_parent_path_component(source.as_str()) {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| source.clone());
-        out.push(SkillPluginCandidate {
-            source,
-            name,
-            category: None,
-            description: None,
-            version: None,
-        });
-    }
-    unique_plugin_candidates(out)
-}
-
-fn unique_plugin_candidates(items: Vec<SkillPluginCandidate>) -> Vec<SkillPluginCandidate> {
-    let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for item in items {
-        if seen.insert(item.source.clone()) {
-            out.push(item);
-        }
-    }
-    out
-}
-
-fn find_default_file_recursively(root: &Path, names: &[&str]) -> Option<PathBuf> {
-    let target_names = names
-        .iter()
-        .map(|value| value.to_ascii_lowercase())
-        .collect::<std::collections::HashSet<_>>();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = fs::read_dir(dir.as_path()).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let file_type = entry.file_type().ok()?;
-            if file_type.is_dir() {
-                if !matches!(
-                    path.file_name().and_then(|value| value.to_str()),
-                    Some(".git" | "node_modules" | "target" | ".next")
-                ) {
-                    stack.push(path);
-                }
-                continue;
-            }
-            if !file_type.is_file() {
-                continue;
-            }
-            let name = path.file_name()?.to_str()?.to_ascii_lowercase();
-            if target_names.contains(name.as_str()) {
-                return Some(path);
-            }
-        }
-    }
-    None
 }

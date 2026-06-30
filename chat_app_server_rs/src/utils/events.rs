@@ -18,7 +18,7 @@ impl Events {
     pub const ERROR: &'static str = "error";
     pub const TASK_CREATE_REVIEW_REQUIRED: &'static str = "task_create_review_required";
     pub const TASK_BOARD_UPDATED: &'static str = "task_board_updated";
-    pub const UI_PROMPT_REQUIRED: &'static str = "ui_prompt_required";
-    pub const UI_PROMPT_RESOLVED: &'static str = "ui_prompt_resolved";
+    pub const ASK_USER_PROMPT_REQUIRED: &'static str = "ask_user_prompt_required";
+    pub const ASK_USER_PROMPT_RESOLVED: &'static str = "ask_user_prompt_resolved";
     pub const RUNTIME_GUIDANCE_APPLIED: &'static str = "runtime_guidance_applied";
 }

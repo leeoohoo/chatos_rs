@@ -3,13 +3,14 @@ import type {
   BatchTaskOperationResponse,
   BatchTaskRunPayload,
   BatchTaskStatusUpdatePayload,
-  CancelUiPromptPayload,
+  CancelAskUserPromptPayload,
   CreateExternalMcpConfigPayload,
   CreateModelConfigPayload,
   CreateTaskPayload,
   CreateUserPayload,
   CurrentUserResponse,
   HealthResponse,
+  InstallSkillPayload,
   LoginPayload,
   LoginResponse,
   ExternalMcpConfigRecord,
@@ -29,10 +30,15 @@ import type {
   RemoteServerRecord,
   RemoteServerTestResponse,
   StartTaskRunPayload,
-  SubmitUiPromptPayload,
+  CreateSkillPayload,
+  SubmitAskUserPromptPayload,
   RunSummaryRecord,
   RunListFilters,
   TaskStatsResponse,
+  SkillListFilters,
+  SkillMarketplaceEntry,
+  SkillMarketplaceQuery,
+  SkillRecord,
   TaskIndexResponse,
   TaskRunnerInternalPromptPreviewResponse,
   TaskRunnerSkillResponse,
@@ -43,6 +49,7 @@ import type {
   TaskMemorySummaryResponse,
   TaskSummaryRecord,
   TaskListFilters,
+  TaskProjectRecord,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
@@ -56,125 +63,37 @@ import type {
   ToolingTerminalProcessListResponse,
   ToolingTerminalProcessLogsResponse,
   ToolingTerminalWriteResponse,
-  UiPromptRecord,
-  UiPromptStatus,
-  UiPromptTaskCountRecord,
+  AskUserPromptRecord,
+  AskUserPromptStatus,
+  AskUserPromptTaskCountRecord,
   UpdateModelConfigPayload,
   UpdateExternalMcpConfigPayload,
   UpdateRemoteServerPayload,
   UpdateRuntimeSettingsPayload,
+  UpdateSkillPayload,
   UpdateTaskPayload,
   UpdateUserPayload,
   SystemConfigResponse,
   UserSummaryRecord,
 } from '../types';
+import { request, withQuery } from './http';
 
-const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL = normalizeApiBaseUrl(RAW_API_BASE_URL);
-const AUTH_TOKEN_STORAGE_KEY = 'task_runner_service_auth_token';
-
-export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
-}
-
-export function setAuthToken(token: string): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-  window.dispatchEvent(new Event('task-runner-auth-changed'));
-}
-
-export function clearAuthToken(): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-  window.dispatchEvent(new Event('task-runner-auth-changed'));
-}
-
-export function buildApiUrl(path: string): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
-}
-
-export function buildEventSourceUrl(path: string): string {
-  const token = getAuthToken();
-  if (!token) {
-    return buildApiUrl(path);
-  }
-  const url = buildApiUrl(path);
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}access_token=${encodeURIComponent(token)}`;
-}
-
-function normalizeApiBaseUrl(value: string): string {
-  if (!value) {
-    return '';
-  }
-  const trimmed = value.replace(/\/+$/, '');
-  return trimmed.endsWith('/api') ? trimmed.slice(0, -4) : trimmed;
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  const token = getAuthToken();
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-
-  const response = await fetch(buildApiUrl(path), {
-    ...init,
-    headers,
-  });
-
-  if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const data = (await response.json()) as { error?: string };
-      if (data.error) {
-        message = data.error;
-      }
-    } catch {
-      // noop
-    }
-    if (response.status === 401) {
-      clearAuthToken();
-    }
-    throw new Error(message);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
-}
-
-function withQuery(path: string, params: Record<string, string | undefined>): string {
-  const search = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value && value.trim()) {
-      search.set(key, value);
-    }
-  });
-  const query = search.toString();
-  return query ? `${path}?${query}` : path;
-}
+export {
+  buildApiUrl,
+  buildEventSourceUrl,
+  clearAuthToken,
+  getAuthToken,
+  setAuthToken,
+} from './http';
 
 export const api = {
   health: () => request<HealthResponse>('/api/health'),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
-  getTaskRunnerSkill: (lang: string) =>
+  getTaskRunnerSkill: (lang: string, profile?: string) =>
     request<TaskRunnerSkillResponse>(
       withQuery('/api/skills/task-runner', {
         lang,
+        profile,
       }),
     ),
   getTaskRunnerInternalPrompts: (lang: string) =>
@@ -220,9 +139,12 @@ export const api = {
         keyword: filters?.keyword,
         tag: filters?.tag,
         model_config_id: filters?.model_config_id,
+        project_id: filters?.project_id,
         scheduled_only:
           filters?.scheduled_only === undefined ? undefined : String(filters.scheduled_only),
         parent_task_id: filters?.parent_task_id,
+        include_subtasks:
+          filters?.include_subtasks === undefined ? undefined : String(filters.include_subtasks),
         source_run_id: filters?.source_run_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
@@ -235,9 +157,12 @@ export const api = {
         keyword: filters?.keyword,
         tag: filters?.tag,
         model_config_id: filters?.model_config_id,
+        project_id: filters?.project_id,
         scheduled_only:
           filters?.scheduled_only === undefined ? undefined : String(filters.scheduled_only),
         parent_task_id: filters?.parent_task_id,
+        include_subtasks:
+          filters?.include_subtasks === undefined ? undefined : String(filters.include_subtasks),
         source_run_id: filters?.source_run_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
@@ -249,6 +174,7 @@ export const api = {
     ids?: string[];
     keyword?: string;
     status?: TaskListFilters['status'];
+    project_id?: string;
     limit?: number;
   }) =>
     request<TaskSummaryRecord[]>(
@@ -256,9 +182,19 @@ export const api = {
         ids: filters?.ids?.length ? filters.ids.join(',') : undefined,
         keyword: filters?.keyword,
         status: filters?.status,
+        project_id: filters?.project_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
       }),
     ),
+  listProjects: (status?: TaskProjectRecord['status']) =>
+    request<TaskProjectRecord[]>(
+      withQuery('/api/projects', {
+        status,
+      }),
+    ),
+  getProject: (id: string) => request<TaskProjectRecord>(`/api/projects/${id}`),
+  listProjectTasks: (id: string) =>
+    request<TaskRecord[]>(`/api/projects/${encodeURIComponent(id)}/tasks`),
   getTask: (id: string) => request<TaskRecord>(`/api/tasks/${id}`),
   createTask: (payload: CreateTaskPayload) =>
     request<TaskRecord>('/api/tasks', {
@@ -373,6 +309,48 @@ export const api = {
     request<void>(`/api/external-mcp-configs/${id}`, {
       method: 'DELETE',
     }),
+  listSkills: (filters?: SkillListFilters) =>
+    request<SkillRecord[]>(
+      withQuery('/api/skills', {
+        keyword: filters?.keyword,
+        enabled: filters?.enabled === undefined ? undefined : String(filters.enabled),
+        auto_inject:
+          filters?.auto_inject === undefined ? undefined : String(filters.auto_inject),
+        source: filters?.source,
+        locale: filters?.locale,
+      }),
+    ),
+  listBundledSkills: () => request<SkillRecord[]>('/api/skills/bundled'),
+  getSkill: (id: string) => request<SkillRecord>(`/api/skills/${id}`),
+  createSkill: (payload: CreateSkillPayload) =>
+    request<SkillRecord>('/api/skills', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateSkill: (id: string, payload: UpdateSkillPayload) =>
+    request<SkillRecord>(`/api/skills/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteSkill: (id: string) =>
+    request<void>(`/api/skills/${id}`, {
+      method: 'DELETE',
+    }),
+  searchSkillMarketplace: (query?: SkillMarketplaceQuery) =>
+    request<PaginatedResponse<SkillMarketplaceEntry>>(
+      withQuery('/api/skills/marketplace', {
+        keyword: query?.keyword,
+        locale: query?.locale,
+        tag: query?.tag,
+        limit: query?.limit === undefined ? undefined : String(query.limit),
+        offset: query?.offset === undefined ? undefined : String(query.offset),
+      }),
+    ),
+  installSkillFromMarketplace: (payload: InstallSkillPayload) =>
+    request<SkillRecord>('/api/skills/marketplace', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   listRuns: (filters?: RunListFilters) =>
     request<TaskRunRecord[]>(
       withQuery('/api/runs', {
@@ -439,7 +417,7 @@ export const api = {
     runId: string,
     filters?: Omit<PromptListFilters, 'taskId' | 'runId'>,
   ) =>
-    request<UiPromptRecord[]>(
+    request<AskUserPromptRecord[]>(
       withQuery(`/api/runs/${runId}/prompts`, {
         status: filters?.status,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
@@ -498,7 +476,7 @@ export const api = {
       method: 'POST',
     }),
   listPrompts: (filters?: PromptListFilters) =>
-    request<UiPromptRecord[]>(
+    request<AskUserPromptRecord[]>(
       withQuery('/api/prompts', {
         task_id: filters?.taskId,
         run_id: filters?.runId,
@@ -508,7 +486,7 @@ export const api = {
       }),
     ),
   listPromptsPage: (filters?: PromptListFilters) =>
-    request<PaginatedResponse<UiPromptRecord>>(
+    request<PaginatedResponse<AskUserPromptRecord>>(
       withQuery('/api/prompts/page', {
         task_id: filters?.taskId,
         run_id: filters?.runId,
@@ -517,20 +495,20 @@ export const api = {
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
     ),
-  listPromptTaskCounts: (filters?: { status?: UiPromptStatus }) =>
-    request<UiPromptTaskCountRecord[]>(
+  listPromptTaskCounts: (filters?: { status?: AskUserPromptStatus }) =>
+    request<AskUserPromptTaskCountRecord[]>(
       withQuery('/api/prompts/task-counts', {
         status: filters?.status,
       }),
     ),
-  getPrompt: (id: string) => request<UiPromptRecord>(`/api/prompts/${id}`),
-  submitPrompt: (id: string, payload: SubmitUiPromptPayload) =>
-    request<UiPromptRecord>(`/api/prompts/${id}/submit`, {
+  getPrompt: (id: string) => request<AskUserPromptRecord>(`/api/prompts/${id}`),
+  submitPrompt: (id: string, payload: SubmitAskUserPromptPayload) =>
+    request<AskUserPromptRecord>(`/api/prompts/${id}/submit`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  cancelPrompt: (id: string, payload: CancelUiPromptPayload = {}) =>
-    request<UiPromptRecord>(`/api/prompts/${id}/cancel`, {
+  cancelPrompt: (id: string, payload: CancelAskUserPromptPayload = {}) =>
+    request<AskUserPromptRecord>(`/api/prompts/${id}/cancel`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

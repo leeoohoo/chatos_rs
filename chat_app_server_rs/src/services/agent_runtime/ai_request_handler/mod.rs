@@ -1,18 +1,17 @@
 #[cfg(test)]
 mod parser;
 
+mod fingerprint;
+mod http_client;
+mod payload;
+
 #[cfg(test)]
 mod tests;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
-use chatos_ai_runtime::request_payload::{
-    build_chat_completions_request_payload as build_shared_chat_completions_request_payload,
-    build_responses_request_payload as build_shared_responses_request_payload,
-    CHAT_PROMPT_CACHE_RETENTION,
-};
+use chatos_ai_runtime::request_payload::CHAT_PROMPT_CACHE_RETENTION;
 #[cfg(test)]
 use chatos_ai_runtime::request_retry::is_prompt_cache_retention_unsupported_error;
 use chatos_ai_runtime::request_retry::{
@@ -24,26 +23,25 @@ use chatos_ai_runtime::{
     AiTransport as SharedAiTransport, StreamCallbacks as SharedStreamCallbacks,
 };
 use serde_json::Value;
-use sha2::{Digest, Sha256};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
+use self::fingerprint::log_request_fingerprint;
+use self::http_client::build_http_client;
+#[cfg(test)]
+use self::http_client::read_timeout_env_ms;
+#[cfg(test)]
+use self::payload::build_request_payload;
+use self::payload::{build_chat_completions_request_payload, build_responses_request_payload};
 use crate::core::tool_call::tool_calls_value_has_items;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_common::{
     build_abort_token, is_task_runner_async_plan_message_mode,
     normalize_task_runner_async_plan_metadata, normalize_task_runner_async_tool_call_metadata,
-    persist_assistant_response_with_policy, should_persist_assistant_message,
-    validate_request_payload_size, AiStreamCallbacks, AssistantResponsePersistenceRequest,
+    persist_assistant_response_with_policy, should_persist_assistant_message, AiStreamCallbacks,
+    AssistantResponsePersistenceRequest,
 };
 
 pub(crate) const AGENT_RUNTIME_LOG_PREFIX: &str = "[Agent Runtime]";
-const REQUEST_BODY_LIMIT_ENV: &str = "AI_AGENT_REQUEST_BODY_MAX_BYTES";
-const UPSTREAM_CONNECT_TIMEOUT_MS_ENV: &str = "AI_AGENT_UPSTREAM_CONNECT_TIMEOUT_MS";
-const UPSTREAM_READ_TIMEOUT_MS_ENV: &str = "AI_AGENT_UPSTREAM_READ_TIMEOUT_MS";
-const DEFAULT_UPSTREAM_CONNECT_TIMEOUT_MS: u64 = 15_000;
-const DEFAULT_UPSTREAM_READ_TIMEOUT_MS: u64 = 120_000;
-const MIN_UPSTREAM_TIMEOUT_MS: u64 = 1_000;
-const MAX_UPSTREAM_TIMEOUT_MS: u64 = 600_000;
 
 pub type StreamCallbacks = AiStreamCallbacks;
 
@@ -136,7 +134,7 @@ impl AiRequestHandler {
         model: String,
         instructions: Option<String>,
         prompt_cache_key: Option<String>,
-        tools: Option<Vec<Value>>,
+        tools: Option<&[Value]>,
         request_cwd: Option<String>,
         temperature: Option<f64>,
         max_output_tokens: Option<i64>,
@@ -149,6 +147,7 @@ impl AiRequestHandler {
         message_source: Option<String>,
         metadata: Option<Value>,
         on_before_send_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+        request_body_limit_bytes: Option<usize>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
         let transport = AiTransport::from_supports_responses(supports_responses);
@@ -158,7 +157,7 @@ impl AiRequestHandler {
                 model,
                 instructions,
                 prompt_cache_key,
-                tools,
+                tools.map(|items| items.to_vec()),
                 request_cwd,
                 temperature,
                 max_output_tokens,
@@ -171,7 +170,7 @@ impl AiRequestHandler {
                 input,
                 model,
                 instructions,
-                tools,
+                tools.map(|items| items.to_vec()),
                 temperature,
                 max_output_tokens,
                 provider.clone(),
@@ -179,14 +178,6 @@ impl AiRequestHandler {
                 true,
             ),
         };
-
-        if let Err(err) = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV) {
-            error!(
-                "{} request payload rejected before send: purpose={}, detail={}",
-                AGENT_RUNTIME_LOG_PREFIX, purpose, err
-            );
-            return Err(err);
-        }
 
         let token = build_abort_token(session_id.as_deref(), turn_id.as_deref());
 
@@ -230,6 +221,7 @@ impl AiRequestHandler {
                 turn_id.clone(),
                 token.clone(),
                 force_identity_encoding,
+                request_body_limit_bytes,
                 persist_messages,
                 message_mode.clone(),
                 message_source.clone(),
@@ -273,6 +265,7 @@ impl AiRequestHandler {
                     turn_id,
                     token,
                     force_identity_encoding,
+                    request_body_limit_bytes,
                     persist_messages,
                     message_mode,
                     message_source,
@@ -297,6 +290,7 @@ impl AiRequestHandler {
         turn_id: Option<String>,
         token: Option<tokio_util::sync::CancellationToken>,
         force_identity_encoding: bool,
+        request_body_limit_bytes: Option<usize>,
         persist_messages: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
@@ -316,6 +310,7 @@ impl AiRequestHandler {
                 SharedAiRequestOptions {
                     abort_token: token,
                     force_identity_encoding,
+                    request_body_limit_bytes,
                     ..Default::default()
                 },
             )
@@ -357,53 +352,11 @@ impl AiRequestHandler {
     }
 }
 
-fn build_http_client() -> (reqwest::Client, u64, u64) {
-    let connect_timeout_ms = read_timeout_env_ms_with_fallback(
-        UPSTREAM_CONNECT_TIMEOUT_MS_ENV,
-        None,
-        DEFAULT_UPSTREAM_CONNECT_TIMEOUT_MS,
-    );
-    let read_timeout_ms = read_timeout_env_ms_with_fallback(
-        UPSTREAM_READ_TIMEOUT_MS_ENV,
-        None,
-        DEFAULT_UPSTREAM_READ_TIMEOUT_MS,
-    );
-
-    match reqwest::Client::builder()
-        .connect_timeout(Duration::from_millis(connect_timeout_ms))
-        .read_timeout(Duration::from_millis(read_timeout_ms))
-        .build()
-    {
-        Ok(client) => (client, connect_timeout_ms, read_timeout_ms),
-        Err(err) => {
-            warn!(
-                "{} failed to build reqwest client with timeout config; fallback default client: {}",
-                AGENT_RUNTIME_LOG_PREFIX, err
-            );
-            (reqwest::Client::new(), connect_timeout_ms, read_timeout_ms)
-        }
-    }
-}
-
 fn to_shared_stream_callbacks(callbacks: &StreamCallbacks) -> SharedStreamCallbacks {
     SharedStreamCallbacks {
         on_chunk: callbacks.on_chunk.clone(),
         on_thinking: callbacks.on_thinking.clone(),
     }
-}
-
-#[cfg(test)]
-fn read_timeout_env_ms(key: &str, default_ms: u64) -> u64 {
-    read_timeout_env_ms_with_fallback(key, None, default_ms)
-}
-
-fn read_timeout_env_ms_with_fallback(key: &str, legacy_key: Option<&str>, default_ms: u64) -> u64 {
-    let parsed = std::env::var(key)
-        .ok()
-        .or_else(|| legacy_key.and_then(|legacy| std::env::var(legacy).ok()))
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .unwrap_or(default_ms);
-    parsed.clamp(MIN_UPSTREAM_TIMEOUT_MS, MAX_UPSTREAM_TIMEOUT_MS)
 }
 
 pub(super) async fn persist_assistant_response_if_needed(
@@ -492,150 +445,4 @@ pub(super) async fn persist_assistant_response_if_needed(
         },
     )
     .await;
-}
-
-#[cfg(test)]
-fn build_request_payload(
-    input: Value,
-    model: String,
-    instructions: Option<String>,
-    prompt_cache_key: Option<String>,
-    tools: Option<Vec<Value>>,
-    request_cwd: Option<String>,
-    temperature: Option<f64>,
-    max_output_tokens: Option<i64>,
-    provider: Option<String>,
-    thinking_level: Option<String>,
-    stream: bool,
-    include_prompt_cache_retention: bool,
-) -> Value {
-    build_responses_request_payload(
-        input,
-        model,
-        instructions,
-        prompt_cache_key,
-        tools,
-        request_cwd,
-        temperature,
-        max_output_tokens,
-        provider,
-        thinking_level,
-        stream,
-        include_prompt_cache_retention,
-    )
-}
-
-fn build_responses_request_payload(
-    input: Value,
-    model: String,
-    instructions: Option<String>,
-    prompt_cache_key: Option<String>,
-    tools: Option<Vec<Value>>,
-    request_cwd: Option<String>,
-    temperature: Option<f64>,
-    max_output_tokens: Option<i64>,
-    provider: Option<String>,
-    thinking_level: Option<String>,
-    stream: bool,
-    include_prompt_cache_retention: bool,
-) -> Value {
-    build_shared_responses_request_payload(
-        input,
-        model,
-        instructions,
-        prompt_cache_key,
-        tools,
-        request_cwd,
-        temperature,
-        max_output_tokens,
-        provider,
-        thinking_level,
-        stream,
-        include_prompt_cache_retention,
-    )
-}
-
-fn build_chat_completions_request_payload(
-    input: Value,
-    model: String,
-    instructions: Option<String>,
-    tools: Option<Vec<Value>>,
-    temperature: Option<f64>,
-    max_output_tokens: Option<i64>,
-    provider: Option<String>,
-    thinking_level: Option<String>,
-    stream: bool,
-) -> Value {
-    build_shared_chat_completions_request_payload(
-        input,
-        model,
-        instructions,
-        tools,
-        temperature,
-        max_output_tokens,
-        provider,
-        thinking_level,
-        stream,
-    )
-}
-
-fn log_request_fingerprint(
-    purpose: &str,
-    session_id: Option<&str>,
-    base_url: &str,
-    payload: &Value,
-    transport: AiTransport,
-) {
-    let input = payload
-        .get("input")
-        .cloned()
-        .or_else(|| payload.get("messages").cloned())
-        .unwrap_or_else(|| Value::Array(Vec::new()));
-    let tools = payload
-        .get("tools")
-        .cloned()
-        .unwrap_or_else(|| Value::Array(Vec::new()));
-    let input_item_count = input.as_array().map(|items| items.len()).unwrap_or(0);
-    let tools_count = tools.as_array().map(|items| items.len()).unwrap_or(0);
-
-    let input_hash = sha256_json_hex(&input);
-    let tools_hash = sha256_json_hex(&tools);
-    let prefix_hash = compute_prefix_hash(&input, 8);
-
-    info!(
-        "{} request fingerprint: purpose={}, transport={}, session={}, baseURL={}, input_items={}, tools={}, prompt_cache_key={}, prompt_cache_retention={}, input_hash={}, input_prefix_hash={}, tools_hash={}",
-        AGENT_RUNTIME_LOG_PREFIX,
-        purpose,
-        transport.log_label(),
-        session_id.unwrap_or("n/a"),
-        base_url,
-        input_item_count,
-        tools_count,
-        payload
-            .get("prompt_cache_key")
-            .and_then(|value| value.as_str())
-            .unwrap_or(""),
-        payload
-            .get("prompt_cache_retention")
-            .and_then(|value| value.as_str())
-            .unwrap_or(""),
-        input_hash,
-        prefix_hash,
-        tools_hash,
-    );
-}
-
-fn compute_prefix_hash(input: &Value, max_items: usize) -> String {
-    let prefix = match input {
-        Value::Array(items) => Value::Array(items.iter().take(max_items).cloned().collect()),
-        other => other.clone(),
-    };
-    sha256_json_hex(&prefix)
-}
-
-fn sha256_json_hex(value: &Value) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value.to_string().as_bytes());
-    let digest = hasher.finalize();
-    hex::encode(digest)
 }

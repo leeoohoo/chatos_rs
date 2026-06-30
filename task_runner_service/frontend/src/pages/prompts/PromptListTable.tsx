@@ -11,20 +11,20 @@ import dayjs from 'dayjs';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   TaskSummaryRecord,
-  UiPromptRecord,
-  UiPromptStatus,
+  AskUserPromptRecord,
+  AskUserPromptStatus,
 } from '../../types';
 import { promptColorMap } from './promptPageUtils';
 
 type PromptListTableProps = {
   t: TranslateFn;
-  prompts: UiPromptRecord[];
+  prompts: AskUserPromptRecord[];
   loading: boolean;
   currentPage: number;
   pageSize: number;
   total: number;
   taskMap: Map<string, TaskSummaryRecord>;
-  promptStatusLabel: (status: UiPromptStatus) => string;
+  promptStatusLabel: (status: AskUserPromptStatus) => string;
   onOpenTask: (taskId: string) => void;
   onOpenRun: (runId: string) => void;
   onOpenPrompt: (promptId: string) => void;
@@ -45,7 +45,15 @@ export function PromptListTable({
   onOpenPrompt,
   onPageChange,
 }: PromptListTableProps) {
-  const columns: ColumnsType<UiPromptRecord> = [
+  function promptOwnerLabel(taskId?: string | null): string {
+    if (!taskId) {
+      return '-';
+    }
+    const task = taskMap.get(taskId);
+    return task?.creator_display_name || task?.creator_username || task?.creator_user_id || '-';
+  }
+
+  const columns: ColumnsType<AskUserPromptRecord> = [
     {
       title: t('prompts.column.promptId'),
       dataIndex: 'id',
@@ -74,6 +82,12 @@ export function PromptListTable({
         ),
     },
     {
+      title: t('runs.column.owner'),
+      dataIndex: 'task_id',
+      width: 160,
+      render: (value?: string | null) => promptOwnerLabel(value),
+    },
+    {
       title: t('prompts.column.run'),
       dataIndex: 'run_id',
       width: 180,
@@ -94,7 +108,7 @@ export function PromptListTable({
       title: t('common.status'),
       dataIndex: 'status',
       width: 120,
-      render: (status: UiPromptStatus) => (
+      render: (status: AskUserPromptStatus) => (
         <Tag color={promptColorMap[status]}>{promptStatusLabel(status)}</Tag>
       ),
     },
@@ -117,7 +131,7 @@ export function PromptListTable({
   ];
 
   return (
-    <Table<UiPromptRecord>
+    <Table<AskUserPromptRecord>
       rowKey="id"
       loading={loading}
       columns={columns}

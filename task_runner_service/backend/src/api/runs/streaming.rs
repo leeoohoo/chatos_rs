@@ -3,7 +3,16 @@ use super::*;
 pub(in crate::api) async fn stream_run_events(
     Path(id): Path<String>,
     State(state): State<AppState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    Extension(current_user): Extension<CurrentUser>,
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
+{
+    let run = state
+        .run_service
+        .get_run(&id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
+    ensure_run_access(&state, &run, &current_user).await?;
     let seen_event_ids = match state.run_service.list_run_events(&id).await {
         Ok(events) => events
             .into_iter()
@@ -84,7 +93,7 @@ pub(in crate::api) async fn stream_run_events(
             }
         },
     );
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 struct RunEventStreamState {

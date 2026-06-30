@@ -48,8 +48,10 @@ export interface AiModelConfigCreatePayload {
   id: string;
   name: string;
   provider: string;
-  model: string;
+  model?: string;
   thinking_level?: string;
+  task_usage_scenario?: string;
+  task_thinking_level?: string;
   api_key: string;
   base_url: string;
   enabled: boolean;
@@ -65,6 +67,8 @@ export interface AiModelConfigUpdatePayload {
   model?: string;
   model_name?: string;
   thinking_level?: string;
+  task_usage_scenario?: string;
+  task_thinking_level?: string;
   api_key?: string;
   clear_api_key?: boolean;
   base_url?: string;
@@ -81,6 +85,8 @@ export interface AiModelConfigResponse {
   model?: string;
   model_name?: string;
   thinking_level?: string;
+  task_usage_scenario?: string | null;
+  task_thinking_level?: string | null;
   api_key?: string;
   has_api_key?: boolean;
   base_url?: string;
@@ -88,10 +94,72 @@ export interface AiModelConfigResponse {
   supports_images?: boolean;
   supports_reasoning?: boolean;
   supports_responses?: boolean;
+  sync_warnings?: string[];
   created_at?: string;
   createdAt?: string;
   updated_at?: string;
   updatedAt?: string;
+}
+
+export interface AiModelProviderCreatePayload {
+  id?: string;
+  name: string;
+  provider: string;
+  api_key: string;
+  base_url: string;
+  enabled: boolean;
+  supports_images?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+}
+
+export interface AiModelProviderUpdatePayload {
+  id?: string;
+  name?: string;
+  provider?: string;
+  api_key?: string;
+  clear_api_key?: boolean;
+  base_url?: string;
+  enabled?: boolean;
+  supports_images?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+}
+
+export interface AiModelProviderResponse {
+  id: string;
+  name: string;
+  provider: string;
+  api_key?: string;
+  has_api_key?: boolean;
+  base_url?: string;
+  enabled?: boolean;
+  supports_images?: boolean;
+  supports_reasoning?: boolean;
+  supports_responses?: boolean;
+  last_sync_status?: string | null;
+  last_sync_error?: string | null;
+  last_synced_at?: string | null;
+  imported_model_count?: number;
+  sync_warnings?: string[];
+  created_at?: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
+}
+
+export interface AiModelSettingsResponse {
+  user_id: string;
+  memory_summary_model_config_id?: string | null;
+  memory_summary_thinking_level?: string | null;
+  updated_at?: string;
+  sync_warnings?: string[];
+}
+
+export interface AiModelSettingsUpdatePayload {
+  user_id?: string;
+  memory_summary_model_config_id?: string | null;
+  memory_summary_thinking_level?: string | null;
 }
 
 export interface AiProviderModelOptionResponse {

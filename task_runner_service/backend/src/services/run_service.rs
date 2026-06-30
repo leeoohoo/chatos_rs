@@ -4,12 +4,12 @@ impl RunService {
     pub(crate) fn new(
         config: AppConfig,
         store: AppStore,
-        ui_prompt_service: UiPromptService,
+        ask_user_prompt_service: AskUserPromptService,
     ) -> Self {
         Self {
             config,
             store,
-            ui_prompt_service,
+            ask_user_prompt_service,
             start_locks: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
     }

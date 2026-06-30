@@ -36,6 +36,7 @@ pub struct SystemConfigResponse {
 pub struct TaskRunnerInternalPromptPreviewResponse {
     pub locale: String,
     pub task_prompt_template: String,
+    pub global_execution_prompt: String,
     pub process_log_system_prompt: String,
     pub notes: Vec<String>,
 }

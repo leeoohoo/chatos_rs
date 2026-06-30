@@ -3,9 +3,9 @@ use serde::Serialize;
 
 use crate::models::{
     BatchSyncRecordsResponse, CompactTurnsResponse, CountThreadRecordsResponse, EngineRecord,
-    SdkBatchSyncRecordsRequest, SdkCountThreadRecordsRequest,
-    SdkDeleteThreadRecordsRequest, SdkGetTurnProcessRecordsRequest, SdkListCompactTurnsRequest,
-    SdkListThreadRecordsRequest, ThreadRecordsPageResponse, TurnProcessRecordsResponse,
+    SdkBatchSyncRecordsRequest, SdkCountThreadRecordsRequest, SdkDeleteThreadRecordsRequest,
+    SdkGetTurnProcessRecordsRequest, SdkListCompactTurnsRequest, SdkListThreadRecordsRequest,
+    ThreadRecordsPageResponse, TurnProcessRecordsResponse,
 };
 
 use super::super::transport::{append_optional_i64_query, append_optional_query};
@@ -35,7 +35,10 @@ impl MemoryEngineClient {
                 };
                 self.send_json(
                     Method::PUT,
-                    &format!("/threads/{}/records/batch-sync", urlencoding::encode(thread_id)),
+                    &format!(
+                        "/threads/{}/records/batch-sync",
+                        urlencoding::encode(thread_id)
+                    ),
                     Some(&direct),
                 )
                 .await
@@ -43,7 +46,10 @@ impl MemoryEngineClient {
             AuthMode::SystemKey { .. } => {
                 self.send_json(
                     Method::PUT,
-                    &format!("/sdk/threads/{}/records/batch-sync", urlencoding::encode(thread_id)),
+                    &format!(
+                        "/sdk/threads/{}/records/batch-sync",
+                        urlencoding::encode(thread_id)
+                    ),
                     Some(req),
                 )
                 .await
@@ -67,8 +73,7 @@ impl MemoryEngineClient {
     ) -> Result<i64, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id =
-                    require_direct_source_id(source_id, "delete_thread_records")?;
+                let source_id = require_direct_source_id(source_id, "delete_thread_records")?;
                 let mut query = format!(
                     "tenant_id={}&source_id={}",
                     urlencoding::encode(tenant_id),
@@ -85,7 +90,10 @@ impl MemoryEngineClient {
                 let resp: DeletedResponse = self
                     .send_json::<DeletedResponse, _>(
                         Method::DELETE,
-                        &format!("/threads/{}/records?{query}", urlencoding::encode(thread_id)),
+                        &format!(
+                            "/threads/{}/records?{query}",
+                            urlencoding::encode(thread_id)
+                        ),
                         Option::<&()>::None,
                     )
                     .await?;
@@ -121,7 +129,11 @@ impl MemoryEngineClient {
             AuthMode::Direct { source_id } => {
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", Some(req.tenant_id.as_str()));
-                append_optional_query(&mut query, "source_id", optional_direct_source_id(source_id));
+                append_optional_query(
+                    &mut query,
+                    "source_id",
+                    optional_direct_source_id(source_id),
+                );
                 append_optional_query(&mut query, "role", req.role.as_deref());
                 append_optional_query(&mut query, "record_type", req.record_type.as_deref());
                 append_optional_query(&mut query, "summary_status", req.summary_status.as_deref());
@@ -130,7 +142,10 @@ impl MemoryEngineClient {
                 append_optional_query(&mut query, "order", req.order.as_deref());
                 self.send_json(
                     Method::GET,
-                    &format!("/threads/{}/records?{query}", urlencoding::encode(thread_id)),
+                    &format!(
+                        "/threads/{}/records?{query}",
+                        urlencoding::encode(thread_id)
+                    ),
                     Option::<&()>::None,
                 )
                 .await
@@ -165,7 +180,11 @@ impl MemoryEngineClient {
             AuthMode::Direct { source_id } => {
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", Some(req.tenant_id.as_str()));
-                append_optional_query(&mut query, "source_id", optional_direct_source_id(source_id));
+                append_optional_query(
+                    &mut query,
+                    "source_id",
+                    optional_direct_source_id(source_id),
+                );
                 append_optional_query(&mut query, "record_type", req.record_type.as_deref());
                 append_optional_i64_query(&mut query, "limit", req.limit);
                 append_optional_query(&mut query, "before_turn_id", req.before_turn_id.as_deref());
@@ -182,7 +201,10 @@ impl MemoryEngineClient {
             AuthMode::SystemKey { .. } => {
                 self.send_json(
                     Method::POST,
-                    &format!("/sdk/threads/{}/compact-turns", urlencoding::encode(thread_id)),
+                    &format!(
+                        "/sdk/threads/{}/compact-turns",
+                        urlencoding::encode(thread_id)
+                    ),
                     Some(req),
                 )
                 .await
@@ -200,7 +222,11 @@ impl MemoryEngineClient {
             AuthMode::Direct { source_id } => {
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", Some(req.tenant_id.as_str()));
-                append_optional_query(&mut query, "source_id", optional_direct_source_id(source_id));
+                append_optional_query(
+                    &mut query,
+                    "source_id",
+                    optional_direct_source_id(source_id),
+                );
                 append_optional_query(&mut query, "record_type", req.record_type.as_deref());
                 self.send_json(
                     Method::GET,
@@ -237,14 +263,21 @@ impl MemoryEngineClient {
             AuthMode::Direct { source_id } => {
                 let mut query = String::new();
                 append_optional_query(&mut query, "tenant_id", Some(req.tenant_id.as_str()));
-                append_optional_query(&mut query, "source_id", optional_direct_source_id(source_id));
+                append_optional_query(
+                    &mut query,
+                    "source_id",
+                    optional_direct_source_id(source_id),
+                );
                 append_optional_query(&mut query, "role", req.role.as_deref());
                 append_optional_query(&mut query, "record_type", req.record_type.as_deref());
                 append_optional_query(&mut query, "summary_status", req.summary_status.as_deref());
                 let resp: CountThreadRecordsResponse = self
                     .send_json(
                         Method::GET,
-                        &format!("/threads/{}/records/count?{query}", urlencoding::encode(thread_id)),
+                        &format!(
+                            "/threads/{}/records/count?{query}",
+                            urlencoding::encode(thread_id)
+                        ),
                         Option::<&()>::None,
                     )
                     .await?;
@@ -254,7 +287,10 @@ impl MemoryEngineClient {
                 let resp: CountThreadRecordsResponse = self
                     .send_json(
                         Method::POST,
-                        &format!("/sdk/threads/{}/records/count", urlencoding::encode(thread_id)),
+                        &format!(
+                            "/sdk/threads/{}/records/count",
+                            urlencoding::encode(thread_id)
+                        ),
                         Some(req),
                     )
                     .await?;

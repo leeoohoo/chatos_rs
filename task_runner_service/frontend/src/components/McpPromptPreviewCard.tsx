@@ -21,7 +21,6 @@ export function McpPromptPreviewCard({ preview }: { preview: McpPromptPreviewRes
         <Tag color={preview.enabled ? 'success' : 'default'}>
           {preview.enabled ? t('common.enabled') : t('common.disabled')}
         </Tag>
-        <Tag>{preview.init_mode}</Tag>
         <Tag color="blue">{preview.builtin_prompt_mode}</Tag>
         <Tag>{preview.builtin_prompt_locale}</Tag>
         <Tag color="processing">

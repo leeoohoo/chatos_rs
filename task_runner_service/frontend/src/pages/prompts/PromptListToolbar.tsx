@@ -7,7 +7,7 @@ import {
 } from 'antd';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
-import type { UiPromptStatus } from '../../types';
+import type { AskUserPromptStatus } from '../../types';
 import type { PromptStatusFilter } from './promptPageUtils';
 
 type PromptListToolbarProps = {
@@ -77,7 +77,7 @@ export function PromptListToolbar({
           onChange={(value) =>
             onFilterChange(
               'status',
-              value === 'all' ? undefined : (value as UiPromptStatus),
+              value === 'all' ? undefined : (value as AskUserPromptStatus),
             )
           }
           options={promptStatusOptions}

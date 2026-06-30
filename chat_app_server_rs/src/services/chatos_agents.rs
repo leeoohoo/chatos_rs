@@ -1,13 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use uuid::Uuid;
-
-use crate::config::Config;
 use crate::models::agent::{Agent, AgentSkill};
 use crate::models::chatos_agent_types::{
-    ChatosAgentDto, ChatosAgentRuntimeCommandSummaryDto, ChatosAgentRuntimeContextDto,
-    ChatosAgentRuntimePluginSummaryDto, ChatosAgentRuntimeSkillSummaryDto, ChatosAgentSkillDto,
-    ChatosSessionDto, ChatosSkillDto, ChatosSkillPluginCommandDto, ChatosSkillPluginDto,
+    ChatosAgentDto, ChatosAgentRuntimeContextDto, ChatosAgentSkillDto, ChatosSessionDto,
     CreateChatosAgentRequest, UpdateChatosAgentRequest,
 };
 use crate::repositories::agents as agents_repo;
@@ -15,9 +10,13 @@ use crate::services::text_normalization::{
     normalize_optional_text_ref, normalize_required_text_owned, normalize_string_vec,
     resolve_visible_user_ids,
 };
-use crate::services::{
-    access_token_scope, chatos_memory_engine, chatos_skills, user_service_api_client,
-};
+use crate::services::{chatos_memory_engine, chatos_skills};
+
+mod provisioning;
+mod runtime;
+
+use provisioning::provision_task_runner_agent_account;
+use runtime::build_agent_runtime_context;
 
 pub async fn list_agents(
     user_id: &str,
@@ -76,6 +75,23 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
     }
     agents_repo::create_agent(&agent).await?;
     Ok(agent_to_dto(agent))
+}
+
+pub async fn ensure_task_runner_agent_account(
+    agent_id: &str,
+) -> Result<Option<ChatosAgentDto>, String> {
+    let Some(mut agent) = agents_repo::get_agent_by_id(agent_id).await? else {
+        return Ok(None);
+    };
+    if normalize_optional_text(agent.task_runner_agent_account_id.as_deref()).is_some() {
+        return Ok(Some(agent_to_dto(agent)));
+    }
+
+    let account_id = provision_task_runner_agent_account(&agent).await?;
+    agent.task_runner_agent_account_id = Some(account_id);
+    agent.updated_at = crate::core::time::now_rfc3339();
+    agents_repo::update_agent(&agent).await?;
+    Ok(Some(agent_to_dto(agent)))
 }
 
 pub async fn update_agent(
@@ -142,59 +158,7 @@ pub async fn get_agent_runtime_context(
         return Ok(None);
     };
 
-    let visible_skills = if agent.skill_ids.is_empty() {
-        Vec::new()
-    } else {
-        chatos_skills::list_skills(agent.user_id.as_str(), None, None, Some(5000), 0).await?
-    };
-    let skill_map = visible_skills
-        .into_iter()
-        .map(|item| (item.id.clone(), item))
-        .collect::<HashMap<_, _>>();
-
-    let mut runtime_plugins = Vec::new();
-    let mut runtime_commands = Vec::new();
-    let mut seen_command_keys = HashSet::new();
-    for plugin_source in &agent.plugin_sources {
-        let plugin =
-            match chatos_skills::get_skill_plugin(agent.user_id.as_str(), plugin_source.as_str())
-                .await
-            {
-                Ok(Some(item)) => Some(item),
-                Ok(None) => None,
-                Err(_) => None,
-            };
-        if let Some(plugin) = plugin {
-            runtime_plugins.push(plugin_to_runtime_plugin(&plugin));
-            push_runtime_commands(
-                &mut runtime_commands,
-                &mut seen_command_keys,
-                plugin.source.as_str(),
-                plugin.commands.as_slice(),
-                plugin.updated_at.as_str(),
-            );
-        }
-    }
-
-    let runtime_skills = build_runtime_skills(&agent, &skill_map);
-
-    Ok(Some(ChatosAgentRuntimeContextDto {
-        agent_id: agent.id.clone(),
-        user_id: agent.user_id.clone(),
-        name: agent.name.clone(),
-        description: agent.description.clone(),
-        category: agent.category.clone(),
-        role_definition: agent.role_definition.clone(),
-        plugin_sources: agent.plugin_sources.clone(),
-        runtime_plugins,
-        skills: dto_skills_from_agent(agent.skills.as_slice()),
-        skill_ids: agent.skill_ids.clone(),
-        runtime_skills,
-        runtime_commands,
-        mcp_policy: agent.mcp_policy.clone(),
-        project_policy: agent.project_policy.clone(),
-        updated_at: agent.updated_at.clone(),
-    }))
+    Ok(Some(build_agent_runtime_context(agent).await?))
 }
 
 pub async fn list_agent_sessions(
@@ -267,108 +231,6 @@ fn session_to_dto(session: crate::models::session::Session) -> ChatosSessionDto 
         updated_at: session.updated_at,
         archived_at: session.archived_at,
     }
-}
-
-fn plugin_to_runtime_plugin(plugin: &ChatosSkillPluginDto) -> ChatosAgentRuntimePluginSummaryDto {
-    ChatosAgentRuntimePluginSummaryDto {
-        source: plugin.source.clone(),
-        name: plugin.name.clone(),
-        category: plugin.category.clone(),
-        description: plugin.description.clone(),
-        content_summary: plugin
-            .description
-            .clone()
-            .or_else(|| plugin.content.as_deref().and_then(first_non_empty_line)),
-        updated_at: Some(plugin.updated_at.clone()),
-    }
-}
-
-fn push_runtime_commands(
-    out: &mut Vec<ChatosAgentRuntimeCommandSummaryDto>,
-    seen: &mut HashSet<String>,
-    plugin_source: &str,
-    commands: &[ChatosSkillPluginCommandDto],
-    updated_at: &str,
-) {
-    let mut items = commands.to_vec();
-    items.sort_by(|left, right| {
-        left.source_path
-            .cmp(&right.source_path)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-    for item in items {
-        let key = format!("{plugin_source}::{}", item.source_path);
-        if !seen.insert(key) {
-            continue;
-        }
-        out.push(ChatosAgentRuntimeCommandSummaryDto {
-            command_ref: format!("CMD{}", out.len() + 1),
-            name: item.name,
-            description: item.description,
-            argument_hint: item.argument_hint,
-            plugin_source: plugin_source.to_string(),
-            source_path: item.source_path,
-            content: item.content,
-            updated_at: Some(updated_at.to_string()),
-        });
-    }
-}
-
-fn build_runtime_skills(
-    agent: &Agent,
-    skill_map: &HashMap<String, ChatosSkillDto>,
-) -> Vec<ChatosAgentRuntimeSkillSummaryDto> {
-    let inline_skill_map = agent
-        .skills
-        .iter()
-        .map(|item| (item.id.as_str(), item))
-        .collect::<HashMap<_, _>>();
-    let mut added_inline = HashSet::new();
-    let mut out = Vec::new();
-
-    for skill_id in &agent.skill_ids {
-        if let Some(skill) = skill_map.get(skill_id) {
-            out.push(ChatosAgentRuntimeSkillSummaryDto {
-                id: skill.id.clone(),
-                name: skill.name.clone(),
-                description: skill.description.clone(),
-                plugin_source: Some(skill.plugin_source.clone()),
-                source_type: "skill_center".to_string(),
-                source_path: Some(skill.source_path.clone()),
-                updated_at: Some(skill.updated_at.clone()),
-            });
-            continue;
-        }
-        if let Some(skill) = inline_skill_map.get(skill_id.as_str()) {
-            added_inline.insert(skill.id.clone());
-            out.push(ChatosAgentRuntimeSkillSummaryDto {
-                id: skill.id.clone(),
-                name: skill.name.clone(),
-                description: None,
-                plugin_source: None,
-                source_type: "inline".to_string(),
-                source_path: None,
-                updated_at: Some(agent.updated_at.clone()),
-            });
-        }
-    }
-
-    for skill in &agent.skills {
-        if added_inline.contains(skill.id.as_str()) {
-            continue;
-        }
-        out.push(ChatosAgentRuntimeSkillSummaryDto {
-            id: skill.id.clone(),
-            name: skill.name.clone(),
-            description: None,
-            plugin_source: None,
-            source_type: "inline".to_string(),
-            source_path: None,
-            updated_at: Some(agent.updated_at.clone()),
-        });
-    }
-
-    out
 }
 
 struct NormalizedAgentPayload {
@@ -500,49 +362,4 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 
 fn normalize_required_text(value: Option<String>, field: &str) -> Result<String, String> {
     normalize_required_text_owned(value, field)
-}
-
-fn first_non_empty_line(value: &str) -> Option<String> {
-    value
-        .lines()
-        .map(str::trim)
-        .find(|item| !item.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-async fn provision_task_runner_agent_account(agent: &Agent) -> Result<String, String> {
-    let config = Config::get();
-    let user_service_base_url = config
-        .user_service_base_url
-        .as_deref()
-        .ok_or_else(|| "CHATOS_USER_SERVICE_BASE_URL is not configured".to_string())?;
-    let access_token = access_token_scope::get_current_access_token()
-        .ok_or_else(|| "current user access token is missing".to_string())?;
-    let created = user_service_api_client::create_agent_account(
-        user_service_base_url,
-        access_token.as_str(),
-        &user_service_api_client::CreateUserServiceAgentAccountRequest {
-            username: build_task_runner_agent_username(agent.id.as_str()),
-            display_name: Some(agent.name.clone()),
-            password: build_task_runner_agent_password(),
-            owner_user_id: Some(agent.user_id.clone()),
-            enabled: Some(agent.enabled),
-        },
-        config.user_service_request_timeout_ms,
-    )
-    .await?;
-    Ok(created.id)
-}
-
-fn build_task_runner_agent_username(agent_id: &str) -> String {
-    let normalized = agent_id
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_lowercase();
-    format!("chatos-agent-{normalized}")
-}
-
-fn build_task_runner_agent_password() -> String {
-    format!("tr-{}", Uuid::new_v4().simple())
 }

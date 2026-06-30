@@ -9,6 +9,7 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         conversation_turn_id: &str,
         draft_tasks: Vec<SharedTaskDraft>,
     ) -> Result<Vec<Value>, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
         let draft_count = draft_tasks.len();
         let draft_titles = draft_tasks
             .iter()
@@ -16,7 +17,8 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
             .filter(|title| !title.is_empty())
             .collect::<Vec<_>>();
         info!(
-            task_id = conversation_id,
+            task_id = root_task_id.as_str(),
+            runtime_conversation_id = conversation_id,
             run_id = conversation_turn_id,
             draft_count,
             draft_titles = draft_titles.join(" | "),
@@ -26,12 +28,13 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         for draft in draft_tasks {
             let task = self
                 .task_service
-                .create_followup_task_for_tool(conversation_id, conversation_turn_id, draft)
+                .create_followup_task_for_tool(root_task_id.as_str(), conversation_turn_id, draft)
                 .await?;
             created.push(task_to_manager_value(&task));
         }
         info!(
-            task_id = conversation_id,
+            task_id = root_task_id.as_str(),
+            runtime_conversation_id = conversation_id,
             run_id = conversation_turn_id,
             created_count = created.len(),
             "task manager finished create_tasks_for_turn request"
@@ -47,8 +50,9 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         _timeout_ms: u64,
         _on_stream_chunk: Option<TaskStreamChunkCallback>,
     ) -> Result<Value, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
         let tasks = self
-            .create_tasks_for_turn(conversation_id, conversation_turn_id, draft_tasks)
+            .create_tasks_for_turn(root_task_id.as_str(), conversation_turn_id, draft_tasks)
             .await?;
         Ok(json!({
             "confirmed": true,
@@ -56,7 +60,7 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
             "auto_created": true,
             "created_count": tasks.len(),
             "tasks": tasks,
-            "conversation_id": conversation_id,
+            "conversation_id": root_task_id,
             "conversation_turn_id": conversation_turn_id,
         }))
     }
@@ -68,9 +72,15 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         include_done: bool,
         limit: usize,
     ) -> Result<Vec<Value>, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
         let tasks = self
             .task_service
-            .list_tool_tasks(conversation_id, conversation_turn_id, include_done, limit)
+            .list_tool_tasks(
+                root_task_id.as_str(),
+                conversation_turn_id,
+                include_done,
+                limit,
+            )
             .await?;
         Ok(tasks.iter().map(task_to_manager_value).collect::<Vec<_>>())
     }
@@ -81,9 +91,10 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         task_id: &str,
         patch: SharedTaskUpdatePatch,
     ) -> Result<Value, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
         let task = self
             .task_service
-            .update_task_from_tool(conversation_id, task_id, patch)
+            .update_task_from_tool(root_task_id.as_str(), task_id, patch)
             .await?;
         Ok(task_to_manager_value(&task))
     }
@@ -94,9 +105,10 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         task_id: &str,
         patch: Option<SharedTaskUpdatePatch>,
     ) -> Result<Value, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
         let task = self
             .task_service
-            .complete_task_from_tool(conversation_id, task_id, patch)
+            .complete_task_from_tool(root_task_id.as_str(), task_id, patch)
             .await?;
         Ok(task_to_manager_value(&task))
     }
@@ -106,8 +118,9 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         conversation_id: &str,
         task_id: &str,
     ) -> Result<bool, String> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
         self.task_service
-            .delete_task_from_tool(conversation_id, task_id)
+            .delete_task_from_tool(root_task_id.as_str(), task_id)
             .await
     }
 
@@ -116,10 +129,11 @@ impl TaskManagerStore for TaskRunnerTaskManagerStore {
         conversation_id: &str,
         conversation_turn_id: &str,
     ) -> Option<Value> {
+        let root_task_id = self.root_task_id(conversation_id).to_string();
         Some(json!({
             "event": "task_runner_task_board_updated",
             "data": {
-                "task_id": conversation_id,
+                "task_id": root_task_id,
                 "run_id": conversation_turn_id,
             }
         }))

@@ -1,18 +1,23 @@
 use super::*;
 
 pub(in crate::mcp_server) fn planner_update_task_request(
-    patch: UpdateTaskRequest,
+    mut patch: UpdateTaskRequest,
 ) -> Result<UpdateTaskRequest, String> {
     if patch.status.is_some() {
         return Err("联系人异步模式不能通过 update_task 修改任务执行状态".to_string());
+    }
+    if let Some(config) = patch.mcp_config.as_mut() {
+        ensure_system_injected_builtin_config(config);
     }
     Ok(patch)
 }
 
 pub(in crate::mcp_server) fn planner_root_create_request(
     mut input: CreateTaskRequest,
+    request_context: &McpRequestContext,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
+    ensure_system_injected_builtin_mcp(&mut input, request_context);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -44,8 +49,10 @@ pub(in crate::mcp_server) fn require_chatos_async_source_context(
 
 pub(in crate::mcp_server) fn planner_prerequisite_create_request(
     mut input: CreateTaskRequest,
+    request_context: &McpRequestContext,
 ) -> Result<CreateTaskRequest, String> {
     ensure_planner_required_fields(&input)?;
+    ensure_system_injected_builtin_mcp(&mut input, request_context);
     input.status = Some(TaskStatus::Ready);
     input.schedule = Some(planner_schedule_contact_async_now(
         input.schedule.unwrap_or_default(),
@@ -56,24 +63,39 @@ pub(in crate::mcp_server) fn planner_prerequisite_create_request(
 pub(in crate::mcp_server) fn ensure_planner_required_fields(
     input: &CreateTaskRequest,
 ) -> Result<(), String> {
-    if input
-        .default_model_config_id
-        .as_deref()
-        .map(str::trim)
-        .is_none_or(|value| value.is_empty())
-    {
-        return Err("联系人异步任务必须指定 default_model_config_id".to_string());
-    }
-    let has_enabled_builtin_kinds = input.mcp_config.as_ref().is_some_and(|config| {
-        config
+    let _ = input;
+    Ok(())
+}
+
+fn ensure_system_injected_builtin_mcp(
+    input: &mut CreateTaskRequest,
+    request_context: &McpRequestContext,
+) {
+    let defaults = TaskMcpConfig::default();
+    let config = input.mcp_config.get_or_insert_with(|| TaskMcpConfig {
+        enabled_builtin_kinds: Vec::new(),
+        ..TaskMcpConfig::default()
+    });
+    config.enabled = true;
+    config.init_mode = defaults.init_mode;
+    config.builtin_prompt_mode = defaults.builtin_prompt_mode;
+    config.builtin_prompt_locale = request_context.requested_builtin_prompt_locale();
+    ensure_system_injected_builtin_config(config);
+}
+
+fn ensure_system_injected_builtin_config(config: &mut TaskMcpConfig) {
+    let defaults = TaskMcpConfig::default();
+    config.enabled = true;
+    config.init_mode = defaults.init_mode;
+    for kind in SYSTEM_INJECTED_BUILTIN_KINDS {
+        if !config
             .enabled_builtin_kinds
             .iter()
-            .any(|value| !value.trim().is_empty())
-    });
-    if !has_enabled_builtin_kinds {
-        return Err("联系人异步任务必须至少选择一个 enabled_builtin_kinds".to_string());
+            .any(|value| value.trim().eq_ignore_ascii_case(kind))
+        {
+            config.enabled_builtin_kinds.push((*kind).to_string());
+        }
     }
-    Ok(())
 }
 
 fn planner_schedule_contact_async_now(

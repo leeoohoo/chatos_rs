@@ -10,6 +10,8 @@ use crate::models::{now_rfc3339, RemoteServerRecord, RemoteServerTestResponse};
 
 use super::host_keys::apply_host_key_policy;
 
+const SSH_COMMAND_OUTPUT_LIMIT_BYTES: usize = 512 * 1024;
+
 pub async fn test_remote_server_connectivity(
     server: &RemoteServerRecord,
     server_id: Option<String>,
@@ -94,15 +96,9 @@ fn run_ssh_command_blocking(
         .exec(remote_command)
         .map_err(|err| format!("执行远端命令失败: {err}"))?;
 
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    channel
-        .read_to_end(&mut stdout)
-        .map_err(|err| format!("读取标准输出失败: {err}"))?;
-    channel
-        .stderr()
-        .read_to_end(&mut stderr)
-        .map_err(|err| format!("读取标准错误失败: {err}"))?;
+    let stdout = read_ssh_stream_limited(&mut channel, "stdout")?;
+    let mut stderr_stream = channel.stderr();
+    let stderr = read_ssh_stream_limited(&mut stderr_stream, "stderr")?;
     let _ = channel.wait_close();
     let exit_code = channel.exit_status().unwrap_or(0);
     if exit_code == 0 {
@@ -118,6 +114,32 @@ fn run_ssh_command_blocking(
             Err(format!("SSH 命令失败，exit={exit_code}"))
         }
     }
+}
+
+fn read_ssh_stream_limited<R: Read>(reader: &mut R, stream_label: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut buffer = [0u8; 8 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|err| format!("读取 SSH {stream_label} 失败: {err}"))?;
+        if read == 0 {
+            return Ok(out);
+        }
+
+        let next_len = out.len().saturating_add(read);
+        ensure_ssh_output_within_limit(stream_label, next_len)?;
+        out.extend_from_slice(&buffer[..read]);
+    }
+}
+
+fn ensure_ssh_output_within_limit(stream_label: &str, actual_bytes: usize) -> Result<(), String> {
+    if actual_bytes > SSH_COMMAND_OUTPUT_LIMIT_BYTES {
+        return Err(format!(
+            "SSH {stream_label} exceeded output limit: {actual_bytes} bytes > {SSH_COMMAND_OUTPUT_LIMIT_BYTES} bytes"
+        ));
+    }
+    Ok(())
 }
 
 fn connect_ssh_session(
@@ -225,4 +247,22 @@ fn authenticate_session(session: &Session, server: &RemoteServerRecord) -> Resul
         _ => return Err("不支持的认证方式".to_string()),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_ssh_output_within_limit, SSH_COMMAND_OUTPUT_LIMIT_BYTES};
+
+    #[test]
+    fn ssh_output_limit_accepts_boundary_size() {
+        assert!(ensure_ssh_output_within_limit("stdout", SSH_COMMAND_OUTPUT_LIMIT_BYTES).is_ok());
+    }
+
+    #[test]
+    fn ssh_output_limit_rejects_oversized_output() {
+        let err = ensure_ssh_output_within_limit("stderr", SSH_COMMAND_OUTPUT_LIMIT_BYTES + 1)
+            .expect_err("oversized output should fail");
+
+        assert!(err.contains("SSH stderr exceeded output limit"));
+    }
 }

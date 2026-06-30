@@ -13,6 +13,10 @@ pub(super) fn task_payload_schema() -> Value {
             "priority": { "type": "string", "enum": ["high", "medium", "low"] },
             "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
             "tags": { "type": "array", "items": { "type": "string" } },
+            "prerequisite_task_id": {
+                "type": "string",
+                "description": "Optional existing task id that must be completed before this task when there is a clear execution order."
+            },
             "due_at": { "type": "string" },
             "outcome_summary": { "type": "string" },
             "outcome_items": {
@@ -40,6 +44,10 @@ fn task_item_schema() -> Value {
             "priority": { "type": "string", "enum": ["high", "medium", "low"] },
             "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
             "tags": { "type": "array", "items": { "type": "string" } },
+            "prerequisite_task_id": {
+                "type": "string",
+                "description": "Optional existing task id that must be completed before this task when there is a clear execution order."
+            },
             "due_at": { "type": "string" },
             "outcome_summary": { "type": "string" },
             "outcome_items": {

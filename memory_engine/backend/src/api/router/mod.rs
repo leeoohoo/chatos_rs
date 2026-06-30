@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{middleware, Router};
 
-use crate::api::{model_profile_auth, operator_auth};
+use crate::api::{memory_auth, model_profile_auth, operator_auth};
 use crate::state::AppState;
 
 mod admin;
@@ -21,14 +21,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .merge(admin::routes().route_layer(middleware::from_fn_with_state(
             protected_state.clone(),
-            operator_auth::require_operator_auth,
+            memory_auth::require_memory_auth,
         )))
         .merge(sdk::routes())
         .merge(core::public_routes())
         .merge(
-            core::protected_routes().route_layer(middleware::from_fn_with_state(
-                protected_state,
+            core::operator_routes().route_layer(middleware::from_fn_with_state(
+                protected_state.clone(),
                 operator_auth::require_operator_auth,
+            )),
+        )
+        .merge(
+            core::data_routes().route_layer(middleware::from_fn_with_state(
+                protected_state,
+                memory_auth::require_memory_auth,
             )),
         )
         .with_state(state)

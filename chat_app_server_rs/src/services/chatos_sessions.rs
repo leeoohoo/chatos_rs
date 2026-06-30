@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::warn;
 
 use crate::core::chat_runtime::{
     contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
@@ -8,6 +9,7 @@ use crate::models::memory_runtime_types::{
     TurnRuntimeSnapshotLookupResponseDto,
 };
 use crate::models::message::Message;
+use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::chatos_memory_engine;
@@ -159,6 +161,13 @@ pub async fn get_message_by_id(message_id: &str) -> Result<Option<Message>, Stri
     chatos_memory_engine::get_chatos_message_by_id(message_id).await
 }
 
+pub async fn get_message_by_id_for_user(
+    message_id: &str,
+    user_id: &str,
+) -> Result<Option<Message>, String> {
+    chatos_memory_engine::get_chatos_message_by_id_for_tenant(message_id, user_id).await
+}
+
 pub async fn get_message_by_id_in_session(
     session: &Session,
     message_id: &str,
@@ -168,6 +177,10 @@ pub async fn get_message_by_id_in_session(
 
 pub async fn delete_message(message_id: &str) -> Result<bool, String> {
     chatos_memory_engine::delete_chatos_message_by_id(message_id).await
+}
+
+pub async fn delete_message_for_user(message_id: &str, user_id: &str) -> Result<bool, String> {
+    chatos_memory_engine::delete_chatos_message_by_id_for_tenant(message_id, user_id).await
 }
 
 pub async fn list_summaries(
@@ -237,7 +250,14 @@ async fn sync_project_agent_link_after_user_message(session: &Session, message: 
     };
     let project_id = normalize_optional_text(session.project_id.as_deref())
         .or_else(|| project_id_from_metadata(metadata))
-        .unwrap_or_else(|| "0".to_string());
+        .map(|value| {
+            if value == "0" {
+                PUBLIC_PROJECT_ID.to_string()
+            } else {
+                value
+            }
+        })
+        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
 
     if let Err(err) = chatos_memory_mappings::touch_current_project_contact_session(
         user_id.as_str(),
@@ -249,9 +269,11 @@ async fn sync_project_agent_link_after_user_message(session: &Session, message: 
     )
     .await
     {
-        eprintln!(
-            "[SESSIONS] touch project contact session after user message failed: session_id={} message_id={} err={}",
-            session.id, message.id, err
+        warn!(
+            session_id = session.id.as_str(),
+            message_id = message.id.as_str(),
+            error = err.as_str(),
+            "touch project contact session after user message failed"
         );
     }
 }

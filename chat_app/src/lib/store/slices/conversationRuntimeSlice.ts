@@ -58,6 +58,7 @@ export interface ConversationRuntimeSliceActions {
   loadMessages: (sessionId: string) => Promise<void>;
   syncSessionMessagesInBackground: (sessionId: string) => Promise<void>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
+  upsertSessionMessage: (message: Message) => void;
   sendMessage: (
     content: string,
     attachments?: File[],

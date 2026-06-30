@@ -7,8 +7,17 @@ import { toLocal } from '../utils';
 
 const { Text } = Typography;
 
+export type OwnerLabelMap = Record<
+  string,
+  {
+    username: string;
+    display_name: string;
+  }
+>;
+
 type ModelsSectionProps = {
   models: EngineModelProfile[];
+  ownerLabelsById?: OwnerLabelMap;
   loading: boolean;
   onReload: () => void;
   onCreate: () => void;
@@ -17,7 +26,24 @@ type ModelsSectionProps = {
 };
 
 export function ModelsSection(props: ModelsSectionProps) {
-  const { models, loading, onReload, onCreate, onEdit, onDelete } = props;
+  const { models, ownerLabelsById = {}, loading, onReload, onCreate, onEdit, onDelete } = props;
+
+  function renderOwnerScope(record: EngineModelProfile) {
+    const ownerUserId = record.owner_user_id?.trim();
+    if (!ownerUserId) {
+      return <Tag>Global</Tag>;
+    }
+    const owner = ownerLabelsById[ownerUserId];
+    const username = owner?.username?.trim() || record.owner_username?.trim();
+    const displayName = owner?.display_name?.trim();
+    const label = displayName || username || ownerUserId;
+    return (
+      <Tag color="geekblue">
+        {label}
+        {username && username !== label ? ` (${username})` : ''}
+      </Tag>
+    );
+  }
 
   const columns: TableColumnsType<EngineModelProfile> = [
     { title: 'Name', dataIndex: 'name', key: 'name', width: 180 },
@@ -27,12 +53,7 @@ export function ModelsSection(props: ModelsSectionProps) {
       title: 'Scope',
       key: 'scope',
       width: 160,
-      render: (_value, record) =>
-        record.owner_username || record.owner_user_id ? (
-          <Tag color="geekblue">{record.owner_username ?? record.owner_user_id}</Tag>
-        ) : (
-          <Tag>Global</Tag>
-        ),
+      render: (_value, record) => renderOwnerScope(record),
     },
     {
       title: 'Default',

@@ -39,6 +39,7 @@ export const useTeamMemberWorkspaceProps = ({
   aiModelConfigs: store.aiModelConfigs,
   supportsReasoning,
   reasoningEnabled: store.chatConfig?.reasoningEnabled === true,
+  planModeEnabled: store.chatConfig?.planModeEnabled === true,
   availableRemoteConnections: resources.composer.remoteConnections || [],
   currentRemoteConnectionId: resources.composer.currentRemoteConnection?.id || null,
   onRemoteConnectionChange: resources.composer.handleComposerRemoteConnectionChange,
@@ -65,6 +66,7 @@ export const useTeamMemberWorkspaceProps = ({
   onThinkingLevelChange: resources.composer.handleComposerSelectedThinkingLevelChange,
   onModelRuntimeChange: resources.composer.handleComposerModelRuntimeSelectionChange,
   onReasoningToggle: (enabled) => store.updateChatConfig({ reasoningEnabled: enabled }),
+  onPlanModeToggle: (enabled) => store.updateChatConfig({ planModeEnabled: enabled }),
   });
 }, [
   project,
@@ -95,6 +97,7 @@ export const useTeamMemberWorkspaceProps = ({
   resources.summary.summaryLoading,
   store.aiModelConfigs,
   store.chatConfig?.reasoningEnabled,
+  store.chatConfig?.planModeEnabled,
   store.messages,
   store.sessionMessagePaginationState,
   store.updateChatConfig,
