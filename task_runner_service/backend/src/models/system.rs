@@ -30,6 +30,12 @@ pub struct SystemConfigResponse {
     pub tool_result_model_max_chars: usize,
     pub default_tool_results_model_total_max_chars: usize,
     pub tool_results_model_total_max_chars: usize,
+    pub default_execution_environment_mode: String,
+    pub execution_environment_mode: String,
+    pub default_sandbox_manager_base_url: String,
+    pub sandbox_manager_base_url: String,
+    pub default_sandbox_lease_ttl_seconds: u64,
+    pub sandbox_lease_ttl_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

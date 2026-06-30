@@ -45,10 +45,16 @@ export function buildProjectDetailColumns({
       title: '需求',
       dataIndex: 'title',
       render: (_, record) => (
-        <Space direction="vertical" size={2}>
-          <Typography.Text strong>{record.title}</Typography.Text>
-          {record.summary ? <Typography.Text type="secondary">{record.summary}</Typography.Text> : null}
-        </Space>
+        <div
+          className="requirement-title-cell"
+          style={{ paddingInlineStart: (record.tree_level || 0) * 28 }}
+        >
+          {(record.tree_level || 0) > 0 ? <span className="requirement-title-branch" aria-hidden /> : null}
+          <Space direction="vertical" size={2} className="requirement-title-content">
+            <Typography.Text strong>{record.title}</Typography.Text>
+            {record.summary ? <Typography.Text type="secondary">{record.summary}</Typography.Text> : null}
+          </Space>
+        </div>
       ),
     },
     {

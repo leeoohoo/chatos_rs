@@ -1,0 +1,4 @@
+backend/target/
+data/
+frontend/dist/
+frontend/node_modules/

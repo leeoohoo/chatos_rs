@@ -210,6 +210,12 @@ pub struct RuntimeSettingsRecord {
     pub tool_result_model_max_chars: usize,
     #[serde(default = "default_tool_results_model_total_max_chars")]
     pub tool_results_model_total_max_chars: usize,
+    #[serde(default = "default_execution_environment_mode")]
+    pub execution_environment_mode: String,
+    #[serde(default = "default_sandbox_manager_base_url")]
+    pub sandbox_manager_base_url: String,
+    #[serde(default = "default_sandbox_lease_ttl_seconds")]
+    pub sandbox_lease_ttl_seconds: u64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -220,6 +226,33 @@ pub struct UpdateRuntimeSettingsRequest {
     pub execution_timeout_ms: Option<u64>,
     pub tool_result_model_max_chars: Option<usize>,
     pub tool_results_model_total_max_chars: Option<usize>,
+    pub execution_environment_mode: Option<String>,
+    pub sandbox_manager_base_url: Option<String>,
+    pub sandbox_lease_ttl_seconds: Option<u64>,
+}
+
+pub fn normalize_execution_environment_mode(value: Option<&str>) -> String {
+    match value
+        .map(str::trim)
+        .unwrap_or("local")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "cloud" => "cloud".to_string(),
+        _ => "local".to_string(),
+    }
+}
+
+pub fn default_execution_environment_mode() -> String {
+    "local".to_string()
+}
+
+pub fn default_sandbox_manager_base_url() -> String {
+    "http://127.0.0.1:8095".to_string()
+}
+
+pub fn default_sandbox_lease_ttl_seconds() -> u64 {
+    7_200
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -26,4 +26,10 @@ export interface SystemConfigResponse {
   tool_result_model_max_chars: number;
   default_tool_results_model_total_max_chars: number;
   tool_results_model_total_max_chars: number;
+  default_execution_environment_mode: 'local' | 'cloud' | string;
+  execution_environment_mode: 'local' | 'cloud' | string;
+  default_sandbox_manager_base_url: string;
+  sandbox_manager_base_url: string;
+  default_sandbox_lease_ttl_seconds: number;
+  sandbox_lease_ttl_seconds: number;
 }

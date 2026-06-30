@@ -2,6 +2,75 @@ use super::support::{create_project, create_requirement, create_work_item, test_
 use crate::models::*;
 
 #[tokio::test]
+async fn list_requirements_page_supports_keyword_offset_and_archive_filter() {
+    let store = test_store().await;
+    let project = create_project(&store).await;
+    let first = create_requirement(&store, &project.id, "Searchable API cleanup").await;
+    let second = create_requirement(&store, &project.id, "Unrelated title").await;
+    let archived = create_requirement(&store, &project.id, "Searchable archived").await;
+
+    store
+        .update_requirement(
+            &first.id,
+            UpdateRequirementRequest {
+                priority: Some(20),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("prioritize first requirement");
+    store
+        .update_requirement(
+            &second.id,
+            UpdateRequirementRequest {
+                source: Some("searchable-source".to_string()),
+                priority: Some(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("make second searchable by source");
+    store
+        .update_requirement(
+            &archived.id,
+            UpdateRequirementRequest {
+                status: Some(RequirementStatus::Archived),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("archive requirement");
+
+    let first_page = store
+        .list_requirements_page(
+            &project.id,
+            None,
+            Some("searchable".to_string()),
+            false,
+            1,
+            0,
+        )
+        .await
+        .expect("first page");
+    let second_page = store
+        .list_requirements_page(
+            &project.id,
+            None,
+            Some("searchable".to_string()),
+            false,
+            1,
+            1,
+        )
+        .await
+        .expect("second page");
+
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(second_page.len(), 1);
+    assert_eq!(first_page[0].id, first.id);
+    assert_eq!(second_page[0].id, second.id);
+}
+
+#[tokio::test]
 async fn requirement_documents_support_multiple_docs_per_requirement() {
     let store = test_store().await;
     let project = create_project(&store).await;

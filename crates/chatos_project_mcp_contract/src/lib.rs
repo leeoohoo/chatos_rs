@@ -156,7 +156,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "project_management_server_tools",
             schemas::project_management_server_tool_definitions(None),
-            0x369c11f56bc8956a,
+            0x421e08d102fb41b2,
         );
     }
 
@@ -165,7 +165,7 @@ mod tests {
         assert_schema_snapshot_hash(
             "task_runner_builtin_tools",
             schemas::task_runner_builtin_tool_definitions(None),
-            0x8923106e27760691,
+            0xc26d17182739386e,
         );
     }
 

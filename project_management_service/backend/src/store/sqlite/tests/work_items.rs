@@ -2,6 +2,93 @@ use super::support::{create_project, create_requirement, create_work_item, test_
 use crate::models::*;
 
 #[tokio::test]
+async fn list_work_items_page_supports_requirement_filter_keyword_and_offset() {
+    let store = test_store().await;
+    let project = create_project(&store).await;
+    let requirement = create_requirement(&store, &project.id, "Requirement").await;
+    let other_requirement = create_requirement(&store, &project.id, "Other requirement").await;
+    let first = create_work_item(&store, &requirement, "First implementation").await;
+    let second = create_work_item(&store, &requirement, "Second implementation").await;
+    let other = create_work_item(&store, &other_requirement, "Other implementation").await;
+
+    store
+        .update_work_item(
+            &first.id,
+            UpdateProjectWorkItemRequest {
+                sort_order: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("sort first item");
+    store
+        .update_work_item(
+            &second.id,
+            UpdateProjectWorkItemRequest {
+                sort_order: Some(2),
+                tags: Some(vec!["lookup-tag".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("sort and tag second item");
+    store
+        .update_work_item(
+            &other.id,
+            UpdateProjectWorkItemRequest {
+                sort_order: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("sort other item");
+
+    let first_page = store
+        .list_work_items_by_project_page(
+            &project.id,
+            None,
+            None,
+            Some(requirement.id.clone()),
+            false,
+            1,
+            0,
+        )
+        .await
+        .expect("first page");
+    let second_page = store
+        .list_work_items_by_project_page(
+            &project.id,
+            None,
+            None,
+            Some(requirement.id.clone()),
+            false,
+            1,
+            1,
+        )
+        .await
+        .expect("second page");
+    let tagged = store
+        .list_work_items_by_project_page(
+            &project.id,
+            None,
+            Some("lookup-tag".to_string()),
+            Some(requirement.id.clone()),
+            false,
+            10,
+            0,
+        )
+        .await
+        .expect("tagged page");
+
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(second_page.len(), 1);
+    assert_eq!(first_page[0].id, first.id);
+    assert_eq!(second_page[0].id, second.id);
+    assert_eq!(tagged.len(), 1);
+    assert_eq!(tagged[0].id, second.id);
+}
+
+#[tokio::test]
 async fn work_item_creation_requires_requirement_technical_document_content() {
     let store = test_store().await;
     let project = create_project(&store).await;

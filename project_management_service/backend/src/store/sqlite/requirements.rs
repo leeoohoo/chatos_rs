@@ -22,12 +22,63 @@ impl SqliteStore {
             "SELECT * FROM requirements
              WHERE project_id = ?1
                AND (?2 IS NULL OR status = ?2)
-               AND (?3 IS NULL OR title LIKE ?3 OR summary LIKE ?3 OR detail LIKE ?3)
+               AND (
+                 ?3 IS NULL
+                 OR id LIKE ?3
+                 OR parent_requirement_id LIKE ?3
+                 OR title LIKE ?3
+                 OR summary LIKE ?3
+                 OR detail LIKE ?3
+                 OR business_value LIKE ?3
+                 OR acceptance_criteria LIKE ?3
+                 OR source LIKE ?3
+               )
              ORDER BY priority DESC, updated_at DESC",
         )
         .bind(project_id)
         .bind(status.map(|status| status.as_str().to_string()))
         .bind(keyword)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok(rows.iter().map(requirement_from_row).collect())
+    }
+
+    pub async fn list_requirements_page(
+        &self,
+        project_id: &str,
+        status: Option<RequirementStatus>,
+        keyword: Option<String>,
+        include_archived: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<RequirementRecord>, String> {
+        let keyword = normalized_optional(keyword).map(|value| format!("%{value}%"));
+        let rows = sqlx::query(
+            "SELECT * FROM requirements
+             WHERE project_id = ?1
+               AND (?2 IS NULL OR status = ?2)
+               AND (?3 OR status <> 'archived')
+               AND (
+                 ?4 IS NULL
+                 OR id LIKE ?4
+                 OR parent_requirement_id LIKE ?4
+                 OR title LIKE ?4
+                 OR summary LIKE ?4
+                 OR detail LIKE ?4
+                 OR business_value LIKE ?4
+                 OR acceptance_criteria LIKE ?4
+                 OR source LIKE ?4
+               )
+             ORDER BY priority DESC, updated_at DESC
+             LIMIT ?5 OFFSET ?6",
+        )
+        .bind(project_id)
+        .bind(status.map(|status| status.as_str().to_string()))
+        .bind(include_archived)
+        .bind(keyword)
+        .bind(limit.max(1) as i64)
+        .bind(offset as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|err| err.to_string())?;

@@ -11,6 +11,9 @@ impl SqliteStore {
                 execution_timeout_ms,
                 tool_result_model_max_chars,
                 tool_results_model_total_max_chars,
+                execution_environment_mode,
+                sandbox_manager_base_url,
+                sandbox_lease_ttl_seconds,
                 created_at,
                 updated_at
              FROM runtime_settings
@@ -34,14 +37,20 @@ impl SqliteStore {
                 execution_timeout_ms,
                 tool_result_model_max_chars,
                 tool_results_model_total_max_chars,
+                execution_environment_mode,
+                sandbox_manager_base_url,
+                sandbox_lease_ttl_seconds,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_execution_max_iterations = excluded.task_execution_max_iterations,
                 execution_timeout_ms = excluded.execution_timeout_ms,
                 tool_result_model_max_chars = excluded.tool_result_model_max_chars,
                 tool_results_model_total_max_chars = excluded.tool_results_model_total_max_chars,
+                execution_environment_mode = excluded.execution_environment_mode,
+                sandbox_manager_base_url = excluded.sandbox_manager_base_url,
+                sandbox_lease_ttl_seconds = excluded.sandbox_lease_ttl_seconds,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at",
         )
@@ -50,6 +59,9 @@ impl SqliteStore {
         .bind(settings.execution_timeout_ms.map(|value| value as i64))
         .bind(settings.tool_result_model_max_chars as i64)
         .bind(settings.tool_results_model_total_max_chars as i64)
+        .bind(&settings.execution_environment_mode)
+        .bind(&settings.sandbox_manager_base_url)
+        .bind(settings.sandbox_lease_ttl_seconds as i64)
         .bind(&settings.created_at)
         .bind(&settings.updated_at)
         .execute(&self.pool)

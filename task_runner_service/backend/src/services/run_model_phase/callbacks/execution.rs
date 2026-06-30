@@ -334,6 +334,7 @@ fn append_external_mcp_runtime_notice(
 fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool {
     matches!(info.server_type.as_str(), "http" | "stdio")
         && info.server_name != PROJECT_MANAGEMENT_MCP_SERVER_NAME
+        && info.server_name != crate::services::sandbox_runtime::SANDBOX_MCP_SERVER_NAME
 }
 
 #[cfg(test)]

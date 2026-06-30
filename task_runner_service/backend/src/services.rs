@@ -14,20 +14,20 @@ use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    normalize_project_id, now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem,
-    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
-    CancelTaskRequest, CancelTaskResponse, ChatosProjectImportRequest,
-    CreateExternalMcpConfigRequest, CreateTaskProjectRequest, CreateTaskRequest,
-    ExternalMcpConfigRecord, HealthResponse, InstallSkillRequest, PaginatedResponse,
-    RecordTaskProcessRequest, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
-    SkillInstallStatus, SkillListFilters, SkillMarketplaceEntry, SkillMarketplaceQuery,
-    SkillPackageFile, SkillRecord, SkillScope, SkillSource, StartTaskRunRequest,
-    SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig, TaskProjectRecord,
-    TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateExternalMcpConfigRequest,
-    UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest, UpdateTaskProjectRequest,
-    UpdateTaskRequest, PUBLIC_PROJECT_ID,
+    normalize_execution_environment_mode, normalize_project_id, now_rfc3339,
+    BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
+    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
+    ChatosProjectImportRequest, CreateExternalMcpConfigRequest, CreateTaskProjectRequest,
+    CreateTaskRequest, ExternalMcpConfigRecord, HealthResponse, InstallSkillRequest,
+    PaginatedResponse, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
+    RuntimeSettingsRecord, SkillInstallStatus, SkillListFilters, SkillMarketplaceEntry,
+    SkillMarketplaceQuery, SkillPackageFile, SkillRecord, SkillScope, SkillSource,
+    StartTaskRunRequest, SystemConfigResponse, TaskIndexResponse, TaskListFilters, TaskMcpConfig,
+    TaskProjectRecord, TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord,
+    TaskRunStatus, TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
+    UpdateExternalMcpConfigRequest, UpdateRuntimeSettingsRequest, UpdateTaskMcpRequest,
+    UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
 };
 use crate::store::AppStore;
 
@@ -54,6 +54,7 @@ mod run_model_phase;
 mod run_prerequisites;
 mod run_recovery;
 mod run_service;
+mod sandbox_runtime;
 mod schedule_helpers;
 mod skill_service;
 mod status_display;
@@ -172,6 +173,9 @@ pub fn system_config(
     execution_timeout_ms: u64,
     task_execution_max_iterations: usize,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
+    execution_environment_mode: String,
+    sandbox_manager_base_url: String,
+    sandbox_lease_ttl_seconds: u64,
 ) -> SystemConfigResponse {
     SystemConfigResponse {
         host: config.host.to_string(),
@@ -196,6 +200,12 @@ pub fn system_config(
         default_tool_results_model_total_max_chars: config
             .default_tool_results_model_total_max_chars,
         tool_results_model_total_max_chars: tool_result_model_budget_limits.total_max_chars,
+        default_execution_environment_mode: config.default_execution_environment_mode.clone(),
+        execution_environment_mode,
+        default_sandbox_manager_base_url: config.default_sandbox_manager_base_url.clone(),
+        sandbox_manager_base_url,
+        default_sandbox_lease_ttl_seconds: config.default_sandbox_lease_ttl_seconds,
+        sandbox_lease_ttl_seconds,
     }
 }
 

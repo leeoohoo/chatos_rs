@@ -61,9 +61,15 @@ pub(super) async fn load_external_mcp_servers(
 pub(super) fn load_system_http_mcp_servers(
     service: &RunService,
     task: &TaskRecord,
+    run: &TaskRunRecord,
+    sandbox_context: Option<&crate::services::sandbox_runtime::SandboxRuntimeContext>,
 ) -> Result<Vec<McpHttpServer>, String> {
-    let _ = (service, task);
-    Ok(Vec::new())
+    let _ = service;
+    let mut servers = Vec::new();
+    if let Some(context) = sandbox_context {
+        servers.push(context.to_mcp_server(task, run));
+    }
+    Ok(servers)
 }
 
 pub(super) fn external_mcp_prefixed_input_items(

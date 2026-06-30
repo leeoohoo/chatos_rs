@@ -56,6 +56,40 @@ impl RunService {
             }))
     }
 
+    pub(super) async fn effective_execution_environment_mode(&self) -> Result<String, String> {
+        Ok(self
+            .store
+            .get_runtime_settings()
+            .await?
+            .map(|settings| {
+                normalize_execution_environment_mode(Some(
+                    settings.execution_environment_mode.as_str(),
+                ))
+            })
+            .unwrap_or_else(|| self.config.default_execution_environment_mode.clone()))
+    }
+
+    pub(super) async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {
+        Ok(self
+            .store
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.sandbox_manager_base_url)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| self.config.default_sandbox_manager_base_url.clone())
+            .trim_end_matches('/')
+            .to_string())
+    }
+
+    pub(super) async fn effective_sandbox_lease_ttl_seconds(&self) -> Result<u64, String> {
+        Ok(self
+            .store
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.sandbox_lease_ttl_seconds.max(1))
+            .unwrap_or(self.config.default_sandbox_lease_ttl_seconds.max(1)))
+    }
+
     pub async fn list_runs(&self, task_id: Option<&str>) -> Result<Vec<TaskRunRecord>, String> {
         self.store.list_runs(task_id).await
     }

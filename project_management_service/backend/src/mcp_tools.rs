@@ -11,19 +11,36 @@ use chatos_project_mcp_contract::{
     },
     tools,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::domain::visibility::{
     ensure_project_task_queryable_for_mcp, ensure_project_task_status_queryable_for_mcp,
     ensure_requirement_queryable_for_mcp, ensure_requirement_status_queryable_for_mcp,
-    non_archived_project_tasks, non_archived_requirements,
 };
 use crate::models::*;
 use crate::services::dependency_graph;
 use crate::state::AppState;
 use crate::task_runner_api_client;
+
+const DEFAULT_MCP_LIST_LIMIT: usize = 50;
+const MAX_MCP_LIST_LIMIT: usize = 100;
+
+#[derive(Debug, Clone, Copy)]
+struct McpListPageRequest {
+    limit: usize,
+    offset: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct McpListPageMeta {
+    limit: usize,
+    offset: usize,
+    returned: usize,
+    has_more: bool,
+    next_offset: Option<usize>,
+}
 
 pub(crate) async fn call_tool_from_value(
     state: &AppState,
@@ -112,13 +129,28 @@ async fn call_tool(
         tools::LIST_REQUIREMENTS => {
             let args: ListRequirementsArgs = decode_value(params.arguments)?;
             let status = args.status.map(RequirementStatus::from);
+            let page = mcp_list_page(args.limit, args.offset);
             require_project_access(state, project_id, current_user).await?;
-            let requirements = state
+            let mut requirements = state
                 .store
-                .list_requirements(project_id, status, args.keyword)
+                .list_requirements_page(
+                    project_id,
+                    status,
+                    args.keyword,
+                    false,
+                    page.fetch_limit(),
+                    page.offset,
+                )
                 .await?;
-            let requirements = non_archived_requirements(requirements);
-            Ok(tool_text_result(json!(requirements)))
+            let has_more = requirements.len() > page.limit;
+            if has_more {
+                requirements.truncate(page.limit);
+            }
+            Ok(tool_text_result(paginated_list_payload(
+                requirements,
+                page,
+                has_more,
+            )))
         }
         tools::CREATE_REQUIREMENT => {
             let args: CreateRequirementArgs = decode_value(params.arguments)?;
@@ -126,6 +158,18 @@ async fn call_tool(
             ensure_requirement_status_queryable_for_mcp(status)?;
             let project = require_project_access(state, project_id, current_user).await?;
             ensure_project_writable(&project)?;
+            if let Some(parent_requirement_id) =
+                normalized_optional(args.parent_requirement_id.clone())
+            {
+                let parent = require_requirement_in_project(
+                    state,
+                    &parent_requirement_id,
+                    project_id,
+                    current_user,
+                )
+                .await?;
+                ensure_requirement_mutable_for_mcp(&parent)?;
+            }
             let requirement = state
                 .store
                 .create_requirement(
@@ -162,6 +206,19 @@ async fn call_tool(
             let project =
                 require_project_access(state, &requirement.project_id, current_user).await?;
             ensure_project_writable(&project)?;
+            ensure_requirement_mutable_for_mcp(&requirement)?;
+            if let Some(parent_requirement_id) =
+                normalized_optional(patch.parent_requirement_id.clone())
+            {
+                let parent = require_requirement_in_project(
+                    state,
+                    &parent_requirement_id,
+                    project_id,
+                    current_user,
+                )
+                .await?;
+                ensure_requirement_mutable_for_mcp(&parent)?;
+            }
             let requirement = state
                 .store
                 .update_requirement(&args.requirement_id, patch)
@@ -198,6 +255,7 @@ async fn call_tool(
             let project =
                 require_project_access(state, &requirement.project_id, current_user).await?;
             ensure_project_writable(&project)?;
+            ensure_requirement_mutable_for_mcp(&requirement)?;
             let deleted = state
                 .store
                 .delete_requirement(&args.requirement_id)
@@ -219,6 +277,7 @@ async fn call_tool(
             let project =
                 require_project_access(state, &requirement.project_id, current_user).await?;
             ensure_project_writable(&project)?;
+            ensure_requirement_mutable_for_mcp(&requirement)?;
             state
                 .store
                 .set_requirement_dependencies(
@@ -265,6 +324,7 @@ async fn call_tool(
             let project =
                 require_project_access(state, &requirement.project_id, current_user).await?;
             ensure_project_writable(&project)?;
+            ensure_requirement_mutable_for_mcp(&requirement)?;
             let doc = if let Some(document_id) = normalized_optional(args.document_id) {
                 state
                     .store
@@ -299,19 +359,38 @@ async fn call_tool(
         tools::LIST_PROJECT_TASKS => {
             let args: ListProjectTasksArgs = decode_value(params.arguments)?;
             let status = args.status.map(ProjectWorkItemStatus::from);
+            let page = mcp_list_page(args.limit, args.offset);
             require_project_access(state, project_id, current_user).await?;
-            let items = state
+            let requirement_id = normalized_optional(args.requirement_id);
+            if let Some(requirement_id) = requirement_id.as_deref() {
+                require_requirement_in_project(state, requirement_id, project_id, current_user)
+                    .await?;
+            }
+            let mut items = state
                 .store
-                .list_work_items_by_project(project_id, status, args.keyword)
+                .list_work_items_by_project_page(
+                    project_id,
+                    status,
+                    args.keyword,
+                    requirement_id,
+                    false,
+                    page.fetch_limit(),
+                    page.offset,
+                )
                 .await?;
-            let items = non_archived_project_tasks(items);
+            let has_more = items.len() > page.limit;
+            if has_more {
+                items.truncate(page.limit);
+            }
             let items = dependency_graph::retain_project_tasks_with_visible_requirements(
                 &state.store,
                 project_id,
                 items,
             )
             .await?;
-            Ok(tool_text_result(json!(items)))
+            Ok(tool_text_result(paginated_list_payload(
+                items, page, has_more,
+            )))
         }
         tools::CREATE_PROJECT_TASK => {
             let args: CreateProjectTaskArgs = decode_value(params.arguments)?;
@@ -327,6 +406,7 @@ async fn call_tool(
             let project =
                 require_project_access(state, &requirement.project_id, current_user).await?;
             ensure_project_writable(&project)?;
+            ensure_requirement_mutable_for_mcp(&requirement)?;
             let owner_user_id = current_user.effective_owner_user_id().ok_or_else(|| {
                 "project management MCP create_project_task requires owner user id for Task Runner model/tool validation".to_string()
             })?;
@@ -380,8 +460,14 @@ async fn call_tool(
             let patch = UpdateProjectWorkItemRequest::from(args.patch);
             ensure_project_task_status_queryable_for_mcp(patch.status)?;
             if let Some(requirement_id) = normalized_optional(patch.requirement_id.clone()) {
-                require_requirement_in_project(state, &requirement_id, project_id, current_user)
-                    .await?;
+                let target_requirement = require_requirement_in_project(
+                    state,
+                    &requirement_id,
+                    project_id,
+                    current_user,
+                )
+                .await?;
+                ensure_requirement_mutable_for_mcp(&target_requirement)?;
             }
             let item = require_project_task_in_project(
                 state,
@@ -390,6 +476,15 @@ async fn call_tool(
                 current_user,
             )
             .await?;
+            ensure_project_task_mutable_for_mcp(&item)?;
+            let current_requirement = require_requirement_in_project(
+                state,
+                &item.requirement_id,
+                project_id,
+                current_user,
+            )
+            .await?;
+            ensure_requirement_mutable_for_mcp(&current_requirement)?;
             let project = require_project_access(state, &item.project_id, current_user).await?;
             ensure_project_writable(&project)?;
             let item = state
@@ -428,6 +523,15 @@ async fn call_tool(
                 current_user,
             )
             .await?;
+            ensure_project_task_mutable_for_mcp(&item)?;
+            let requirement = require_requirement_in_project(
+                state,
+                &item.requirement_id,
+                project_id,
+                current_user,
+            )
+            .await?;
+            ensure_requirement_mutable_for_mcp(&requirement)?;
             let project = require_project_access(state, &item.project_id, current_user).await?;
             ensure_project_writable(&project)?;
             let deleted = state
@@ -448,6 +552,15 @@ async fn call_tool(
                 current_user,
             )
             .await?;
+            ensure_project_task_mutable_for_mcp(&item)?;
+            let requirement = require_requirement_in_project(
+                state,
+                &item.requirement_id,
+                project_id,
+                current_user,
+            )
+            .await?;
+            ensure_requirement_mutable_for_mcp(&requirement)?;
             let project = require_project_access(state, &item.project_id, current_user).await?;
             ensure_project_writable(&project)?;
             state
@@ -556,6 +669,28 @@ fn ensure_project_writable(project: &ProjectRecord) -> Result<(), String> {
     }
 }
 
+fn ensure_requirement_mutable_for_mcp(requirement: &RequirementRecord) -> Result<(), String> {
+    if requirement.status == RequirementStatus::Done {
+        Err(format!(
+            "需求已完成，不能通过 MCP 修改、删除或追加内容；如有相似的新需求，请新建需求。requirement_id={}",
+            requirement.id
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_project_task_mutable_for_mcp(item: &ProjectWorkItemRecord) -> Result<(), String> {
+    if item.status == ProjectWorkItemStatus::Done {
+        Err(format!(
+            "项目任务已完成，不能通过 MCP 修改、删除或调整依赖；如有相似的新工作，请新建项目任务。project_task_id={}",
+            item.id
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn tool_text_result(payload: Value) -> Value {
     json!({
         "content": [
@@ -565,6 +700,39 @@ fn tool_text_result(payload: Value) -> Value {
             }
         ],
         "isError": false
+    })
+}
+
+impl McpListPageRequest {
+    fn fetch_limit(&self) -> usize {
+        self.limit.saturating_add(1)
+    }
+}
+
+fn mcp_list_page(limit: Option<usize>, offset: Option<usize>) -> McpListPageRequest {
+    McpListPageRequest {
+        limit: limit
+            .unwrap_or(DEFAULT_MCP_LIST_LIMIT)
+            .clamp(1, MAX_MCP_LIST_LIMIT),
+        offset: offset.unwrap_or_default(),
+    }
+}
+
+fn paginated_list_payload<T: Serialize>(
+    items: Vec<T>,
+    page: McpListPageRequest,
+    has_more: bool,
+) -> Value {
+    let returned = items.len();
+    json!({
+        "items": items,
+        "page": McpListPageMeta {
+            limit: page.limit,
+            offset: page.offset,
+            returned,
+            has_more,
+            next_offset: has_more.then_some(page.offset.saturating_add(page.limit)),
+        }
     })
 }
 
@@ -642,5 +810,345 @@ impl From<UpdateProjectTaskPatch> for UpdateProjectWorkItemRequest {
             sort_order: value.sort_order,
             tags: value.tags,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::models::UserRole;
+
+    async fn test_state() -> AppState {
+        let database_path = std::env::temp_dir().join(format!(
+            "project-management-mcp-tools-{}.db",
+            Uuid::new_v4()
+        ));
+        AppState::new(AppConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            database_url: format!("sqlite://{}", database_path.display()),
+            user_service_base_url: "http://127.0.0.1:1".to_string(),
+            user_service_request_timeout: Duration::from_millis(300),
+            task_runner_base_url: None,
+            task_runner_request_timeout: Duration::from_millis(300),
+            task_runner_internal_secret: None,
+            sync_secret: None,
+        })
+        .await
+        .expect("test state")
+    }
+
+    fn test_user() -> CurrentUser {
+        CurrentUser {
+            principal_type: "human_user".to_string(),
+            id: "user-1".to_string(),
+            username: "owner".to_string(),
+            display_name: "Owner".to_string(),
+            role: UserRole::Agent,
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: Some("owner".to_string()),
+            owner_display_name: Some("Owner".to_string()),
+        }
+    }
+
+    async fn create_project(state: &AppState, user: &CurrentUser) -> ProjectRecord {
+        state
+            .store
+            .create_project(
+                CreateProjectRequest {
+                    name: "Project".to_string(),
+                    root_path: None,
+                    git_url: None,
+                    description: None,
+                },
+                user,
+            )
+            .await
+            .expect("create project")
+    }
+
+    async fn create_requirement(
+        state: &AppState,
+        user: &CurrentUser,
+        project_id: &str,
+        title: &str,
+    ) -> RequirementRecord {
+        state
+            .store
+            .create_requirement(
+                project_id,
+                CreateRequirementRequest {
+                    parent_requirement_id: None,
+                    requirement_type: None,
+                    title: title.to_string(),
+                    summary: None,
+                    detail: None,
+                    business_value: None,
+                    acceptance_criteria: None,
+                    source: None,
+                    priority: None,
+                    status: None,
+                    assignee_user_id: None,
+                },
+                user,
+            )
+            .await
+            .expect("create requirement")
+    }
+
+    async fn add_technical_document(state: &AppState, user: &CurrentUser, requirement_id: &str) {
+        state
+            .store
+            .create_requirement_document(
+                requirement_id,
+                UpsertRequirementDocumentRequest {
+                    doc_type: None,
+                    title: None,
+                    format: None,
+                    content: "Technical overview".to_string(),
+                },
+                user,
+            )
+            .await
+            .expect("create requirement document");
+    }
+
+    async fn create_project_task(
+        state: &AppState,
+        user: &CurrentUser,
+        requirement: &RequirementRecord,
+    ) -> ProjectWorkItemRecord {
+        add_technical_document(state, user, &requirement.id).await;
+        state
+            .store
+            .create_work_item(
+                requirement,
+                CreateProjectWorkItemRequest {
+                    title: "Full Maven build".to_string(),
+                    description: None,
+                    task_runner_default_model_config_id: "model-config-test".to_string(),
+                    task_runner_enabled_tool_ids: vec!["filesystem".to_string()],
+                    task_runner_skill_ids: Vec::new(),
+                    status: None,
+                    priority: None,
+                    assignee_user_id: None,
+                    estimate_points: None,
+                    due_at: None,
+                    sort_order: None,
+                    tags: None,
+                },
+                user,
+            )
+            .await
+            .expect("create work item")
+    }
+
+    async fn call_test_tool(
+        state: &AppState,
+        user: &CurrentUser,
+        project_id: &str,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, String> {
+        call_tool(
+            state,
+            user,
+            project_id,
+            ToolCallParams {
+                name: name.to_string(),
+                arguments,
+            },
+        )
+        .await
+    }
+
+    fn assert_done_record_rejected(result: Result<Value, String>) {
+        let error = result.expect_err("done record mutation rejected");
+        assert!(
+            error.contains("已完成") || error.contains("done"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_mutating_done_requirement() {
+        let state = test_state().await;
+        let user = test_user();
+        let project = create_project(&state, &user).await;
+        let requirement = create_requirement(&state, &user, &project.id, "Requirement").await;
+        state
+            .store
+            .update_requirement(
+                &requirement.id,
+                UpdateRequirementRequest {
+                    status: Some(RequirementStatus::Done),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("mark requirement done");
+
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::UPDATE_REQUIREMENT,
+                json!({
+                    "requirement_id": requirement.id,
+                    "patch": { "title": "Changed" }
+                }),
+            )
+            .await,
+        );
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::UPSERT_REQUIREMENT_TECHNICAL_DOCUMENT,
+                json!({
+                    "requirement_id": requirement.id,
+                    "content": "Updated technical overview"
+                }),
+            )
+            .await,
+        );
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::CREATE_PROJECT_TASK,
+                json!({
+                    "requirement_id": requirement.id,
+                    "title": "Full Maven build",
+                    "task_runner_default_model_config_id": "model-config-test",
+                    "task_runner_enabled_tool_ids": ["filesystem"]
+                }),
+            )
+            .await,
+        );
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::DELETE_REQUIREMENT,
+                json!({ "requirement_id": requirement.id }),
+            )
+            .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_attaching_new_records_to_done_requirement() {
+        let state = test_state().await;
+        let user = test_user();
+        let project = create_project(&state, &user).await;
+        let done_parent = create_requirement(&state, &user, &project.id, "Done parent").await;
+        let child = create_requirement(&state, &user, &project.id, "Open child").await;
+        state
+            .store
+            .update_requirement(
+                &done_parent.id,
+                UpdateRequirementRequest {
+                    status: Some(RequirementStatus::Done),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("mark parent done");
+
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::CREATE_REQUIREMENT,
+                json!({
+                    "parent_requirement_id": done_parent.id,
+                    "title": "New child under done parent"
+                }),
+            )
+            .await,
+        );
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::UPDATE_REQUIREMENT,
+                json!({
+                    "requirement_id": child.id,
+                    "patch": { "parent_requirement_id": done_parent.id }
+                }),
+            )
+            .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_mutating_done_project_task() {
+        let state = test_state().await;
+        let user = test_user();
+        let project = create_project(&state, &user).await;
+        let requirement = create_requirement(&state, &user, &project.id, "Requirement").await;
+        let item = create_project_task(&state, &user, &requirement).await;
+        state
+            .store
+            .update_work_item(
+                &item.id,
+                UpdateProjectWorkItemRequest {
+                    status: Some(ProjectWorkItemStatus::Done),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("mark work item done");
+
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::UPDATE_PROJECT_TASK,
+                json!({
+                    "project_task_id": item.id,
+                    "patch": { "title": "Changed" }
+                }),
+            )
+            .await,
+        );
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::SET_PROJECT_TASK_DEPENDENCIES,
+                json!({
+                    "project_task_id": item.id,
+                    "prerequisite_project_task_ids": []
+                }),
+            )
+            .await,
+        );
+        assert_done_record_rejected(
+            call_test_tool(
+                &state,
+                &user,
+                &project.id,
+                tools::DELETE_PROJECT_TASK,
+                json!({ "project_task_id": item.id }),
+            )
+            .await,
+        );
     }
 }

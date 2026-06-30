@@ -3,6 +3,7 @@ use super::*;
 mod mcp_builder;
 mod mcp_inputs;
 
+use crate::services::sandbox_runtime::sandbox_mcp_prefixed_input_items;
 use mcp_builder::build_mcp_builder_parts;
 #[cfg(test)]
 use mcp_inputs::project_management_skill_prefixed_input_item;
@@ -21,7 +22,11 @@ pub(super) async fn prepare_model_execution(
     prerequisite_context: &[PrerequisiteTaskContext],
 ) -> Result<PreparedModelExecution, String> {
     let loaded_external_mcp = load_external_mcp_servers(service, task).await?;
-    let system_http_servers = load_system_http_mcp_servers(service, task)?;
+    let sandbox_context = service
+        .prepare_cloud_sandbox_if_needed(task, run, effective_workspace_dir)
+        .await?;
+    let system_http_servers =
+        load_system_http_mcp_servers(service, task, run, sandbox_context.as_ref())?;
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -44,7 +49,13 @@ pub(super) async fn prepare_model_execution(
         loaded_external_mcp.summaries.as_slice(),
         task.mcp_config.locale(),
     ));
-    let metadata = build_execution_metadata(task, run, model_config);
+    if let Some(context) = sandbox_context.as_ref() {
+        prefixed_input_items.extend(sandbox_mcp_prefixed_input_items(
+            context,
+            task.mcp_config.locale(),
+        ));
+    }
+    let metadata = build_execution_metadata(task, run, model_config, sandbox_context.as_ref());
     let task_process_logging_enabled = task_process_logging_enabled(&task.mcp_config);
     let mut run_spec = build_run_spec(
         task,
@@ -77,6 +88,7 @@ pub(super) async fn prepare_model_execution(
         effective_workspace_dir,
         task_process_logging_enabled,
         task_service.clone(),
+        sandbox_context.as_ref(),
     )
     .await;
     if !loaded_external_mcp.summaries.is_empty() {
@@ -105,6 +117,7 @@ pub(super) async fn prepare_model_execution(
         runtime_config,
         mcp_builder,
         tool_result_model_budget_limits,
+        sandbox_context,
     })
 }
 
@@ -112,13 +125,21 @@ fn build_execution_metadata(
     task: &TaskRecord,
     run: &TaskRunRecord,
     model_config: &ModelConfigRecord,
+    sandbox_context: Option<&crate::services::sandbox_runtime::SandboxRuntimeContext>,
 ) -> serde_json::Value {
-    json!({
+    let mut metadata = json!({
         "task_id": task.id,
         "run_id": run.id,
         "model_config_id": model_config.id,
         "service": "task_runner_service",
-    })
+    });
+    if let Some(context) = sandbox_context {
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert("execution_environment_mode".to_string(), json!("cloud"));
+            object.insert("sandbox".to_string(), context.to_metadata());
+        }
+    }
+    metadata
 }
 
 fn build_run_spec(
@@ -277,7 +298,7 @@ mod tests {
         let task_service = TaskService::new(service.config.clone(), service.store.clone());
 
         let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service).await;
+            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None).await;
         let server = builtin_servers
             .iter()
             .find(|server| server.name == chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME)
@@ -317,11 +338,12 @@ mod tests {
         let run = sample_run(&task);
         let task_service = TaskService::new(service.config.clone(), service.store.clone());
 
-        let system_servers = load_system_http_mcp_servers(&service, &task).expect("system servers");
+        let system_servers =
+            load_system_http_mcp_servers(&service, &task, &run, None).expect("system servers");
         assert!(system_servers.is_empty());
 
         let (builtin_servers, builtin_registry) =
-            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service).await;
+            build_mcp_builder_parts(&service, &task, &run, ".", false, task_service, None).await;
         assert!(builtin_servers
             .iter()
             .all(|server| server.name != chatos_mcp_runtime::PROJECT_MANAGEMENT_SERVER_NAME));
@@ -355,6 +377,9 @@ mod tests {
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1_000,
             default_tool_results_model_total_max_chars: 1_000,
+            default_execution_environment_mode: "local".to_string(),
+            default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
+            default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: None,
             chatos_callback_secret: None,
             internal_api_secret: None,

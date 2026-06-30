@@ -1,0 +1,105 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f5f7fb;
+}
+
+.app-layout {
+  min-height: 100vh;
+}
+
+.app-logo {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  color: #fff;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.topbar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: #fff;
+  border-bottom: 1px solid #e8ecf3;
+}
+
+.page-content {
+  padding: 24px;
+}
+
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-heading .ant-typography {
+  margin: 0;
+}
+
+.surface,
+.metric-panel {
+  background: #fff;
+  border: 1px solid #e8ecf3;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.metric-panel {
+  min-height: 98px;
+}
+
+.filter-bar {
+  margin-bottom: 16px;
+  row-gap: 12px;
+}
+
+.form-surface {
+  max-width: 720px;
+}
+
+.muted-line {
+  color: #778195;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.section-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-heading-row .ant-typography {
+  margin: 0;
+}
+
+.json-input textarea,
+.json-panel {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.json-panel {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #d8dee9;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 1.6;
+}

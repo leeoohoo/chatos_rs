@@ -4,7 +4,7 @@ use mongodb::bson::doc;
 use uuid::Uuid;
 
 use super::super::common::{normalize_id_list, task_runner_status_is_active};
-use super::{find_many, keyword_filter, upsert_by_id, upsert_one, MongoStore};
+use super::{find_many, find_many_page, keyword_or_filter, upsert_by_id, upsert_one, MongoStore};
 use crate::auth::CurrentUser;
 use crate::models::*;
 
@@ -19,19 +19,72 @@ impl MongoStore {
         if let Some(status) = status {
             filter.insert("status", status.as_str());
         }
-        if let Some(keyword) = keyword_filter(keyword) {
-            filter.insert(
-                "$or",
-                vec![
-                    doc! { "title": keyword.clone() },
-                    doc! { "description": keyword },
-                ],
-            );
+        if let Some(keyword) = keyword_or_filter(
+            keyword,
+            &[
+                "id",
+                "requirement_id",
+                "title",
+                "description",
+                "tags",
+                "task_runner_default_model_config_id",
+                "task_runner_enabled_tool_ids",
+                "task_runner_skill_ids",
+            ],
+        ) {
+            filter.insert("$or", keyword);
         }
         find_many(
             &self.work_items,
             filter,
             Some(doc! { "sort_order": 1, "priority": -1, "updated_at": -1, "id": 1 }),
+        )
+        .await
+    }
+
+    pub async fn list_work_items_by_project_page(
+        &self,
+        project_id: &str,
+        status: Option<ProjectWorkItemStatus>,
+        keyword: Option<String>,
+        requirement_id: Option<String>,
+        include_archived: bool,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ProjectWorkItemRecord>, String> {
+        let mut filter = doc! { "project_id": project_id };
+        if let Some(requirement_id) = normalized_optional(requirement_id) {
+            filter.insert("requirement_id", requirement_id);
+        }
+        if let Some(status) = status {
+            filter.insert("status", status.as_str());
+        } else if !include_archived {
+            filter.insert(
+                "status",
+                doc! { "$ne": ProjectWorkItemStatus::Archived.as_str() },
+            );
+        }
+        if let Some(keyword) = keyword_or_filter(
+            keyword,
+            &[
+                "id",
+                "requirement_id",
+                "title",
+                "description",
+                "tags",
+                "task_runner_default_model_config_id",
+                "task_runner_enabled_tool_ids",
+                "task_runner_skill_ids",
+            ],
+        ) {
+            filter.insert("$or", keyword);
+        }
+        find_many_page(
+            &self.work_items,
+            filter,
+            doc! { "sort_order": 1, "priority": -1, "updated_at": -1, "id": 1 },
+            limit,
+            offset,
         )
         .await
     }

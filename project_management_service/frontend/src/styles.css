@@ -40,3 +40,56 @@ body {
 .muted {
   color: rgba(0, 0, 0, 0.45);
 }
+
+.requirement-tree-expander {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  margin-inline-end: 8px;
+  align-items: center;
+  justify-content: center;
+  vertical-align: top;
+  color: rgba(0, 0, 0, 0.58);
+  background: #ffffff;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.requirement-tree-expander:hover {
+  color: #1677ff;
+  border-color: #91caff;
+  background: #f0f7ff;
+}
+
+.requirement-tree-expander-placeholder {
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.requirement-title-cell {
+  position: relative;
+  display: inline-flex;
+  box-sizing: border-box;
+  width: calc(100% - 30px);
+  min-width: 0;
+  align-items: flex-start;
+  vertical-align: top;
+}
+
+.requirement-title-content {
+  min-width: 0;
+}
+
+.requirement-title-branch {
+  width: 16px;
+  height: 22px;
+  margin-inline: -18px 2px;
+  flex: 0 0 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+  border-left: 1px solid rgba(0, 0, 0, 0.18);
+  transform: translateY(-8px);
+}

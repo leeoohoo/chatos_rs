@@ -1,7 +1,8 @@
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { CaretDownOutlined, CaretRightOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Button, Card, Col, Descriptions, Form, Row, Space, Statistic, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { FormInstance } from 'antd/es/form';
+import type { MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import type {
@@ -44,6 +45,33 @@ interface ProjectDetailTabsProps {
   blockingRelations: GraphRelationRow[];
   containsRelations: GraphRelationRow[];
 }
+
+const renderRequirementExpandIcon = ({
+  expanded,
+  onExpand,
+  record,
+}: {
+  expanded: boolean;
+  onExpand: (record: RequirementTableRecord, event: MouseEvent<HTMLElement>) => void;
+  record: RequirementTableRecord;
+}) => {
+  if (!record.children?.length) {
+    return <span className="requirement-tree-expander requirement-tree-expander-placeholder" />;
+  }
+  return (
+    <button
+      type="button"
+      aria-label={expanded ? '收起子需求' : '展开子需求'}
+      className="requirement-tree-expander"
+      onClick={(event) => {
+        event.stopPropagation();
+        onExpand(record, event);
+      }}
+    >
+      {expanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
+    </button>
+  );
+};
 
 export function ProjectDetailTabs({
   projectId,
@@ -189,7 +217,7 @@ export function ProjectDetailTabs({
                   loading={requirementsLoading}
                   columns={requirementColumns}
                   dataSource={requirementTree}
-                  expandable={{ indentSize: 24 }}
+                  expandable={{ indentSize: 0, expandIcon: renderRequirementExpandIcon }}
                   pagination={{ pageSize: 8, showSizeChanger: true }}
                   scroll={{ x: 1220 }}
                 />

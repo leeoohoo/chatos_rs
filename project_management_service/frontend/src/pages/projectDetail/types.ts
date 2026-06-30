@@ -20,6 +20,7 @@ export interface GraphRelationRow {
 
 export type RequirementTableRecord = RequirementRecord & {
   children?: RequirementTableRecord[];
+  tree_level?: number;
 };
 
 export type ProfileMarkdownFieldName = 'background' | 'introduction';

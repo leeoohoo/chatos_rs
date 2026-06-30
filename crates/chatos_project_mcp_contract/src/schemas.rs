@@ -75,7 +75,7 @@ fn tool_definitions(
         ),
         tool_definition(
             tools::LIST_REQUIREMENTS,
-            "List requirements for the current project.",
+            "List requirements for the current project. Prefer keyword and pagination for large projects instead of reading every requirement at once.",
             object_schema(
                 vec![
                     enum_field(
@@ -83,14 +83,19 @@ fn tool_definitions(
                         "Optional requirement status filter.",
                         REQUIREMENT_STATUS_VALUES,
                     ),
-                    optional_string_field("keyword", "Optional fuzzy keyword."),
+                    optional_string_field(
+                        "keyword",
+                        "Optional case-insensitive fuzzy keyword across id, title, summary, detail, business value, acceptance criteria, and source.",
+                    ),
+                    page_limit_field(),
+                    page_offset_field(),
                 ],
                 vec![],
             ),
         ),
         tool_definition(
             tools::CREATE_REQUIREMENT,
-            "Create a requirement in the current project.",
+            "Create a requirement in the current project. If the work is similar to a done requirement, create a new requirement instead of modifying or extending the done one. Do not attach new child requirements under a done parent requirement.",
             object_schema(
                 vec![
                     string_field("title", "Requirement title."),
@@ -114,7 +119,7 @@ fn tool_definitions(
         ),
         tool_definition(
             tools::UPDATE_REQUIREMENT,
-            "Update a requirement and optionally replace its prerequisite requirement ids.",
+            "Update a requirement and optionally replace its prerequisite requirement ids. Done requirements are immutable through MCP; create a new requirement for similar new work.",
             object_schema(
                 vec![
                     string_field("requirement_id", "Requirement id to update."),
@@ -132,7 +137,7 @@ fn tool_definitions(
     if include_delete_tools {
         definitions.push(tool_definition(
             tools::DELETE_REQUIREMENT,
-            "Delete a requirement and its child requirements, technical documents, project tasks, and dependency edges when none of the affected project tasks have been executed. Use this during planning to remove incorrectly created requirements instead of archiving or cancelling them.",
+            "Delete a requirement and its child requirements, technical documents, project tasks, and dependency edges when none of the affected project tasks have been executed. Done requirements are immutable and cannot be deleted through MCP. Use this during planning to remove incorrectly created requirements instead of archiving or cancelling them.",
             object_schema(
                 vec![string_field("requirement_id", "Requirement id to delete.")],
                 vec!["requirement_id"],
@@ -143,7 +148,7 @@ fn tool_definitions(
     definitions.extend([
         tool_definition(
             tools::SET_REQUIREMENT_DEPENDENCIES,
-            "Replace prerequisite requirements for one requirement.",
+            "Replace prerequisite requirements for one requirement. Done requirements are immutable through MCP; do not change their dependencies.",
             object_schema(
                 vec![
                     string_field("requirement_id", "Requirement id to update."),
@@ -182,7 +187,7 @@ fn tool_definitions(
         ),
         tool_definition(
             tools::UPSERT_REQUIREMENT_TECHNICAL_DOCUMENT,
-            "Create a new typed technical document for a requirement, or update an existing one when document_id is provided. Keep each document focused and split long content by doc_type or title.",
+            "Create a new typed technical document for a requirement, or update an existing one when document_id is provided. Done requirements are immutable through MCP, so create a new requirement for similar new work instead of editing completed docs. Keep each document focused and split long content by doc_type or title.",
             object_schema(
                 vec![
                     string_field("requirement_id", "Requirement id."),
@@ -200,7 +205,7 @@ fn tool_definitions(
         ),
         tool_definition(
             tools::LIST_PROJECT_TASKS,
-            "List project-management tasks/work items for the current project.",
+            "List project-management tasks/work items for the current project. Prefer requirement_id, keyword, and pagination for large projects instead of reading every task at once.",
             object_schema(
                 vec![
                     enum_field(
@@ -208,14 +213,23 @@ fn tool_definitions(
                         "Optional project task status filter.",
                         PROJECT_TASK_STATUS_VALUES,
                     ),
-                    optional_string_field("keyword", "Optional fuzzy keyword."),
+                    optional_string_field(
+                        "keyword",
+                        "Optional case-insensitive fuzzy keyword across id, requirement_id, title, description, and tags.",
+                    ),
+                    optional_string_field(
+                        "requirement_id",
+                        "Optional requirement id filter for checking coverage under one requirement.",
+                    ),
+                    page_limit_field(),
+                    page_offset_field(),
                 ],
                 vec![],
             ),
         ),
         tool_definition(
             tools::CREATE_PROJECT_TASK,
-            "Create a project-management task/work item under a requirement. The requirement must already have at least one non-empty technical document.",
+            "Create a project-management task/work item under a requirement. The requirement must be open and must already have at least one non-empty technical document. If similar work was already done under another requirement, create a new task for this requirement instead of modifying the completed one.",
             object_schema(
                 vec![
                     string_field("requirement_id", "Requirement id this project task belongs to."),
@@ -250,7 +264,7 @@ fn tool_definitions(
         ),
         tool_definition(
             tools::UPDATE_PROJECT_TASK,
-            "Update a project-management task/work item and optionally replace its prerequisite project task ids.",
+            "Update a project-management task/work item and optionally replace its prerequisite project task ids. Done project tasks are immutable through MCP; create a new task for similar new work.",
             object_schema(
                 vec![
                     string_field("project_task_id", "Project task/work item id to update."),
@@ -268,7 +282,7 @@ fn tool_definitions(
     if include_delete_tools {
         definitions.push(tool_definition(
             tools::DELETE_PROJECT_TASK,
-            "Delete a project-management task/work item that has not been executed. Use this during planning to remove incorrectly created project tasks instead of cancelling them.",
+            "Delete a project-management task/work item that has not been executed. Done project tasks are immutable and cannot be deleted through MCP. Use this during planning to remove incorrectly created project tasks instead of cancelling them.",
             object_schema(
                 vec![string_field(
                     "project_task_id",
@@ -282,7 +296,7 @@ fn tool_definitions(
     definitions.extend([
         tool_definition(
             tools::SET_PROJECT_TASK_DEPENDENCIES,
-            "Replace prerequisite project task ids for one project task.",
+            "Replace prerequisite project task ids for one project task. Done project tasks are immutable through MCP; do not change their dependencies.",
             object_schema(
                 vec![
                     string_field("project_task_id", "Project task/work item id to update."),
@@ -343,6 +357,29 @@ fn integer_field(name: &'static str, description: &'static str) -> (&'static str
     (
         name,
         json!({ "type": ["integer", "null"], "description": description }),
+    )
+}
+
+fn page_limit_field() -> (&'static str, Value) {
+    (
+        "limit",
+        json!({
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Optional page size. Defaults to 50 and is capped at 100."
+        }),
+    )
+}
+
+fn page_offset_field() -> (&'static str, Value) {
+    (
+        "offset",
+        json!({
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Optional zero-based page offset. Use next_offset from the previous result to continue."
+        }),
     )
 }
 

@@ -255,7 +255,108 @@ export const buildRequirementChildrenMap = (
   return byParent;
 };
 
-export const buildDownstreamRequirementScope = ({
+const requirementStatusIsDone = (status: unknown): boolean => (
+  ['done', 'succeeded', 'success', 'completed'].includes(readText(status).toLowerCase())
+);
+
+const expandRequirementDescendants = (
+  requirements: ProjectRequirementResponse[],
+  scope: Set<string>,
+) => {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    requirements.forEach((requirement) => {
+      const parentId = requirementParentId(requirement);
+      if (parentId && scope.has(parentId) && !scope.has(requirement.id)) {
+        scope.add(requirement.id);
+        changed = true;
+      }
+    });
+  }
+};
+
+const expandRequirementDependents = (
+  dependencyMaps: DependencyMaps,
+  scope: Set<string>,
+) => {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    dependencyMaps.requirementPrerequisites.forEach((prerequisiteIds, requirementId) => {
+      if (prerequisiteIds.some((prerequisiteId) => scope.has(prerequisiteId))
+        && !scope.has(requirementId)) {
+        scope.add(requirementId);
+        changed = true;
+      }
+    });
+  }
+};
+
+export const buildRequirementExecutionScope = ({
+  dependencyMaps,
+  includePrerequisiteDependents = false,
+  requirements,
+  rootId,
+}: {
+  dependencyMaps: DependencyMaps;
+  includePrerequisiteDependents?: boolean;
+  requirements: ProjectRequirementResponse[];
+  rootId: string | null;
+}): string[] => {
+  const normalizedRootId = readText(rootId);
+  if (!normalizedRootId) {
+    return [];
+  }
+
+  const downstreamIds = buildRequirementDownstreamScope({
+    dependencyMaps,
+    requirements,
+    rootId: normalizedRootId,
+  });
+  if (downstreamIds.length === 0) {
+    return [];
+  }
+
+  const scope = new Set<string>(downstreamIds);
+  const requirementById = new Map(requirements.map((requirement) => [requirement.id, requirement]));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    Array.from(scope).forEach((requirementId) => {
+      const prerequisiteIds = dependencyMaps.requirementPrerequisites.get(requirementId) || [];
+      prerequisiteIds.forEach((prerequisiteId) => {
+        if (scope.has(prerequisiteId)) {
+          return;
+        }
+        const prerequisite = requirementById.get(prerequisiteId);
+        if (!prerequisite || requirementStatusIsDone(prerequisite.status)) {
+          return;
+        }
+        scope.add(prerequisiteId);
+        changed = true;
+      });
+    });
+    const before = scope.size;
+    expandRequirementDescendants(requirements, scope);
+    if (includePrerequisiteDependents) {
+      expandRequirementDependents(dependencyMaps, scope);
+      expandRequirementDescendants(requirements, scope);
+    }
+    if (scope.size !== before) {
+      changed = true;
+    }
+  }
+
+  return [
+    normalizedRootId,
+    ...requirements
+      .map((requirement) => requirement.id)
+      .filter((requirementId) => requirementId !== normalizedRootId && scope.has(requirementId)),
+  ];
+};
+
+export const buildRequirementDownstreamScope = ({
   dependencyMaps,
   requirements,
   rootId,
@@ -268,29 +369,10 @@ export const buildDownstreamRequirementScope = ({
   if (!normalizedRootId) {
     return [];
   }
-
   const scope = new Set<string>([normalizedRootId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    requirements.forEach((requirement) => {
-      const parentId = requirementParentId(requirement);
-      if (parentId && scope.has(parentId) && !scope.has(requirement.id)) {
-        scope.add(requirement.id);
-        changed = true;
-      }
-    });
-    Array.from(scope).forEach((requirementId) => {
-      const dependents = dependencyMaps.requirementDependents.get(requirementId) || [];
-      dependents.forEach((dependentId) => {
-        if (!scope.has(dependentId)) {
-          scope.add(dependentId);
-          changed = true;
-        }
-      });
-    });
-  }
-
+  expandRequirementDescendants(requirements, scope);
+  expandRequirementDependents(dependencyMaps, scope);
+  expandRequirementDescendants(requirements, scope);
   return [
     normalizedRootId,
     ...requirements

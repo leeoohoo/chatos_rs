@@ -21,6 +21,9 @@ impl TaskService {
         if input.tool_results_model_total_max_chars == Some(0) {
             return Err("tool_results_model_total_max_chars 必须大于 0".to_string());
         }
+        if input.sandbox_lease_ttl_seconds == Some(0) {
+            return Err("sandbox_lease_ttl_seconds 必须大于 0".to_string());
+        }
 
         let now = now_rfc3339();
         let mut settings = self
@@ -34,6 +37,9 @@ impl TaskService {
                 tool_results_model_total_max_chars: self
                     .config
                     .default_tool_results_model_total_max_chars,
+                execution_environment_mode: self.config.default_execution_environment_mode.clone(),
+                sandbox_manager_base_url: self.config.default_sandbox_manager_base_url.clone(),
+                sandbox_lease_ttl_seconds: self.config.default_sandbox_lease_ttl_seconds,
                 created_at: now.clone(),
                 updated_at: now.clone(),
             });
@@ -48,6 +54,19 @@ impl TaskService {
         }
         if let Some(tool_results_model_total_max_chars) = input.tool_results_model_total_max_chars {
             settings.tool_results_model_total_max_chars = tool_results_model_total_max_chars;
+        }
+        if let Some(mode) = input.execution_environment_mode {
+            settings.execution_environment_mode =
+                normalize_execution_environment_mode(Some(mode.as_str()));
+        }
+        if let Some(base_url) = input.sandbox_manager_base_url {
+            let base_url = base_url.trim();
+            if !base_url.is_empty() {
+                settings.sandbox_manager_base_url = base_url.trim_end_matches('/').to_string();
+            }
+        }
+        if let Some(ttl_seconds) = input.sandbox_lease_ttl_seconds {
+            settings.sandbox_lease_ttl_seconds = ttl_seconds.max(1);
         }
         settings.updated_at = now;
         self.store.save_runtime_settings(settings).await
@@ -89,5 +108,36 @@ impl TaskService {
                     self.config.default_tool_results_model_total_max_chars,
                 )
             }))
+    }
+
+    pub async fn effective_execution_environment_mode(&self) -> Result<String, String> {
+        Ok(self
+            .get_runtime_settings()
+            .await?
+            .map(|settings| {
+                normalize_execution_environment_mode(Some(
+                    settings.execution_environment_mode.as_str(),
+                ))
+            })
+            .unwrap_or_else(|| self.config.default_execution_environment_mode.clone()))
+    }
+
+    pub async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {
+        Ok(self
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.sandbox_manager_base_url)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| self.config.default_sandbox_manager_base_url.clone())
+            .trim_end_matches('/')
+            .to_string())
+    }
+
+    pub async fn effective_sandbox_lease_ttl_seconds(&self) -> Result<u64, String> {
+        Ok(self
+            .get_runtime_settings()
+            .await?
+            .map(|settings| settings.sandbox_lease_ttl_seconds.max(1))
+            .unwrap_or(self.config.default_sandbox_lease_ttl_seconds.max(1)))
     }
 }
