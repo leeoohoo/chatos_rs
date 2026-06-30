@@ -1146,8 +1146,9 @@ async fn install_github_skill_package(
     fs::create_dir_all(packages_root)
         .await
         .map_err(|err| format!("创建 skill 包目录失败: {err}"))?;
-    let final_dir = packages_root.join(skill_id);
-    let staging_dir = packages_root.join(format!("{skill_id}.tmp-{}", Uuid::new_v4()));
+    let package_dir_name = filesystem_safe_dir_name(skill_id, "skill-package");
+    let final_dir = packages_root.join(&package_dir_name);
+    let staging_dir = packages_root.join(format!("{package_dir_name}.tmp-{}", Uuid::new_v4()));
     fs::create_dir_all(&staging_dir)
         .await
         .map_err(|err| format!("创建 skill 包临时目录失败: {err}"))?;
@@ -1372,8 +1373,9 @@ async fn install_local_skill_package(
     fs::create_dir_all(packages_root)
         .await
         .map_err(|err| format!("创建 bundled skill 包目录失败: {err}"))?;
-    let final_dir = packages_root.join(skill_id);
-    let staging_dir = packages_root.join(format!("{skill_id}.tmp-{}", Uuid::new_v4()));
+    let package_dir_name = filesystem_safe_dir_name(skill_id, "skill-package");
+    let final_dir = packages_root.join(&package_dir_name);
+    let staging_dir = packages_root.join(format!("{package_dir_name}.tmp-{}", Uuid::new_v4()));
     fs::create_dir_all(&staging_dir)
         .await
         .map_err(|err| format!("创建 bundled skill 包临时目录失败: {err}"))?;
@@ -1876,7 +1878,70 @@ fn runtime_skill_dir_name(skill: &SkillRecord) -> String {
     } else {
         slug
     };
-    format!("{}-{}", skill.id, slug)
+    filesystem_safe_dir_name(&format!("{}-{}", skill.id, slug), "skill")
+}
+
+fn filesystem_safe_dir_name(value: &str, fallback: &str) -> String {
+    let raw = value.trim();
+    let mut name = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while name.ends_with('.') {
+        name.pop();
+    }
+    if name.is_empty() {
+        name = fallback.to_string();
+    }
+
+    let mut needs_hash = name != raw;
+    if is_windows_reserved_file_name(&name) {
+        name = format!("_{name}");
+        needs_hash = true;
+    }
+    if name.chars().count() > 120 {
+        name = name.chars().take(120).collect();
+        while name.ends_with('.') || name.ends_with('-') {
+            name.pop();
+        }
+        if name.is_empty() {
+            name = fallback.to_string();
+        }
+        needs_hash = true;
+    }
+    if needs_hash {
+        format!("{name}-{:016x}", stable_fnv1a64(raw))
+    } else {
+        name
+    }
+}
+
+fn is_windows_reserved_file_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || (stem.len() == 4
+            && (stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
+}
+
+fn stable_fnv1a64(value: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 fn installed_skill_packages_root(default_workspace_dir: &str) -> PathBuf {
@@ -2289,4 +2354,33 @@ fn preview_content(content: &str) -> String {
     }
     let preview = content.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
     format!("{preview}\n\n...")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_safe_dir_name_preserves_safe_ids() {
+        let id = "550e8400-e29b-41d4-a716-446655440000";
+
+        assert_eq!(filesystem_safe_dir_name(id, "skill-package"), id);
+    }
+
+    #[test]
+    fn filesystem_safe_dir_name_rewrites_windows_invalid_chars() {
+        let name = filesystem_safe_dir_name("bundled:figma:figma-use", "skill-package");
+
+        assert!(name.starts_with("bundled-figma-figma-use-"));
+        assert!(!name
+            .chars()
+            .any(|ch| matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')));
+    }
+
+    #[test]
+    fn filesystem_safe_dir_name_rewrites_windows_reserved_names() {
+        let name = filesystem_safe_dir_name("con", "skill-package");
+
+        assert!(name.starts_with("_con-"));
+    }
 }
